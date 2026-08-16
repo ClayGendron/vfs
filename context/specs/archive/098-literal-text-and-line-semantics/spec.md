@@ -52,6 +52,11 @@
     125,378 byte-compared, ~2.7 s. Note: bare `[!]` never reaches
     the class translator (fnmatch's scan reads it as literal `[`);
     the reachable crash was the merged inverted-range reduction.
+  - **Mined and archived 2026-08-14**: residue was already
+    downstream at landing — the ADR 030 rationale-3 restoration and
+    the `\n`-only line law are annotated in place, the
+    control-character battery edition lives in the grep differential
+    study, and the parity fuzz rides `tests/` as a marked slow row.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** correctness repairs where literal text (paths, content

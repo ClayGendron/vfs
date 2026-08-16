@@ -83,9 +83,10 @@ first; regenerate STATUS.md when the picture shifts.
 
 ## archive/
 
-Landed specs awaiting their mining pass — their inline decisions and
-research haven't flowed backward yet. This includes both the pre-reorg
-landed stories (001–071, moved 2026-07-16) and post-reorg specs moved
-here on landing (074 onward, moved 2026-07-26). Mine opportunistically;
-delete each folder once mined. Nothing in `archive/` governs current
-work.
+Landed specs, kept permanently as the historical record (deletion after
+mining was rescinded 2026-08-05 — see `archive/MINING.md`). This
+includes both the pre-reorg landed stories (001–071, moved 2026-07-16)
+and post-reorg specs moved here on landing (074 onward). Folders not
+yet mined get their backward-flow pass opportunistically — decisions →
+`../decisions/`, research → `../research/` — with the mining date noted
+in the spec's status line. Nothing in `archive/` governs current work.

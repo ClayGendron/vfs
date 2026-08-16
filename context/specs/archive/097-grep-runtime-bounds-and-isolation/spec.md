@@ -32,6 +32,13 @@
   blocking); races and conformance passed in isolation and the exact
   combined selection re-ran green (203/87 s) — filed as Rosetta
   first-run flakiness, worth an eye on future legs.
+  **Mined and archived 2026-08-14**: residue was already downstream
+  at landing — the fork resolution rests in
+  `open-questions-archive.md`, the
+  epoch-reread ladder and reindex lease are ADR 033 amendments
+  (`7880efe`), and the race rows live in the conformance battery.
+  The observed-once MSSQL hang above is the one watch item carried
+  forward.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** grep-verb hardening — epoch-consistent reads on every

@@ -1,7 +1,7 @@
 """Code-oriented byte-trigram tokenizer and conservative regex-to-gram planner.
 
-This module is the database-agnostic primitive behind Grover's portable code
-search candidate index (story 013). It deliberately does NOT use ``pg_trgm``
+This module is the database-agnostic primitive behind the portable code
+search candidate index. It deliberately does NOT use ``pg_trgm``
 semantics: punctuation, whitespace, operators, path separators, and bytes
 inside non-ASCII UTF-8 code points all participate in candidate generation.
 

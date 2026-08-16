@@ -5,7 +5,19 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-13, at spec 094's mining pass (rides the
+- **Last reviewed:** 2026-08-14, at the 095–099 mining pass. That
+  pass: all five campaign specs mined and archived (residue verified
+  downstream — ADR amendments, `open-questions-archive.md`
+  resolutions, battery editions); specs 100 (gram-planner upgrades),
+  101 (move/copy drop `overwrite` — Clay's 2026-08-14 resolution of
+  the last agent-reachable destruction), and 102 (set-based scattered
+  delete, research-first) drafted into `active/`; `open-questions.md`
+  split live-only with resolved entries moved to
+  `open-questions-archive.md`; the Grover-era references purged from
+  live surfaces (src, standards, CONTRIBUTING, docs) and the two
+  top-level relics deleted; suite re-verified green same day (2,276
+  passed / 838 skipped, `ruff`/`ty` zero).
+- **Previous review:** 2026-08-13, at spec 094's mining pass (rides the
   review campaign's decision 7). This true-up records the 094 landing
   and mining (decision set → ADR 037) and the campaign arc — the
   2026-08-13 five-lens review memo, ADR 036, and specs 095–099, all
@@ -16,7 +28,7 @@ lines first; regenerate this file when the picture shifts (review the
   045, 051, 053, 054, 070) carry forward from the 2026-07-10/11
   review — not re-verified, and no commits since have claimed router
   work.
-- **Previous review:** 2026-07-26, the specs-reorg session (tree at
+- **Earlier review:** 2026-07-26, the specs-reorg session (tree at
   `d616d75`): verified the 084–090 line directly (code spot-checks
   against each spec's decisions, full suite at 1873 passed / 744
   skipped; four Docker legs green at each 07-26 landing) and moved
@@ -147,7 +159,9 @@ lines first; regenerate this file when the picture shifts (review the
   annotations, docs flips, and battery were already downstream at
   landing.
 - **The 095–099 review-campaign arc — all landed and committed
-  2026-08-13.** A 73-agent five-lens review of the 092/093/094 arc
+  2026-08-13; all five mined and archived 2026-08-14** (residue was
+  already downstream at each landing; per-spec status lines carry the
+  mining notes). A 73-agent five-lens review of the 092/093/094 arc
   (`f1ab5b3^..0359c8d`) produced the 2026-08-13 campaign memo (30
   verified findings, 8-question decision pass resolved by Clay) and
   five specs, each implemented same day:
@@ -177,6 +191,19 @@ lines first; regenerate this file when the picture shifts (review the
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
   are verified on real engines.
+- **100 — gram-planner upgrades** (draft 2026-08-14) — the recorded
+  ADR 033 successor story: bounded char-class expansion, alternation
+  cross-products, anchor-tolerant extraction. Slice A is a bounded
+  research memo (prior-art caps + refusal-set delta); the §6 cap
+  fork is the one open question.
+- **101 — move/copy drop `overwrite`** (draft 2026-08-14) — Clay's
+  resolution of the last agent-reachable destruction: the flag is
+  removed entirely, occupied destinations refuse `exists`,
+  displacement is delete-then-transfer; ADR 027's contract sentence
+  loses its exception. No open forks.
+- **102 — set-based scattered delete** (draft 2026-08-14,
+  research-first) — owns the 10k-scattered-target topology-lock-hold
+  question; research memo before any design.
 
 ## Decided but unspecified — the next specs to write
 
@@ -195,11 +222,9 @@ lines first; regenerate this file when the picture shifts (review the
   `../research/2026-07-25-multimodal-result-content.md`): the
   storage-bytes ADR gates the content-channel ADR. Entries in
   `../open-questions.md`.
-- **Open decision worth making soon:** move/copy `overwrite=True`
-  still permanently destroys the occupant — after ADR 027 it is the
-  only agent-reachable destruction left. Filed in
-  `../open-questions.md`; decides whether ADR 027's contract sentence
-  gains a footnote or loses the exception.
+- ~~Open decision worth making soon: move/copy `overwrite=True`~~ —
+  **resolved 2026-08-14** (Clay): the flag is removed entirely; spec
+  101 owns the landing (see the active line above).
 
 ## Outstanding work that touches `base.py`
 
@@ -273,8 +298,8 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 awaiting ratification; 018 awaiting its wiring spec; 032, 033, and
 037 are the retroactive records of 073's, 093's, and 094's decision
 sets, written at their mining passes; 036 amends 033's chunk-grain
-clause). The 073/091/092 glob arc, 093, and 094 are mined and
-archived; 095–099 landed with their ledgers in `active/` and await
-their own mining passes. Tree green at 2,276 passed / 838 skipped,
+clause). The 073/091/092 glob arc, 093, 094, and the 095–099
+campaign arc are all mined and archived (095–099 on 2026-08-14).
+Tree green at 2,276 passed / 838 skipped,
 coverage 100%, `ruff`/`ty` at zero, all four Docker engine legs
 green as of the 098 landing (2026-08-13).

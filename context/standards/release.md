@@ -2,7 +2,7 @@
 
 VFS publishes to PyPI as `vfs-py`. Releases are cut from `main` after CI is green.
 
-> **Naming note.** The package on PyPI is `vfs-py`. The module currently imports as `grover`; it will become `vfs` once the in-repo rename lands. Versions issued during the rename window are tagged from whichever name `pyproject.toml` carries at the time.
+> **Naming note.** The package on PyPI is `vfs-py`; the module imports as `vfs`.
 
 ## When to release
 
@@ -41,7 +41,7 @@ uv run python scripts/bump_version.py --minor   # 0.0.20 → 0.1.0
 uv run python scripts/bump_version.py --major   # 0.1.0  → 1.0.0
 ```
 
-The script updates both `pyproject.toml` and `src/grover/__init__.py` (post-rename: `src/vfs/__init__.py`). Don't hand-edit version strings.
+The script updates both `pyproject.toml` and `src/vfs/__init__.py`. Don't hand-edit version strings.
 
 ### 4. Update `CHANGELOG.md`
 
@@ -90,7 +90,7 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'EOF'
 ### Added
 - ...
 
-**Full Changelog**: https://github.com/ClayGendron/grover/compare/vPREV...vX.Y.Z
+**Full Changelog**: https://github.com/ClayGendron/vfs/compare/vPREV...vX.Y.Z
 EOF
 )"
 ```

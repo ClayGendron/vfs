@@ -77,6 +77,11 @@
     trued to Python 3.11+ (pyproject: `>=3.11`); ADR 032 §1's
     `>=3.13` consequence annotated as superseded history rather than
     edited. `STATUS.md` untouched — decision 7's territory.
+  - **Mined and archived 2026-08-14**: residue was already
+    downstream at landing — the decision pass rests in the campaign
+    memo, the ADR 031 §5 tightening annotation was written in place,
+    and the 38,880-case admission-law differential is recorded in
+    the ledger above. STATUS.md trued up in the same pass.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** structural cleanup — placement moves, duplication

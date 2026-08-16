@@ -17,6 +17,7 @@ standards. Each directory is one stage:
 context/
   README.md             # this map
   open-questions.md     # intake: unknowns, undecided calls, parked ideas
+  open-questions-archive.md  # resolved entries, moved here on resolution
   research/             # RESEARCH — dated memos: raw study of precedent
   decisions/            # DECIDE — ADRs: point-in-time choices, append-only
   specs/                # SPECIFY — open work packages, single-dev scope

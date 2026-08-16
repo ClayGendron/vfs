@@ -25,6 +25,10 @@
   both tiers; executed repro at kickoff); the occupant's material
   update now resets ``chunked``/``encoded``/``indexable`` like any
   content write, pinned by a facade regression row.
+  **Mined and archived 2026-08-14**: the decision set was recorded
+  forward as ADR 036 at kickoff (this spec is its landing vehicle);
+  the boundary battery edition lives in the grep differential study
+  and the codec pin in `tests/` — nothing further to mine.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** correctness repair of gram extraction at chunk boundaries

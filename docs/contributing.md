@@ -1,12 +1,12 @@
 # Contributing to vfs
 
-This repo still lives at `ClayGendron/grover`, but the library and docs are now branded as `vfs`.
+The repo lives at [`ClayGendron/vfs`](https://github.com/ClayGendron/vfs).
 
 ## Setup
 
 ```bash
-git clone https://github.com/ClayGendron/grover.git
-cd grover
+git clone https://github.com/ClayGendron/vfs.git
+cd vfs
 uv venv
 uv pip install -e ".[all]"
 uv pip install --group dev --group docs
@@ -17,43 +17,37 @@ Requires Python 3.11+.
 ## Day-to-Day Checks
 
 ```bash
-uvx ruff check src/ tests/
-uvx ruff format --check src/ tests/
-uvx --refresh ty check src/
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+uv run ty check src/ tests/
 uv run pytest
 uv run mkdocs build --clean
 ```
 
-Use `uvx ruff check --fix src/ tests/` and `uvx ruff format src/ tests/` when you want ruff to rewrite code.
+Use `uv run ruff check --fix src/ tests/` and `uv run ruff format src/ tests/` when you want ruff to rewrite code.
 
 ## Repo Layout
 
 ```text
 src/vfs/
-├── __init__.py
-├── base.py
-├── client.py
-├── results.py
-├── paths.py
-├── permissions.py
-├── models.py
-├── backends/
-│   ├── database.py
-│   ├── postgres.py
-│   └── mssql.py
-├── graph/
-│   └── rustworkx.py
-└── query/
-    ├── parser.py
-    ├── executor.py
-    └── render.py
+├── base.py               # VirtualFileSystem — mounts, dispatch, fan-out
+├── paths.py              # Path type, normalization, extension law
+├── params.py             # Per-verb parameter gates
+├── permissions.py        # Permission maps and write authorization
+├── exceptions.py         # Error hierarchy
+├── pattern_matching/     # Glob and grep pattern authorities
+├── models/               # Row and value models
+├── results/              # Result envelope, error kinds, rendering
+└── storage/
+    ├── protocol.py       # StorageBackend capability protocols
+    └── backends/
+        └── database/     # The portable SQL backend
 ```
 
-Tests mirror the shipped modules. Examples:
-
-- `src/vfs/query/parser.py` -> `tests/test_query_parser.py`
-- `src/vfs/backends/database.py` -> `tests/test_database.py`
-- `src/vfs/results.py` -> `tests/test_results.py`
+Tests mirror the shipped modules under `tests/` — for example
+`src/vfs/storage/backends/database/reads.py` is tested in
+`tests/storage/database/test_reads.py`. `src2/` and `tests2/` are an
+archived reference quarry; never edit, run, or lint them.
 
 ## Docs
 
@@ -63,4 +57,4 @@ The GitHub Pages deployment workflow lives at `.github/workflows/deploy-docs.yml
 
 ## Pull Requests
 
-Keep changes scoped, run the checks above, and describe the behavior change rather than only the file list. If you are touching the public API or the query language, update the docs in the same change.
+Keep changes scoped, run the checks above, and describe the behavior change rather than only the file list. If you are touching the public API, update the docs in the same change.

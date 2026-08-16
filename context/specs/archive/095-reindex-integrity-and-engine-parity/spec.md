@@ -17,6 +17,14 @@
   shape: §3 additionally mints epochs past every *built* number
   (crash-orphaned builds self-heal); §6's knob already existed —
   landed as declaration (constant comment + ADR 033 amendment).
+  **Mined and archived 2026-08-14**: residue was already downstream
+  at landing — both fork resolutions rest in
+  `open-questions-archive.md`
+  (demote-on-coverage-exit; no designed ceiling, now a standing
+  CLAUDE.md principle), the flag-algebra and format-knob decisions
+  are ADR 033 amendments, and the §9 engine rows live in the
+  conformance battery. §7's general case stays with spec 080's
+  open-questions entry.
 - **Date:** 2026-08-13
 - **Owner:** Clay Gendron
 - **Kind:** correctness hardening of the reindex verb and the

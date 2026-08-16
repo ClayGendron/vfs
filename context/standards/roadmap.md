@@ -163,10 +163,9 @@ The wave above presupposes the following stories on `main`:
 
 - `docs/plan9-mount-namespace-recommendations.html` — the
   10-recommendation audit that seeded most of these stories
-- `~/.claude/projects/-Users-claygendron-Git-Repos-grover/memory/`
-  — Plan 9 study memos (`plan9_namespaces.md`, `plan9_overview.md`,
-  `plan9_9p_protocol.md`, `plan9_security.md`, `plan9_networks.md`,
-  `plan9_lib9p_patterns.md`, `plan9_to_vfs_guidance.md`)
+- `context/research/2026-04-19-plan9-and-plan9port.md` — the Plan 9
+  study memo (namespaces, 9P protocol, lib9p patterns) that seeded the
+  mount/bind design
 - `context/research/2026-04-19-fsp-vfs-synthesis.md` — the
   pre-existing synthesis memo this wave operationalizes
 - `context/specs/archive/015-024/spec.md` — full per-story specs

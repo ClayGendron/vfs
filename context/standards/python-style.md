@@ -34,7 +34,7 @@ Per-file ignores:
 - `PascalCase` for classes.
 - `SCREAMING_SNAKE` for module-level constants.
 - Internal-by-convention: leading underscore. Backend implementation hooks follow the `_{op}_impl` pattern (`_write_impl`, `_edit_impl`, `_route_single`, …) — that pattern is load-bearing; preserve it when adding new ops.
-- `known-first-party = ["grover"]` — ruff treats `grover` as the local package for import sorting. (Will become `vfs` post-rename.)
+- `known-first-party = ["vfs"]` — ruff treats `vfs` as the local package for import sorting.
 
 ## Imports
 
@@ -51,12 +51,12 @@ Per-file ignores:
 
 ## Async
 
-- Async is the primary path. The sync facade (`Grover` / future `VFS`) is a thin wrapper around the async core (`GroverAsync` / future `VFSAsync`).
+- Async is the primary path. If a sync facade ships, it is a thin wrapper around the async core (`VirtualFileSystem`).
 - New backend methods are written async-first; the sync wrapper picks them up automatically.
 - Don't mix `asyncio.run` inside library code. The caller owns the loop.
 
 ## Errors
 
 - Use the exception hierarchy in `exceptions.py` — don't raise bare `RuntimeError` / `ValueError` from public surfaces.
-- Failures that are part of the result contract (missing search provider, permission denied on a single candidate within a batch) become `success=False` on `Detail` / `GroverResult`, not exceptions.
+- Failures that are part of the result contract (missing search provider, permission denied on a single row within a batch) become `success=False` / `ResultError` rows on `Result`, not exceptions.
 - Don't add `try / except` blocks around things that "shouldn't fail." Boundaries (user input, external APIs, disk) yes; internal calls no.

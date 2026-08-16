@@ -1,6 +1,6 @@
 # Integrating VFS with `deepagents`
 
-Audience: the grover/VFS team. This doc explains what the
+Audience: the VFS team. This doc explains what the
 [`deepagents`](https://github.com/langchain-ai/deepagents) framework expects
 from a filesystem backend, where the impedance gaps with VFS sit, and what
 shape an adapter should take so a deepagents agent can be pointed at a VFS
@@ -637,4 +637,4 @@ Subclass `BackendProtocol`, override the six `a*` methods to call
 and ship a separate middleware that exposes `semantic_search`, graph
 traversal, and `run_query` as custom tools. The standard deepagents agent
 loop will then drive VFS as its filesystem with no further changes — and
-agents that opt into the extra tools get the full Grover experience.
+agents that opt into the extra tools get the full VFS experience.

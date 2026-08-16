@@ -15,9 +15,9 @@ tests/
   fixtures/                # static repo fixtures, sample data
 ```
 
-Test files mirror source structure: `src/grover/backends/database.py` → `tests/test_database_fs.py`. New source file → new test file.
+Test files mirror source structure: `src/vfs/storage/backends/database/reads.py` → `tests/storage/database/test_reads.py`. New source file → new test file.
 
-`tests_old/` is archived. Never edit it; ruff and pytest skip it.
+`tests2/` is archived. Never edit it; ruff and pytest skip it.
 
 ## Conventions
 
@@ -38,7 +38,7 @@ async def test_write_then_read(db_fs):
     assert read.candidates[0].content == "hello"
 ```
 
-- Assert on `GroverResult` fields directly. Don't wrap assertions in helper functions that hide what failed.
+- Assert on `Result` fields directly. Don't wrap assertions in helper functions that hide what failed.
 - One behaviour per test. If a test name needs `and`, split it.
 - Fixtures over setup methods. Test classes are unusual here.
 

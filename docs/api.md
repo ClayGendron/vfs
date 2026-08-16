@@ -1,6 +1,6 @@
 # API Reference
 
-This page tracks the current public `vfs` surface in `src/vfs`. It intentionally describes the shipped `VFSClient` / `VFSClientAsync` API rather than the older Grover facade.
+This page tracks the current public `vfs` surface in `src/vfs`.
 
 ## Clients
 
