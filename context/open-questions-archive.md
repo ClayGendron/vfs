@@ -314,3 +314,32 @@ resolve to this file.
   8-way cold storm — retired as presumed fixed or environmental, with
   097's watch item as the standing tripwire. Fresh-container combined
   MSSQL leg green same session (205 passed / 4 skipped, 70 s).
+
+## Gram-planner expansion caps: one final-width ceiling or per-upgrade caps? (spec 100 §6)
+
+- **Asked:** 2026-08-14 (spec 100 draft — the planner-upgrade
+  follow-up story ADR 033's consequences section records)
+- **Context:** The three planner upgrades (bounded char-class
+  expansion, alternation cross-products, anchor-tolerant extraction)
+  compose — a class inside a nested branch inside an anchored group —
+  so the caps must bound the *product* of expansions, not each in
+  isolation. Prior-art numbers (codesearch `RegexpQuery` clamps,
+  zoekt `regexpToQuery` limits) and a measured refusal-set delta over
+  field-pattern corpora are slice A's research memo.
+- **Blocking:** spec 100 slices B–D.
+- **Options considered:** one shared final-width ceiling on the
+  compiled query (the `MAX_PATTERN_ARMS` shape); per-upgrade caps
+  (class-member cap × branch arm cap); the numbers themselves.
+- **Status:** resolved 2026-08-16 (Clay, in session, taught through
+  the slice A memo's numbers) — **both caps, small values**: a
+  post-fold class-member cap of 8 plus a shared width ceiling of 64
+  enforced at every cross step; over-cap expansion degrades to
+  today's flush. Neither named option alone survived measurement: a
+  single ceiling is non-monotonic (W=128 rescues fewer than W=64 —
+  gramless digit-class forks starve the gram-bearing branch), and
+  per-upgrade caps alone leave the composed product unbounded
+  (width-1000 in-corpus). Evidence:
+  `research/2026-08-16-gram-planner-expansion-caps.md` (rerunnable
+  study in `research/studies/2026-08-16-gram-planner-expansion-caps/`);
+  decision recorded in `specs/active/100-gram-planner-upgrades/`
+  §6; slices B–D unblocked.

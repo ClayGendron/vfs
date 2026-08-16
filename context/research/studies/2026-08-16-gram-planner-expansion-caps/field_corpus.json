@@ -1,0 +1,826 @@
+[
+ {
+  "pattern": "\u0428\u0435\u0440\u043b\u043e\u043a \u0425\u043e\u043b\u043c\u0441",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "Sherlock",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "2",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "far",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "For\\s",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "[0-9]\\w+",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "Sherlock$",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": ".",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "NADA",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "*",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": ".+",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "(?<=the )Sherlock",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "\\x00",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "needle",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "\u0394",
+  "source": "ripgrep-tests:feature.rs"
+ },
+ {
+  "pattern": "Sherlock Holmes",
+  "source": "ripgrep-tests:json.rs"
+ },
+ {
+  "pattern": "(?-u)\\xFF",
+  "source": "ripgrep-tests:json.rs"
+ },
+ {
+  "pattern": "\n",
+  "source": "ripgrep-tests:json.rs"
+ },
+ {
+  "pattern": "(?<=foo\\n)bar",
+  "source": "ripgrep-tests:json.rs"
+ },
+ {
+  "pattern": "as",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "()",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "of (\\w+)",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "the",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "world|attached",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "Sherlock|Watson",
+  "source": "ripgrep-tests:misc.rs"
+ },
+ {
+  "pattern": "abc\ndef",
+  "source": "ripgrep-tests:multiline.rs"
+ },
+ {
+  "pattern": "xyz",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "(\\d{1,3}\\.){3}\\d{1,3}",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "x",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "./",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "sym1",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "sym2",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "\\btest\\b",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "[E]conomie",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "\u043f\u0440\u0438\u0432\u0435\u0442",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "-test",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "[0-9]+",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "\\b 're \\b",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "min|max",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "-baz",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "./a",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "string",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "./some_dir",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "./some_dir/build",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "a(.*c)",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "nada",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "no-file",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "^test123",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "\\d\\d\\d00",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "\\d\\d\\d000",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "TTGAGTCCAGGAG[ATCG]{2}C",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": ";(.*,){1}",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "TaskID +int",
+  "source": "ripgrep-tests:regression.rs"
+ },
+ {
+  "pattern": "fast\\w+",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fast\\w*",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fn write\\(",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fn write(",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fn\nwrite\\(",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fn run",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "int main",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "^make:",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "web:*.html",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "web:*.{html,css,js}",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "^.*fast.*$",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fast\\s+(\\w+)",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fast\\s+(?P<word>\\w+)",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "(?-u)\\(\\x045\\x04@\\x04;\\x04>\\x04:\\x04",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "\u0428\u0435\u0440\u043b\u043e\u043a",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "(?-u:.)",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "\\w(?-u:\\w)\\w",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "The Commentz-Walter algorithm",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "fn is_empty",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "*.pdf",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "\\b-2\\b",
+  "source": "ripgrep-docs:GUIDE.md"
+ },
+ {
+  "pattern": "(\\w{10})\\1",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "\\pL{1000}",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "\\n",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "^\\w{42}$",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "[\\w--\\p{ascii}]",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "(?-u)^\\w{42}$",
+  "source": "ripgrep-docs:FAQ.md"
+ },
+ {
+  "pattern": "[A-Z]+_SUSPEND",
+  "source": "ripgrep-docs:README.md"
+ },
+ {
+  "pattern": "Sherlock [A-Z]\\w+",
+  "source": "ripgrep-docs:README.md"
+ },
+ {
+  "pattern": "[A-Z]\\w+ Sherlock [A-Z]\\w+",
+  "source": "ripgrep-docs:README.md"
+ },
+ {
+  "pattern": "[A-Za-z]{30}",
+  "source": "ripgrep-docs:README.md"
+ },
+ {
+  "pattern": "^(startup|exit|split|unlikely|hot|unknown)(\\.|$)",
+  "source": "shell:linux/scripts/check-function-names.sh"
+ },
+ {
+  "pattern": "LLVM.*[0-9]+\\.[0-9]+\\.[0-9]+",
+  "source": "shell:linux/scripts/rustc-llvm-version.sh"
+ },
+ {
+  "pattern": "\\<R_",
+  "source": "shell:linux/scripts/relocs_check.sh"
+ },
+ {
+  "pattern": "ext[234]|jfs|xfs|jffs2|gfs2|btrfs|f2fs|ocfs2",
+  "source": "shell:linux/scripts/selinux/install_policy.sh"
+ },
+ {
+  "pattern": "^#define HWCAP[0-9]*_[A-Z0-9_]+",
+  "source": "shell:linux/arch/arm64/tools/gen-kernel-hwcaps.sh"
+ },
+ {
+  "pattern": "^[0-9A-Fa-fXx]+[[:space:]]+",
+  "source": "shell:linux/arch/arm/tools/syscallnr.sh"
+ },
+ {
+  "pattern": "^# require ",
+  "source": "shell:linux/arch/mips/tools/generic-board-config.sh"
+ },
+ {
+  "pattern": "^(#|Using)",
+  "source": "shell:linux/arch/mips/tools/generic-board-config.sh"
+ },
+ {
+  "pattern": "\\-\\-|Name|Slabs",
+  "source": "shell:linux/tools/mm/slabinfo-gnuplot.sh"
+ },
+ {
+  "pattern": "arm_spe_[0-9]+//",
+  "source": "shell:linux/tools/perf/tests/shell/test_arm_spe.sh"
+ },
+ {
+  "pattern": "Performance counter stats for 'true':",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "No supported events found.",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "Performance counter stats for 'pipe':",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "CPU[[:space:]]+THREAD[[:space:]]+VAL[[:space:]]+ENA[[:space:]]+RUN[[:space:]]+TIME[[:space:]]+EVENT",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "<not supported>",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "instructions",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "/cpu-cycles/[uH]*|  cpu-cycles[:uH]*  ",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "Performance counter stats for",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "CPU",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "Performance counter stats",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": "\\([[:space:]]*\\+-.*%[[:space:]]*\\)",
+  "source": "shell:linux/tools/perf/tests/shell/stat.sh"
+ },
+ {
+  "pattern": " +touch +[0-9]+ +\\[[0-9]+\\] +[0-9]+\\.[0-9]+: +probe:vfs_getname[_0-9]*: +\\([[:xdigit:]]+\\) +pathname=\\",
+  "source": "shell:linux/tools/perf/tests/shell/record+script_probe_vfs_getname.sh"
+ },
+ {
+  "pattern": "available",
+  "source": "shell:linux/tools/perf/tests/shell/test_data_symbol.sh"
+ },
+ {
+  "pattern": "vendor_id.*AuthenticAMD",
+  "source": "shell:linux/tools/perf/tests/shell/test_data_symbol.sh"
+ },
+ {
+  "pattern": "[ perf sched stats: Wrote samples to perf.data ]",
+  "source": "shell:linux/tools/perf/tests/shell/perf_sched_stats.sh"
+ },
+ {
+  "pattern": "Description",
+  "source": "shell:linux/tools/perf/tests/shell/perf_sched_stats.sh"
+ },
+ {
+  "pattern": "[0-9]+\\.[0-9]+%",
+  "source": "shell:linux/tools/perf/tests/shell/kvm.sh"
+ },
+ {
+  "pattern": "py::(foo|bar|baz):<stdin>",
+  "source": "shell:linux/tools/perf/tests/shell/jitdump-python.sh"
+ },
+ {
+  "pattern": "tpiu",
+  "source": "shell:linux/tools/perf/tests/shell/test_arm_coresight.sh"
+ },
+ {
+  "pattern": " +[0-9]+\\.[0-9]+% .* (Interpreter|jdk\\.internal).*",
+  "source": "shell:linux/tools/perf/tests/shell/test_java_symbol.sh"
+ },
+ {
+  "pattern": "(# compressed : Zstd,)|(COMPRESSED events:)",
+  "source": "shell:linux/tools/perf/tests/shell/record+zstd_comp_decomp.sh"
+ },
+ {
+  "pattern": "syscalls:sys_enter_open(at)? ",
+  "source": "shell:linux/tools/perf/tests/shell/trace+probe_vfs_getname.sh"
+ },
+ {
+  "pattern": " +[0-9]+\\.[0-9]+ +\\( +[0-9]+\\.[0-9]+ ms\\): +touch/[0-9]+ open(at)?\\((dfd: +CWD, +)?filename: +\\",
+  "source": "shell:linux/tools/perf/tests/shell/trace+probe_vfs_getname.sh"
+ },
+ {
+  "pattern": "^(Failed to find the path for the kernel|Debuginfo-analysis is not supported)|(file has no debug information)",
+  "source": "shell:linux/tools/perf/tests/shell/lib/probe_vfs_getname.sh"
+ },
+ {
+  "pattern": "\\",
+  "source": "shell:linux/tools/perf/trace/beauty/sockaddr.sh"
+ },
+ {
+  "pattern": "^#define[[:blank:]]+(E[^[:blank:]]+)[[:blank:]]+([[:digit:]]+).*",
+  "source": "shell:linux/tools/perf/trace/beauty/arch_errno_names.sh"
+ },
+ {
+  "pattern": "(MSK|VERBOSE|MGC_VAL)\\>",
+  "source": "shell:linux/tools/perf/trace/beauty/mount_flags.sh"
+ },
+ {
+  "pattern": "MAP_(UNINITIALIZED|TYPE|SHARED_VALIDATE)",
+  "source": "shell:linux/tools/perf/trace/beauty/mmap_flags.sh"
+ },
+ {
+  "pattern": "#[[:space:]]*include[[:space:]]+.*uapi/asm-generic/mman.*",
+  "source": "shell:linux/tools/perf/trace/beauty/mmap_flags.sh"
+ },
+ {
+  "pattern": "#[[:space:]]*include[[:space:]]+.*uapi/asm-generic/mman.h>.*",
+  "source": "shell:linux/tools/perf/trace/beauty/mmap_flags.sh"
+ },
+ {
+  "pattern": "USBDEVFS_\\w+32[[:space:]]",
+  "source": "shell:linux/tools/perf/trace/beauty/usbdevfs_ioctl.sh"
+ },
+ {
+  "pattern": " ((ARM|PPC|S390)_|[GS]ET_(DEBUGREGS|PIT2|XSAVE|TSC_KHZ)|CREATE_SPAPR_TCE_64)",
+  "source": "shell:linux/tools/perf/trace/beauty/kvm_ioctl.sh"
+ },
+ {
+  "pattern": "MSR_(ATOM|P[46]|IA32_(TSC_DEADLINE|UCODE_REV)|IDT_FCR4)",
+  "source": "shell:linux/tools/perf/trace/beauty/tracepoints/x86_msr.sh"
+ },
+ {
+  "pattern": "K6_WHCR",
+  "source": "shell:linux/tools/perf/trace/beauty/tracepoints/x86_msr.sh"
+ },
+ {
+  "pattern": "^TARGETS +|^TARGETS =",
+  "source": "shell:linux/tools/testing/selftests/kselftest_deps.sh"
+ },
+ {
+  "pattern": "[[:space:]].*eth[0-9]*:|[[:space:]].*enp[0-9]s[0-9]:",
+  "source": "shell:linux/tools/testing/selftests/net/netdevice.sh"
+ },
+ {
+  "pattern": "mtu|redirected",
+  "source": "shell:linux/tools/testing/selftests/net/icmp_redirect.sh"
+ },
+ {
+  "pattern": "\\sovs_br0",
+  "source": "shell:linux/tools/testing/selftests/net/pmtu.sh"
+ },
+ {
+  "pattern": "[0-9]+.[0-9]+.[0-9]+",
+  "source": "shell:linux/tools/testing/selftests/net/traceroute.sh"
+ },
+ {
+  "pattern": "rt-*|hs-*",
+  "source": "shell:linux/tools/testing/selftests/net/srv6_end_dx6_netfilter_test.sh"
+ },
+ {
+  "pattern": "^#?",
+  "source": "shell:linux/tools/testing/selftests/lkdtm/run.sh"
+ },
+ {
+  "pattern": "^",
+  "source": "shell:linux/tools/testing/selftests/lkdtm/run.sh"
+ },
+ {
+  "pattern": "Subject:|Issuer:|Key Usage|Extended",
+  "source": "shell:linux/tools/testing/selftests/dm-verity/test-dm-verity-keyring.sh"
+ },
+ {
+  "pattern": "^[0-9]+$",
+  "source": "shell:linux/tools/testing/selftests/dm-verity/test-dm-verity-keyring.sh"
+ },
+ {
+  "pattern": "Stop|ERROR|Error|error:|warning:",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/torture.sh"
+ },
+ {
+  "pattern": "error:|warning:|^ld: .*undefined reference to",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/kvm-find-errors.sh"
+ },
+ {
+  "pattern": "Start batch|Starting build\\.",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/kvm.sh"
+ },
+ {
+  "pattern": "\\(null\\)|rtc: 000000000* ",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "WARNING:|Warn",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "\\bBUG|Oops:",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "BUG: KCSAN: ",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "Call Trace:|Call trace:",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "detected stalls on CPUs/tasks:|self-detected stall on CPU|Stall ended before state dump start|\\?\\?\\? Writer stall state",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/parse-console.sh"
+ },
+ {
+  "pattern": "Stop|ERROR|Error|error:",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/kvm-build.sh"
+ },
+ {
+  "pattern": "Stop|Error|error:|warning:",
+  "source": "shell:linux/tools/testing/selftests/rcutorture/bin/kvm-build.sh"
+ },
+ {
+  "pattern": "OCC: Chip [0-9a-f]+ Core [0-9a-f]",
+  "source": "shell:linux/tools/testing/selftests/powerpc/scripts/hmi.sh"
+ },
+ {
+  "pattern": "token:[^ ]+",
+  "source": "shell:linux/tools/testing/selftests/net/mptcp/diag.sh"
+ },
+ {
+  "pattern": "^--ip_version=",
+  "source": "shell:linux/tools/testing/selftests/net/packetdrill/ksft_runner.sh"
+ },
+ {
+  "pattern": "^([0-9a-f]{2}:){5}",
+  "source": "shell:linux/tools/testing/selftests/net/hsr/link_faults.sh"
+ },
+ {
+  "pattern": "listening on upcall packet handler",
+  "source": "shell:linux/tools/testing/selftests/net/openvswitch/openvswitch.sh"
+ },
+ {
+  "pattern": "link/ether [0-9a-f:]+",
+  "source": "shell:linux/tools/testing/selftests/net/openvswitch/openvswitch.sh"
+ },
+ {
+  "pattern": "RIP: [0-9a-fA-Fx]+:ovs_dp_cmd_new\\+",
+  "source": "shell:linux/tools/testing/selftests/net/openvswitch/openvswitch.sh"
+ },
+ {
+  "pattern": "MISS upcall\\[0/yes\\]: .*arp\\(sip=172.31.110.1,tip=172.31.110.20,op=1,sha=",
+  "source": "shell:linux/tools/testing/selftests/net/openvswitch/openvswitch.sh"
+ },
+ {
+  "pattern": "Need to (install|upgrade) the python",
+  "source": "shell:linux/tools/testing/selftests/net/openvswitch/openvswitch.sh"
+ },
+ {
+  "pattern": "^ \\* Result: (Never|Sometimes|Always|DEADLOCK)",
+  "source": "shell:linux/tools/memory-model/scripts/checkghlitmus.sh"
+ },
+ {
+  "pattern": "<a href=\"srctree/([^\"]+)\"",
+  "source": "shell:linux/rust/Makefile"
+ },
+ {
+  "pattern": "^#|^$$",
+  "source": "shell:linux/rust/Makefile"
+ },
+ {
+  "pattern": "__GNUC_(MINOR_|PATCHLEVEL_)?_",
+  "source": "shell:linux/arch/loongarch/Makefile"
+ },
+ {
+  "pattern": "^#",
+  "source": "shell:linux/arch/mips/Makefile"
+ },
+ {
+  "pattern": "jalr.*t9",
+  "source": "shell:linux/arch/mips/vdso/Makefile"
+ },
+ {
+  "pattern": "^processor|^CPU[0-9]",
+  "source": "shell:linux/tools/perf/Makefile"
+ },
+ {
+  "pattern": "^LIBBPF_([0-9.]+)",
+  "source": "shell:linux/tools/lib/bpf/Makefile"
+ },
+ {
+  "pattern": "[^ ]+@LIBBPF_",
+  "source": "shell:linux/tools/lib/bpf/Makefile"
+ },
+ {
+  "pattern": "^$(pound)define LIBBPF_MAJOR_VERSION ([0-9]+)$$",
+  "source": "shell:linux/tools/lib/bpf/Makefile"
+ },
+ {
+  "pattern": "^$(pound)define LIBBPF_MINOR_VERSION ([0-9]+)$$",
+  "source": "shell:linux/tools/lib/bpf/Makefile"
+ },
+ {
+  "pattern": "MIPS(EL|EB)|_MIPS_SZ(PTR|LONG) |_MIPS_SIM |_ABI(O32|N32|64) ",
+  "source": "shell:linux/tools/testing/selftests/bpf/Makefile"
+ },
+ {
+  "pattern": "^PROGRAM(FILES(\\(X86\\))?|W6432)=",
+  "source": "shell:git/git-mergetool--lib.sh"
+ },
+ {
+  "pattern": "^(fatal|error):.*(requires|incompatible with|needs)",
+  "source": "shell:git/t/t1006-cat-file.sh"
+ },
+ {
+  "pattern": "^fatal:.*required",
+  "source": "shell:git/t/t1006-cat-file.sh"
+ },
+ {
+  "pattern": "mask::?rw-",
+  "source": "shell:git/t/t1304-default-acl.sh"
+ },
+ {
+  "pattern": "mask::?r--",
+  "source": "shell:git/t/t1304-default-acl.sh"
+ },
+ {
+  "pattern": "(.|.)[\\d]",
+  "source": "shell:git/t/t7814-grep-recurse-submodules.sh"
+ },
+ {
+  "pattern": "HEAD detached at [0-9a-f]+",
+  "source": "shell:git/t/t7508-status.sh"
+ },
+ {
+  "pattern": "^| | gpg: Can'",
+  "source": "shell:git/t/t4202-log.sh"
+ },
+ {
+  "pattern": "(already exists|is inside git dir|does not point to a valid repository)",
+  "source": "shell:git/t/t7450-bad-git-dotfiles.sh"
+ },
+ {
+  "pattern": "^trace: (built-in|exec|run_command): git pack-refs --",
+  "source": "shell:git/t/t6500-gc.sh"
+ },
+ {
+  "pattern": "^trace: (built-in|exec|run_command): git reflog expire --",
+  "source": "shell:git/t/t6500-gc.sh"
+ },
+ {
+  "pattern": "^trace: (built-in|exec|run_command): git repack .* --filter=blob:none ?.*",
+  "source": "shell:git/t/t6500-gc.sh"
+ },
+ {
+  "pattern": "^A-8-g[0-9a-f]+$",
+  "source": "shell:git/t/t6120-describe.sh"
+ },
+ {
+  "pattern": "^(error|fatal): cannot (exec|spawn) .*bad-hooks/test-hook",
+  "source": "shell:git/t/t1800-hook.sh"
+ },
+ {
+  "pattern": "commit|tree",
+  "source": "shell:git/t/t5317-pack-objects-filter-objects.sh"
+ },
+ {
+  "pattern": "tree|blob",
+  "source": "shell:git/t/t5317-pack-objects-filter-objects.sh"
+ },
+ {
+  "pattern": "^[0-9a-f]{40} blob",
+  "source": "shell:git/t/t5317-pack-objects-filter-objects.sh"
+ },
+ {
+  "pattern": "^[0-9a-f]{40} commit",
+  "source": "shell:git/t/t5317-pack-objects-filter-objects.sh"
+ },
+ {
+  "pattern": "^[0-9a-f]{40} tree",
+  "source": "shell:git/t/t5317-pack-objects-filter-objects.sh"
+ },
+ {
+  "pattern": "<[^>_-]+_",
+  "source": "shell:git/t/t0450-txt-doc-vs-help.sh"
+ },
+ {
+  "pattern": "a[",
+  "source": "shell:git/t/t7810-grep.sh"
+ },
+ {
+  "pattern": "a+b*c",
+  "source": "shell:git/t/t7810-grep.sh"
+ },
+ {
+  "pattern": "a+",
+  "source": "shell:git/t/t7810-grep.sh"
+ },
+ {
+  "pattern": "^ ",
+  "source": "shell:git/t/t7810-grep.sh"
+ },
+ {
+  "pattern": "^\\.\\.?$",
+  "source": "shell:git/t/test-lib-functions.sh"
+ },
+ {
+  "pattern": "^index",
+  "source": "shell:git/t/t3702-add-edit.sh"
+ },
+ {
+  "pattern": "Content|MIME",
+  "source": "shell:git/t/t9001-send-email.sh"
+ },
+ {
+  "pattern": "^(commit|tag)",
+  "source": "shell:git/t/t7007-show.sh"
+ },
+ {
+  "pattern": "^(diff|---|\\+\\+\\+) ",
+  "source": "shell:git/t/t4013-diff-various.sh"
+ },
+ {
+  "pattern": "^[0-9a-f]{16,} ",
+  "source": "shell:git/t/t5702-protocol-v2.sh"
+ },
+ {
+  "pattern": "^[[[:digit:]]+/[[:digit:]]+] .* \\(A U Thor\\)",
+  "source": "shell:git/t/t4014-format-patch.sh"
+ },
+ {
+  "pattern": "^[[[:digit:]]+/[[:digit:]]+] \\(A U Thor\\)",
+  "source": "shell:git/t/t4014-format-patch.sh"
+ },
+ {
+  "pattern": "^A U Thor \\([[:digit:]]+\\)",
+  "source": "shell:git/t/t4014-format-patch.sh"
+ },
+ {
+  "pattern": "^--+mimemime",
+  "source": "shell:git/t/t4014-format-patch.sh"
+ },
+ {
+  "pattern": "fatal:( options)? .* cannot be used together",
+  "source": "shell:git/t/t2400-worktree-add.sh"
+ },
+ {
+  "pattern": "http-equiv=['\\",
+  "source": "shell:git/t/t9502-gitweb-standalone-parse-output.sh"
+ }
+]

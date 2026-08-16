@@ -1,11 +1,14 @@
 # 100 — Gram-planner upgrades: shrink the refusal set
 
-- **Status: draft 2026-08-14** — the recorded successor story of
-  ADR 033 (planner upgrades deferred at 093's shaping fork 3,
-  resolved by Clay 2026-08-05: "all three deferred to a follow-up
-  story once the refusal gate has live users"). No code yet; §6's
-  cap fork is the one owner decision, pointered in
-  `../../open-questions.md`.
+- **Status: slice A complete, §6 resolved 2026-08-16** — the recorded
+  successor story of ADR 033 (planner upgrades deferred at 093's
+  shaping fork 3, resolved by Clay 2026-08-05: "all three deferred to
+  a follow-up story once the refusal gate has live users"). Slice A's
+  research memo landed 2026-08-16
+  (`../../research/2026-08-16-gram-planner-expansion-caps.md`, with
+  the rerunnable study under `research/studies/`); Clay resolved the
+  §6 cap fork the same day (see §6). No code yet; slices B–D are
+  unblocked.
 - **Date:** 2026-08-14
 - **Owner:** Clay Gendron
 - **Kind:** planner capability extension — three upgrades to
@@ -36,7 +39,12 @@ while equivalent spellings index — an asymmetry users hit immediately:
 2. **Only top-level alternation branches.** `^(import|from)` and
    `foo_(bar|baz)` plan `GramAny` because a non-top-level `BRANCH`
    conservatively flushes; pg_trgm and zoekt answer these from the
-   index in milliseconds.
+   index in milliseconds. The reach is wider than grouped
+   alternations: `sre_parse` factors common prefixes out of branches
+   (`min|max` parses as `[LITERAL 'm', BRANCH('in'|'ax')]`), so even
+   a *bare* alternation refuses today whenever its arms share a
+   first character, while `alpha|beta` indexes — an asymmetry users
+   cannot see (slice A memo §3).
 3. **Anchors split literal runs.** `AT` nodes (`^`, `$`, `\b`, `\A`,
    `\Z`) are zero-width — they consume no bytes, so the literals on
    either side are byte-adjacent in any actual match — yet the
@@ -64,9 +72,15 @@ Every pattern the planner still refuses remains answerable under
 - **§2 Alternation cross-products.** A `BRANCH` at any depth compiles
   each branch to its own sub-query and combines with the surrounding
   literal context under a declared arm cap, generalizing the existing
-  top-level split. The existing collapse law extends unchanged: any
-  unconstrained branch collapses its OR to `GramAny`, and an over-cap
-  product degrades to the flush the collector does today.
+  top-level split. **Group adjacency-transparency is a prerequisite,
+  not a side effect**: `foo_(bar|baz)` only composes if the group
+  passes adjacency through to its body, so §2 replaces the
+  pure-literal-only splice with full transparency for `SUBPATTERN`
+  (a group is its body's sequence; the slice A prototype ties the
+  two together and validates the composed behavior). The existing
+  collapse law extends unchanged: any unconstrained branch collapses
+  its OR to `GramAny`, and an over-cap product degrades to the flush
+  the collector does today.
 - **§3 Anchor-tolerant extraction.** `AT` nodes become
   adjacency-transparent in both `_collect_runs` and
   `_pure_literal_text`: a zero-width assertion contributes no bytes
@@ -77,22 +91,39 @@ Every pattern the planner still refuses remains answerable under
   joined grams is vacuously sound.
 - **§4 Interactions.** The upgrades compose (a class inside a nested
   branch inside an anchored group); the caps must bound the *product*
-  of expansions, not each in isolation — one shared arm-count
-  ceiling on the final query width, in the spirit of
-  `MAX_PATTERN_ARMS`. Wide-alternation fetch cost stays governed by
-  the runtime budgets (ADR 033 — per-branch rarest-gram exemption,
-  wall-clock between branches); this spec adds no new runtime knob.
+  of expansions, not each in isolation. **Resolved by §6: two caps,
+  both declared constants** — a post-fold class-member cap (8) that
+  filters gramless category-range expansions before they bid for
+  width, and one shared width ceiling (64, `MAX_PATTERN_ARMS`'s
+  spirit and value) on the accumulated variant product, enforced at
+  every cross step so intermediate state stays bounded (codesearch's
+  clamp-after-every-combine discipline). Over-cap expansion degrades
+  that node to today's flush — degrade, never refuse. Wide-alternation
+  fetch cost stays governed by the runtime budgets (ADR 033 —
+  per-branch rarest-gram exemption, wall-clock between branches);
+  this spec adds no new runtime knob. One invariant the upgrades must
+  preserve: the planner only claims grams that appear in the
+  pattern's guaranteed literal text — it never manufactures
+  wildcard-position grams to dodge a refusal (sub-3-byte patterns
+  stay refused at every cap value).
 
-## Research task (bounded, before slice B)
+## Research task (bounded, before slice B) — **done 2026-08-16**
 
-One dated memo extending the 2026-07-13 study with the specific
-numbers this spec needs: codesearch's `RegexpQuery` expansion limits
-and zoekt's `regexpToQuery` caps (where they clamp class/alternation
-products and what they degrade to), plus a measured refusal-set delta
-— run the planner over a corpus of field patterns (ripgrep issue
-corpus, the differential battery's pattern set, the query-ladder
-patterns) before and after, so the upgrade's value and the cap's bite
-are numbers, not vibes.
+Landed as `../../research/2026-08-16-gram-planner-expansion-caps.md`
+with the rerunnable study (miner, prototype planner, measurement) in
+`../../research/studies/2026-08-16-gram-planner-expansion-caps/`.
+Headline numbers: codesearch clamps at `maxExact = 7` / `maxSet = 20`
+/ class-cardinality 100, re-applied after every combine, with anchors
+fully transparent; zoekt has no expansion caps because it never
+expands (the do-nothing floor). Over a 231-pattern field corpus
+(ripgrep tests/docs, linux/git/postgres/freebsd/sqlite/zoekt build
+scripts, the ladder and battery sets): 61/216 parseable patterns
+refuse today; all 13 rescues come from §2; §1/§3 narrow 15/155
+already-indexable plans instead of rescuing; a single shared ceiling
+is non-monotonic (W=128 rescues fewer than W=64 — gramless
+digit-class forks starve the gram-bearing branch); a post-fold member
+cap of 8 makes the sweep monotone, saturating at W=16 with widest
+real demand 12.
 
 ## Verification obligations
 
@@ -112,6 +143,17 @@ are numbers, not vibes.
 - Refusal-gate contract rows stay green: a still-unindexable pattern
   refuses with the same `unindexable_pattern` message naming
   `allow_scan=True`.
+- Pinned rows from the slice A measurement (each guards a finding a
+  future cap change could silently lose):
+  - `min|max` plans indexable (the sre common-prefix factoring case —
+    §2 must see the nested BRANCH);
+  - `^(#|Using)` still refuses (a gramless arm collapses the OR — the
+    collapse law survives the upgrades);
+  - `' +[0-9]+\.[0-9]+% .* (Interpreter|jdk\.internal).*'` plans
+    indexable at the declared caps (the junk-starvation pathology —
+    this row is the monotonicity guard);
+  - `[fF]oo` plans as a single-variant `GramAnd` containing the
+    `foo` gram (post-fold member dedupe).
 
 ## Touch points
 
@@ -127,17 +169,28 @@ are numbers, not vibes.
 
 ## Slices
 
-- **A** — research memo (prior-art caps + refusal-delta measurement);
-  resolves §6 with Clay.
+- **A** — **done 2026-08-16**: research memo (prior-art caps +
+  refusal-delta measurement) landed; §6 resolved with Clay.
 - **B** — char-class expansion (§1), the declared caps, planner rows.
-- **C** — alternation cross-products (§2) and composition (§4).
+- **C** — alternation cross-products (§2), group transparency, and
+  composition (§4).
 - **D** — anchor transparency (§3); battery planner edition +
   query-ladder re-run; true-up of ADR 033's deferred list.
 
 ## Open questions
 
-- **§6 [NEEDS CLARIFICATION] The caps** (pointered in
-  `../../open-questions.md`): one shared final-width ceiling vs
-  per-upgrade caps (class member cap × branch arm cap), and the
-  numbers — slice A's memo brings the prior-art values and the
-  measured deltas; Clay picks.
+- **§6 The caps — resolved 2026-08-16 (Clay, in session, on the
+  slice A memo's numbers): both caps, small values.** A post-fold
+  class-member cap of **8** and a shared width ceiling of **64**
+  enforced at every cross step; over-cap expansion degrades that node
+  to today's flush. Rationale (memo §§3–4): a single ceiling alone is
+  order-sensitive and measured non-monotonic (junk forks starve
+  valuable ones); per-upgrade caps alone leave the composed product
+  unbounded (width-1000 in-corpus, adversarially unbounded); together
+  they are monotone with 4× headroom over measured saturation (W=16)
+  and demand (12). The width constant deliberately matches glob's
+  `MAX_PATTERN_ARMS = 64` so both pattern surfaces degrade at the
+  same declared width. Constant naming and placement (module
+  constants in `code_grams.py`, beside `GRAM_SIZE`) are slice B's
+  call; the resolved open-questions entry moved to
+  `../../open-questions-archive.md`.
