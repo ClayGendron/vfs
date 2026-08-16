@@ -220,6 +220,13 @@ lines first; regenerate this file when the picture shifts (review the
 - **102 — set-based scattered delete** (draft 2026-08-14,
   research-first) — owns the 10k-scattered-target topology-lock-hold
   question; research memo before any design.
+- **103 — grep pipeline Rust core** (draft 2026-08-16,
+  research-first) — Clay's resolution at the linux-benchmark readout:
+  the measured-slow grep loops (index build, read-side verify) move
+  to Rust behind unchanged contracts; acceptance bar = beat rg on
+  every row of the recorded 25-query bench. Owns the
+  dependency-posture fork in `../open-questions.md`; slice A memos
+  (packaging, profiling, prior art) gate any code.
 
 ## Decided but unspecified — the next specs to write
 
