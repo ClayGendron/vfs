@@ -5,7 +5,26 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-17 (third pass the same day), at spec
+- **Last reviewed:** 2026-08-17 (fourth pass the same day), at spec
+  104's completion — all four slices landed in one arc. A: the
+  segment posting table and synchronous maintenance in every
+  path-writing verb, plus the guarded reindex re-convergence. B: the
+  term compiler and allow-list seam (`pathterms.py`), superset law
+  pinned by a generated battery. C: grep nomination intersects the
+  allow-list before the candidate budget (the recall fix), ext/name
+  facts and meta scope push into SQL, and the per-candidate gate
+  matches stored strings — no `Path` minted. D: the scoped bench
+  study recorded
+  (`../research/studies/2026-08-17-scoped-grep-benchmark/`): recall
+  exact on all twelve usage-mined scope shapes vs rg positional, vfs
+  ahead on six (exclusion 13.5 ms vs 1,856 ms), the recall-stress
+  row at 27 ms vs 1,182 ms truncated; unscoped ladder zero
+  regressions with 11–19 % wins on saturated rows; write 53 s /
+  reindex 196 s bound §2's overhead; no budget re-derivation needed.
+  Suite 2,475 passed / 842 skipped, coverage 100 %, ruff/ty zero.
+  Spec 104 is ready for the mining pass; the per-engine cascade legs
+  still await a real-server run.
+- **Previous review:** 2026-08-17 (third pass the same day), at spec
   104's slice A landing. The segment posting table
   (`{table}_segments`, (segment, entry_id) PK, entry-id index,
   schema format 4), synchronous maintenance in every path-writing
@@ -21,7 +40,7 @@ lines first; regenerate this file when the picture shifts (review the
   legs in `tests/storage/test_conformance.py` (skipped without
   servers). Suite 2,420 passed / 842 skipped, coverage 100%,
   ruff/ty zero. Slices B–D pending.
-- **Previous review:** 2026-08-17 (later the same day), at spec 104's
+- **Earlier review:** 2026-08-17 (later the same day), at spec 104's
   drafting. That arc, all in one session: the path-indexing
   prior-art memo (`../research/2026-08-17-path-indexing-prior-art.md`
   — field study of zoekt/codesearch/ripgrep/pg_trgm plus Blackbird,

@@ -30,12 +30,18 @@
   segment maintenance ≈ 85 µs/file at ETL scale; reindex 196 s vs
   191 s — the drift collect ≈ 5 s): the 25-row unscoped ladder shows
   **zero regressions, identical counts, and 11–19 % wins on
-  saturated rows** (the gate skip + string gate); seven targeted
-  scoped rows all match rg's positional-path counts line-for-line,
-  with the headline `copyright -i` under `fs/ext4` at 25 ms vs
-  1,182 ms (truncated) unscoped, and vfs 0.5–3.3× of rg positional
-  across the set. Slice D (the recorded scoped study + budget
-  re-derivation) pending.
+  saturated rows** (the gate skip + string gate). Slice D: the §6
+  study executed and recorded
+  (`../../../research/studies/2026-08-17-scoped-grep-benchmark/`) —
+  twelve usage-mined scope shapes vs rg's positional-path form,
+  **recall exact on every row**, vfs ahead outright on 6 of 12
+  (exclusion 13.5 ms vs rg's 1,856 ms; bare ext ~115 ms vs ~730 ms)
+  and within 2.3× on the rest; the recall-stress row (`copyright -i`
+  under `fs/ext4/**`) answers in 27 ms where the unscoped spelling
+  truncates at 1,182 ms. No budget re-derivation (candidate cost
+  stays fetch-dominated; scoped rows under-fill the budget), and no
+  slice contradicted ADR 040. **All slices landed — ready for the
+  mining pass.**
   Born from the path-indexing research arc: the prior-art memo
   (`../../../research/2026-08-17-path-indexing-prior-art.md`, field
   study + fork evidence + usage mining, studies under
@@ -198,20 +204,24 @@ The laws that bind every slice:
   numbers move them; ADR 040 amended if any slice contradicted it;
   spec status updated for the mining pass.
 
-## Open questions
+## Open questions — resolutions at slice D
 
-- **Scan-tier segment join.** The overlay's SQL currently prefilters
-  with LIKE arms; joining the segment table there too may help
-  `allow_scan` sweeps. Measure in slice C; adopt only on evidence.
-- **Glob-verb adoption.** The glob verb's LIKE-superset arms could
-  consult the allow-list seam for its candidate nomination as well.
-  Same posture: wire it in slice C if the seam makes it nearly
-  free, else record as follow-up.
-- **Cascade statement shapes per dialect.** The single-`UPDATE`
-  rename fast path wants an UPDATE-with-join or IN-chunked form on
-  MSSQL/Oracle; slice A picks shapes with `db_test` evidence, under
-  the declared budgets.
-- **Glean pre-filtering.** The seam is designed for it (ADR 007's
-  `paths` scope; chunks keyed by entry identity), but glean has no
-  live implementation; the hookup belongs to the glean story, not
-  this one.
+- **Scan-tier segment join: not adopted, no evidence of need.** On
+  the bench store the post-reindex overlay is empty, so there was
+  nothing to measure; the overlay keeps its LIKE arms. Revisit only
+  if `allow_scan` sweeps over a large unencoded overlay surface as a
+  measured cost.
+- **Glob-verb adoption: recorded as follow-up.** The seam stands
+  ready and unconsumed by glob; the win case is a floating-directory
+  pattern whose literal-prefix LIKE degenerates to `%` (a full path
+  scan today). Wire it with its own measurement when that shape
+  shows up in glob usage.
+- **Cascade statement shapes per dialect: pending a server run.**
+  Slice A landed the portable IN-chunked forms and the per-engine
+  `db_test` cascade legs (`test_conformance.py`); they skip without
+  servers and have not yet run against real engines. The
+  UPDATE-with-join variants remain unexplored until those legs
+  produce evidence.
+- **Glean pre-filtering: unchanged.** The seam is designed for it
+  (ADR 007's `paths` scope; chunks keyed by entry identity); the
+  hookup belongs to the glean story, not this one.
