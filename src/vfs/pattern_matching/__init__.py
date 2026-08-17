@@ -7,9 +7,10 @@ structural path gates, the router's composition/residuation algebra),
 verification). Paths and text in, decisions out — no storage types, no
 router types, no sessions. Storage prefilters and router dispatch both
 defer to this layer, and nothing in it may ever know where rows come
-from: the layer imports only ``vfs.paths`` and ``vfs.models``, and the
-internal dependency runs one way (grep uses glob's compiled filters
-and path gates; glob never looks back).
+from: the layer imports only ``vfs.paths``, ``vfs.models``, and the
+``vfs.native`` engine seam, and the internal dependency runs one way
+(grep uses glob's compiled filters and path gates; glob never looks
+back).
 """
 
 from vfs.pattern_matching.glob import (
@@ -31,7 +32,9 @@ from vfs.pattern_matching.glob import (
     residuals,
 )
 from vfs.pattern_matching.grep import (
+    ContentMatcher,
     GrepHit,
+    PatternError,
     compile_verifier,
     filter_candidates,
     match_texts,
@@ -42,9 +45,11 @@ from vfs.pattern_matching.grep import (
 __all__ = [
     "GLOB_CHANNEL_LABELS",
     "MAX_PATTERN_ARMS",
+    "ContentMatcher",
     "DerivedExt",
     "GlobFilter",
     "GrepHit",
+    "PatternError",
     "compile_filter",
     "compile_glob",
     "compile_verifier",

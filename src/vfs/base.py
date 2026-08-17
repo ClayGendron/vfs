@@ -34,7 +34,6 @@ receives is already proven.
 from __future__ import annotations
 
 import asyncio
-import re
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -50,6 +49,7 @@ from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, normalize_ex
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
+    PatternError,
     compile_filter,
     compile_verifier,
     composed_pattern,
@@ -1560,7 +1560,7 @@ class VirtualFileSystem:
             verifier = compile_verifier(
                 pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode
             )
-        except re.error as exc:
+        except PatternError as exc:
             return self._error(f"grep pattern {pattern!r}: {exc}", kind=VFSErrorKind.invalid, op="grep")
         keep = set(
             filter_candidates([row.path for row in rows], ext=ext, ext_not=ext_not, globs=globs, globs_not=globs_not)

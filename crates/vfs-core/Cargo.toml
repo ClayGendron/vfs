@@ -15,4 +15,8 @@ crate-type = ["cdylib", "rlib"]
 python = ["dep:pyo3"]
 
 [dependencies]
+memchr = "2"
 pyo3 = { version = "0.29", optional = true, features = ["abi3-py311"] }
+rayon = "1"
+regex = "1"
+regex-syntax = "0.8"

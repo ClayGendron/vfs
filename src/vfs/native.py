@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - exercised only in extension-less insta
 if TYPE_CHECKING:
     from vfs.models.code_grams import GramKey
 
-EXPECTED_PROTOCOL: Final = 1
+EXPECTED_PROTOCOL: Final = 2
 
 
 class PostingsBuilder(Protocol):
@@ -82,6 +82,18 @@ _active = _resolve(_ext)
 def active_core() -> Literal["rust", "python"]:
     """Which engine serves this process — for tests and diagnostics."""
     return "python" if _active is None else "rust"
+
+
+def extension() -> Any | None:
+    """The live extension module, or ``None`` on the pure engine.
+
+    For seams that dispatch per call site (the grep matcher lives in
+    ``vfs.pattern_matching``, which owns the match law and the pure
+    reference implementation — it cannot be imported from here without a
+    cycle). Callers treat the module as opaque and feature-test nothing:
+    protocol acceptance already happened at import.
+    """
+    return _active
 
 
 # ---------------------------------------------------------------------------

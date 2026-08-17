@@ -9,7 +9,7 @@ alignment guarantee.
 from __future__ import annotations
 
 from vfs.paths import Path
-from vfs.pattern_matching import compile_verifier, filter_candidates, match_texts, split_lines, verify
+from vfs.pattern_matching import ContentMatcher, compile_verifier, filter_candidates, match_texts, split_lines, verify
 
 
 class TestFilterCandidates:
@@ -30,19 +30,24 @@ class TestFilterCandidates:
         assert filter_candidates(paths) == paths  # no meta rule: paths in hand are never hidden
 
 
+def _matches(verifier: ContentMatcher, text: str) -> bool:
+    counts, _ = verifier.count_lines([text], cap=1, invert=False, budget=None)
+    return bool(counts[0])
+
+
 class TestCompileVerifier:
     def test_smart_case_is_judged_on_the_raw_pattern(self) -> None:
         lower = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="smart")
-        assert lower.search("NEEDLE") is not None
+        assert _matches(lower, "NEEDLE")
         upper = compile_verifier("Needle", fixed_strings=False, word_regexp=False, case_mode="smart")
-        assert upper.search("needle") is None
+        assert not _matches(upper, "needle")
 
     def test_fixed_strings_escape_and_word_regexp_wraps(self) -> None:
         fixed = compile_verifier("a.b", fixed_strings=True, word_regexp=False, case_mode="sensitive")
-        assert fixed.search("axb") is None
+        assert not _matches(fixed, "axb")
         word = compile_verifier("cat", fixed_strings=False, word_regexp=True, case_mode="sensitive")
-        assert word.search("concatenate") is None
-        assert word.search("a cat sat") is not None
+        assert not _matches(word, "concatenate")
+        assert _matches(word, "a cat sat")
 
 
 class TestVerifyAndMatchTexts:
@@ -70,6 +75,10 @@ class TestVerifyAndMatchTexts:
         [hit] = match_texts([(Path("/a"), "x\nx\nx")], verifier, invert=False, before=0, after=0, mode="count", cap=2)
         assert hit is not None
         assert (hit.matches, hit.score) == (None, 2.0)
+
+    def test_count_mode_drops_the_zero_count_row(self) -> None:
+        verifier = compile_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        assert verify("no hit\n", verifier, invert=False, before=0, after=0, mode="count", cap=None) is None
 
 
 class TestSplitLines:

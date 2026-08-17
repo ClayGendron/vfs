@@ -10,9 +10,11 @@
 
 mod grams;
 mod postings;
+mod verify;
 
 #[cfg(feature = "python")]
 mod python;
 
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use postings::{AddDocError, DrainedPostings, PostingRow, PostingsAccumulator};
+pub use verify::{BatchOutcome, Hit, Matcher, PatternError, count_batch, hits_batch};

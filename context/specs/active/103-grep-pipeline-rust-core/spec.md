@@ -23,7 +23,27 @@
   pure fallback, the build side in Rust, and the CI legs; the linux
   reindex fell 672 s → 191 s, with the surviving 161 s attributed to
   tree-sitter chunking — a new fork recorded in Open questions.
-  Slices C–D are unblocked.
+  **2026-08-17:** the verify-authority spike executed
+  (`../../../research/2026-08-17-verify-authority-spike.md`) and Clay
+  resolved the authority fork against the memo's recommendation:
+  **the shared Rust core is the match authority** — one verifier for
+  the multi-language future outweighs keeping Python `re` the judge;
+  the Intent law and §3 carry the amended shape. **Slice C landed the
+  same day** on that design: the `vfs-core` verify module (HIR
+  `\n`-strip, wrapping-dot-star reduction, whole-body scan with line
+  recovery, rayon batch, in-loop deadline), the `ContentMatcher`
+  binding (protocol 2), the shared language gate in
+  `pattern_matching.grep` with the pure `re` fallback behind the
+  same seam, and both verify call sites (storage batches, router
+  chaining) rewired. Measured on the linux candidate sets through
+  the production path: zero-hit floor 631 ms → **13 ms** (§4 met),
+  wrapped wildcard 130.8 s → **52 ms**, word rows 4.5–5.4 s →
+  **50–62 ms**, hit counts identical to the recorded authority on
+  every measured row. Both suite legs green at the same count
+  (2,391 passed / 838 skipped; coverage 100%; `ruff`/`ty` zero;
+  `cargo test` 23), parity/refusal/divergence pins in
+  `tests/pattern_matching/test_matcher_parity.py`. The full 25-row
+  bench-gate re-run against rg and the ladder re-run are slice D.
 - **Date:** 2026-08-16
 - **Owner:** Clay Gendron
 - **Kind:** performance rewrite of the grep hot loops behind
@@ -58,13 +78,22 @@ problems:
 5. **The 4 MB candidate budget truncates 9 of 25 rows** at this
    corpus size — loud and sound, but sized for a smaller world.
 
-The law that binds every slice: **Rust replaces throughput, never
-semantics.** Python `re` over raw content remains the sole match
-authority; the planner's algebra, caps, and refusal gate keep their
-landed shapes; every Rust-side filter is a *necessary* condition —
-the same soundness discipline the gram planner already follows,
-extended down the pipeline. A wrong answer fast is not an
-optimization.
+The law that binds every slice — **amended 2026-08-17** (Clay, in
+session, resolving the verify-authority fork on the spike's evidence,
+`../../../research/2026-08-17-verify-authority-spike.md`): **match
+semantics are defined once, in the shared Rust core, for every
+language surface** — the vfs-py / vfs-js / vfs-rs roadmap means one
+verifier all bindings share, not per-language authorities that drift.
+The grep pattern language is the regex-crate language (ripgrep's):
+constructs beyond it (backreferences, lookarounds) classify
+`invalid`, as ripgrep refuses them. The original law's residue
+stands where it always mattered: the planner's algebra, caps, and
+refusal gate keep their landed shapes; every *prefilter* remains a
+necessary condition; the pure-Python fallback engine approximates
+the authority with battery-pinned, documented divergences (the
+spike measured zero across ~250K matched lines — the accepted
+residual of wheel-less installs). A wrong answer fast is still not
+an optimization.
 
 ## Shape
 
@@ -111,31 +140,48 @@ optimization.
   `Chunk.split` (161 s, GIL-bound, thread-unparallelizable) was hiding
   inside the 672 s unattributed; the grep-index build proper is
   ~30 s. The chunking fork is recorded in Open questions.
-- **§3 Read side.** The profile pins the target: verify is 82–99.7%
-  of every query while all index stages together cost ≤ 25 ms — the
-  read-side rewrite is the verify stage, full stop. The discipline
-  is the field consensus the prior-art memo records (*lines are
-  presentation, not matching*):
+- **§3 Read side — reshaped 2026-08-17 by the verify-authority
+  resolution and the spike's numbers; landed the same day (slice C)
+  with one simplification: the wrapping-dot-star strip happens at
+  the HIR level and the crate's own literal engine does the
+  prefiltering, so the separate memmem Confirmed/Candidate stage
+  below was never needed — no hit runs a second engine**
+  (`../../../research/2026-08-17-verify-authority-spike.md`). The
+  profile pins the target: verify is 82–99.7% of every query while
+  all index stages together cost ≤ 25 ms — the read-side rewrite is
+  the verify stage, full stop. The discipline is the field consensus
+  the prior-art memo records (*lines are presentation, not
+  matching*):
   - the planner's **longest guaranteed literal run** rides the plan
     into the verify stage; candidate content is scanned for that
-    folded literal in Rust (memmem) — never pre-split into lines;
-    per hit, the enclosing line is recovered backward/forward and
-    only that line slice reaches the authority.
+    literal in Rust (memmem; folded stream for case-insensitive
+    patterns, raw for case-exact) — never pre-split into lines; per
+    hit, the enclosing line is recovered backward/forward. The
+    reduction is mandatory in both engines: the spike measured the
+    wildcard row at 1,150 ms under the raw regex crate (its DFA
+    does not strip wrapping `.*`) vs 24 ms with the literal
+    prefilter.
   - **Confirmed vs Candidate hits** (ripgrep's `LineMatchKind`
     shape): when the literal is the whole effective pattern
     (leading/trailing `.*` stripped — `.*alloc_page.*` reduces to a
-    substring search), the hit is already confirmed and Python `re`
-    never runs; case-exact patterns still verify case on the raw
-    slice. This alone deletes the 102 s pathology (3,720 candidates
-    at 4.5% precision reduce to memmem + 418 line recoveries).
+    substring search), the hit is already confirmed and no matcher
+    runs; case-exact patterns still verify case on the raw slice.
+    This alone deletes the 102 s pathology.
+  - **Candidate lines are judged by the shared verifier in
+    `vfs-core`** (the regex crate, `\n` stripped from classes via
+    the regex-syntax HIR — rg's transform — so whole-text scanning
+    keeps the per-line law). The pure-Python fallback engine judges
+    the same recovered lines with Python `re`, the approximation
+    whose divergences the battery pins.
   - verify parallelized across entries while the Rust scan holds no
     GIL (`allow_threads`; no abi3 restriction).
   - the **wall deadline moves inside the hit loop** — the profile
     caught the wildcard row running 102 s against a 10 s budget
     because the deadline is only consulted between content batches.
-  Authority unchanged: every admitted line still passes through
-  Python `re`; the prefilter only discards what cannot match, and
-  fold-comparison keeps the orbit invariant (never ASCII-lowercase).
+  The prefilter discipline is unchanged: literal scans only discard
+  what cannot match, and fold-comparison keeps the orbit invariant
+  (never ASCII-lowercase; the index fold remains a superset of the
+  crate's simple-fold orbit, so the index needs no change).
 - **§4 The per-call floor — attributed.** The profile found it: 96
   permanently-unindexed entries (over `MAX_INDEXABLE_BYTES` = 2 MB
   or 20K distinct grams; linux's amdgpu headers, 366 MB) are
@@ -187,6 +233,14 @@ optimization.
   if folding moves to Rust, a pinned exhaustive test proves
   Rust-fold == `fold_content` over every codepoint (the orbit-scan
   machinery already exists in the suite).
+- **The authority change is pinned, not assumed:** the battery runs
+  the same cases through the Rust verifier and the pure-Python
+  fallback and pins their agreement on the supported language;
+  patterns outside the language (backreferences, lookarounds)
+  classify `invalid` with a message naming the refusal, pinned on
+  both engines; the known divergence catalog (the spike memo's
+  finding 7) gets a test per entry documenting the fallback's
+  accepted residual.
 - **The bench gate:** the linux benchmark re-runs with the same
   method (rg on the original checkout) and **every one of the 25
   rows beats rg**, including `.*alloc_page.*` and the word rows;
@@ -216,10 +270,17 @@ optimization.
   leg in test.yml and ci.sh. Reindex 672 s → 191 s; build-side numbers
   and the surviving chunking cost recorded in §2 and the build-profile
   study.
-- **C** — read side: literal-run prefilter with Confirmed/Candidate
-  hits, line recovery around hits, parallel verify, in-loop
-  deadline; wildcard and word rows beat rg; big-file cap decision
-  on this slice's measurements.
+- **C** — **done 2026-08-17** (see Status): read side on the amended
+  law. The landed shape simplified the drafted one: the regex
+  crate's own literal engine plus the HIR wrapping-dot-star
+  reduction replaced a separate memmem Confirmed/Candidate stage —
+  the crate's prefilters already run at memmem speed once the
+  wrapping `.*` is stripped structurally, so no hit ever runs a
+  second engine. Wildcard and word rows measured 50–62 ms against
+  rg's recorded 3.0–3.6 s floor. Big-file caps unchanged this
+  slice: the 96-entry overlay tail now costs ~13 ms per call, so
+  no cap pressure remains — revisit only if slice D's bench re-run
+  disagrees.
 - **D** — budget re-derivation, the bench gate re-run recorded, ADR
   for the decision set, true-ups.
 
@@ -234,6 +295,20 @@ optimization.
   records. The bench gate binds the accelerated path; the resolved
   open-questions entry moved to
   `../../../open-questions-archive.md`.
+- **Verify authority — resolved 2026-08-17** (Clay, in session, on
+  the spike's evidence): **the shared Rust core judges matches**,
+  overriding the spike memo's keep-Python-`re` recommendation. The
+  deciding fact is the roadmap, not speed: vfs-py, vfs-js, and
+  vfs-rs must return identical answers, which one verifier in
+  `vfs-core` gives structurally and per-language authorities never
+  would. Consequences accepted with the decision: the grep pattern
+  language is the regex-crate language (ripgrep-compatible;
+  backreferences and lookarounds classify `invalid`); drift risk
+  inverts onto the pure fallbacks (Python `re` today, JS later),
+  confined to extension-less installs and battery-pinned; the
+  index fold already supersets the crate's case orbit, so the
+  index is untouched. The spike's parity evidence (25/25 rows,
+  ~250K matched lines identical) is the empirical basis.
 - **Fold ownership — resolved 2026-08-16 (slice B):** Python folds and
   the engine receives pre-folded bytes. Measured basis: the whole
   Python-side fold+normalize pass costs ~3 s of a 191 s reindex, so

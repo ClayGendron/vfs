@@ -1,16 +1,18 @@
 """Grep over the gram index: refusal gate, posting ladder, overlay scan.
 
 The read side of content search, one coherent epoch per call: compile
-the caller's pattern (uncompilable classifies invalid), plan folded
-grams unconditionally, refuse a pattern with no gram predicate unless
-``allow_scan=True`` opts into the scan tier, intersect the rarest
-posting lists into candidate entries, apply the
-structural gates before any content fetch, verify every candidate with
-Python ``re``, and union the flag-partitioned scan side (``NOT
-encoded``) so index staleness can never lose a match. ``invert_match``
-is scan-shaped by construction — no occurrence index narrows
-non-matches — and runs the scan tier without ``allow_scan``; the
-refusal gate is pattern-shaped.
+the caller's pattern (outside the grep pattern language classifies
+invalid), plan folded grams unconditionally, refuse a pattern with no
+gram predicate unless ``allow_scan=True`` opts into the scan tier,
+intersect the rarest posting lists into candidate entries, apply the
+structural gates before any content fetch, verify every candidate
+through the shared matcher (the Rust core where the extension serves,
+its Python approximation otherwise — batched per content batch, with
+the wall deadline carried into the body loop), and union the
+flag-partitioned scan side (``NOT encoded``) so index staleness can
+never lose a match. ``invert_match`` is scan-shaped by construction —
+no occurrence index narrows non-matches — and runs the scan tier
+without ``allow_scan``; the refusal gate is pattern-shaped.
 
 Epoch coherence is detected, never assumed: engines without a
 repeatable-read pin read each statement at its own snapshot, so after
@@ -38,7 +40,6 @@ none begins or commits — ``backend.py`` owns the transaction.
 
 from __future__ import annotations
 
-import re
 from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
@@ -46,18 +47,18 @@ import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import or_, select
 
-from vfs.models import CONTENT_KINDS, Observation
+from vfs.models import CONTENT_KINDS, Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
 from vfs.paths import Path, normalize_ext_channel
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     GlobFilter,
+    PatternError,
     compile_filter,
     compile_verifier,
     glob_defect,
     passes_filters,
-    verify,
 )
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import liveness_filters
@@ -78,7 +79,6 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from vfs.models import Match
     from vfs.models.code_grams import GramKey, GramQuery
     from vfs.models.rows import EntryId, VFSTables
     from vfs.ops import CaseMode, GrepOutputMode
@@ -87,7 +87,8 @@ if TYPE_CHECKING:
 
 # Runtime budgets (the spike's numbers): candidates fetched and
 # verified, posting bytes decoded, and a wall-time deadline checked
-# between ladder stages. A tripped budget truncates with a warning.
+# between ladder stages and inside the matcher's body loop. A tripped
+# budget truncates with a warning.
 CANDIDATE_BUDGET: Final = 10_000
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
 WALL_TIME_BUDGET: Final = 10.0
@@ -158,7 +159,7 @@ async def grep_rows(
                 return Result(ops=("grep",), errors=[error])
     try:
         verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
-    except re.error as exc:
+    except PatternError as exc:
         error = ResultError(kind=VFSErrorKind.invalid, message=f"grep pattern {pattern!r}: {exc}")
         return Result(ops=("grep",), errors=[error])
     plan = build_code_gram_query(pattern, fixed_strings=fixed_strings)
@@ -242,23 +243,37 @@ async def grep_rows(
                 truncations.append("wall-time budget")
             break
         contents = await _content_for_entries(session, tables, membership_budget, [m["entry_id"] for m in batch])
-        for mapping in batch:
-            text = contents.get(mapping["entry_id"])
-            if text is None:
-                continue
-            verified = verify(
-                text,
-                verifier,
-                invert=invert_match,
+        paired = [(m, text) for m in batch if (text := contents.get(m["entry_id"])) is not None]
+        if not paired:
+            continue
+        texts = [text for _, text in paired]
+        budget = max(0.0, deadline - monotonic())
+        if output_mode in ("files", "count"):
+            cap = 1 if output_mode == "files" else max_count
+            counts, completed = verifier.count_lines(texts, cap=cap, invert=invert_match, budget=budget)
+            for (mapping, text), count in zip(paired, counts, strict=True):
+                if count:
+                    score = float(count) if output_mode == "count" else None
+                    rows.append(_observe_hit(mapping, fetched, text, None, score, mode=output_mode))
+        else:
+            spans, completed = verifier.hit_lines(
+                texts,
                 before=before_context,
                 after=after_context,
-                mode=output_mode,
                 cap=max_count,
+                invert=invert_match,
+                budget=budget,
             )
-            if verified is None:
-                continue
-            matches, score = verified
-            rows.append(_observe_hit(mapping, fetched, text, matches, score, mode=output_mode))
+            for (mapping, text), row in zip(paired, spans, strict=True):
+                if row:
+                    matches = [Match(start=s, end=e, match=m, content=c) for s, e, m, c in row]
+                    rows.append(_observe_hit(mapping, fetched, text, matches, None, mode=output_mode))
+        if not completed:
+            # The matcher hit the wall mid-batch: bodies it never reached
+            # are unverified, so the record must say so loudly.
+            if "wall-time budget" not in truncations:
+                truncations.append("wall-time budget")
+            break
     for reason in truncations:
         message = f"grep result truncated at the {reason}; {_REFINE_GUIDANCE}"
         errors.append(ResultError(kind=VFSErrorKind.truncated, severity=Severity.warning, message=message))
