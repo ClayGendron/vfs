@@ -198,9 +198,7 @@ class TestSupersetLaw:
         arms = compile_terms(pattern)
         for path in PATHS:
             if authority.matches(path):
-                assert any(_nominated(arm, path) for arm in arms), (
-                    f"{pattern!r} matches {path} but no arm nominates it"
-                )
+                assert any(_nominated(arm, path) for arm in arms), f"{pattern!r} matches {path} but no arm nominates it"
 
     def test_directory_positions_nominate_ancestors_not_order(self) -> None:
         # Order and position stay the authority's job: the terms

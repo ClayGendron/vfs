@@ -216,9 +216,7 @@ async def grep_rows(
         else:
             allow_size = len(allow) if allow is not None else None
             try:
-                laddered = await _index_doc_ids(
-                    session, tables, membership_budget, epoch, plan, deadline, allow_size
-                )
+                laddered = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline, allow_size)
             except PostingCorruptionError as exc:
                 error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
@@ -233,9 +231,7 @@ async def grep_rows(
         if doc_ids.size > CANDIDATE_BUDGET:
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
-        pushdown = _pushdown_terms(
-            tables.entry, profile, membership_budget, channel, wanted, hide_meta=not gates
-        )
+        pushdown = _pushdown_terms(tables.entry, profile, membership_budget, channel, wanted, hide_meta=not gates)
         for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
             if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
@@ -452,9 +448,7 @@ def _choose_grams(
     return out
 
 
-def _ladder_defers(
-    chosen: Sequence[list[GramKey] | None], meta: dict[GramKey, PostingMeta], allow_size: int
-) -> bool:
+def _ladder_defers(chosen: Sequence[list[GramKey] | None], meta: dict[GramKey, PostingMeta], allow_size: int) -> bool:
     """Whether verifying the whole scope outright beats fetching the blobs.
 
     Both sides priced from measurement: the ladder at a per-group setup

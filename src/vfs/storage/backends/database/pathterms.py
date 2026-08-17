@@ -227,18 +227,14 @@ async def _term_counts(
     counts = dict.fromkeys(terms, 0)
     for chunk in chunked(sorted(terms), membership_budget):
         stmt = (
-            select(segments.c.segment, func.count())
-            .where(segments.c.segment.in_(chunk))
-            .group_by(segments.c.segment)
+            select(segments.c.segment, func.count()).where(segments.c.segment.in_(chunk)).group_by(segments.c.segment)
         )
         for segment, count in await session.execute(stmt):
             counts[segment] = count
     return counts
 
 
-async def _arm_ids(
-    session: AsyncSession, tables: VFSTables, arm: ArmTerms, counts: dict[str, int] | None
-) -> set[int]:
+async def _arm_ids(session: AsyncSession, tables: VFSTables, arm: ArmTerms, counts: dict[str, int] | None) -> set[int]:
     """One arm's doc ids: a single rarest-first self-join on the segment table.
 
     Term order seeds the engines that plan joins in written order with
