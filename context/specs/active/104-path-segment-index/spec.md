@@ -1,15 +1,25 @@
 # 104 — Path terms in candidate nomination: the segment index and glob pushdown
 
-- **Status: slice A landed 2026-08-17** (drafted earlier the same
-  day) — the segment table (`{table}_segments`, schema format 4), §2
-  maintenance across write/mkdir/move/copy/trash/restore/delete/
-  purge and the trash-chain mint, and the reindex re-convergence
-  (running after the gram phases; the guard re-read locks the entry
-  rows so a rival path rewrite serializes instead of interleaving)
-  are live, pinned by the mirror battery + phase-boundary tests in
-  `tests/storage/database/test_segments.py` and per-engine cascade
-  legs in `tests/storage/test_conformance.py` (skip without
-  servers; not yet run against real engines). Slices B–D pending.
+- **Status: slices A and B landed 2026-08-17** (drafted earlier the
+  same day) — slice A: the segment table (`{table}_segments`, schema
+  format 4), §2 maintenance across write/mkdir/move/copy/trash/
+  restore/delete/purge and the trash-chain mint, and the reindex
+  re-convergence (running after the gram phases; the guard re-read
+  locks the entry rows so a rival path rewrite serializes instead of
+  interleaving), pinned by the mirror battery + phase-boundary tests
+  in `tests/storage/database/test_segments.py` and per-engine
+  cascade legs in `tests/storage/test_conformance.py` (skip without
+  servers; not yet run against real engines). Slice B: the §3 term
+  compiler and the allow-list seam
+  (`storage/backends/database/pathterms.py` — `compile_terms` /
+  `compile_channel` / `allow_list_ids`, plain int sets, ids in the
+  surrogate doc-id space via one indexed join per term; an arm is
+  allow-list-bounded only by segment terms, ext/name facts compile
+  as pushdown predicates for slice C), pinned by the superset
+  battery in `tests/storage/database/test_pathterms.py` (generated
+  paths × generated globs: nomination ⊇ authority, exclusions
+  structurally absent from the seam). Slices C–D pending; nothing
+  consumes the seam yet — grep/glob wiring is slice C.
   Born from the path-indexing research arc: the prior-art memo
   (`../../../research/2026-08-17-path-indexing-prior-art.md`, field
   study + fork evidence + usage mining, studies under

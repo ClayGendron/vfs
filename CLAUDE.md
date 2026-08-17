@@ -239,3 +239,6 @@ private *types and constants* stay next to what they support.
 - **A smell is a hint to look closer, not a rule to obey blindly.** When you
   spot one, dig in: understand *why* the code took that shape, and decide
   whether it is justified here.
+- **Don't reach for numpy where plain Python suffices** (Clay, 2026-08-17):
+  heavy dependencies belong only where measured scale justifies them (grep's
+  posting intersections); small sets and lists take stdlib structures.

@@ -129,6 +129,17 @@ def expand_pattern(pattern: str) -> tuple[str, ...]:
     return tuple(_cross_product(parts, MAX_PATTERN_ARMS))
 
 
+def canonical_pattern(pattern: str) -> str:
+    """The canonical anchored form every consumer shares.
+
+    Any ``/`` anchors the pattern at the root and adjacent ``**``
+    components collapse to one — the same form ``GlobFilter.pattern``
+    carries, exposed for consumers that derive facts from the pattern
+    text without compiling a regex.
+    """
+    return _canonical(pattern)
+
+
 def compile_glob(pattern: str) -> re.Pattern[str]:
     """Compile a defect-free pattern to its authoritative regex, canonicalized first."""
     return re.compile(_translate(_canonical(pattern), recursive=True))
