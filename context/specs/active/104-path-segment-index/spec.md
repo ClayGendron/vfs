@@ -1,13 +1,22 @@
 # 104 — Path terms in candidate nomination: the segment index and glob pushdown
 
-- **Status: drafted 2026-08-17** — born from the path-indexing
-  research arc executed the same day: the prior-art memo
+- **Status: slice A landed 2026-08-17** (drafted earlier the same
+  day) — the segment table (`{table}_segments`, schema format 4), §2
+  maintenance across write/mkdir/move/copy/trash/restore/delete/
+  purge and the trash-chain mint, and the reindex re-convergence
+  (running after the gram phases; the guard re-read locks the entry
+  rows so a rival path rewrite serializes instead of interleaving)
+  are live, pinned by the mirror battery + phase-boundary tests in
+  `tests/storage/database/test_segments.py` and per-engine cascade
+  legs in `tests/storage/test_conformance.py` (skip without
+  servers; not yet run against real engines). Slices B–D pending.
+  Born from the path-indexing research arc: the prior-art memo
   (`../../../research/2026-08-17-path-indexing-prior-art.md`, field
   study + fork evidence + usage mining, studies under
   `../../../research/studies/2026-08-17-path-indexing-prior-art/`),
   Clay's in-session resolutions of the four forks (term shape,
   maintenance mode, planner placement, multi-surface contract), and
-  the decision set recorded as **ADR 040**. No slices landed yet.
+  the decision set recorded as **ADR 040**.
 - **Date:** 2026-08-17
 - **Owner:** Clay Gendron
 - **Kind:** a second posting family (path segments) beside the

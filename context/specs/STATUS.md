@@ -5,7 +5,23 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-17 (later the same day), at spec 104's
+- **Last reviewed:** 2026-08-17 (third pass the same day), at spec
+  104's slice A landing. The segment posting table
+  (`{table}_segments`, (segment, entry_id) PK, entry-id index,
+  schema format 4), synchronous maintenance in every path-writing
+  verb (write/mkdir fresh inserts, move/restore/trash deltas with
+  the pure-rename UPDATE fast path, copy inserts, purge deletes,
+  the trash-chain mint), and the reindex re-convergence phase
+  (wholesale in effect, guarded delta in application — collect is a
+  plain read, repair locks the drifted rows and skips any guard
+  miss, drift reported as loud warnings on the verb Result) are
+  live. Pinned by `tests/storage/database/test_segments.py` (mirror
+  battery over every verb + a seeded randomized sequence, rebuild
+  drift/guard tests, phase-boundary arms) and per-engine cascade
+  legs in `tests/storage/test_conformance.py` (skipped without
+  servers). Suite 2,420 passed / 842 skipped, coverage 100%,
+  ruff/ty zero. Slices B–D pending.
+- **Previous review:** 2026-08-17 (later the same day), at spec 104's
   drafting. That arc, all in one session: the path-indexing
   prior-art memo (`../research/2026-08-17-path-indexing-prior-art.md`
   — field study of zoekt/codesearch/ripgrep/pg_trgm plus Blackbird,
@@ -22,7 +38,7 @@ lines first; regenerate this file when the picture shifts (review the
   allow-list seam beside the planners — recorded as **ADR 040**;
   spec 104 drafted into `active/` with slices A–D pending. No live
   code changed; the tree stays at spec 103's verified green.
-- **Previous review:** 2026-08-17, at spec 103's slice D. That arc,
+- **Earlier review:** 2026-08-17, at spec 103's slice D. That arc,
   across two days: slice B (the Rust engine for the gram-index
   build — `crates/vfs-core`, the pendulum packaging model, the
   `vfs.native` seam; reindex 672 s → 191 s), the verify-authority

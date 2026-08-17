@@ -349,10 +349,11 @@ class TestArbitration:
         assert written.success is True, written.errors[:3]
         created = [o for o in written.observations if str(o.path).endswith(".txt")]
         assert len(created) == 50
-        # "Nothing read back" is a pin: one plan-fetch SELECT, then three
-        # depth-layer inserts, content delete + insert, parent bump.
+        # "Nothing read back" is a pin: one plan-fetch SELECT, three
+        # depth-layer inserts, the segment-posting insert riding the
+        # creates, content delete + insert, parent bump.
         shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
-        assert shapes == ["SELECT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"], statements
+        assert shapes == ["SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"], statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
         assert again.observations[0].status == "updated"

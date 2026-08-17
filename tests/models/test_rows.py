@@ -38,7 +38,7 @@ from vfs.models.rows import (
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, Path
 
-TABLE_ATTRS = ("entry", "content", "versions", "chunks", "edges", "meta", "gram_epochs", "posting_list")
+TABLE_ATTRS = ("entry", "content", "versions", "chunks", "edges", "meta", "gram_epochs", "posting_list", "segments")
 
 # The metadata family: each model, its table attribute, and the table's
 # columns with no model field (the id backbone and owner references).
@@ -139,6 +139,7 @@ class TestBuildVFSTables:
             "vfs_entries_meta",
             "vfs_entries_gram_epochs",
             "vfs_entries_grams_posting_list",
+            "vfs_entries_segments",
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
@@ -228,6 +229,16 @@ class TestBuildVFSTables:
         assert isinstance(default, ColumnDefault)
         assert default.arg == ENCODING_DELTA_VARINT
         assert {"epoch", "format_version", "options_hash", "created_at"} == set(tables.gram_epochs.c.keys())
+
+    def test_segment_postings_key_on_segment_then_entry(self, tables: VFSTables) -> None:
+        # Verbatim bytewise segment text first (the term lookup), entry
+        # identity second; the secondary index serves delete-by-entry.
+        assert [c.name for c in tables.segments.primary_key.columns] == ["segment", "entry_id"]
+        assert isinstance(tables.segments.c.segment.type, BytewiseString)
+        assert tables.segments.c.segment.type.length == MAX_SEGMENT_LENGTH
+        assert isinstance(tables.segments.c.entry_id.type, ULIDKey)
+        by_name = {str(index.name): index for index in tables.segments.indexes}
+        assert [c.name for c in by_name["ix_vfs_entries_segments_entry"].columns] == ["entry_id"]
 
     def test_ext_kind_composite_index(self, tables: VFSTables) -> None:
         by_name = {str(index.name): index for index in tables.entry.indexes}

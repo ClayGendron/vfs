@@ -60,6 +60,11 @@ from vfs.storage.backends.database.indexing import (
 )
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.backends.database.segments import (
+    SegmentRebuildState,
+    collect_segment_drift,
+    repair_segment_drift,
+)
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import storage_ops, targets_of
@@ -457,16 +462,18 @@ class DatabaseStorage:
         return Result(ops=("first_touch",))
 
     async def reindex(self) -> Result:
-        """Batch gram-index build: claim the lease, chunk, build, publish, reclaim.
+        """Batch index maintenance: segments re-converged, gram epochs rebuilt.
 
         One runner at a time: the verb claims the single-runner lease up
         front — a live rival refuses loudly with a retryable conflict —
         and releases it best-effort at the end; a crashed run frees the
-        lease by heartbeat expiry. Idempotent-cheap when nothing is
-        dirty and the epoch fingerprint matches. Each phase runs in its
-        own writer transaction; posting rows are invisible until the
-        publish transaction flips the ``encoded`` flags and the epoch
-        pointer together.
+        lease by heartbeat expiry. The segment pass re-converges the
+        path-segment postings to the recomputed truth under per-row path
+        guards, reporting any found drift loudly. The gram side is
+        idempotent-cheap when nothing is dirty and the epoch fingerprint
+        matches; each phase runs in its own writer transaction, and
+        posting rows are invisible until the publish transaction flips
+        the ``encoded`` flags and the epoch pointer together.
         """
         tables = self._host.tables
         token = str(ULID())
@@ -509,7 +516,38 @@ class DatabaseStorage:
                 return
 
     async def _reindex_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
-        """The lease-held phases; a lost lease stops at the next boundary."""
+        """The lease-held phases: the gram epochs, then segment re-convergence.
+
+        The segment pass rebuilds the path-segment postings — wholesale
+        in effect, guarded delta in application: a plain read diffs the
+        table against the recomputed segments of every stored path, and
+        only found drift opens a writer transaction, applied under
+        per-row path guards. Its warnings (drift is a maintenance bug
+        surfacing) ride on the verb's final Result.
+        """
+        result = await self._gram_phases(tables, lost)
+        if not result.success:
+            return result
+        segment_state = SegmentRebuildState()
+        collected = await self._execute(
+            "reindex", lambda session: collect_segment_drift(session, tables, segment_state)
+        )
+        if not collected.success:
+            return collected
+        if segment_state.clean:
+            return result
+        if lost.is_set():
+            return lease_lost_result()
+        repaired = await self._execute_write(
+            "reindex",
+            lambda session: repair_segment_drift(session, tables, self._host.membership_budget, segment_state),
+        )
+        if not repaired.success:
+            return repaired
+        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *repaired.errors])
+
+    async def _gram_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
+        """The gram-index phases; a lost lease stops at the next boundary."""
         state = ReindexState()
         result = await self._execute_write(
             "reindex",

@@ -119,7 +119,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 3
+SCHEMA_FORMAT_VERSION: Final = 4
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -288,6 +288,7 @@ class VFSTables(NamedTuple):
     meta: Table
     gram_epochs: Table
     posting_list: Table
+    segments: Table
 
     def content_joined(self) -> FromClause:
         """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
@@ -505,6 +506,19 @@ def build_vfs_tables(
         schema=schema,
     )
 
+    # Path-segment postings: one row per (segment, entry_id) — the entry's
+    # ancestor directory names, verbatim, leaf excluded (``name`` serves it).
+    # Maintained inside the same transactions that write ``path``, never
+    # epoch-cycled; the entry_id index serves delete-by-entry and cascades.
+    segments = Table(
+        f"{table_name}_segments",
+        metadata,
+        Column("segment", BytewiseString(MAX_SEGMENT_LENGTH), primary_key=True),
+        Column("entry_id", ULIDKey(), primary_key=True),
+        Index(f"ix_{table_name}_segments_entry", "entry_id"),
+        schema=schema,
+    )
+
     return VFSTables(
         metadata=metadata,
         entry=entry,
@@ -515,4 +529,5 @@ def build_vfs_tables(
         meta=meta,
         gram_epochs=gram_epochs,
         posting_list=posting_list,
+        segments=segments,
     )

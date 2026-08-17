@@ -1,8 +1,9 @@
 """Topology-family statement builders for ``DatabaseStorage`` — delete,
 restore, sweep, move, copy.
 
-Topology verbs rewrite the namespace's shape — parent pointers and path
-caches — so every one of them serializes: its first statement takes the
+Topology verbs rewrite the namespace's shape — parent pointers, path
+caches, and the segment postings that mirror the path column inside the
+same transaction — so every one of them serializes: its first statement takes the
 per-mount serialization point (nothing on SQLite, whose writer
 transaction is the lock; a transaction-scoped advisory lock on
 Postgres; an X-lock on the single meta row everywhere else), and every
@@ -100,6 +101,7 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
 if TYPE_CHECKING:
     from typing import Any
@@ -181,7 +183,7 @@ async def delete_rows(
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
     now = datetime.now(UTC)
-    trash = _TrashChain(entry, root_id=snapshot["/"]["entry_id"], user_id=user_id, now=now)
+    trash = _TrashChain(entry, tables.segments, root_id=snapshot["/"]["entry_id"], user_id=user_id, now=now)
     unique = set(targets)
     seen: set[Path] = set()
     rows: list[Observation] = []
@@ -238,10 +240,11 @@ async def delete_rows(
         if refused is not None:
             errors.append(refused)
             continue
+        await move_postings(session, tables.segments, membership_budget, [(row["entry_id"], row["path"], trash_path)])
         # Rewrites re-collect post-claim: a deep child can land under an
         # unguarded descendant mid-window; the pre-claim list judged bytes.
         if is_directory:
-            await _rewrite_descendants(session, entry, profile, str(target), trash_path)
+            await _rewrite_descendants(session, tables, profile, membership_budget, str(target), trash_path)
         await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
         local_bumps[bucket_id] += 1
@@ -591,6 +594,7 @@ async def _purge_subtree(
             await session.execute(delete(tables.content).where(tables.content.c.entry_id.in_(chunk)))
             await session.execute(delete(tables.versions).where(tables.versions.c.entry_id.in_(chunk)))
             await session.execute(delete(tables.chunks).where(tables.chunks.c.entry_id.in_(chunk)))
+            await session.execute(delete(tables.segments).where(tables.segments.c.entry_id.in_(chunk)))
             # Two single-list deletes: one OR'd statement would carry the
             # chunk's binds twice, doubling past the tightest engine cap.
             await session.execute(delete(edges).where(edges.c.source_id.in_(chunk)))
@@ -642,8 +646,9 @@ class _TrashChain:
     is an ordinary writable subtree; a user file may squat there).
     """
 
-    def __init__(self, entry: Table, *, root_id: str, user_id: str | None, now: datetime) -> None:
+    def __init__(self, entry: Table, segments: Table, *, root_id: str, user_id: str | None, now: datetime) -> None:
         self._entry = entry
+        self._segments = segments
         self._root_id = root_id
         self._user_id = user_id
         self._now = now
@@ -677,11 +682,12 @@ class _TrashChain:
 
     async def _mint(self, session: AsyncSession, link: str, parent_id: str) -> Row[Any]:
         probe = select(self._entry.c.entry_id, self._entry.c.kind).where(self._entry.c.path == link)
+        entry_id = str(ULID())
         try:
             async with session.begin_nested():
                 await session.execute(
                     insert(self._entry).values(
-                        entry_id=str(ULID()),
+                        entry_id=entry_id,
                         parent_id=parent_id,
                         path=link,
                         name=link.rsplit("/", 1)[-1],
@@ -692,6 +698,10 @@ class _TrashChain:
                         updated_at=self._now,
                     )
                 )
+                # Inside the savepoint: a losing rival rolls the postings
+                # back with the entry row they mirror.
+                if rows := segment_rows(entry_id, link):
+                    await session.execute(insert(self._segments), rows)
             await _bump(session, self._entry, parent_id)
         except IntegrityError:
             # The benign race: a rival write minted this link first.
@@ -916,14 +926,14 @@ async def _reparent_to_trash(
 async def _descendant_rewrites(
     session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
 ) -> list[dict[str, str]]:
-    """Each descendant's id and recomputed path cache under the new prefix.
+    """Each descendant's id, old path, and recomputed path cache under the new prefix.
 
     Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
     the whole set on the byte budget before anything is applied.
     """
     like = descendant_filter(entry, old_prefix, profile)
     found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
-    return [{"b_id": r.entry_id, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
+    return [{"b_id": r.entry_id, "b_old": r.path, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
 
 
 async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[str, str]]) -> None:
@@ -935,23 +945,32 @@ async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[s
     if not rows:
         return
     stmt = update(entry).where(entry.c.entry_id == bindparam("b_id")).values(path=bindparam("b_path"))
-    await session.execute(stmt, rows)
+    await session.execute(stmt, [{"b_id": row["b_id"], "b_path": row["b_path"]} for row in rows])
 
 
 async def _rewrite_descendants(
-    session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    old_prefix: str,
+    new_prefix: str,
 ) -> None:
     """Recompute descendant path caches under the moved prefix, collected live.
 
     Runs after the root claim, so a child committed inside the pre-claim
     window is carried. A late arrival whose rewritten path overflows the
     byte budget raises :class:`StaleSnapshot` instead of storing it —
-    the redriven ladder then refuses the whole target honestly.
+    the redriven ladder then refuses the whole target honestly. The
+    segment postings ride the same rewrite list, so they mirror the
+    rewritten path caches inside this same transaction.
     """
-    rewrites = await _descendant_rewrites(session, entry, profile, old_prefix, new_prefix)
+    rewrites = await _descendant_rewrites(session, tables.entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
         raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
-    await _apply_rewrites(session, entry, rewrites)
+    await _apply_rewrites(session, tables.entry, rewrites)
+    moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
+    await move_postings(session, tables.segments, membership_budget, moves)
 
 
 async def _bump(session: AsyncSession, entry: Table, entry_id: str) -> None:
@@ -1093,7 +1112,9 @@ async def _execute_move(
         raise StaleSnapshot(f"a rival write took {dest} before this {op}'s claim") from exc
     if refused is not None:
         return refused
-    await _rewrite_descendants(session, entry, profile, src_row["path"], str(dest))
+    root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
+    await move_postings(session, tables.segments, membership_budget, root_move)
+    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest))
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.
@@ -1188,6 +1209,10 @@ async def _execute_copy(
                     await session.execute(insert(entry), list(chunk))
             except IntegrityError as exc:
                 raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
+        # Fresh copies get their postings; an overwritten occupant kept
+        # its path, so its postings already hold.
+        copied = [(id_map[row["entry_id"]], new_paths[row["entry_id"]]) for row in fresh]
+        await insert_postings(session, tables.segments, copied)
     bodies = [
         {"entry_id": id_map[row["entry_id"]], "created_at": now, "content": row["content"]}
         for row in subtree

@@ -34,6 +34,7 @@ from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.backends.database.segments import path_segments
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -348,3 +349,68 @@ class TestMySQLTornRowRegression:
             assert after.content == "mine"
             assert after.version == 3
             assert after.content_hash == Entry(path=Path("/race.txt"), content=after.content).content_hash
+
+
+async def _segment_postings_mirror(storage: DatabaseStorage) -> None:
+    """Postings == recomputed segments of every stored path, every kind."""
+    tables = storage._host.tables
+    async with storage._host.session_factory() as session:
+        entries = (await session.execute(select(tables.entry.c.entry_id, tables.entry.c.path))).all()
+        postings = (await session.execute(select(tables.segments.c.segment, tables.segments.c.entry_id))).all()
+    truth = {(segment, entry_id) for entry_id, path in entries for segment in path_segments(path)}
+    assert {(row.segment, row.entry_id) for row in postings} == truth
+
+
+async def _segment_cascades_hold_the_mirror(env_var: str) -> None:
+    """The segment cascade statements on a real engine, verb by verb.
+
+    The rename fast-path UPDATE, the per-segment delete+insert general
+    path, the purge delete, and the trash-chain mint all run under the
+    engine's own dialect arms; the mirror is re-derived after every verb,
+    and a final reindex must find zero drift.
+    """
+    async with _server_storage(env_var) as storage:
+        entries = [
+            Entry(path=Path("/a/x/a/f.txt"), content="recurring name"),
+            Entry(path=Path("/a/x/g.txt"), content="plain"),
+            Entry(path=Path("/a/y/h.txt"), content="sibling"),
+        ]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        await _segment_postings_mirror(storage)
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/b"))])).success is True
+        await _segment_postings_mirror(storage)
+        assert (await storage.copy(operations=[ResolvedPair(src=Path("/b/x"), dest=Path("/c"))])).success is True
+        await _segment_postings_mirror(storage)
+        assert (await storage.delete(path=Path("/b"))).success is True
+        await _segment_postings_mirror(storage)
+        assert (await storage.restore(path=Path("/b"))).success is True
+        await _segment_postings_mirror(storage)
+        assert (await storage.sweep(path=Path("/c"))).success is True
+        await _segment_postings_mirror(storage)
+        reindexed = await storage.reindex()
+        assert reindexed.success is True
+        assert reindexed.errors == []
+
+
+@pytest.mark.postgres
+class TestPostgresSegmentCascades:
+    async def test_cascades_hold_the_mirror(self) -> None:
+        await _segment_cascades_hold_the_mirror("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLSegmentCascades:
+    async def test_cascades_hold_the_mirror(self) -> None:
+        await _segment_cascades_hold_the_mirror("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLSegmentCascades:
+    async def test_cascades_hold_the_mirror(self) -> None:
+        await _segment_cascades_hold_the_mirror("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleSegmentCascades:
+    async def test_cascades_hold_the_mirror(self) -> None:
+        await _segment_cascades_hold_the_mirror("VFS_TEST_ORACLE_URL")
