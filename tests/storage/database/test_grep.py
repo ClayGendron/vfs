@@ -10,6 +10,7 @@ worlds.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from time import monotonic
 from typing import Any
 
@@ -743,6 +744,15 @@ class TestOverlayGate:
         assert scan_spy == [False]
         await storage.close()
 
+    async def test_a_missing_meta_row_reads_as_unpublished_and_pending(self, tmp_path: Any) -> None:
+        # A malformed store degrades to the scan side, never a crash.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        host = storage._host
+        async with host.session_factory() as session:
+            await session.execute(host.tables.meta.delete())
+            assert await grep_module._pointer_with_overlay(session, host.tables) == (None, False)
+        await storage.close()
+
 
 class TestBytesContentPath:
     """The dialect-declared bytes fetch: cast on sqlite, str on the floor."""
@@ -759,8 +769,6 @@ class TestBytesContentPath:
         await storage.close()
 
     async def test_undeclared_profiles_fetch_str(self, tmp_path: Any) -> None:
-        from dataclasses import replace
-
         storage = await _fresh(tmp_path, {"/a.txt": "hé body\n"})
         host = storage._host
         floor = replace(host.profile, content_bytes=False)
