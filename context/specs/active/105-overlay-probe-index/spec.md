@@ -1,7 +1,27 @@
 # 105 — The overlay probe's fixed cost: composite index and the emptiness gate
 
-- **Status: drafted 2026-08-17** — from the overlay-probe research
-  memo (`../../../research/2026-08-17-overlay-probe-cost.md`, studies
+- **Status: all slices landed 2026-08-17** (drafted the same day) —
+  slice A: the composite `(encoded, kind)` index, schema format 5,
+  shape-pinned with per-engine `db_test` reflection legs; the real
+  write path measured unchanged (10k-file batches −0.96%, within
+  noise). Slice B: `_pointer_with_overlay` — the epoch pointer and
+  the overlay-EXISTS verdict in one statement (CASE-wrapped for
+  MSSQL), the scan tier skipped only on a same-snapshot empty
+  verdict; pinned by a scan spy over all five behaviors, the
+  epoch-redrive pin moved to the one-re-read-per-attempt cadence.
+  Slice C: store rebuilt on format 5 — **write 47 s (53 s prior),
+  reindex 175 s (196 s)**, so the flip overhead is invisible
+  end-to-end — and both ladders re-ran with identical counts on
+  every row: unscoped rows all faster (zero-hit floor 68.8 →
+  55.4 ms warm; `copyright -i` 712 → 665 ms; `kfree` 456 → 417 ms),
+  scoped rows all faster with recall exact (`copyright -i @
+  fs/ext4` 8.0 → 5.4 ms vs rg 8.9; `obj- @ Makefile` 130.8 →
+  79.4 ms vs rg 149.7; `spin_lock` 23.4 → 18.6 vs rg 17.3;
+  `GFP_KERNEL @ mm` 15.6 → 11.9 vs rg 11.2 — the last two inside
+  rg's own run-to-run variance, which also moved between sessions).
+  **Ready for the mining pass.**
+  Born from the overlay-probe research memo
+  (`../../../research/2026-08-17-overlay-probe-cost.md`, studies
   under `../../../research/studies/2026-08-17-overlay-probe-index/`),
   which decomposed the ~1.6–2.5 ms scan-tier probe paid on every grep
   call, refuted the partial-index hypothesis by measurement, and
