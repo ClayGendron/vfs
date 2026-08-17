@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, or_, select
 
 from vfs.models import CONTENT_KINDS, Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
@@ -203,8 +203,9 @@ async def grep_rows(
     candidates: dict[str, RowMapping] = {}
     truncations: list[str] = []
     epoch: Epoch | None = None
+    overlay_empty = False
     if not scan_all:
-        epoch = await current_epoch(session, tables)
+        epoch, overlay_empty = await _pointer_with_overlay(session, tables)
         await seam("grep:after-pointer-read")
         # The allow-list joins nomination before the budget: the budget
         # counts scoped candidates, so truncation cannot drop in-scope rows.
@@ -248,7 +249,9 @@ async def grep_rows(
             if "candidate budget" in truncations:
                 truncations.remove("candidate budget")
             truncations.append("candidate budget, with the unindexed overlay not consulted")
-        else:
+        elif not overlay_empty:
+            # Skipped only when the same-snapshot EXISTS proved the overlay
+            # empty — the skip returns exactly what the scan would.
             nominated, overflow = await _entries_for_scan(
                 session,
                 tables,
@@ -333,6 +336,27 @@ async def grep_rows(
 # ---------------------------------------------------------------------------
 # The ladder — posting metadata, rarest-first intersection, doc→entry
 # ---------------------------------------------------------------------------
+
+
+async def _pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
+    """The epoch pointer plus an overlay-emptiness verdict, one statement.
+
+    The overlay check rides the pointer read so both come from the same
+    snapshot: an empty verdict lets the caller skip the scan tier with
+    results identical to scanning. The predicate stays ORM-built — the
+    negation renders as an inline literal on every dialect, which keeps
+    the seek on the composite (encoded, kind) index reachable; the CASE
+    wrapper is what lets engines without boolean select-list expressions
+    (SQL Server) carry the EXISTS.
+    """
+    entry = tables.entry
+    pending = select(entry.c.id).where(~entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))).exists()
+    stmt = select(tables.meta.c.current_gram_epoch, case((pending, 1), else_=0)).where(tables.meta.c.id == 1)
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
+        return None, False
+    pointer, has_pending = row
+    return pointer, not has_pending
 
 
 async def _index_doc_ids(

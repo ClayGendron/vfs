@@ -552,7 +552,7 @@ class TestEpochLadder:
         async def moved_once(session, tables):
             calls["n"] += 1
             current = await real(session, tables)
-            if calls["n"] == 2:  # the first attempt's post-ladder re-read
+            if calls["n"] == 1:  # the first attempt's post-ladder re-read
                 return (current or 0) + 1
             return current
 
@@ -560,7 +560,9 @@ class TestEpochLadder:
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert _paths(result) == ["/a.txt"]
-        assert calls["n"] == 4  # two pointer reads per attempt: exactly one redrive
+        # The preamble reads the pointer through the combined overlay
+        # statement, so current_epoch serves only the per-attempt re-read.
+        assert calls["n"] == 2  # one re-read per attempt: exactly one redrive
         await storage.close()
 
     async def test_a_pointer_that_never_settles_classifies_conflict(self, tmp_path, monkeypatch) -> None:
@@ -682,4 +684,61 @@ class TestScanMergeBounds:
             )
         assert [m["path"] for m in nominated] == ["/a1.txt"]
         assert overflow is True
+        await storage.close()
+
+
+class TestOverlayGate:
+    """The overlay-EXISTS rides the pointer read; an empty overlay skips the scan."""
+
+    @pytest.fixture
+    def scan_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+        calls: list[bool] = []
+        original = grep_module._entries_for_scan
+
+        async def spying(*args: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs["everything"])
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(grep_module, "_entries_for_scan", spying)
+        return calls
+
+    async def test_empty_overlay_skips_the_scan_statement(self, tmp_path: Any, scan_spy: list[bool]) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt"]
+        assert scan_spy == []
+        await storage.close()
+
+    async def test_unencoded_rows_run_the_scan(self, tmp_path: Any, scan_spy: list[bool]) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt", "/fresh.txt"]
+        assert scan_spy == [False]
+        await storage.close()
+
+    async def test_trashed_rows_keep_the_gate_honest(self, tmp_path: Any, scan_spy: list[bool]) -> None:
+        storage = await _fresh(tmp_path, {"/keep.txt": "needle keep", "/gone.txt": "needle gone"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.delete(path=Path("/gone.txt"))).success is True
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/keep.txt"]
+        assert scan_spy == [False]
+        await storage.close()
+
+    async def test_scan_callers_ignore_the_gate(self, tmp_path: Any, scan_spy: list[bool]) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "ab here"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="ab", allow_scan=True)
+        assert _paths(result) == ["/a.txt"]
+        assert scan_spy == [True]
+        await storage.close()
+
+    async def test_never_indexed_store_scans(self, tmp_path: Any, scan_spy: list[bool]) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt"]
+        assert scan_spy == [False]
         await storage.close()
