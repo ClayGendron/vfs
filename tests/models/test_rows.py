@@ -244,6 +244,11 @@ class TestBuildVFSTables:
         by_name = {str(index.name): index for index in tables.entry.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_ext_kind"].columns] == ["ext", "kind"]
 
+    def test_encoded_kind_composite_index(self, tables: VFSTables) -> None:
+        by_name = {str(index.name): index for index in tables.entry.indexes}
+        assert [c.name for c in by_name["ix_vfs_entries_encoded_kind"].columns] == ["encoded", "kind"]
+        assert "ix_vfs_entries_encoded" not in by_name
+
     def test_default_embedding_is_portable(self, tables: VFSTables) -> None:
         vector_type = tables.chunks.c.embedding.type
         assert isinstance(vector_type, VectorType)

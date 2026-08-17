@@ -119,7 +119,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 4
+SCHEMA_FORMAT_VERSION: Final = 5
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -369,9 +369,9 @@ def build_vfs_tables(
         Column("deleted_at", DateTime(timezone=True)),
         UniqueConstraint("parent_id", "name", name=f"uq_{table_name}_parent_name"),
         Index(f"ix_{table_name}_ext_kind", "ext", "kind"),
-        # Serves grep's overlay and the pending probe (both filter NOT
-        # encoded); measured faster than an (encoded, kind) composite.
-        Index(f"ix_{table_name}_encoded", "encoded"),
+        # Serves grep's overlay probe: the encoded=0 seek set is mostly
+        # directories, so kind in the key rejects them without row lookups.
+        Index(f"ix_{table_name}_encoded_kind", "encoded", "kind"),
         # Restore lookup by original site. Plain composite: a filtered
         # index over the mostly-NULL restore columns is not portable.
         Index(f"ix_{table_name}_restore", "original_parent_id", "original_name"),

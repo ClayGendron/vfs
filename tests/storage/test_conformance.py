@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.storage_contract import StorageContract
@@ -414,3 +414,55 @@ class TestMSSQLSegmentCascades:
 class TestOracleSegmentCascades:
     async def test_cascades_hold_the_mirror(self) -> None:
         await _segment_cascades_hold_the_mirror("VFS_TEST_ORACLE_URL")
+
+
+async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
+    """The composite (encoded, kind) index on a real engine, both flag states.
+
+    Grep must find fresh writes through the scan-tier overlay (encoded=0
+    rows seek through the composite) and the same rows post-reindex
+    (encoded flipped); reflection pins the index shape the engine built.
+    """
+    async with _server_storage(env_var) as storage:
+        entries = [Entry(path=Path(f"/src/f{i}.txt"), content=f"needle_{i} haystack") for i in range(3)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        fresh = await storage.grep(pattern="haystack")
+        assert sum(len(o.matches or ()) for o in fresh.observations) == 3
+        assert (await storage.reindex()).success is True
+        encoded = await storage.grep(pattern="haystack")
+        assert sum(len(o.matches or ()) for o in encoded.observations) == 3
+    url = os.environ[env_var]
+    engine = create_async_engine(url)
+    try:
+        async with engine.connect() as conn:
+            indexes = await conn.run_sync(lambda sync: inspect(sync).get_indexes("vfs"))
+    finally:
+        await engine.dispose()
+    by_name = {str(index["name"]).lower(): index for index in indexes}
+    columns = by_name["ix_vfs_encoded_kind"]["column_names"]
+    assert [c.lower() for c in columns if c is not None] == ["encoded", "kind"]
+    assert "ix_vfs_encoded" not in by_name
+
+
+@pytest.mark.postgres
+class TestPostgresEncodedKindIndex:
+    async def test_index_serves_the_overlay(self) -> None:
+        await _encoded_kind_index_serves_the_overlay("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLEncodedKindIndex:
+    async def test_index_serves_the_overlay(self) -> None:
+        await _encoded_kind_index_serves_the_overlay("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLEncodedKindIndex:
+    async def test_index_serves_the_overlay(self) -> None:
+        await _encoded_kind_index_serves_the_overlay("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleEncodedKindIndex:
+    async def test_index_serves_the_overlay(self) -> None:
+        await _encoded_kind_index_serves_the_overlay("VFS_TEST_ORACLE_URL")
