@@ -5,7 +5,24 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-16, at spec 100's mining pass. That arc,
+- **Last reviewed:** 2026-08-17, at spec 103's slice D. That arc,
+  across two days: slice B (the Rust engine for the gram-index
+  build — `crates/vfs-core`, the pendulum packaging model, the
+  `vfs.native` seam; reindex 672 s → 191 s), the verify-authority
+  spike (four strategies raced at linux scale; memo recommended
+  keeping Python `re`, Clay resolved for the shared Rust core on
+  the vfs-js/vfs-rs roadmap), slice C (the shared verify authority:
+  regex-crate pattern language, HIR line law, the shared language
+  gate, pure `re` fallback with pinned residuals; zero-hit floor
+  631 ms → 13 ms, wildcard 130.8 s → 52 ms verify-stage), and
+  slice D (bench gate PASSES — all 25 rows beat rg, vfs 115–644 ms
+  vs rg 2.0–3.6 s; ladder improved throughout; `CANDIDATE_BUDGET`
+  10,000 → 25,000 by sweep, 24/25 rows now match rg exactly;
+  ADR 039). Both suite legs 2,391 passed / 838 skipped, coverage
+  100%, `ruff`/`ty` zero, `cargo test` green at each landing. Spec
+  103's one open fork: tree-sitter chunking on the reindex path
+  (needs Clay).
+- **Previous review:** 2026-08-16, at spec 100's mining pass. That arc,
   all in two days: slice A's expansion-caps research memo and
   rerunnable study landed and the §6 cap fork resolved by Clay
   (both caps, small values); slices B–D landed as one planner
@@ -17,7 +34,7 @@ lines first; regenerate this file when the picture shifts (review the
   green same day (2,301 passed / 838 skipped, coverage 100%,
   `ruff`/`ty` zero, full 3.11–3.14 matrix). Entries older than this
   arc carry forward from the 2026-08-14 review unverified.
-- **Previous review:** 2026-08-14, at the 095–099 mining pass. That
+- **Earlier review:** 2026-08-14, at the 095–099 mining pass. That
   pass: all five campaign specs mined and archived (residue verified
   downstream — ADR amendments, `open-questions-archive.md`
   resolutions, battery editions); specs 100 (gram-planner upgrades),

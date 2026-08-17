@@ -42,8 +42,17 @@
   every measured row. Both suite legs green at the same count
   (2,391 passed / 838 skipped; coverage 100%; `ruff`/`ty` zero;
   `cargo test` 23), parity/refusal/divergence pins in
-  `tests/pattern_matching/test_matcher_parity.py`. The full 25-row
-  bench-gate re-run against rg and the ladder re-run are slice D.
+  `tests/pattern_matching/test_matcher_parity.py`. **Slice D
+  completed 2026-08-17, same day: the bench gate PASSES** — the full
+  re-run on the rebuilt store beat rg on every one of the 25 rows
+  (vfs 115–644 ms vs rg 2.0–3.6 s; records in the study docstring),
+  the ladder re-ran with improvements throughout (reindex build
+  4.7 s → 0.9 s at 10K docs, no regressions), `CANDIDATE_BUDGET`
+  re-derived 10,000 → 25,000 on the §5 sweep (24 of 25 rows now
+  match rg's counts exactly; only `copyright -i`, 62% of the corpus,
+  stays loudly truncated), and the decision set is recorded as
+  **ADR 039**. The story's one open fork is tree-sitter chunking on
+  the reindex path (§2, needs Clay); everything else is done.
 - **Date:** 2026-08-16
 - **Owner:** Clay Gendron
 - **Kind:** performance rewrite of the grep hot loops behind
@@ -192,14 +201,17 @@ an optimization.
   the big-file caps themselves rise is decided on slice C's
   measurements. Target: zero-hit ≤ 25 ms at 94K docs where the
   overlay tail is empty; ≤ the memmem cost of the tail otherwise.
-- **§5 Budgets at scale.** Re-derive `CANDIDATE_BUDGET` (10,000
-  entries — the cap the nine truncated benchmark rows actually hit;
-  the posting-byte budget was the first record's misattribution,
-  since corrected) against the 5 GB index reality — likely
-  corpus-scaled rather than constant, with the truncation record
-  and refine guidance unchanged. With §3's rejection speed, a much
-  larger candidate set is affordable; truncation remains for
-  genuinely adversarial widths.
+- **§5 Budgets at scale — resolved 2026-08-17 (slice D), by
+  measurement: 25,000, a constant.** The sweep (10k/25k/50k/100k/
+  200k over the nine truncated rows on the rebuilt store) showed
+  candidate cost is fetch-dominated at ~75 µs each and plateaus at
+  each row's natural width: eight of nine rows fully un-truncate by
+  25,000 at 740–1,800 ms, all under rg. Corpus-scaling was
+  considered and rejected — it makes hot-row latency grow with
+  corpus size, backwards for the latency-sensitive agent audience —
+  and 50,000+ only chases `copyright -i` (57,832 files, 62% of the
+  corpus, bulk retrieval) past rg's own time. Truncation record and
+  refine guidance unchanged; wall deadline unchanged.
 
 ## Research tasks (slice A) — **done 2026-08-16**
 
@@ -281,8 +293,11 @@ an optimization.
   slice: the 96-entry overlay tail now costs ~13 ms per call, so
   no cap pressure remains — revisit only if slice D's bench re-run
   disagrees.
-- **D** — budget re-derivation, the bench gate re-run recorded, ADR
-  for the decision set, true-ups.
+- **D** — **done 2026-08-17**: the bench-gate re-run recorded (all
+  25 rows beat rg; study docstring carries the 10,000-budget gate
+  run and the 25,000-budget landed run), the ladder re-run recorded
+  (improvements throughout), `CANDIDATE_BUDGET` → 25,000 on the §5
+  sweep, ADR 039 written, spec and STATUS trued.
 
 ## Open questions
 

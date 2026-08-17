@@ -85,11 +85,14 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
 
-# Runtime budgets (the spike's numbers): candidates fetched and
-# verified, posting bytes decoded, and a wall-time deadline checked
-# between ladder stages and inside the matcher's body loop. A tripped
-# budget truncates with a warning.
-CANDIDATE_BUDGET: Final = 10_000
+# Runtime budgets: candidates fetched and verified, posting bytes
+# decoded, and a wall-time deadline checked between ladder stages and
+# inside the matcher's body loop. A tripped budget truncates with a
+# warning. The candidate budget is re-derived from the linux-scale
+# sweep: candidate cost is ~75 µs each (fetch-dominated), so 25,000
+# bounds a saturated call near ~2 s while un-truncating every
+# benchmark row search semantics can justify.
+CANDIDATE_BUDGET: Final = 25_000
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
 WALL_TIME_BUDGET: Final = 10.0
 

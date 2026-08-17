@@ -35,6 +35,14 @@ upgrades now answer from the index — folded class ``[mM]utex_[lL]ock``
 rows are unchanged: ``ab`` and ``medium_ident_a|ab`` (a gramless arm)
 still refuse in ~0.1 ms.
 
+Slice-C run (2026-08-17, same corpus tier, the shared Rust verify
+core as match authority): no regressions, improvements throughout —
+reindex build 4.7 s -> 0.9 s (Rust build side), zero-hit 2.4 ms, rare
+4.2 ms, medium 24.5 ms, hot phrase 56.4 ms, punct 26.2 ms, regex
+25.3 ms, wrapped regex 16.8 ms, folded 25.1 ms, ultra-hot 207.6 ms /
+5,000 rows, class fold 24.6 ms, nested alt 17.8 ms, anchored group
+26.3 ms; scans 231–309 ms. Refusal rows unchanged (~0.1–0.2 ms).
+
 Run:  uv run python context/research/studies/2026-08-05-grep-query-ladder-benchmark/grep_query_ladder.py
 """
 

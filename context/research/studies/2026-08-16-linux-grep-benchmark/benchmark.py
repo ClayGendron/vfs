@@ -80,6 +80,33 @@ grep-index build proper is ~30 s. The vfs query leg re-run on the
 Rust-built index returned row counts identical to this record on all
 25 queries (read-path times unchanged, as expected before slice C).
 
+Slice-C bench-gate record (2026-08-17, same corpus, checkout
+``faeab1661``, and machine; the shared Rust verify core as match
+authority, vfs+rg legs, ``RG_ROOT`` over the original checkout,
+median of 3): **every one of the 25 rows beats rg** — vfs 115–644 ms
+vs rg 2.0–3.6 s (5–28x per row). The recorded losses are gone: word
+rows 638/395 ms (were 4.9–5.9 s), the wrapped wildcard 368 ms (was
+102 s), zero-hit 115 ms (the ~700 ms floor deleted). Build: mirror
+23 s, reindex 207 s (the tree-sitter chunking fork unchanged). The
+nine budget-truncated rows still truncate at ``CANDIDATE_BUDGET`` =
+10,000 with the loud warning; every vfs/rg count divergence again
+coincides with a truncation flag, and all 16 untruncated rows match
+rg exactly. Truncated-row counts shift by tens across rebuilds — the
+cap slices the lowest 10,000 entry ids and ``parents=True`` directory
+rows interleave differently per build — while untruncated rows are
+build-invariant.
+
+Slice-D landed-budget record (2026-08-17, same store, vfs leg at the
+re-derived ``CANDIDATE_BUDGET`` = 25,000, median of 3): every row
+120 ms–1.46 s, still 1.4–30x under the rg leg above, and **24 of 25
+rows now match rg's counts exactly** — the budget sweep
+(spec 103 §5) showed candidate cost is fetch-dominated at ~75 µs
+each and every row whose width search semantics can justify
+un-truncates by 25,000. The one survivor is ``copyright -i``
+(57,832 matching files, 62% of the corpus — bulk retrieval, not
+search): loudly truncated at 40,926 rows / 1.46 s with the refine
+guidance. Decision set recorded as ADR 039.
+
 Run:  WORKDIR=/path/to/scratch uv run python \
       context/research/studies/2026-08-16-linux-grep-benchmark/benchmark.py
 """
