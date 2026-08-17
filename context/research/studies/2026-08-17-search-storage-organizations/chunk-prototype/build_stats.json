@@ -1,0 +1,14 @@
+{
+  "engine": "rust",
+  "chunks_indexed": 726817,
+  "entries_covered": 93664,
+  "fold_feed_seconds": 7.53,
+  "drain_insert_seconds": 0.78,
+  "total_seconds": 11.69,
+  "chunk_posting_rows": 256994,
+  "chunk_blob_bytes": 386193303,
+  "live_posting_rows": 257012,
+  "live_blob_bytes": 141515281,
+  "blob_ratio": 2.729,
+  "row_ratio": 1.0
+}

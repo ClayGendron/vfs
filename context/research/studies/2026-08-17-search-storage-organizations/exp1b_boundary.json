@@ -1,0 +1,81 @@
+{
+ "mutex_lock@drm": {
+  "match_chunks": 1860,
+  "gram_missed_chunks": 5,
+  "examples": [
+   [
+    "/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_debugfs.c",
+    1799,
+    1875
+   ],
+   [
+    "/drivers/gpu/drm/bridge/ti-sn65dsi86.c",
+    476,
+    552
+   ],
+   [
+    "/drivers/gpu/drm/i915/i915_ttm_buddy_manager.c",
+    1,
+    86
+   ]
+  ]
+ },
+ "kzalloc@drivers/net": {
+  "match_chunks": 3190,
+  "gram_missed_chunks": 15,
+  "examples": [
+   [
+    "/drivers/net/dsa/realtek/rtl83xx.c",
+    72,
+    152
+   ],
+   [
+    "/drivers/net/ethernet/broadcom/sb1250-mac.c",
+    569,
+    625
+   ],
+   [
+    "/drivers/net/ethernet/hisilicon/hns_mdio.c",
+    425,
+    506
+   ]
+  ]
+ },
+ "EXPORT_SYMBOL_GPL@drivers": {
+  "match_chunks": 7701,
+  "gram_missed_chunks": 4,
+  "examples": [
+   [
+    "/drivers/ata/libata-eh.c",
+    1275,
+    1355
+   ],
+   [
+    "/drivers/comedi/comedi_buf.c",
+    318,
+    376
+   ],
+   [
+    "/drivers/nvme/host/core.c",
+    1752,
+    1819
+   ]
+  ]
+ },
+ "copyright -i unscoped": {
+  "match_chunks": 25116,
+  "gram_missed_chunks": 2,
+  "examples": [
+   [
+    "/Documentation/networking/device_drivers/wifi/intel/ipw2100.rst",
+    255,
+    300
+   ],
+   [
+    "/Documentation/networking/device_drivers/wifi/intel/ipw2200.rst",
+    465,
+    503
+   ]
+  ]
+ }
+}

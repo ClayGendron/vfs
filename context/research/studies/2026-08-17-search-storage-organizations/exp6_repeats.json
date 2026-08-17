@@ -1,0 +1,81 @@
+{
+ "raw_dataset_in_repo": false,
+ "note": "re-mined live from ~/.claude/projects (same source the memo used)",
+ "bash_calls": 18668,
+ "search_invocations": 10929,
+ "with_pattern": 10420,
+ "with_timestamp": 10929,
+ "exact_repeats": 855,
+ "exact_repeat_rate": 0.08205374280230326,
+ "pattern_repeats": 2785,
+ "pattern_repeat_rate": 0.26727447216890593,
+ "exact_repeat_same_session": 121,
+ "exact_repeat_within_1h": 577,
+ "pattern_repeat_within_1h": 1937,
+ "top_exact": [
+  {
+   "pattern": "def __init__",
+   "globs": [],
+   "paths": [
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "n": 47
+  },
+  {
+   "pattern": "def __init__",
+   "globs": [],
+   "paths": [
+    "/Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py"
+   ],
+   "n": 29
+  },
+  {
+   "pattern": "table_name",
+   "globs": [],
+   "paths": [
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "n": 10
+  },
+  {
+   "pattern": "reindex",
+   "globs": [],
+   "paths": [
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "n": 10
+  },
+  {
+   "pattern": "async def grep",
+   "globs": [],
+   "paths": [
+    "src/vfs/storage/backends/database/backend.py"
+   ],
+   "n": 9
+  },
+  {
+   "pattern": "def _url",
+   "globs": [],
+   "paths": [
+    "tests/test_backends_database.py"
+   ],
+   "n": 8
+  },
+  {
+   "pattern": "def __init__",
+   "globs": [],
+   "paths": [
+    "/Users/claygendron/Git/Repos/vfs/src/vfs/base.py"
+   ],
+   "n": 8
+  },
+  {
+   "pattern": "requires-python",
+   "globs": [],
+   "paths": [
+    "pyproject.toml"
+   ],
+   "n": 7
+  }
+ ]
+}

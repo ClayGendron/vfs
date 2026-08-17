@@ -1,0 +1,20 @@
+{
+ "sample_files": 500,
+ "occurrences": 5171374,
+ "gram_doc_pairs": 671987,
+ "positions_per_pair": 7.6956458979117155,
+ "position_delta_bytes": 8013941,
+ "count_header_bytes": 676191,
+ "pos_bytes_per_occurrence": 1.5496734523552154,
+ "sample_distinct_grams": 56215,
+ "store_blob_bytes_for_sample_grams": 134849443,
+ "store_pairs_for_sample_grams": 129345040,
+ "corpus_blob_bytes": 141515281,
+ "corpus_pairs": 133728772,
+ "corpus_grams": 257012,
+ "docid_bytes_per_pair": 1.0582261310228738,
+ "fold_len_ratio": 1.0,
+ "corpus_occurrences_est": 1221204381.0,
+ "projected_position_bytes": 2027033398.1497345,
+ "projected_index_multiplier": 15.323777501807275
+}

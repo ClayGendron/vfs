@@ -1,0 +1,215 @@
+{
+  "any_newline_gram": false,
+  "rows": [
+    {
+      "pattern": "EXPORT_SYMBOL_GPL",
+      "fixed": false,
+      "n_grams": 15,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "kzalloc",
+      "fixed": false,
+      "n_grams": 5,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "mutex_lock",
+      "fixed": false,
+      "n_grams": 8,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "copyright",
+      "fixed": false,
+      "n_grams": 7,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "napi_gro_receive",
+      "fixed": false,
+      "n_grams": 14,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "GFP_KERNEL",
+      "fixed": false,
+      "n_grams": 8,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "cgroup_subsys_state",
+      "fixed": false,
+      "n_grams": 17,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "spin_lock",
+      "fixed": false,
+      "n_grams": 7,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "probe",
+      "fixed": false,
+      "n_grams": 3,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "obj-",
+      "fixed": false,
+      "n_grams": 2,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "xyzzy_no_such_symbol_42",
+      "fixed": false,
+      "n_grams": 21,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "randomize_kstack_offset",
+      "fixed": false,
+      "n_grams": 21,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "raw_spin_lock_irqsave",
+      "fixed": false,
+      "n_grams": 19,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "kmalloc",
+      "fixed": false,
+      "n_grams": 5,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "static int __init",
+      "fixed": false,
+      "n_grams": 15,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "!= NULL",
+      "fixed": true,
+      "n_grams": 5,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "if (ret < 0)",
+      "fixed": true,
+      "n_grams": 10,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "mutex_lock\\(&",
+      "fixed": false,
+      "n_grams": 10,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "static\\s+int\\s+\\w+_probe",
+      "fixed": false,
+      "n_grams": 9,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": ".*alloc_page.*",
+      "fixed": false,
+      "n_grams": 8,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "deadlock",
+      "fixed": false,
+      "n_grams": 6,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "kfree",
+      "fixed": false,
+      "n_grams": 3,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "pr_debug",
+      "fixed": false,
+      "n_grams": 6,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "TODO|FIXME",
+      "fixed": false,
+      "n_grams": 5,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "kzalloc|kcalloc",
+      "fixed": false,
+      "n_grams": 7,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "devm_(kzalloc|kmalloc)",
+      "fixed": false,
+      "n_grams": 13,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "^(EXPORT_SYMBOL|MODULE_LICENSE)",
+      "fixed": false,
+      "n_grams": 23,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "^#include <linux/module.h>",
+      "fixed": false,
+      "n_grams": 20,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "ext[234]",
+      "fixed": false,
+      "n_grams": 4,
+      "is_any": false,
+      "newline_grams": []
+    },
+    {
+      "pattern": "-O[0-3]",
+      "fixed": false,
+      "n_grams": 4,
+      "is_any": false,
+      "newline_grams": []
+    }
+  ]
+}

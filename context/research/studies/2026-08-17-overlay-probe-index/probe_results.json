@@ -1,0 +1,496 @@
+[
+  {
+    "db": "base.sqlite",
+    "probe_gateless_rows": 96,
+    "probe_gateless": {
+      "n": 40,
+      "median_us": 1703.7080833688378,
+      "mean_us": 1733.762351796031,
+      "min_us": 1587.7080149948597,
+      "p90_us": 1947.2911953926086
+    },
+    "probe_gated_rows": 59,
+    "probe_gated": {
+      "n": 40,
+      "median_us": 1606.916426680982,
+      "mean_us": 1664.6073141600937,
+      "min_us": 1477.0419802516699,
+      "p90_us": 1898.749964311719
+    },
+    "sql_gateless": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "sql_gated": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path LIKE '/drivers/%' ESCAPE '\\' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "exists_text_nokind": {
+      "n": 200,
+      "median_us": 188.56197129935026,
+      "mean_us": 194.27328021265566,
+      "min_us": 141.45905151963234,
+      "p90_us": 221.58422507345676
+    },
+    "exists_text_kind": {
+      "n": 200,
+      "median_us": 285.1454773917794,
+      "mean_us": 287.42480324581265,
+      "min_us": 233.04205387830734,
+      "p90_us": 317.7090547978878
+    },
+    "exists_orm_kind": {
+      "n": 200,
+      "median_us": 202.39606965333223,
+      "mean_us": 203.73060717247427,
+      "min_us": 163.12510706484318,
+      "p90_us": 223.08318875730038
+    },
+    "epoch_read": {
+      "n": 200,
+      "median_us": 210.1873978972435,
+      "mean_us": 210.6149890460074,
+      "min_us": 174.20900985598564,
+      "p90_us": 243.45796555280685
+    },
+    "epoch_read_wide": {
+      "n": 200,
+      "median_us": 144.83300037682056,
+      "mean_us": 146.3414158206433,
+      "min_us": 125.33320114016533,
+      "p90_us": 154.6249259263277
+    },
+    "epoch_read_plus_exists": {
+      "n": 200,
+      "median_us": 215.41654132306576,
+      "mean_us": 222.93829591944814,
+      "min_us": 156.25008381903172,
+      "p90_us": 254.3749287724495
+    },
+    "sync_probe_gateless": {
+      "n": 40,
+      "median_us": 1339.9788876995444,
+      "mean_us": 1363.180298358202,
+      "min_us": 1310.999970883131,
+      "p90_us": 1469.2919794470072
+    },
+    "sync_probe_gated": {
+      "n": 40,
+      "median_us": 1331.791514530778,
+      "mean_us": 1324.7594120912254,
+      "min_us": 1200.66711679101,
+      "p90_us": 1383.6659491062164
+    },
+    "sync_exists_nokind": {
+      "n": 200,
+      "median_us": 2.250075340270996,
+      "mean_us": 2.5703723076730967,
+      "min_us": 2.166023477911949,
+      "p90_us": 2.5420449674129486
+    },
+    "sync_exists_kind": {
+      "n": 200,
+      "median_us": 92.58300997316837,
+      "mean_us": 94.82288733124733,
+      "min_us": 86.50007657706738,
+      "p90_us": 94.25007738173008
+    },
+    "plan_gateless": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_gated": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_exists_nokind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SCAN vfs USING COVERING INDEX ix_vfs_encoded"
+    ],
+    "plan_exists_kind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SEARCH vfs USING INDEX ix_vfs_kind (kind=?)"
+    ]
+  },
+  {
+    "db": "empty.sqlite",
+    "probe_gateless_rows": 0,
+    "probe_gateless": {
+      "n": 40,
+      "median_us": 979.3539065867662,
+      "mean_us": 1020.23018989712,
+      "min_us": 932.2920814156532,
+      "p90_us": 1135.0419372320175
+    },
+    "probe_gated_rows": 0,
+    "probe_gated": {
+      "n": 40,
+      "median_us": 1154.3331202119589,
+      "mean_us": 1168.2249314617366,
+      "min_us": 1037.9168670624495,
+      "p90_us": 1312.3748358339071
+    },
+    "sql_gateless": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "sql_gated": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path LIKE '/drivers/%' ESCAPE '\\' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "rebuild_matches_captured": true,
+    "build_stmt": {
+      "n": 400,
+      "median_us": 50.24997517466545,
+      "mean_us": 53.79749112762511,
+      "min_us": 47.582900151610374,
+      "p90_us": 54.08306606113911
+    },
+    "cache_key": {
+      "n": 400,
+      "median_us": 0.08346978574991226,
+      "mean_us": 0.08195638656616211,
+      "min_us": 0.040978193283081055,
+      "p90_us": 0.125030055642128
+    },
+    "compile_cold": {
+      "n": 400,
+      "median_us": 96.08303662389517,
+      "mean_us": 98.74463721644133,
+      "min_us": 88.79206143319607,
+      "p90_us": 102.37493552267551
+    },
+    "execute_reused_stmt": {
+      "n": 40,
+      "median_us": 818.8330102711916,
+      "mean_us": 898.016628343612,
+      "min_us": 779.4999983161688,
+      "p90_us": 1121.0001539438963
+    },
+    "execute_fresh_stmt": {
+      "n": 40,
+      "median_us": 941.688078455627,
+      "mean_us": 950.816657859832,
+      "min_us": 886.5410927683115,
+      "p90_us": 1002.9159020632505
+    },
+    "compiled_cache_growth_over_10_fresh_executes": 0,
+    "execute_text": {
+      "n": 40,
+      "median_us": 853.2085921615362,
+      "mean_us": 839.9729209486395,
+      "min_us": 744.2079950124025,
+      "p90_us": 910.3331249207258
+    },
+    "execute_raw_aiosqlite": {
+      "n": 40,
+      "median_us": 736.2291216850281,
+      "mean_us": 744.1363821271807,
+      "min_us": 688.083004206419,
+      "p90_us": 779.1661191731691
+    },
+    "execute_gated_reused_stmt": {
+      "n": 40,
+      "median_us": 899.9579586088657,
+      "mean_us": 901.8656273838133,
+      "min_us": 788.1659548729658,
+      "p90_us": 933.5831273347139
+    },
+    "exists_text_nokind": {
+      "n": 200,
+      "median_us": 156.04146756231785,
+      "mean_us": 156.5983018372208,
+      "min_us": 134.20800678431988,
+      "p90_us": 167.12513752281666
+    },
+    "exists_text_kind": {
+      "n": 200,
+      "median_us": 10722.625069320202,
+      "mean_us": 10600.142306648195,
+      "min_us": 8249.874925240874,
+      "p90_us": 11944.959172978997
+    },
+    "exists_orm_kind": {
+      "n": 200,
+      "median_us": 884.8125580698252,
+      "mean_us": 903.7906129378825,
+      "min_us": 751.7500780522823,
+      "p90_us": 1030.124956741929
+    },
+    "epoch_read": {
+      "n": 200,
+      "median_us": 185.89594401419163,
+      "mean_us": 188.8242072891444,
+      "min_us": 163.7078821659088,
+      "p90_us": 202.00014114379883
+    },
+    "epoch_read_wide": {
+      "n": 200,
+      "median_us": 175.06256699562073,
+      "mean_us": 179.60123252123594,
+      "min_us": 141.66603796184063,
+      "p90_us": 212.29195408523083
+    },
+    "epoch_read_plus_exists": {
+      "n": 200,
+      "median_us": 877.0209969952703,
+      "mean_us": 897.7162395603955,
+      "min_us": 722.1249397844076,
+      "p90_us": 1083.0829851329327
+    },
+    "sync_probe_gateless": {
+      "n": 40,
+      "median_us": 1070.4165324568748,
+      "mean_us": 1113.7834459077567,
+      "min_us": 1038.084039464593,
+      "p90_us": 1188.2921680808067
+    },
+    "sync_probe_gated": {
+      "n": 40,
+      "median_us": 1141.4795881137252,
+      "mean_us": 1135.3999958373606,
+      "min_us": 1046.2081991136074,
+      "p90_us": 1215.9999459981918
+    },
+    "sync_exists_nokind": {
+      "n": 200,
+      "median_us": 2.2081658244132996,
+      "mean_us": 2.2808380890637636,
+      "min_us": 2.084067091345787,
+      "p90_us": 2.334127202630043
+    },
+    "sync_exists_kind": {
+      "n": 200,
+      "median_us": 7921.6459998860955,
+      "mean_us": 7932.387521723285,
+      "min_us": 7189.4999127835035,
+      "p90_us": 8440.166944637895
+    },
+    "plan_gateless": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_gated": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_exists_nokind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SCAN vfs USING COVERING INDEX ix_vfs_encoded"
+    ],
+    "plan_exists_kind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SEARCH vfs USING INDEX ix_vfs_kind (kind=?)"
+    ]
+  },
+  {
+    "db": "empty_p1.sqlite",
+    "probe_gateless_rows": 0,
+    "probe_gateless": {
+      "n": 40,
+      "median_us": 1247.5000694394112,
+      "mean_us": 1255.4906192235649,
+      "min_us": 1145.4590130597353,
+      "p90_us": 1347.5408777594566
+    },
+    "probe_gated_rows": 0,
+    "probe_gated": {
+      "n": 40,
+      "median_us": 1053.3749591559172,
+      "mean_us": 1093.0709191597998,
+      "min_us": 972.7079886943102,
+      "p90_us": 1319.8750093579292
+    },
+    "sql_gateless": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "sql_gated": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path LIKE '/drivers/%' ESCAPE '\\' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "exists_text_nokind": {
+      "n": 200,
+      "median_us": 181.60406034439802,
+      "mean_us": 185.30808039940894,
+      "min_us": 131.0831867158413,
+      "p90_us": 213.0840439349413
+    },
+    "exists_text_kind": {
+      "n": 200,
+      "median_us": 9898.645454086363,
+      "mean_us": 10092.722674598917,
+      "min_us": 7949.250051751733,
+      "p90_us": 11720.290873199701
+    },
+    "exists_orm_kind": {
+      "n": 200,
+      "median_us": 821.0414089262486,
+      "mean_us": 815.8455754164606,
+      "min_us": 724.0420673042536,
+      "p90_us": 909.8330046981573
+    },
+    "epoch_read": {
+      "n": 200,
+      "median_us": 186.4585792645812,
+      "mean_us": 189.66186325997114,
+      "min_us": 162.29203902184963,
+      "p90_us": 204.8751339316368
+    },
+    "epoch_read_wide": {
+      "n": 200,
+      "median_us": 147.0624702051282,
+      "mean_us": 149.87996546551585,
+      "min_us": 123.0000052601099,
+      "p90_us": 169.12491992115974
+    },
+    "epoch_read_plus_exists": {
+      "n": 200,
+      "median_us": 748.70849493891,
+      "mean_us": 792.7985629066825,
+      "min_us": 723.8341495394707,
+      "p90_us": 910.8339436352253
+    },
+    "sync_probe_gateless": {
+      "n": 40,
+      "median_us": 1062.7295123413205,
+      "mean_us": 1126.591581851244,
+      "min_us": 1034.5419868826866,
+      "p90_us": 1333.707943558693
+    },
+    "sync_probe_gated": {
+      "n": 40,
+      "median_us": 1041.8335441499949,
+      "mean_us": 1081.084436737001,
+      "min_us": 1029.707957059145,
+      "p90_us": 1169.7919107973576
+    },
+    "sync_exists_nokind": {
+      "n": 200,
+      "median_us": 2.1248124539852142,
+      "mean_us": 2.273163991048932,
+      "min_us": 2.040993422269821,
+      "p90_us": 2.375105395913124
+    },
+    "sync_exists_kind": {
+      "n": 200,
+      "median_us": 7667.312980629504,
+      "mean_us": 7654.589617159218,
+      "min_us": 7162.2091345489025,
+      "p90_us": 8141.207974404097
+    },
+    "plan_gateless": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_gated": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_exists_nokind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SCAN vfs USING COVERING INDEX ix_vfs_pending"
+    ],
+    "plan_exists_kind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SEARCH vfs USING INDEX ix_vfs_kind (kind=?)"
+    ]
+  },
+  {
+    "db": "empty_p2.sqlite",
+    "probe_gateless_rows": 0,
+    "probe_gateless": {
+      "n": 40,
+      "median_us": 1111.7499088868499,
+      "mean_us": 1166.7635408230126,
+      "min_us": 985.4170493781567,
+      "p90_us": 1340.9999664872885
+    },
+    "probe_gated_rows": 0,
+    "probe_gated": {
+      "n": 40,
+      "median_us": 1032.0835281163454,
+      "mean_us": 1063.1811805069447,
+      "min_us": 917.0419070869684,
+      "p90_us": 1255.8330781757832
+    },
+    "sql_gateless": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "sql_gated": "SELECT vfs.entry_id, vfs.content_hash, vfs.created_at, vfs.ext, vfs.kind, vfs.mime_type, vfs.name, vfs.path, vfs.size_bytes, vfs.updated_at, vfs.version \nFROM vfs \nWHERE vfs.kind IN ('chunk', 'file', 'version') AND vfs.encoded = 0 AND vfs.path != '/' AND vfs.path LIKE '/drivers/%' ESCAPE '\\' AND vfs.path != '/.vfs' AND vfs.path NOT LIKE '/.vfs/%' ESCAPE '\\' ORDER BY vfs.path\n LIMIT 25001 OFFSET 0",
+    "exists_text_nokind": {
+      "n": 200,
+      "median_us": 166.18799418210983,
+      "mean_us": 174.79164176620543,
+      "min_us": 147.00018800795078,
+      "p90_us": 205.5000513792038
+    },
+    "exists_text_kind": {
+      "n": 200,
+      "median_us": 9626.87493301928,
+      "mean_us": 9711.78523497656,
+      "min_us": 7987.832883372903,
+      "p90_us": 11284.24983471632
+    },
+    "exists_orm_kind": {
+      "n": 200,
+      "median_us": 842.4584520980716,
+      "mean_us": 827.888926723972,
+      "min_us": 729.1659712791443,
+      "p90_us": 889.708986505866
+    },
+    "epoch_read": {
+      "n": 200,
+      "median_us": 191.62497483193874,
+      "mean_us": 201.36774866841733,
+      "min_us": 163.95817510783672,
+      "p90_us": 239.91684429347515
+    },
+    "epoch_read_wide": {
+      "n": 200,
+      "median_us": 147.31253031641245,
+      "mean_us": 150.8741092402488,
+      "min_us": 124.66707266867161,
+      "p90_us": 169.16589811444283
+    },
+    "epoch_read_plus_exists": {
+      "n": 200,
+      "median_us": 844.0414676442742,
+      "mean_us": 828.3364225644618,
+      "min_us": 726.9999478012323,
+      "p90_us": 888.1671819835901
+    },
+    "sync_probe_gateless": {
+      "n": 40,
+      "median_us": 1110.4579316452146,
+      "mean_us": 1135.781267657876,
+      "min_us": 1053.7500493228436,
+      "p90_us": 1235.5418875813484
+    },
+    "sync_probe_gated": {
+      "n": 40,
+      "median_us": 1144.4169795140624,
+      "mean_us": 1174.3542505428195,
+      "min_us": 1058.167079463601,
+      "p90_us": 1350.790960714221
+    },
+    "sync_exists_nokind": {
+      "n": 200,
+      "median_us": 2.2079329937696457,
+      "mean_us": 2.3503857664763927,
+      "min_us": 2.1248124539852142,
+      "p90_us": 2.4167820811271667
+    },
+    "sync_exists_kind": {
+      "n": 200,
+      "median_us": 7775.916485115886,
+      "mean_us": 7806.675806641579,
+      "min_us": 7187.000010162592,
+      "p90_us": 8420.75003311038
+    },
+    "plan_gateless": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_gated": [
+      "SEARCH vfs USING INDEX ix_vfs_encoded (encoded=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ],
+    "plan_exists_nokind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SCAN vfs USING COVERING INDEX ix_vfs_encoded"
+    ],
+    "plan_exists_kind": [
+      "SCAN CONSTANT ROW",
+      "SCALAR SUBQUERY 1",
+      "SEARCH vfs USING INDEX ix_vfs_kind (kind=?)"
+    ]
+  }
+]

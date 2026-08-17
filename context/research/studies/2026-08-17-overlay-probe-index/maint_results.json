@@ -1,0 +1,48 @@
+[
+  {
+    "variant": "v_base",
+    "ddl_ms": 0.0035830307751893997,
+    "insert_10k_ms": 54.81637502089143,
+    "pending_files": 103760,
+    "flip_all_ms": 198.5912499949336,
+    "flipped": 207520,
+    "index_sizes_kib": {
+      "ix_vfs_encoded": 1104
+    }
+  },
+  {
+    "variant": "v_partial",
+    "ddl_ms": 15.591250034049153,
+    "insert_10k_ms": 56.73062498681247,
+    "pending_files": 103760,
+    "flip_all_ms": 228.849875042215,
+    "flipped": 207520,
+    "index_sizes_kib": {
+      "ix_vfs_encoded": 1104,
+      "ix_vfs_pending": 80
+    }
+  },
+  {
+    "variant": "v_composite_add",
+    "ddl_ms": 23.6069168895483,
+    "insert_10k_ms": 57.936707977205515,
+    "pending_files": 103760,
+    "flip_all_ms": 259.06295888125896,
+    "flipped": 207520,
+    "index_sizes_kib": {
+      "ix_vfs_encoded": 1104,
+      "ix_vfs_encoded_kind": 1744
+    }
+  },
+  {
+    "variant": "v_composite_repl",
+    "ddl_ms": 23.487792117521167,
+    "insert_10k_ms": 55.99237489514053,
+    "pending_files": 103760,
+    "flip_all_ms": 209.57370894029737,
+    "flipped": 207520,
+    "index_sizes_kib": {
+      "ix_vfs_encoded_kind": 1744
+    }
+  }
+]

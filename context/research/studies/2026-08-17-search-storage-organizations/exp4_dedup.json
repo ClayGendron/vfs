@@ -1,0 +1,40 @@
+{
+ "hash_source": "sha256(utf8)",
+ "files": 93664,
+ "bytes": 1221391709,
+ "dup_groups": 382,
+ "redundant_files": 575,
+ "redundant_bytes": 3258272,
+ "redundant_files_pct": 0.6138964810386061,
+ "redundant_bytes_pct": 0.26676716208166107,
+ "bench_rows": {
+  "mutex_lock@drm": {
+   "candidates": 683,
+   "duplicate_candidates": 0,
+   "fetch_bytes_today": 93782792,
+   "bytes_saved_by_cas": 0,
+   "saving_pct": 0.0
+  },
+  "kzalloc@drivers/net": {
+   "candidates": 1437,
+   "duplicate_candidates": 0,
+   "fetch_bytes_today": 64665176,
+   "bytes_saved_by_cas": 0,
+   "saving_pct": 0.0
+  },
+  "EXPORT_SYMBOL_GPL@drivers": {
+   "candidates": 2465,
+   "duplicate_candidates": 0,
+   "fetch_bytes_today": 111568262,
+   "bytes_saved_by_cas": 0,
+   "saving_pct": 0.0
+  },
+  "copyright -i unscoped": {
+   "candidates": 25000,
+   "duplicate_candidates": 13,
+   "fetch_bytes_today": 419938583,
+   "bytes_saved_by_cas": 29953,
+   "saving_pct": 0.0071327096895976334
+  }
+ }
+}

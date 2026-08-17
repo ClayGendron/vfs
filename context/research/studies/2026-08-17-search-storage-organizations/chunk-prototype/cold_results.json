@@ -1,0 +1,609 @@
+{
+  "scoped-01 EXPORT_SYMBOL_GPL @ drivers/**": {
+    "file:25000": {
+      "median_ms": 468.0331232957542,
+      "all_ms": [
+        478.74362277798355,
+        479.72199809737504,
+        461.41591714695096,
+        468.0331232957542,
+        465.33941361121833
+      ],
+      "last": {
+        "total_ms": 465.33941361121833,
+        "stages_ms": {
+          "session_open": 0.00874977558851242,
+          "compile": 0.19149994477629662,
+          "epoch_read": 0.8536661043763161,
+          "allow_list": 58.554374845698476,
+          "posting_meta": 6.6983329597860575,
+          "posting_blobs": 0.4944999236613512,
+          "decode_intersect": 5.799917038530111,
+          "allow_map": 0.6429171189665794,
+          "allow_intersect": 1.1445831041783094,
+          "entries_fetch": 47.343917191028595,
+          "gate": 2.1410828921943903,
+          "content_fetch": 324.0264989435673,
+          "verify": 15.81216580234468,
+          "collect": 1.6272079665213823
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": 40262,
+          "deferred": false,
+          "posting_bytes": 39871,
+          "laddered_docs": 2467,
+          "budgeted_docs": 2467,
+          "candidate_entries": 2467,
+          "gated_entries": 2465,
+          "fetch_units": 2465,
+          "fetch_bytes": 111568262,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 13073
+      }
+    },
+    "chunk:none": {
+      "median_ms": 489.3682496622205,
+      "all_ms": [
+        482.3771647643298,
+        489.7626235615462,
+        499.6053350623697,
+        489.3682496622205,
+        487.16208525002
+      ],
+      "last": {
+        "total_ms": 487.16208525002,
+        "stages_ms": {
+          "session_open": 0.008834060281515121,
+          "compile": 0.2057498786598444,
+          "epoch_read": 0.9644171223044395,
+          "allow_list": 57.79870902188122,
+          "posting_meta": 8.221083087846637,
+          "posting_blobs": 0.35120919346809387,
+          "decode_intersect": 11.255874997004867,
+          "allow_map": 70.9691250231117,
+          "allow_intersect": 13.389249797910452,
+          "chunk_map": 45.062333112582564,
+          "entries_fetch": 42.95537481084466,
+          "gate": 1.8024169839918613,
+          "content_fetch": 221.31854202598333,
+          "verify": 10.896166088059545,
+          "collect": 1.9630000460892916
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": 40262,
+          "deferred": false,
+          "posting_bytes": 133760,
+          "laddered_docs": 7931,
+          "budgeted_docs": 7931,
+          "candidate_entries": 2138,
+          "gated_entries": 2137,
+          "fetch_units": 7930,
+          "fetch_bytes": 13285906,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 13073
+      }
+    }
+  },
+  "scoped-02 kzalloc @ drivers/net/**": {
+    "file:25000": {
+      "median_ms": 223.36304234340787,
+      "all_ms": [
+        223.36304234340787,
+        222.5415832363069,
+        225.370709085837,
+        222.25408419035375,
+        225.8417080156505
+      ],
+      "last": {
+        "total_ms": 225.8417080156505,
+        "stages_ms": {
+          "session_open": 0.00929180532693863,
+          "compile": 0.20308303646743298,
+          "epoch_read": 0.8857077918946743,
+          "allow_list": 33.66808407008648,
+          "posting_meta": 2.7288340497761965,
+          "posting_blobs": 0.47208298929035664,
+          "decode_intersect": 10.528041049838066,
+          "allow_map": 0.1232498325407505,
+          "allow_intersect": 0.50783297047019,
+          "entries_fetch": 17.22983317449689,
+          "gate": 1.2412499636411667,
+          "content_fetch": 149.35775008052588,
+          "verify": 8.435500087216496,
+          "collect": 0.45116711407899857
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": 7501,
+          "deferred": false,
+          "posting_bytes": 124856,
+          "laddered_docs": 1447,
+          "budgeted_docs": 1447,
+          "candidate_entries": 1447,
+          "gated_entries": 1437,
+          "fetch_units": 1437,
+          "fetch_bytes": 64665176,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 3938
+      }
+    },
+    "chunk:none": {
+      "median_ms": 263.6688316706568,
+      "all_ms": [
+        270.1609591022134,
+        270.85854043252766,
+        263.6688316706568,
+        262.7357915043831,
+        263.3876260370016
+      ],
+      "last": {
+        "total_ms": 263.3876260370016,
+        "stages_ms": {
+          "session_open": 0.00895792618393898,
+          "compile": 0.21112500689923763,
+          "epoch_read": 0.9547499939799309,
+          "allow_list": 33.695707796141505,
+          "posting_meta": 3.7037089932709932,
+          "posting_blobs": 0.3184170927852392,
+          "decode_intersect": 27.66454196535051,
+          "allow_map": 14.373125042766333,
+          "allow_intersect": 3.021917073056102,
+          "chunk_map": 17.05124997533858,
+          "entries_fetch": 17.13800011202693,
+          "gate": 1.301957992836833,
+          "content_fetch": 139.53041704371572,
+          "verify": 3.8330000825226307,
+          "collect": 0.5807499401271343
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": 7501,
+          "deferred": false,
+          "posting_bytes": 472421,
+          "laddered_docs": 3213,
+          "budgeted_docs": 3213,
+          "candidate_entries": 1447,
+          "gated_entries": 1437,
+          "fetch_units": 3175,
+          "fetch_bytes": 5598755,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 3938
+      }
+    }
+  },
+  "scoped-03 mutex_lock @ drivers/gpu/drm/**": {
+    "file:25000": {
+      "median_ms": 251.35808275081217,
+      "all_ms": [
+        250.07245340384543,
+        251.35808275081217,
+        249.28104039281607,
+        259.4888776075095,
+        259.10699740052223
+      ],
+      "last": {
+        "total_ms": 259.10699740052223,
+        "stages_ms": {
+          "session_open": 0.009874813258647919,
+          "compile": 0.20975014194846153,
+          "epoch_read": 1.0173751506954432,
+          "allow_list": 40.41879205033183,
+          "posting_meta": 4.359333077445626,
+          "posting_blobs": 0.613250071182847,
+          "decode_intersect": 7.078041788190603,
+          "allow_map": 0.1721661537885666,
+          "allow_intersect": 0.366083113476634,
+          "entries_fetch": 14.672332908958197,
+          "gate": 0.6292080506682396,
+          "content_fetch": 179.50120894238353,
+          "verify": 9.782373905181885,
+          "collect": 0.27720723301172256
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": 8460,
+          "deferred": false,
+          "posting_bytes": 58370,
+          "laddered_docs": 683,
+          "budgeted_docs": 683,
+          "candidate_entries": 683,
+          "gated_entries": 683,
+          "fetch_units": 683,
+          "fetch_bytes": 93782792,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 2506
+      }
+    },
+    "chunk:none": {
+      "median_ms": 168.2254569604993,
+      "all_ms": [
+        177.65295947901905,
+        168.16049884073436,
+        168.2254569604993,
+        165.33825010992587,
+        169.7102072648704
+      ],
+      "last": {
+        "total_ms": 169.7102072648704,
+        "stages_ms": {
+          "session_open": 0.008582836017012596,
+          "compile": 0.18208404071629047,
+          "epoch_read": 0.940999947488308,
+          "allow_list": 37.241082871332765,
+          "posting_meta": 4.537333035841584,
+          "posting_blobs": 0.2604168839752674,
+          "decode_intersect": 14.993082964792848,
+          "allow_map": 15.95250004902482,
+          "allow_intersect": 4.300375003367662,
+          "chunk_map": 10.097582824528217,
+          "entries_fetch": 11.500166030600667,
+          "gate": 0.4973339382559061,
+          "content_fetch": 65.8950419165194,
+          "verify": 2.9481251258403063,
+          "collect": 0.3554997965693474
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": 8460,
+          "deferred": false,
+          "posting_bytes": 214280,
+          "laddered_docs": 1875,
+          "budgeted_docs": 1875,
+          "candidate_entries": 580,
+          "gated_entries": 580,
+          "fetch_units": 1875,
+          "fetch_bytes": 3253804,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 2506
+      }
+    }
+  },
+  "unscoped copyright -i": {
+    "file:25000": {
+      "median_ms": 1114.9543339852244,
+      "all_ms": [
+        1123.2617481146008,
+        1147.0728346612304,
+        1110.8936294913292,
+        1110.7080802321434,
+        1114.9543339852244
+      ],
+      "last": {
+        "total_ms": 1114.9543339852244,
+        "stages_ms": {
+          "session_open": 0.008417060598731041,
+          "compile": 0.2737501636147499,
+          "epoch_read": 0.8643330074846745,
+          "allow_list": 0.0013748649507761002,
+          "posting_meta": 4.86312503926456,
+          "posting_blobs": 0.43154205195605755,
+          "decode_intersect": 19.803875125944614,
+          "entries_fetch": 166.4106249809265,
+          "gate": 2.4939170107245445,
+          "content_fetch": 845.642875880003,
+          "verify": 66.25579064711928,
+          "collect": 7.904708152636886
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 237438,
+          "laddered_docs": 57785,
+          "budgeted_docs": 25000,
+          "candidate_entries": 25000,
+          "gated_entries": 25000,
+          "fetch_units": 25000,
+          "fetch_bytes": 419938583,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": [
+            "candidate budget"
+          ]
+        },
+        "n_pairs": 40926
+      }
+    },
+    "chunk:25000": {
+      "median_ms": 812.3912077862769,
+      "all_ms": [
+        813.454250106588,
+        789.4203762989491,
+        812.3912077862769,
+        800.3563734237105,
+        834.0059982147068
+      ],
+      "last": {
+        "total_ms": 834.0059982147068,
+        "stages_ms": {
+          "session_open": 0.00833277590572834,
+          "compile": 0.23554102517664433,
+          "epoch_read": 0.8425419218838215,
+          "allow_list": 0.0013748649507761002,
+          "posting_meta": 5.201500141993165,
+          "posting_blobs": 0.27637509629130363,
+          "decode_intersect": 22.911249892786145,
+          "chunk_map": 58.84045804850757,
+          "entries_fetch": 167.55899996496737,
+          "gate": 2.492208033800125,
+          "content_fetch": 535.4902080725878,
+          "verify": 32.62237412855029,
+          "collect": 7.524834247305989
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": 25000,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 295553,
+          "laddered_docs": 58144,
+          "budgeted_docs": 25000,
+          "candidate_entries": 24883,
+          "gated_entries": 24883,
+          "fetch_units": 25000,
+          "fetch_bytes": 39103162,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": [
+            "candidate budget"
+          ]
+        },
+        "n_pairs": 40763
+      }
+    },
+    "chunk:none": {
+      "median_ms": 2155.969956656918,
+      "all_ms": [
+        2169.949836563319,
+        2199.812458595261,
+        2154.308414552361,
+        2155.969956656918,
+        2136.9478721171618
+      ],
+      "last": {
+        "total_ms": 2136.9478721171618,
+        "stages_ms": {
+          "session_open": 0.009249895811080933,
+          "compile": 0.278000021353364,
+          "epoch_read": 0.8322079665958881,
+          "allow_list": 0.004291068762540817,
+          "posting_meta": 5.37258293479681,
+          "posting_blobs": 0.30987500213086605,
+          "decode_intersect": 23.07883300818503,
+          "chunk_map": 137.53525004722178,
+          "entries_fetch": 410.9310421627015,
+          "gate": 6.1587500385940075,
+          "content_fetch": 1462.611790979281,
+          "verify": 71.68262405321002,
+          "collect": 18.14337493851781
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 295553,
+          "laddered_docs": 58144,
+          "budgeted_docs": 58144,
+          "candidate_entries": 57783,
+          "gated_entries": 57783,
+          "fetch_units": 58144,
+          "fetch_bytes": 92834331,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 88861
+      }
+    }
+  },
+  "unscoped kfree -w": {
+    "file:25000": {
+      "median_ms": 1119.4577519781888,
+      "all_ms": [
+        1102.0234131719917,
+        1149.072457337752,
+        1121.066671796143,
+        1105.9501238632947,
+        1119.4577519781888
+      ],
+      "last": {
+        "total_ms": 1119.4577519781888,
+        "stages_ms": {
+          "session_open": 0.00895792618393898,
+          "compile": 0.1595409121364355,
+          "epoch_read": 0.9332089684903622,
+          "allow_list": 0.0014579854905605316,
+          "posting_meta": 2.400666940957308,
+          "posting_blobs": 0.4626659210771322,
+          "decode_intersect": 8.689500158652663,
+          "entries_fetch": 124.06166712753475,
+          "gate": 1.0526247788220644,
+          "content_fetch": 904.9527510069311,
+          "verify": 70.0338336173445,
+          "collect": 6.700876634567976
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 91188,
+          "laddered_docs": 11071,
+          "budgeted_docs": 11071,
+          "candidate_entries": 11071,
+          "gated_entries": 11071,
+          "fetch_units": 11071,
+          "fetch_bytes": 380876883,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 42148
+      }
+    },
+    "chunk:none": {
+      "median_ms": 1224.6577912010252,
+      "all_ms": [
+        1270.3163344413042,
+        1194.878167938441,
+        1169.6126675233245,
+        1287.8136637154967,
+        1224.6577912010252
+      ],
+      "last": {
+        "total_ms": 1224.6577912010252,
+        "stages_ms": {
+          "session_open": 0.008875038474798203,
+          "compile": 0.15604100190103054,
+          "epoch_read": 0.9326250292360783,
+          "allow_list": 0.001458916813135147,
+          "posting_meta": 2.2153330501168966,
+          "posting_blobs": 0.28841709718108177,
+          "decode_intersect": 19.205791875720024,
+          "chunk_map": 100.34562484361231,
+          "entries_fetch": 124.54208312556148,
+          "gate": 1.1760001070797443,
+          "content_fetch": 931.4835001714528,
+          "verify": 35.20787484012544,
+          "collect": 9.094166103750467
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 295869,
+          "laddered_docs": 31467,
+          "budgeted_docs": 31467,
+          "candidate_entries": 10958,
+          "gated_entries": 10958,
+          "fetch_units": 31467,
+          "fetch_bytes": 54008582,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 42148
+      }
+    }
+  },
+  "unscoped randomize_kstack_offset": {
+    "file:25000": {
+      "median_ms": 51.64299858734012,
+      "all_ms": [
+        51.594831980764866,
+        51.64299858734012,
+        52.28750058449805,
+        51.60262458957732,
+        52.25295666605234
+      ],
+      "last": {
+        "total_ms": 52.25295666605234,
+        "stages_ms": {
+          "session_open": 0.00958307646214962,
+          "compile": 0.14308281242847443,
+          "epoch_read": 0.8459580130875111,
+          "allow_list": 0.001500127837061882,
+          "posting_meta": 9.028416825458407,
+          "posting_blobs": 0.5004578270018101,
+          "decode_intersect": 4.123209044337273,
+          "entries_fetch": 11.82062504813075,
+          "gate": 0.008333008736371994,
+          "content_fetch": 24.47149995714426,
+          "verify": 1.287457998842001,
+          "collect": 0.012832926586270332
+        },
+        "metrics": {
+          "mode": "file",
+          "budget": 25000,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 13496,
+          "laddered_docs": 64,
+          "budgeted_docs": 64,
+          "candidate_entries": 64,
+          "gated_entries": 64,
+          "fetch_units": 64,
+          "fetch_bytes": 5171407,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 14
+      }
+    },
+    "chunk:none": {
+      "median_ms": 32.23454230464995,
+      "all_ms": [
+        31.536498805508018,
+        32.157334266230464,
+        33.889331854879856,
+        32.24491630680859,
+        32.23454230464995
+      ],
+      "last": {
+        "total_ms": 32.23454230464995,
+        "stages_ms": {
+          "session_open": 0.008458038792014122,
+          "compile": 0.14341715723276138,
+          "epoch_read": 0.9379589464515448,
+          "allow_list": 0.0013748649507761002,
+          "posting_meta": 10.284374933689833,
+          "posting_blobs": 0.2187499776482582,
+          "decode_intersect": 4.381875041872263,
+          "chunk_map": 3.965958021581173,
+          "entries_fetch": 6.774167064577341,
+          "gate": 0.00520818866789341,
+          "content_fetch": 5.299790995195508,
+          "verify": 0.2062499988824129,
+          "collect": 0.006959075108170509
+        },
+        "metrics": {
+          "mode": "chunk",
+          "budget": null,
+          "allow_entries": null,
+          "deferred": false,
+          "posting_bytes": 29584,
+          "laddered_docs": 30,
+          "budgeted_docs": 30,
+          "candidate_entries": 28,
+          "gated_entries": 28,
+          "fetch_units": 30,
+          "fetch_bytes": 52747,
+          "scan_units": 0,
+          "scan_bytes": 0,
+          "truncations": []
+        },
+        "n_pairs": 14
+      }
+    }
+  }
+}

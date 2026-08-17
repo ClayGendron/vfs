@@ -1,0 +1,15 @@
+{
+ "plan_gram_count": 7,
+ "chosen_gram_count": 4,
+ "posting_bytes_read_today": 237438,
+ "identical_plan_for_both_case_modes": true,
+ "raw_index_i_lookup_expansion": 56,
+ "expansion_factor": 8.0,
+ "sample_files": 500,
+ "raw_gram_doc_pairs": 747645,
+ "folded_gram_doc_pairs": 671987,
+ "folded_pair_ratio": 0.8988049140969311,
+ "raw_vocab": 78970,
+ "folded_vocab": 56215,
+ "folded_vocab_ratio": 0.7118526022540205
+}

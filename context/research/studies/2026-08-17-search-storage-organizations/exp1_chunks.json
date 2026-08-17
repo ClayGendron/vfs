@@ -1,0 +1,53 @@
+{
+ "mutex_lock@drm": {
+  "fetch_bytes_today": 93782792,
+  "ideal_match_chunk_bytes": 3227078,
+  "ideal_reduction_factor": 29.06121017217433,
+  "match_chunks": 1860,
+  "chunks_in_matched_files": 13654,
+  "realistic_chunk_bytes": 3253804,
+  "realistic_reduction_factor": 28.822508055187097,
+  "realistic_chunks": 1875,
+  "chunks_in_all_candidates": 49334
+ },
+ "kzalloc@drivers/net": {
+  "fetch_bytes_today": 64665176,
+  "ideal_match_chunk_bytes": 5629023,
+  "ideal_reduction_factor": 11.487815203455378,
+  "match_chunks": 3190,
+  "chunks_in_matched_files": 38598,
+  "realistic_chunk_bytes": 5598755,
+  "realistic_reduction_factor": 11.549920652002097,
+  "realistic_chunks": 3175,
+  "chunks_in_all_candidates": 38598
+ },
+ "EXPORT_SYMBOL_GPL@drivers": {
+  "fetch_bytes_today": 111568262,
+  "ideal_match_chunk_bytes": 12894032,
+  "ideal_reduction_factor": 8.652705530744766,
+  "match_chunks": 7701,
+  "chunks_in_matched_files": 31811,
+  "realistic_chunk_bytes": 13352976,
+  "realistic_reduction_factor": 8.35531060641463,
+  "realistic_chunks": 7968,
+  "chunks_in_all_candidates": 63003
+ },
+ "copyright -i unscoped": {
+  "fetch_bytes_today": 419938583,
+  "ideal_match_chunk_bytes": 39328458,
+  "ideal_reduction_factor": 10.677728147897383,
+  "match_chunks": 25116,
+  "chunks_in_matched_files": 238837,
+  "realistic_chunk_bytes": 39327813,
+  "realistic_reduction_factor": 10.677903269118982,
+  "realistic_chunks": 25116,
+  "chunks_in_all_candidates": 238899
+ },
+ "posting_sample": {
+  "sample_files": 500,
+  "sample_chunks": 3165,
+  "gram_file_pairs": 671987,
+  "gram_chunk_pairs": 1626526,
+  "posting_multiplier": 2.4204724198533603
+ }
+}

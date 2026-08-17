@@ -1,0 +1,12 @@
+{
+ "files": 500,
+ "chunks": 3165,
+ "file_pairs": 671987,
+ "file_blob_bytes": 770046,
+ "file_bytes_per_pair": 1.1459239538860126,
+ "chunk_pairs": 1626526,
+ "chunk_blob_bytes": 1831149,
+ "chunk_bytes_per_pair": 1.1258037067959565,
+ "pair_multiplier": 2.4204724198533603,
+ "blob_multiplier": 2.3779735236596253
+}
