@@ -499,9 +499,9 @@ class TestBudgets:
         batches: list[list[str]] = []
         real = grep_module._content_for_entries
 
-        async def recording(session, tables, membership_budget, entry_ids):
+        async def recording(session, tables, profile, membership_budget, entry_ids):
             batches.append(list(entry_ids))
-            return await real(session, tables, membership_budget, entry_ids)
+            return await real(session, tables, profile, membership_budget, entry_ids)
 
         monkeypatch.setattr(grep_module, "_content_for_entries", recording)
         files = {f"/f{i}.txt": f"needle padding padding {i:04d}" for i in range(3)}
@@ -518,9 +518,9 @@ class TestBudgets:
         fetches: list[object] = []
         real = grep_module._content_for_entries
 
-        async def counting(session, tables, membership_budget, entry_ids):
+        async def counting(session, tables, profile, membership_budget, entry_ids):
             fetches.append(entry_ids)
-            return await real(session, tables, membership_budget, entry_ids)
+            return await real(session, tables, profile, membership_budget, entry_ids)
 
         monkeypatch.setattr(grep_module, "_content_for_entries", counting)
         storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
@@ -741,4 +741,50 @@ class TestOverlayGate:
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         assert scan_spy == [False]
+        await storage.close()
+
+
+class TestBytesContentPath:
+    """The dialect-declared bytes fetch: cast on sqlite, str on the floor."""
+
+    async def test_sqlite_fetches_bodies_as_bytes(self, tmp_path: Any) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "hé body\n"})
+        host = storage._host
+        async with host.session_factory() as session:
+            entries = (await session.execute(select(host.tables.entry.c.entry_id))).scalars().all()
+            contents = await grep_module._content_for_entries(
+                session, host.tables, host.profile, host.membership_budget, list(entries)
+            )
+        assert list(contents.values()) == ["hé body\n".encode()]
+        await storage.close()
+
+    async def test_undeclared_profiles_fetch_str(self, tmp_path: Any) -> None:
+        from dataclasses import replace
+
+        storage = await _fresh(tmp_path, {"/a.txt": "hé body\n"})
+        host = storage._host
+        floor = replace(host.profile, content_bytes=False)
+        async with host.session_factory() as session:
+            entries = (await session.execute(select(host.tables.entry.c.entry_id))).scalars().all()
+            contents = await grep_module._content_for_entries(
+                session, host.tables, floor, host.membership_budget, list(entries)
+            )
+        assert list(contents.values()) == ["hé body\n"]
+        await storage.close()
+
+    async def test_unicode_bodies_round_trip_every_mode(self, tmp_path: Any) -> None:
+        body = "hé\nwörld🚀 needle\nplain é\n"
+        storage = await _fresh(tmp_path, {"/u.txt": body, "/miss.txt": "nothing\n"})
+        for world in ("overlay", "encoded"):
+            if world == "encoded":
+                assert (await storage.reindex()).success is True
+            lines = await storage.grep(pattern="needle", columns=frozenset({"content"}))
+            assert _paths(lines) == ["/u.txt"]
+            assert lines.observations[0].content == body
+            assert [(m.start, m.match) for m in lines.observations[0].matches or []] == [(2, 2)]
+            counts = await storage.grep(pattern="needle", output_mode="count")
+            assert [(str(o.path), o.score) for o in counts.observations] == [("/u.txt", 1.0)]
+            files = await storage.grep(pattern="wörld🚀", output_mode="files")
+            assert _paths(files) == ["/u.txt"]
+            assert files.observations[0].content is None
         await storage.close()

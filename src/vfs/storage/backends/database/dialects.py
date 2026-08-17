@@ -103,6 +103,16 @@ class DialectProfile:
     :func:`~vfs.storage.backends.database.descent.escape_like` escapes
     ``[`` exactly where this is declared.
 
+    ``content_bytes`` declares that casting the content column to the
+    engine's bytes type returns exactly the column's UTF-8 bytes, cheaply
+    — true where TEXT is stored as UTF-8 and the cast is a
+    reinterpretation (sqlite: TEXT and BLOB share storage). Grep fetches
+    bodies as bytes where declared, skipping the driver's decode and the
+    matcher seam's re-encode; everywhere else bodies stay ``str``. Never
+    declare it where the cast transcodes (NVARCHAR's UTF-16) or where
+    the database character set may not be UTF-8 — wrong bytes match
+    nothing, silently.
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
@@ -133,6 +143,7 @@ class DialectProfile:
     values_join: bool = False
     tuple_in: bool = False
     like_bracket_class: bool = False
+    content_bytes: bool = False
 
 
 SQLITE: Final = DialectProfile(
@@ -159,6 +170,7 @@ SQLITE: Final = DialectProfile(
     # discipline bug classified loudly, deliberately NOT retryable.
     retryable_sqlite_codes=frozenset({5}),
     tuple_in=True,
+    content_bytes=True,
 )
 
 POSTGRESQL: Final = DialectProfile(

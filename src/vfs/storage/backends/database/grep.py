@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import and_, case, or_, select
+from sqlalchemy import LargeBinary, and_, case, cast, or_, select
 
 from vfs.models import CONTENT_KINDS, Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
@@ -57,6 +57,7 @@ from vfs.models.postings import PostingCorruptionError, decode_postings
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
+    Body,
     GlobFilter,
     PatternError,
     compile_filter,
@@ -294,7 +295,8 @@ async def grep_rows(
             if "wall-time budget" not in truncations:
                 truncations.append("wall-time budget")
             break
-        contents = await _content_for_entries(session, tables, membership_budget, [m["entry_id"] for m in batch])
+        ids = [m["entry_id"] for m in batch]
+        contents = await _content_for_entries(session, tables, profile, membership_budget, ids)
         paired = [(m, text) for m in batch if (text := contents.get(m["entry_id"])) is not None]
         if not paired:
             continue
@@ -703,13 +705,23 @@ def _content_batches(ordered: Sequence[RowMapping]) -> Iterator[list[RowMapping]
 
 
 async def _content_for_entries(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, entry_ids: Sequence[EntryId]
-) -> dict[EntryId, str]:
-    """``entry_id → full body text`` for one verification batch."""
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    entry_ids: Sequence[EntryId],
+) -> dict[EntryId, Body]:
+    """``entry_id → full body`` for one verification batch.
+
+    Where the profile declares ``content_bytes`` the body comes back as
+    the column's UTF-8 bytes — the driver skips its decode and the
+    matcher takes them as-is; only hit rows ever decode, at assembly.
+    """
     content = tables.content
-    out: dict[EntryId, str] = {}
+    body = cast(content.c.content, LargeBinary).label("content") if profile.content_bytes else content.c.content
+    out: dict[EntryId, Body] = {}
     for chunk in chunked(sorted(set(entry_ids)), membership_budget):
-        stmt = select(content.c.entry_id, content.c.content).where(content.c.entry_id.in_(chunk))
+        stmt = select(content.c.entry_id, body).where(content.c.entry_id.in_(chunk))
         out.update({row.entry_id: row.content for row in await session.execute(stmt)})
     return out
 
@@ -718,7 +730,7 @@ def _observe_hit(
     mapping: RowMapping,
     projected: tuple[str, ...],
     mask: frozenset[str],
-    text: str,
+    text: Body,
     matches: list[Match] | None,
     score: float | None,
     *,
@@ -727,15 +739,16 @@ def _observe_hit(
     """One result row; only ``lines`` mode may carry the body.
 
     ``files`` and ``count`` verdicts retain no content — the body was
-    needed to verify, never to report. *projected* (the non-content
-    fetched fields) and *mask* (the populated set) are call-invariant,
-    hoisted by the caller off the per-row path.
+    needed to verify, never to report. Only hit rows reach here, so a
+    bytes-fetched body decodes exactly once per hit. *projected* (the
+    non-content fetched fields) and *mask* (the populated set) are
+    call-invariant, hoisted by the caller off the per-row path.
     """
     values: dict[str, object] = {field: mapping[field] for field in projected}
     # Stored paths passed the gate at write time; re-brand without re-gating.
     values["path"] = Path._brand(mapping["path"])
     if carry_content:
-        values["content"] = text
+        values["content"] = text if isinstance(text, str) else text.decode("utf-8", "surrogatepass")
     if matches is not None:
         values["matches"] = matches
     if score is not None:

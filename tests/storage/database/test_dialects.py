@@ -162,6 +162,13 @@ class TestDialectPolicy:
         assert escape_like("/a[1]b_c%", MSSQL) == "/a\\[1]b\\_c\\%"
         assert escape_like("/a[1]b_c%", ORACLE) == "/a[1]b\\_c\\%"
 
+    def test_content_bytes_is_sqlite_only_until_audited(self) -> None:
+        # The cast must return the column's UTF-8 bytes as a cheap
+        # reinterpretation — proven only on sqlite; servers await audit.
+        assert SQLITE.content_bytes is True
+        for profile in (POSTGRESQL, MSSQL, MYSQL, ORACLE, GENERIC):
+            assert profile.content_bytes is False
+
     def test_values_join_is_declared_only_where_proven(self) -> None:
         # SQLite rejects the column-aliased VALUES join despite declaring
         # update_returning — the bit is earned per engine, floor stays off.
