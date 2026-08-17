@@ -79,9 +79,17 @@ Consequences that bind design work:
 - This is a **uv** project. Run Python and tooling through `uv` — e.g.
   `uv run python ...`, `uv run pytest ...`. Do not invoke the interpreter or
   `pip` directly, and do not manually `source .venv`.
-- **`ruff` and `ty` must stay at zero across `src/` and `tests/`.** They
-  currently pass clean; leave them that way after every change. `src2/` and
-  `tests2/` are excluded in `pyproject.toml` — never chase errors there.
+- **`ruff check`, `ruff format --check`, and `ty` must stay at zero across
+  `src/` and `tests/`.** They currently pass clean; leave them that way
+  after every change. The format gate is not optional: CI runs
+  `ruff format --check`, and format drift has reached `main` twice by
+  sessions running only `ruff check`. `src2/` and `tests2/` are excluded
+  in `pyproject.toml` — never chase errors there.
+- **Before any commit touching `src/`, `tests/`, `crates/`, or
+  `pyproject.toml`, run `scripts/ci.sh 3.13`** (the coverage leg — lint,
+  format, types, tests, 100% coverage, pure-Python engine), or the full
+  matrix `scripts/ci.sh` before a push. It mirrors the CI Tests job
+  exactly; green here means green there.
 - **The Rust engine** lives in `crates/vfs-core` (pyo3 binding behind its
   `python` cargo feature; maturin builds it into the wheel as
   `vfs._native`, fronted by the `vfs/native.py` seam with a pure-Python
