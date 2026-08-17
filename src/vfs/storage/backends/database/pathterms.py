@@ -27,7 +27,8 @@ table can bound. One arm without segment terms voids pruning for the
 whole call (its ``ext``/``name`` facts remain compiled here for the
 fetch pushdown); a term that posts nothing yields an honestly empty
 arm. Ids are the entries-table surrogate ids — the doc-id space the
-gram postings already speak — via one indexed join per term.
+gram postings already speak — via one rarest-first self-join per arm,
+so only each arm's intersection ever leaves the database.
 """
 
 from __future__ import annotations
@@ -35,9 +36,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from vfs.pattern_matching import canonical_pattern, derive_ext, expand_pattern
+from vfs.storage.backends.database.dialects import chunked
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,6 +53,10 @@ if TYPE_CHECKING:
 # the class opener (an unclosed "[" reads literally, but conservatively
 # dropping the term only widens the superset).
 _PATTERN_CHARS: Final = frozenset("*?[")
+
+# Rarest-first join width — like the gram ladder's, selectivity
+# saturates fast; dropping the commonest terms only widens the superset.
+_INTERSECT_TERMS: Final = 4
 
 DocIds = Annotated[list[int], "sorted entries-table surrogate ids - the posting doc-id space"]
 
@@ -133,23 +139,37 @@ def compile_channel(patterns: Sequence[str]) -> ChannelTerms:
 # ---------------------------------------------------------------------------
 
 
-async def allow_list_ids(session: AsyncSession, tables: VFSTables, channel: ChannelTerms) -> DocIds | None:
+async def allow_list_ids(
+    session: AsyncSession, tables: VFSTables, membership_budget: int, channel: ChannelTerms
+) -> DocIds | None:
     """The channel's nomination allow-list, or ``None`` when pruning is void.
 
     ``None`` — never an empty list — means the channel cannot bound
     nomination: no admission glob at all, or some arm without a segment
     term. Otherwise the union over arms of each arm's segment-posting
-    intersection, resolved smallest-first so a dead term short-circuits
-    its arm. Ids arrive per term through one indexed join
-    (``segments → entries``) into the surrogate doc-id space and are
-    returned sorted and deduped. The set is a superset by law —
-    ``ext``/``name`` facts and the compiled authority narrow later.
+    intersection. One grouped count prices every term first (an indexed
+    aggregate, no ids shipped); a zero-count term empties its arm
+    without a fetch, and each surviving arm resolves as **one**
+    rarest-first self-join on the segment table — the engine walks the
+    rarest term's posting and probes the ``(segment, entry_id)`` key for
+    the rest, so only the intersection ever crosses the wire — joined
+    into the surrogate doc-id space and returned sorted and deduped.
+    The set is a superset by law — ``ext``/``name`` facts and the
+    compiled authority narrow later.
     """
     if not channel.prunable:
         return None
+    # Single-term arms need no ordering and no count: their join is
+    # already minimal, and a dead term comes back honestly empty.
+    counts: dict[str, int] | None = None
+    if any(len(arm.segments) > 1 for arm in channel.arms):
+        terms = {term for arm in channel.arms for term in arm.segments}
+        counts = await _term_counts(session, tables, membership_budget, terms)
     admitted: set[int] = set()
     for arm in channel.arms:
-        admitted |= await _arm_ids(session, tables, arm)
+        if counts is not None and not all(counts[term] for term in arm.segments):
+            continue
+        admitted |= await _arm_ids(session, tables, arm, counts)
     return sorted(admitted)
 
 
@@ -195,21 +215,47 @@ def _name_fact(leaf: str) -> NameFact | None:
     return NameFact(text=head, prefix=True)
 
 
-async def _arm_ids(session: AsyncSession, tables: VFSTables, arm: ArmTerms) -> set[int]:
-    """One arm's doc ids: per-term indexed joins, intersected smallest-first."""
-    postings = [await _term_ids(session, tables, term) for term in sorted(arm.segments)]
-    postings.sort(key=len)
-    ids = postings[0]
-    for other in postings[1:]:
-        if not ids:
-            break
-        ids &= other
-    return ids
+async def _term_counts(
+    session: AsyncSession, tables: VFSTables, membership_budget: int, terms: set[str]
+) -> dict[str, int]:
+    """``term → posting row count``, one grouped indexed aggregate per chunk.
+
+    A term the table has never seen counts zero — its arm is honestly
+    empty and never pays a fetch.
+    """
+    segments = tables.segments
+    counts = dict.fromkeys(terms, 0)
+    for chunk in chunked(sorted(terms), membership_budget):
+        stmt = (
+            select(segments.c.segment, func.count())
+            .where(segments.c.segment.in_(chunk))
+            .group_by(segments.c.segment)
+        )
+        for segment, count in await session.execute(stmt):
+            counts[segment] = count
+    return counts
 
 
-async def _term_ids(session: AsyncSession, tables: VFSTables, term: str) -> set[int]:
-    """One segment term's posting, joined into the surrogate doc-id space."""
+async def _arm_ids(
+    session: AsyncSession, tables: VFSTables, arm: ArmTerms, counts: dict[str, int] | None
+) -> set[int]:
+    """One arm's doc ids: a single rarest-first self-join on the segment table.
+
+    Term order seeds the engines that plan joins in written order with
+    the rarest posting as the driving side; width is capped at the
+    rarest ``_INTERSECT_TERMS`` — dropped terms only widen the superset.
+    *counts* is ``None`` only when every arm is single-term: nothing to
+    order, nothing to cap.
+    """
     segments, entry = tables.segments, tables.entry
-    joined = segments.join(entry, segments.c.entry_id == entry.c.entry_id)
-    stmt = select(entry.c.id).select_from(joined).where(segments.c.segment == term)
+    ranked = sorted(arm.segments) if counts is None else sorted(arm.segments, key=lambda term: counts[term])
+    ordered = ranked[:_INTERSECT_TERMS]
+    anchor = segments.alias()
+    joined = anchor.join(entry, anchor.c.entry_id == entry.c.entry_id)
+    conditions = [anchor.c.segment == ordered[0]]
+    for term in ordered[1:]:
+        other = segments.alias()
+        joined = joined.join(other, other.c.entry_id == anchor.c.entry_id)
+        conditions.append(other.c.segment == term)
+    stmt = select(entry.c.id).select_from(joined).where(*conditions)
     return {row.id for row in await session.execute(stmt)}

@@ -11,7 +11,7 @@ import time
 from typing import cast
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from vfs.paths import (
     MAX_PATH_LENGTH,
@@ -473,6 +473,63 @@ class TestPath:
 
         with pytest.raises(ValidationError):
             M(p="/a\x00b")
+
+
+class TestBrandedPassthrough:
+    """The model-boundary fast path: a branded instance skips the re-gate.
+
+    Pins that the passthrough is observationally identical to the gate on
+    a battery of shapes — same value, same type, same dumps, same fields
+    set — and that raw strings (python and json) still gate in full.
+    """
+
+    BATTERY = (
+        "/",
+        "/a",
+        "/a/b.txt",
+        "/a/../b",
+        "/a//b/",
+        "docs/x.md",
+        "/.vfs/trash/2026-07-18/x.txt",
+        "/café/naïve.txt",
+    )
+
+    def test_branded_path_passes_through_identically(self):
+        adapter = TypeAdapter(Path)
+        for raw in self.BATTERY:
+            branded = Path(raw)
+            assert adapter.validate_python(branded) is branded
+
+    def test_passthrough_equals_gate_output(self):
+        class M(BaseModel):
+            p: Path
+
+        for raw in self.BATTERY:
+            from_str = M(p=raw)
+            from_branded = M(p=Path(raw))
+            assert from_str.p == from_branded.p
+            assert type(from_str.p) is Path
+            assert type(from_branded.p) is Path
+            assert from_str.model_dump() == from_branded.model_dump()
+            assert from_str.model_dump_json() == from_branded.model_dump_json()
+            assert from_str.model_fields_set == from_branded.model_fields_set
+
+    def test_raw_strings_still_gate(self):
+        adapter = TypeAdapter(Path)
+        assert adapter.validate_python("/a/../b") == "/b"
+        assert adapter.validate_json('"/a/../b"') == "/b"
+        with pytest.raises(ValidationError):
+            adapter.validate_python("/a\x00b")
+        with pytest.raises(ValidationError):
+            adapter.validate_python(123)
+
+    def test_branded_relative_path_passes_through_identically(self):
+        adapter = TypeAdapter(RelativePath)
+        branded = RelativePath("scripts/x.py")
+        assert adapter.validate_python(branded) is branded
+        assert adapter.validate_python("scripts//x.py") == "scripts/x.py"
+        with pytest.raises(ValidationError):
+            adapter.validate_python("/absolute")
 
 
 # =========================================================================

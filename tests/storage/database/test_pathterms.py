@@ -225,7 +225,7 @@ async def _paths_by_id(storage: DatabaseStorage) -> dict[int, str]:
 async def _allow_list(storage: DatabaseStorage, patterns: tuple[str, ...]) -> list[int] | None:
     channel = compile_channel(patterns)
     async with storage._host.session_factory() as session:
-        return await allow_list_ids(session, storage._host.tables, channel)
+        return await allow_list_ids(session, storage._host.tables, storage._host.membership_budget, channel)
 
 
 class TestAllowListSeam:

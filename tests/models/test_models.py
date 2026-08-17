@@ -664,6 +664,25 @@ class TestObservation:
         assert obs.edge_weight == 0.5
         assert obs.edge_distance == 1.5
 
+    def test_branded_path_row_equals_gated_row(self) -> None:
+        # Backend assembly hands model_validate a pre-branded path; every
+        # row shape must equal the str-gated form field-for-field.
+        matches = [Match(start=1, end=3, match=2, content="x"), Match(start=9, end=9, match=9, content="y")]
+        shapes: list[dict[str, object]] = [
+            {"path": "/src/a.py"},
+            {"path": "/src/a.py", "kind": "file", "size_bytes": 10, "content": "x\n", "version": 2},
+            {"path": "/src/a.py", "kind": "directory", "size_bytes": 7},
+            {"path": "/src/a.py", "matches": matches, "score": None, "mime_type": None},
+            {"path": "/src/a.py", "matches": matches, "populated": frozenset({"path", "matches"})},
+        ]
+        for values in shapes:
+            gated = Observation.model_validate(values)
+            branded = Observation.model_validate({**values, "path": Path("/src/a.py")})
+            for field in Observation.model_fields:
+                assert getattr(gated, field) == getattr(branded, field)
+            assert gated.model_fields_set == branded.model_fields_set
+            assert gated.model_dump() == branded.model_dump()
+
     def test_match_regions_carry_their_own_text(self) -> None:
         chunk_hit = Match(start=10, end=42, content="def login(): ...", score=0.91)
         grep_hit = Match(start=3, end=7, match=5, content="retry()")

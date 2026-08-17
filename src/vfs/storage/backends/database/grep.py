@@ -110,6 +110,13 @@ CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
 # Rarest-first intersection width — selectivity saturates by four grams.
 _INTERSECT_GRAMS: Final = 4
 
+# Scoped-defer pricing, measured on the linux-scale store: ~75 µs to fetch
+# and verify one candidate, ~0.055 µs per posting byte fetched+decoded+
+# intersected, ~500 µs of statement setup per AND-group.
+_CANDIDATE_COST_US: Final = 75.0
+_POSTING_COST_US_PER_BYTE: Final = 0.055
+_GROUP_SETUP_US: Final = 500.0
+
 _REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or scope with paths"
 
 
@@ -201,17 +208,26 @@ async def grep_rows(
         await seam("grep:after-pointer-read")
         # The allow-list joins nomination before the budget: the budget
         # counts scoped candidates, so truncation cannot drop in-scope rows.
-        allow = await allow_list_ids(session, tables, channel)
+        allow = await allow_list_ids(session, tables, membership_budget, channel)
         if allow is not None and not allow:
             doc_ids: DocIds = np.empty(0, dtype=np.int64)
         else:
+            allow_size = len(allow) if allow is not None else None
             try:
-                doc_ids = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline)
+                laddered = await _index_doc_ids(
+                    session, tables, membership_budget, epoch, plan, deadline, allow_size
+                )
             except PostingCorruptionError as exc:
                 error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
-            if allow is not None:
-                doc_ids = np.intersect1d(doc_ids, np.asarray(allow, dtype=np.int64), assume_unique=True)
+            if laddered is None:
+                # The ladder priced above verifying the whole scope: the
+                # allow-list itself is the candidate set, a lawful superset.
+                doc_ids = np.asarray(allow, dtype=np.int64)
+            elif allow is not None:
+                doc_ids = np.intersect1d(laddered, np.asarray(allow, dtype=np.int64), assume_unique=True)
+            else:
+                doc_ids = laddered
         if doc_ids.size > CANDIDATE_BUDGET:
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
@@ -260,6 +276,16 @@ async def grep_rows(
 
     ordered = [candidates[path] for path in sorted(candidates)]
     rows: list[Observation] = []
+    # The projection and populated mask are call-invariant: hoist them
+    # out of the per-row assembly path.
+    projected = tuple(fetched - {"content"})
+    carry_content = "content" in fetched and output_mode == "lines"
+    row_mask = fetched if carry_content else fetched - {"content"}
+    if output_mode == "lines":
+        row_mask = row_mask | {"matches"}
+    elif output_mode == "count":
+        row_mask = row_mask | {"score"}
+    mask = frozenset(row_mask)
     for batch in _content_batches(ordered):
         if monotonic() > deadline:
             if "wall-time budget" not in truncations:
@@ -277,7 +303,7 @@ async def grep_rows(
             for (mapping, text), count in zip(paired, counts, strict=True):
                 if count:
                     score = float(count) if output_mode == "count" else None
-                    rows.append(_observe_hit(mapping, fetched, text, None, score, mode=output_mode))
+                    rows.append(_observe_hit(mapping, projected, mask, text, None, score, carry_content=carry_content))
         else:
             spans, completed = verifier.hit_lines(
                 texts,
@@ -290,7 +316,8 @@ async def grep_rows(
             for (mapping, text), row in zip(paired, spans, strict=True):
                 if row:
                     matches = [Match(start=s, end=e, match=m, content=c) for s, e, m, c in row]
-                    rows.append(_observe_hit(mapping, fetched, text, matches, None, mode=output_mode))
+                    hit = _observe_hit(mapping, projected, mask, text, matches, None, carry_content=carry_content)
+                    rows.append(hit)
         if not completed:
             # The matcher hit the wall mid-batch: bodies it never reached
             # are unverified, so the record must say so loudly.
@@ -315,7 +342,8 @@ async def _index_doc_ids(
     epoch: Epoch | None,
     plan: GramQuery,
     deadline: float,
-) -> DocIds:
+    allow_size: int | None,
+) -> DocIds | None:
     """Candidate entry doc ids for *plan* under the caller-read *epoch*, sorted.
 
     No published epoch means no encoded entries: the index side is
@@ -323,56 +351,97 @@ async def _index_doc_ids(
     read — its post-ladder re-read is what detects a mid-call publish.
     The posting-byte budget is enforced before any blob fetch via the
     stored ``byte_size``.
+
+    The ladder is priced before any blob is fetched: one metadata read
+    covers every AND-group, the rarest-first choice fixes the byte bill,
+    and when *allow_size* (the scoped allow-list's width) is cheaper to
+    verify outright than that bill, the return is ``None`` — the caller
+    takes the allow-list itself as the candidate set, a lawful superset.
+    OR unions groups and AND intersects grams as ever, with the deadline
+    consulted between groups: an expired union stops, and the caller's
+    post-ladder check records the truncation loudly.
     """
     if epoch is None:
         return np.empty(0, dtype=np.int64)
-    budget = [POSTING_BYTE_BUDGET]
-    return await _doc_ids_for_plan(session, tables, membership_budget, epoch, plan, budget, deadline)
-
-
-async def _doc_ids_for_plan(
-    session: AsyncSession,
-    tables: VFSTables,
-    membership_budget: int,
-    epoch: int,
-    plan: GramQuery,
-    budget: list[int],
-    deadline: float,
-) -> DocIds:
-    """One plan node's candidates: OR unions branches, AND intersects grams.
-
-    Branch width is deliberately uncapped (each branch fetches one
-    budget-exempt rarest blob), so the deadline is consulted between
-    branches: an expired union stops, and the caller's post-ladder
-    check records the truncation loudly.
-    """
-    if isinstance(plan, GramOr):
-        parts = [np.empty(0, dtype=np.int64)]
-        for branch in plan.branches:
-            if monotonic() > deadline:
-                break
-            parts.append(await _doc_ids_for_plan(session, tables, membership_budget, epoch, branch, budget, deadline))
-        return np.unique(np.concatenate(parts))
-    grams = sorted(plan.required_grams())
+    groups = _plan_groups(plan)
+    grams = sorted({gram for group in groups for gram in group})
     meta = await _posting_meta(session, tables, membership_budget, epoch, grams)
-    if len(meta) < len(grams):
-        # A required gram indexes nothing — no entry can match.
-        return np.empty(0, dtype=np.int64)
-    chosen: list[GramKey] = []
-    for gram in sorted(meta, key=lambda key: meta[key].doc_count):
-        size = meta[gram].byte_size
-        if chosen and (len(chosen) >= _INTERSECT_GRAMS or size > budget[0]):
+    chosen = _choose_grams(groups, meta)
+    if allow_size is not None and _ladder_defers(chosen, meta, allow_size):
+        return None
+    wanted = sorted({gram for group_chosen in chosen if group_chosen for gram in group_chosen})
+    blobs = await _posting_blobs(session, tables, membership_budget, epoch, wanted)
+    parts = [np.empty(0, dtype=np.int64)]
+    for group_chosen in chosen:
+        if monotonic() > deadline:
             break
-        chosen.append(gram)
-        budget[0] -= size
-    blobs = await _posting_blobs(session, tables, membership_budget, epoch, chosen)
-    ids: NDArray[np.int64] | None = None
-    for gram in chosen:
-        decoded = decode_postings(blobs[gram])
-        ids = decoded if ids is None else np.intersect1d(ids, decoded, assume_unique=True)
-        if ids.size == 0:
-            break
-    return ids if ids is not None else np.empty(0, dtype=np.int64)
+        if not group_chosen:
+            # None: a required gram indexes nothing, the group is empty.
+            # []: a gramless group — it nominates nothing either way.
+            continue
+        ids: NDArray[np.int64] | None = None
+        for gram in group_chosen:
+            decoded = decode_postings(blobs[gram])
+            ids = decoded if ids is None else np.intersect1d(ids, decoded, assume_unique=True)
+            if ids.size == 0:
+                break
+        if ids is not None:
+            parts.append(ids)
+    return np.unique(np.concatenate(parts))
+
+
+def _plan_groups(plan: GramQuery) -> list[tuple[GramKey, ...]]:
+    """The plan's AND-groups in union order, each as its required grams."""
+    if isinstance(plan, GramOr):
+        groups: list[tuple[GramKey, ...]] = []
+        for branch in plan.branches:
+            groups.extend(_plan_groups(branch))
+        return groups
+    return [tuple(sorted(plan.required_grams()))]
+
+
+def _choose_grams(
+    groups: Sequence[tuple[GramKey, ...]], meta: dict[GramKey, PostingMeta]
+) -> list[list[GramKey] | None]:
+    """Each group's fetch list, rarest-first under the shared byte budget.
+
+    ``None`` marks a group with a gram that indexes nothing — no entry
+    can match it. The rarest gram of each group is budget-exempt, so a
+    wide union's byte bill grows with its group count by design.
+    """
+    budget = POSTING_BYTE_BUDGET
+    out: list[list[GramKey] | None] = []
+    for group in groups:
+        if any(gram not in meta for gram in group):
+            out.append(None)
+            continue
+        chosen: list[GramKey] = []
+        for gram in sorted(group, key=lambda key: meta[key].doc_count):
+            size = meta[gram].byte_size
+            if chosen and (len(chosen) >= _INTERSECT_GRAMS or size > budget):
+                break
+            chosen.append(gram)
+            budget -= size
+        out.append(chosen)
+    return out
+
+
+def _ladder_defers(
+    chosen: Sequence[list[GramKey] | None], meta: dict[GramKey, PostingMeta], allow_size: int
+) -> bool:
+    """Whether verifying the whole scope outright beats fetching the blobs.
+
+    Both sides priced from measurement: the ladder at a per-group setup
+    charge plus a per-byte fetch+decode+intersect rate over the chosen
+    blobs, the scope at the per-candidate fetch+verify cost. Deferring
+    only ever trades index work for verify work — recall is untouched.
+    """
+    posting_us = sum(
+        _GROUP_SETUP_US + sum(meta[gram].byte_size for gram in group) * _POSTING_COST_US_PER_BYTE
+        for group in chosen
+        if group
+    )
+    return posting_us > allow_size * _CANDIDATE_COST_US
 
 
 async def _posting_meta(
@@ -623,30 +692,29 @@ async def _content_for_entries(
 
 def _observe_hit(
     mapping: RowMapping,
-    fetched: frozenset[str],
+    projected: tuple[str, ...],
+    mask: frozenset[str],
     text: str,
     matches: list[Match] | None,
     score: float | None,
     *,
-    mode: GrepOutputMode,
+    carry_content: bool,
 ) -> Observation:
     """One result row; only ``lines`` mode may carry the body.
 
     ``files`` and ``count`` verdicts retain no content — the body was
-    needed to verify, never to report.
+    needed to verify, never to report. *projected* (the non-content
+    fetched fields) and *mask* (the populated set) are call-invariant,
+    hoisted by the caller off the per-row path.
     """
-    populated = set(fetched)
-    values: dict[str, object] = {field: mapping[field] for field in fetched - {"content"}}
-    values["path"] = Path(mapping["path"])
-    if "content" in fetched and mode == "lines":
+    values: dict[str, object] = {field: mapping[field] for field in projected}
+    # Stored paths passed the gate at write time; re-brand without re-gating.
+    values["path"] = Path._brand(mapping["path"])
+    if carry_content:
         values["content"] = text
-    else:
-        populated.discard("content")
     if matches is not None:
         values["matches"] = matches
-        populated.add("matches")
     if score is not None:
         values["score"] = score
-        populated.add("score")
-    values["populated"] = frozenset(populated)
+    values["populated"] = mask
     return Observation.model_validate(values)

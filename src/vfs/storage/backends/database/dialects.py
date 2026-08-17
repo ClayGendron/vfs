@@ -141,10 +141,14 @@ SQLITE: Final = DialectProfile(
     in_list_budget=32_766,
     arbitration="upsert",
     guard_miss="reprobe",
+    # mmap_size serves content reads from mapped pages (measured ~20%
+    # off body fetch on the linux store); cache_size is 256 MiB in KiB.
     session_settings=(
         "PRAGMA busy_timeout = 5000",
         "PRAGMA synchronous = FULL",
         "PRAGMA case_sensitive_like = ON",
+        "PRAGMA mmap_size = 8589934592",
+        "PRAGMA cache_size = -262144",
     ),
     # page_size must precede WAL: a WAL database's page size is frozen.
     file_settings=(

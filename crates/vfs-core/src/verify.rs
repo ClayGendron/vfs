@@ -492,6 +492,36 @@ mod tests {
     }
 
     #[test]
+    fn batch_output_is_identical_across_pool_widths() {
+        let matcher = Matcher::new(r"ab?c", false).unwrap();
+        let bodies: Vec<Vec<u8>> = (0..64)
+            .map(|i| {
+                let mut body = Vec::new();
+                for line in 0..(i % 7) * 40 {
+                    if (line + i) % 3 == 0 {
+                        body.extend_from_slice(b"xx abc yy\n");
+                    } else {
+                        body.extend_from_slice(b"nothing here\n");
+                    }
+                }
+                body
+            })
+            .collect();
+        let sequential_counts: Vec<u64> =
+            bodies.iter().map(|b| matcher.count_lines(b, Some(9), false)).collect();
+        let sequential_hits: Vec<Vec<Hit>> =
+            bodies.iter().map(|b| matcher.hit_lines(b, 1, 2, Some(9), false)).collect();
+        for threads in [1, 8] {
+            let pool =
+                rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
+            let counts = pool.install(|| count_batch(&matcher, &bodies, Some(9), false, None));
+            assert_eq!(counts.results, sequential_counts);
+            let hits = pool.install(|| hits_batch(&matcher, &bodies, 1, 2, Some(9), false, None));
+            assert_eq!(hits.results, sequential_hits);
+        }
+    }
+
+    #[test]
     fn batch_reports_counts_and_completion() {
         let matcher = Matcher::new("x", false).unwrap();
         let bodies: Vec<&[u8]> = vec![b"x\n", b"y\n", b"x\nx\n"];

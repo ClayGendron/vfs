@@ -20,15 +20,18 @@ from __future__ import annotations
 
 import posixpath
 import unicodedata
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeVar
 
 from pydantic_core import core_schema
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
+    from pydantic_core.core_schema import ValidatorFunctionWrapHandler
+
+_BrandedT = TypeVar("_BrandedT", bound=str)
 
 
 ObjectKind = Literal["file", "directory"]
@@ -219,11 +222,12 @@ class Path(str):
 
         The single unchecked construction site, called only where canonicality
         is proven: :func:`resolve_path` (on a string it has just normalized and
-        validated) and the rebase pair :meth:`with_mount` / :meth:`without_mount`
+        validated), the rebase pair :meth:`with_mount` / :meth:`without_mount`
         (canonical-absolute concat/strip of two branded paths, length checked
-        explicitly). Going through the public ``Path(...)`` constructor at those
-        sites would recurse back into the gate; every other mint runs the full
-        validation.
+        explicitly), and backend row hydration (a stored path passed the gate
+        at write time, so re-gating every read row is pure overhead). Going
+        through the public ``Path(...)`` constructor at those sites would
+        recurse back into the gate; every other mint runs the full validation.
         """
         return str.__new__(cls, canonical)
 
@@ -336,9 +340,10 @@ class Path(str):
         source_type: type,
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        # Validate-and-coerce str to Path at model boundaries; the str subclass serializes as-is.
-        return core_schema.no_info_after_validator_function(
-            cls,
+        # A branded instance is canonical by construction and passes through
+        # untouched; anything else validates-and-coerces through the one gate.
+        return core_schema.no_info_wrap_validator_function(
+            _passthrough_or_gate(cls),
             core_schema.str_schema(),
         )
 
@@ -436,9 +441,10 @@ class RelativePath(str):
         source_type: type,
         handler: GetCoreSchemaHandler,
     ) -> CoreSchema:
-        # Validate-and-coerce str to RelativePath at model boundaries; the str subclass serializes as-is.
-        return core_schema.no_info_after_validator_function(
-            cls,
+        # A branded instance is canonical by construction and passes through
+        # untouched; anything else validates-and-coerces through the one gate.
+        return core_schema.no_info_wrap_validator_function(
+            _passthrough_or_gate(cls),
             core_schema.str_schema(),
         )
 
@@ -773,6 +779,23 @@ def check_mutable_path(path: Path) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _passthrough_or_gate(cls: type[_BrandedT]) -> Callable[[object, ValidatorFunctionWrapHandler], _BrandedT]:
+    """The pydantic wrap validator for a branded str class.
+
+    A branded instance carries its own proof of canonicality, so it is
+    returned untouched — re-running the gate on every model validation
+    is pure overhead. Any other input runs the inner ``str`` schema and
+    then the class's full constructor gate.
+    """
+
+    def validate(value: object, handler: ValidatorFunctionWrapHandler) -> _BrandedT:
+        if isinstance(value, cls):
+            return value
+        return cls(handler(value))
+
+    return validate
 
 
 def _forbidden_char_reason(text: str) -> str | None:
