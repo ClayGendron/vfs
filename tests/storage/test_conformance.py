@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import event, inspect, select
+from sqlalchemy import event, inspect, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.storage_contract import StorageContract
@@ -466,3 +466,55 @@ class TestMSSQLEncodedKindIndex:
 class TestOracleEncodedKindIndex:
     async def test_index_serves_the_overlay(self) -> None:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_ORACLE_URL")
+
+
+async def _content_bytes_audit(env_var: str, cast_sql: str | None) -> None:
+    """The per-engine bytes-cast audit: opt-in evidence, str-arm correctness.
+
+    Every server profile keeps ``content_bytes`` declined until audited.
+    The leg pins the live str arm on multi-byte content, then records the
+    opt-in precondition where a cheap cast form exists: the cast must
+    yield exactly the body's UTF-8 bytes. A failing cast assertion is the
+    audit verdict — that engine's cast transcodes, keep it declined.
+    """
+    body = "hé\nwörld🚀 needle\nplain é\n"
+    async with _server_storage(env_var) as storage:
+        assert storage._host.profile.content_bytes is False
+        assert (await storage.write(entries=[Entry(path=Path("/u.txt"), content=body)], parents=True)).success is True
+        result = await storage.grep(pattern="needle", columns=frozenset({"content"}))
+        assert [str(o.path) for o in result.observations] == ["/u.txt"]
+        assert result.observations[0].content == body
+        if cast_sql is not None:
+            async with storage._host.session_factory() as session:
+                fetched = (await session.execute(text(cast_sql))).scalar_one()
+            assert bytes(fetched) == body.encode()
+
+
+@pytest.mark.postgres
+class TestPostgresContentBytesAudit:
+    async def test_cast_yields_utf8_bytes(self) -> None:
+        # convert_to transcodes to UTF-8 regardless of server encoding.
+        await _content_bytes_audit("VFS_TEST_POSTGRES_URL", "SELECT convert_to(content, 'UTF8') FROM vfs_content")
+
+
+@pytest.mark.mysql
+class TestMySQLContentBytesAudit:
+    async def test_cast_yields_utf8_bytes(self) -> None:
+        # BINARY yields column-charset bytes: UTF-8 iff the table is utf8mb4.
+        await _content_bytes_audit("VFS_TEST_MYSQL_URL", "SELECT CAST(content AS BINARY) FROM vfs_content")
+
+
+@pytest.mark.mssql
+class TestMSSQLContentBytesAudit:
+    async def test_cast_yields_utf8_bytes(self) -> None:
+        # The column is VARCHAR(max) under the pinned UTF-8 collation, so
+        # VARBINARY reinterprets — NVARCHAR would transcode UTF-16 here.
+        await _content_bytes_audit("VFS_TEST_MSSQL_URL", "SELECT CAST(content AS VARBINARY(MAX)) FROM vfs_content")
+
+
+@pytest.mark.oracle
+class TestOracleContentBytesAudit:
+    async def test_no_cheap_cast_form_stays_declined(self) -> None:
+        # CLOB reaches bytes only through DBMS_LOB conversion in the
+        # database charset — a copy, not a reinterpretation; str arm only.
+        await _content_bytes_audit("VFS_TEST_ORACLE_URL", None)

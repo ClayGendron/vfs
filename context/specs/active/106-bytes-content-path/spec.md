@@ -1,11 +1,38 @@
 # 106 — Bytes through the content path: BLOB fetch and a bytes-native verify seam
 
-- **Status: drafted 2026-08-17** — from two independent
-  measurements: the fetch-path study during the scoped-grep
-  optimization arc (`CAST(content AS BLOB)` fetched 181.6 MB in
-  55.6 ms vs 63.1 ms as text, −12%, while also skipping an 11.4 ms
-  Python-side UTF-8 encode — ~25% off fetch+encode combined) and
-  the storage-organizations research
+- **Status: all slices landed 2026-08-17** (drafted the same day) —
+  slice A: the bytes-native seam (`Body = str | bytes` through
+  `ContentMatcher`, `verify`, `match_texts`; the core takes bytes
+  without the per-call encode, the pure fallback decodes them),
+  parity pinned four ways over the battery plus a
+  multi-byte-at-line-boundary body, mixed batches, and a pure-only
+  twin for the extension-less CI leg. Slice B: the `content_bytes`
+  profile fact (sqlite only; the docstring carries the
+  never-declare-where-the-cast-transcodes doctrine), the
+  `CAST(content AS BLOB)` body fetch, and decode-exactly-once-per-hit
+  at assembly. Both ladders re-ran with identical counts: unscoped
+  rows 6–25% faster (zero-hit floor 55 → 41 ms; `copyright -i`
+  665 → 624 ms), scoped recall exact with **11 of 12 rows ahead of
+  rg** (`mutex_lock @ drm` 106 → 90 ms vs rg 139;
+  `GFP_KERNEL @ mm` 11.7 vs rg 12.9; the lone nominal loss,
+  `spin_lock`, 20.4 vs 19.7 — inside session noise). Fetch alone is
+  arm-neutral (~8.5 µs/candidate) — the wins are the eliminated
+  byte-proportional decode+encode on large bodies; no budget
+  re-derivation. Slice C: the §3 audit landed as per-engine
+  `db_test` legs (skip without servers; not yet run against real
+  engines) — Postgres `convert_to`, MySQL `CAST AS BINARY`, and
+  MSSQL `CAST AS VARBINARY(MAX)` (the column is VARCHAR(max) under
+  the pinned UTF-8 collation, so the cast reinterprets — the audit
+  brief's NVARCHAR worry does not apply to our own schema) each
+  assert the cast yields the body's exact UTF-8 bytes; Oracle's leg
+  records the decline (CLOB reaches bytes only through a DBMS_LOB
+  copy). Profiles flip only when those legs produce server
+  evidence. **Ready for the mining pass.**
+  Born from two independent measurements: the fetch-path study
+  during the scoped-grep optimization arc (`CAST(content AS BLOB)`
+  fetched 181.6 MB in 55.6 ms vs 63.1 ms as text, −12%, while also
+  skipping an 11.4 ms Python-side UTF-8 encode — ~25% off
+  fetch+encode combined) and the storage-organizations research
   (`../../../research/2026-08-17-search-storage-organizations.md`),
   whose line-offset experiment independently found the seam's
   re-encode is 4.9 ms of the 7.6 ms whole-corpus verify. Ranked
