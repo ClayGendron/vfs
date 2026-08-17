@@ -4,15 +4,19 @@ The read side of content search, one coherent epoch per call: compile
 the caller's pattern (outside the grep pattern language classifies
 invalid), plan folded grams unconditionally, refuse a pattern with no
 gram predicate unless ``allow_scan=True`` opts into the scan tier,
-intersect the rarest posting lists into candidate entries, apply the
-structural gates before any content fetch, verify every candidate
-through the shared matcher (the Rust core where the extension serves,
-its Python approximation otherwise — batched per content batch, with
-the wall deadline carried into the body loop), and union the
-flag-partitioned scan side (``NOT encoded``) so index staleness can
-never lose a match. ``invert_match`` is scan-shaped by construction —
-no occurrence index narrows non-matches — and runs the scan tier
-without ``allow_scan``; the refusal gate is pattern-shaped.
+intersect the rarest posting lists into candidate entries — with a
+segment-bounded glob scope joining as an allow-list *before* the
+candidate budget, so the budget counts scoped candidates and
+truncation can never drop in-scope rows — apply the structural gates
+off the rows' own stored facts (no per-candidate ``Path``) before any
+content fetch, verify every candidate through the shared matcher (the
+Rust core where the extension serves, its Python approximation
+otherwise — batched per content batch, with the wall deadline carried
+into the body loop), and union the flag-partitioned scan side
+(``NOT encoded``) so index staleness can never lose a match.
+``invert_match`` is scan-shaped by construction — no occurrence index
+narrows non-matches — and runs the scan tier without ``allow_scan``;
+the refusal gate is pattern-shaped.
 
 Epoch coherence is detected, never assumed: engines without a
 repeatable-read pin read each statement at its own snapshot, so after
@@ -45,12 +49,12 @@ from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from vfs.models import CONTENT_KINDS, Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
-from vfs.paths import Path, normalize_ext_channel
+from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     GlobFilter,
@@ -58,12 +62,13 @@ from vfs.pattern_matching import (
     compile_filter,
     compile_verifier,
     glob_defect,
-    passes_filters,
+    passes_row_filters,
 )
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.descent import liveness_filters
+from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
+from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
     effective_columns,
@@ -76,6 +81,7 @@ from vfs.storage.backends.database.seams import seam
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,6 +90,7 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
+    from vfs.storage.backends.database.pathterms import ChannelTerms
 
 # Runtime budgets: candidates fetched and verified, posting bytes
 # decoded, and a wall-time deadline checked between ladder stages and
@@ -181,6 +188,8 @@ async def grep_rows(
     not_gates = [compile_filter(glob, ()) for glob in exclusions]
     wanted = normalize_ext_channel(ext)
     unwanted = normalize_ext_channel(ext_not)
+    channel = compile_channel(admissions)
+    gated = bool(gates or not_gates or wanted or unwanted)
     fetched = effective_columns(columns, content=columns is not None)
     deadline = monotonic() + wall_seconds
 
@@ -190,16 +199,27 @@ async def grep_rows(
     if not scan_all:
         epoch = await current_epoch(session, tables)
         await seam("grep:after-pointer-read")
-        try:
-            doc_ids = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline)
-        except PostingCorruptionError as exc:
-            error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
-            return Result(ops=("grep",), errors=[error])
+        # The allow-list joins nomination before the budget: the budget
+        # counts scoped candidates, so truncation cannot drop in-scope rows.
+        allow = await allow_list_ids(session, tables, channel)
+        if allow is not None and not allow:
+            doc_ids: DocIds = np.empty(0, dtype=np.int64)
+        else:
+            try:
+                doc_ids = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline)
+            except PostingCorruptionError as exc:
+                error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
+                return Result(ops=("grep",), errors=[error])
+            if allow is not None:
+                doc_ids = np.intersect1d(doc_ids, np.asarray(allow, dtype=np.int64), assume_unique=True)
         if doc_ids.size > CANDIDATE_BUDGET:
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
-        for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched):
-            if _passes_gates(Path(mapping["path"]), gates, not_gates, wanted, unwanted):
+        pushdown = _pushdown_terms(
+            tables.entry, profile, membership_budget, channel, wanted, hide_meta=not gates
+        )
+        for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
+            if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
@@ -229,7 +249,7 @@ async def grep_rows(
             if overflow:
                 truncations.append("candidate budget")
             for mapping in nominated:
-                if _passes_gates(Path(mapping["path"]), gates, not_gates, wanted, unwanted):
+                if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
                     candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
@@ -391,18 +411,26 @@ async def _entries_for_docs(
     membership_budget: int,
     doc_ids: DocIds,
     fetched: frozenset[str],
+    pushdown: Sequence[ColumnElement[bool]],
 ) -> list[RowMapping]:
     """Candidate doc ids resolved to their live, encoded entry rows.
 
     The id-first shape: entry rows come back without content — the
-    structural Python gates run before any content is fetched.
-    ``size_bytes`` always rides along: it prices the content batches.
+    structural gates run before any content is fetched. ``size_bytes``
+    always rides along (it prices the content batches), and ``ext`` and
+    ``name`` ride for the string gate. *pushdown* carries the compiled
+    column facts and the meta scope; its binds shrink the id chunk so
+    the statement stays inside the declared budgets.
     """
     entry = tables.entry
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | {"size_bytes"}) - {"content"}))]
+    ride_along = {"size_bytes", "ext", "name"}
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
+    per_chunk = max(1, membership_budget - _predicate_binds(pushdown))
     rows: list[RowMapping] = []
-    for chunk in chunked(doc_ids.tolist(), membership_budget):
-        stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)))
+    for chunk in chunked(doc_ids.tolist(), per_chunk):
+        stmt = select(*columns).where(
+            entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)), *pushdown
+        )
         rows.extend((await session.execute(stmt)).mappings())
     return rows
 
@@ -443,7 +471,8 @@ async def _entries_for_scan(
     base = [entry.c.kind.in_(sorted(CONTENT_KINDS))]
     if not everything:
         base.append(~entry.c.encoded)
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | {"size_bytes"}) - {"content"}))]
+    ride_along = {"size_bytes", "ext", "name"}
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
     merged: dict[str, RowMapping] = {}
     overflow = False
     if gates:
@@ -481,21 +510,84 @@ async def _entries_for_scan(
 
 
 def _passes_gates(
-    path: Path,
+    mapping: RowMapping,
     gates: list[GlobFilter],
     not_gates: list[GlobFilter],
     wanted: frozenset[str],
     unwanted: frozenset[str],
 ) -> bool:
-    """The authoritative structural gates, per candidate, path-derived.
+    """The authoritative structural gates, per candidate, off the row's own facts.
 
-    A meta row is admitted only by a gate whose literal prefix addresses
+    Matches raw strings — the stored ``name`` and ``ext`` columns mirror
+    the path by invariant, so no ``Path`` is minted per candidate. A
+    meta row is admitted only by a gate whose literal prefix addresses
     the meta subtree — default enumeration hides ``/.vfs`` even when a
     wildcard gate would match it. The rest is the shared filter law.
     """
-    if path.is_meta and not any(gate.matches(path) and meta_scoped(gate.pattern) for gate in gates):
+    path, name, ext = mapping["path"], mapping["name"], mapping["ext"]
+    if _under_meta_root(path) and not any(gate.hits(path, name, ext) and meta_scoped(gate.pattern) for gate in gates):
         return False
-    return passes_filters(path, gates, not_gates, wanted, unwanted)
+    return passes_row_filters(path, name, ext, gates, not_gates, wanted, unwanted)
+
+
+def _pushdown_terms(
+    entry: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    channel: ChannelTerms,
+    wanted: frozenset[str],
+    *,
+    hide_meta: bool,
+) -> list[ColumnElement[bool]]:
+    """The SQL terms the candidate fetch may carry beside the id chunk.
+
+    With no admission gates the meta scope moves into SQL — the string
+    gate may then be skipped entirely. The caller's wanted-ext set rides
+    under the membership rule, and the channel's compiled column facts
+    ride as an OR over arms; both only ever narrow toward the authority,
+    never past it.
+    """
+    terms: list[ColumnElement[bool]] = []
+    if hide_meta:
+        terms.extend(liveness_filters(entry, profile, include_meta=False))
+    ride = ext_membership(entry, wanted, membership_budget)
+    if ride.predicate is not None:
+        terms.append(ride.predicate)
+    facts = _channel_facts(entry, profile, channel)
+    if facts is not None:
+        terms.append(facts)
+    return terms
+
+
+def _channel_facts(entry: Table, profile: DialectProfile, channel: ChannelTerms) -> ColumnElement[bool] | None:
+    """The channel's ``ext``/``name`` facts as one OR over arms, or ``None``.
+
+    The channel is an OR, so the predicate is sound only when *every*
+    arm pins at least one fact — an arm with none admits everything and
+    makes the disjunction vacuous. Each ext fact carries the dotfile
+    rescue (a stored NULL ext with the dot-suffix name), mirroring the
+    scan tier's arm law.
+    """
+    arms: list[ColumnElement[bool]] = []
+    for arm in channel.arms:
+        facts: list[ColumnElement[bool]] = []
+        if arm.ext is not None:
+            facts.append(or_(entry.c.ext == arm.ext.ext, entry.c.name == arm.ext.dot_suffix))
+        if arm.name is not None:
+            if arm.name.prefix:
+                prefix = escape_like(arm.name.text, profile) + "%"
+                facts.append(entry.c.name.like(prefix, escape=LIKE_ESCAPE))
+            else:
+                facts.append(entry.c.name == arm.name.text)
+        if not facts:
+            return None
+        arms.append(and_(*facts))
+    return or_(*arms) if arms else None
+
+
+def _predicate_binds(pushdown: Sequence[ColumnElement[bool]]) -> int:
+    """Bind slots the pushdown terms spend, off each compiled predicate."""
+    return sum(len(term.compile().binds) for term in pushdown)
 
 
 def _content_batches(ordered: Sequence[RowMapping]) -> Iterator[list[RowMapping]]:

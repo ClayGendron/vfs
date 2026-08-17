@@ -21,6 +21,7 @@ from vfs.models import Entry
 from vfs.paths import Path
 from vfs.pattern_matching import compile_filter
 from vfs.results import Result, Severity, VFSErrorKind
+from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database.seams import installed
@@ -270,6 +271,83 @@ class TestGlobChannelScoping:
         storage = await _fresh(tmp_path, {"/data/a.txt": "needle", "/other/b.txt": "needle"})
         result = await storage.grep(pattern="needle", globs=("/data/**",))
         assert _paths(result) == ["/data/a.txt"]
+        await storage.close()
+
+
+class TestScopedNomination:
+    """The allow-list joins nomination: budgets count scoped candidates."""
+
+    async def test_scoped_recall_survives_a_saturated_budget(self, tmp_path, monkeypatch) -> None:
+        # The pre-fix defect: the budget was spent on out-of-scope
+        # candidates (lower doc ids) and the glob then discarded them —
+        # silent recall loss. The allow-list intersects before the cut,
+        # so every in-scope row survives and nothing truncates.
+        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 5)
+        files = {f"/bulk/f{i:02}.txt": "needle body" for i in range(10)}
+        files |= {f"/scoped/g{i}.txt": "needle body" for i in range(3)}
+        storage = await _fresh(tmp_path, files)
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle", globs=("scoped/**",))
+        assert _paths(result) == [f"/scoped/g{i}.txt" for i in range(3)]
+        assert result.errors == []
+        await storage.close()
+
+    async def test_an_unbounded_glob_arm_falls_back_whole(self, tmp_path) -> None:
+        # "*.txt" yields no segment term: pruning is void for the call
+        # and the ext/name facts alone narrow the fetch — same results.
+        storage = await _fresh(tmp_path, {"/a/one.txt": "needle", "/a/two.py": "needle"})
+        for _ in range(2):
+            result = await storage.grep(pattern="needle", globs=("*.txt",))
+            assert _paths(result) == ["/a/one.txt"]
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_a_dead_scope_short_circuits_the_index_side(self, tmp_path) -> None:
+        storage = await _fresh(tmp_path, {"/src/a.txt": "needle"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle", globs=("nosuchdir/**",))
+        assert result.success is True
+        assert result.observations == []
+        await storage.close()
+
+    async def test_name_and_ext_facts_keep_the_dotfile_rescue(self, tmp_path) -> None:
+        # "/src/.py" has a NULL stored ext; the pushdown's dot-suffix
+        # arm must admit it exactly as the authority does.
+        storage = await _fresh(tmp_path, {"/src/.py": "needle", "/src/real.py": "needle", "/src/off.txt": "needle"})
+        for _ in range(2):
+            result = await storage.grep(pattern="needle", globs=("src/*.py",))
+            assert _paths(result) == ["/src/.py", "/src/real.py"]
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_basename_literal_scope_pins_the_name_column(self, tmp_path) -> None:
+        storage = await _fresh(tmp_path, {"/src/Makefile": "needle", "/src/other.mk": "needle"})
+        for _ in range(2):
+            result = await storage.grep(pattern="needle", globs=("src/**/Makefile",))
+            assert _paths(result) == ["/src/Makefile"]
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_stem_prefix_scope_rides_a_sargable_like(self, tmp_path) -> None:
+        # The literal head escapes its LIKE metacharacters: a stored
+        # name with "_" in the prefix must not wildcard-match.
+        storage = await _fresh(tmp_path, {"/t/test_a.py": "needle", "/t/testXa.py": "needle", "/t/b.py": "needle"})
+        for _ in range(2):
+            result = await storage.grep(pattern="needle", globs=("t/test_*.py",))
+            assert _paths(result) == ["/t/test_a.py"]
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_a_rename_is_visible_to_the_next_scoped_grep(self, tmp_path) -> None:
+        # Segment postings are live truth while gram postings are
+        # epoch-scoped: a rename lands in scope with no reindex between.
+        storage = await _fresh(tmp_path, {"/old/a.txt": "needle"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.move(operations=[ResolvedPair(src=Path("/old"), dest=Path("/new"))])).success is True
+        found = await storage.grep(pattern="needle", globs=("new/**",))
+        assert _paths(found) == ["/new/a.txt"]
+        gone = await storage.grep(pattern="needle", globs=("old/**",))
+        assert gone.observations == []
         await storage.close()
 
 

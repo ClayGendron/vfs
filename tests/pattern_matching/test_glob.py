@@ -27,6 +27,8 @@ from vfs.pattern_matching import (
     expand_pattern,
     filter_paths,
     glob_defect,
+    passes_filters,
+    passes_row_filters,
     residuals,
 )
 
@@ -564,3 +566,57 @@ class TestTranslateParity:
                     gate.pattern, recursive=True, include_hidden=True, seps="/"
                 )
                 assert gate.regex.pattern == expected, pattern
+
+
+class TestRowFactParity:
+    """The string gate answers exactly as the Path gate, fact for fact."""
+
+    PARITY_PATHS = (
+        "/Makefile",
+        "/src/main.py",
+        "/src/app/main.py",
+        "/src/.py",
+        "/src/app.tests/x.py",
+        "/docs/readme.md",
+        "/a/x/a/f.txt",
+        "/Docs/Readme.MD",
+        "/.hidden/config",
+        "/.vfs/state/s.txt",
+    )
+    PARITY_PATTERNS = (
+        "src/**/*.py",
+        "*.py",
+        "Makefile",
+        "docs/*",
+        "**/[mr]*.py",
+        "/a/**",
+        "?",
+        "**",
+        "/.vfs/**",
+    )
+
+    def test_hits_agrees_with_matches_everywhere(self) -> None:
+        for text, pattern in product(self.PARITY_PATHS, self.PARITY_PATTERNS):
+            path = Path(text)
+            gate = compile_filter(pattern, ("py", "md"))
+            bare = compile_filter(pattern, ())
+            for compiled in (gate, bare):
+                assert compiled.hits(str(path), path.name, path.ext) is compiled.matches(path), (
+                    f"{pattern!r} disagrees on {path}"
+                )
+
+    def test_passes_row_filters_agrees_with_passes_filters(self) -> None:
+        gates = [compile_filter("src/**", ()), compile_filter("*.md", ())]
+        not_gates = [compile_filter("**/app/**", ())]
+        channels = (
+            (gates, [], frozenset(), frozenset()),
+            (gates, not_gates, frozenset({"py"}), frozenset()),
+            ([], not_gates, frozenset(), frozenset({"md"})),
+            ([], [], frozenset({"py", "txt"}), frozenset({"md"})),
+        )
+        for text in self.PARITY_PATHS:
+            path = Path(text)
+            for admit, deny, wanted, unwanted in channels:
+                expected = passes_filters(path, admit, deny, wanted, unwanted)
+                actual = passes_row_filters(str(path), path.name, path.ext, admit, deny, wanted, unwanted)
+                assert actual is expected, f"{text!r} disagrees under {wanted}/{unwanted}"

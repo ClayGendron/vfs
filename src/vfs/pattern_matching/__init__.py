@@ -29,6 +29,7 @@ from vfs.pattern_matching.glob import (
     filter_paths,
     glob_defect,
     passes_filters,
+    passes_row_filters,
     render_residual,
     residuals,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "glob_defect",
     "match_texts",
     "passes_filters",
+    "passes_row_filters",
     "render_residual",
     "residuals",
     "split_lines",

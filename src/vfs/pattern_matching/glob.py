@@ -63,6 +63,19 @@ class GlobFilter:
             return False
         return not self.wanted_ext or (extract_extension(path) or "") in self.wanted_ext
 
+    def hits(self, path: str, name: str, ext: str | None) -> bool:
+        """The same verdict as :meth:`matches`, off row facts already in hand.
+
+        *name* and *ext* must be the path's own leaf name and derived
+        extension (storage's stored columns mirror both by invariant) —
+        no ``Path`` is minted on this arm. Parity with :meth:`matches`
+        is pinned by test.
+        """
+        subject = path if self.by_path else name
+        if self.regex.match(subject) is None:
+            return False
+        return not self.wanted_ext or (ext or "") in self.wanted_ext
+
 
 # ---------------------------------------------------------------------------
 # Validation and compilation
@@ -179,6 +192,32 @@ def passes_filters(
     if any(gate.matches(path) for gate in not_gates):
         return False
     extension = extract_extension(path) or ""
+    if wanted and extension not in wanted:
+        return False
+    return not (unwanted and extension in unwanted)
+
+
+def passes_row_filters(
+    path: str,
+    name: str,
+    ext: str | None,
+    gates: list[GlobFilter],
+    not_gates: list[GlobFilter],
+    wanted: frozenset[str],
+    unwanted: frozenset[str],
+) -> bool:
+    """The :func:`passes_filters` law over row facts already in hand.
+
+    The hot-loop arm: storage passes each candidate's stored path,
+    name, and extension columns — which mirror the path by invariant —
+    so no ``Path`` is constructed per candidate. Same channel order,
+    same verdicts; parity is pinned by test.
+    """
+    if gates and not any(gate.hits(path, name, ext) for gate in gates):
+        return False
+    if any(gate.hits(path, name, ext) for gate in not_gates):
+        return False
+    extension = ext or ""
     if wanted and extension not in wanted:
         return False
     return not (unwanted and extension in unwanted)

@@ -18,8 +18,24 @@
   as pushdown predicates for slice C), pinned by the superset
   battery in `tests/storage/database/test_pathterms.py` (generated
   paths × generated globs: nomination ⊇ authority, exclusions
-  structurally absent from the seam). Slices C–D pending; nothing
-  consumes the seam yet — grep/glob wiring is slice C.
+  structurally absent from the seam). Slice C: §4 in grep nomination
+  (the allow-list intersects gram candidates *before* the budget —
+  the recall fix, pinned by the saturated-budget regression test — a
+  dead scope short-circuits the ladder, an unbounded arm falls back
+  whole) and §5's pushdown + string gate (`GlobFilter.hits` /
+  `passes_row_filters` over the stored `name`/`ext` columns, parity
+  pinned; channel facts + wanted-ext + gateless meta liveness ride
+  the candidate-fetch SQL, binds netted from the id chunks).
+  Measured on the rebuilt linux store (write 53 s vs 45 s pre-104 —
+  segment maintenance ≈ 85 µs/file at ETL scale; reindex 196 s vs
+  191 s — the drift collect ≈ 5 s): the 25-row unscoped ladder shows
+  **zero regressions, identical counts, and 11–19 % wins on
+  saturated rows** (the gate skip + string gate); seven targeted
+  scoped rows all match rg's positional-path counts line-for-line,
+  with the headline `copyright -i` under `fs/ext4` at 25 ms vs
+  1,182 ms (truncated) unscoped, and vfs 0.5–3.3× of rg positional
+  across the set. Slice D (the recorded scoped study + budget
+  re-derivation) pending.
   Born from the path-indexing research arc: the prior-art memo
   (`../../../research/2026-08-17-path-indexing-prior-art.md`, field
   study + fork evidence + usage mining, studies under
