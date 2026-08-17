@@ -57,6 +57,10 @@ if TYPE_CHECKING:
 # context block's text (hit line extended before/after, newline-joined).
 MatchSpan = tuple[int, int, int, str]
 
+# One candidate body: text, or its UTF-8 bytes fetched straight from
+# storage — the two spellings verify identically on both engines.
+Body = str | bytes
+
 
 class PatternError(ValueError):
     """A grep pattern outside the language, carrying the refusal reason."""
@@ -65,18 +69,20 @@ class PatternError(ValueError):
 class ContentMatcher(Protocol):
     """The compiled verifier contract both engines implement.
 
-    Texts go in as plain strings; ``budget`` is wall seconds from call
-    start — bodies not reached in time are skipped and the second return
-    reports incomplete. ``cap`` bounds hit lines per body.
+    Texts go in as plain strings or as their UTF-8 bytes — content is
+    valid UTF-8 by construction, so the spellings are interchangeable;
+    ``budget`` is wall seconds from call start — bodies not reached in
+    time are skipped and the second return reports incomplete. ``cap``
+    bounds hit lines per body.
     """
 
     def count_lines(
-        self, texts: Sequence[str], *, cap: int | None, invert: bool, budget: float | None
+        self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]: ...
 
     def hit_lines(
         self,
-        texts: Sequence[str],
+        texts: Sequence[Body],
         *,
         before: int,
         after: int,
@@ -210,7 +216,7 @@ def compile_verifier(pattern: str, *, fixed_strings: bool, word_regexp: bool, ca
 
 
 def verify(
-    text: str,
+    text: Body,
     verifier: ContentMatcher,
     *,
     invert: bool,
@@ -238,7 +244,7 @@ def verify(
 
 
 def match_texts(
-    texts: Sequence[tuple[Path, str]],
+    texts: Sequence[tuple[Path, Body]],
     verifier: ContentMatcher,
     *,
     invert: bool,
@@ -276,6 +282,16 @@ def match_texts(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _as_bytes(body: Body) -> bytes:
+    """The core's spelling: bytes pass through, text encodes."""
+    return body if isinstance(body, bytes) else body.encode("utf-8", "surrogatepass")
+
+
+def _as_text(body: Body) -> str:
+    """The pure engine's spelling: text passes through, bytes decode."""
+    return body if isinstance(body, str) else body.decode("utf-8", "surrogatepass")
 
 
 def _escape_fixed(text: str) -> str:
@@ -367,21 +383,21 @@ def _class_admits_newline(items: list[Any]) -> bool:
 
 
 class _RustMatcher:
-    """The shared core's matcher behind the str-in/str-out seam contract."""
+    """The shared core's matcher: bytes pass through, text encodes at the seam."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
     def count_lines(
-        self, texts: Sequence[str], *, cap: int | None, invert: bool, budget: float | None
+        self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]:
-        bodies = [text.encode("utf-8", "surrogatepass") for text in texts]
+        bodies = [_as_bytes(body) for body in texts]
         counts, completed = self._inner.count_lines(bodies, cap=cap, invert=invert, budget=budget)
         return list(counts), completed
 
     def hit_lines(
         self,
-        texts: Sequence[str],
+        texts: Sequence[Body],
         *,
         before: int,
         after: int,
@@ -389,7 +405,7 @@ class _RustMatcher:
         invert: bool,
         budget: float | None,
     ) -> tuple[list[list[MatchSpan]], bool]:
-        bodies = [text.encode("utf-8", "surrogatepass") for text in texts]
+        bodies = [_as_bytes(body) for body in texts]
         rows, completed = self._inner.hit_lines(
             bodies, before=before, after=after, cap=cap, invert=invert, budget=budget
         )
@@ -411,13 +427,14 @@ class _PureMatcher:
         self._multi_rx = multi_rx
 
     def count_lines(
-        self, texts: Sequence[str], *, cap: int | None, invert: bool, budget: float | None
+        self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]:
         deadline = None if budget is None else monotonic() + budget
         counts: list[int] = []
-        for text in texts:
+        for body in texts:
             if deadline is not None and monotonic() > deadline:
                 return counts + [0] * (len(texts) - len(counts)), False
+            text = _as_text(body)
             if self._multi_rx is not None and not invert:
                 counts.append(self._count_whole(text, cap))
             else:
@@ -426,7 +443,7 @@ class _PureMatcher:
 
     def hit_lines(
         self,
-        texts: Sequence[str],
+        texts: Sequence[Body],
         *,
         before: int,
         after: int,
@@ -436,9 +453,10 @@ class _PureMatcher:
     ) -> tuple[list[list[MatchSpan]], bool]:
         deadline = None if budget is None else monotonic() + budget
         rows: list[list[MatchSpan]] = []
-        for text in texts:
+        for body in texts:
             if deadline is not None and monotonic() > deadline:
                 return rows + [[] for _ in range(len(texts) - len(rows))], False
+            text = _as_text(body)
             if self._multi_rx is not None and not invert and not before and not after:
                 rows.append(self._hits_whole(text, cap))
             else:

@@ -98,6 +98,7 @@ BODIES: tuple[str, ...] = (
     "usb_probe helper_probe2\n",
     "café au lait\nΚΑΛΗΜΈΡΑ κόσμε\n",  # noqa: RUF001
     "x" * 5000 + "\nneedle at end",
+    "hé\nwörld🚀\nplain é\n",
 )
 
 MODES: tuple[dict, ...] = (
@@ -123,6 +124,41 @@ class TestEngineParity:
             assert (rust_rows, rust_done) == (pure_rows, pure_done), (pattern, mode)
             counts = {"cap": mode["cap"], "invert": mode["invert"]}
             assert rust.count_lines(BODIES, budget=None, **counts) == pure.count_lines(BODIES, budget=None, **counts)
+
+    @needs_rust
+    @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
+    def test_bytes_bodies_match_text_bodies_on_both_engines(self, pattern: str, kwargs: dict) -> None:
+        options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
+        rust = rust_verifier(pattern, **options)
+        pure = pure_verifier(pattern, **options)
+        encoded = [body.encode("utf-8") for body in BODIES]
+        for mode in MODES:
+            truth, done = rust.hit_lines(BODIES, budget=None, **mode)
+            assert done is True
+            for engine in (rust, pure):
+                assert engine.hit_lines(encoded, budget=None, **mode) == (truth, True), (pattern, mode)
+            counts = {"cap": mode["cap"], "invert": mode["invert"]}
+            count_truth = rust.count_lines(BODIES, budget=None, **counts)
+            for engine in (rust, pure):
+                assert engine.count_lines(encoded, budget=None, **counts) == count_truth
+
+    def test_bytes_bodies_match_text_bodies_on_the_pure_engine(self) -> None:
+        # No extension required: the fallback CI leg pins its own twin.
+        pure = pure_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        encoded = [body.encode("utf-8") for body in BODIES]
+        for mode in MODES:
+            assert pure.hit_lines(encoded, budget=None, **mode) == pure.hit_lines(BODIES, budget=None, **mode)
+
+    @needs_rust
+    def test_mixed_batches_verify_each_body_by_its_own_spelling(self) -> None:
+        rust = rust_verifier("é", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        pure = pure_verifier("é", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        mixed = ["hé one\nmiss\n", "hé two\n".encode(), b"miss\n", "hé three"]
+        for engine in (rust, pure):
+            rows, done = engine.hit_lines(mixed, before=0, after=0, cap=None, invert=False, budget=None)
+            assert done is True
+            assert [[span[2] for span in row] for row in rows] == [[1], [1], [], [1]]
+            assert [span[3] for row in rows for span in row] == ["hé one", "hé two", "hé three"]
 
     @needs_rust
     def test_pure_per_line_and_whole_text_paths_agree(self) -> None:

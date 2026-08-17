@@ -34,6 +34,7 @@ from vfs.pattern_matching.glob import (
     residuals,
 )
 from vfs.pattern_matching.grep import (
+    Body,
     ContentMatcher,
     GrepHit,
     PatternError,
@@ -47,6 +48,7 @@ from vfs.pattern_matching.grep import (
 __all__ = [
     "GLOB_CHANNEL_LABELS",
     "MAX_PATTERN_ARMS",
+    "Body",
     "ContentMatcher",
     "DerivedExt",
     "GlobFilter",
