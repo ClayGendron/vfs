@@ -5,7 +5,24 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-17, at spec 103's slice D. That arc,
+- **Last reviewed:** 2026-08-17 (later the same day), at spec 104's
+  drafting. That arc, all in one session: the path-indexing
+  prior-art memo (`../research/2026-08-17-path-indexing-prior-art.md`
+  — field study of zoekt/codesearch/ripgrep/pg_trgm plus Blackbird,
+  plocate, Lucene, filtered-ANN; three rerunnable studies) and its
+  fork-evidence pass (term-shape economics and maintenance
+  microbenches on the linux store; a 10,519-call mining pass over
+  real agent search usage; write-path/overlay/rename code facts).
+  Clay resolved the four forks in session — directory-segment
+  postings + `ext`/`name` column pushdown (no trigrams, no prefix
+  terms), synchronous write-path maintenance (epoch-cycling
+  disqualified by rename false negatives; the flag-repaired variant
+  recorded, not chosen), path terms as peers in rarest-first
+  nomination with the budget counting scoped candidates, and the
+  allow-list seam beside the planners — recorded as **ADR 040**;
+  spec 104 drafted into `active/` with slices A–D pending. No live
+  code changed; the tree stays at spec 103's verified green.
+- **Previous review:** 2026-08-17, at spec 103's slice D. That arc,
   across two days: slice B (the Rust engine for the gram-index
   build — `crates/vfs-core`, the pendulum packaging model, the
   `vfs.native` seam; reindex 672 s → 191 s), the verify-authority
@@ -22,7 +39,7 @@ lines first; regenerate this file when the picture shifts (review the
   100%, `ruff`/`ty` zero, `cargo test` green at each landing. Spec
   103's one open fork: tree-sitter chunking on the reindex path
   (needs Clay).
-- **Previous review:** 2026-08-16, at spec 100's mining pass. That arc,
+- **Earlier review:** 2026-08-16, at spec 100's mining pass. That arc,
   all in two days: slice A's expansion-caps research memo and
   rerunnable study landed and the §6 cap fork resolved by Clay
   (both caps, small values); slices B–D landed as one planner
