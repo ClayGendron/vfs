@@ -1,0 +1,432 @@
+{
+  "alternation": {
+    "candidates": 5391,
+    "regex_1t": {
+      "files": 4868,
+      "lines": 10267,
+      "ms": 65.056375
+    },
+    "regex_mt": {
+      "files": 4868,
+      "lines": 10267,
+      "ms": 9.568334
+    }
+  },
+  "anchored group": {
+    "candidates": 10000,
+    "regex_1t": {
+      "files": 7054,
+      "lines": 19243,
+      "ms": 31.273166999999997
+    },
+    "regex_mt": {
+      "files": 7054,
+      "lines": 19243,
+      "ms": 5.971125
+    }
+  },
+  "anchored literal": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 9717,
+      "lines": 9717,
+      "ms": 10.611625
+    },
+    "regex_1t": {
+      "files": 9717,
+      "lines": 9717,
+      "ms": 10.954749999999999
+    },
+    "regex_mt": {
+      "files": 9717,
+      "lines": 9717,
+      "ms": 2.8327080000000002
+    }
+  },
+  "escaped call": {
+    "candidates": 5785,
+    "prefilter_1t": {
+      "files": 5335,
+      "lines": 22792,
+      "ms": 21.434459
+    },
+    "regex_1t": {
+      "files": 5335,
+      "lines": 22792,
+      "ms": 22.236292000000002
+    },
+    "regex_mt": {
+      "files": 5335,
+      "lines": 22792,
+      "ms": 6.517875
+    }
+  },
+  "factored alternation": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 9926,
+      "lines": 21409,
+      "ms": 17.690791
+    },
+    "regex_1t": {
+      "files": 9926,
+      "lines": 21409,
+      "ms": 42.891791
+    },
+    "regex_mt": {
+      "files": 9926,
+      "lines": 21409,
+      "ms": 6.110250000000001
+    }
+  },
+  "fixed string": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 1667,
+      "lines": 4555,
+      "ms": 13.684708
+    },
+    "regex_1t": {
+      "files": 1667,
+      "lines": 4555,
+      "ms": 14.157625
+    },
+    "regex_mt": {
+      "files": 1667,
+      "lines": 4555,
+      "ms": 3.8575
+    }
+  },
+  "fixed string 2": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 7004,
+      "lines": 32991,
+      "ms": 16.38275
+    },
+    "regex_1t": {
+      "files": 7004,
+      "lines": 32991,
+      "ms": 16.469125000000002
+    },
+    "regex_mt": {
+      "files": 7004,
+      "lines": 32991,
+      "ms": 4.35925
+    }
+  },
+  "folded": {
+    "candidates": 10000,
+    "regex_1t": {
+      "files": 9999,
+      "lines": 14438,
+      "ms": 10.393708
+    },
+    "regex_mt": {
+      "files": 9999,
+      "lines": 14438,
+      "ms": 1.76925
+    }
+  },
+  "folded 2": {
+    "candidates": 1183,
+    "regex_1t": {
+      "files": 1002,
+      "lines": 2346,
+      "ms": 49.599167
+    },
+    "regex_mt": {
+      "files": 1002,
+      "lines": 2346,
+      "ms": 7.157041
+    }
+  },
+  "group alternation": {
+    "candidates": 5889,
+    "prefilter_1t": {
+      "files": 5737,
+      "lines": 7686,
+      "ms": 17.24875
+    },
+    "regex_1t": {
+      "files": 5737,
+      "lines": 7686,
+      "ms": 17.194792
+    },
+    "regex_mt": {
+      "files": 5737,
+      "lines": 7686,
+      "ms": 5.098833
+    }
+  },
+  "hot literal": {
+    "candidates": 4393,
+    "prefilter_1t": {
+      "files": 3599,
+      "lines": 20800,
+      "ms": 18.220917
+    },
+    "regex_1t": {
+      "files": 3599,
+      "lines": 20800,
+      "ms": 18.449083
+    },
+    "regex_mt": {
+      "files": 3599,
+      "lines": 20800,
+      "ms": 5.254041999999999
+    }
+  },
+  "hot literal 2": {
+    "candidates": 4241,
+    "prefilter_1t": {
+      "files": 3711,
+      "lines": 8346,
+      "ms": 17.879583
+    },
+    "regex_1t": {
+      "files": 3711,
+      "lines": 8346,
+      "ms": 18.138125000000002
+    },
+    "regex_mt": {
+      "files": 3711,
+      "lines": 8346,
+      "ms": 5.362375
+    }
+  },
+  "medium literal": {
+    "candidates": 965,
+    "prefilter_1t": {
+      "files": 336,
+      "lines": 1252,
+      "ms": 13.029625
+    },
+    "regex_1t": {
+      "files": 336,
+      "lines": 1252,
+      "ms": 13.01275
+    },
+    "regex_mt": {
+      "files": 336,
+      "lines": 1252,
+      "ms": 3.794042
+    }
+  },
+  "medium literal 2": {
+    "candidates": 360,
+    "prefilter_1t": {
+      "files": 143,
+      "lines": 170,
+      "ms": 12.775458
+    },
+    "regex_1t": {
+      "files": 143,
+      "lines": 170,
+      "ms": 12.981125
+    },
+    "regex_mt": {
+      "files": 143,
+      "lines": 170,
+      "ms": 3.761209
+    }
+  },
+  "medium literal 3": {
+    "candidates": 346,
+    "prefilter_1t": {
+      "files": 79,
+      "lines": 545,
+      "ms": 12.297832999999999
+    },
+    "regex_1t": {
+      "files": 79,
+      "lines": 545,
+      "ms": 12.094459
+    },
+    "regex_mt": {
+      "files": 79,
+      "lines": 545,
+      "ms": 3.522958
+    }
+  },
+  "phrase": {
+    "candidates": 8460,
+    "prefilter_1t": {
+      "files": 5926,
+      "lines": 8697,
+      "ms": 26.759292000000002
+    },
+    "regex_1t": {
+      "files": 5926,
+      "lines": 8697,
+      "ms": 26.854959
+    },
+    "regex_mt": {
+      "files": 5926,
+      "lines": 8697,
+      "ms": 6.02675
+    }
+  },
+  "rare literal": {
+    "candidates": 160,
+    "prefilter_1t": {
+      "files": 8,
+      "lines": 14,
+      "ms": 11.7315
+    },
+    "regex_1t": {
+      "files": 8,
+      "lines": 14,
+      "ms": 11.614332999999998
+    },
+    "regex_mt": {
+      "files": 8,
+      "lines": 14,
+      "ms": 3.377
+    }
+  },
+  "regex classes": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 6597,
+      "lines": 7474,
+      "ms": 14.274541
+    },
+    "regex_1t": {
+      "files": 6597,
+      "lines": 7474,
+      "ms": 29.441499999999998
+    },
+    "regex_mt": {
+      "files": 6597,
+      "lines": 7474,
+      "ms": 5.247208
+    }
+  },
+  "rescued class": {
+    "candidates": 270,
+    "prefilter_1t": {
+      "files": 166,
+      "lines": 241,
+      "ms": 11.562625
+    },
+    "regex_1t": {
+      "files": 166,
+      "lines": 241,
+      "ms": 31.591541
+    },
+    "regex_mt": {
+      "files": 166,
+      "lines": 241,
+      "ms": 5.972625
+    }
+  },
+  "small class": {
+    "candidates": 1118,
+    "prefilter_1t": {
+      "files": 487,
+      "lines": 15139,
+      "ms": 17.280375
+    },
+    "regex_1t": {
+      "files": 487,
+      "lines": 15139,
+      "ms": 51.048583
+    },
+    "regex_mt": {
+      "files": 487,
+      "lines": 15139,
+      "ms": 7.568083
+    }
+  },
+  "ultra-hot literal": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 9954,
+      "lines": 24238,
+      "ms": 11.565208
+    },
+    "regex_1t": {
+      "files": 9954,
+      "lines": 24238,
+      "ms": 11.788625
+    },
+    "regex_mt": {
+      "files": 9954,
+      "lines": 24238,
+      "ms": 3.270083
+    }
+  },
+  "word": {
+    "candidates": 10000,
+    "prefilter_1t": {
+      "files": 8981,
+      "lines": 38446,
+      "ms": 16.1205
+    },
+    "regex_1t": {
+      "files": 8981,
+      "lines": 38446,
+      "ms": 16.438042
+    },
+    "regex_mt": {
+      "files": 8981,
+      "lines": 38446,
+      "ms": 4.179292
+    }
+  },
+  "word 2": {
+    "candidates": 4899,
+    "prefilter_1t": {
+      "files": 2260,
+      "lines": 13185,
+      "ms": 21.888125000000002
+    },
+    "regex_1t": {
+      "files": 2260,
+      "lines": 13185,
+      "ms": 21.903458
+    },
+    "regex_mt": {
+      "files": 2260,
+      "lines": 13185,
+      "ms": 6.090875
+    }
+  },
+  "wrapped wildcard": {
+    "candidates": 3816,
+    "prefilter_1t": {
+      "files": 756,
+      "lines": 1916,
+      "ms": 24.290625
+    },
+    "regex_1t": {
+      "files": 756,
+      "lines": 1916,
+      "ms": 1149.864459
+    },
+    "regex_mt": {
+      "files": 756,
+      "lines": 1916,
+      "ms": 152.46895899999998
+    }
+  },
+  "zero-hit": {
+    "candidates": 99,
+    "prefilter_1t": {
+      "files": 0,
+      "lines": 0,
+      "ms": 11.437833
+    },
+    "regex_1t": {
+      "files": 0,
+      "lines": 0,
+      "ms": 11.53475
+    },
+    "regex_mt": {
+      "files": 0,
+      "lines": 0,
+      "ms": 3.3792079999999998
+    }
+  }
+}
