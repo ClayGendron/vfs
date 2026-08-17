@@ -27,7 +27,11 @@
   assert the cast yields the body's exact UTF-8 bytes; Oracle's leg
   records the decline (CLOB reaches bytes only through a DBMS_LOB
   copy). Profiles flip only when those legs produce server
-  evidence. **Ready for the mining pass.**
+  evidence. **Mined 2026-08-17:** decision set recorded as ADR 043
+  (the `content_bytes` doctrine, the bytes-native seam, the
+  audit-before-declare rule); research residue was already in the
+  memos this spec was born from. Folder stays as the historical
+  record.
   Born from two independent measurements: the fetch-path study
   during the scoped-grep optimization arc (`CAST(content AS BLOB)`
   fetched 181.6 MB in 55.6 ms vs 63.1 ms as text, −12%, while also

@@ -40,8 +40,13 @@
   under `fs/ext4/**`) answers in 27 ms where the unscoped spelling
   truncates at 1,182 ms. No budget re-derivation (candidate cost
   stays fetch-dominated; scoped rows under-fill the budget), and no
-  slice contradicted ADR 040. **All slices landed — ready for the
-  mining pass.**
+  slice contradicted ADR 040. **All slices landed. Mined
+  2026-08-17:** the decision set was pre-recorded as ADR 040
+  (including the in-session reindex re-convergence amendment); the
+  post-landing optimization arc that reshaped §4's nomination and
+  §5's assembly is recorded as ADR 041; research residue flowed at
+  landing (the scoped-bench study and the prior-art memo). Folder
+  stays as the historical record.
   Born from the path-indexing research arc: the prior-art memo
   (`../../../research/2026-08-17-path-indexing-prior-art.md`, field
   study + fork evidence + usage mining, studies under

@@ -19,7 +19,10 @@
   79.4 ms vs rg 149.7; `spin_lock` 23.4 → 18.6 vs rg 17.3;
   `GFP_KERNEL @ mm` 15.6 → 11.9 vs rg 11.2 — the last two inside
   rg's own run-to-run variance, which also moved between sessions).
-  **Ready for the mining pass.**
+  **Mined 2026-08-17:** decision set recorded as ADR 042; research
+  residue flowed before drafting (the overlay-probe memo and its
+  studies); the trash-stamping fork stays open in ADR 042's
+  consequences. Folder stays as the historical record.
   Born from the overlay-probe research memo
   (`../../../research/2026-08-17-overlay-probe-cost.md`, studies
   under `../../../research/studies/2026-08-17-overlay-probe-index/`),

@@ -5,7 +5,34 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-17 (fourth pass the same day), at spec
+- **Last reviewed:** 2026-08-17 (fifth pass the same day), at the
+  104/105/106 mining pass. That arc, all in one session after spec
+  104's completion: the "close the gaps to rg" optimization landing
+  (`1b36b4a` — priced gram ladder with the defer rule, join-built
+  allow-lists seeded by grouped COUNT, branded-`Path` passthrough
+  assembly, sqlite mmap/cache session settings; 6 scoped losses →
+  10-of-12 wins, recorded as **ADR 041**); the overlay-probe
+  research memo (`../research/2026-08-17-overlay-probe-cost.md` —
+  the partial-index hypothesis refuted, the cost located as
+  directory pollution of the `encoded=0` seek set) and the
+  storage-organizations sweep
+  (`../research/2026-08-17-search-storage-organizations.md` — field
+  study + seven priced experiments + an executed chunk-granularity
+  prototype that measured the 8–29× fetch-byte bound as a net
+  wall-time loss on warm sqlite; chunking/caching parked with
+  re-open triggers); spec 105 (composite `(encoded, kind)` index,
+  schema format 5, the same-snapshot overlay-emptiness gate —
+  **ADR 042**) and spec 106 (bytes-native verify seam, the
+  `content_bytes` profile fact declared for sqlite only, per-engine
+  cast-audit `db_test` legs — **ADR 043**) drafted, landed whole,
+  and mined the same day. End state: scoped board 11-of-12 ahead of
+  rg positional (the twelfth 0.7 ms inside session noise), unscoped
+  zero-hit floor 110 → 41 ms across the day, recall exact
+  everywhere. Suite 2,515 passed / 850 skipped, coverage 100 %,
+  ruff/ty zero. All three specs archived with mining notes; the
+  accumulated server legs (104's cascades, 105's index reflection,
+  106's cast audits) still await one real-server run.
+- **Previous review:** 2026-08-17 (fourth pass the same day), at spec
   104's completion — all four slices landed in one arc. A: the
   segment posting table and synchronous maintenance in every
   path-writing verb, plus the guarded reindex re-convergence. B: the
@@ -24,7 +51,7 @@ lines first; regenerate this file when the picture shifts (review the
   Suite 2,475 passed / 842 skipped, coverage 100 %, ruff/ty zero.
   Spec 104 is ready for the mining pass; the per-engine cascade legs
   still await a real-server run.
-- **Previous review:** 2026-08-17 (third pass the same day), at spec
+- **Earlier review:** 2026-08-17 (third pass the same day), at spec
   104's slice A landing. The segment posting table
   (`{table}_segments`, (segment, entry_id) PK, entry-id index,
   schema format 4), synchronous maintenance in every path-writing
@@ -398,13 +425,16 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
 → 089 → 090 → 073 → 091 → 092 → 093 → 094 → 095 → 096 → 097 → 098 →
-099 → 100. ADRs 001–038 accepted (005 superseded by 016; 021/022
-proposed, awaiting ratification; 018 awaiting its wiring spec; 032,
-033, 037, and 038 are the retroactive records of 073's, 093's, 094's,
-and 100's decision sets, written at their mining passes; 036 amends
-033's chunk-grain clause). The 073/091/092 glob arc, 093, 094, the
-095–099 campaign arc, and 100 are all mined and archived (095–099 on
-2026-08-14; 100 on 2026-08-16). Tree green at 2,301 passed / 838
+099 → 100 → 104 → 105 → 106. ADRs 001–043 accepted (005 superseded by
+016; 021/022 proposed, awaiting ratification; 018 awaiting its wiring
+spec; 032, 033, 037, and 038 are the retroactive records of 073's,
+093's, 094's, and 100's decision sets, written at their mining passes;
+036 amends 033's chunk-grain clause; 041–043 record the 2026-08-17
+read-path arc — the priced-nomination landing and specs 105/106 —
+written at the 104/105/106 mining pass). The 073/091/092 glob arc,
+093, 094, the 095–099 campaign arc, 100, and the 104–106 read-path
+arc are all mined and archived (095–099 on 2026-08-14; 100 on
+2026-08-16; 104–106 on 2026-08-17). Tree green at 2,301 passed / 838
 skipped, coverage 100%, `ruff`/`ty` at zero (2026-08-16, full
 3.11–3.14 matrix), all four Docker engine legs green as of the 098
 landing (2026-08-13).
