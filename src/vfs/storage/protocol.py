@@ -21,10 +21,13 @@ method surface.
 
     fs = VirtualFileSystem(storage=SnapshotStorage())
 
-Every path a backend method receives is already gated and terminal-relative
-(the router resolves, gates, and rebases first); every path a backend
-*returns* is likewise terminal-relative and normalized — the funnel
-validates and rebases on the way out.  Every op method returns a ``Result``
+Every path a backend method receives is already gated and terminal-relative,
+and it arrives as a branded :class:`~vfs.paths.Path` — the router resolves,
+gates, and rebases first. A bare ``str`` at this seam is out of contract:
+backends assume the branded type and may fail on anything else arbitrarily
+(string-holding callers go through the router, which resolves them). Every
+path a backend *returns* is likewise terminal-relative and normalized — the
+funnel validates and rebases on the way out.  Every op method returns a ``Result``
 — the single classified failure channel.  A raw exception from an
 in-process backend is a bug and propagates as one; a *wire* backend
 raises :class:`TransportError` for a dead or unreachable peer, which the

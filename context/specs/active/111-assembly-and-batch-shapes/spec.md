@@ -1,6 +1,34 @@
 # 111 — Assembly and batch shapes: hydration law everywhere, batched maintenance, honest profiles
 
-- **Status: drafted 2026-08-18.**
+- **Status: all slices landed 2026-08-18.**
+  §1: `reads._observe` re-brands stored paths (`Path._brand`) and
+  glob's candidate gate runs `passes_row_filters` over ridden
+  `name`/`ext` columns (queried beside `fetched`, never leaked into
+  a narrow `columns=` observation) — measured on the finding's own
+  20k-row shapes, interleaved arms: glob 311 → 146 ms (−53%), ls
+  277 → 204 ms (−26%), counts identical. The ls-precondition lead
+  settled by declaration: the storage protocol docstring now states
+  paths cross the seam as branded `Path` objects and a bare `str`
+  is out of contract (string-holding callers go through the router,
+  which resolves). §2: delete accumulates its root posting deltas
+  and flushes one `move_postings` batch per call after adjudication
+  — nothing in the loop reads segments, refused targets never
+  accumulate, and the expired-bucket 1:1 delta lawfully rides the
+  rename fast path. Measured at the 10k-target contract,
+  interleaved: sqlite 21.8 → 16.0 s (−26%), live Postgres (the
+  finding's venue) 48.5 → 36.0 s (−26%). The move/restore executor
+  was inspected and left per-pair with the reason recorded: its
+  descendant work already batches, the root move is one triple per
+  pair (no 10k-per-call contract shape), and the occupant-trash
+  interleave would need its own deferral-hazard audit — revisit
+  when a measurement names it. §3: `pathterms` carries the
+  acknowledged-suboptimality paragraph (corpus-width union, the
+  measured numbers, SQL-side join as the named future direction, no
+  cap implied). §4: all four engine legs green (Postgres 209, MySQL
+  210, MSSQL 211, Oracle 208 — segment-mirror and cascade batteries
+  included), both grep ladders identical counts with the zero-hit
+  floor at 41.9 ms, full 3.13 leg green (100% coverage).
+- **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),
   findings 7 (ownership lens), 10, and 11 (scale lens) — three

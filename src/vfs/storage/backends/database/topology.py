@@ -191,6 +191,9 @@ async def delete_rows(
     # Bumps this batch itself issued, by entry id: a later target's claim
     # guard expects its snapshot version plus exactly these.
     local_bumps = Counter[str]()
+    # Root posting deltas accumulate across targets and flush as one
+    # batch: nothing in the loop reads segments, so deferral is safe.
+    segment_moves: list[tuple[str, str, str]] = []
     for target in targets:
         if target == ROOT:
             errors.append(classified(VFSErrorKind.invalid, "Cannot delete the root directory", target))
@@ -240,7 +243,7 @@ async def delete_rows(
         if refused is not None:
             errors.append(refused)
             continue
-        await move_postings(session, tables.segments, membership_budget, [(row["entry_id"], row["path"], trash_path)])
+        segment_moves.append((row["entry_id"], row["path"], trash_path))
         # Rewrites re-collect post-claim: a deep child can land under an
         # unguarded descendant mid-window; the pre-claim list judged bytes.
         if is_directory:
@@ -252,6 +255,7 @@ async def delete_rows(
         rows.append(_observe_deleted(target, row, trash_path=Path(trash_path)))
     if errors:
         return Result(ops=("delete",), errors=errors)
+    await move_postings(session, tables.segments, membership_budget, segment_moves)
     return Result(ops=("delete",), observations=rows)
 
 

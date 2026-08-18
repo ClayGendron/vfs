@@ -35,7 +35,7 @@ from vfs.pattern_matching import (
     compile_filter,
     derive_ext,
     glob_defect,
-    passes_filters,
+    passes_row_filters,
 )
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
@@ -243,9 +243,13 @@ async def glob_rows(
     arms = [arm for arm in built if arm is not None]
     ride = ext_membership(entry, wanted, membership_budget)
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
-    for mapping in await _pattern_candidates(session, entry, chunk, arms, fetched):
+    # name and ext ride for the row-fact gate; the observation mask stays
+    # the caller's `fetched`, so a narrow columns= never leaks the ride.
+    queried = fetched | frozenset({"name", "ext"})
+    for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
         # Wanted-ext admission rides inside the gates (compiled with *ext*).
-        if passes_filters(Path(mapping["path"]), gates, not_gates, frozenset(), unwanted):
+        row = (mapping["path"], mapping["name"], mapping["ext"])
+        if passes_row_filters(*row, gates, not_gates, frozenset(), unwanted):
             matched.setdefault(mapping["path"], mapping)
     rows = [_observe(matched[path], fetched) for path in sorted(matched)]
     if max_count is not None:
@@ -446,8 +450,9 @@ def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]
 
 
 def _observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:
+    # Stored paths are canonical by invariant: re-brand, never re-gate.
     values: dict[str, object] = {field: mapping[field] for field in fetched}
-    values["path"] = Path(mapping["path"])
+    values["path"] = Path._brand(mapping["path"])
     values["populated"] = fetched
     return Observation.model_validate(values)
 

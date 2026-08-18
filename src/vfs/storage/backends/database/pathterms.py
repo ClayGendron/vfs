@@ -29,6 +29,16 @@ fetch pushdown); a term that posts nothing yields an honestly empty
 arm. Ids are the entries-table surrogate ids — the doc-id space the
 gram postings already speak — via one rarest-first self-join per arm,
 so only each arm's intersection ever leaves the database.
+
+Known profile, acknowledged: the union materializes in Python as id
+sets, so its memory is corpus-width when the scope is — measured
+~10 MB and sub-second at the linux benchmark's scale, ~103 MB traced
+peak (+360 MB RSS) and ~5.5 s at a 1M-entry scope — before any
+downstream budget can truncate. This is a suboptimality, not a limit:
+no corpus size is refused. The named future direction is pushing the
+allow-list join into the candidate fetch as a SQL predicate (temp
+table, VALUES join, or array by dialect), activated if a workload
+shows corpus-width scopes under tight budgets.
 """
 
 from __future__ import annotations
