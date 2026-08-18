@@ -188,3 +188,11 @@
 - **Blocking:** nothing shipped; it shapes the concurrency story whenever that becomes active work.
 - **Options considered (none decided):** (a) offload verify to a worker thread through the seam — the Rust core can release the GIL, pure `re` cannot, and ordering/cancellation semantics need design; (b) cooperative yields between content batches — cheap, bounds the stall at one batch, no true parallelism; (c) accept occupancy and document it.
 - **Status:** open
+
+## Bounding the pure scan's backtracking residual
+
+- **Asked:** 2026-08-18, out of the remediation-landing review (scale-lens major; recorded by spec 112 §4)
+- **Context:** The pure engine consults its deadline between 16-line slices, and one slice of `re` backtracking is uninterruptible and exponential in line content under a pathological pattern — measured for `(a+)+bcd`: 273 ms for a 16-line slice of 18-char lines, doubling per two characters, 75 s for a single 30-char line under a declared 1 s budget. Single-slice bodies pay it whole after their one entry check. Results after an overrun are exact (a wall breach, never wrong data), the incomplete flag stays a data-completeness signal by law, and the storage caller's per-batch deadline check records any breach that could cost data — so this is a wall-fidelity gap, not a correctness one. The `_PureMatcher` docstring names the magnitude honestly; the Rust engine is linear and unaffected.
+- **Blocking:** nothing shipped; it matters when a hostile or unlucky pattern on the pure engine must not hold a worker for minutes.
+- **Options considered (none decided):** (a) finer-grain interruption — a wrapping scan that re-checks the clock per match attempt; per-match overhead on every budgeted scan, and still floored by one attempt's backtracking; (b) a pattern-complexity gate on the pure path — refuses shapes the language gate admits today, colliding with the no-designed-caps rule; needs its own decision pass; (c) offload the scan to a worker thread where a true timeout is possible — the same territory as the event-loop occupancy fork above; one decision should settle both.
+- **Status:** open

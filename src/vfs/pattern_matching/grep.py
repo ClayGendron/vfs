@@ -453,9 +453,15 @@ class _PureMatcher:
     A budgeted call consults the deadline *within* each body, between
     ``_SLICE_LINES``-line slices: expiry mid-body returns the partial
     hits found so far — a lawful subset — reported incomplete. The
-    residual floor is one slice's matching: ``re`` backtracking inside
-    a single line cannot be interrupted, so a pathological pattern on a
-    pathological line still pays that line's full cost once.
+    residual between checks is one slice's matching, and it is a floor,
+    not a bound: ``re`` backtracking cannot be interrupted, and its
+    cost grows exponentially with line content under a pathological
+    pattern — measured for ``(a+)+bcd``: 273 ms for a 16-line slice of
+    18-character lines, 65 ms for one 20-character line, doubling per
+    two characters from there. A body inside one slice pays that cost
+    whole after the single check at body entry. An overrun leaves the
+    results exact — the wall is breached, never the answer — and the
+    incomplete flag stays a data-completeness signal, not a wall one.
     """
 
     def __init__(self, line_rx: re.Pattern[str], multi_rx: re.Pattern[str] | None) -> None:
@@ -513,6 +519,10 @@ class _PureMatcher:
             if deadline is not None and begin and monotonic() > deadline:
                 return count, False
             for found in self._multi_rx.finditer(text, begin, stop):
+                # A zero-width match at the slice end is ``endpos`` posing as
+                # end-of-string; the next slice judges it with real context.
+                if found.start() == stop and stop < len(text):
+                    continue
                 start = text.rfind("\n", 0, found.start()) + 1
                 if start >= len(text) or start == last_start:
                     continue
@@ -532,6 +542,10 @@ class _PureMatcher:
             if deadline is not None and begin and monotonic() > deadline:
                 return hits, False
             for found in self._multi_rx.finditer(text, begin, stop):
+                # A zero-width match at the slice end is ``endpos`` posing as
+                # end-of-string; the next slice judges it with real context.
+                if found.start() == stop and stop < len(text):
+                    continue
                 start = text.rfind("\n", 0, found.start()) + 1
                 if start >= len(text) or start == last_start:
                     continue

@@ -1,5 +1,34 @@
 # 112 — Pure-scan slice integrity: no phantom boundary matches, an honest wall record
 
+- **Status: all slices landed 2026-08-18.**
+  §1: the whole-text scan loops discard zero-width matches landing
+  exactly on a non-final slice end — the `endpos`-as-end-of-string
+  artifact — and the next slice judges that position with real
+  context. Fabrication repro (40 non-empty lines, `^$`, budgeted):
+  before `[2]` with hits on lines 17/33, after `[0]`/no hits, equal
+  to unbudgeted; displacement repro (`cap=1`, genuine empty line 19):
+  before returns the fabricated line-17 hit, after the genuine hit,
+  both spellings; public surface (`grep("^$", allow_scan=True)` on
+  the pure engine) 1 observation → 0. §2: the battery gained three
+  slice-boundary bodies (anchors hitting lines 1/17/33/last, empty
+  lines on both boundaries), a budgeted-equals-unbudgeted sweep over
+  all CASES on the pure engine, a budgeted-pure-equals-authority
+  sweep, and three targeted rows (fabrication, cap displacement,
+  genuine-boundary-line served once). Guard-removal mutant killed by
+  4 tests (both `^$` sweep rows, fabrication, displacement) under
+  the safe-restore discipline. §3: the `_PureMatcher` docstring
+  carries the measured residual (273 ms per 16-line slice of 18-char
+  lines, 65 ms per 20-char line, doubling per two characters — a
+  floor, not a bound), the single-check-at-entry profile of one-slice
+  bodies, and the exact-results-on-overrun law; the ReDoS pin
+  re-shaped from 18-char lines under a 2.0 s ceiling (~100×
+  headroom) to 20-char lines (~1.05 s/slice) under 3.0 s, with the
+  authority twin on the same shape. §4: the residual-bounding fork
+  recorded in `open-questions.md` beside the event-loop occupancy
+  fork (finer-grain interruption / complexity gate / worker-thread
+  offload — one decision should settle both). Parity file 142
+  passed on both engine legs; deadline-cadence spelling untouched
+  (§1's rewrite never reached those guards). Full 3.13 CI leg green.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

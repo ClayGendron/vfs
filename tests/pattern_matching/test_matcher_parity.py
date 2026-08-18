@@ -101,6 +101,11 @@ BODIES: tuple[str, ...] = (
     "café au lait\nΚΑΛΗΜΈΡΑ κόσμε\n",  # noqa: RUF001
     "x" * 5000 + "\nneedle at end",
     "hé\nwörld🚀\nplain é\n",
+    # Slice-boundary shapes: bodies past the 16-line slice grain, so
+    # budgeted scans cross boundaries; anchors hit lines 1, 17, 33, last.
+    "\n".join(f"line{i}" for i in range(1, 41)) + "\n",
+    "\n".join("inc word end" if i in (1, 17, 33, 36) else f"filler {i}" for i in range(1, 37)) + "\n",
+    "\n".join("" if i in (17, 33) else f"l{i}" for i in range(1, 37)) + "\n",
 )
 
 MODES: tuple[dict, ...] = (
@@ -174,6 +179,57 @@ class TestEngineParity:
             rows_p, _ = pure.hit_lines(BODIES, before=0, after=0, cap=None, invert=False, budget=None)
             assert rows_r == rows_p, pattern
 
+    @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
+    def test_budgeted_scans_match_unbudgeted_on_the_pure_engine(self, pattern: str, kwargs: dict) -> None:
+        # A generous budget takes the sliced paths without ever expiring:
+        # the answer must be byte-identical to the unbudgeted scan.
+        options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
+        pure = pure_verifier(pattern, **options)
+        for mode in MODES:
+            truth = pure.hit_lines(BODIES, budget=None, **mode)
+            assert pure.hit_lines(BODIES, budget=1e6, **mode) == truth, (pattern, mode)
+            counts = {"cap": mode["cap"], "invert": mode["invert"]}
+            assert pure.count_lines(BODIES, budget=1e6, **counts) == pure.count_lines(BODIES, budget=None, **counts)
+
+    @needs_rust
+    @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
+    def test_budgeted_pure_scans_match_the_authority(self, pattern: str, kwargs: dict) -> None:
+        options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
+        rust = rust_verifier(pattern, **options)
+        pure = pure_verifier(pattern, **options)
+        for mode in MODES:
+            truth = rust.hit_lines(BODIES, budget=None, **mode)
+            assert pure.hit_lines(BODIES, budget=1e6, **mode) == truth, (pattern, mode)
+
+    def test_a_budgeted_scan_never_invents_boundary_matches(self) -> None:
+        # 40 non-empty lines: `^$` has nothing to match, and a slice end
+        # posing as end-of-string would report hits on lines 17 and 33.
+        body = "\n".join(f"line{i}" for i in range(1, 41)) + "\n"
+        verifier = pure_verifier("^$", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        for spelling in (body, body.encode()):
+            assert verifier.count_lines([spelling], cap=None, invert=False, budget=1e4) == ([0], True)
+            rows, completed = verifier.hit_lines([spelling], before=0, after=0, cap=None, invert=False, budget=1e4)
+            assert (rows, completed) == ([[]], True)
+
+    def test_a_capped_budgeted_scan_keeps_the_genuine_hit(self) -> None:
+        # A boundary phantom would consume the cap slot on line 17 and
+        # displace the genuine empty line at 19 — the wrong hit entirely.
+        body = "\n".join(["filler"] * 16 + ["not-empty", "x", "", "tail"]) + "\n"
+        verifier = pure_verifier("^$", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        for spelling in (body, body.encode()):
+            for budget in (None, 1e4):
+                rows, completed = verifier.hit_lines([spelling], before=0, after=0, cap=1, invert=False, budget=budget)
+                assert (rows, completed) == ([[(19, 19, 19, "")]], True), budget
+
+    def test_a_genuine_boundary_line_match_is_served_once(self) -> None:
+        # Empty lines sitting exactly on slice boundaries are genuine
+        # hits: the next slice serves each, exactly once, budget or not.
+        body = "\n".join("" if i in (17, 33) else f"l{i}" for i in range(1, 37)) + "\n"
+        verifier = pure_verifier("^$", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        for budget in (None, 1e4):
+            rows, completed = verifier.hit_lines([body], before=0, after=0, cap=None, invert=False, budget=budget)
+            assert ([span[2] for span in rows[0]], completed) == ([17, 33], True), budget
+
     @needs_rust
     def test_exhausted_budget_reports_incomplete_on_both(self) -> None:
         bodies = ["needle\n"] * 64
@@ -187,15 +243,15 @@ class TestEngineParity:
             assert len(rows) == len(bodies)
 
     def test_a_backtracking_pattern_stays_inside_the_wall_budget(self) -> None:
-        # The ReDoS shape: catastrophic per-line backtracking must stop
-        # at an inter-slice check, never run the whole body out.
-        body = "\n".join("a" * 18 for _ in range(64))
+        # The ReDoS shape must stop at an inter-slice check: 20-char lines
+        # cost ~65 ms each (~1.05 s/slice), so the ceiling rides one slice.
+        body = "\n".join("a" * 20 for _ in range(64))
         verifier = pure_verifier("(a+)+bcd", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         for spelling in (body, body.encode()):
             started = monotonic()
             counts, completed = verifier.count_lines([spelling], cap=None, invert=False, budget=0.05)
             elapsed = monotonic() - started
-            assert elapsed < 2.0, elapsed  # one slice's backtracking, the documented floor
+            assert elapsed < 3.0, elapsed  # one slice's backtracking, the documented residual
             assert counts == [0]
             assert completed is False
 
@@ -203,7 +259,7 @@ class TestEngineParity:
     def test_the_authority_finishes_the_backtracking_shape_within_budget(self) -> None:
         # The linear engine needs no rescue: same shape, same budget,
         # complete answer.
-        body = "\n".join("a" * 18 for _ in range(64))
+        body = "\n".join("a" * 20 for _ in range(64))
         verifier = rust_verifier("(a+)+bcd", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         counts, completed = verifier.count_lines([body], cap=None, invert=False, budget=0.05)
         assert counts == [0]
