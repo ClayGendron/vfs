@@ -1,6 +1,31 @@
 # 110 — Seam bounds: the pure engine honors the wall clock, the ingress gate gets maxima
 
-- **Status: drafted 2026-08-18.**
+- **Status: all slices landed 2026-08-18.**
+  §1: the pure matcher consults the deadline *within* each body, at
+  16-line slice boundaries on all four scan paths (whole-text via
+  `finditer(text, begin, stop)` on line boundaries — `^`/`$`/`\b`
+  judge identically since boundaries land just after `\n` and the
+  gate already refused look-arounds; per-line via a stride check);
+  expiry mid-body returns the partial hits as a lawful subset,
+  reported incomplete. The residual floor — one slice's
+  backtracking, uninterruptible inside `re` — measured 273 ms on
+  16 catastrophic 18-char lines and recorded in the docstring. The
+  unbudgeted path is one whole-body slice: zero overhead. §2: every
+  int ParamSpec carries `maximum=INT_CEILING` (2³¹−1, the tightest
+  integer all seams carry — probed live: the pyo3 context channels
+  overflow at 2³², cap at 2⁶⁴); over-max refuses typed `invalid`
+  naming the parameter, and the former raw-OverflowError repro
+  (`before_context=2**32`) is now a router refusal pin, with the
+  ceiling itself served end-to-end on the live engine. §3: parity
+  rows — the ReDoS shape bounded on the pure engine (str and bytes
+  spellings) and completed by the linear authority under the same
+  budget, mid-body subset rows on both split and whole paths, the
+  7-channel maximum sweep — all green on both engines (the pure CI
+  leg runs them without the extension). §4: the event-loop
+  occupancy fork recorded in `context/open-questions.md` for Clay,
+  deliberately not landed. Full 3.13 leg green (2,558 tests, 100%
+  coverage).
+- **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),
   findings 5 (adversarial lens, major) and 14 (adversarial lens,

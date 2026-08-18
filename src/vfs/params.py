@@ -7,7 +7,7 @@ and the wire dialect's schema projection. The module is a leaf — stdlib plus
 ``vfs.ops`` only — so schema consumers never import the router.
 
     param_violation("tree", {"max_depth": "2"})
-    # → "tree max_depth must be an integer >= 1, got '2'"
+    # → "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
 """
 
 from __future__ import annotations
@@ -46,6 +46,10 @@ CASE_MODES: Final[frozenset[str]] = frozenset(get_args(CaseMode))
 OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
 OBJECT_KINDS: Final[frozenset[str]] = frozenset(get_args(ObjectKind))
 
+# The shared ceiling on every int channel: the tightest integer all of
+# vfs's seams carry alike — 32-bit FFI paths, SQL INT columns, JSON.
+INT_CEILING: Final = 2**31 - 1
+
 
 class ParamSpec(NamedTuple):
     """One parameter's ingress contract — type kind, domain, and schema facts.
@@ -60,6 +64,7 @@ class ParamSpec(NamedTuple):
     required: bool = False
     nullable: bool = True
     minimum: int | None = None
+    maximum: int | None = None
     choices: frozenset[str] | None = None
     default: object = None
     doc: str = ""
@@ -107,7 +112,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     ),
     "tree": (
         ParamSpec("path", "path", required=True, doc="the region root"),
-        ParamSpec("max_depth", "int", minimum=1, doc="depth budget; None is unbounded"),
+        ParamSpec("max_depth", "int", minimum=1, maximum=INT_CEILING, doc="depth budget; None is unbounded"),
         _COLUMNS,
         _USER,
     ),
@@ -186,7 +191,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("ext_not", "str_seq", nullable=False, default=(), doc="drop these extensions"),
         ParamSpec("globs_not", "str_seq", nullable=False, default=(), doc="drop paths matching these globs"),
         ParamSpec("kind", "str", choices=OBJECT_KINDS, doc="keep only rows of this kind; None keeps both"),
-        ParamSpec("max_count", "int", minimum=1, doc="bound per entry and on the merged result"),
+        ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="bound per entry and on the merged result"),
         _COLUMNS,
         _USER,
     ),
@@ -202,10 +207,26 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("fixed_strings", "bool", nullable=False, default=False, doc="treat pattern as a literal"),
         ParamSpec("word_regexp", "bool", nullable=False, default=False, doc="match whole words only"),
         ParamSpec("invert_match", "bool", nullable=False, default=False, doc="report non-matching lines"),
-        ParamSpec("before_context", "int", nullable=False, minimum=0, default=0, doc="context lines before a match"),
-        ParamSpec("after_context", "int", nullable=False, minimum=0, default=0, doc="context lines after a match"),
+        ParamSpec(
+            "before_context",
+            "int",
+            nullable=False,
+            minimum=0,
+            maximum=INT_CEILING,
+            default=0,
+            doc="context lines before a match",
+        ),
+        ParamSpec(
+            "after_context",
+            "int",
+            nullable=False,
+            minimum=0,
+            maximum=INT_CEILING,
+            default=0,
+            doc="context lines after a match",
+        ),
         ParamSpec("output_mode", "str", nullable=False, choices=OUTPUT_MODES, default="lines", doc="row shape"),
-        ParamSpec("max_count", "int", minimum=1, doc="matches per file, ripgrep's -m"),
+        ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="matches per file, ripgrep's -m"),
         ParamSpec("allow_scan", "bool", nullable=False, default=False, doc="opt into an unindexed scan tier"),
         _COLUMNS,
         _USER,
@@ -213,7 +234,13 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "glean": (
         ParamSpec("query", "str", required=True, doc="ranked-search text"),
         ParamSpec(
-            "limit", "int", nullable=False, minimum=1, default=10, doc="bound per entry and on the merged result"
+            "limit",
+            "int",
+            nullable=False,
+            minimum=1,
+            maximum=INT_CEILING,
+            default=10,
+            doc="bound per entry and on the merged result",
         ),
         _SCOPE_PATHS,
         _OBSERVATIONS,
@@ -224,7 +251,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("method", "str", required=True, choices=GRAPH_METHODS, doc="traversal to run"),
         ParamSpec("path", "path", doc="the node to start from"),
         _OBSERVATIONS,
-        ParamSpec("depth", "int", minimum=1, doc="traversal depth budget"),
+        ParamSpec("depth", "int", minimum=1, maximum=INT_CEILING, doc="traversal depth budget"),
         _USER,
     ),
     "run": (
@@ -359,9 +386,18 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
             return f"{op} {spec.name} must be one of {sorted(spec.choices)}, got {value!r}"
         return None
     if kind == "int":
-        if isinstance(value, bool) or not isinstance(value, int) or (spec.minimum is not None and value < spec.minimum):
-            bound = "" if spec.minimum is None else f" >= {spec.minimum}"
-            return f"{op} {spec.name} must be an integer{bound}, got {value!r}"
+        in_range = (
+            not isinstance(value, bool)
+            and isinstance(value, int)
+            and (spec.minimum is None or value >= spec.minimum)
+            and (spec.maximum is None or value <= spec.maximum)
+        )
+        if not in_range:
+            bounds = [f">= {spec.minimum}"] if spec.minimum is not None else []
+            if spec.maximum is not None:
+                bounds.append(f"<= {spec.maximum}")
+            suffix = f" {' and '.join(bounds)}" if bounds else ""
+            return f"{op} {spec.name} must be an integer{suffix}, got {value!r}"
         return None
     if kind == "bool":
         if not isinstance(value, bool):

@@ -10,7 +10,7 @@ import pytest
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS
-from vfs.params import PARAMS, RULES, param_violation
+from vfs.params import INT_CEILING, PARAMS, RULES, param_violation
 from vfs.results import VFSErrorKind
 
 # ----------------------------------------------------------------------
@@ -31,10 +31,29 @@ def test_every_verb_signature_matches_the_table() -> None:
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
 
 
+def test_every_int_channel_enforces_the_shared_ceiling() -> None:
+    # The seam sweep: no int channel is unbounded above, so no value
+    # the gate admits can overflow an FFI or SQL integer downstream.
+    swept = 0
+    for op, specs in PARAMS.items():
+        for spec in specs:
+            if spec.kind != "int":
+                continue
+            swept += 1
+            assert spec.maximum == INT_CEILING, (op, spec.name)
+            at_max = param_violation(op, {spec.name: INT_CEILING})
+            assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
+            over = param_violation(op, {spec.name: INT_CEILING + 1})
+            assert over is not None and spec.name in over and str(INT_CEILING) in over
+    assert swept == 7
+
+
 def test_violation_messages_name_the_parameter() -> None:
     # The invalid KindContract's hint is "fix the flagged parameter" —
     # every type/domain refusal must say which one.
-    assert param_violation("tree", {"max_depth": "2"}) == "tree max_depth must be an integer >= 1, got '2'"
+    assert param_violation("tree", {"max_depth": "2"}) == (
+        "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
+    )
     assert param_violation("grep", {"case_mode": "bogus", "pattern": "x"}) == (
         "grep case_mode must be one of ['insensitive', 'sensitive', 'smart'], got 'bogus'"
     )

@@ -180,3 +180,11 @@
 - **Blocking:** nothing current; it shaped spec 103 §1's crate layout (recorded there). Its own research → decide arc starts when Clay prioritizes it.
 - **Options considered:** none yet — the fork space (shared Rust core with bindings everywhere vs independent idiomatic implementations vs wasm-first) is the future research question.
 - **Status:** parked
+
+## Grep verify occupies the event loop
+
+- **Asked:** 2026-08-18, out of the glob/grep review campaign (adversarial-lens lead; recorded by spec 110 §4)
+- **Context:** The verify stage runs synchronously inside the grep coroutine on both engines: up to a full `grep_wall_seconds` (default 10 s) of matching holds the event loop, so concurrent calls on the same host stall behind one heavy grep. Spec 110 bounded the pure engine's within-body worst case (deadline consulted between 16-line slices; residual is one slice's backtracking, measured 273 ms on a pathological shape) — but even bounded, wall-budget-sized synchronous matching is real occupancy for the high-concurrency agent audience, Rust engine included.
+- **Blocking:** nothing shipped; it shapes the concurrency story whenever that becomes active work.
+- **Options considered (none decided):** (a) offload verify to a worker thread through the seam — the Rust core can release the GIL, pure `re` cannot, and ordering/cancellation semantics need design; (b) cooperative yields between content batches — cheap, bounds the stall at one batch, no true parallelism; (c) accept occupancy and document it.
+- **Status:** open

@@ -15,6 +15,7 @@ import pytest
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
 from vfs.models import Observation
+from vfs.params import INT_CEILING
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
@@ -264,3 +265,25 @@ async def test_chained_grep_output_modes_shape_the_held_row() -> None:
     assert files.observations[0].matches is None
     counted = await fs.grep("needle", observations=rows, output_mode="count")
     assert counted.observations[0].score == 2.0
+
+
+async def test_int_channels_refuse_past_the_shared_ceiling() -> None:
+    # The former raw-OverflowError shape: a router-admitted value the
+    # FFI seam could not carry. Over-max now refuses typed invalid.
+    fs = await _plain_world()
+    over = await fs.grep("needle", before_context=2**32)
+    assert over.success is False
+    assert over.errors[0].kind is VFSErrorKind.invalid
+    assert "before_context" in over.errors[0].message
+    huge_count = await fs.grep("needle", max_count=2**64)
+    assert huge_count.success is False
+    assert huge_count.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_the_ceiling_itself_is_served_on_the_live_engine() -> None:
+    # The declared maximum is a lawful value: it must cross the engine
+    # seam and answer, not refuse at one and overflow at the other.
+    fs = await _plain_world()
+    result = await fs.grep("needle", before_context=INT_CEILING, after_context=INT_CEILING, max_count=INT_CEILING)
+    assert result.success is True
+    assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.py", "/notes.txt"]

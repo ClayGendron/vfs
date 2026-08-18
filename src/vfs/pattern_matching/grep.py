@@ -47,7 +47,7 @@ from vfs.paths import normalize_ext_channel
 from vfs.pattern_matching.glob import compile_filter, passes_filters
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
     from typing import Any
 
     from vfs.ops import CaseMode, GrepOutputMode
@@ -413,6 +413,35 @@ class _RustMatcher:
         return decoded, completed
 
 
+# Lines per deadline slice on the pure engine: the clock is consulted
+# between slices, so one slice's worth of matching is the check's grain.
+_SLICE_LINES: Final = 16
+
+
+def _line_slices(text: str, bounded: bool) -> Iterator[tuple[int, int]]:
+    """``(begin, stop)`` offsets on line boundaries, ``_SLICE_LINES`` per slice.
+
+    Unbounded calls get the whole body as one slice — the fast path pays
+    nothing. Boundaries land just after ``\\n``, so ``^``/``$`` and word
+    boundaries judge identically to an unsliced scan (the language gate
+    already refused look-arounds and text anchors).
+    """
+    if not bounded:
+        yield 0, len(text)
+        return
+    begin = 0
+    while begin < len(text):
+        stop = begin
+        for _ in range(_SLICE_LINES):
+            newline = text.find("\n", stop)
+            if newline == -1:
+                stop = len(text)
+                break
+            stop = newline + 1
+        yield begin, stop
+        begin = stop
+
+
 class _PureMatcher:
     """The fallback engine: Python ``re`` under the same line law.
 
@@ -420,6 +449,13 @@ class _PureMatcher:
     the per-line anchor law) when the gate proved it safe and the call
     has no context or inversion to shape; otherwise splits and matches
     per line — always correct, the reference shape.
+
+    A budgeted call consults the deadline *within* each body, between
+    ``_SLICE_LINES``-line slices: expiry mid-body returns the partial
+    hits found so far — a lawful subset — reported incomplete. The
+    residual floor is one slice's matching: ``re`` backtracking inside
+    a single line cannot be interrupted, so a pathological pattern on a
+    pathological line still pays that line's full cost once.
     """
 
     def __init__(self, line_rx: re.Pattern[str], multi_rx: re.Pattern[str] | None) -> None:
@@ -436,9 +472,12 @@ class _PureMatcher:
                 return counts + [0] * (len(texts) - len(counts)), False
             text = _as_text(body)
             if self._multi_rx is not None and not invert:
-                counts.append(self._count_whole(text, cap))
+                count, completed = self._count_whole(text, cap, deadline)
             else:
-                counts.append(self._count_lines_split(text, cap, invert))
+                count, completed = self._count_split(text, cap, invert, deadline)
+            counts.append(count)
+            if not completed:
+                return counts + [0] * (len(texts) - len(counts)), False
         return counts, True
 
     def hit_lines(
@@ -458,62 +497,77 @@ class _PureMatcher:
                 return rows + [[] for _ in range(len(texts) - len(rows))], False
             text = _as_text(body)
             if self._multi_rx is not None and not invert and not before and not after:
-                rows.append(self._hits_whole(text, cap))
+                spans, completed = self._hits_whole(text, cap, deadline)
             else:
-                rows.append(self._hits_split(text, before, after, cap, invert))
+                spans, completed = self._hits_split(text, before, after, cap, invert, deadline)
+            rows.append(spans)
+            if not completed:
+                return rows + [[] for _ in range(len(texts) - len(rows))], False
         return rows, True
 
-    def _count_whole(self, text: str, cap: int | None) -> int:
+    def _count_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[int, bool]:
         assert self._multi_rx is not None
         count = 0
         last_start = -1
-        for found in self._multi_rx.finditer(text):
-            start = text.rfind("\n", 0, found.start()) + 1
-            if start >= len(text) or start == last_start:
-                continue
-            last_start = start
-            count += 1
-            if cap is not None and count >= cap:
-                break
-        return count
+        for begin, stop in _line_slices(text, deadline is not None):
+            if deadline is not None and begin and monotonic() > deadline:
+                return count, False
+            for found in self._multi_rx.finditer(text, begin, stop):
+                start = text.rfind("\n", 0, found.start()) + 1
+                if start >= len(text) or start == last_start:
+                    continue
+                last_start = start
+                count += 1
+                if cap is not None and count >= cap:
+                    return count, True
+        return count, True
 
-    def _hits_whole(self, text: str, cap: int | None) -> list[MatchSpan]:
+    def _hits_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[list[MatchSpan], bool]:
         assert self._multi_rx is not None
         hits: list[MatchSpan] = []
         last_start = -1
         cursor = 0
         line_no = 1
-        for found in self._multi_rx.finditer(text):
-            start = text.rfind("\n", 0, found.start()) + 1
-            if start >= len(text) or start == last_start:
-                continue
-            last_start = start
-            line_no += text.count("\n", cursor, start)
-            cursor = start
-            end = text.find("\n", found.end())
-            content = text[start:] if end == -1 else text[start:end]
-            hits.append((line_no, line_no, line_no, content))
-            if cap is not None and len(hits) >= cap:
-                break
-        return hits
+        for begin, stop in _line_slices(text, deadline is not None):
+            if deadline is not None and begin and monotonic() > deadline:
+                return hits, False
+            for found in self._multi_rx.finditer(text, begin, stop):
+                start = text.rfind("\n", 0, found.start()) + 1
+                if start >= len(text) or start == last_start:
+                    continue
+                last_start = start
+                line_no += text.count("\n", cursor, start)
+                cursor = start
+                end = text.find("\n", found.end())
+                content = text[start:] if end == -1 else text[start:end]
+                hits.append((line_no, line_no, line_no, content))
+                if cap is not None and len(hits) >= cap:
+                    return hits, True
+        return hits, True
 
-    def _count_lines_split(self, text: str, cap: int | None, invert: bool) -> int:
+    def _count_split(self, text: str, cap: int | None, invert: bool, deadline: float | None) -> tuple[int, bool]:
         count = 0
-        for line in split_lines(text):
+        for index, line in enumerate(split_lines(text)):
+            if deadline is not None and index and index % _SLICE_LINES == 0 and monotonic() > deadline:
+                return count, False
             if (self._line_rx.search(line) is not None) is not invert:
                 count += 1
                 if cap is not None and count >= cap:
                     break
-        return count
+        return count, True
 
-    def _hits_split(self, text: str, before: int, after: int, cap: int | None, invert: bool) -> list[MatchSpan]:
+    def _hits_split(
+        self, text: str, before: int, after: int, cap: int | None, invert: bool, deadline: float | None
+    ) -> tuple[list[MatchSpan], bool]:
         lines = split_lines(text)
         hits: list[MatchSpan] = []
         for number, line in enumerate(lines, start=1):
+            if deadline is not None and number > 1 and number % _SLICE_LINES == 1 and monotonic() > deadline:
+                return hits, False
             if (self._line_rx.search(line) is not None) is not invert:
                 start = max(1, number - before)
                 end = min(len(lines), number + after)
                 hits.append((start, end, number, "\n".join(lines[start - 1 : end])))
                 if cap is not None and len(hits) >= cap:
                     break
-        return hits
+        return hits, True
