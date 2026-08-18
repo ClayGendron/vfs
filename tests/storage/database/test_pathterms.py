@@ -11,7 +11,7 @@ channels return ``None``, dead terms return honestly empty sets.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import select
@@ -24,6 +24,7 @@ from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.pathterms import (
     ArmTerms,
     NameFact,
+    _term_counts,
     allow_list_ids,
     compile_channel,
     compile_terms,
@@ -34,7 +35,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 # A corpus of stored-path shapes: root-level, nested, recurring names,
-# dotfiles, case variants, dotted directory names, deep chains.
+# dotfiles, case variants, dotted directory names, deep chains, plus
+# term-overlap decoys (a segment shared without the whole conjunction)
+# and a five-literal chain that makes the intersection cap slice.
 PATHS = tuple(
     Path(text)
     for text in (
@@ -54,6 +57,9 @@ PATHS = tuple(
         "/Docs/Readme.MD",
         "/.hidden/config",
         "/deep/er/est/leaf",
+        "/app/solo.txt",
+        "/p1/p2/p3/p4/p5/leaf.txt",
+        "/p2/p3/p4/p5/decoy.txt",
     )
 )
 
@@ -278,6 +284,49 @@ class TestAllowListSeam:
         # the smallest posting) and empties the arm without a second look.
         ids = await _allow_list(storage, ("ghost/src/**",))
         assert ids == []
+
+    async def test_the_intersection_excludes_a_term_overlap_decoy(self, storage: DatabaseStorage) -> None:
+        # /app/solo.txt carries the rarer term without the conjunction —
+        # a join shortened to the rarest term alone would admit it.
+        ids = await _allow_list(storage, ("src/app/**",))
+        assert ids is not None
+        by_id = await _paths_by_id(storage)
+        admitted = {by_id[doc_id] for doc_id in ids}
+        assert "/src/app/main.py" in admitted
+        assert not any(path.startswith("/app/") for path in admitted)
+
+    async def test_a_wide_arm_slices_to_the_rarest_terms_and_stays_sound(self, storage: DatabaseStorage) -> None:
+        # Five literal directories exceed the intersection cap: the join
+        # keeps the four rarest, and p1 (rarest) always survives.
+        ids = await _allow_list(storage, ("p1/p2/p3/p4/p5/*.txt",))
+        assert ids is not None
+        by_id = await _paths_by_id(storage)
+        admitted = {by_id[doc_id] for doc_id in ids}
+        assert "/p1/p2/p3/p4/p5/leaf.txt" in admitted
+        assert "/p2/p3/p4/p5/decoy.txt" not in admitted
+
+    async def test_the_join_drives_from_the_rarest_term(
+        self, storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Written order seeds engines that join in written order: the
+        # anchor condition must name the rarest term, not the first.
+        channel = compile_channel(("docs/img1/**",))
+        captured: list[Any] = []
+        async with storage._host.session_factory() as session:
+            real = session.execute
+
+            async def spying(stmt, *args, **kwargs):
+                captured.append(stmt)
+                return await real(stmt, *args, **kwargs)
+
+            monkeypatch.setattr(session, "execute", spying)
+            budget = storage._host.membership_budget
+            counts = await _term_counts(session, storage._host.tables, budget, {"docs", "img1"})
+            assert counts["img1"] < counts["docs"]  # the pin is non-vacuous
+            ids = await allow_list_ids(session, storage._host.tables, storage._host.membership_budget, channel)
+        assert ids
+        anchor_condition = captured[-1]._where_criteria[0]
+        assert anchor_condition.right.value == "img1"
 
     async def test_ids_are_sorted_and_deduped(self, storage: DatabaseStorage) -> None:
         ids = await _allow_list(storage, ("src/**", "src/app/**"))

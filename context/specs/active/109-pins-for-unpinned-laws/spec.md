@@ -1,6 +1,27 @@
 # 109 — Pins for unpinned laws: the mutations the suite must start killing
 
-- **Status: drafted 2026-08-18.**
+- **Status: all slices landed 2026-08-18.** The mutation ledger, each
+  applied against the finished suite under safe-restore and shown to
+  fail (mutation → killing tests):
+  - `_channel_facts` `return None` → `continue` (the partial OR):
+    killed by the mixed-channel storage row, the `_channel_facts`
+    void unit row, and the contract battery's mixed-channel row on
+    the memory leg — 3 failures.
+  - `_arm_ids` join shortened to the rarest term
+    (`ranked[:_INTERSECT_TERMS]` → `ranked[:1]`): killed by the
+    term-overlap decoy row, the wide-arm slice row, and
+    `test_multi_term_arms_intersect` (now armed by `/app/solo.txt`)
+    — 3 failures.
+  - Pricing constants, one magnitude each way: 75→7.5 (4 pins fail),
+    75→750 (3), 500→5,000 (4), 500→50 (3), 0.055→0.55 (1),
+    0.055→0.0055 (1) — every drift killed by the `_ladder_defers`
+    boundary rows or the defer/ladder spy rows.
+  Also landed: the rarest-first ordering pin (anchor condition
+  drives from `img1`, the rarer term, with a non-vacuity count
+  precondition) and the reachable `laddered ∩ allow` row (the wide
+  scope rides the ladder — blob-fetch spy — and intersects). Full
+  3.13 leg green (2,539 tests, 100% coverage).
+- **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),
   findings 4 (test lens, major), 12, and 13 (test lens, minor) —

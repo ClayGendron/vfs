@@ -1463,6 +1463,24 @@ class StorageContract:
         assert [o.path for o in found.observations] == ["/idx.txt"]
 
     @needs("write", "grep")
+    async def test_grep_mixed_channel_serves_the_fact_free_arm_in_both_worlds(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # globs mixing a fact-carrying arm (*.py pins ext) with a
+        # fact-free arm (docs/** pins no column fact): both rows serve.
+        reindexer = _reindexer_of(storage)
+        files = (("/src/a.py", "needle py"), ("/docs/readme.md", "needle md"), ("/notes.txt", "needle txt"))
+        for text, content in files:
+            written = await storage.write(entries=[Entry(path=Path(text), content=content)], parents=True)
+            assert written.success is True
+        expected = ["/docs/readme.md", "/src/a.py"]
+        scanned = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
+        assert [o.path for o in scanned.observations] == expected
+        assert (await reindexer.reindex()).success is True
+        indexed = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
+        assert [o.path for o in indexed.observations] == expected
+
+    @needs("write", "grep")
     async def test_reindex_twice_then_a_rewrite_advances_the_epoch(self, storage: ConformanceBackend) -> None:
         # The second build runs the pending probe against a live epoch —
         # a statement surface the first build never reaches.

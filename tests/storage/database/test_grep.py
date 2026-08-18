@@ -19,12 +19,15 @@ from sqlalchemy import func, select, update
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry
+from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import compile_filter
 from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database.dialects import MSSQL, SQLITE
+from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.seams import installed
 
 
@@ -929,4 +932,133 @@ class TestBytesContentPath:
             files = await storage.grep(pattern="wörld🚀", output_mode="files")
             assert _paths(files) == ["/u.txt"]
             assert files.observations[0].content is None
+        await storage.close()
+
+
+class TestMixedChannelSoundness:
+    """An arm with no column fact voids the whole pushdown disjunction."""
+
+    async def test_a_fact_free_arm_voids_the_pushdown_not_the_recall(self, tmp_path: Any) -> None:
+        # Guards the mutation `if not facts: return None` -> `continue`:
+        # the partial OR silently drops the fact-free arm's rows.
+        files = {"/src/a.py": "needle py", "/docs/readme.md": "needle md", "/notes.txt": "needle txt"}
+        storage = await _fresh(tmp_path, files)
+        expected = ["/docs/readme.md", "/src/a.py"]
+        scanned = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
+        assert _paths(scanned) == expected
+        assert (await storage.reindex()).success is True
+        indexed = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
+        assert _paths(indexed) == expected
+        await storage.close()
+
+
+class TestChannelFacts:
+    """Direct rows on the pushdown disjunction's shape, per arm kind."""
+
+    def _facts(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> Any:
+        entry = build_vfs_tables(table_name="vfs").entry
+        return grep_module._channel_facts(entry, profile, compile_channel(patterns))
+
+    def _sql(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> str:
+        facts = self._facts(patterns, profile)
+        assert facts is not None
+        return str(facts.compile(compile_kwargs={"literal_binds": True}))
+
+    def test_a_fact_free_arm_voids_the_disjunction(self) -> None:
+        assert self._facts(("*.py", "docs/**")) is None
+        assert self._facts(("docs/**",)) is None
+        assert self._facts(()) is None
+
+    def test_an_ext_arm_carries_the_dotfile_rescue(self) -> None:
+        sql = self._sql(("*.py",))
+        assert "'py'" in sql
+        assert "'.py'" in sql
+        assert " OR " in sql
+
+    def test_a_name_literal_arm_pins_equality(self) -> None:
+        sql = self._sql(("**/Makefile",))
+        assert "= 'Makefile'" in sql
+        assert "LIKE" not in sql
+
+    def test_arms_union_and_facts_conjoin(self) -> None:
+        sql = self._sql(("*.py", "**/Makefile"))
+        assert "'Makefile'" in sql and "'py'" in sql
+        assert " OR " in sql
+
+    @pytest.mark.parametrize("profile", [SQLITE, MSSQL], ids=["sqlite", "mssql"])
+    def test_a_stem_prefix_arm_escapes_like_metacharacters(self, profile: Any) -> None:
+        # The literal underscore must match only itself on every dialect,
+        # bracket-class engines included.
+        sql = self._sql(("test_*.py",), profile)
+        assert "LIKE 'test\\_%'" in sql
+        assert "ESCAPE" in sql
+
+
+class TestLadderPricing:
+    """The defer decision priced at its boundary — results cannot see it,
+    so the branch and its constants are pinned directly."""
+
+    def _meta(self, byte_size: int) -> dict[int, grep_module.PostingMeta]:
+        return {1: grep_module.PostingMeta(doc_count=10, byte_size=byte_size)}
+
+    def test_the_group_setup_charge_decides_at_its_boundary(self) -> None:
+        # One byteless group prices at the setup charge alone (500 µs);
+        # the scope bill is allow_size x 75 µs.
+        meta = self._meta(0)
+        assert grep_module._ladder_defers([[1]], meta, allow_size=6) is True
+        assert grep_module._ladder_defers([[1]], meta, allow_size=7) is False
+
+    def test_the_per_byte_rate_decides_at_its_boundary(self) -> None:
+        # 100k posting bytes price at 500 + 5,500 µs against the bill.
+        meta = self._meta(100_000)
+        assert grep_module._ladder_defers([[1]], meta, allow_size=79) is True
+        assert grep_module._ladder_defers([[1]], meta, allow_size=81) is False
+
+    def test_dead_groups_price_at_nothing(self) -> None:
+        meta = self._meta(0)
+        assert grep_module._ladder_defers([None, [1]], meta, allow_size=7) is False
+        assert grep_module._ladder_defers([None], meta, allow_size=1) is False
+
+    async def test_a_tiny_scope_defers_the_ladder_to_the_allow_list(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # One in-scope file bills under a single group's setup charge:
+        # no posting blob is fetched and the allow-list is the candidates.
+        files = {"/one/only.txt": "needle body"}
+        files |= {f"/bulk/f{i}.txt": "needle filler" for i in range(30)}
+        storage = await _fresh(tmp_path, files)
+        assert (await storage.reindex()).success is True
+        calls: list[Any] = []
+        real = grep_module._posting_blobs
+
+        async def spying(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(grep_module, "_posting_blobs", spying)
+        result = await storage.grep(pattern="needle", globs=("one/**",))
+        assert _paths(result) == ["/one/only.txt"]
+        assert calls == []
+        await storage.close()
+
+    async def test_a_wide_scope_rides_the_ladder_and_intersects_the_allow_list(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Thirty in-scope files bill above the posting cost: blobs fetch
+        # and the laddered ids intersect the allow-list.
+        files = {"/one/only.txt": "needle body"}
+        files |= {f"/bulk/f{i}.txt": "needle filler" for i in range(30)}
+        storage = await _fresh(tmp_path, files)
+        assert (await storage.reindex()).success is True
+        calls: list[Any] = []
+        real = grep_module._posting_blobs
+
+        async def spying(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(grep_module, "_posting_blobs", spying)
+        result = await storage.grep(pattern="needle", globs=("bulk/**",))
+        assert _paths(result) == sorted(f"/bulk/f{i}.txt" for i in range(30))
+        assert len(calls) == 1
         await storage.close()
