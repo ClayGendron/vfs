@@ -16,9 +16,10 @@ from typing import Any
 
 import pytest
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 
 from tests.support.database_helpers import _url
-from vfs.models import Entry
+from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import compile_filter
@@ -26,7 +27,7 @@ from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
-from vfs.storage.backends.database.dialects import MSSQL, SQLITE
+from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
 from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.seams import installed
 
@@ -1108,6 +1109,32 @@ class TestPushdownBindAccounting:
         executed = sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in pushdown.terms)
         assert pushdown.binds == executed
         assert pushdown.binds >= 32  # the ext ride is charged at width
+
+    def test_the_base_facts_charge_equals_their_executed_width(self) -> None:
+        # The encoded flag renders inline (zero binds) on every dialect;
+        # the kind membership binds one per member — the base charge exactly.
+        entry = build_vfs_tables(table_name="vfs").entry
+        base = [entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))]
+        for compiler in [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]:
+            executed = sum(
+                len(term.compile(dialect=compiler, compile_kwargs={"render_postcompile": True}).params) for term in base
+            )
+            assert executed == len(CONTENT_KINDS), compiler.name
+
+    def test_static_bind_counts_are_dialect_invariant(self) -> None:
+        # The chunk arithmetic counts static predicates on the default
+        # compiler; every bundled dialect must execute the same count.
+        entry = build_vfs_tables(table_name="vfs").entry
+        compilers = [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]
+        for profile in (*PROFILES.values(), GENERIC):
+            liveness = grep_module.liveness_filters(entry, profile, include_meta=False)
+            charged = grep_module._static_binds(liveness)
+            for compiler in compilers:
+                executed = sum(
+                    len(term.compile(dialect=compiler, compile_kwargs={"render_postcompile": True}).params)
+                    for term in liveness
+                )
+                assert executed == charged, (profile.name, compiler.name)
 
     def test_a_ride_too_wide_for_the_budget_stands_down(self) -> None:
         # Half the membership budget is the ride's ceiling: the id chunk

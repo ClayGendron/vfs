@@ -1,5 +1,34 @@
 # 115 — Bind accounting and docstring trues: the record matches the code
 
+- **Status: all slices landed 2026-08-18.** §1: `base_binds` is
+  `len(CONTENT_KINDS)` — the `+ 1` for the encoded flag dropped,
+  the comment now naming what is charged (kind membership at element
+  width; the flag renders inline and binds nothing) — and the charge
+  is pinned directly:
+  `test_the_base_facts_charge_equals_their_executed_width` compiles
+  the base facts with `render_postcompile` on all five bundled
+  dialects and asserts executed == charged. The alternative (derive
+  the base charge through `_static_binds`) was declined: the base
+  facts include an expanding membership, which `_static_binds`
+  deliberately refuses — routing them through it would bend its
+  contract, a worse trade than one directly-pinned constant. §2:
+  both docstring sites reworded from spec 107's accurate language —
+  the module paragraph now says a non-empty preamble verdict settles
+  the decision (the scan tier will run after the index tier, no
+  second combined read), and `_pointer_with_overlay` says "issued
+  twice on the skip path, once when the preamble verdict is
+  non-empty". §3: `test_static_bind_counts_are_dialect_invariant`
+  compiles `liveness_filters` output for every profile (the five
+  named plus GENERIC) on all five bundled dialect compilers and
+  asserts each count equals `_static_binds`' default-compiler
+  answer; the `_static_binds` docstring states the invariant
+  (dialect-count-invariant inputs required). §4: ladder referee on
+  the linux store — all seven rows' line/file counts byte-identical
+  before/after (e.g. 3,938/1,437 · 19,210/2,549 · 20,800/3,599 ·
+  zero-hit 0), wall times in noise (zero-hit 45.0 → 42.6 ms); full
+  3.13 CI leg green; MSSQL leg green at 211 (the saturated 40-ext
+  boundary and bind-budget rows on the tightest engine, one db_test
+  cycle, machine restored).
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

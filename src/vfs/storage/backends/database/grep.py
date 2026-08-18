@@ -26,9 +26,11 @@ a rival publish landed mid-call and the whole call redrives via
 CAS, so every observable mix moves the pointer first). On pinned
 engines the re-read is a same-snapshot no-op. The overlay-emptiness
 verdict follows the same discipline: the preamble's combined
-pointer+EXISTS read is advisory — non-empty routes straight to the
-scan tier — while skipping the scan is authorized only by re-issuing
-the combined read *after* the candidate fetch it vouches for. A rival
+pointer+EXISTS read is advisory — a non-empty verdict settles the
+decision (the scan tier will run after the index tier, and no second
+combined read is issued) — while skipping the scan is authorized only
+by re-issuing the combined read *after* the candidate fetch it
+vouches for. A rival
 demotion committed before the fetch is committed before that read, so
 the verdict sees it and the scan runs; a demotion committed after the
 fetch means the fetch served the still-encoded row. Either way the
@@ -381,11 +383,12 @@ async def grep_rows(
 async def _pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
     """The epoch pointer plus an overlay-emptiness verdict, one statement.
 
-    Issued twice per gated call: the preamble read, whose verdict is
-    advisory (non-empty routes to the scan tier early), and the
-    authoritative post-fetch read, whose empty verdict alone permits
-    skipping the scan — with results identical to scanning — and which
-    doubles as the epoch recheck. The predicate stays ORM-built — the
+    Issued twice on the skip path, once when the preamble verdict is
+    non-empty: the preamble read is advisory (non-empty settles it —
+    the scan tier will run, and no second combined read is issued),
+    while the authoritative post-fetch read's empty verdict alone
+    permits skipping the scan — with results identical to scanning —
+    and doubles as the epoch recheck. The predicate stays ORM-built — the
     negation renders as an inline literal on every dialect, which keeps
     the seek on the composite (encoded, kind) index reachable; the CASE
     wrapper is what lets engines without boolean select-list expressions
@@ -558,7 +561,9 @@ async def _entries_for_docs(
     entry = tables.entry
     ride_along = {"size_bytes", "ext", "name"}
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
-    base_binds = len(CONTENT_KINDS) + 1  # the kind membership and the encoded flag
+    # The kind membership at element width; the encoded flag renders as
+    # an inline literal on every dialect and binds nothing.
+    base_binds = len(CONTENT_KINDS)
     per_chunk = max(1, membership_budget - pushdown.binds - base_binds)
     rows: list[RowMapping] = []
     for chunk in chunked(doc_ids.tolist(), per_chunk):
@@ -744,7 +749,10 @@ def _static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
     Post-compile rendering yields the parameters the engine is actually
     asked to bind (``binds`` overcounts bookkeeping entries). Expanding
     memberships never pass through here — they charge their declared
-    element width instead (``ExtMembership.binds``).
+    element width instead (``ExtMembership.binds``). Counting compiles
+    on the default dialect: inputs must be dialect-count-invariant — a
+    predicate whose bind cardinality varied by dialect would be
+    mischarged here, and the pinned invariant is that none does.
     """
     return sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in terms)
 
