@@ -361,6 +361,46 @@ From run 2:
   warning already says rows may be missing); a per-row partiality
   field.
 
+## Decision pass (2026-08-18, Clay)
+
+Dispositions for the ten design questions and the two recorded forks:
+
+- **Closed, no action:** run-1 question 4 (house style confirmed —
+  the two `StaleSnapshot` sites guard different windows) and question
+  7 (routed to spec 109's standing-mutation-harness question, its
+  natural home). Finding 4's remainder — reconciling the four
+  bind-counting conventions against spec 108's "one mechanism"
+  narrative — stays owed to the specs 107–115 mining pass.
+- **Parked with a named trigger:** question 2. Unifying the three
+  deadline-cadence spellings is churn while they are proven
+  phase-identical (refutation R1); spec 110's byte-cap-slicing
+  follow-up — which the line-counting strides cannot express — is the
+  trigger to unify into one slice-iterator helper.
+- **Spec 116** (`../specs/active/116-decision-pass-hygiene/`) lands
+  the verified-but-inert hygiene batch: question 1 (the channel fan
+  budget derived once, with unit-true naming), question 3 (the
+  row-gate ride literal named once and glob's positional splat into
+  `passes_row_filters` made named), question 5 (the `ContentMatcher`
+  partiality sentence), question 8 (the rarest-first ordering pin
+  moved to public `Select.whereclause`), and question 6's record half
+  (the budgeted path's linear pre-work named honestly in the
+  docstring; no engineering — a lazy line iterator alone would not
+  close it).
+- **Q1:** resolved by spec 115 §3 — the default-compiler invariant is
+  now stated and pinned across five bundled dialects × six profiles.
+- **Q2:** status quo ratified. Partiality stays a result-level signal,
+  consistent with every other truncation channel; no contract promises
+  per-row exactness, and dropping the interrupted row or adding a
+  per-row field buys parity or vocabulary the callers have not asked
+  for. The per-body law joins the `ContentMatcher` docstring via
+  spec 116 so a third engine inherits it as contract, not folklore.
+- **The joint fork** (event-loop occupancy + backtracking residual,
+  both in `open-questions.md`): research commissioned 2026-08-18 —
+  a memo on worker offload for the matching stage (executor posture,
+  GIL release through the pyo3 seam, cancellation and timeout
+  semantics, thread vs process), so the one decision that settles
+  both forks is ready when the concurrency story becomes active work.
+
 ## What no lens reached (unreviewed surface)
 
 The commit bodies' benchmark claims (ladders, hydration/delete wins)
