@@ -960,14 +960,22 @@ class TestChannelFacts:
         return grep_module._channel_facts(entry, profile, compile_channel(patterns))
 
     def _sql(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> str:
-        facts = self._facts(patterns, profile)
+        facts, _ = self._facts(patterns, profile)
         assert facts is not None
         return str(facts.compile(compile_kwargs={"literal_binds": True}))
 
     def test_a_fact_free_arm_voids_the_disjunction(self) -> None:
-        assert self._facts(("*.py", "docs/**")) is None
-        assert self._facts(("docs/**",)) is None
-        assert self._facts(()) is None
+        assert self._facts(("*.py", "docs/**")) == (None, 0)
+        assert self._facts(("docs/**",)) == (None, 0)
+        assert self._facts(()) == (None, 0)
+
+    def test_the_disjunction_charges_its_true_bind_width(self) -> None:
+        # An ext arm spends the pair (ext value, dot-suffix name); a
+        # name arm spends one — the count the executed statement pays.
+        _, ext_binds = self._facts(("*.py",))
+        assert ext_binds == 2
+        _, mixed_binds = self._facts(("*.py", "**/Makefile"))
+        assert mixed_binds == 3
 
     def test_an_ext_arm_carries_the_dotfile_rescue(self) -> None:
         sql = self._sql(("*.py",))
@@ -1061,4 +1069,90 @@ class TestLadderPricing:
         result = await storage.grep(pattern="needle", globs=("bulk/**",))
         assert _paths(result) == sorted(f"/bulk/f{i}.txt" for i in range(30))
         assert len(calls) == 1
+        await storage.close()
+
+
+class TestPushdownBindAccounting:
+    """The fetch's bind arithmetic charges executed widths, not compiled ones."""
+
+    def test_charged_binds_equal_executed_parameters(self) -> None:
+        # The one law: what the arithmetic charges is what the engine
+        # is asked to bind, expanding memberships at element width.
+        entry = build_vfs_tables(table_name="vfs").entry
+        wanted = frozenset(f"e{i:02d}" for i in range(32))
+        channel = compile_channel(("*.py", "**/Makefile"))
+        pushdown = grep_module._pushdown_terms(entry, SQLITE, 4000, 2000, channel, wanted, hide_meta=True)
+        executed = sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in pushdown.terms)
+        assert pushdown.binds == executed
+        assert pushdown.binds >= 32  # the ext ride is charged at width
+
+    def test_a_ride_too_wide_for_the_budget_stands_down(self) -> None:
+        # Half the membership budget is the ride's ceiling: the id chunk
+        # always keeps room, so per-chunk can never collapse toward 1.
+        entry = build_vfs_tables(table_name="vfs").entry
+        wanted = frozenset(f"e{i:02d}" for i in range(32))
+        pushdown = grep_module._pushdown_terms(entry, SQLITE, 4000, 40, compile_channel(()), wanted, hide_meta=True)
+        assert all("IN" not in str(term) for term in pushdown.terms)
+        assert pushdown.binds <= 20
+
+    async def test_every_fetch_statement_stays_inside_a_tight_budget(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The engine-cap boundary shape (31 ext values pass, 32 failed):
+        # under a tightened budget every executed statement stays inside.
+        files = {f"/d/f{i}.x{i % 32:02d}": "needle body" for i in range(64)}
+        storage = await _fresh(tmp_path, files)
+        assert (await storage.reindex()).success is True
+        host = storage._host
+        captured: list[int] = []
+        async with host.session_factory() as session:
+            real = session.execute
+
+            async def spying(stmt: Any, *args: Any, **kwargs: Any) -> Any:
+                compiled = stmt.compile(compile_kwargs={"render_postcompile": True})
+                captured.append(len(compiled.params))
+                return await real(stmt, *args, **kwargs)
+
+            monkeypatch.setattr(session, "execute", spying)
+            result = await grep_module.grep_rows(
+                session,
+                host.tables,
+                host.profile,
+                100,
+                40,
+                pattern="needle",
+                ext=tuple(f"x{i:02d}" for i in range(32)),
+                ext_not=(),
+                globs=(),
+                globs_not=(),
+                case_mode="sensitive",
+                fixed_strings=False,
+                word_regexp=False,
+                invert_match=False,
+                before_context=0,
+                after_context=0,
+                output_mode="lines",
+                max_count=None,
+                allow_scan=False,
+                columns=None,
+            )
+        assert result.success is True, result.errors
+        assert _paths(result) == sorted(files)
+        assert captured and max(captured) <= 40
+        await storage.close()
+
+
+class TestChannelStatementGrowth:
+    """A caller-sized glob channel can never grow one statement past a cap."""
+
+    async def test_a_caller_sized_glob_channel_cannot_break_the_statement(self, tmp_path: Any) -> None:
+        # 499 plain globs killed sqlite's expression tree before the fan
+        # bound; the measured boundary and far past it must both serve.
+        storage = await _fresh(tmp_path, {"/src/keep.py": "needle body", "/docs/skip.md": "needle other"})
+        assert (await storage.reindex()).success is True
+        for width in (499, 2000):
+            globs = (*(f"gen{i}_*.py" for i in range(width)), "*.py")
+            result = await storage.grep(pattern="needle", globs=globs)
+            assert result.success is True, result.errors
+            assert _paths(result) == ["/src/keep.py"]
         await storage.close()

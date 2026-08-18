@@ -34,6 +34,7 @@ so only each arm's intersection ever leaves the database.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 from sqlalchemy import func, select
@@ -140,7 +141,13 @@ def compile_channel(patterns: Sequence[str]) -> ChannelTerms:
 
 
 async def allow_list_ids(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, channel: ChannelTerms
+    session: AsyncSession,
+    tables: VFSTables,
+    membership_budget: int,
+    channel: ChannelTerms,
+    *,
+    statement_budget: int,
+    deadline: float,
 ) -> DocIds | None:
     """The channel's nomination allow-list, or ``None`` when pruning is void.
 
@@ -156,8 +163,14 @@ async def allow_list_ids(
     into the surrogate doc-id space and returned sorted and deduped.
     The set is a superset by law — ``ext``/``name`` facts and the
     compiled authority narrow later.
+
+    The loop is bounded twice: a channel wider than *statement_budget*
+    arms voids pruning outright (its statement count would otherwise
+    grow with caller input), and *deadline* is consulted between arms.
+    Both bounds void whole — a partial union would under-nominate, the
+    forbidden false negative.
     """
-    if not channel.prunable:
+    if not channel.prunable or len(channel.arms) > statement_budget:
         return None
     # Single-term arms need no ordering and no count: their join is
     # already minimal, and a dead term comes back honestly empty.
@@ -167,6 +180,8 @@ async def allow_list_ids(
         counts = await _term_counts(session, tables, membership_budget, terms)
     admitted: set[int] = set()
     for arm in channel.arms:
+        if monotonic() > deadline:
+            return None
         if counts is not None and not all(counts[term] for term in arm.segments):
             continue
         admitted |= await _arm_ids(session, tables, arm, counts)

@@ -1,6 +1,31 @@
 # 108 — Statement growth in the grep pushdown: true bind accounting and a chunked channel
 
-- **Status: drafted 2026-08-18.**
+- **Status: all slices landed 2026-08-18.**
+  §1: `_pushdown_terms` returns a `Pushdown` carrying its true bind
+  spend (`ExtMembership.binds` at element width, channel facts
+  counted as built, static predicates at executed-parameter count —
+  `render_postcompile`, since `compiled.binds` overcounts); the whole
+  ride is capped at half the membership budget so the id chunk always
+  keeps room, killing the per-chunk collapse. Pinned by
+  charged-equals-executed, ride-stand-down, and a tight-budget
+  saturated grep whose every executed statement stays inside.
+  §2: measured on the linux store's arm ladder (1/64/504/2000 arms,
+  identical counts everywhere): §2b void-the-ride 87.5/91.4/173.9/
+  493.5 ms vs §2a union-per-chunk 77.7/86.0/194.4/470.3 ms — no
+  material winner (controls show ~10% noise), so **§2b landed** per
+  the simplicity default. sqlite serves 499- and 2,000-glob channels
+  (the old code died at 499). §3: `allow_list_ids` takes a statement
+  budget and deadline, voiding whole — never partial — on either
+  bound. Law 3: SQLSTATE class 07 joins class 42 as a permanent
+  defect (the observed 07002 becomes `internal`); sqlite's generic
+  code stays an operating condition — it is indistinguishable by
+  code from missing-schema conditions, recorded as the honest
+  residual. Gates: the pre-108 arm reproduces the review's defect
+  live (MSSQL 07002 at a saturated 40-ext fetch) and the landed
+  arithmetic serves all 2,200 rows; all four engine legs green
+  (Postgres 209, MySQL 210, MSSQL 211, Oracle 208); both benchmark
+  ladders re-ran with identical counts and wall time within noise.
+- **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),
   findings 2 and 3 (scale lens, both CONFIRMED on live engines) plus

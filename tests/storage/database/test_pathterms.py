@@ -11,6 +11,7 @@ channels return ``None``, dead terms return honestly empty sets.
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -226,10 +227,24 @@ async def _paths_by_id(storage: DatabaseStorage) -> dict[int, str]:
     return {row.id: row.path for row in rows}
 
 
-async def _allow_list(storage: DatabaseStorage, patterns: tuple[str, ...]) -> list[int] | None:
+async def _allow_list(
+    storage: DatabaseStorage,
+    patterns: tuple[str, ...],
+    *,
+    statement_budget: int = 200,
+    deadline: float | None = None,
+) -> list[int] | None:
     channel = compile_channel(patterns)
+    horizon = deadline if deadline is not None else monotonic() + 60
     async with storage._host.session_factory() as session:
-        return await allow_list_ids(session, storage._host.tables, storage._host.membership_budget, channel)
+        return await allow_list_ids(
+            session,
+            storage._host.tables,
+            storage._host.membership_budget,
+            channel,
+            statement_budget=statement_budget,
+            deadline=horizon,
+        )
 
 
 class TestAllowListSeam:
@@ -323,10 +338,28 @@ class TestAllowListSeam:
             budget = storage._host.membership_budget
             counts = await _term_counts(session, storage._host.tables, budget, {"docs", "img1"})
             assert counts["img1"] < counts["docs"]  # the pin is non-vacuous
-            ids = await allow_list_ids(session, storage._host.tables, storage._host.membership_budget, channel)
+            ids = await allow_list_ids(
+                session,
+                storage._host.tables,
+                budget,
+                channel,
+                statement_budget=200,
+                deadline=monotonic() + 60,
+            )
         assert ids
         anchor_condition = captured[-1]._where_criteria[0]
         assert anchor_condition.right.value == "img1"
+
+    async def test_an_expired_deadline_voids_pruning_whole(self, storage: DatabaseStorage) -> None:
+        # Never a partial union: a partial allow-list under-nominates.
+        assert await _allow_list(storage, ("src/**", "docs/**"), deadline=-1.0) is None
+
+    async def test_a_channel_wider_than_the_statement_budget_voids_pruning(self, storage: DatabaseStorage) -> None:
+        # The loop's statement count is caller-sized: past the fan
+        # budget, pruning stands down rather than issue one join per arm.
+        patterns = ("src/**", "docs/**", "a/**")
+        assert await _allow_list(storage, patterns, statement_budget=2) is None
+        assert await _allow_list(storage, patterns, statement_budget=3) is not None
 
     async def test_ids_are_sorted_and_deduped(self, storage: DatabaseStorage) -> None:
         ids = await _allow_list(storage, ("src/**", "src/app/**"))

@@ -147,6 +147,23 @@ class ScanNominees(NamedTuple):
     overflow: bool
 
 
+class Pushdown(NamedTuple):
+    """The candidate fetch's rideable predicates and their true bind spend.
+
+    Every predicate is charged at its executed width — an expanding
+    membership at its element count, not its compiled placeholder count
+    — so the id-chunk arithmetic can never overdraw an engine's
+    parameter budget.
+    """
+
+    terms: tuple[ColumnElement[bool], ...]
+    binds: int
+
+
+# Ceiling of one channel arm's bind slots: the ext pair and the name fact.
+_CHANNEL_ARM_BINDS: Final = 3
+
+
 async def grep_rows(
     session: AsyncSession,
     tables: VFSTables,
@@ -219,7 +236,14 @@ async def grep_rows(
         await seam("grep:after-pointer-read")
         # The allow-list joins nomination before the budget: the budget
         # counts scoped candidates, so truncation cannot drop in-scope rows.
-        allow = await allow_list_ids(session, tables, membership_budget, channel)
+        allow = await allow_list_ids(
+            session,
+            tables,
+            membership_budget,
+            channel,
+            statement_budget=arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS),
+            deadline=deadline,
+        )
         if allow is not None and not allow:
             doc_ids: DocIds = np.empty(0, dtype=np.int64)
         else:
@@ -240,7 +264,9 @@ async def grep_rows(
         if doc_ids.size > CANDIDATE_BUDGET:
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
-        pushdown = _pushdown_terms(tables.entry, profile, membership_budget, channel, wanted, hide_meta=not gates)
+        pushdown = _pushdown_terms(
+            tables.entry, profile, parameter_budget, membership_budget, channel, wanted, hide_meta=not gates
+        )
         for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
             if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
@@ -518,25 +544,26 @@ async def _entries_for_docs(
     membership_budget: int,
     doc_ids: DocIds,
     fetched: frozenset[str],
-    pushdown: Sequence[ColumnElement[bool]],
+    pushdown: Pushdown,
 ) -> list[RowMapping]:
     """Candidate doc ids resolved to their live, encoded entry rows.
 
     The id-first shape: entry rows come back without content — the
     structural gates run before any content is fetched. ``size_bytes``
     always rides along (it prices the content batches), and ``ext`` and
-    ``name`` ride for the string gate. *pushdown* carries the compiled
-    column facts and the meta scope; its binds shrink the id chunk so
-    the statement stays inside the declared budgets.
+    ``name`` ride for the string gate. *pushdown* carries its true bind
+    spend, which shrinks the id chunk beside the statement's own base
+    facts so the executed parameter count stays inside the budgets.
     """
     entry = tables.entry
     ride_along = {"size_bytes", "ext", "name"}
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
-    per_chunk = max(1, membership_budget - _predicate_binds(pushdown))
+    base_binds = len(CONTENT_KINDS) + 1  # the kind membership and the encoded flag
+    per_chunk = max(1, membership_budget - pushdown.binds - base_binds)
     rows: list[RowMapping] = []
     for chunk in chunked(doc_ids.tolist(), per_chunk):
         stmt = select(*columns).where(
-            entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)), *pushdown
+            entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)), *pushdown.terms
         )
         rows.extend((await session.execute(stmt)).mappings())
     return rows
@@ -640,61 +667,86 @@ def _passes_gates(
 def _pushdown_terms(
     entry: Table,
     profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
     channel: ChannelTerms,
     wanted: frozenset[str],
     *,
     hide_meta: bool,
-) -> list[ColumnElement[bool]]:
+) -> Pushdown:
     """The SQL terms the candidate fetch may carry beside the id chunk.
 
     With no admission gates the meta scope moves into SQL — the string
     gate may then be skipped entirely. The caller's wanted-ext set rides
     under the membership rule, and the channel's compiled column facts
     ride as an OR over arms; both only ever narrow toward the authority,
-    never past it.
+    never past it. The whole ride is capped at half the membership
+    budget so the id chunk always keeps room, and a channel wider than
+    one fan chunk is dropped whole — narrowing is a convenience the
+    statement may decline; ``_passes_gates`` stays the authority.
     """
     terms: list[ColumnElement[bool]] = []
+    binds = 0
     if hide_meta:
-        terms.extend(liveness_filters(entry, profile, include_meta=False))
+        liveness = liveness_filters(entry, profile, include_meta=False)
+        terms.extend(liveness)
+        binds += _static_binds(liveness)
+    ceiling = membership_budget // 2
     ride = ext_membership(entry, wanted, membership_budget)
-    if ride.predicate is not None:
+    if ride.predicate is not None and binds + ride.binds <= ceiling:
         terms.append(ride.predicate)
-    facts = _channel_facts(entry, profile, channel)
+        binds += ride.binds
+    facts, fact_binds = _channel_facts(entry, profile, channel)
     if facts is not None:
-        terms.append(facts)
-    return terms
+        within_fan = len(channel.arms) <= arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS)
+        if within_fan and binds + fact_binds <= ceiling:
+            terms.append(facts)
+            binds += fact_binds
+    return Pushdown(tuple(terms), binds)
 
 
-def _channel_facts(entry: Table, profile: DialectProfile, channel: ChannelTerms) -> ColumnElement[bool] | None:
-    """The channel's ``ext``/``name`` facts as one OR over arms, or ``None``.
+def _channel_facts(
+    entry: Table, profile: DialectProfile, channel: ChannelTerms
+) -> tuple[ColumnElement[bool] | None, int]:
+    """The channel's ``ext``/``name`` facts as one OR over arms, with binds.
 
     The channel is an OR, so the predicate is sound only when *every*
     arm pins at least one fact — an arm with none admits everything and
-    makes the disjunction vacuous. Each ext fact carries the dotfile
-    rescue (a stored NULL ext with the dot-suffix name), mirroring the
-    scan tier's arm law.
+    makes the disjunction vacuous; the void returns ``(None, 0)``. Each
+    ext fact carries the dotfile rescue (a stored NULL ext with the
+    dot-suffix name), mirroring the scan tier's arm law.
     """
     arms: list[ColumnElement[bool]] = []
+    binds = 0
     for arm in channel.arms:
         facts: list[ColumnElement[bool]] = []
         if arm.ext is not None:
             facts.append(or_(entry.c.ext == arm.ext.ext, entry.c.name == arm.ext.dot_suffix))
+            binds += 2
         if arm.name is not None:
             if arm.name.prefix:
                 prefix = escape_like(arm.name.text, profile) + "%"
                 facts.append(entry.c.name.like(prefix, escape=LIKE_ESCAPE))
             else:
                 facts.append(entry.c.name == arm.name.text)
+            binds += 1
         if not facts:
-            return None
+            return None, 0
         arms.append(and_(*facts))
-    return or_(*arms) if arms else None
+    if not arms:
+        return None, 0
+    return or_(*arms), binds
 
 
-def _predicate_binds(pushdown: Sequence[ColumnElement[bool]]) -> int:
-    """Bind slots the pushdown terms spend, off each compiled predicate."""
-    return sum(len(term.compile().binds) for term in pushdown)
+def _static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
+    """Executed parameter count of non-expanding predicates.
+
+    Post-compile rendering yields the parameters the engine is actually
+    asked to bind (``binds`` overcounts bookkeeping entries). Expanding
+    memberships never pass through here — they charge their declared
+    element width instead (``ExtMembership.binds``).
+    """
+    return sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in terms)
 
 
 def _content_batches(ordered: Sequence[RowMapping]) -> Iterator[list[RowMapping]]:

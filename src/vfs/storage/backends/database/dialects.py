@@ -447,15 +447,19 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
 def is_permanent_defect(exc: BaseException) -> bool:
     """Whether *exc* reports a statement defect no retry can clear.
 
-    SQLSTATE class 42 — syntax error or access rule violation — means
-    the statement itself is wrong: a vfs bug to surface loudly, never an
-    operating condition to keep retrying. DBAPI ``ProgrammingError``
-    carries the same verdict for drivers that expose no SQLSTATE.
-    Classification is by code and exception type — never message text.
+    SQLSTATE class 42 (syntax error or access rule violation) and
+    class 07 (dynamic SQL error — bind-count and descriptor
+    mismatches) mean the statement itself is wrong: a vfs bug to
+    surface loudly, never an operating condition to keep retrying.
+    DBAPI ``ProgrammingError`` covers drivers that expose no SQLSTATE.
+    SQLite's generic result code is deliberately not classified here:
+    it covers statement defects and missing-schema operating
+    conditions alike, indistinguishable by code. Classification is by
+    code and exception type — never message text.
     """
     origin = getattr(exc, "orig", None) or exc
     state = _sqlstate_of(origin)
-    if state is not None and state.startswith(_SQLSTATE_SYNTAX_CLASS):
+    if state is not None and state[:2] in _SQLSTATE_DEFECT_CLASSES:
         return True
     return isinstance(exc, ProgrammingError)
 
@@ -465,8 +469,9 @@ def is_permanent_defect(exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 
 
-# ISO 9075 class 42: syntax error or access rule violation.
-_SQLSTATE_SYNTAX_CLASS: Final = "42"
+# ISO 9075 classes 42 (syntax/access-rule violation) and 07 (dynamic
+# SQL error): the statement itself is defective, never transient.
+_SQLSTATE_DEFECT_CLASSES: Final = frozenset({"42", "07"})
 
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).

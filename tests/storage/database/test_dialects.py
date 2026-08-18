@@ -111,6 +111,17 @@ class TestDialectPolicy:
     def test_programming_error_is_a_permanent_defect_without_a_sqlstate(self) -> None:
         assert is_permanent_defect(ProgrammingError("SELECT", None, Exception(1064, "syntax"))) is True
 
+    def test_dynamic_sql_class_sqlstates_are_permanent_defects(self) -> None:
+        # 07002 (COUNT field incorrect) is a bind-shape defect: a
+        # statement no retry can clear, never an operating condition.
+        assert is_permanent_defect(DBAPIError("SELECT", None, Exception("07002", "count field incorrect"))) is True
+
+    def test_sqlite_generic_error_stays_an_operating_condition(self) -> None:
+        # SQLITE_ERROR (1) covers missing-schema conditions and
+        # statement defects alike — indistinguishable by code, so it
+        # never classifies permanent.
+        assert is_permanent_defect(DBAPIError("SELECT", None, _SqliteError(1))) is False
+
     def test_operational_faults_are_not_permanent_defects(self) -> None:
         assert is_permanent_defect(DBAPIError("SELECT 1", None, _SqliteError(5))) is False
         assert is_permanent_defect(DBAPIError("SELECT", None, _PgError("40001"))) is False

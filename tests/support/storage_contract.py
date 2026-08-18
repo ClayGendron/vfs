@@ -1481,6 +1481,20 @@ class StorageContract:
         assert [o.path for o in indexed.observations] == expected
 
     @needs("write", "grep")
+    async def test_grep_a_wide_ext_channel_survives_a_saturated_fetch(self, storage: ConformanceBackend) -> None:
+        # The engine-cap shape: enough candidates to fill an id chunk
+        # plus a 40-member ext ride — the arithmetic must charge the
+        # ride's true width so no statement crosses a parameter cap.
+        reindexer = _reindexer_of(storage)
+        entries = [Entry(path=Path(f"/w/f{i}.x{i % 40:02d}"), content="needle body") for i in range(2_200)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        assert (await reindexer.reindex()).success is True
+        wanted = tuple(f"x{i:02d}" for i in range(40))
+        found = await storage.grep(pattern="needle", ext=wanted, output_mode="files")
+        assert found.success is True, found.errors
+        assert len(found.observations) == 2_200
+
+    @needs("write", "grep")
     async def test_reindex_twice_then_a_rewrite_advances_the_epoch(self, storage: ConformanceBackend) -> None:
         # The second build runs the pending probe against a live epoch —
         # a statement surface the first build never reaches.
