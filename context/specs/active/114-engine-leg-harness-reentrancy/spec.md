@@ -1,5 +1,29 @@
 # 114 — Engine-leg harness reentrancy: per-run table namespaces
 
+- **Status: all slices landed 2026-08-18.** §1: both
+  `_server_storage` fixtures mint `vfs_<uuid4-hex10>` per run, pass
+  it to `DatabaseStorage(table_name=...)`, and invert the lifecycle —
+  no setup drop, teardown drops exactly the minted metadata after
+  close (advisory-lock isolation follows free: the key derives from
+  the table name). §2: the traps were three, not two — the audit
+  cast SQL became `{content}` templates formatted from the minted
+  content table; the four rival handles in `test_races.py` join the
+  namespace via the new `_sibling` helper; and the encoded-kind
+  index reflection (found while in the file) hardcoded `"vfs"` /
+  `"ix_vfs_encoded_kind"` *and* reflected after teardown — it now
+  reflects the minted names inside the namespace's lifetime. The
+  conformance module docstring's drop-before-run posture rewritten
+  to match. §3: reentrancy posture recorded in the db_test skill
+  and `docker/README.md` (concurrent runs supported; crashed-run
+  `vfs_*` residue cleared by `compose down`). §4: the lead's
+  collision shape replayed against the new fixture on a shared
+  sqlite file — run A survives run B's full lifecycle, namespaces
+  disjoint — and the live gate: two concurrent `pytest -m postgres`
+  processes against one engine, both green at 209 (the exact shape
+  that produced the review's spurious red). All four legs green
+  sequentially at their prior counts (Postgres 209, MySQL 210,
+  MSSQL 211, Oracle 208); zero relations left on the server after
+  teardown; full 3.13 CI leg green.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

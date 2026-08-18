@@ -81,6 +81,11 @@ VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_na
 A healthy leg matches the sqlite leg's pass count, with the same
 capability skips (mkedge is the last classified stub).
 Keep `?charset=utf8mb4` on the MySQL URL — text bodies depend on it.
+Engine legs are reentrant: each harness run mints its own table
+namespace (`vfs_<hex>`), so concurrent runs against one engine —
+two terminals, parallel review agents on a shared stack — never tear
+each other down. A crashed run's leftover `vfs_*` tables are residue
+on an ephemeral-data stack; `compose down` clears them.
 Report failures as findings against the code, not the harness: a leg
 that fails on a real engine while sqlite passes is exactly the signal
 this setup exists to produce (that is how the InnoDB index-cap defect

@@ -26,6 +26,7 @@ import random
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import insert, select
@@ -58,21 +59,32 @@ _RACE_KINDS = frozenset({VFSErrorKind.not_found, VFSErrorKind.conflict, VFSError
 
 @asynccontextmanager
 async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    """A fresh backend on the server named by *env_var*, tables reset."""
+    """A fresh backend on the server named by *env_var*, in a minted namespace.
+
+    Each run mints its own table namespace, so concurrent runs against
+    one engine never tear each other down; teardown drops exactly what
+    this run minted. Rival handles join the namespace via ``_sibling``.
+    """
     url = os.environ.get(env_var)
     if url is None:
         pytest.skip(f"{env_var} is not set")
-    engine = create_async_engine(url)
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(build_vfs_tables(table_name="vfs").metadata.drop_all)
-    finally:
-        await engine.dispose()
-    storage = DatabaseStorage(url=url)
+    table_name = f"vfs_{uuid4().hex[:10]}"
+    storage = DatabaseStorage(url=url, table_name=table_name)
     try:
         yield storage
     finally:
         await storage.close()
+        engine = create_async_engine(url)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
+        finally:
+            await engine.dispose()
+
+
+def _sibling(env_var: str, storage: DatabaseStorage) -> DatabaseStorage:
+    """A rival handle on the fixture's own minted namespace."""
+    return DatabaseStorage(url=os.environ[env_var], table_name=storage._host.tables.entry.name)
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -331,7 +343,7 @@ class TestAncestorMintConvergence:
         # sequential execution succeeds, so a hard-failed loser is a defect.
         rounds = int(os.environ.get("VFS_MINT_ROUNDS", "20"))
         async with _server_storage(env_var) as writer:
-            rival = DatabaseStorage(url=os.environ[env_var])
+            rival = _sibling(env_var, writer)
             try:
                 assert (await rival.first_touch()).success is True
                 for i in range(rounds):
@@ -522,7 +534,7 @@ class TestNaturalTimingStorm:
         seed = int(os.environ.get("VFS_RACE_STORM_SEED", "4242"))
         rng = random.Random(seed)
         async with _server_storage(env_var) as writer:
-            rival = DatabaseStorage(url=os.environ[env_var])
+            rival = _sibling(env_var, writer)
             try:
                 # Warm both instances before the storm: a cold MSSQL first
                 # touch blocks unboundedly behind an in-flight rival
@@ -572,7 +584,7 @@ class TestAdoptAffirmation:
         # standing under a trashed parent is the torn state the audit fails.
         rounds = int(os.environ.get("VFS_ADOPT_ROUNDS", "15"))
         async with _server_storage(env_var) as writer:
-            rival = DatabaseStorage(url=os.environ[env_var])
+            rival = _sibling(env_var, writer)
             try:
                 assert (await rival.first_touch()).success is True
                 # Pre-mint the trash chain: a fresh-DB delete would take the
@@ -615,7 +627,7 @@ class TestExhaustionClassification:
         writers, per_writer = 8, 6
         async with _server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/hot.txt"), content="0")])).success
-            instances = [DatabaseStorage(url=os.environ[env_var]) for _ in range(writers)]
+            instances = [_sibling(env_var, storage) for _ in range(writers)]
             try:
                 for instance in instances:
                     assert (await instance.first_touch()).success is True
