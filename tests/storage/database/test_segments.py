@@ -191,6 +191,33 @@ class TestTopologyMirror:
         assert (await storage.restore(path=Path("/a/x"))).success is True
         await _assert_mirror(storage)
 
+    async def test_a_batch_delete_flushes_every_targets_postings(self, storage: DatabaseStorage) -> None:
+        # Two targets under distinct roots in one call: every accumulated
+        # posting delta must flush, never just the batch's last one.
+        await self._tree(storage)
+        targets = [Observation(path=Path("/a/x")), Observation(path=Path("/a/y"))]
+        assert (await storage.delete(observations=targets)).success is True
+        await _assert_mirror(storage)
+
+    async def test_a_batch_move_mirrors_every_pair(self, storage: DatabaseStorage) -> None:
+        # Two pairs in one call: each pair's root reparent must land its
+        # own posting delta, not only the last pair's.
+        await self._tree(storage)
+        pairs = [
+            ResolvedPair(src=Path("/a/x"), dest=Path("/m1")),
+            ResolvedPair(src=Path("/a/y"), dest=Path("/m2")),
+        ]
+        assert (await storage.move(operations=pairs)).success is True
+        await _assert_mirror(storage)
+
+    async def test_a_batch_restore_returns_every_targets_postings(self, storage: DatabaseStorage) -> None:
+        await self._tree(storage)
+        targets = [Observation(path=Path("/a/x")), Observation(path=Path("/a/y"))]
+        assert (await storage.delete(observations=targets)).success is True
+        restored = await storage.restore(observations=targets)
+        assert restored.success is True
+        await _assert_mirror(storage)
+
     async def test_sweep_purge_drops_the_subtree_postings(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)
         assert (await storage.sweep(path=Path("/a/x"))).success is True
@@ -219,13 +246,25 @@ class TestRandomizedMirror:
             elif verb == "mkdir":
                 await storage.mkdir(path=Path(source), parents=True, exist_ok=True)
             elif verb == "move" and source != dest:
-                await storage.move(operations=[ResolvedPair(src=Path(source), dest=Path(dest))])
+                pairs = [ResolvedPair(src=Path(source), dest=Path(dest))]
+                extra = "/" + "/".join(rng.sample(names, rng.randint(1, 3)))
+                # Sometimes a second pair rides the same call: batch width
+                # is a pinned dimension, not a single-pair convention.
+                if rng.random() < 0.4 and extra not in (source, dest):
+                    pairs.append(ResolvedPair(src=Path(extra), dest=Path(extra + "-moved")))
+                await storage.move(operations=pairs)
             elif verb == "copy" and source != dest:
                 await storage.copy(operations=[ResolvedPair(src=Path(source), dest=Path(dest))])
             elif verb == "delete":
-                await storage.delete(observations=[Observation(path=Path(source))])
+                targets = [Observation(path=Path(source))]
+                if rng.random() < 0.4 and dest != source:
+                    targets.append(Observation(path=Path(dest)))
+                await storage.delete(observations=targets)
             elif verb == "restore":
-                await storage.restore(path=Path(source))
+                if rng.random() < 0.4 and dest != source:
+                    await storage.restore(observations=[Observation(path=Path(source)), Observation(path=Path(dest))])
+                else:
+                    await storage.restore(path=Path(source))
             await _assert_mirror(storage)
 
 

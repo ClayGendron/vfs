@@ -404,6 +404,18 @@ class TestOutputModes:
         assert projected.observations[0].content == "needle body"
         await storage.close()
 
+    async def test_a_narrow_projection_masks_exactly_the_requested_columns(self, tmp_path) -> None:
+        # Exact equality, not subset: the name/ext/size ride serves the
+        # row gates and pricing and must never leak into the wire mask.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        expected = {"path", "kind", "version", "content", "matches"}
+        scanned = await storage.grep(pattern="needle", columns=frozenset({"content"}))
+        assert scanned.observations[0].populated == expected
+        assert (await storage.reindex()).success is True
+        indexed = await storage.grep(pattern="needle", columns=frozenset({"content"}))
+        assert indexed.observations[0].populated == expected
+        await storage.close()
+
 
 class TestBudgets:
     async def test_candidate_budget_truncates_with_a_warning(self, tmp_path, monkeypatch) -> None:
@@ -793,11 +805,22 @@ class TestOverlayGate:
                 return pointer, True
             return pointer, overlay_empty
 
+        real_epoch = grep_module.current_epoch
+        epoch_calls = {"n": 0}
+
+        async def counting_epoch(session, tables):
+            epoch_calls["n"] += 1
+            return await real_epoch(session, tables)
+
         monkeypatch.setattr(grep_module, "_pointer_with_overlay", blind_preamble)
+        monkeypatch.setattr(grep_module, "current_epoch", counting_epoch)
         result = await storage.grep(pattern="needle")
         assert result.success is True, result.errors
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
         assert calls["n"] == 2  # advisory, then authoritative
+        # The rescued arm's third pointer read: a rescued verdict is
+        # never skip-verified, so the post-scan epoch recheck must fire.
+        assert epoch_calls["n"] == 1
         assert scan_spy == [False]  # the raced call runs the scan mid-call
         await storage.close()
 

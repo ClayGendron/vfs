@@ -1,5 +1,32 @@
 # 113 — Width and mask pins: killing tests for the arc's unpinned laws
 
+- **Status: all slices landed 2026-08-18.** Tests only, no
+  production code changed. §1: three batch-width rows in the mirror
+  battery (two-target delete, two-pair move, two-target restore,
+  each under distinct roots, each followed by the mirror audit), the
+  seeded verb sequence widened to sometimes issue 2-pair moves and
+  2-target deletes/restores, and the engine-leg cascade helper
+  rebuilt on batch shapes (second tree, 2-pair move, 2-target
+  delete/restore) — validated on sqlite via a harness double, then
+  green on all four engine legs (Postgres 209, MySQL 210, MSSQL 211,
+  Oracle 208). §2: exact-equality mask rows — grep with
+  `columns={"content"}` on both fetchers (scan tier pre-reindex,
+  doc-id tier post-reindex) asserting
+  `populated == {path, kind, version, content, matches}`; glob with
+  `columns={"path"}` asserting `populated == {path, kind, version}`.
+  §3: the rescued-path test gained a `current_epoch` counting spy
+  (exactly one post-scan read; the arm's three pointer reads now
+  fully pinned alongside the existing two-combined-read assert).
+  Mutant→kill ledger, each applied under the safe-restore
+  discipline and each surviving every pre-existing test:
+  M1 delete flushes `segment_moves[-1:]` → killed by the batch
+  delete and batch restore rows (2 failures); M2 `_execute_move`
+  mirrors only the batch's last pair (identity at width 1) → killed
+  by the batch move and batch restore rows (2); M3 grep's hoisted
+  projection/row-mask widened by the ride → killed by the grep mask
+  row (1); M4 glob observes the queried mask → killed by the glob
+  mask row (1); M5 `skip_verified = True` → killed by the epoch spy
+  (1). Full 3.13 CI leg green (2,612 passed, 100% coverage).
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

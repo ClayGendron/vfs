@@ -28,7 +28,7 @@ from sqlalchemy import event, inspect, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.storage_contract import StorageContract
-from vfs.models import Entry
+from vfs.models import Entry, Observation
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
@@ -374,16 +374,21 @@ async def _segment_cascades_hold_the_mirror(env_var: str) -> None:
             Entry(path=Path("/a/x/a/f.txt"), content="recurring name"),
             Entry(path=Path("/a/x/g.txt"), content="plain"),
             Entry(path=Path("/a/y/h.txt"), content="sibling"),
+            Entry(path=Path("/a2/z/i.txt"), content="second tree"),
         ]
         assert (await storage.write(entries=entries, parents=True)).success is True
         await _segment_postings_mirror(storage)
-        assert (await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/b"))])).success is True
+        # Batch shapes throughout: width is a pinned dimension of the
+        # maintenance statements, not a single-target convention.
+        moves = [ResolvedPair(src=Path("/a"), dest=Path("/b")), ResolvedPair(src=Path("/a2"), dest=Path("/b2"))]
+        assert (await storage.move(operations=moves)).success is True
         await _segment_postings_mirror(storage)
         assert (await storage.copy(operations=[ResolvedPair(src=Path("/b/x"), dest=Path("/c"))])).success is True
         await _segment_postings_mirror(storage)
-        assert (await storage.delete(path=Path("/b"))).success is True
+        targets = [Observation(path=Path("/b")), Observation(path=Path("/b2"))]
+        assert (await storage.delete(observations=targets)).success is True
         await _segment_postings_mirror(storage)
-        assert (await storage.restore(path=Path("/b"))).success is True
+        assert (await storage.restore(observations=targets)).success is True
         await _segment_postings_mirror(storage)
         assert (await storage.sweep(path=Path("/c"))).success is True
         await _segment_postings_mirror(storage)

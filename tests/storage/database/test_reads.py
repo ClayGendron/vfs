@@ -227,6 +227,13 @@ class TestReadFamily:
         assert with_content.content == "alpha"
         assert "content" in with_content.populated
 
+    async def test_glob_projection_stamps_exactly_the_requested_mask(self, storage: DatabaseStorage) -> None:
+        # Exact equality, not subset: the name/ext ride serves the row
+        # gate and must never leak into a narrow columns= observation.
+        result = await storage.glob(patterns=("*.txt",), columns=frozenset({"path"}))
+        assert result.observations
+        assert all(o.populated == {"path", "kind", "version"} for o in result.observations)
+
     async def test_projection_of_an_unbacked_field_serves_identity_only(self, storage: DatabaseStorage) -> None:
         # A requested field with no entries-table column is dropped from
         # the mask, never a raw column lookup that would raise past _execute.
