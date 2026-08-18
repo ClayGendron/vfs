@@ -24,7 +24,16 @@ the last epoch-dependent read the pointer is re-read — movement means
 a rival publish landed mid-call and the whole call redrives via
 :class:`StaleSnapshot` (reclaim commits strictly after the publish
 CAS, so every observable mix moves the pointer first). On pinned
-engines the re-read is a same-snapshot no-op.
+engines the re-read is a same-snapshot no-op. The overlay-emptiness
+verdict follows the same discipline: the preamble's combined
+pointer+EXISTS read is advisory — non-empty routes straight to the
+scan tier — while skipping the scan is authorized only by re-issuing
+the combined read *after* the candidate fetch it vouches for. A rival
+demotion committed before the fetch is committed before that read, so
+the verdict sees it and the scan runs; a demotion committed after the
+fetch means the fetch served the still-encoded row. Either way the
+row is served with no isolation assumption, and the late read doubles
+as the epoch recheck, so the skip path's statement count is unchanged.
 
 Runtime budgets bound work, never correctness silently: a capped call
 carries a warning-severity truncation record naming the refine moves.
@@ -238,6 +247,7 @@ async def grep_rows(
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
 
+    skip_verified = False
     if not truncations or truncations == ["candidate budget"]:
         remaining = CANDIDATE_BUDGET - len(candidates)
         if remaining <= 0:
@@ -246,30 +256,36 @@ async def grep_rows(
             if "candidate budget" in truncations:
                 truncations.remove("candidate budget")
             truncations.append("candidate budget, with the unindexed overlay not consulted")
-        elif not overlay_empty:
-            # Skipped only when the same-snapshot EXISTS proved the overlay
-            # empty — the skip returns exactly what the scan would.
-            nominated, overflow = await _entries_for_scan(
-                session,
-                tables,
-                profile,
-                parameter_budget,
-                membership_budget,
-                gates,
-                wanted,
-                everything=scan_all,
-                fetched=fetched,
-                limit=remaining,
-                deadline=deadline,
-            )
-            if overflow:
-                truncations.append("candidate budget")
-            for mapping in nominated:
-                if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
-                    candidates.setdefault(mapping["path"], mapping)
+        else:
+            if not scan_all and overlay_empty:
+                # The preamble verdict was advisory: the verdict that skips
+                # the scan is read after the statements it vouches for.
+                current, overlay_empty = await _pointer_with_overlay(session, tables)
+                if current != epoch:
+                    raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
+                skip_verified = overlay_empty
+            if not overlay_empty:
+                nominated, overflow = await _entries_for_scan(
+                    session,
+                    tables,
+                    profile,
+                    parameter_budget,
+                    membership_budget,
+                    gates,
+                    wanted,
+                    everything=scan_all,
+                    fetched=fetched,
+                    limit=remaining,
+                    deadline=deadline,
+                )
+                if overflow:
+                    truncations.append("candidate budget")
+                for mapping in nominated:
+                    if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
+                        candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
-    if not scan_all and await current_epoch(session, tables) != epoch:
+    if not scan_all and not skip_verified and await current_epoch(session, tables) != epoch:
         # A rival publish+reclaim landed mid-call: the tiers this call
         # read are a mix of epochs. Redrive whole from a fresh session.
         raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
@@ -339,9 +355,11 @@ async def grep_rows(
 async def _pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
     """The epoch pointer plus an overlay-emptiness verdict, one statement.
 
-    The overlay check rides the pointer read so both come from the same
-    snapshot: an empty verdict lets the caller skip the scan tier with
-    results identical to scanning. The predicate stays ORM-built — the
+    Issued twice per gated call: the preamble read, whose verdict is
+    advisory (non-empty routes to the scan tier early), and the
+    authoritative post-fetch read, whose empty verdict alone permits
+    skipping the scan — with results identical to scanning — and which
+    doubles as the epoch recheck. The predicate stays ORM-built — the
     negation renders as an inline literal on every dialect, which keeps
     the seek on the composite (encoded, kind) index reachable; the CASE
     wrapper is what lets engines without boolean select-list expressions

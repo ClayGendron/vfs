@@ -543,26 +543,27 @@ class TestBudgets:
 
 class TestEpochLadder:
     async def test_a_moved_pointer_redrives_the_call_once(self, tmp_path, monkeypatch) -> None:
-        # The re-read sees the pointer move on attempt one; the redrive
-        # re-reads everything from current state and serves correctly.
+        # The post-scan re-read sees the pointer move on attempt one; the
+        # redrive re-reads everything from current state and serves correctly.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.current_epoch
         calls = {"n": 0}
 
         async def moved_once(session, tables):
             calls["n"] += 1
             current = await real(session, tables)
-            if calls["n"] == 1:  # the first attempt's post-ladder re-read
+            if calls["n"] == 1:  # the first attempt's post-scan re-read
                 return (current or 0) + 1
             return current
 
         monkeypatch.setattr(grep_module, "current_epoch", moved_once)
         result = await storage.grep(pattern="needle")
         assert result.success is True
-        assert _paths(result) == ["/a.txt"]
-        # The preamble reads the pointer through the combined overlay
-        # statement, so current_epoch serves only the per-attempt re-read.
+        assert _paths(result) == ["/a.txt", "/fresh.txt"]
+        # Pointer reads ride the combined overlay statement, so
+        # current_epoch serves only the busy-store post-scan re-read.
         assert calls["n"] == 2  # one re-read per attempt: exactly one redrive
         await storage.close()
 
@@ -571,6 +572,7 @@ class TestEpochLadder:
         # retryable conflict, never a silent empty success.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.current_epoch
         calls = {"n": 0}
 
@@ -689,7 +691,8 @@ class TestScanMergeBounds:
 
 
 class TestOverlayGate:
-    """The overlay-EXISTS rides the pointer read; an empty overlay skips the scan."""
+    """The overlay-EXISTS rides the pointer read; only the authoritative
+    post-fetch verdict — never the advisory preamble — skips the scan."""
 
     @pytest.fixture
     def scan_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
@@ -751,6 +754,137 @@ class TestOverlayGate:
         async with host.session_factory() as session:
             await session.execute(host.tables.meta.delete())
             assert await grep_module._pointer_with_overlay(session, host.tables) == (None, False)
+        await storage.close()
+
+    async def test_a_rival_demotion_between_verdict_and_fetch_serves_the_row(self, tmp_path: Any) -> None:
+        # A rival content write demotes an indexed row mid-call: either
+        # the fetch serves its snapshot or the late verdict forces the scan.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
+        assert (await storage.reindex()).success is True
+
+        async def rival() -> None:
+            entries = [Entry(path=Path("/a.txt"), content="needle changed")]
+            assert (await storage.write(entries=entries, overwrite=True)).success is True
+
+        with installed("grep:after-pointer-read", rival):
+            result = await storage.grep(pattern="needle")
+        assert result.success is True, result.errors
+        assert _paths(result) == ["/a.txt"]
+        await storage.close()
+
+    async def test_a_false_empty_verdict_is_rescued_at_the_recheck(
+        self, tmp_path: Any, scan_spy: list[bool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The unpinned-engine race shape: overlay rows the preamble missed
+        # are seen by the authoritative read, and the mid-call scan serves them.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
+        real = grep_module._pointer_with_overlay
+        calls = {"n": 0}
+
+        async def blind_preamble(session, tables):
+            calls["n"] += 1
+            pointer, overlay_empty = await real(session, tables)
+            if calls["n"] == 1:  # the advisory read, blind to the overlay
+                return pointer, True
+            return pointer, overlay_empty
+
+        monkeypatch.setattr(grep_module, "_pointer_with_overlay", blind_preamble)
+        result = await storage.grep(pattern="needle")
+        assert result.success is True, result.errors
+        assert _paths(result) == ["/a.txt", "/fresh.txt"]
+        assert calls["n"] == 2  # advisory, then authoritative
+        assert scan_spy == [False]  # the raced call runs the scan mid-call
+        await storage.close()
+
+    async def test_a_pointer_moved_at_the_authoritative_read_redrives(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Movement between the two combined reads is a mixed-epoch call:
+        # redrive once, then serve whole from current state.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        real = grep_module._pointer_with_overlay
+        calls = {"n": 0}
+
+        async def moved_at_recheck(session, tables):
+            calls["n"] += 1
+            pointer, overlay_empty = await real(session, tables)
+            if calls["n"] == 2:  # the first attempt's authoritative read
+                return ((pointer or 0) + 1), overlay_empty
+            return pointer, overlay_empty
+
+        monkeypatch.setattr(grep_module, "_pointer_with_overlay", moved_at_recheck)
+        result = await storage.grep(pattern="needle")
+        assert result.success is True, result.errors
+        assert _paths(result) == ["/a.txt"]
+        assert calls["n"] == 4  # two combined reads per attempt: one redrive
+        await storage.close()
+
+    async def test_the_skip_path_statement_count_is_unchanged(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two combined reads replace one combined read plus one pointer
+        # recheck: the quiet-store skip path never touches current_epoch.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        counts = {"combined": 0, "pointer": 0}
+        real_combined = grep_module._pointer_with_overlay
+        real_pointer = grep_module.current_epoch
+
+        async def counting_combined(session, tables):
+            counts["combined"] += 1
+            return await real_combined(session, tables)
+
+        async def counting_pointer(session, tables):
+            counts["pointer"] += 1
+            return await real_pointer(session, tables)
+
+        monkeypatch.setattr(grep_module, "_pointer_with_overlay", counting_combined)
+        monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt"]
+        assert counts == {"combined": 2, "pointer": 0}
+        await storage.close()
+
+    async def test_the_scan_path_statement_count_is_unchanged(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A non-empty advisory verdict routes to the scan with no second
+        # combined read; the post-scan recheck stays the pointer read.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
+        counts = {"combined": 0, "pointer": 0}
+        real_combined = grep_module._pointer_with_overlay
+        real_pointer = grep_module.current_epoch
+
+        async def counting_combined(session, tables):
+            counts["combined"] += 1
+            return await real_combined(session, tables)
+
+        async def counting_pointer(session, tables):
+            counts["pointer"] += 1
+            return await real_pointer(session, tables)
+
+        monkeypatch.setattr(grep_module, "_pointer_with_overlay", counting_combined)
+        monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt", "/fresh.txt"]
+        assert counts == {"combined": 1, "pointer": 1}
+        await storage.close()
+
+    async def test_allow_scan_with_an_indexable_pattern_is_still_gated(
+        self, tmp_path: Any, scan_spy: list[bool]
+    ) -> None:
+        # allow_scan widens the refusal gate, not the plan: an indexable
+        # pattern rides the ladder and the empty-overlay skip still holds.
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        assert (await storage.reindex()).success is True
+        result = await storage.grep(pattern="needle", allow_scan=True)
+        assert _paths(result) == ["/a.txt"]
+        assert scan_spy == []
         await storage.close()
 
 

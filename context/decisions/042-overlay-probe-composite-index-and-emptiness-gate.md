@@ -1,7 +1,10 @@
 # 042. The Overlay Probe: Composite Index and the Same-Snapshot Emptiness Gate
 
 - **Status:** accepted 2026-08-17 — spec 105's decision set,
-  written at its mining pass. Schema format 5.
+  written at its mining pass. Schema format 5. **Amended
+  2026-08-18** (spec 107): the emptiness gate's verdict is no longer
+  same-snapshot-at-the-preamble — see the amendment note under
+  *Consequences*.
 - **Date:** 2026-08-17
 - **Deciders:** Clay Gendron (research-first directive; "make sure
   the index doesn't slow writes"); mechanisms chosen by the memo's
@@ -35,10 +38,15 @@ indexes die under forced parameterization).
 2. **The epoch-pointer read carries an overlay-emptiness verdict**
    in the same statement (a CASE-wrapped EXISTS, ORM-built so the
    negation renders as an inline literal on every dialect — the
-   fact that keeps the seek reachable). A same-snapshot empty
-   verdict skips the scan-tier statement outright; `allow_scan` and
-   `invert_match` callers never consult the gate. Skipping returns
-   exactly what scanning an empty overlay would.
+   fact that keeps the seek reachable). An empty verdict skips the
+   scan-tier statement outright; skipping returns exactly what
+   scanning an empty overlay would. The gate keys off scan-shaped
+   *plans*, not the flag: `invert_match` calls and gramless
+   patterns run the scan tier without consulting the gate, while an
+   `allow_scan` call whose pattern is indexable rides the ladder
+   and is gated like any other. (As accepted, this bullet read
+   "`allow_scan` and `invert_match` callers never consult the
+   gate" — the code was always plan-keyed; the prose was wrong.)
 3. **Rejected on measurement:** partial/filtered indexes, a
    separate EXISTS round trip (overhead ≈ the fixed probe), and a
    maintained meta-row counter (an ETL write hot-spot for zero read
@@ -57,3 +65,17 @@ indexes die under forced parameterization).
 - Any future query against `encoded` must spell the predicate
   ORM-built (`~entry.c.encoded`), never raw text — the raw
   bareword spelling measured as a full-table scan.
+- **Amendment (2026-08-18, spec 107):** the accepted design read
+  the verdict once, in the preamble, and treated it as
+  same-snapshot with the statements it vouched for. That holds
+  only under a repeatable-read pin; on SQL Server, Oracle, and the
+  GENERIC floor a rival demotion committing between the verdict
+  and the candidate fetch lost the demoted row silently (executed
+  by the 2026-08-18 review campaign,
+  `../research/2026-08-18-glob-grep-review-campaign.md`). The
+  repair keeps this ADR's statement shape and cost profile but
+  moves authority: the preamble verdict is advisory, and skipping
+  the scan is authorized only by re-issuing the combined read
+  after the candidate fetch, where it doubles as the epoch recheck
+  — statement counts on the skip and scan paths unchanged, no
+  locks, no writer involvement.

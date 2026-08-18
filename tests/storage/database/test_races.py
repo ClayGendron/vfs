@@ -670,6 +670,29 @@ class TestGrepEpochConsistency:
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_demotion_mid_grep_never_hides_the_row(self, env_var: str) -> None:
+        # The unpinned-engine exposure: a rival write demotes an indexed
+        # row between grep's advisory verdict and its candidate fetch.
+        # The authoritative post-fetch read must route the row to the
+        # scan tier — never a silent false empty.
+        async with _server_storage(env_var) as storage:
+            for path, content in (("/a.txt", "needle alpha"), ("/b.txt", "needle beta"), ("/c.txt", "needle gamma")):
+                assert (await storage.write(entries=[Entry(path=Path(path), content=content)])).success
+            assert (await storage.reindex()).success is True
+
+            async def demote() -> Result:
+                entries = [Entry(path=Path("/b.txt"), content="needle beta v2")]
+                return await storage.write(entries=entries, overwrite=True)
+
+            handler, rival_results = _self_clearing("grep:after-pointer-read", demote)
+            with seams.installed("grep:after-pointer-read", handler):
+                raced = await storage.grep(pattern="needle")
+            assert rival_results and rival_results[0].success is True, rival_results
+            assert raced.success is True, raced.errors
+            assert sorted(str(o.path) for o in raced.observations) == ["/a.txt", "/b.txt", "/c.txt"]
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_second_reindex_refuses_while_one_runs(self, env_var: str) -> None:
         # The single-runner lease: the rival's claim misses while the
         # first run holds it, and the refusal names the live run.
