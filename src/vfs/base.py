@@ -214,6 +214,24 @@ class _FanoutPlan(NamedTuple):
     refusal: Result | None = None
 
 
+class _PathFilters(NamedTuple):
+    """The caller's structural path filters — the four-channel law of ``passes_filters``.
+
+    The one fan-out argument the pattern-search verbs hand the router
+    apart from the forwarded keywords. The two glob channels are
+    rewritten per entry — composed under each scope root and residuated
+    into entry coordinates before they cross the seam: ``admissions`` is
+    glob's pattern (its brace-expanded arms) or grep's ``globs``,
+    ``exclusions`` is ``globs_not`` on both verbs. The two ext channels
+    cross verbatim and are read here only by the root probe's gate.
+    """
+
+    admissions: tuple[str, ...]
+    exclusions: tuple[str, ...]
+    ext: tuple[str, ...]
+    ext_not: tuple[str, ...]
+
+
 def _path_covers(ancestor: Path, descendant: Path) -> bool:
     """Whether *descendant* sits at or beneath *ancestor* in the namespace."""
     if ancestor in (descendant, ROOT):
@@ -1118,10 +1136,7 @@ class VirtualFileSystem:
             "glob",
             paths=paths,
             row_cap=max_count,
-            patterns=arms,
-            not_arms=globs_not,
-            ext=ext,
-            ext_not=ext_not,
+            filters=_PathFilters(admissions=arms, exclusions=globs_not, ext=ext, ext_not=ext_not),
             kind=kind,
             max_count=max_count,
             columns=columns,
@@ -1228,11 +1243,8 @@ class VirtualFileSystem:
         return await self._route_fanout(
             "grep",
             paths=paths,
+            filters=_PathFilters(admissions=globs, exclusions=globs_not, ext=ext, ext_not=ext_not),
             pattern=pattern,
-            ext=ext,
-            ext_not=ext_not,
-            globs=globs,
-            globs_not=globs_not,
             case_mode=case_mode,
             fixed_strings=fixed_strings,
             word_regexp=word_regexp,
@@ -1689,10 +1701,16 @@ class VirtualFileSystem:
         paths: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         row_cap: int | None = None,
+        filters: _PathFilters | None = None,
         user_id: str | None = None,
         **kwargs: object,
     ) -> Result:
         """Route a namespace-wide query: everywhere, a scope subset, or rows.
+
+        *kwargs* forwards to storage verbatim — nothing is stripped or
+        peeked.  *filters* is the pattern-search verbs' one typed
+        argument: the dispatch builders compose and residuate its glob
+        channels per scope root and forward its ext channels as-is.
 
         With observations: reuse grouped dispatch.  With scope paths: group
         the scopes by entry — a scoped entry that cannot answer errors
@@ -1738,21 +1756,9 @@ class VirtualFileSystem:
             if plan.refusal is not None:
                 return plan.refusal
 
-            patterns = kwargs.get("patterns")
-            if op == "glob" and isinstance(patterns, tuple):
-                rest = {key: value for key, value in kwargs.items() if key not in ("patterns", "not_arms")}
-                arms = cast("tuple[str, ...]", patterns)
-                not_arms = cast("tuple[str, ...]", kwargs.get("not_arms", ()))
-                named_coros, branches, skips = self._glob_dispatches(
-                    plan, paths, arms, not_arms, user_id=user_id, **rest
-                )
-            elif op == "grep":
-                globs = cast("tuple[str, ...]", kwargs.get("globs", ()))
-                globs_not = cast("tuple[str, ...]", kwargs.get("globs_not", ()))
-                rest = {key: value for key, value in kwargs.items() if key not in ("globs", "globs_not")}
-                named_coros, branches, skips = self._grep_dispatches(
-                    plan, paths, globs, globs_not, user_id=user_id, **rest
-                )
+            if filters is not None:
+                build = self._glob_dispatches if op == "glob" else self._grep_dispatches
+                named_coros, branches, skips = build(plan, paths, filters, user_id=user_id, **kwargs)
             else:
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
@@ -1831,8 +1837,7 @@ class VirtualFileSystem:
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
-        arms: tuple[str, ...],
-        not_arms: tuple[str, ...],
+        filters: _PathFilters,
         *,
         user_id: str | None,
         **kwargs: object,
@@ -1843,9 +1848,10 @@ class VirtualFileSystem:
     ]:
         """Build glob's dispatches: scoping crosses the seam as pattern text.
 
-        The caller's pattern arrives brace-expanded as *arms* and the
-        exclusions as *not_arms*; every step below is per-arm with
-        any-arm admission and any-exclusion rejection. Each scope root
+        The caller's pattern arrives brace-expanded as the filters'
+        *admissions* (its arms) and ``globs_not`` as their *exclusions*;
+        every step below is per-arm with any-arm admission and
+        any-exclusion rejection. Each scope root
         composes each arm into one spatial pattern (name arm goes
         ``root/**/pattern``, path arm anchors under the root), but only
         into its owning entry and the entries beneath the root — never
@@ -1862,14 +1868,13 @@ class VirtualFileSystem:
         minted; capability skips survive only where some arm can reach
         the entry's rows.
         """
+        arms, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
         members = {key: self._composed_members(key, roots, arms) for key in capable}
-        ext = cast("tuple[str, ...]", kwargs.get("ext", ()))
-        ext_not = cast("tuple[str, ...]", kwargs.get("ext_not", ()))
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
-        not_gates = [compile_filter(glob, ()) for glob in not_arms]
+        not_gates = [compile_filter(glob, ()) for glob in exclusions]
         unwanted = normalize_ext_channel(ext_not)
 
         def keep(row: Observation) -> bool:
@@ -1891,7 +1896,9 @@ class VirtualFileSystem:
                     capable[key],
                     "glob",
                     patterns=tuple(sorted(live)),
-                    globs_not=tuple(sorted(self._composed_members(key, roots, not_arms))),
+                    globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
+                    ext=ext,
+                    ext_not=ext_not,
                     user_id=user_id,
                     **kwargs,
                 ),
@@ -1911,8 +1918,7 @@ class VirtualFileSystem:
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
-        globs: tuple[str, ...],
-        globs_not: tuple[str, ...],
+        filters: _PathFilters,
         *,
         user_id: str | None,
         **kwargs: object,
@@ -1923,9 +1929,11 @@ class VirtualFileSystem:
     ]:
         """Build grep's dispatches: scoping crosses the seam as glob text.
 
-        Glob's dispatch shape on grep's channels: each scope root
-        composes into the ``globs`` batch (no caller globs → the root
-        composes to ``root/**``), exclusions compose per root so one can
+        Glob's dispatch shape on grep's filters (*admissions* is the
+        caller's ``globs``, *exclusions* its ``globs_not``, the ext
+        channels forward as-is): each scope
+        root composes into the ``globs`` batch (no caller globs → the
+        root composes to ``root/**``), exclusions compose per root so one can
         never reach another root's subtree, and a root whose path passes
         the caller's globs rides the batch as its own literal path — the
         content test can only happen at storage, so for grep the root
@@ -1933,12 +1941,13 @@ class VirtualFileSystem:
         dead-entry skips, and the root probe are the glob machinery; the
         probe serves no rows, only classifications.
         """
+        globs, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
         for key, binding in capable.items():
-            admissions = self._grep_admissions(key, roots, globs)
-            if admissions is not None and not admissions:
+            admitted = self._grep_admissions(key, roots, globs)
+            if admitted is not None and not admitted:
                 continue
             branches.append(
                 (
@@ -1946,8 +1955,10 @@ class VirtualFileSystem:
                     self._dispatch_entry(
                         binding,
                         "grep",
-                        globs=tuple(sorted(admissions)) if admissions else (),
-                        globs_not=tuple(sorted(self._composed_members(key, roots, globs_not))),
+                        globs=tuple(sorted(admitted)) if admitted else (),
+                        globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
+                        ext=ext,
+                        ext_not=ext_not,
                         user_id=user_id,
                         **kwargs,
                     ),
