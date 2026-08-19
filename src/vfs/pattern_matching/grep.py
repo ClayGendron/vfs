@@ -73,7 +73,10 @@ class ContentMatcher(Protocol):
     valid UTF-8 by construction, so the spellings are interchangeable;
     ``budget`` is wall seconds from call start — bodies not reached in
     time are skipped and the second return reports incomplete. ``cap``
-    bounds hit lines per body.
+    bounds hit lines per body. Per-body results are exact, except that
+    an engine may skip a body it did not reach or leave a partial count
+    on the body the budget interrupted — the incomplete flag is the
+    only partiality signal; no per-row marker exists.
     """
 
     def count_lines(
@@ -462,6 +465,13 @@ class _PureMatcher:
     whole after the single check at body entry. An overrun leaves the
     results exact — the wall is breached, never the answer — and the
     incomplete flag stays a data-completeness signal, not a wall one.
+
+    Before its first deadline consult, a budgeted body also pays linear
+    pre-work the clock never sees: the bytes decode (``_as_text``) on
+    both paths, and on the split path an eager line split — about 2.4 times
+    the body's size in transient residency, measured as a ~7 % overrun
+    of the 10 s default wall at 512 MiB. A lazy line iterator alone
+    would not close it; the decode is a second linear pass.
     """
 
     def __init__(self, line_rx: re.Pattern[str], multi_rx: re.Pattern[str] | None) -> None:

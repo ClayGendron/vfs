@@ -16,6 +16,7 @@ back).
 from vfs.pattern_matching.glob import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
+    ROW_GATE_FIELDS,
     DerivedExt,
     GlobFilter,
     canonical_pattern,
@@ -48,6 +49,7 @@ from vfs.pattern_matching.grep import (
 __all__ = [
     "GLOB_CHANNEL_LABELS",
     "MAX_PATTERN_ARMS",
+    "ROW_GATE_FIELDS",
     "Body",
     "ContentMatcher",
     "DerivedExt",

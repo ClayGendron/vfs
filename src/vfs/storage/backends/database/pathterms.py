@@ -156,7 +156,7 @@ async def allow_list_ids(
     membership_budget: int,
     channel: ChannelTerms,
     *,
-    statement_budget: int,
+    fan_arms: int,
     deadline: float,
 ) -> DocIds | None:
     """The channel's nomination allow-list, or ``None`` when pruning is void.
@@ -174,13 +174,15 @@ async def allow_list_ids(
     The set is a superset by law — ``ext``/``name`` facts and the
     compiled authority narrow later.
 
-    The loop is bounded twice: a channel wider than *statement_budget*
-    arms voids pruning outright (its statement count would otherwise
-    grow with caller input), and *deadline* is consulted between arms.
+    The loop is bounded twice: a channel wider than *fan_arms* voids
+    pruning outright — the loop spends one statement per arm, so its
+    statement count would otherwise grow with caller input; the figure
+    is the caller's channel fan, derived once from the dialect's arm
+    budget — and *deadline* is consulted between arms.
     Both bounds void whole — a partial union would under-nominate, the
     forbidden false negative.
     """
-    if not channel.prunable or len(channel.arms) > statement_budget:
+    if not channel.prunable or len(channel.arms) > fan_arms:
         return None
     # Single-term arms need no ordering and no count: their join is
     # already minimal, and a dead term comes back honestly empty.

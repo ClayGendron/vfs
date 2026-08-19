@@ -68,6 +68,7 @@ from vfs.models.postings import PostingCorruptionError, decode_postings
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
+    ROW_GATE_FIELDS,
     Body,
     GlobFilter,
     PatternError,
@@ -165,6 +166,10 @@ class Pushdown(NamedTuple):
 # Ceiling of one channel arm's bind slots: the ext pair and the name fact.
 _CHANNEL_ARM_BINDS: Final = 3
 
+# Columns every candidate fetch rides beside the caller's mask: the
+# row-gate facts plus size_bytes, which prices the content read.
+_FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes"}
+
 
 async def grep_rows(
     session: AsyncSession,
@@ -228,6 +233,9 @@ async def grep_rows(
     gated = bool(gates or not_gates or wanted or unwanted)
     fetched = effective_columns(columns, content=columns is not None)
     deadline = monotonic() + wall_seconds
+    # Channel fan in arms: the pruning loop spends one statement per arm
+    # and the fetch one OR branch per arm, so both consumers share it.
+    fan_arms = arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS)
 
     candidates: dict[str, RowMapping] = {}
     truncations: list[str] = []
@@ -243,7 +251,7 @@ async def grep_rows(
             tables,
             membership_budget,
             channel,
-            statement_budget=arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS),
+            fan_arms=fan_arms,
             deadline=deadline,
         )
         if allow is not None and not allow:
@@ -267,7 +275,7 @@ async def grep_rows(
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
             truncations.append("candidate budget")
         pushdown = _pushdown_terms(
-            tables.entry, profile, parameter_budget, membership_budget, channel, wanted, hide_meta=not gates
+            tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
         for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
             if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
@@ -559,8 +567,7 @@ async def _entries_for_docs(
     facts so the executed parameter count stays inside the budgets.
     """
     entry = tables.entry
-    ride_along = {"size_bytes", "ext", "name"}
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
     # The kind membership at element width; the encoded flag renders as
     # an inline literal on every dialect and binds nothing.
     base_binds = len(CONTENT_KINDS)
@@ -610,8 +617,7 @@ async def _entries_for_scan(
     base = [entry.c.kind.in_(sorted(CONTENT_KINDS))]
     if not everything:
         base.append(~entry.c.encoded)
-    ride_along = {"size_bytes", "ext", "name"}
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | ride_along) - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
     merged: dict[str, RowMapping] = {}
     overflow = False
     if gates:
@@ -672,7 +678,7 @@ def _passes_gates(
 def _pushdown_terms(
     entry: Table,
     profile: DialectProfile,
-    parameter_budget: int,
+    fan_arms: int,
     membership_budget: int,
     channel: ChannelTerms,
     wanted: frozenset[str],
@@ -687,8 +693,9 @@ def _pushdown_terms(
     ride as an OR over arms; both only ever narrow toward the authority,
     never past it. The whole ride is capped at half the membership
     budget so the id chunk always keeps room, and a channel wider than
-    one fan chunk is dropped whole — narrowing is a convenience the
-    statement may decline; ``_passes_gates`` stays the authority.
+    *fan_arms* (the caller's channel fan, one OR branch per arm) is
+    dropped whole — narrowing is a convenience the statement may
+    decline; ``_passes_gates`` stays the authority.
     """
     terms: list[ColumnElement[bool]] = []
     binds = 0
@@ -702,11 +709,9 @@ def _pushdown_terms(
         terms.append(ride.predicate)
         binds += ride.binds
     facts, fact_binds = _channel_facts(entry, profile, channel)
-    if facts is not None:
-        within_fan = len(channel.arms) <= arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS)
-        if within_fan and binds + fact_binds <= ceiling:
-            terms.append(facts)
-            binds += fact_binds
+    if facts is not None and len(channel.arms) <= fan_arms and binds + fact_binds <= ceiling:
+        terms.append(facts)
+        binds += fact_binds
     return Pushdown(tuple(terms), binds)
 
 

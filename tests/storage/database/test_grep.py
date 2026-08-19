@@ -1105,7 +1105,7 @@ class TestPushdownBindAccounting:
         entry = build_vfs_tables(table_name="vfs").entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
         channel = compile_channel(("*.py", "**/Makefile"))
-        pushdown = grep_module._pushdown_terms(entry, SQLITE, 4000, 2000, channel, wanted, hide_meta=True)
+        pushdown = grep_module._pushdown_terms(entry, SQLITE, 64, 2000, channel, wanted, hide_meta=True)
         executed = sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in pushdown.terms)
         assert pushdown.binds == executed
         assert pushdown.binds >= 32  # the ext ride is charged at width
@@ -1141,7 +1141,7 @@ class TestPushdownBindAccounting:
         # always keeps room, so per-chunk can never collapse toward 1.
         entry = build_vfs_tables(table_name="vfs").entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
-        pushdown = grep_module._pushdown_terms(entry, SQLITE, 4000, 40, compile_channel(()), wanted, hide_meta=True)
+        pushdown = grep_module._pushdown_terms(entry, SQLITE, 64, 40, compile_channel(()), wanted, hide_meta=True)
         assert all("IN" not in str(term) for term in pushdown.terms)
         assert pushdown.binds <= 20
 

@@ -31,6 +31,7 @@ from vfs.models import CONTENT_KINDS, Observation
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
+    ROW_GATE_FIELDS,
     GlobFilter,
     compile_filter,
     derive_ext,
@@ -245,11 +246,11 @@ async def glob_rows(
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
-    queried = fetched | frozenset({"name", "ext"})
+    queried = fetched | ROW_GATE_FIELDS
     for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
         # Wanted-ext admission rides inside the gates (compiled with *ext*).
-        row = (mapping["path"], mapping["name"], mapping["ext"])
-        if passes_row_filters(*row, gates, not_gates, frozenset(), unwanted):
+        path, name, row_ext = mapping["path"], mapping["name"], mapping["ext"]
+        if passes_row_filters(path, name, row_ext, gates, not_gates, frozenset(), unwanted):
             matched.setdefault(mapping["path"], mapping)
     rows = [_observe(matched[path], fetched) for path in sorted(matched)]
     if max_count is not None:

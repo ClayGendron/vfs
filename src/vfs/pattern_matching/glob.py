@@ -42,6 +42,10 @@ GLOB_CHANNEL_LABELS: Final[Mapping[str, str]] = MappingProxyType(
     {"pattern": "glob pattern", "globs": "grep glob", "globs_not": "glob exclusion"}
 )
 
+# The row facts `passes_row_filters` reads beside the path: storage rides
+# these columns on every candidate fetch so the gate never builds a Path.
+ROW_GATE_FIELDS: Final = frozenset({"name", "ext"})
+
 
 @dataclass(frozen=True)
 class GlobFilter:

@@ -1,5 +1,23 @@
 # 116 — Decision-pass hygiene: five verified-but-inert trues
 
+- **Status: all slices landed 2026-08-19.** §1: `fan_arms` derived
+  once in `grep_rows` and passed to `allow_list_ids(fan_arms=)` and
+  `_pushdown_terms(fan_arms)` (the `parameter_budget` and
+  `statement_budget` seams renamed to the unit they carry);
+  `pathterms.py`'s docstring names the source. §2: `ROW_GATE_FIELDS`
+  declared beside `passes_row_filters` in `pattern_matching/glob.py`
+  and exported; grep composes `_FETCH_RIDE = ROW_GATE_FIELDS |
+  {"size_bytes"}` once for both fetchers; `glob_rows` queries
+  `fetched | ROW_GATE_FIELDS` and passes named `path, name, row_ext`.
+  §3: the `ContentMatcher` docstring carries the per-body partiality
+  law. §4: the rarest-first pin reads `Select.whereclause.clauses[0]`.
+  §5: the `_PureMatcher` docstring discloses the pre-deadline linear
+  pre-work (decode + eager split, ~2.4× residency, ~7 % overrun at
+  512 MiB). §6: `scripts/ci.sh 3.13` green (2,614 passed / 862
+  skipped, coverage 100 %, ruff/format/ty zero); both grep ladders on
+  the linux store byte-identical counts on all 25 unscoped and 12
+  scoped rows (scoped recall still equal to rg's on every row), warm
+  walls inside session noise (zero-hit 41.9 → 43.2 ms).
 - **Drafted 2026-08-18.** Born from the remediation-landing review's
   decision pass
   (`../../../research/2026-08-18-remediation-landing-review.md`,

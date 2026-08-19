@@ -231,7 +231,7 @@ async def _allow_list(
     storage: DatabaseStorage,
     patterns: tuple[str, ...],
     *,
-    statement_budget: int = 200,
+    fan_arms: int = 200,
     deadline: float | None = None,
 ) -> list[int] | None:
     channel = compile_channel(patterns)
@@ -242,7 +242,7 @@ async def _allow_list(
             storage._host.tables,
             storage._host.membership_budget,
             channel,
-            statement_budget=statement_budget,
+            fan_arms=fan_arms,
             deadline=horizon,
         )
 
@@ -343,23 +343,23 @@ class TestAllowListSeam:
                 storage._host.tables,
                 budget,
                 channel,
-                statement_budget=200,
+                fan_arms=200,
                 deadline=monotonic() + 60,
             )
         assert ids
-        anchor_condition = captured[-1]._where_criteria[0]
+        anchor_condition = captured[-1].whereclause.clauses[0]
         assert anchor_condition.right.value == "img1"
 
     async def test_an_expired_deadline_voids_pruning_whole(self, storage: DatabaseStorage) -> None:
         # Never a partial union: a partial allow-list under-nominates.
         assert await _allow_list(storage, ("src/**", "docs/**"), deadline=-1.0) is None
 
-    async def test_a_channel_wider_than_the_statement_budget_voids_pruning(self, storage: DatabaseStorage) -> None:
+    async def test_a_channel_wider_than_the_fan_voids_pruning(self, storage: DatabaseStorage) -> None:
         # The loop's statement count is caller-sized: past the fan
         # budget, pruning stands down rather than issue one join per arm.
         patterns = ("src/**", "docs/**", "a/**")
-        assert await _allow_list(storage, patterns, statement_budget=2) is None
-        assert await _allow_list(storage, patterns, statement_budget=3) is not None
+        assert await _allow_list(storage, patterns, fan_arms=2) is None
+        assert await _allow_list(storage, patterns, fan_arms=3) is not None
 
     async def test_ids_are_sorted_and_deduped(self, storage: DatabaseStorage) -> None:
         ids = await _allow_list(storage, ("src/**", "src/app/**"))
