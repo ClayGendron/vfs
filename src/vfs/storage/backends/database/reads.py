@@ -30,12 +30,12 @@ from sqlalchemy import and_, func, or_, select
 from vfs.models import CONTENT_KINDS, Observation
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
-    GLOB_CHANNEL_LABELS,
     ROW_GATE_FIELDS,
     GlobFilter,
+    PatternError,
     compile_filter,
     derive_ext,
-    glob_defect,
+    expand_channel,
     passes_row_filters,
 )
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
@@ -219,27 +219,27 @@ async def glob_rows(
     """Rows matching **any** pattern, one snapshot, statements chunked by budget.
 
     Scoping arrives purely as pattern text — the router composes and
-    residuates scope upstream; no path channel crosses this seam. One
-    refusable pattern refuses the whole call before any row is touched.
-    Exclusions never prefilter in SQL — an over-approximating ``NOT
+    residuates scope upstream; no path channel crosses this seam. The
+    seam admits the full pattern language through the shared admission
+    call (a brace pattern arriving unexpanded alternates, never a
+    silent literal), and one refusable pattern refuses the whole call
+    before any row is touched. Exclusions never prefilter in SQL — an over-approximating ``NOT
     LIKE`` would wrongly exclude, the forbidden false negative — so
     ``globs_not`` and ``ext_not`` gate candidates beside the compiled
     authority; ``kind`` is an exact fact and rides inside every arm.
     """
-    for label, channel in ((GLOB_CHANNEL_LABELS["pattern"], patterns), (GLOB_CHANNEL_LABELS["globs_not"], globs_not)):
-        for pattern in channel:
-            defect = glob_defect(pattern)
-            if defect is not None:
-                error = ResultError(kind=VFSErrorKind.invalid, message=f"{label} {pattern!r}: {defect}")
-                return Result(ops=("glob",), errors=[error])
+    try:
+        live = expand_channel("pattern", patterns)
+        exclusions = expand_channel("globs_not", globs_not)
+    except PatternError as exc:
+        return Result(ops=("glob",), errors=[ResultError(kind=VFSErrorKind.invalid, message=str(exc))])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = normalize_ext_channel(ext)
     unwanted = normalize_ext_channel(ext_not)
     matched: dict[str, RowMapping] = {}
-    live = list(dict.fromkeys(patterns))
     gates = [compile_filter(pattern, ext) for pattern in live]
-    not_gates = [compile_filter(pattern, ()) for pattern in dict.fromkeys(globs_not)]
+    not_gates = [compile_filter(pattern, ()) for pattern in exclusions]
     built = (pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind) for glob in gates)
     arms = [arm for arm in built if arm is not None]
     ride = ext_membership(entry, wanted, membership_budget)

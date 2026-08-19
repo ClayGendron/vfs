@@ -12,10 +12,12 @@ filter reads the **path-derived** extension, deliberately never a
 stored column. ``**`` inside a component is a refusable defect, not a
 silent ``*``.
 
-    if (defect := glob_defect(pattern)) is not None:
-        ...  # classify invalid, touch no rows
-    glob = compile_filter(pattern, ext=())
-    kept = [p for p in candidates if glob.matches(p)]
+    try:
+        arms = expand_pattern(pattern)      # gate, brace-expand, cap — or PatternError
+    except PatternError as exc:
+        ...  # classify invalid, prefixed with the channel label; touch no rows
+    gates = [compile_filter(arm, ext=()) for arm in arms]
+    kept = [p for p in candidates if any(g.matches(p) for g in gates)]
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import sys
 from dataclasses import dataclass
 from itertools import product
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple
 
 from vfs.paths import Path, extract_extension, normalize_ext_channel, normalize_extension
 
@@ -36,15 +38,30 @@ if TYPE_CHECKING:
 # refuse an over-cap expansion loudly rather than fan it out.
 MAX_PATTERN_ARMS: Final = 64
 
-# One label per glob-language channel, shared by every site that mints a
-# channel refusal — the vocabulary cannot drift per verb or per layer.
-GLOB_CHANNEL_LABELS: Final[Mapping[str, str]] = MappingProxyType(
+# The glob-language channels: glob's pattern, grep's globs, and the
+# exclusions both verbs share; one label each, shared by every site that
+# mints a channel refusal — the vocabulary cannot drift per verb or layer.
+GlobChannel = Literal["pattern", "globs", "globs_not"]
+GLOB_CHANNEL_LABELS: Final[Mapping[GlobChannel, str]] = MappingProxyType(
     {"pattern": "glob pattern", "globs": "grep glob", "globs_not": "glob exclusion"}
 )
 
 # The row facts `passes_row_filters` reads beside the path: storage rides
 # these columns on every candidate fetch so the gate never builds a Path.
 ROW_GATE_FIELDS: Final = frozenset({"name", "ext"})
+
+
+class PatternError(ValueError):
+    """A pattern outside its language, carrying the refusal reason.
+
+    One exception for both pattern languages: the glob expander raises
+    it with the offending pattern and the defect (``'{a,b': unclosed
+    '{' — …``); the grep verifier raises it with the reason alone. The
+    message carries identity and diagnosis and nothing else — the
+    channel label and the verb are the caller's to prefix, so a refusal
+    reads ``glob exclusion '{a,b': unclosed '{' — …`` on one surface and
+    ``grep glob '{a,b': …`` on another from the same text.
+    """
 
 
 @dataclass(frozen=True)
@@ -130,20 +147,49 @@ def glob_defect(pattern: str) -> str | None:
 
 
 def expand_pattern(pattern: str) -> tuple[str, ...]:
-    """The defect-free pattern's brace expansion — plain arms, order kept.
+    """Gate, brace-expand, and cap one pattern — its plain arms, or :class:`PatternError`.
 
-    ``{a,b}`` alternates (each alternative is arbitrary brace-free
-    pattern text, ``/`` included), groups cross-product left to right,
-    and duplicates collapse to first appearance. A brace-free pattern
-    returns itself. Collection stops one arm past
-    :data:`MAX_PATTERN_ARMS`, so an over-cap expansion is detected
-    without being materialized — callers refuse at the cap. Input must
-    be defect-free, same contract as :func:`compile_glob`.
+    The one admission call every surface shares: the defect gate
+    (:func:`glob_defect`) runs first, then ``{a,b}`` alternates (each
+    alternative is arbitrary brace-free pattern text, ``/`` included),
+    groups cross-product left to right, and duplicates collapse to
+    first appearance. A brace-free pattern returns itself, so the call
+    is idempotent over its own output — a surface handed pre-expanded
+    arms loses nothing by expanding again. Collection stops one arm
+    past :data:`MAX_PATTERN_ARMS` and refuses, so an over-cap expansion
+    is detected without being materialized. The refusal names the
+    pattern and the defect; the channel label is the caller's.
     """
+    defect = glob_defect(pattern)
+    if defect is not None:
+        raise PatternError(f"{pattern!r}: {defect}")
     if "{" not in pattern:
         return (pattern,)
     parts, _defect = _parse_braces(pattern)
-    return tuple(_cross_product(parts, MAX_PATTERN_ARMS))
+    arms = _cross_product(parts, MAX_PATTERN_ARMS)
+    if len(arms) > MAX_PATTERN_ARMS:
+        cap = f"expands past the arm cap ({MAX_PATTERN_ARMS}) — narrow the alternation or split the call"
+        raise PatternError(f"{pattern!r}: {cap}")
+    return tuple(arms)
+
+
+def expand_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[str, ...]:
+    """One glob channel's deduped arms, or :class:`PatternError` naming the channel.
+
+    The channel form of :func:`expand_pattern`, for every surface that
+    admits a whole channel at once — the router's verbs and the storage
+    seam alike: each pattern is admitted in turn, the first refusal
+    refuses the channel whole, prefixed with the channel's one label
+    (``glob exclusion '{a': unclosed '{' — …``). Only the producing verb
+    stays the caller's to stamp.
+    """
+    expanded: list[str] = []
+    for pattern in patterns:
+        try:
+            expanded.extend(expand_pattern(pattern))
+        except PatternError as exc:
+            raise PatternError(f"{GLOB_CHANNEL_LABELS[channel]} {exc}") from exc
+    return tuple(dict.fromkeys(expanded))
 
 
 def canonical_pattern(pattern: str) -> str:

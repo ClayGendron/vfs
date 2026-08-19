@@ -1175,6 +1175,22 @@ class StorageContract:
         assert [str(o.path) for o in files.observations] == ["/file.txt"]
 
     @needs("write", "glob")
+    async def test_glob_seam_admits_the_full_language_braces_expand(self, storage: ConformanceBackend) -> None:
+        # The seam runs the same admission call as the router: a brace
+        # pattern arriving unexpanded alternates — never a silent literal.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x"), Entry(path=Path("/b.md"), content="y")])
+        await storage.write(entries=[Entry(path=Path("/{a,b}.txt"), content="z")])
+        result = await storage.glob(patterns=("*.{txt,md}",), globs_not=("{a,b}.txt",))
+        assert result.success is True
+        assert sorted(str(o.path) for o in result.observations) == ["/b.md", "/{a,b}.txt"]
+        literal = await storage.glob(patterns=("*.txt",), globs_not=(escape_glob("{a,b}.txt"),))
+        assert sorted(str(o.path) for o in literal.observations) == ["/a.txt"]
+        over_cap = await storage.glob(patterns=("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}",))
+        assert over_cap.success is False
+        assert [e.kind for e in over_cap.errors] == [VFSErrorKind.invalid]
+        assert "arm cap" in over_cap.errors[0].message
+
+    @needs("write", "glob")
     async def test_glob_defective_exclusion_refuses_the_call_whole(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         result = await storage.glob(patterns=("*.txt",), globs_not=("a**b",))

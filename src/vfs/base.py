@@ -47,17 +47,14 @@ from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOpe
 from vfs.params import param_violation
 from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, normalize_ext_channel, resolve_path
 from vfs.pattern_matching import (
-    GLOB_CHANNEL_LABELS,
-    MAX_PATTERN_ARMS,
     PatternError,
     compile_filter,
     compile_verifier,
     composed_pattern,
     effective_pattern,
     escape_glob,
-    expand_pattern,
+    expand_channel,
     filter_candidates,
-    glob_defect,
     match_texts,
     passes_filters,
     render_residual,
@@ -1113,12 +1110,11 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        arms, refused = self._expanded_arms("glob", GLOB_CHANNEL_LABELS["pattern"], pattern)
-        if refused is not None:
-            return refused
-        globs_not, refused = self._expanded_channel("glob", GLOB_CHANNEL_LABELS["globs_not"], globs_not)
-        if refused is not None:
-            return refused
+        try:
+            arms = expand_channel("pattern", (pattern,))
+            globs_not = expand_channel("globs_not", globs_not)
+        except PatternError as exc:
+            return self._error(str(exc), kind=VFSErrorKind.invalid, op="glob")
         if observations is not None:
             if not self._bindings:
                 return self._closed_error("glob")
@@ -1213,12 +1209,11 @@ class VirtualFileSystem:
         )
         if refusal is not None:
             return refusal
-        globs, refused = self._expanded_channel("grep", GLOB_CHANNEL_LABELS["globs"], globs)
-        if refused is not None:
-            return refused
-        globs_not, refused = self._expanded_channel("grep", GLOB_CHANNEL_LABELS["globs_not"], globs_not)
-        if refused is not None:
-            return refused
+        try:
+            globs = expand_channel("globs", globs)
+            globs_not = expand_channel("globs_not", globs_not)
+        except PatternError as exc:
+            return self._error(str(exc), kind=VFSErrorKind.invalid, op="grep")
         if observations is not None:
             if not self._bindings:
                 return self._closed_error("grep")
@@ -1464,35 +1459,6 @@ class VirtualFileSystem:
                     op=op,
                 )
         return rows, None
-
-    def _expanded_arms(self, op: Op, label: str, pattern: str) -> tuple[tuple[str, ...], Result | None]:
-        """Defect-gate and brace-expand one pattern, or refuse the call.
-
-        Twice-gated: ``glob_defect`` covers raw brace structure and
-        every expansion arm's component defects; the cap refusal names
-        the fix instead of fanning out an oversized expansion.
-        """
-        defect = glob_defect(pattern)
-        if defect is not None:
-            return (), self._error(f"{label} {pattern!r}: {defect}", kind=VFSErrorKind.invalid, op=op)
-        arms = expand_pattern(pattern)
-        if len(arms) > MAX_PATTERN_ARMS:
-            message = (
-                f"{label} {pattern!r} expands past the arm cap ({MAX_PATTERN_ARMS}) — "
-                "narrow the alternation or split the call"
-            )
-            return (), self._error(message, kind=VFSErrorKind.invalid, op=op)
-        return arms, None
-
-    def _expanded_channel(self, op: Op, label: str, patterns: tuple[str, ...]) -> tuple[tuple[str, ...], Result | None]:
-        """Expand every pattern of a glob channel; the cap applies per pattern."""
-        expanded: list[str] = []
-        for pattern in patterns:
-            arms, refused = self._expanded_arms(op, label, pattern)
-            if refused is not None:
-                return (), refused
-            expanded.extend(arms)
-        return tuple(dict.fromkeys(expanded)), None
 
     async def _glob_rows_in_hand(
         self,

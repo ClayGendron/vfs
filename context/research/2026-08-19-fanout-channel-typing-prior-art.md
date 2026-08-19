@@ -148,3 +148,55 @@ returns the dispatch triples as one unit) and ripgrep's polarity-in-
 token (`!glob`) — vfs's two-channel protocol is the wire contract and
 is not changing here.
 
+## Addendum (same day): who owns pattern admission vs the channel label
+
+A second question from the same walkthrough — `_expanded_arms(op, label,
+pattern)` took `op` only to stamp its refusal — prompted three more
+read-only studies (ripgrep's `globset`/`ignore`; zoekt's `query/parse.go`,
+codesearch's trigram planner, SQLAlchemy's `exc.py`; nushell/elvish/
+PowerShell glob and brace handling).
+
+- **globset/ignore**: the library owns *identity* and *diagnosis* as
+  separate fields (`Error{glob, kind}`, `globset/src/lib.rs:157-163`),
+  validate+compile is one `GlobBuilder::build` call, and the caller
+  (`ignore`) adds *provenance* (file, line) as wrapper variants
+  (`ignore/src/lib.rs:263-284`) — it deliberately re-prefixes with
+  `err.kind()` so the user's *original* glob is named after a rewrite
+  (`gitignore.rs:526-536`). The library never learns that `.gitignore`
+  files exist. Nesting is supported and there is no expansion cap,
+  because alternation lowers to a regex `|`, never a textual product
+  (`glob.rs:743-759`).
+- **zoekt**: `Parse` hardcodes a `"query: "` prefix (`parse.go:122`)
+  that is wrong at the JSON API where the field is `Q` — the library
+  owning the prefix is exactly what blocked the caller from owning it.
+  Errors are `fmt.Errorf` strings nobody can classify.
+- **codesearch**: `maxExact = 7`, `maxSet = 20` are library-owned named
+  constants with written rationale (`index/regexp.go:359-378`), and the
+  planner `RegexpQuery(*syntax.Regexp)` cannot fail because parsing
+  happened at the type boundary upstream.
+- **SQLAlchemy**: each layer appends its own context (`StatementError
+  .statement/.params/.orig`, `Session.add_detail`) without the lower
+  layer knowing the caller.
+- **Shells**: none caps expansion width (nushell's dc_glob never
+  materializes the product; elvish expands at the language level, not in
+  the glob library); structured errors survive only until the first
+  `to_string()` — nushell flattens `bracoxide`'s rich enum into a
+  constant title four times, copy-pasted (`nu-engine/src/glob_from.rs:
+  128,147,158,167`); PowerShell validates lazily at first match, in
+  whichever backend runs first.
+
+**What transferred.** `expand_pattern` became the one admission call
+(defect gate, brace expansion, arm cap) raising `PatternError` with
+identity + diagnosis and no label; `expand_channel(channel, patterns)`
+prefixes the channel's one label — `GLOB_CHANNEL_LABELS` already lived
+in the pattern layer, so only the channel *choice* crosses in; the verb
+stamps `op` once, as a literal, at the `except`. The router's
+`_expanded_arms`/`_expanded_channel` were deleted. The storage seam
+(`glob_rows`, `grep_rows`) calls the same function and uses the arms,
+so a brace pattern arriving unexpanded now alternates — previously it
+passed `glob_defect` and then matched *literally* in `compile_filter`
+(the PowerShell shape: admissibility judged in one place, matching in
+another). The cap value stays in the pattern layer as a declared
+constant (codesearch's posture; ADR 037 §3 records the number).
+`PatternError` moved to `glob.py`, the root of the package's one-way
+dependency, and serves both languages.

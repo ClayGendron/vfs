@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 from vfs.models import Match
 from vfs.native import extension
 from vfs.paths import normalize_ext_channel
-from vfs.pattern_matching.glob import compile_filter, passes_filters
+from vfs.pattern_matching.glob import PatternError, compile_filter, passes_filters
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -60,10 +60,6 @@ MatchSpan = tuple[int, int, int, str]
 # One candidate body: text, or its UTF-8 bytes fetched straight from
 # storage — the two spellings verify identically on both engines.
 Body = str | bytes
-
-
-class PatternError(ValueError):
-    """A grep pattern outside the language, carrying the refusal reason."""
 
 
 class ContentMatcher(Protocol):

@@ -67,14 +67,13 @@ from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
-    GLOB_CHANNEL_LABELS,
     ROW_GATE_FIELDS,
     Body,
     GlobFilter,
     PatternError,
     compile_filter,
     compile_verifier,
-    glob_defect,
+    expand_channel,
     passes_row_filters,
 )
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
@@ -202,12 +201,11 @@ async def grep_rows(
     crosses this seam. *wall_seconds* is the caller-configured wall-clock
     budget; the declared default keeps direct callers honest.
     """
-    for label, channel in ((GLOB_CHANNEL_LABELS["globs"], globs), (GLOB_CHANNEL_LABELS["globs_not"], globs_not)):
-        for glob_pattern in channel:
-            defect = glob_defect(glob_pattern)
-            if defect is not None:
-                error = ResultError(kind=VFSErrorKind.invalid, message=f"{label} {glob_pattern!r}: {defect}")
-                return Result(ops=("grep",), errors=[error])
+    try:
+        admissions = expand_channel("globs", globs)
+        exclusions = expand_channel("globs_not", globs_not)
+    except PatternError as exc:
+        return Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.invalid, message=str(exc))])
     try:
         verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
     except PatternError as exc:
@@ -223,8 +221,6 @@ async def grep_rows(
     scan_all = invert_match or plan.is_any()
 
     errors: list[ResultError] = []
-    admissions = list(dict.fromkeys(globs))
-    exclusions = list(dict.fromkeys(globs_not))
     gates = [compile_filter(glob, ()) for glob in admissions]
     not_gates = [compile_filter(glob, ()) for glob in exclusions]
     wanted = normalize_ext_channel(ext)

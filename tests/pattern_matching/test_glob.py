@@ -9,6 +9,7 @@ refused. The demo tree is the spec's acceptance table.
 from __future__ import annotations
 
 import glob as stdlib_glob
+import re
 from itertools import product
 
 import pytest
@@ -18,6 +19,7 @@ from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
     DerivedExt,
+    PatternError,
     compile_filter,
     compile_glob,
     composed_pattern,
@@ -171,10 +173,24 @@ class TestExpandPattern:
         assert expand_pattern("[!,]{a,b}") == ("[!,]a", "[!,]b")
         assert expand_pattern("[]]{a,b}") == ("[]]a", "[]]b")
 
-    def test_collection_stops_one_past_the_cap(self):
+    def test_an_over_cap_expansion_refuses_naming_the_pattern_and_the_cap(self):
         pattern = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}"  # 2**7 = 128 arms
-        arms = expand_pattern(pattern)
-        assert len(arms) == MAX_PATTERN_ARMS + 1
+        with pytest.raises(PatternError, match=rf"^{re.escape(repr(pattern))}: expands past the arm cap \(64\)"):
+            expand_pattern(pattern)
+
+    def test_a_defective_pattern_refuses_with_identity_and_diagnosis(self):
+        # The exception carries the pattern and the defect; the channel
+        # label is the caller's to prefix — the language never knows it.
+        with pytest.raises(PatternError, match=r"^'a\*\*b': '\*\*' inside a component"):
+            expand_pattern("a**b")
+        with pytest.raises(PatternError, match=r"^'x/\{a,\}': empty component.*expansion arm 'x/'"):
+            expand_pattern("x/{a,}")
+
+    def test_expansion_is_idempotent_over_its_own_arms(self):
+        # A surface handed pre-expanded arms loses nothing by expanding again.
+        for pattern in ("*.{ts,tsx}", "{src,docs}/**/*.md", "*.py"):
+            arms = expand_pattern(pattern)
+            assert tuple(arm for a in arms for arm in expand_pattern(a)) == arms
 
     def test_a_cap_sized_expansion_is_exact(self):
         pattern = "{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}"  # 2**6 = 64 arms
