@@ -24,6 +24,7 @@
   sequentially at their prior counts (Postgres 209, MySQL 210,
   MSSQL 211, Oracle 208); zero relations left on the server after
   teardown; full 3.13 CI leg green.
+  **Mined 2026-08-19:** the reentrancy posture flowed to `standards/testing.md` (per-run `vfs_<hex>` namespaces, minted names everywhere); the db_test skill and `docker/README.md` were updated at landing. No ADR — harness only. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

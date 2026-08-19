@@ -4,7 +4,9 @@
   optimization arc (commit `1b36b4a`), written at the 104/105/106
   mining pass. Amends the *shapes* of ADR 040's §4 nomination and
   spec 104's assembly path; every contract, law, and budget of
-  ADR 033/040 stands.
+  ADR 033/040 stands. **Extended by ADR 047** (2026-08-18): the
+  hydration law adopted by every backend reader, resting on the
+  declared branded-`Path` seam precondition.
 - **Date:** 2026-08-17
 - **Deciders:** Clay Gendron (the "close the gaps to rg" directive
   and the no-numpy-in-small-set-code rule); shapes chosen from the

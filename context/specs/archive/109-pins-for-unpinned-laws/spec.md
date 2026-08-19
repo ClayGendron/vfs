@@ -21,6 +21,7 @@
   precondition) and the reachable `laddered ∩ allow` row (the wide
   scope rides the ladder — blob-fetch spy — and intersects). Full
   3.13 leg green (2,539 tests, 100% coverage).
+  **Mined 2026-08-19:** the pins-land-with-their-mutant discipline flowed to `standards/testing.md`; the standing-mutation-harness question entered `open-questions.md`. No ADR — tests only. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),

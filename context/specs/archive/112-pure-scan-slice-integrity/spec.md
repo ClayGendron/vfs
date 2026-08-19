@@ -29,6 +29,7 @@
   offload — one decision should settle both). Parity file 142
   passed on both engine legs; deadline-cadence spelling untouched
   (§1's rewrite never reached those guards). Full 3.13 CI leg green.
+  **Mined 2026-08-19:** decision set recorded in ADR 046 alongside spec 110's (zero-width discard at slice ends, budgeted parity pins, the residual disclosed not bounded, the residual fork deferred with the offload memo's findings). Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

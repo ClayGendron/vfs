@@ -28,6 +28,7 @@
   210, MSSQL 211, Oracle 208 — segment-mirror and cascade batteries
   included), both grep ladders identical counts with the zero-hit
   floor at 41.9 ms, full 3.13 leg green (100% coverage).
+  **Mined 2026-08-19:** decision set recorded as ADR 047 (branded-Path seam precondition, hydration law for every reader, delete maintenance flushed once per call, move/restore left per-pair with reason, the acknowledged-not-capped profile doctrine). The `_brand` sweep and SQL-side allow-list join stay in the spec as follow-ups. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),

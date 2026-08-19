@@ -27,6 +27,7 @@
   row (1); M4 glob observes the queried mask → killed by the glob
   mask row (1); M5 `skip_verified = True` → killed by the epoch spy
   (1). Full 3.13 CI leg green (2,612 passed, 100% coverage).
+  **Mined 2026-08-19:** the batch-width / exact-mask / budgeted-row rules flowed to `standards/testing.md`; the mutation-harness question entered `open-questions.md`. No ADR — tests only. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

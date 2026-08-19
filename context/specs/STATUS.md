@@ -5,7 +5,49 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-17 (fifth pass the same day), at the
+- **Last reviewed:** 2026-08-19, at the 107–116 mining pass — the
+  close of the glob/grep review-and-remediation arc. Two review
+  campaigns bracketed it: the 34-agent five-lens campaign over
+  `0359c8d..da3cee3`
+  (`../research/2026-08-18-glob-grep-review-campaign.md` — 1
+  critical, 4 major, 9 minor, 11 design questions; all four engine
+  legs live) fed specs 107–111, one per defect class (the lock-free
+  late overlay verdict `a3de8d7`; pins for unpinned laws `666c4c5`;
+  bounded pushdown with true bind accounting `5318fd7`; seam bounds
+  `981a198`; hydration law and batched delete maintenance
+  `14e8df5`); the 25+9-agent remediation-landing review over that
+  range (`../research/2026-08-18-remediation-landing-review.md` —
+  storage-side work held under live-engine attack; the arc's only
+  wrong-results defect was spec 110's `^$` phantom at slice
+  boundaries) fed specs 112–115 (slice integrity `02f92b1`; width
+  and mask pins `74a403b`; engine-leg reentrancy `91e5a4c`; bind
+  accounting and docstring trues `e2869b4`), and its decision pass
+  (Clay, 2026-08-18) fed spec 116 (five verified-but-inert hygiene
+  items, landed 2026-08-19 `00bdb52`) and commissioned the
+  matcher-offload memo (`../research/2026-08-18-matcher-offload.md`
+  — thread offload settles event-loop occupancy on the Rust engine,
+  cannot bound one `sre` backtracking episode; the joint fork waits
+  on the concurrency story). Mining residue: **ADRs 044–047** (the
+  advisory/authoritative two-read protocol; the bounded pushdown's
+  one charged-equals-executed law with term-typed counters and the
+  fan derived once; the pure engine's wall discipline, seam maxima,
+  and result-level partiality; the branded-`Path` seam precondition,
+  hydration law for every reader, batched maintenance), the
+  pins-land-with-their-mutant and engine-leg-reentrancy sections in
+  `../standards/testing.md`, and the standing-mutation-harness entry
+  in `../open-questions.md`. End state: suite 2,614 passed / 862
+  skipped, coverage 100 %, ruff/format/ty zero (`scripts/ci.sh
+  3.13`, 2026-08-19); all four Docker engine legs green at the 113/
+  114/115 landings (Postgres 209, MySQL 210, MSSQL 211, Oracle 208);
+  both grep ladders byte-identical counts across every landing in
+  the arc, zero-hit floor ~42 ms. Still open from the arc: the
+  occupancy/residual joint fork (concurrency story), the
+  trash-stamping fork (ADR 042/044), cadence unification (parked on
+  the byte-cap trigger), the MSSQL classification audit, and the
+  SQL-side allow-list join. The full `scripts/ci.sh` 3.11–3.14
+  matrix was not run during the arc (single 3.13 legs each landing);
+  MySQL remains the least-exercised engine.
+- **Previous review:** 2026-08-17 (fifth pass the same day), at the
   104/105/106 mining pass. That arc, all in one session after spec
   104's completion: the "close the gaps to rg" optimization landing
   (`1b36b4a` — priced gram ladder with the defer rule, join-built
@@ -32,7 +74,7 @@ lines first; regenerate this file when the picture shifts (review the
   ruff/ty zero. All three specs archived with mining notes; the
   accumulated server legs (104's cascades, 105's index reflection,
   106's cast audits) still await one real-server run.
-- **Previous review:** 2026-08-17 (fourth pass the same day), at spec
+- **Earlier review:** 2026-08-17 (fourth pass the same day), at spec
   104's completion — all four slices landed in one arc. A: the
   segment posting table and synchronous maintenance in every
   path-writing verb, plus the guarded reindex re-convergence. B: the
@@ -425,16 +467,21 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 049 → 055 → 056 Pass A → 057 → 069 → 071 → 072 slices 6–9 → 074 →
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
 → 089 → 090 → 073 → 091 → 092 → 093 → 094 → 095 → 096 → 097 → 098 →
-099 → 100 → 104 → 105 → 106. ADRs 001–043 accepted (005 superseded by
-016; 021/022 proposed, awaiting ratification; 018 awaiting its wiring
+099 → 100 → 104 → 105 → 106 → 107 → 109 → 108 → 110 → 111 → 112 →
+113 → 114 → 115 → 116. ADRs 001–047 accepted (005 superseded by 016;
+021/022 proposed, awaiting ratification; 018 awaiting its wiring
 spec; 032, 033, 037, and 038 are the retroactive records of 073's,
 093's, 094's, and 100's decision sets, written at their mining passes;
 036 amends 033's chunk-grain clause; 041–043 record the 2026-08-17
 read-path arc — the priced-nomination landing and specs 105/106 —
-written at the 104/105/106 mining pass). The 073/091/092 glob arc,
-093, 094, the 095–099 campaign arc, 100, and the 104–106 read-path
-arc are all mined and archived (095–099 on 2026-08-14; 100 on
-2026-08-16; 104–106 on 2026-08-17). Tree green at 2,301 passed / 838
-skipped, coverage 100%, `ruff`/`ty` at zero (2026-08-16, full
-3.11–3.14 matrix), all four Docker engine legs green as of the 098
-landing (2026-08-13).
+written at the 104/105/106 mining pass; 044–047 record the
+2026-08-18 review-and-remediation arc — specs 107–116 — written at
+the 107–116 mining pass; 042 amended by 107, 039 refined by 046, 041
+extended by 047). The 073/091/092 glob arc, 093, 094, the 095–099
+campaign arc, 100, the 104–106 read-path arc, and the 107–116
+remediation arc are all mined and archived (095–099 on 2026-08-14;
+100 on 2026-08-16; 104–106 on 2026-08-17; 107–116 on 2026-08-19).
+Tree green at 2,614 passed / 862 skipped, coverage 100%,
+`ruff`/`ty`/format at zero (2026-08-19, 3.13 leg; full 3.11–3.14
+matrix last run 2026-08-16), all four Docker engine legs green as of
+the 113/114/115 landings (2026-08-18).

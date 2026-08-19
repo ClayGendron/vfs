@@ -10,7 +10,9 @@
   033's budget values and moves the match authority 033 assumed.
   The tree-sitter chunking fork (161 s of the reindex verb) remains
   open in spec 103 — it is an embedding-pipeline question, not a
-  grep one.
+  grep one. **Refined by ADR 046** (2026-08-18): the pure fallback's
+  wall discipline, seam maxima, and partiality law — an unbounded
+  hang was never among decision 6's cataloged residuals.
 - **Date:** 2026-08-17 (slices B–C landed 2026-08-16/17; recorded at
   slice D)
 - **Deciders:** Clay Gendron

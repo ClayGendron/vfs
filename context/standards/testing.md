@@ -42,6 +42,37 @@ async def test_write_then_read(db_fs):
 - One behaviour per test. If a test name needs `and`, split it.
 - Fixtures over setup methods. Test classes are unusual here.
 
+## Pins land with their mutant
+
+A test that exists to pin a law is proven by the mutation it kills,
+not by the coverage it adds. Every review campaign has found laws
+that held by authorship — exercised by dozens of tests, asserted by
+none — because the suite's rows were subset asserts, single-target
+shapes, or unbudgeted paths. So:
+
+- When a law is named (a docstring, a spec, an ADR), ask which
+  one-line mutation would break it silently, apply that mutation
+  under the safe-restore rule (copy to the scratchpad first; restore
+  from the copy; verify with `ruff`), and confirm the pin fails.
+- Record the mutation the test guards in its docstring — the shape,
+  never a spec or finding number.
+- Batch-shaped behavior gets a batch-width row (a two-target delete,
+  a two-pair move) with the referee that can see the width; mask
+  promises get exact-equality rows (`==`, not `<=`); budgeted paths
+  get budgeted parity rows.
+
+Whether curated mutants become a standing CI harness is an open
+question (`../open-questions.md`); today pins land hand-proven.
+
+## Engine legs are reentrant
+
+The real-engine fixtures mint a per-run table namespace
+(`vfs_<hex>`) and drop exactly what they minted at teardown, so two
+runs against one live engine never tear each other down (review
+agents sharing a Docker stack were the first to collide). A new
+engine-leg fixture or raw-SQL audit must take the minted name, never
+a fixed `vfs`.
+
 ## Running
 
 ```bash

@@ -18,6 +18,7 @@
   the linux store byte-identical counts on all 25 unscoped and 12
   scoped rows (scoped recall still equal to rg's on every row), warm
   walls inside session noise (zero-hit 41.9 → 43.2 ms).
+  **Mined 2026-08-19:** `fan_arms`-once into ADR 045, `ROW_GATE_FIELDS` into ADR 047, the ContentMatcher partiality law (Q2's ratification) into ADR 046; the pre-work disclosure lives in the `_PureMatcher` docstring. Folder stays as the historical record.
 - **Drafted 2026-08-18.** Born from the remediation-landing review's
   decision pass
   (`../../../research/2026-08-18-remediation-landing-review.md`,

@@ -25,6 +25,7 @@
   occupancy fork recorded in `context/open-questions.md` for Clay,
   deliberately not landed. Full 3.13 leg green (2,558 tests, 100%
   coverage).
+  **Mined 2026-08-19:** decision set recorded as ADR 046 with spec 112's (within-body wall discipline, disclosed residual, INT_CEILING maxima, engine parity of refusals, the deferred occupancy fork with its research pointer). The byte-cap slicing follow-up stays parked as the cadence-unification trigger. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),

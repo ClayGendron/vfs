@@ -28,6 +28,7 @@
   correctness price is ~1 ms, one scan over the demoted overlay.
   Budget constants unmoved. Bench scripts were session-scratch
   repros per the campaign convention; numbers live here.
+  **Mined 2026-08-19:** decision set recorded as ADR 044 (the lock-free advisory/authoritative protocol and the rejected mitigations); ADR 042 already carries the amendment note. The trash-stamping fork stays open in ADR 042/044. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the 2026-08-18 five-lens review campaign over
   `0359c8d..da3cee3` (run `wf_2784b845-963`), whose adversarial lens

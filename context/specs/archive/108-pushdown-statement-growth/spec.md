@@ -25,6 +25,7 @@
   arithmetic serves all 2,200 rows; all four engine legs green
   (Postgres 209, MySQL 210, MSSQL 211, Oracle 208); both benchmark
   ladders re-ran with identical counts and wall time within noise.
+  **Mined 2026-08-19:** decision set recorded as ADR 045 (true bind accounting as one charged-equals-executed law with term-typed counters, §2b void-the-ride by the simplicity default, the allow-list voiding whole, over-limit as a permanent defect). The ext-width and MSSQL-classification-audit questions stay in the spec as follow-ups. Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the review campaign memo
   (`../../../research/2026-08-18-glob-grep-review-campaign.md`),

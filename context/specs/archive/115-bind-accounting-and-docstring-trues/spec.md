@@ -29,6 +29,7 @@
   3.13 CI leg green; MSSQL leg green at 211 (the saturated 40-ext
   boundary and bind-budget rows on the tightest engine, one db_test
   cycle, machine restored).
+  **Mined 2026-08-19:** folded into ADR 045 (the directly-pinned base charge, the default-compiler invariant of `_static_binds`, and the four-counter convention reconciled against spec 108's 'one mechanism' as one law with term-typed counters). Folder stays as the historical record.
 - **Drafted 2026-08-18.**
   Born from the remediation-landing review
   (`../../../research/2026-08-18-remediation-landing-review.md`),

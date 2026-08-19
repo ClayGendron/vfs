@@ -376,7 +376,7 @@ Dispositions for the ten design questions and the two recorded forks:
   phase-identical (refutation R1); spec 110's byte-cap-slicing
   follow-up — which the line-counting strides cannot express — is the
   trigger to unify into one slice-iterator helper.
-- **Spec 116** (`../specs/active/116-decision-pass-hygiene/`) lands
+- **Spec 116** (`../specs/archive/116-decision-pass-hygiene/`, landed 2026-08-19) lands
   the verified-but-inert hygiene batch: question 1 (the channel fan
   budget derived once, with unit-true naming), question 3 (the
   row-gate ride literal named once and glob's positional splat into
