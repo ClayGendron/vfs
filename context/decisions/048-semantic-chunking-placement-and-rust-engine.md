@@ -6,6 +6,20 @@
   engine-parity clause: chunking becomes the one declared exception
   to byte-identical engines (see Decision §3). Spec to follow; the
   open-questions entry archives against this ADR.
+  **§3 amended 2026-08-25 (Clay, in session, at spec 117 slice A):**
+  grammar delivery is **crates.io grammar crates** (cargo-managed,
+  `Cargo.lock` as the pin, the pack's `language_definitions.json` as
+  the reference for which grammar serves each name), not vendored
+  `parser.c` archives — the vendoring trial measured ~0.5 GB of
+  generated C for the 68-grammar set, a maintenance system Clay
+  declined, and §4's deletion of the Python pack had already
+  dissolved the rev-parity argument that motivated vendoring.
+  Consequence accepted with the amendment: coverage is the ~60
+  grammars with live compatible crates; the stragglers (astro,
+  clojure, csv, json5, tcl, tsv, vb, vue) take the character
+  splitter — the same fallback unmapped extensions already take —
+  and terraform rides the hcl grammar. Spec 117 records the resolved
+  crate mapping.
 - **Date:** 2026-08-25
 - **Deciders:** Clay Gendron (all four selections, made against the
   executed evidence: placement ratified reindex-side; the deferred

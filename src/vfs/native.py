@@ -40,7 +40,7 @@ except ImportError:  # pragma: no cover - exercised only in extension-less insta
 if TYPE_CHECKING:
     from vfs.models.code_grams import GramKey
 
-EXPECTED_PROTOCOL: Final = 2
+EXPECTED_PROTOCOL: Final = 3
 
 
 class PostingsBuilder(Protocol):

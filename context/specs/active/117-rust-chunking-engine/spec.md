@@ -38,15 +38,23 @@
    for the whole batch (the verify seam's pattern). Spike-measured
    expectation at linux scale: the 161 s chunk wall → ~25 s at
    8 workers, event-loop occupancy ~0.
-2. **All 68 mapped grammars are vendored, pinned, and hermetic.**
-   Generated `parser.c` (plus `scanner.c` where a grammar has one)
-   vendored at exactly the `repo` + `rev` the pack's
-   `language_definitions.json` pins at adoption time, compiled by
-   `build.rs` via `cc`. A checked-in manifest records per grammar:
-   repo, rev, ABI, license. No network, no dlopen, no crates.io
-   grammar crates. Grammar-rev bumps are declared events: a bump
-   changes the chunk generation (§4) and must update the parity
-   fixtures in the same landing.
+2. **Grammars are crates.io crates on one runtime** *(reshaped
+   2026-08-25 by Clay at slice A — ADR 048 carries the amendment
+   note; the vendored-`parser.c` plan was discarded when its trial
+   measured ~0.5 GB of generated C and §3's pack deletion had
+   already dissolved the rev-parity motive)*. `Cargo.lock` is the
+   pin, `cargo update` is the bump, and the pack's
+   `language_definitions.json` stays the reference for which grammar
+   serves each name. Resolved empirically at tree-sitter 0.26:
+   **57 crates serving 59 grammar names** (typescript's crate also
+   carries tsx; hcl serves terraform; forks where the canonical
+   crate is dead: `kotlin-ng`, `md`, `sequel`, `svelte-ng`,
+   `toml-ng`). Nine names have no usable crate and take the
+   character splitter — astro, clojure, csv, json5, latex (broken
+   publish), tcl, tsv, vb, vue — recorded in the coverage-contract
+   test. Grammar bumps remain declared events: a bump changes the
+   chunk generation (§4) and must update the fixtures in the same
+   landing.
 3. **The pure fallback degrades, declaredly.** `chunking.py` routes
    structure-aware splitting through the native seam;
    without the native engine, every extension takes the recursive
@@ -73,38 +81,49 @@
 
 ## Shape
 
-- `crates/vfs-core/src/chunk.rs` (walker, merge, character splitter,
-  batch driver), `crates/vfs-core/grammars/` (vendored sources +
-  manifest), `build.rs` (cc compilation, parallel), `python.rs`
-  (batch binding, GIL-detached), `PROTOCOL_VERSION` bump.
-- `src/vfs/models/chunking.py` shrinks to routing + the pure
-  character splitter + notebook cell routing (cells still route per
-  grammar; their splits go through the same seam). `native.py` grows
-  the chunk entry point with the pure fallback.
+- `crates/vfs-core/src/chunk.rs` — registry + walker + merge + rayon
+  batch driver returning `SpanRow` byte-spans with line ranges;
+  grammar crates as `Cargo.toml` dependencies; `python.rs` gains
+  `chunk_spans` (GIL-detached) and `supported_grammars`;
+  `PROTOCOL_VERSION` 2 → 3. The engine returns spans, never text:
+  the host slices content, filters whitespace-only chunks, and
+  re-splits oversized leaves with its character splitter (which
+  therefore lives only in Python — no Rust port needed).
+- `src/vfs/models/chunking.py` shrinks to routing + the character
+  splitter + notebook cell routing (cells still route per grammar;
+  their splits go through the same seam). `native.py` grows the
+  chunk entry point with the pure fallback;
+  `_AVAILABLE_GRAMMARS` comes from `supported_grammars()` instead
+  of the pack.
 - `src/vfs/storage/backends/database/indexing.py`: `chunk_dirty`
   batches dirty bodies into one native call and applies the
   fingerprint-skip law.
-- Licenses: every vendored grammar's license verified permissive and
-  recorded (the pack's `ATTRIBUTIONS.md` precedent); the wheel's
-  metadata carries the attributions.
+- Licenses: grammar crates carry their licenses through normal
+  cargo metadata; the license audit rides `cargo` tooling rather
+  than a hand-kept attributions file.
 
 ## Slices
 
-- **A — the core:** vendoring manifest + sources for the 68
-  grammars, chunk module with parity fixtures (the spike's
-  dump-and-replay corpus, committed), rayon batch driver,
-  `cargo test -p vfs-core` green.
-- **B — the seam:** pyo3 batch binding, `native.py` entry with pure
-  fallback, `chunking.py` reroute, pack dependency deleted,
-  divergence pins, coverage-contract test, `uv sync
-  --reinstall-package vfs-py` note honored in CI.
+- **A — the core** *(landed 2026-08-25)*: crate set resolved
+  empirically (57 crates / 59 names on tree-sitter 0.26; smoke
+  test parsed every registered grammar; ~79 MB unstripped static
+  binary measured), `chunk.rs` with registry + walker + merge +
+  rayon batch, `chunk_spans`/`supported_grammars` bindings,
+  protocol bump, `cargo test -p vfs-core` green (7 chunk tests).
+  Engine-behavior fixtures land with slice B where the assembled
+  Python-visible chunks exist to pin.
+- **B — the seam:** `native.py` entry with pure fallback,
+  `chunking.py` reroute (span assembly, strip filter, oversized
+  re-split), pack dependency deleted, divergence pins,
+  coverage-contract test against `supported_grammars()`, fixtures,
+  `uv sync --reinstall-package vfs-py` note honored.
 - **C — the dirty pass:** batch call from `chunk_dirty`,
   generation-stamped fingerprint-skip, re-dirty on generation
   change, guarded-flip law preserved; engine legs re-run.
 - **D — the gate:** linux-corpus reindex measured as a verb —
   target ≤60 s end-to-end (index build ~30 s + parallel chunking);
-  wheel size recorded (expected ~+25 MB, watched against PyPI's
-  100 MB cap); full `scripts/ci.sh` matrix green.
+  wheel size recorded (watched against PyPI's 100 MB cap); full
+  `scripts/ci.sh` matrix green.
 
 ## Open questions
 
@@ -112,8 +131,5 @@
   call, or a declared knob beside `grep_wall_seconds`? (Lean:
   available parallelism, no knob until a consumer asks — the call is
   already bounded by batch size.)
-- Vendoring mechanics: take committed `parser.c` from each grammar
-  repo at the pinned rev vs regenerate with a pinned tree-sitter CLI
-  at ABI 14 (the pack regenerates; taking committed artifacts is
-  simpler but trusts each repo's checked-in generation). Settle in
-  slice A with the choice recorded in the manifest.
+- ~~Vendoring mechanics~~ — dissolved by the slice-A reshape:
+  grammar delivery is crates.io crates; there is nothing to vendor.

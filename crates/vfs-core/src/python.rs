@@ -13,13 +13,14 @@ use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyo3::types::PyBytes;
 
+use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
 use crate::postings::{DrainedPostings, PostingsAccumulator};
 use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// warns and falls back on mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -155,10 +156,49 @@ impl ContentMatcher {
     }
 }
 
+/// Grammar names the chunk registry serves; the host's extension map
+/// filters against this instead of guessing.
+#[pyfunction]
+fn supported_grammars() -> Vec<&'static str> {
+    GRAMMAR_NAMES.to_vec()
+}
+
+/// Structure-aware chunk spans for a batch of `(body, grammar)` pairs,
+/// parsed in parallel off the GIL. Per body: `None` when the structure
+/// path cannot serve it (unknown grammar, parse failure) — the host
+/// falls back to its character splitter — otherwise `(start, end,
+/// line_start, line_end, oversized)` rows of byte offsets and 1-based
+/// lines; the host slices text, filters whitespace-only chunks, and
+/// re-splits oversized leaves.
+#[pyfunction]
+#[pyo3(signature = (bodies, *, chunk_size))]
+fn chunk_spans(
+    py: Python<'_>,
+    bodies: Vec<(PyBackedBytes, String)>,
+    chunk_size: usize,
+) -> Vec<Option<Vec<(u32, u32, u32, u32, bool)>>> {
+    let pairs: Vec<(&[u8], &str)> =
+        bodies.iter().map(|(body, grammar)| (body.as_ref(), grammar.as_str())).collect();
+    py.detach(|| {
+        split_batch(&pairs, chunk_size)
+            .into_iter()
+            .map(|rows| {
+                rows.map(|rows| {
+                    rows.into_iter()
+                        .map(|row| (row.start, row.end, row.line_start, row.line_end, row.oversized))
+                        .collect()
+                })
+            })
+            .collect()
+    })
+}
+
 #[pymodule(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PROTOCOL_VERSION", PROTOCOL_VERSION)?;
     m.add_function(wrap_pyfunction!(distinct_gram_count, m)?)?;
+    m.add_function(wrap_pyfunction!(supported_grammars, m)?)?;
+    m.add_function(wrap_pyfunction!(chunk_spans, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<ContentMatcher>()?;
     Ok(())
