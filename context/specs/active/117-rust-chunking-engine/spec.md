@@ -1,11 +1,13 @@
 # 117 — Rust chunking engine: vendored grammars, parallel split, degraded pure fallback
 
-- **Status: drafted 2026-08-25.** Born from ADR 048 and its two
-  research memos
+- **Status: all slices landed 2026-08-25** (A–D, same day drafted —
+  slice statuses inline below carry the measured numbers). Born from
+  ADR 048 and its two research memos
   (`../../../research/2026-08-25-semantic-chunking-write-vs-reindex.md`,
-  `../../../research/2026-08-25-rust-tree-sitter-chunking.md`); the
-  decisions are made, this spec owns the landing. Spec 103 archives
-  when this lands (its last open fork is ADR 048's subject).
+  `../../../research/2026-08-25-rust-tree-sitter-chunking.md`).
+  Spec 103's last open fork is discharged — both specs now await
+  their backward-flow mining pass; nothing further blocks archiving
+  either.
 - **Date:** 2026-08-25
 - **Owner:** Clay Gendron
 - **Kind:** engine move — semantic chunking's tree-sitter walk leaves
@@ -126,10 +128,17 @@
   the existing guarded flip via a column-to-column SET. Both law
   pins proven with their mutants (ledger rows P1/P2). Engine legs
   re-run in slice D with the gate.
-- **D — the gate:** linux-corpus reindex measured as a verb —
-  target ≤60 s end-to-end (index build ~30 s + parallel chunking);
-  wheel size recorded (watched against PyPI's 100 MB cap); full
-  `scripts/ci.sh` matrix green.
+- **D — the gate** *(landed 2026-08-25)*: linux corpus (93,760
+  files) — write 52 s, **reindex 54 s** as a verb, inside the ≤60 s
+  target (from 191 s at spec 103's close, 672 s pure baseline; the
+  chunk wall fell 161 s → ~24 s, matching the spike's 6.6×
+  projection); all 25 grep bench queries at their healthy profile
+  (55–742 ms) on the new store. Wheel: 449 KB → **9.0 MB** (the
+  81 MB extension strips and deflates ~9:1 — far under PyPI's
+  100 MB cap). Full matrix green (3.11–3.14); all four engine legs
+  green on schema 6 (Postgres 210, MySQL 211, MSSQL 212,
+  Oracle 209 — the MySQL flip-count pin trued up to name the
+  generation re-dirty statement, as sqlite's was).
 
 ## Open questions
 

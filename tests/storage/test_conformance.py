@@ -299,16 +299,18 @@ class TestMySQLFlagFlipRoundTrips:
         async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
             entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
             assert (await storage.write(entries=entries)).success is True
-            flips: list[bool] = []
+            updates: list[tuple[str, bool]] = []
 
             def record(conn, cursor, statement, parameters, context, executemany) -> None:
                 if statement.startswith("UPDATE") and ("chunked" in statement or "encoded" in statement):
-                    flips.append(executemany)
+                    updates.append((statement, executemany))
 
             event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
             assert (await storage.reindex()).success is True
+            assert all(many is False for _, many in updates)
+            flips = [(s, many) for s, many in updates if "version" in s]
             assert len(flips) == 2  # ten pairs fit one statement per flag
-            assert all(many is False for many in flips)
+            assert len(updates) == len(flips) + 1  # plus the one set-based generation re-dirty
 
 
 @pytest.mark.mssql
