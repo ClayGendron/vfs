@@ -102,11 +102,11 @@ def chunk_spans(
 
     Bodies parse in parallel off the GIL on the Rust engine. Per body:
     ``None`` when the structure path cannot serve it — unknown grammar,
-    parse failure, or the pure engine, where every body is ``None`` —
-    and the caller falls back to its character splitter; otherwise
-    ``(start, end, line_start, line_end, oversized)`` rows of byte
-    offsets and 1-based lines. The caller slices text, filters
-    whitespace-only chunks, and re-splits oversized leaves.
+    language load failure, a body over 4 GiB, or the pure engine, where
+    every body is ``None`` — and the caller falls back to its character
+    splitter; otherwise ``(start, end, line_start, line_end, oversized)``
+    rows of byte offsets and 1-based lines. The caller slices text,
+    filters whitespace-only chunks, and re-splits oversized leaves.
     """
     if _active is None:
         return [None] * len(bodies)

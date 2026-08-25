@@ -1,6 +1,28 @@
 # 125 — The round's consolidations and prose trues
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  Slice A: §1 the whole-text skeleton unified into one
+  ``_whole_matches`` driver — expiry yields a ``None`` sentinel as the
+  generator's last act (a trailing statement after that yield is
+  unreachable under consumer abandonment, which the first draft
+  learned from a 99.98 % coverage run), and ``found.end()`` travels
+  with each hit for the hits consumer; ledger row P12 replayed against
+  the unified driver, both directions killed (4 failures each). §2
+  ``split`` delegates to ``split_batch([...])[0]``; ``_split_content``
+  and the redundant notebook-extension guard deleted; the "single
+  door" line trued. §3 ``KindMembership`` beside ``ExtMembership``,
+  all four spellings and both separately-remembered bind charges
+  consuming it — compiled text verified byte-identical on all five
+  bundled dialect compilers, old spellings vs the owner. §4 both
+  "candidate budget" appends guarded; a new at-most-once row (index
+  cut and scan overflow tripping in one call) proven against the
+  pre-guard code (1 failure), closing campaign OQ 23. Slice B: §5–§9
+  prose trues landed as ruled (ADR 049 carries the F5 amendment
+  note); §10 STATUS 2,641 → 2,646 at both sites — the neighboring
+  engine-leg counts re-checked against the spec 121 measurements
+  (210/212/212/209 minus 121's one MySQL row reproduces the recorded
+  210/211/212/209) and found not stale. Gates: 3.13 CI leg green at
+  100 % coverage (native and pure legs); all four engine legs green.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`):
   design questions Q1 (skeleton unification — ruled *unify now*,

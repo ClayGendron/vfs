@@ -71,7 +71,12 @@ processes), leaving the process posture parked on its own.
    the void, its ≤32 MiB batch residency is accepted and
    documented, and a superseded worker from a `StaleSnapshot`
    redrive is harmless by construction. No protocol-level interrupt
-   is invented.
+   is invented. *Amendment (2026-08-25, chunking-arc landing
+   review, F5):* the residency bound is the content-byte budget
+   (a `grep.py` module constant, not a caller knob) **or one body,
+   whichever is larger** — the batcher's declared singleton
+   exemption lawfully sends one oversized body through alone
+   (executed: a 40 MiB body rode as a 41,942,023-byte batch).
 3. **The pure engine's exponential residual is settled by engine
    choice, not chased with mechanisms.** The Rust engine — the
    default wheel — is the linear-time answer (codesearch's posture:

@@ -22,8 +22,10 @@ Three laws govern the hop:
 - **Cancellation is abandonment made safe.** A cancelled await returns
   immediately; a worker already running finishes into the void — it
   touches no session, its results are dropped, and its only residency
-  is the batch it holds (bounded by the caller's content-byte budget,
-  ≤32 MiB). No protocol-level interrupt exists.
+  is the batch it holds, bounded by the batcher's content-byte budget
+  (a module constant, 32 MiB) *or one body, whichever is larger* — the
+  batcher's singleton exemption sends an oversized body through alone.
+  No protocol-level interrupt exists.
 - **The pool follows the host's close, and calls survive it.** A call
   that races close and finds its pool shut serves the batch inline —
   one on-loop batch in the close window, never a raw escape — and the

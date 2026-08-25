@@ -63,7 +63,7 @@ import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import LargeBinary, and_, case, cast, or_, select
 
-from vfs.models import CONTENT_KINDS, Match, Observation
+from vfs.models import Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError, decode_postings
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
@@ -87,6 +87,7 @@ from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
     effective_columns,
     ext_membership,
+    kind_membership,
     meta_scoped,
     pattern_arm,
 )
@@ -273,7 +274,8 @@ async def grep_rows(
                 doc_ids = laddered
         if doc_ids.size > CANDIDATE_BUDGET:
             doc_ids = doc_ids[:CANDIDATE_BUDGET]
-            truncations.append("candidate budget")
+            if "candidate budget" not in truncations:
+                truncations.append("candidate budget")
         pushdown = _pushdown_terms(
             tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
@@ -314,7 +316,7 @@ async def grep_rows(
                     limit=remaining,
                     deadline=deadline,
                 )
-                if overflow:
+                if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
                 for mapping in nominated:
                     if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
@@ -406,7 +408,7 @@ async def _pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tup
     (SQL Server) carry the EXISTS.
     """
     entry = tables.entry
-    pending = select(entry.c.id).where(~entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))).exists()
+    pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
     stmt = select(tables.meta.c.current_gram_epoch, case((pending, 1), else_=0)).where(tables.meta.c.id == 1)
     row = (await session.execute(stmt)).one_or_none()
     if row is None:
@@ -571,15 +573,13 @@ async def _entries_for_docs(
     """
     entry = tables.entry
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
-    # The kind membership at element width; the encoded flag renders as
-    # an inline literal on every dialect and binds nothing.
-    base_binds = len(CONTENT_KINDS)
-    per_chunk = max(1, membership_budget - pushdown.binds - base_binds)
+    # The kind membership charges its element width; the encoded flag
+    # renders as an inline literal on every dialect and binds nothing.
+    kinds = kind_membership(entry)
+    per_chunk = max(1, membership_budget - pushdown.binds - kinds.binds)
     rows: list[RowMapping] = []
     for chunk in chunked(doc_ids.tolist(), per_chunk):
-        stmt = select(*columns).where(
-            entry.c.id.in_(chunk), entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS)), *pushdown.terms
-        )
+        stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, kinds.predicate, *pushdown.terms)
         rows.extend((await session.execute(stmt)).mappings())
     return rows
 
@@ -617,7 +617,8 @@ async def _entries_for_scan(
     post-scan check records the truncation loudly.
     """
     entry = tables.entry
-    base = [entry.c.kind.in_(sorted(CONTENT_KINDS))]
+    kinds = kind_membership(entry)
+    base = [kinds.predicate]
     if not everything:
         base.append(~entry.c.encoded)
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
@@ -629,7 +630,7 @@ async def _entries_for_scan(
         if not arms:
             return ScanNominees([], False)
         ride = ext_membership(entry, wanted, membership_budget)
-        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + len(CONTENT_KINDS))
+        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + kinds.binds)
         for chunk in chunked(arms, chunk_size):
             if monotonic() > deadline:
                 break

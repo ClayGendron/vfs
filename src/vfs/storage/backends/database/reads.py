@@ -284,6 +284,23 @@ def ext_membership(entry: Table, wanted: frozenset[str], membership_budget: int)
     return ExtMembership(None, 0)
 
 
+class KindMembership(NamedTuple):
+    """The content-kind gate: predicate paired with its bind charge."""
+
+    predicate: ColumnElement[bool]
+    binds: int
+
+
+def kind_membership(entry: Table) -> KindMembership:
+    """The content-bearing kinds as one sorted SQL membership fact.
+
+    The one spelling every content-scoped statement rides — predicate
+    and bind charge travel together, exactly as :func:`ext_membership`,
+    so no consumer re-spells the set or re-counts its price.
+    """
+    return KindMembership(entry.c.kind.in_(sorted(CONTENT_KINDS)), len(CONTENT_KINDS))
+
+
 def pattern_arm(
     entry: Table,
     glob: GlobFilter,

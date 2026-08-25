@@ -44,7 +44,7 @@ lines first; regenerate this file when the picture shifts (review the
   `publish.yml`. Mining residue: ADR 048/049 status-block
   implementation notes, the ADR 039 fork-closure annotations —
   everything else was already downstream at landing. End state:
-  suite 2,641 passed / 866 skipped, coverage 100 %,
+  suite 2,646 passed / 866 skipped, coverage 100 %,
   ruff/format/ty zero, full 3.11–3.14 matrix green; all four Docker
   legs green twice this session (117's gate and 118's re-run:
   Postgres 210, MySQL 211, MSSQL 212, Oracle 209); linux corpus
@@ -540,7 +540,7 @@ the 095–099 campaign arc, 100, the 104–106 read-path arc, the
 107–116 remediation arc, and the 103/117/118 chunking-and-
 concurrency arc are all mined and archived (095–099 on 2026-08-14;
 100 on 2026-08-16; 104–106 on 2026-08-17; 107–116 on 2026-08-19;
-103/117/118 on 2026-08-25). Tree green at 2,641 passed / 866
+103/117/118 on 2026-08-25). Tree green at 2,646 passed / 866
 skipped, coverage 100%, `ruff`/`ty`/format at zero (2026-08-25, full
 3.11–3.14 matrix), all four Docker engine legs green as of the spec
 118 landing (2026-08-25: Postgres 210, MySQL 211, MSSQL 212,

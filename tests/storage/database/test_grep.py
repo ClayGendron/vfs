@@ -512,6 +512,22 @@ class TestBudgets:
         assert "overlay not consulted" in warning.message
         await storage.close()
 
+    async def test_the_candidate_budget_record_is_emitted_at_most_once(self, tmp_path, monkeypatch) -> None:
+        # Both tiers trip the same budget in one call — the index cut
+        # (b.py rides the cut, then falls to the ext gate, leaving scan
+        # room) and the scan overflow — yet the seam emits one record.
+        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 2)
+        storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.py": "needle two", "/c.txt": "needle three"})
+        assert (await storage.reindex()).success is True
+        fresh = [Entry(path=Path("/d.txt"), content="needle four"), Entry(path=Path("/e.txt"), content="needle five")]
+        assert (await storage.write(entries=fresh)).success is True
+        result = await storage.grep(pattern="needle", ext=("txt",))
+        assert result.success is True
+        assert _paths(result) == ["/a.txt", "/d.txt"]
+        [warning] = [e for e in result.errors if e.kind == VFSErrorKind.truncated]
+        assert "candidate budget" in warning.message
+        await storage.close()
+
     async def test_content_is_fetched_in_byte_budgeted_batches(self, tmp_path, monkeypatch) -> None:
         # Three ~30-byte bodies under a 64-byte budget: the fetch must
         # split, and no batch may exceed the budget (singletons exempt).

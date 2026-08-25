@@ -20,7 +20,9 @@ Two splitters cover every file type:
   Jupyter cell to the grammar its cell type and kernel imply.
 
 Any content of at least ``GRAM_SIZE`` bytes (the smallest indexable unit)
-yields at least one chunk; shorter content yields none. ``split_code`` and
+yields at least one chunk — except on the structure path, where an
+over-budget whitespace-only body yields none by design (every span is
+strip-filtered); shorter content yields none. ``split_code`` and
 ``split_notebook`` route their fits-in-one-chunk and fallback cases through
 ``split_with_line_ranges`` so small files and cells chunk under the same rule.
 
@@ -260,10 +262,10 @@ def split_code(
     edges, computed by the native engine. A merged span that is itself an
     oversized indivisible leaf falls back to the recursive separator
     splitter per span; when the engine cannot serve the split at all —
-    unknown grammar, parse failure, or the pure engine, where the
-    structure path is absent by contract — the recursive splitter takes
-    the whole file. *chunk_size* is measured in UTF-8 bytes on the
-    structure path.
+    unknown grammar, language load failure, a body over 4 GiB, or the
+    pure engine, where the structure path is absent by contract — the
+    recursive splitter takes the whole file. *chunk_size* is measured
+    in UTF-8 bytes on the structure path.
     """
     return split_code_batch([(content, language)], chunk_size=chunk_size)[0]
 

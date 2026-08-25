@@ -55,7 +55,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 from sqlalchemy import bindparam, column, delete, func, insert, literal, or_, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
 
-from vfs.models import CONTENT_KINDS
 from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
@@ -69,6 +68,7 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
     supports_values_update,
 )
+from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
@@ -231,7 +231,7 @@ async def chunk_dirty(
             content.c.content,
         )
         .select_from(tables.content_joined())
-        .where(entry.c.kind.in_(CONTENT_KINDS), entry.c.deleted_at.is_(None), ~entry.c.chunked)
+        .where(kind_membership(entry).predicate, entry.c.deleted_at.is_(None), ~entry.c.chunked)
         .order_by(entry.c.id)
     )
     rows = (await session.execute(dirty)).all()

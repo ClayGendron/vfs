@@ -421,9 +421,12 @@ def _line_slices(text: str, bounded: bool) -> Iterator[tuple[int, int]]:
     """``(begin, stop)`` offsets on line boundaries, ``_SLICE_LINES`` per slice.
 
     Unbounded calls get the whole body as one slice — the fast path pays
-    nothing. Boundaries land just after ``\\n``, so ``^``/``$`` and word
-    boundaries judge identically to an unsliced scan (the language gate
-    already refused look-arounds and text anchors).
+    nothing. Boundaries land just after ``\\n``, so no match is ever
+    split and begin-side context (``^``, word boundaries) judges as an
+    unsliced scan would; the end side is weaker: a zero-width match at
+    ``stop`` is ``endpos`` posing as end-of-string, and discarding it is
+    the consumer's obligation — the guard the whole-text driver carries
+    (the language gate already refused look-arounds and text anchors).
     """
     if not bounded:
         yield 0, len(text)
@@ -517,13 +520,24 @@ class _PureMatcher:
                 return rows + [[] for _ in range(len(texts) - len(rows))], False
         return rows, True
 
-    def _count_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[int, bool]:
+    def _whole_matches(self, text: str, deadline: float | None) -> Iterator[tuple[int, int] | None]:
+        """Whole-text hits as ``(line_start, match_end)``, one per hit line.
+
+        The shared skeleton both whole-text consumers drive: the slice
+        loop with its between-slice deadline consult, the zero-width
+        discard at slice ends, and the line-start recovery with per-line
+        dedup. Expiry yields one ``None`` and stops — consumers map it
+        to an incomplete verdict; a consumer's early ``cap`` break just
+        abandons the iterator (a generator *return* value would be
+        unobservable there).
+        """
         assert self._multi_rx is not None
-        count = 0
         last_start = -1
+        expired = False
         for begin, stop in _line_slices(text, deadline is not None):
             if deadline is not None and begin and monotonic() > deadline:
-                return count, False
+                expired = True
+                break
             for found in self._multi_rx.finditer(text, begin, stop):
                 # A zero-width match at the slice end is ``endpos`` posing as
                 # end-of-string; the next slice judges it with real context.
@@ -533,36 +547,37 @@ class _PureMatcher:
                 if start >= len(text) or start == last_start:
                     continue
                 last_start = start
-                count += 1
-                if cap is not None and count >= cap:
-                    return count, True
+                yield start, found.end()
+        if expired:
+            # The sentinel is the generator's last act: consumers abandon
+            # on it, so a statement after this yield could never run.
+            yield None
+
+    def _count_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[int, bool]:
+        count = 0
+        for site in self._whole_matches(text, deadline):
+            if site is None:
+                return count, False
+            count += 1
+            if cap is not None and count >= cap:
+                return count, True
         return count, True
 
     def _hits_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[list[MatchSpan], bool]:
-        assert self._multi_rx is not None
         hits: list[MatchSpan] = []
-        last_start = -1
         cursor = 0
         line_no = 1
-        for begin, stop in _line_slices(text, deadline is not None):
-            if deadline is not None and begin and monotonic() > deadline:
+        for site in self._whole_matches(text, deadline):
+            if site is None:
                 return hits, False
-            for found in self._multi_rx.finditer(text, begin, stop):
-                # A zero-width match at the slice end is ``endpos`` posing as
-                # end-of-string; the next slice judges it with real context.
-                if found.start() == stop and stop < len(text):
-                    continue
-                start = text.rfind("\n", 0, found.start()) + 1
-                if start >= len(text) or start == last_start:
-                    continue
-                last_start = start
-                line_no += text.count("\n", cursor, start)
-                cursor = start
-                end = text.find("\n", found.end())
-                content = text[start:] if end == -1 else text[start:end]
-                hits.append((line_no, line_no, line_no, content))
-                if cap is not None and len(hits) >= cap:
-                    return hits, True
+            start, match_end = site
+            line_no += text.count("\n", cursor, start)
+            cursor = start
+            end = text.find("\n", match_end)
+            content = text[start:] if end == -1 else text[start:end]
+            hits.append((line_no, line_no, line_no, content))
+            if cap is not None and len(hits) >= cap:
+                return hits, True
         return hits, True
 
     def _count_split(self, text: str, cap: int | None, invert: bool, deadline: float | None) -> tuple[int, bool]:

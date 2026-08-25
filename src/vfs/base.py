@@ -1673,8 +1673,10 @@ class VirtualFileSystem:
     ) -> Result:
         """Route a namespace-wide query: everywhere, a scope subset, or rows.
 
-        *kwargs* forwards to storage verbatim — nothing is stripped or
-        peeked.  *filters* is the pattern-search verbs' one typed
+        *kwargs* forwards to storage verbatim — this function strips and
+        peeks nothing (:meth:`_glob_dispatches` reads ``kind`` and
+        ``columns`` for its root probe, forwarding both untouched).
+        *filters* is the pattern-search verbs' one typed
         argument: the dispatch builders compose and residuate its glob
         channels per scope root and forward its ext channels as-is.
 

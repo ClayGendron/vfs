@@ -165,8 +165,9 @@ fn supported_grammars() -> Vec<&'static str> {
 
 /// Structure-aware chunk spans for a batch of `(body, grammar)` pairs,
 /// parsed in parallel off the GIL. Per body: `None` when the structure
-/// path cannot serve it (unknown grammar, parse failure) — the host
-/// falls back to its character splitter — otherwise `(start, end,
+/// path cannot serve it (unknown grammar, language load failure, a
+/// body over 4 GiB) — the host falls back to its character splitter —
+/// otherwise `(start, end,
 /// line_start, line_end, oversized)` rows of byte offsets and 1-based
 /// lines; the host slices text, filters whitespace-only chunks, and
 /// re-splits oversized leaves.
