@@ -7,54 +7,38 @@ engine serves — it try-imports the extension, accepts it only when its
 ``PROTOCOL_VERSION`` matches, warns once and falls back otherwise, and
 exposes the active engine for tests and diagnostics::
 
-    from vfs.native import active_core, distinct_gram_count, postings_builder
+    from vfs.native import active_core, extension
 
     active_core()  # "rust" | "python"
-    builder = postings_builder()  # same contract either way
-    builder.add_docs([(doc_id, folded_bytes(content)), ...])
-    while (rows := builder.next_batch(byte_cap)) is not None:
-        ...  # gram-ordered (gram_key, blob, doc_count) rows
+    extension()  # the live module, or None on the pure engine
 
-Both engines speak pre-folded bytes: callers prepare the stream with
-:func:`folded_bytes` (fold, then newline-normalize and encode), so fold
-policy lives in exactly one place — ``vfs.models.code_grams`` — and the
-engines are byte-identical in output, pinned by the parity suite. Setting
-``VFS_PURE_PYTHON=1`` in the environment before import forces the pure
-engine (the CI fallback leg's switch).
+Per-surface dispatch lives with each surface's **owner**, never here —
+this module imports nothing from the rest of vfs, so any module may
+import it without ordering hazards. ``vfs.models.code_grams`` owns the
+folded stream and the gram gate, ``vfs.models.postings`` the builder,
+``vfs.pattern_matching`` the match law; each holds its pure reference
+implementation beside its dispatch. The one surface served directly
+here is structure-aware chunking, whose pure "fallback" is *absence by
+contract*: without the extension there is no tree-sitter at all, and
+chunking degrades to the character splitter — a declared divergence,
+not an equivalent engine.
+
+Setting ``VFS_PURE_PYTHON=1`` in the environment before import forces
+the pure engine (the CI fallback leg's switch).
 """
 
 from __future__ import annotations
 
 import os
 import warnings
-from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
-
-from vfs.models.code_grams import fold_content, iter_byte_trigrams, normalize_content
-from vfs.models.postings import encode_postings
+from typing import Any, Final, Literal
 
 try:
     from vfs import _native as _ext
 except ImportError:  # pragma: no cover - exercised only in extension-less installs
     _ext = None  # ty: ignore[invalid-assignment]
 
-if TYPE_CHECKING:
-    from vfs.models.code_grams import GramKey
-
 EXPECTED_PROTOCOL: Final = 3
-
-
-class PostingsBuilder(Protocol):
-    """The one builder contract both engines implement.
-
-    Docs are fed in strictly increasing doc-id order as pre-folded bytes;
-    draining yields gram-ordered batches of ``(gram_key, blob, doc_count)``
-    rows sliced by accumulated blob bytes (each batch carries at least one
-    row). Feeding after the first drain raises ``ValueError``.
-    """
-
-    def add_docs(self, docs: list[tuple[int, bytes]]) -> None: ...
-
-    def next_batch(self, byte_cap: int) -> list[tuple[int, bytes, int]] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -87,86 +71,43 @@ def active_core() -> Literal["rust", "python"]:
 def extension() -> Any | None:
     """The live extension module, or ``None`` on the pure engine.
 
-    For seams that dispatch per call site (the grep matcher lives in
-    ``vfs.pattern_matching``, which owns the match law and the pure
-    reference implementation — it cannot be imported from here without a
-    cycle). Callers treat the module as opaque and feature-test nothing:
-    protocol acceptance already happened at import.
+    The handle every surface owner dispatches through. Callers treat the
+    module as opaque and feature-test nothing: protocol acceptance
+    already happened at import.
     """
     return _active
 
 
 # ---------------------------------------------------------------------------
-# Engine surface
+# Structure-aware chunk spans
 # ---------------------------------------------------------------------------
 
 
-def folded_bytes(content: str) -> bytes:
-    """The folded, newline-normalized UTF-8 stream both engines consume."""
-    return normalize_content(fold_content(content))
+def structure_grammars() -> frozenset[str]:
+    """Grammar names the active engine can split structurally.
 
-
-def distinct_gram_count(data: bytes, cap: int) -> int:
-    """Distinct trigrams of *data*, early-exiting past *cap*.
-
-    Any return value greater than *cap* means "over cap" — the exact count
-    is not computed beyond that point.
+    Empty on the pure engine: structure-aware chunking is a native
+    capability by contract, and pure installs take the character
+    splitter for every extension (the declared degradation).
     """
-    if _active is not None:
-        return _active.distinct_gram_count(data, cap)
-    seen: set[GramKey] = set()
-    for gram in iter_byte_trigrams(data):
-        seen.add(gram)
-        if len(seen) > cap:
-            break
-    return len(seen)
+    if _active is None:
+        return frozenset()
+    return frozenset(_active.supported_grammars())
 
 
-def postings_builder() -> PostingsBuilder:
-    """A fresh posting-set builder from the active engine."""
-    if _active is not None:
-        return _active.PostingsBuilder()
-    return PurePostingsBuilder()
+def chunk_spans(
+    bodies: list[tuple[bytes, str]], *, chunk_size: int
+) -> list[list[tuple[int, int, int, int, bool]] | None]:
+    """Structure-aware chunk spans per ``(utf-8 body, grammar)`` pair.
 
-
-class PurePostingsBuilder:
-    """The reference builder: dict accumulation, then the reference codec.
-
-    Peak memory holds every gram's raw doc-id list (the Rust engine holds
-    only the compressed deltas); acceptable for the fallback path, whose
-    contract is correctness, not the throughput target.
+    Bodies parse in parallel off the GIL on the Rust engine. Per body:
+    ``None`` when the structure path cannot serve it — unknown grammar,
+    parse failure, or the pure engine, where every body is ``None`` —
+    and the caller falls back to its character splitter; otherwise
+    ``(start, end, line_start, line_end, oversized)`` rows of byte
+    offsets and 1-based lines. The caller slices text, filters
+    whitespace-only chunks, and re-splits oversized leaves.
     """
-
-    def __init__(self) -> None:
-        self._postings: dict[GramKey, list[int]] = {}
-        self._last_doc = 0
-        self._rows: list[tuple[int, bytes, int]] | None = None
-        self._cursor = 0
-
-    def add_docs(self, docs: list[tuple[int, bytes]]) -> None:
-        if self._rows is not None:
-            raise ValueError("builder is already draining; create a fresh one")
-        for doc_id, data in docs:
-            if doc_id <= self._last_doc:
-                message = f"doc ids must be strictly increasing and positive; got {doc_id} after {self._last_doc}"
-                raise ValueError(message)
-            self._last_doc = doc_id
-            for gram in set(iter_byte_trigrams(data)):
-                self._postings.setdefault(gram, []).append(doc_id)
-
-    def next_batch(self, byte_cap: int) -> list[tuple[int, bytes, int]] | None:
-        if self._rows is None:
-            self._rows = [(gram, encode_postings(ids), len(ids)) for gram, ids in sorted(self._postings.items())]
-            self._postings = {}
-        if self._cursor >= len(self._rows):
-            return None
-        batch: list[tuple[int, bytes, int]] = []
-        batch_bytes = 0
-        while self._cursor < len(self._rows):
-            row = self._rows[self._cursor]
-            if batch and batch_bytes + len(row[1]) > byte_cap:
-                break
-            batch.append(row)
-            batch_bytes += len(row[1])
-            self._cursor += 1
-        return batch
+    if _active is None:
+        return [None] * len(bodies)
+    return _active.chunk_spans(bodies, chunk_size=chunk_size)

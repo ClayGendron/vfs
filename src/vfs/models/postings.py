@@ -12,18 +12,29 @@ The codec refuses rather than guesses: `encode_postings` raises
 blob class — truncated or over-wide varints, non-canonical spellings,
 count mismatches, non-positive deltas, and int64 wraps — so blob
 corruption is loud, never silently-wrong search results.
+
+This module also owns the posting-set **builder** surface: the
+`PostingsBuilder` contract both engines implement, the pure reference
+builder, and `postings_builder()`, which serves the active engine's —
+per the seam's ownership rule (the format's owner holds its pure
+reference and its dispatch; `vfs.native` only resolves the engine).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol
 
 import numpy as np
+
+from vfs.models.code_grams import iter_byte_trigrams
+from vfs.native import extension
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from numpy.typing import NDArray
+
+    from vfs.models.code_grams import GramKey
 
 MAX_DOC_ID: Final = 2**63 - 1
 """Doc ids live in the signed-BIGINT range the chunk PK allocates from."""
@@ -92,6 +103,76 @@ def decode_postings(blob: bytes) -> NDArray[np.int64]:
     if int(ids.min()) <= 0:
         raise PostingCorruptionError("doc ids not monotone (int64 wrap)")
     return ids
+
+
+# ---------------------------------------------------------------------------
+# Builders
+# ---------------------------------------------------------------------------
+
+
+class PostingsBuilder(Protocol):
+    """The one builder contract both engines implement.
+
+    Docs are fed in strictly increasing doc-id order as pre-folded bytes;
+    draining yields gram-ordered batches of ``(gram_key, blob, doc_count)``
+    rows sliced by accumulated blob bytes (each batch carries at least one
+    row). Feeding after the first drain raises ``ValueError``.
+    """
+
+    def add_docs(self, docs: list[tuple[int, bytes]]) -> None: ...
+
+    def next_batch(self, byte_cap: int) -> list[tuple[int, bytes, int]] | None: ...
+
+
+def postings_builder() -> PostingsBuilder:
+    """A fresh posting-set builder from the active engine."""
+    ext = extension()
+    if ext is not None:
+        return ext.PostingsBuilder()
+    return PurePostingsBuilder()
+
+
+class PurePostingsBuilder:
+    """The reference builder: dict accumulation, then the reference codec.
+
+    Peak memory holds every gram's raw doc-id list (the Rust engine holds
+    only the compressed deltas); acceptable for the fallback path, whose
+    contract is correctness, not the throughput target.
+    """
+
+    def __init__(self) -> None:
+        self._postings: dict[GramKey, list[int]] = {}
+        self._last_doc = 0
+        self._rows: list[tuple[int, bytes, int]] | None = None
+        self._cursor = 0
+
+    def add_docs(self, docs: list[tuple[int, bytes]]) -> None:
+        if self._rows is not None:
+            raise ValueError("builder is already draining; create a fresh one")
+        for doc_id, data in docs:
+            if doc_id <= self._last_doc:
+                message = f"doc ids must be strictly increasing and positive; got {doc_id} after {self._last_doc}"
+                raise ValueError(message)
+            self._last_doc = doc_id
+            for gram in set(iter_byte_trigrams(data)):
+                self._postings.setdefault(gram, []).append(doc_id)
+
+    def next_batch(self, byte_cap: int) -> list[tuple[int, bytes, int]] | None:
+        if self._rows is None:
+            self._rows = [(gram, encode_postings(ids), len(ids)) for gram, ids in sorted(self._postings.items())]
+            self._postings = {}
+        if self._cursor >= len(self._rows):
+            return None
+        batch: list[tuple[int, bytes, int]] = []
+        batch_bytes = 0
+        while self._cursor < len(self._rows):
+            row = self._rows[self._cursor]
+            if batch and batch_bytes + len(row[1]) > byte_cap:
+                break
+            batch.append(row)
+            batch_bytes += len(row[1])
+            self._cursor += 1
+        return batch
 
 
 # ---------------------------------------------------------------------------

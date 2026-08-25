@@ -60,6 +60,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Final
 
+from vfs.native import extension
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -157,6 +159,33 @@ def grams_for_fixed_string(pattern: str) -> set[GramKey]:
     grams; the candidate query must fall back to ``ANY`` for those.
     """
     return unique_code_grams(pattern, folded=True)
+
+
+def folded_bytes(content: str) -> bytes:
+    """The folded, newline-normalized UTF-8 stream both engines consume.
+
+    The one composition of this module's fold and normalization — index
+    maintenance and the parity suite feed engines nothing else.
+    """
+    return normalize_content(fold_content(content))
+
+
+def distinct_gram_count(data: bytes, cap: int) -> int:
+    """Distinct trigrams of *data*, early-exiting past *cap*.
+
+    Any return value greater than *cap* means "over cap" — the exact count
+    is not computed beyond that point. Dispatches to the active engine;
+    this module owns the pure reference, per the seam's ownership rule.
+    """
+    ext = extension()
+    if ext is not None:
+        return ext.distinct_gram_count(data, cap)
+    seen: set[GramKey] = set()
+    for gram in iter_byte_trigrams(data):
+        seen.add(gram)
+        if len(seen) > cap:
+            break
+    return len(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +516,9 @@ __all__ = [
     "GramOr",
     "GramQuery",
     "build_code_gram_query",
+    "distinct_gram_count",
     "fold_content",
+    "folded_bytes",
     "grams_for_fixed_string",
     "iter_byte_trigrams",
     "iter_code_grams",

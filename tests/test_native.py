@@ -18,15 +18,25 @@ from types import SimpleNamespace
 import pytest
 
 import vfs.native as native
-from vfs.models.code_grams import iter_byte_trigrams, pack_gram, unique_code_grams
-from vfs.models.postings import decode_postings, encode_postings
+from vfs.models.code_grams import (
+    distinct_gram_count,
+    folded_bytes,
+    iter_byte_trigrams,
+    pack_gram,
+    unique_code_grams,
+)
+from vfs.models.postings import (
+    PurePostingsBuilder,
+    decode_postings,
+    encode_postings,
+    postings_builder,
+)
 from vfs.native import (
     EXPECTED_PROTOCOL,
-    PurePostingsBuilder,
     _resolve,
     active_core,
-    folded_bytes,
-    postings_builder,
+    chunk_spans,
+    structure_grammars,
 )
 
 # The pure-fallback CI leg runs this same suite with VFS_PURE_PYTHON=1, so
@@ -203,9 +213,43 @@ class TestSeamSelection:
     def test_dispatch_serves_pure_when_no_engine_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(native, "_active", None)
         assert native.active_core() == "python"
-        assert isinstance(native.postings_builder(), PurePostingsBuilder)
-        assert native.distinct_gram_count(b"abcabc", 10) == 3
-        assert native.distinct_gram_count(b"abcdefgh", 3) == 4
+        assert isinstance(postings_builder(), PurePostingsBuilder)
+        assert distinct_gram_count(b"abcabc", 10) == 3
+        assert distinct_gram_count(b"abcdefgh", 3) == 4
+
+
+class TestChunkSeam:
+    """The structure-aware chunk surface: native rows, pure absence."""
+
+    def test_pure_engine_serves_no_structure_grammars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(native, "_active", None)
+        assert native.structure_grammars() == frozenset()
+        assert native.chunk_spans([(b"def f(): pass\n", "python")] * 3, chunk_size=8) == [None, None, None]
+
+    @needs_rust
+    def test_rust_engine_serves_the_registry(self) -> None:
+        if FORCED_PURE:
+            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
+        grammars = structure_grammars()
+        assert {"python", "c", "rust", "markdown"} <= grammars
+
+    @needs_rust
+    def test_rows_carry_spans_lines_and_the_oversized_flag(self) -> None:
+        if FORCED_PURE:
+            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
+        body = b"def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y * 2\n"
+        (rows,) = chunk_spans([(body, "python")], chunk_size=32)
+        assert rows is not None and len(rows) >= 2
+        assert rows[0][0] == 0 and rows[-1][1] == len(body)
+        assert rows[0][2] == 1  # 1-indexed lines
+        assert all(not oversized for _s, _e, _ls, _le, oversized in rows)
+
+    @needs_rust
+    def test_unknown_grammar_rows_are_none(self) -> None:
+        if FORCED_PURE:
+            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
+        good = b"x = 1\n" * 400
+        assert chunk_spans([(good, "no_such_grammar"), (good, "python")], chunk_size=64)[0] is None
 
 
 class TestFoldedBytes:

@@ -1,0 +1,93 @@
+{
+ "sample.py": [
+  [
+   "\"\"\"A fixture module: enough structure to force real chunk boundaries.\"\"\"\n\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass Inventory:\n    \"\"\"Tracks stock levels for one warehouse aisle.\"\"\"\n\n    aisle: int\n    bins: dict[str, int]\n\n    ",
+   1,
+   13
+  ],
+  [
+   "def total(self) -> int:\n        return sum(self.bins.values())\n\n    ",
+   13,
+   16
+  ],
+  [
+   "def restock(self, sku: str, count: int) -> None:\n        if count <= 0:\n            raise ValueError(f\"count must be positive, got {count}\")\n        self.bins[sku] = self.bins.get(sku, 0) + count\n\n    ",
+   16,
+   21
+  ],
+  [
+   "def drain(self, sku: str, count: int) -> int:\n        held = self.bins.get(sku, 0)\n        taken = min(held, count)\n        self.bins[sku] = held - taken\n        return taken\n\n\nLONG_NOTICE = \"\"\"",
+   21,
+   28
+  ],
+  [
+   "\nThis block exists to be an indivisible oversized leaf when the chunk\nbudget is small: a single string node that no walker can split on tree\nboundaries, so the character splitter must take it piece by piece. It\n",
+   28,
+   31
+  ],
+  [
+   "rambles on purpose, line after line, well past any small byte budget,\nbecause the fixture wants the oversized-leaf path exercised against a\ncommitted expectation rather than a synthetic one-off in a test body.\n",
+   32,
+   34
+  ],
+  [
+   "\"\"\"\n\n\ndef audit(inventories: list[Inventory]) -> dict[int, int]:\n    totals: dict[int, int] = {}\n    for inventory in inventories:\n        totals[inventory.aisle] = inventory.total()\n    return totals\n\n\n",
+   35,
+   44
+  ],
+  [
+   "def merge(left: Inventory, right: Inventory) -> Inventory:\n    merged = Inventory(aisle=left.aisle, bins=dict(left.bins))\n    for sku, count in right.bins.items():\n        merged.bins[sku] = merged.bins.get(sku, 0) + count\n    return merged\n",
+   45,
+   49
+  ]
+ ],
+ "sample.c": [
+  [
+   "/* A fixture translation unit: functions, a struct, and comment gaps. */\n\n#include <stddef.h>\n\nstruct ring {\n    size_t head;\n    size_t tail;\n    size_t capacity;\n    int slots[64];\n};\n\n/* Interstitial comments become gap spans between named siblings. */",
+   1,
+   12
+  ],
+  [
+   "\n\nstatic size_t ring_advance(size_t index, size_t capacity)\n{\n    return (index + 1 == capacity) ? 0 : index + 1;\n}\n\n",
+   12,
+   18
+  ],
+  [
+   "int ring_push(struct ring *r, int value)\n{\n    size_t next = ring_advance(r->head, r->capacity);\n    if (next == r->tail) {\n        return -1; /* full */\n    }\n    r->slots[r->head] = value;\n    r->head = next;\n    return 0;\n}\n\n",
+   19,
+   29
+  ],
+  [
+   "int ring_pop(struct ring *r, int *out)\n{\n    if (r->tail == r->head) {\n        return -1; /* empty */\n    }\n    *out = r->slots[r->tail];\n    r->tail = ring_advance(r->tail, r->capacity);\n    return 0;\n}\n\n",
+   30,
+   39
+  ],
+  [
+   "size_t ring_count(const struct ring *r)\n{\n    if (r->head >= r->tail) {\n        return r->head - r->tail;\n    }\n    return r->capacity - (r->tail - r->head);\n}\n",
+   40,
+   46
+  ]
+ ],
+ "sample.md": [
+  [
+   "# Fixture document\n\nA markdown fixture with heading hierarchy, lists, and a code block, so\nthe heading-hierarchical grammar has real boundaries to cut on.\n\n",
+   1,
+   5
+  ],
+  [
+   "## First section\n\nProse paragraph one, long enough to matter. It continues across a\nsecond line and a third to give the walker a paragraph-sized node.\n\n- one list item\n- another list item\n- a third, slightly longer list item to widen the node\n\n",
+   6,
+   14
+  ],
+  [
+   "## Second section\n\nAnother paragraph sits here between the sections, holding the middle of\nthe document together with unremarkable but honest filler text.\n\n```python\ndef sample(n):\n    return n * 2\n```\n\n",
+   15,
+   24
+  ],
+  [
+   "### Nested subsection\n\nDeeper heading, shorter body.\n\n## Third section\n\nThe closing section carries the final paragraph, and one more sentence\nso the last node does not end flush with the heading above it.\n",
+   25,
+   32
+  ]
+ ]
+}

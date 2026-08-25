@@ -57,9 +57,9 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS
 from vfs.models.chunk import Chunk
-from vfs.models.code_grams import GRAM_SIZE, normalize_content
+from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
+from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
-from vfs.native import distinct_gram_count, folded_bytes, postings_builder
 from vfs.paths import Path
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (

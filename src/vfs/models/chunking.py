@@ -9,11 +9,14 @@ Two splitters cover every file type:
   adjacent pieces are greedily merged up to the budget, and any single piece
   still over budget recurses into the next separator. With no overlap, the
   concatenation of the emitted chunks reconstructs the input exactly.
-- **Structure-aware splitter** (tree-sitter): one language-agnostic walker
-  chunks every supported file type — code, markup, config, data, markdown —
-  on real syntax-tree boundaries. The grammar for a file is resolved from its
-  extension by :func:`grammar_for_extension`; the recursive splitter remains
-  the fallback for extensions with no grammar. ``split_notebook`` routes each
+- **Structure-aware splitter** (tree-sitter, in the native engine): the
+  Rust core parses and walks every supported file type — code, markup,
+  config, data, markdown — and returns chunk spans on real syntax-tree
+  boundaries; this module slices the text, drops whitespace-only chunks,
+  and re-splits oversized indivisible leaves with the recursive splitter.
+  The grammar for a file is resolved from its extension by
+  :func:`grammar_for_extension`; the recursive splitter remains the
+  fallback for extensions with no grammar. ``split_notebook`` routes each
   Jupyter cell to the grammar its cell type and kernel imply.
 
 Any content of at least ``GRAM_SIZE`` bytes (the smallest indexable unit)
@@ -22,27 +25,25 @@ yields at least one chunk; shorter content yields none. ``split_code`` and
 ``split_with_line_ranges`` so small files and cells chunk under the same rule.
 
 Unit: ``chunk_size`` is measured in characters for ``recursive_text_split`` /
-``split_with_line_ranges``; ``split_code`` measures UTF-8 bytes internally for
-its tree-sitter span logic and delegates oversized leaves to the character
-splitter (where a byte budget bounds a character budget for ASCII-dominant
-code, which is the regime that matters).
+``split_with_line_ranges``; ``split_code`` measures UTF-8 bytes on the
+structure path and delegates oversized leaves to the character splitter
+(where a byte budget bounds a character budget for ASCII-dominant code,
+which is the regime that matters).
 
-Binding note: ``tree-sitter-language-pack`` ships a Rust-native binding, *not*
-the ``tree_sitter`` PyO3 binding. ``parse`` takes a ``str`` (not ``bytes``),
-byte offsets index the UTF-8 encoding of the source, and Node accessors may be
-methods or properties depending on the pack version (``_call`` tolerates both
-so a version switch does not break us).
+Engine note: structure-aware splitting is a **native-engine capability by
+contract**. A pure-Python install carries no tree-sitter at all, so every
+extension takes the recursive character splitter there — a declared,
+tested degradation, not an equivalent engine.
 """
 
 from __future__ import annotations
 
 import json
-import typing
 from bisect import bisect_left
-
-from tree_sitter_language_pack import SupportedLanguage, get_parser
+from typing import Final
 
 from vfs.models.code_grams import GRAM_SIZE, normalize_content
+from vfs.native import chunk_spans
 
 # Separator priority for the recursive character splitter.
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")
@@ -153,10 +154,10 @@ EXTENSION_TO_GRAMMAR: dict[str, str] = {
     "tsv": "tsv",
 }
 
-_AVAILABLE_GRAMMARS = frozenset(typing.get_args(SupportedLanguage))
-
-# Keep only entries whose grammar exists in the installed pack.
-EXTENSION_TO_GRAMMAR = {k: v for k, v in EXTENSION_TO_GRAMMAR.items() if v in _AVAILABLE_GRAMMARS}
+# Mapped grammar names with no usable crate in the native registry; their
+# extensions take the character splitter, exactly like unmapped extensions.
+# Pinned against the live registry by the coverage-contract test.
+STRUCTURE_FALLBACK_GRAMMARS: Final = frozenset({"astro", "clojure", "csv", "json5", "latex", "tcl", "tsv", "vb", "vue"})
 
 NOTEBOOK_EXTENSION = "ipynb"
 
@@ -237,40 +238,37 @@ def split_code(
     language: str,
     chunk_size: int = 2048,
 ) -> list[tuple[str, int, int]]:
-    """Structure-aware split of *content* using its tree-sitter *grammar*.
+    """Structure-aware split of *content* using its tree-sitter *language*.
 
     Returns ``(chunk_text, line_start, line_end)`` tuples (1-indexed lines).
-    Content that fits one chunk yields a single whole-content piece; sub-trigram
-    content yields ``[]``. Boundaries fall on syntax-tree node edges. A merged
-    span that is itself an oversized indivisible leaf falls back to the recursive
-    separator splitter; an unparseable file (or any binding error) falls back
-    wholesale. *chunk_size* is measured in UTF-8 bytes.
+    Content that fits one chunk yields a single whole-content piece;
+    sub-trigram content yields ``[]``. Boundaries fall on syntax-tree node
+    edges, computed by the native engine. A merged span that is itself an
+    oversized indivisible leaf falls back to the recursive separator
+    splitter per span; when the engine cannot serve the split at all —
+    unknown grammar, parse failure, or the pure engine, where the
+    structure path is absent by contract — the recursive splitter takes
+    the whole file. *chunk_size* is measured in UTF-8 bytes on the
+    structure path.
     """
     data = content.encode("utf-8")
     if len(data) <= chunk_size:
         # Fits one chunk — emit a whole-content piece (or [] for sub-trigram).
         return split_with_line_ranges(content, chunk_size=chunk_size)
-    try:
-        spans = _atomic_spans(content, language, chunk_size)
-    except Exception:
+    (rows,) = chunk_spans([(data, language)], chunk_size=chunk_size)
+    if rows is None:
         return split_with_line_ranges(content, chunk_size=chunk_size)
 
-    newlines = [i for i, byte in enumerate(data) if byte == 0x0A]
     out: list[tuple[str, int, int]] = []
-    for start, end in _merge_spans(spans, chunk_size):
+    for start, end, line_start, line_end, oversized in rows:
         text = data[start:end].decode("utf-8", "replace")
         if not text.strip():
             continue
-        line_start = bisect_left(newlines, start) + 1
-        if end - start > chunk_size:  # oversized indivisible leaf
+        if oversized:  # indivisible leaf over budget: character-split in place
             base = line_start - 1
             for piece, rel_start, rel_end in split_with_line_ranges(text, chunk_size=chunk_size):
                 out.append((piece, base + rel_start, base + rel_end))
         else:
-            # Same convention as split_with_line_ranges: line_end is the line
-            # holding the chunk's last character, so a trailing newline never
-            # opens a phantom extra line.
-            line_end = bisect_left(newlines, end - 1) + 1
             out.append((text, line_start, line_end))
     return out
 
@@ -411,81 +409,11 @@ def _split_keep_separator(content: str, sep: str, chunk_size: int) -> list[str]:
     return pieces
 
 
-def _call(attr):  # noqa: ANN001, ANN202 - duck-typed Node accessor
-    """Resolve a tree-sitter-language-pack Node accessor (method-or-property)."""
-    return attr() if callable(attr) else attr
-
-
-_PARSERS: dict[str, object] = {}
-
-
-def _parser(grammar: str):  # noqa: ANN202 - opaque pack Parser
-    parser = _PARSERS.get(grammar)
-    if parser is None:
-        parser = get_parser(grammar)  # type: ignore[arg-type]
-        _PARSERS[grammar] = parser
-    return parser
-
-
-def _atomic_spans(content: str, grammar: str, chunk_size: int) -> list[tuple[int, int]]:
-    """Contiguous, file-covering UTF-8 byte spans, each as coarse as fits budget.
-
-    Iterative in-order descent (no recursion limit): a node is emitted whole if
-    it fits the budget or has no named children; otherwise its named children
-    are walked, with interstitial gaps (punctuation, comments) emitted as their
-    own spans.
-    """
-    root = _call(_parser(grammar).parse(content).root_node)
-    spans: list[tuple[int, int]] = []
-    stack: list[tuple[bool, typing.Any]] = [(False, root)]
-    while stack:
-        is_span, payload = stack.pop()
-        if is_span:
-            spans.append(payload)
-            continue
-        node = payload
-        start, end = _call(node.start_byte), _call(node.end_byte)
-        count = _call(node.named_child_count)
-        if end - start <= chunk_size or count == 0:
-            spans.append((start, end))
-            continue
-        items: list[tuple[bool, typing.Any]] = []
-        cursor = start
-        for i in range(count):
-            child = node.named_child(i)
-            child_start = _call(child.start_byte)
-            if child_start > cursor:
-                items.append((True, (cursor, child_start)))
-            items.append((False, child))
-            cursor = _call(child.end_byte)
-        if cursor < end:
-            items.append((True, (cursor, end)))
-        stack.extend(reversed(items))
-    return spans
-
-
-def _merge_spans(spans: list[tuple[int, int]], chunk_size: int) -> list[tuple[int, int]]:
-    """Greedily merge contiguous spans while the merged byte length fits budget."""
-    out: list[tuple[int, int]] = []
-    cur_start: int | None = None
-    cur_end = 0
-    for start, end in spans:
-        if cur_start is None:
-            cur_start, cur_end = start, end
-        elif end - cur_start <= chunk_size:
-            cur_end = end
-        else:
-            out.append((cur_start, cur_end))
-            cur_start, cur_end = start, end
-    if cur_start is not None:
-        out.append((cur_start, cur_end))
-    return out
-
-
 __all__ = [
     "DEFAULT_SEPARATORS",
     "EXTENSION_TO_GRAMMAR",
     "NOTEBOOK_EXTENSION",
+    "STRUCTURE_FALLBACK_GRAMMARS",
     "grammar_for_extension",
     "recursive_text_split",
     "split_code",
