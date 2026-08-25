@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 VERSIONS=("$@")
 [ ${#VERSIONS[@]} -eq 0 ] && VERSIONS=(3.11 3.12 3.13 3.14)
 COVERAGE_LEG=3.13
+WHEEL_BUDGET_MB=50  # half of PyPI's 100 MB file cap; publish.yml enforces the same budget
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,6 +35,20 @@ step() {
     return 1
 }
 
+# Build the real release wheel and hold it under the declared budget. Runs on
+# the coverage leg only (the wheel is abi3 — one artifact serves the matrix);
+# the CI twin of this gate lives in publish.yml, not the Tests job.
+check_wheel_size() {
+    local out="target/wheels-ci"
+    rm -rf "$out"
+    uv build --wheel -o "$out" || return 1
+    local whl size
+    whl=$(echo "$out"/*.whl)
+    size=$(wc -c < "$whl")
+    echo "$(basename "$whl"): $((size / 1024 / 1024)) MB (budget ${WHEEL_BUDGET_MB} MB, PyPI cap 100 MB)"
+    [ "$size" -le $((WHEEL_BUDGET_MB * 1024 * 1024)) ]
+}
+
 run_leg() {
     local v=$1
     export UV_PROJECT_ENVIRONMENT=".venv-ci/${v}"
@@ -46,6 +61,7 @@ run_leg() {
             --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100 || return 1
         step "tests pure-python (py${v})" env VFS_PURE_PYTHON=1 \
             uv run --no-sync --python "$v" pytest --tb=short || return 1
+        step "wheel size" check_wheel_size || return 1
     else
         step "tests (py${v})" uv run --no-sync --python "$v" pytest --tb=short || return 1
     fi

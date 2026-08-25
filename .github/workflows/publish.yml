@@ -66,6 +66,22 @@ jobs:
           merge-multiple: true
           path: dist/
 
+      # Half of PyPI's 100 MB file cap; scripts/ci.sh runs the same gate at
+      # commit time. Every platform wheel must clear the budget before upload.
+      - name: Wheel size gate
+        run: |
+          budget=$((50 * 1024 * 1024))
+          status=0
+          for f in dist/*.whl; do
+            size=$(wc -c < "$f")
+            echo "$(basename "$f"): $((size / 1024 / 1024)) MB"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error::$(basename "$f") exceeds the 50 MB wheel budget"
+              status=1
+            fi
+          done
+          exit "$status"
+
       - uses: astral-sh/setup-uv@v7
 
       - name: Publish to PyPI
