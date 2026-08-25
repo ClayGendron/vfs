@@ -21,7 +21,7 @@ from tests.support.database_helpers import _url
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.pattern_matching import compile_verifier
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
@@ -318,13 +318,47 @@ class TestExecutorOwnership:
     async def test_close_shuts_the_pool_down_without_waiting(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         gate = threading.Event()
-        storage._host.verify_executor.submit(gate.wait, 5.0)
+        pool = storage._host.verify_executor
+        pool.submit(gate.wait, 5.0)
         start = monotonic()
         await storage.close()
         assert monotonic() - start < 1.0
         gate.set()
         with pytest.raises(RuntimeError):
-            storage._host.verify_executor.submit(time.sleep, 0)
+            pool.submit(time.sleep, 0)
+        # The slot is cleared, never left holding the dead pool: the
+        # next grep re-mints fresh (the sibling serve-after-close law).
+        assert storage._host._verify_executor is None
+        assert storage._host.verify_executor is not pool
+        await storage.close()
+
+    async def test_a_pool_minted_after_close_is_shut_by_the_next_close(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.close()
+        reminted = storage._host.verify_executor
+        assert reminted.submit(time.sleep, 0).result(timeout=5.0) is None
+        await storage.close()
+        with pytest.raises(RuntimeError):
+            reminted.submit(time.sleep, 0)
+        assert storage._host._verify_executor is None
+
+    async def test_a_grep_racing_close_is_served_whole(self, tmp_path) -> None:
+        # close lands mid-grep, after the call captured its pool: the
+        # shut pool serves the batch inline — a classified Result comes
+        # back, never a raw "cannot schedule new futures" escape.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])).success is True
+        warm = await storage.grep(pattern="needle")
+        assert warm.success is True
+
+        async def closer() -> None:
+            seams.clear("grep:after-pointer-read")
+            await storage.close()
+
+        with seams.installed("grep:after-pointer-read", closer):
+            raced = await storage.grep(pattern="needle")
+        assert raced.success is True, raced.errors
+        assert [str(o.path) for o in raced.observations] == ["/a.txt"]
 
     async def test_a_borrowed_host_still_shuts_its_own_pool(self, tmp_path) -> None:
         engine = create_async_engine(_url(tmp_path))

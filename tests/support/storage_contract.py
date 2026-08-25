@@ -41,6 +41,7 @@ from vfs.storage import (
     TRAIT_VALUES,
     ResolvedPair,
     StorageBackend,
+    SupportsClose,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsReindex,
@@ -52,7 +53,7 @@ needs = pytest.mark.needs
 """Ops a test requires; the gate fixture skips when capabilities lack any."""
 
 
-class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation, Protocol):
+class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation, SupportsClose, Protocol):
     """The full verb surface the suite may call; capability gating trims per test."""
 
 
@@ -2127,6 +2128,27 @@ class StorageContract:
         assert sorted(str(o.path) for o in listing.observations) == sorted([str(moved), str(copied)])
         assert (await storage.delete(path=copied)).success is True
         assert (await storage.stat(path=copied)).success is False
+
+    # ------------------------------------------------------------------
+    # Lifecycle — close releases resources, never service
+    # ------------------------------------------------------------------
+
+    @needs("write", "glob", "grep")
+    async def test_pattern_search_serves_after_close(self, storage: ConformanceBackend) -> None:
+        """A verb called after ``close()`` re-establishes what it needs and
+        returns a classified Result — grep exactly like its siblings,
+        whatever hidden pools it holds. Durability across close is the
+        backend's own story; the contract here is service: both verbs
+        succeed, and their answers agree with each other."""
+        assert (await storage.write(entries=[Entry(path=Path("/held.txt"), content="needle body")])).success is True
+        warm = await storage.grep(pattern="needle")
+        assert warm.success is True
+        await storage.close()
+        globbed = await storage.glob(patterns=("*.txt",))
+        assert globbed.success is True, globbed.errors
+        grepped = await storage.grep(pattern="needle")
+        assert grepped.success is True, grepped.errors
+        assert sorted(str(o.path) for o in grepped.observations) == sorted(str(o.path) for o in globbed.observations)
 
     # ------------------------------------------------------------------
     # Declared traits

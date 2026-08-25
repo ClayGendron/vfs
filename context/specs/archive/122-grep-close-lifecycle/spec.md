@@ -1,6 +1,26 @@
 # 122 — grep serves across close: the verify pool follows the sibling law
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  The sibling law landed three ways: close shuts *and clears* the
+  verify pool (every close, so a re-minted pool is owned by the next
+  close) and stops cancelling queued batches — their greps are still
+  awaiting, and a served call beats a poisoned one; `_run` serves the
+  batch inline when a submit races the shutdown (one on-loop batch in
+  the close window, never a raw escape); and the ready latch falls
+  with close, so the first op after close re-runs the idempotent
+  first touch instead of serving a catalog miss off a disposed pool
+  (found by the new battery row on the memory leg — the `:memory:`
+  backend's first post-close op previously failed retryable).
+  Pinned by the re-shaped shutdown pin (re-mint asserts), the
+  mint-after-close ownership pin, the seam-staged close-race row, and
+  a backend-agnostic conformance row (`test_pattern_search_serves_
+  after_close`) on the memory leg and all four engine legs. The
+  review's 24-in-flight-greps + close repro re-run: 24/24 served,
+  zero raw escapes. Mutants proven under safe-restore, ledger rows
+  P8/P9/P10. The close-refusal question recorded in
+  `open-questions.md` as ruled. Gates: 3.13 CI leg green at 100 %
+  coverage; engine legs green at +1 — Postgres 211, MySQL 213,
+  MSSQL 213, Oracle 210.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   finding F3 (the raw RuntimeError — introduced by spec 118 slice A;

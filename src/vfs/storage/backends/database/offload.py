@@ -24,6 +24,10 @@ Three laws govern the hop:
   touches no session, its results are dropped, and its only residency
   is the batch it holds (bounded by the caller's content-byte budget,
   ≤32 MiB). No protocol-level interrupt exists.
+- **The pool follows the host's close, and calls survive it.** A call
+  that races close and finds its pool shut serves the batch inline —
+  one on-loop batch in the close window, never a raw escape — and the
+  next grep re-mints a fresh pool from the host.
 
 On the Rust engine the matcher detaches the GIL for the whole batch,
 so the offload removes loop occupancy wholesale; on the pure engine it
@@ -112,4 +116,10 @@ class VerifyOffload:
             finally:
                 self._in_flight = False
 
-        return await asyncio.get_running_loop().run_in_executor(self._executor, guarded)
+        try:
+            future = self._executor.submit(guarded)
+        except RuntimeError:
+            # close() shut this pool mid-call: serve the batch inline —
+            # one on-loop batch in the close window, never a raw escape.
+            return guarded()
+        return await asyncio.wrap_future(future)

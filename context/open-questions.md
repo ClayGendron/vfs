@@ -172,3 +172,11 @@
 - **Blocking:** nothing current; it shaped spec 103 §1's crate layout (recorded there). Its own research → decide arc starts when Clay prioritizes it.
 - **Options considered:** none yet — the fork space (shared Rust core with bindings everywhere vs independent idiomatic implementations vs wasm-first) is the future research question.
 - **Status:** parked
+
+## Should a closed backend refuse, for every verb?
+
+- **Asked:** 2026-08-25 by Clay + Claude (chunking-arc landing review, finding F3's decision pass — `research/2026-08-25-chunking-arc-landing-review.md`)
+- **Context:** Spec 122 ruled grep's close posture by the sibling law — after and across `close()`, every verb serves, transparently re-establishing what it needs (the ready latch now falls with close, so first touch re-runs; the verify pool re-mints; a call racing close serves its batch inline). What was deliberately *not* ruled: whether that sibling law itself is right. `close()` today releases resources but never ends service — a post-close `write` still mutates (executed in the review's leads) — and `SupportsClose` commits only to idempotence and dead-peer tolerance, taking no position on refusal. A refuse-after-close contract would touch every backend, the router's dispose walk, and the conformance battery's lifecycle row (`test_pattern_search_serves_after_close`, which currently pins serve-after-close for glob and grep).
+- **Blocking:** nothing — the current posture is coherent and pinned; this is a contract question about what `close()` *means*, not a defect.
+- **Options considered:** (a) status quo — close releases, service re-establishes (the POSIX-fd analogy fails here, but the SQLAlchemy-engine analogy holds: dispose then reuse works); (b) closed-means-refuse — every verb returns a classified `unavailable` after close, requiring an explicit reopen; (c) closed-means-refuse only for mutations, reads re-establish. Each needs the router and memory backend ruled together.
+- **Status:** open

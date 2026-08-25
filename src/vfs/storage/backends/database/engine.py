@@ -169,7 +169,12 @@ class EngineHost:
 
     @property
     def verify_executor(self) -> ThreadPoolExecutor:
-        """The verify offload pool — lazy on first grep, shut down at close."""
+        """The verify offload pool — lazy on first grep, shut and cleared at close.
+
+        Cleared, not just shut: a grep after close re-mints a fresh pool
+        and serves, the same transparent re-establishment every sibling
+        verb already has; any re-minted pool is shut by the next close.
+        """
         if self._verify_executor is None:
             self._verify_executor = ThreadPoolExecutor(max_workers=VERIFY_WORKERS, thread_name_prefix="vfs-verify")
         return self._verify_executor
@@ -259,15 +264,24 @@ class EngineHost:
     async def close(self) -> None:
         """Dispose iff built; idempotent; borrowed connectivity is never touched.
 
-        The verify pool is the host's own either way and always shuts
-        down — without waiting: an abandoned worker mid-match finishes
-        into the void rather than holding close hostage.
+        The verify pool is the host's own either way and every close
+        shuts whatever pool exists — without waiting: an abandoned
+        worker mid-match finishes into the void rather than holding
+        close hostage. Queued batches are never cancelled: their greps
+        are still awaiting, and a served call beats a poisoned one. The
+        slot is cleared so the next grep re-mints (the sibling posture:
+        verbs serve after close), owned by whichever close comes next.
         """
+        if self._verify_executor is not None:
+            self._verify_executor.shutdown(wait=False)
+            self._verify_executor = None
         if self._closed:
             return
         self._closed = True
-        if self._verify_executor is not None:
-            self._verify_executor.shutdown(wait=False, cancel_futures=True)
+        # The ready latch falls with the connectivity it vouched for: the
+        # next op re-runs the idempotent first touch instead of serving
+        # catalog misses off a disposed pool's stale latch.
+        self._ready = False
         if self._engine is not None:
             await self._engine.dispose()
 
