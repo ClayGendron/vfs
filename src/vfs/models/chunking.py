@@ -36,6 +36,17 @@ Engine note: structure-aware splitting is a **native-engine capability by
 contract**. A pure-Python install carries no tree-sitter at all, so every
 extension takes the recursive character splitter there — a declared,
 tested degradation, not an equivalent engine.
+
+Exception floor: no shape the write gate admits raises out of the
+splitter — any body either splits by its route or degrades to a coarser
+split. Deep-nested notebook JSON that overruns the parser's recursion
+budget takes the recursive fallback like any other malformed body. Lone
+surrogates and null bytes — which ``json.loads`` manufactures from
+admitted pure-ASCII escapes and no chunk may carry (surrogates cannot
+encode to UTF-8; NUL is invalid in SQL text) — are scrubbed to U+FFFD,
+one character for one, before any chunk is cut, so line ranges and
+chunk boundaries are unchanged by the scrub. The scrub runs in Python
+before the engine seam: both engines see the identical scrubbed body.
 """
 
 from __future__ import annotations
@@ -281,9 +292,11 @@ def split_code_batch(
     native engine parses the whole batch in parallel; results are
     index-aligned with the input. Fits-in-one-chunk bodies and bodies the
     engine declines take the character splitter, per the single-item
-    contract.
+    contract. Unstorable characters are scrubbed to U+FFFD at this door
+    (module docstring), so every emitted chunk is storable text.
     """
-    datas = [content.encode("utf-8") for content, _language in items]
+    scrubbed = [_scrub_unstorable(content) for content, _language in items]
+    datas = [content.encode("utf-8") for content in scrubbed]
     need = [i for i, data in enumerate(datas) if len(data) > chunk_size]
     rows_by_index: dict[int, list[tuple[int, int, int, int, bool]] | None] = {}
     if need:
@@ -291,7 +304,7 @@ def split_code_batch(
         rows_by_index = dict(zip(need, spans, strict=True))
 
     out: list[list[tuple[str, int, int]]] = []
-    for index, (content, _language) in enumerate(items):
+    for index, content in enumerate(scrubbed):
         rows = rows_by_index.get(index)
         if rows is None:
             out.append(split_with_line_ranges(content, chunk_size=chunk_size))
@@ -319,16 +332,17 @@ def split_notebook(
 
     Markdown cells use the ``markdown`` grammar, code cells the notebook's kernel
     language (default ``python``). Line ranges are absolute over the concatenated
-    cell sources. A body without a well-formed cell list falls back to the
-    recursive splitter; malformed cell or kernelspec fields degrade in place
-    (empty source, default grammar) — no shape the JSON parse admits raises.
+    cell sources. A body without a well-formed cell list — deep nesting
+    that overruns the parser's recursion budget included — falls back to
+    the recursive splitter; malformed cell or kernelspec fields degrade in
+    place (empty source, default grammar) — no admitted shape raises.
     """
     try:
         notebook = json.loads(content)
         cells = notebook["cells"]
         if not isinstance(cells, list):
             raise TypeError
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, RecursionError):
         return split_with_line_ranges(content, chunk_size=chunk_size)
 
     # The kernel fields are advisory grammar selection: junk shapes take
@@ -369,6 +383,24 @@ def split_notebook(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _scrub_unstorable(content: str) -> str:
+    """Degrade characters no chunk may carry to U+FFFD, one for one.
+
+    ``json.loads`` manufactures lone surrogates (``\\uD800`` escapes) and
+    null bytes from admitted pure-ASCII bodies; surrogates cannot encode
+    to UTF-8 and NUL is invalid in SQL text, so both degrade before any
+    chunk is cut. Well-formed content returns unchanged, checked at
+    C speed; the character walk runs only on a pathological body.
+    """
+    try:
+        if "\x00" not in content:
+            content.encode("utf-8")
+            return content
+    except UnicodeEncodeError:
+        pass
+    return "".join("\ufffd" if ch == "\x00" or "\ud800" <= ch <= "\udfff" else ch for ch in content)
 
 
 def _assemble_spans(

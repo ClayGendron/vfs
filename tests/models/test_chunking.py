@@ -368,3 +368,86 @@ class TestSplitNotebook:
     )
     def test_malformed_notebooks_fall_back_to_text_split(self, content: str) -> None:
         assert split_notebook(content, chunk_size=16) == split_with_line_ranges(content, chunk_size=16)
+
+
+# ---------------------------------------------------------------------------
+# The exception floor — deep nesting and unstorable characters
+# ---------------------------------------------------------------------------
+
+
+class TestExceptionFloor:
+    @pytest.mark.parametrize("depth", [10_000, 100_000])
+    def test_deep_nested_json_degrades_to_the_text_split(self, depth: int) -> None:
+        # json.loads overruns its recursion budget on this body; the parse
+        # guard must route it to the fallback, never let the raise escape.
+        body = "[" * depth + "]" * depth
+        assert split_notebook(body, chunk_size=64) == split_with_line_ranges(body, chunk_size=64)
+
+    def test_a_manufactured_surrogate_in_a_code_cell_is_scrubbed(self) -> None:
+        # The notebook JSON is pure ASCII — the write gate admits it — and
+        # json.loads manufactures the lone surrogate from the escape.
+        source = "needle_value = 1  # \ud800 marker\n" * 4
+        notebook = make_notebook([{"cell_type": "code", "source": source}])
+        assert "\ud800" not in notebook and "\\ud800" in notebook
+        pieces = split_notebook(notebook, chunk_size=64)
+        assert pieces
+        joined = "".join(text for text, _start, _end in pieces)
+        assert "\ud800" not in joined and "�" in joined
+        # One character for one: the scrub moves no boundary or line range.
+        assert pieces == split_notebook(notebook.replace("\\ud800", "\\ufffd"), chunk_size=64)
+
+    def test_a_manufactured_surrogate_in_a_markdown_cell_is_scrubbed(self) -> None:
+        source = "# Title\nprose \udfff prose continues on this line\n" * 3
+        notebook = make_notebook([{"cell_type": "markdown", "source": source}])
+        pieces = split_notebook(notebook, chunk_size=64)
+        assert pieces
+        assert all("\udfff" not in text for text, _start, _end in pieces)
+
+    def test_a_manufactured_null_byte_never_reaches_a_chunk(self) -> None:
+        source = "hello \x00 world, padded well enough to chunk\n" * 3
+        notebook = make_notebook([{"cell_type": "markdown", "source": source}])
+        assert "\x00" not in notebook
+        pieces = split_notebook(notebook, chunk_size=64)
+        assert pieces
+        joined = "".join(text for text, _start, _end in pieces)
+        assert "\x00" not in joined and "�" in joined
+
+    def test_the_splitter_takes_a_raw_surrogate_string_directly(self) -> None:
+        content = "alpha \ud800 beta gamma delta epsilon\n" * 20
+        pieces = split_code(content, language="python", chunk_size=64)
+        assert pieces
+        texts = [text for text, _start, _end in pieces]
+        assert all("\ud800" not in text for text in texts)
+        assert any("�" in text for text in texts)
+
+    def test_batch_and_single_agree_on_pathological_bodies(self) -> None:
+        items = [
+            ("clean = 1\n" * 30, "python"),
+            ("dirty = 1  # \ud800\n" * 30, "python"),
+            ("nul \x00 text on this line\n" * 30, "no_such_grammar"),
+        ]
+        batch = split_code_batch(items, chunk_size=64)
+        assert batch == [split_code(content, language=grammar, chunk_size=64) for content, grammar in items]
+
+    def test_the_recursive_splitter_never_raises_on_a_surrogate(self) -> None:
+        # The character splitter passes text through untouched; totality
+        # comes from the byte-domain surrogatepass in normalize_content.
+        content = "abc \ud800 def\n" * 10
+        pieces = recursive_text_split(content, chunk_size=16)
+        assert "".join(pieces) == content
+
+    def test_pure_engine_scrubs_identically(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The scrub is pre-seam Python: the pure engine's character split
+        # sees the same scrubbed body the native structure path sees.
+        monkeypatch.setattr(vfs.native, "_active", None)
+        content = "dirty = 1  # \ud800 padded line here\n" * 20
+        pieces = split_code(content, language="python", chunk_size=64)
+        assert pieces == split_with_line_ranges(content.replace("\ud800", "�"), chunk_size=64)
+
+    @needs_structure
+    def test_structure_path_chunks_carry_the_scrub_with_true_ranges(self) -> None:
+        content = "".join(f"def f{i}():\n    return '\ud800{i}'\n\n\n" for i in range(20))
+        pieces = split_code(content, language="python", chunk_size=128)
+        scrubbed = content.replace("\ud800", "�")
+        assert_true_line_ranges(scrubbed, pieces)
+        assert all("\ud800" not in text for text, _start, _end in pieces)

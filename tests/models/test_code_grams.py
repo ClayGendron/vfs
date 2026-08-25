@@ -98,6 +98,11 @@ class TestTokenizer:
     def test_newlines_normalize_before_gramming(self) -> None:
         assert normalize_content("a\r\nb") == normalize_content("a\nb") == b"a\nb"
 
+    def test_a_lone_surrogate_meters_instead_of_raising(self) -> None:
+        # A surrogate-carrying str (a pattern literal, a surrogatepass
+        # decode) grams as the WTF-8 bytes the verify spelling produces.
+        assert normalize_content("abc\ud800def") == "abc\ud800def".encode("utf-8", "surrogatepass")
+
     def test_the_stream_is_raw_codepoints_never_normalized(self) -> None:
         # The verifier (re over raw content) is codepoint-exact and never
         # unifies canonical-equivalent forms \u2014 so neither does the index:

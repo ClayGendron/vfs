@@ -220,6 +220,15 @@ coincidence (explained by the generation stamp), and the
 completed-flag divergence (lawful). Each refutation is executed
 evidence, recorded in the run transcripts.
 
+> **Correction (2026-08-25, spec 127's landing):** the first
+> refutation was wrong. The write gate refuses only *direct*
+> surrogate strs; a pure-ASCII notebook whose JSON carries a
+> `\ud800` escape passes the gate, and `json.loads` manufactures
+> the lone surrogate inside `split_notebook` — the next review
+> round reproduced the wedge end-to-end (its F4). Fixed by
+> spec 127: unstorable characters are scrubbed to U+FFFD at the
+> splitter. The other two refutations stand.
+
 **Unverified leads (for a future pass — none verified):**
 
 - Reindex-vs-writer lock scope beyond F2: the counterfactual arm

@@ -683,6 +683,42 @@ class TestChunkProvenance:
         assert all("needle_value" in body for body in bodies)
         await storage.close()
 
+    async def test_a_deep_nested_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+        # Nesting past the JSON parser's recursion budget must degrade to
+        # the fallback split, never wedge the maintenance verb.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        body = "[" * 10_000 + "]" * 10_000
+        assert (await storage.write(entries=[Entry(path=Path("/deep.ipynb"), content=body)])).success is True
+        assert (await storage.reindex()).success is True
+        row = await self._entry_row(storage, "/deep.ipynb")
+        assert row.chunked is True
+        chunks = storage._host.tables.chunks
+        async with storage._host.engine.begin() as conn:
+            query = select(chunks.c.content).order_by(chunks.c.chunk_index)
+            bodies = (await conn.execute(query)).scalars().all()
+        assert bodies and "".join(bodies) == body
+        await storage.close()
+
+    async def test_a_surrogate_escape_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+        # Pure-ASCII JSON passes the write gate; json.loads manufactures
+        # the lone surrogate, which must degrade in chunks, never raise.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        body = json.dumps({"cells": [{"cell_type": "code", "source": "needle_value = 1  # \ud800\n" * 40}]})
+        assert body.isascii()
+        assert (await storage.write(entries=[Entry(path=Path("/escape.ipynb"), content=body)])).success is True
+        assert (await storage.reindex()).success is True
+        row = await self._entry_row(storage, "/escape.ipynb")
+        assert row.chunked is True
+        chunks = storage._host.tables.chunks
+        async with storage._host.engine.begin() as conn:
+            bodies = (await conn.execute(select(chunks.c.content))).scalars().all()
+        assert bodies
+        assert all("needle_value" in body and "\ud800" not in body for body in bodies)
+        assert any("�" in body for body in bodies)
+        # The scrub is chunk-side only: the stored body reads back verbatim.
+        assert (await storage.read(path=Path("/escape.ipynb"))).observations[0].content == body
+        await storage.close()
+
     async def test_generation_change_redirties_and_resplits(self, tmp_path) -> None:
         """Guards the skip condition losing its generation term, and the re-dirty statement vanishing."""
         storage = DatabaseStorage(url=_url(tmp_path))

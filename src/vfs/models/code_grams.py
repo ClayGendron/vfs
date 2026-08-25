@@ -88,10 +88,13 @@ def normalize_content(content: str) -> bytes:
 
     Deliberately no Unicode normalization: the index stream must contain
     the same codepoints the raw-content regex verify sees (module docstring).
+    ``surrogatepass`` keeps that law total: a lone surrogate — a pattern
+    literal, a body decoded with ``surrogatepass`` — meters and grams as
+    the same WTF-8 bytes the verify spelling produces, instead of raising.
     """
     if "\r" in content:
         content = content.replace("\r\n", "\n").replace("\r", "\n")
-    return content.encode("utf-8")
+    return content.encode("utf-8", "surrogatepass")
 
 
 def fold_content(content: str) -> str:

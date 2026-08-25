@@ -104,3 +104,37 @@ Gates: `scripts/ci.sh 3.13` at 100 % coverage; `cargo test` plus
 policy mirrored; engine legs only if the end-to-end rows touch
 engine-specific paths (models-layer change — the sqlite legs are
 expected to carry it, per spec 123's precedent).
+
+## Landing note (2026-08-25)
+
+- **Policy ruled (§2):** scrub to U+FFFD, applied once at
+  `split_code_batch`'s door (`_scrub_unstorable`) before the encode
+  and the engine seam — one character for one, so boundaries and
+  line ranges never move and both engines see the identical
+  scrubbed body. `normalize_content` becomes total via
+  `surrogatepass` — the byte-domain backstop that keeps its
+  index-stream-equals-verify-stream law exact (grep's verify uses
+  the same spelling), covering the recursive fallback and the gram
+  planner's pattern literals. The Rust seam needed no mirroring:
+  the scrub runs in Python pre-seam, so no `cargo`/reinstall gate
+  applied.
+- **The sweep (§3) found one more hole, same class:** a JSON
+  `\u0000` escape manufactures a null byte in a cell source, and
+  the chunk model's null-byte validator raised it out of the
+  splitter (executed: `ValidationError` from `Chunk.split`). Fixed
+  by the same scrub — NUL degrades to U+FFFD beside the
+  surrogates. Direct null bytes and direct surrogates are both
+  refused by the write gate (verified executed), so the class is
+  manufactured-only. Beyond that, the sweep is clean: the engine
+  seam is declared-total (`None` on any decline), span assembly
+  decodes with `replace`, and the recursive splitter's
+  `ValueError`s are caller-contract, unreachable from any body.
+- **Ledger rows:** P18 (parse guard loses its recursion arm,
+  3 kills) and P19 (encode floor falls, both directions: scrub
+  deleted, 8 kills; strict `normalize_content`, 2 kills), executed
+  under safe-restore.
+- **Record correction:** the prior campaign memo's §4 refutation
+  ("the surrogate escape is unreachable past the write gate") is
+  corrected in place in
+  `2026-08-25-chunking-arc-landing-review.md`, dated, per the
+  amendment pattern.
