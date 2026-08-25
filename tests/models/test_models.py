@@ -582,6 +582,20 @@ class TestChunk:
         assert all((c.line_start, c.line_end) == (1, 1) for c in chunks)
         assert sum(len(c.content) for c in chunks) == 5000
 
+    def test_split_batch_matches_per_file_splits_across_routes(self) -> None:
+        notebook = json.dumps(
+            {"cells": [{"cell_type": "code", "source": "value = 42\n"}], "metadata": {}, "nbformat": 4},
+        )
+        files = [
+            (Path("/src/mod.py"), "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(40)), "py"),
+            (Path("/nb.ipynb"), notebook, "ipynb"),
+            (Path("/notes.txt"), "plain text here\n" * 10, "txt"),
+            (Path("/tiny.py"), "hi", "py"),  # sub-trigram: no chunks
+        ]
+        batch = Chunk.split_batch(files)
+        assert batch == [Chunk.split(file=file, content=content, ext=ext) for file, content, ext in files]
+        assert batch[3] == []
+
     def test_notebooks_split_by_cell_source(self) -> None:
         notebook = json.dumps(
             {

@@ -117,9 +117,15 @@
   re-split), pack dependency deleted, divergence pins,
   coverage-contract test against `supported_grammars()`, fixtures,
   `uv sync --reinstall-package vfs-py` note honored.
-- **C — the dirty pass:** batch call from `chunk_dirty`,
-  generation-stamped fingerprint-skip, re-dirty on generation
-  change, guarded-flip law preserved; engine legs re-run.
+- **C — the dirty pass** *(landed 2026-08-25)*: `chunk_dirty` splits
+  through one `Chunk.split_batch` call (grammar-routed bodies cross
+  the seam in a single batch); the fingerprint-skip law spares
+  same-hash re-splits and the generation law re-dirties stale
+  shapes — carried by two new entry columns (`chunk_source_hash`,
+  `chunk_generation`; SCHEMA_FORMAT_VERSION 5 → 6), stamped inside
+  the existing guarded flip via a column-to-column SET. Both law
+  pins proven with their mutants (ledger rows P1/P2). Engine legs
+  re-run in slice D with the gate.
 - **D — the gate:** linux-corpus reindex measured as a verb —
   target ≤60 s end-to-end (index build ~30 s + parallel chunking);
   wheel size recorded (watched against PyPI's 100 MB cap); full

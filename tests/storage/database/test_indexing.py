@@ -19,6 +19,7 @@ from sqlalchemy.dialects import mssql, postgresql
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry
+from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import pack_gram
 from vfs.models.postings import decode_postings, encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
@@ -565,9 +566,99 @@ class TestPostingBatches:
             statements.append((statement, executemany))
 
         assert (await storage.reindex()).success is True
-        flips = [(s, many) for s, many in statements if s.startswith("UPDATE") and ("chunked" in s or "encoded" in s)]
+        updates = [(s, many) for s, many in statements if s.startswith("UPDATE") and ("chunked" in s or "encoded" in s)]
+        assert all(many is False for _, many in updates)
+        flips = [(s, many) for s, many in updates if "version" in s]
         assert len(flips) == 2  # ten pairs fit one statement per flag
-        assert all(many is False for _, many in flips)
+        assert len(updates) == len(flips) + 1  # plus the one set-based generation re-dirty
+        await storage.close()
+
+
+class TestChunkProvenance:
+    """The chunk pass's generation and fingerprint-skip laws."""
+
+    BODY = "def f():\n    return 1\n\n\n" + "".join(f"x{i} = {i}\n" for i in range(40))
+
+    def _record_into(self, storage: DatabaseStorage, statements: list[str]) -> None:
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+    @staticmethod
+    def _chunk_writes(statements: list[str]) -> list[str]:
+        return [s for s in statements if s.startswith(("DELETE", "INSERT")) and "chunk" in s.lower()]
+
+    async def _entry_row(self, storage: DatabaseStorage, path: str) -> Any:
+        entry = storage._host.tables.entry
+        async with storage._host.engine.begin() as conn:
+            return (await conn.execute(select(entry).where(entry.c.path == path))).one()
+
+    async def test_provenance_is_stamped_with_the_flip(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
+        # A sub-trigram body: chunk-ineligible, but provenance still stamps.
+        assert (await storage.write(entries=[Entry(path=Path("/tiny.py"), content="hi")])).success is True
+        assert (await storage.reindex()).success is True
+        for path, indexable in (("/a.py", True), ("/tiny.py", False)):
+            row = await self._entry_row(storage, path)
+            assert row.chunked is True
+            assert row.indexable is indexable
+            assert row.chunk_source_hash == row.content_hash
+            assert row.chunk_generation == chunk_generation()
+        await storage.close()
+
+    async def test_same_body_overwrite_skips_the_resplit(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
+        assert (await storage.reindex()).success is True
+        statements: list[str] = []
+        self._record_into(storage, statements)
+        # A same-body overwrite dirties the entry (content writes reset the
+        # flags) but leaves the hash equal: the pass must not touch chunks.
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
+        row = await self._entry_row(storage, "/a.py")
+        assert row.chunked is False
+        assert (await storage.reindex()).success is True
+        assert self._chunk_writes(statements) == []
+        row = await self._entry_row(storage, "/a.py")
+        assert row.chunked is True
+        await storage.close()
+
+    async def test_changed_body_still_resplits(self, tmp_path) -> None:
+        """Guards the skip condition losing its body-hash equality (skip-everything)."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
+        assert (await storage.reindex()).success is True
+        statements: list[str] = []
+        self._record_into(storage, statements)
+        changed = self.BODY + "tail_marker = True\n"
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=changed)])).success is True
+        assert (await storage.reindex()).success is True
+        writes = self._chunk_writes(statements)
+        assert any(s.startswith("DELETE") for s in writes)
+        assert any(s.startswith("INSERT") for s in writes)
+        chunks = storage._host.tables.chunks
+        async with storage._host.engine.begin() as conn:
+            bodies = (await conn.execute(select(chunks.c.content))).scalars().all()
+        assert any("tail_marker" in body for body in bodies)
+        await storage.close()
+
+    async def test_generation_change_redirties_and_resplits(self, tmp_path) -> None:
+        """Guards the skip condition losing its generation term, and the re-dirty statement vanishing."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
+        assert (await storage.reindex()).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.engine.begin() as conn:
+            await conn.execute(update(entry).values(chunk_generation="stale:0"))
+        statements: list[str] = []
+        self._record_into(storage, statements)
+        assert (await storage.reindex()).success is True
+        writes = self._chunk_writes(statements)
+        assert any(s.startswith("DELETE") for s in writes)  # stale generation re-split, not skipped
+        row = await self._entry_row(storage, "/a.py")
+        assert row.chunked is True
+        assert row.chunk_generation == chunk_generation()
         await storage.close()
 
 

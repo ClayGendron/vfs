@@ -15,6 +15,7 @@ enumerates the resulting chunks in order.
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -22,12 +23,16 @@ from vfs.models.chunking import (
     NOTEBOOK_EXTENSION,
     grammar_for_extension,
     split_code,
+    split_code_batch,
     split_notebook,
     split_with_line_ranges,
 )
 from vfs.models.entry import ContentHash  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.models.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class Chunk(BaseModel):
@@ -87,6 +92,35 @@ class Chunk(BaseModel):
             cls(file=file, chunk_index=index, content=text, line_start=start, line_end=end)
             for index, (text, start, end) in enumerate(pieces)
         ]
+
+    @classmethod
+    def split_batch(cls, files: Sequence[tuple[Path, str, str | None]]) -> list[list[Chunk]]:
+        """:meth:`split` for many ``(file, content, ext)`` rows at once.
+
+        Grammar-routed files cross the engine seam in a single batch call,
+        so the native engine parses them in parallel; notebooks and
+        fallback extensions split per row exactly as :meth:`split` would.
+        Results are index-aligned with the input.
+        """
+        routed = [
+            (index, grammar)
+            for index, (_file, _content, ext) in enumerate(files)
+            if ext != NOTEBOOK_EXTENSION and (grammar := grammar_for_extension(ext))
+        ]
+        code_pieces = split_code_batch([(files[index][1], grammar) for index, grammar in routed])
+        pieces_by_index = dict(zip((index for index, _grammar in routed), code_pieces, strict=True))
+        out: list[list[Chunk]] = []
+        for index, (file, content, ext) in enumerate(files):
+            pieces = pieces_by_index.get(index)
+            if pieces is None:
+                pieces = split_notebook(content) if ext == NOTEBOOK_EXTENSION else split_with_line_ranges(content)
+            out.append(
+                [
+                    cls(file=file, chunk_index=chunk_index, content=text, line_start=start, line_end=end)
+                    for chunk_index, (text, start, end) in enumerate(pieces)
+                ],
+            )
+        return out
 
     @staticmethod
     def _split_content(content: str, ext: str | None) -> list[tuple[str, int, int]]:

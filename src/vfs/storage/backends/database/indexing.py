@@ -57,6 +57,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import CONTENT_KINDS
 from vfs.models.chunk import Chunk
+from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
 from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
@@ -193,15 +194,34 @@ async def chunk_dirty(
 ) -> Result:
     """Re-derive per-entry state for every live content entry that is stale.
 
-    Per entry: replace its semantic chunk rows with the fresh split (or
-    none), stamp gram eligibility from the body just read, and flip
-    ``chunked`` guarded on the version the content was read at — a
-    guard miss leaves the entry dirty for the next run, and its
-    just-written state unused.
+    Two laws govern the pass. The **generation law** first re-dirties every
+    entry whose stored chunks derive from a different engine or grammar
+    generation, so shapes from different splitters never silently coexist.
+    The **fingerprint-skip law** then spares re-splitting: a dirty entry
+    whose current ``content_hash`` equals its stamped ``chunk_source_hash``
+    under the current generation keeps its chunk rows untouched — a
+    same-body overwrite or restore re-splits nothing — and only re-stamps
+    its flags. Every remaining body splits through one batched engine
+    call; per entry the fresh chunk rows replace the old, gram eligibility
+    is stamped from the body just read, and ``chunked`` flips guarded on
+    the version the content was read at — a guard miss leaves the entry
+    dirty for the next run, and its just-written state unused.
     """
     entry, content, chunks = tables.entry, tables.content, tables.chunks
+    generation = chunk_generation()
+    stale = or_(entry.c.chunk_generation.is_(None), entry.c.chunk_generation != generation)
+    await session.execute(update(entry).where(entry.c.chunked, stale).values(chunked=False))
     dirty = (
-        select(entry.c.entry_id, entry.c.version, entry.c.path, entry.c.ext, content.c.content)
+        select(
+            entry.c.entry_id,
+            entry.c.version,
+            entry.c.path,
+            entry.c.ext,
+            entry.c.content_hash,
+            entry.c.chunk_source_hash,
+            entry.c.chunk_generation,
+            content.c.content,
+        )
         .select_from(tables.content_joined())
         .where(entry.c.kind.in_(CONTENT_KINDS), entry.c.deleted_at.is_(None), ~entry.c.chunked)
         .order_by(entry.c.id)
@@ -211,32 +231,44 @@ async def chunk_dirty(
         return Result(ops=("reindex",))
     eligible: list[tuple[str, int]] = []
     ineligible: list[tuple[str, int]] = []
-    chunk_rows: list[dict[str, object]] = []
+    resplit_ids: list[str] = []
+    split_targets: list[Any] = []
     for row in rows:
-        if row.content is None or not _indexable(row.content):
-            ineligible.append((row.entry_id, row.version))
-            continue
-        eligible.append((row.entry_id, row.version))
-        chunk_rows.extend(
-            {
-                "entry_id": row.entry_id,
-                "chunk_index": piece.chunk_index,
-                "line_start": piece.line_start,
-                "line_end": piece.line_end,
-                "content_hash": piece.content_hash,
-                "encoded": False,
-                "content": piece.content,
-            }
-            for piece in Chunk.split(file=Path(row.path), content=row.content, ext=row.ext)
+        body_ok = row.content is not None and _indexable(row.content)
+        (eligible if body_ok else ineligible).append((row.entry_id, row.version))
+        skipped = (
+            row.content_hash is not None
+            and row.content_hash == row.chunk_source_hash
+            and row.chunk_generation == generation
         )
-    for ids in chunked([entry_id for entry_id, _ in (*eligible, *ineligible)], membership_budget):
+        if skipped:
+            continue
+        resplit_ids.append(row.entry_id)
+        if body_ok:
+            split_targets.append(row)
+    batches = Chunk.split_batch([(Path(row.path), row.content, row.ext) for row in split_targets])
+    chunk_rows: list[dict[str, object]] = [
+        {
+            "entry_id": row.entry_id,
+            "chunk_index": piece.chunk_index,
+            "line_start": piece.line_start,
+            "line_end": piece.line_end,
+            "content_hash": piece.content_hash,
+            "encoded": False,
+            "content": piece.content,
+        }
+        for row, pieces in zip(split_targets, batches, strict=True)
+        for piece in pieces
+    ]
+    for ids in chunked(resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
     if chunk_rows:
         await session.execute(insert(chunks), chunk_rows)
     await seam("reindex:before-chunk-flip")
-    stamp = {"chunked": True, "indexable": True}
+    provenance = {"chunk_source_hash": entry.c.content_hash, "chunk_generation": generation}
+    stamp = {"chunked": True, "indexable": True, **provenance}
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, eligible, assignments=stamp)
-    stamp = {"chunked": True, "indexable": False}
+    stamp = {"chunked": True, "indexable": False, **provenance}
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, ineligible, assignments=stamp)
     return Result(ops=("reindex",))
 
@@ -438,7 +470,7 @@ async def _flip_flags(
     membership_budget: int,
     pairs: list[tuple[str, int]],
     *,
-    assignments: dict[str, bool],
+    assignments: dict[str, Any],
 ) -> None:
     """Version-guarded set-based flag stamp; a miss leaves rows scan-side.
 
@@ -475,7 +507,7 @@ async def _flip_flags(
     await session.execute(stmt, [{"b_id": eid, "b_ver": ver} for eid, ver in pairs])
 
 
-def _values_flip_stmt(entry: Table, rows: Sequence[tuple[str, int]], *, assignments: dict[str, bool]) -> Update:
+def _values_flip_stmt(entry: Table, rows: Sequence[tuple[str, int]], *, assignments: dict[str, Any]) -> Update:
     """One guarded flag stamp over a VALUES join carrying *rows*."""
     incoming = values(
         column("v_id", entry.c.entry_id.type),

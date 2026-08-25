@@ -43,7 +43,7 @@ from bisect import bisect_left
 from typing import Final
 
 from vfs.models.code_grams import GRAM_SIZE, normalize_content
-from vfs.native import chunk_spans
+from vfs.native import active_core, chunk_spans
 
 # Separator priority for the recursive character splitter.
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")
@@ -159,7 +159,21 @@ EXTENSION_TO_GRAMMAR: dict[str, str] = {
 # Pinned against the live registry by the coverage-contract test.
 STRUCTURE_FALLBACK_GRAMMARS: Final = frozenset({"astro", "clojure", "csv", "json5", "latex", "tcl", "tsv", "vb", "vue"})
 
+# Bumped deliberately when a grammar crate or walker change alters chunk
+# shapes; the chunk fixtures regenerate in the same landing.
+CHUNK_GENERATION: Final = 1
+
 NOTEBOOK_EXTENSION = "ipynb"
+
+
+def chunk_generation() -> str:
+    """The engine + grammar generation stamped onto stored chunk state.
+
+    Stored chunks derived under any other value are stale by law: an
+    engine switch (pure ↔ native) or a declared generation bump re-dirties
+    them, so shapes from different splitters never silently coexist.
+    """
+    return f"{active_core()}:{CHUNK_GENERATION}"
 
 
 # ---------------------------------------------------------------------------
@@ -251,25 +265,36 @@ def split_code(
     the whole file. *chunk_size* is measured in UTF-8 bytes on the
     structure path.
     """
-    data = content.encode("utf-8")
-    if len(data) <= chunk_size:
-        # Fits one chunk — emit a whole-content piece (or [] for sub-trigram).
-        return split_with_line_ranges(content, chunk_size=chunk_size)
-    (rows,) = chunk_spans([(data, language)], chunk_size=chunk_size)
-    if rows is None:
-        return split_with_line_ranges(content, chunk_size=chunk_size)
+    return split_code_batch([(content, language)], chunk_size=chunk_size)[0]
 
-    out: list[tuple[str, int, int]] = []
-    for start, end, line_start, line_end, oversized in rows:
-        text = data[start:end].decode("utf-8", "replace")
-        if not text.strip():
-            continue
-        if oversized:  # indivisible leaf over budget: character-split in place
-            base = line_start - 1
-            for piece, rel_start, rel_end in split_with_line_ranges(text, chunk_size=chunk_size):
-                out.append((piece, base + rel_start, base + rel_end))
+
+def split_code_batch(
+    items: list[tuple[str, str]],
+    *,
+    chunk_size: int = 2048,
+) -> list[list[tuple[str, int, int]]]:
+    """:func:`split_code` for many ``(content, language)`` pairs at once.
+
+    Every over-budget body crosses the engine seam in **one** call, so the
+    native engine parses the whole batch in parallel; results are
+    index-aligned with the input. Fits-in-one-chunk bodies and bodies the
+    engine declines take the character splitter, per the single-item
+    contract.
+    """
+    datas = [content.encode("utf-8") for content, _language in items]
+    need = [i for i, data in enumerate(datas) if len(data) > chunk_size]
+    rows_by_index: dict[int, list[tuple[int, int, int, int, bool]] | None] = {}
+    if need:
+        spans = chunk_spans([(datas[i], items[i][1]) for i in need], chunk_size=chunk_size)
+        rows_by_index = dict(zip(need, spans, strict=True))
+
+    out: list[list[tuple[str, int, int]]] = []
+    for index, (content, _language) in enumerate(items):
+        rows = rows_by_index.get(index)
+        if rows is None:
+            out.append(split_with_line_ranges(content, chunk_size=chunk_size))
         else:
-            out.append((text, line_start, line_end))
+            out.append(_assemble_spans(datas[index], rows, chunk_size))
     return out
 
 
@@ -337,6 +362,30 @@ def split_notebook(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _assemble_spans(
+    data: bytes,
+    rows: list[tuple[int, int, int, int, bool]],
+    chunk_size: int,
+) -> list[tuple[str, int, int]]:
+    """Assemble engine span rows into chunks: slice, strip-filter, re-split.
+
+    Whitespace-only spans are dropped; an oversized indivisible leaf is
+    character-split in place with its line numbers rebased.
+    """
+    out: list[tuple[str, int, int]] = []
+    for start, end, line_start, line_end, oversized in rows:
+        text = data[start:end].decode("utf-8", "replace")
+        if not text.strip():
+            continue
+        if oversized:
+            base = line_start - 1
+            for piece, rel_start, rel_end in split_with_line_ranges(text, chunk_size=chunk_size):
+                out.append((piece, base + rel_start, base + rel_end))
+        else:
+            out.append((text, line_start, line_end))
+    return out
 
 
 def _recursive_split(content: str, chunk_size: int, separators: tuple[str, ...]) -> list[str]:
@@ -410,13 +459,16 @@ def _split_keep_separator(content: str, sep: str, chunk_size: int) -> list[str]:
 
 
 __all__ = [
+    "CHUNK_GENERATION",
     "DEFAULT_SEPARATORS",
     "EXTENSION_TO_GRAMMAR",
     "NOTEBOOK_EXTENSION",
     "STRUCTURE_FALLBACK_GRAMMARS",
+    "chunk_generation",
     "grammar_for_extension",
     "recursive_text_split",
     "split_code",
+    "split_code_batch",
     "split_notebook",
     "split_with_line_ranges",
 ]

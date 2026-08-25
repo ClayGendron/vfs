@@ -77,7 +77,7 @@ if TYPE_CHECKING:
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
     {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"}
-    | {"chunked", "encoded", "indexable"},
+    | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -119,7 +119,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 5
+SCHEMA_FORMAT_VERSION: Final = 6
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -361,6 +361,10 @@ def build_vfs_tables(
         # Gram eligibility: reset by content writes like its siblings,
         # re-stamped with `chunked`; only read behind a true `chunked`.
         Column("indexable", Boolean, nullable=False, default=False),
+        # Chunk provenance: the body hash and engine/grammar generation the
+        # stored chunk rows derive from — the fingerprint-skip law reads both.
+        Column("chunk_source_hash", String(64)),
+        Column("chunk_generation", _string(32)),
         Column("owner_id", _string(255), index=True),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),

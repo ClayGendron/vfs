@@ -16,13 +16,16 @@ import pytest
 
 import vfs.native
 from vfs.models.chunking import (
+    CHUNK_GENERATION,
     DEFAULT_SEPARATORS,
     EXTENSION_TO_GRAMMAR,
     STRUCTURE_FALLBACK_GRAMMARS,
     _recursive_split,
+    chunk_generation,
     grammar_for_extension,
     recursive_text_split,
     split_code,
+    split_code_batch,
     split_notebook,
     split_with_line_ranges,
 )
@@ -215,6 +218,29 @@ class TestSplitCode:
         content = "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(8))
         expected = split_with_line_ranges(content, chunk_size=48)
         assert split_code(content, language="python", chunk_size=48) == expected
+
+
+class TestSplitCodeBatch:
+    def test_batch_matches_single_splits_across_mixed_routes(self) -> None:
+        items = [
+            ("tiny = 1\n", "python"),  # fits one chunk
+            ("".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(40)), "python"),  # structure path
+            ("plain text line\n" * 60, "no_such_grammar"),  # engine declines
+        ]
+        batch = split_code_batch(items, chunk_size=128)
+        assert batch == [split_code(content, language=grammar, chunk_size=128) for content, grammar in items]
+
+    def test_empty_batch_is_empty(self) -> None:
+        assert split_code_batch([], chunk_size=128) == []
+
+
+class TestChunkGeneration:
+    def test_generation_names_the_engine_and_the_declared_constant(self) -> None:
+        assert chunk_generation() == f"{active_core()}:{CHUNK_GENERATION}"
+
+    def test_pure_engine_yields_a_distinct_generation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(vfs.native, "_active", None)
+        assert chunk_generation() == f"python:{CHUNK_GENERATION}"
 
 
 class TestChunkFixtures:
