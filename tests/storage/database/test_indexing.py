@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -808,7 +809,7 @@ class TestReindexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="chunk broke")])
 
-        async def broken(session, tables, profile, parameter_budget, membership_budget) -> Result:
+        async def broken(session, tables, profile, parameter_budget, membership_budget, executor) -> Result:
             return failure
 
         monkeypatch.setattr(backend_module, "chunk_dirty", broken)
@@ -836,3 +837,92 @@ class TestReindexLease:
         assert "expired mid-run" in result.errors[0].message
         assert await _epoch(storage) is None  # the publish never ran
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# The offload seam: reindex CPU leaves the event loop
+# ---------------------------------------------------------------------------
+
+
+class _SleepyBuilder:
+    """A builder double whose work releases the GIL — the engines' shape."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def add_docs(self, batch: Any) -> None:
+        time.sleep(0.5)
+        self._inner.add_docs(batch)
+
+    def next_batch(self, cap: int) -> Any:
+        time.sleep(0.5)
+        return self._inner.next_batch(cap)
+
+
+class TestReindexLoopResponsiveness:
+    async def test_the_loop_keeps_ticking_through_every_reindex_hop(self, tmp_path, monkeypatch) -> None:
+        """Guards: chunk_dirty's assessment-and-split, build_epoch's
+        fold-and-feed, or the drain running inline on the loop."""
+        real_assess = indexing._assess_and_split
+        real_builder = indexing.postings_builder
+
+        def sleepy_assess(rows: Any, generation: str) -> Any:
+            time.sleep(0.5)
+            return real_assess(rows, generation)
+
+        monkeypatch.setattr(indexing, "_assess_and_split", sleepy_assess)
+        monkeypatch.setattr(indexing, "postings_builder", lambda: _SleepyBuilder(real_builder()))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn_{i}():\n    return {i}\n") for i in range(8)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        gaps: list[float] = []
+
+        async def tick() -> None:
+            last = time.monotonic()
+            while True:
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.ensure_future(tick())
+        result = await storage.reindex()
+        ticker.cancel()
+        assert result.success is True
+        assert gaps and max(gaps) < 0.25
+        assert await _flags(storage, "/f0.py") == (True, True)
+        await storage.close()
+
+
+class TestSplitBatchBudget:
+    async def test_sub_batched_splits_match_the_whole_batch_answer(self, tmp_path, monkeypatch) -> None:
+        # A one-byte budget forces every split target into its own
+        # sub-batch (the flush and singleton-exemption path); the chunk
+        # rows must equal the default whole-batch answer exactly.
+        files = {
+            f"/src/f{i}.py": "\n".join(f"def fn_{i}_{j}():\n    return {i + j}" for j in range(120)) for i in range(6)
+        }
+
+        async def chunk_rows(storage: DatabaseStorage) -> list[tuple]:
+            chunks, entry = storage._host.tables.chunks, storage._host.tables.entry
+            stmt = (
+                select(entry.c.path, chunks.c.chunk_index, chunks.c.line_start, chunks.c.line_end, chunks.c.content)
+                .select_from(chunks.join(entry, chunks.c.entry_id == entry.c.entry_id))
+                .order_by(entry.c.path, chunks.c.chunk_index)
+            )
+            async with storage._host.engine.connect() as conn:
+                return [row._tuple() for row in await conn.execute(stmt)]
+
+        answers: list[list[tuple]] = []
+        for name in ("whole", "batched"):
+            if name == "batched":
+                monkeypatch.setattr(indexing, "_SPLIT_BATCH_BYTES", 1)
+            storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{name}.sqlite")
+            entries = [Entry(path=Path(path), content=content) for path, content in files.items()]
+            assert (await storage.write(entries=entries, parents=True)).success is True
+            assert (await storage.reindex()).success is True
+            answers.append(await chunk_rows(storage))
+            await storage.close()
+        whole, batched = answers
+        assert whole and len(whole) > len(files)  # multi-chunk bodies referee the split
+        assert batched == whole

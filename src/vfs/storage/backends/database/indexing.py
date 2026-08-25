@@ -49,8 +49,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from functools import partial
 from time import time
-from typing import TYPE_CHECKING, Annotated, Any, Final, cast
+from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple, cast
 
 from sqlalchemy import bindparam, column, delete, func, insert, literal, or_, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
@@ -68,11 +69,13 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
     supports_values_update,
 )
+from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
+    from concurrent.futures import Executor
 
     from sqlalchemy import Select, Table, Update
     from sqlalchemy.engine import CursorResult
@@ -99,6 +102,10 @@ _POSTING_BATCH_BYTES: Final = 1 << 20
 # One engine feed's content payload; bounds what a single extraction call
 # copies across the seam, independent of corpus size.
 _EXTRACT_BATCH_BYTES: Final = 32 * 1024 * 1024
+
+# One split call's content payload, the extract budget's twin: bounds the
+# batch encode's transient (~0.4x content measured) — never a corpus cap.
+_SPLIT_BATCH_BYTES: Final = 32 * 1024 * 1024
 
 _SCAN_YIELD_ROWS: Final = 256
 
@@ -189,8 +196,22 @@ async def release_reindex_lease(session: AsyncSession, tables: VFSTables, token:
 # ---------------------------------------------------------------------------
 
 
+class _ChunkWork(NamedTuple):
+    """One chunk pass's CPU product: flag pairs, resplit ids, fresh rows."""
+
+    eligible: list[tuple[str, int]]
+    ineligible: list[tuple[str, int]]
+    resplit_ids: list[str]
+    chunk_rows: list[dict[str, object]]
+
+
 async def chunk_dirty(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile, parameter_budget: int, membership_budget: int
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    executor: Executor,
 ) -> Result:
     """Re-derive per-entry state for every live content entry that is stale.
 
@@ -207,11 +228,24 @@ async def chunk_dirty(
     whose current ``content_hash`` equals its stamped ``chunk_source_hash``
     under the current generation keeps its chunk rows untouched — a
     same-body overwrite or restore re-splits nothing — and only re-stamps
-    its flags. Every remaining body splits through one batched engine
-    call; per entry the fresh chunk rows replace the old, gram eligibility
-    is stamped from the body just read, and ``chunked`` flips guarded on
-    the version the content was read at — a guard miss leaves the entry
-    dirty for the next run, and its just-written state unused.
+    its flags. Every remaining body splits through byte-bounded batched
+    engine calls; per entry the fresh chunk rows replace the old, gram
+    eligibility is stamped from the body just read, and ``chunked`` flips
+    guarded on the version the content was read at — a guard miss leaves
+    the entry dirty for the next run, and its just-written state unused.
+
+    The pass's CPU — eligibility assessment, the splits, and chunk-row
+    assembly — runs whole on the backend's offload pool
+    (:func:`~vfs.storage.backends.database.offload.call_offloaded`), so
+    the event loop keeps serving concurrent callers for its duration.
+    Residency profile, honestly: the dirty set's rows (bodies included)
+    are materialized before the hop, and the pass peaks at ~6.1x dirty
+    content on the measured shapes — set by the chunk-insert
+    executemany, linear in the dirty set; the split batches bound only
+    the batch encode's transient. A streaming per-sub-batch
+    delete/insert flush is the future direction if a deployment needs
+    a tighter bound; the profile is a recorded suboptimality, never a
+    designed corpus cap.
     """
     entry, content, chunks = tables.entry, tables.content, tables.chunks
     generation = chunk_generation()
@@ -237,47 +271,17 @@ async def chunk_dirty(
     rows = (await session.execute(dirty)).all()
     if not rows:
         return Result(ops=("reindex",))
-    eligible: list[tuple[str, int]] = []
-    ineligible: list[tuple[str, int]] = []
-    resplit_ids: list[str] = []
-    split_targets: list[Any] = []
-    for row in rows:
-        body_ok = row.content is not None and _indexable(row.content)
-        (eligible if body_ok else ineligible).append((row.entry_id, row.version))
-        skipped = (
-            row.content_hash is not None
-            and row.content_hash == row.chunk_source_hash
-            and row.chunk_generation == generation
-        )
-        if skipped:
-            continue
-        resplit_ids.append(row.entry_id)
-        if body_ok:
-            split_targets.append(row)
-    batches = Chunk.split_batch([(Path(row.path), row.content, row.ext) for row in split_targets])
-    chunk_rows: list[dict[str, object]] = [
-        {
-            "entry_id": row.entry_id,
-            "chunk_index": piece.chunk_index,
-            "line_start": piece.line_start,
-            "line_end": piece.line_end,
-            "content_hash": piece.content_hash,
-            "encoded": False,
-            "content": piece.content,
-        }
-        for row, pieces in zip(split_targets, batches, strict=True)
-        for piece in pieces
-    ]
-    for ids in chunked(resplit_ids, membership_budget):
+    work = await call_offloaded(executor, partial(_assess_and_split, rows, generation))
+    for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
-    if chunk_rows:
-        await session.execute(insert(chunks), chunk_rows)
+    if work.chunk_rows:
+        await session.execute(insert(chunks), work.chunk_rows)
     await seam("reindex:before-chunk-flip")
     provenance = {"chunk_source_hash": entry.c.content_hash, "chunk_generation": generation}
     stamp = {"chunked": True, "indexable": True, **provenance}
-    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, eligible, assignments=stamp)
+    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.eligible, assignments=stamp)
     stamp = {"chunked": True, "indexable": False, **provenance}
-    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, ineligible, assignments=stamp)
+    await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.ineligible, assignments=stamp)
     return Result(ops=("reindex",))
 
 
@@ -286,7 +290,7 @@ async def chunk_dirty(
 # ---------------------------------------------------------------------------
 
 
-async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexState) -> Result:
+async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexState, executor: Executor) -> Result:
     """Build the full posting set under a fresh epoch, or no-op.
 
     The no-op check: no live entry awaits encoding and the current
@@ -307,12 +311,15 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     Extraction and posting encode run in the active engine
     (:mod:`vfs.native`): content streams through in bounded batches in
     ascending row-id order, and the builder's gram-ordered drain feeds
-    byte-capped inserts. Peak build memory is the accumulated posting
-    set — compressed delta blobs in the Rust engine, raw id lists in the
-    pure fallback — held for the whole build and paid whenever any entry
-    is dirty. A known suboptimality, deliberately not converted into a
-    designed corpus cap; gram-range partitioned passes are the future
-    direction if a deployment ever needs a tighter bound.
+    byte-capped inserts. The build's CPU — the fold-and-feed of each
+    batch and every drain call — hops through the backend's offload
+    pool, so the loop keeps serving while the engine works. Peak build
+    memory is the accumulated posting set — compressed delta blobs in
+    the Rust engine, raw id lists in the pure fallback — held for the
+    whole build and paid whenever any entry is dirty. A known
+    suboptimality, deliberately not converted into a designed corpus
+    cap; gram-range partitioned passes are the future direction if a
+    deployment ever needs a tighter bound.
     """
     entry = tables.entry
     state.previous_epoch = await current_epoch(session, tables)
@@ -328,22 +335,24 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     )
     builder = postings_builder()
     covered: dict[str, int] = {}
-    batch: list[tuple[int, bytes]] = []
+    # Content length in characters is the batch's byte proxy (exact for
+    # ASCII-dominant code); the fold itself runs inside the hop.
+    batch: list[tuple[int, str]] = []
     batch_bytes = 0
     rows = await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS))
     async for row in rows:
         covered[row.entry_id] = row.version
-        data = folded_bytes(row.content)
-        batch.append((row.id, data))
-        batch_bytes += len(data)
+        batch.append((row.id, row.content))
+        batch_bytes += len(row.content)
         if batch_bytes >= _EXTRACT_BATCH_BYTES:
-            builder.add_docs(batch)
+            await call_offloaded(executor, partial(_feed_docs, builder, batch))
             batch, batch_bytes = [], 0
     if batch:
-        builder.add_docs(batch)
+        await call_offloaded(executor, partial(_feed_docs, builder, batch))
     state.covered = list(covered.items())
+    drain = partial(builder.next_batch, _POSTING_BATCH_BYTES)
     try:
-        while (drained := builder.next_batch(_POSTING_BATCH_BYTES)) is not None:
+        while (drained := await call_offloaded(executor, drain)) is not None:
             await session.execute(
                 insert(tables.posting_list),
                 [
@@ -449,6 +458,74 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
 def _now_ms() -> int:
     """Wall-clock epoch milliseconds — the lease's cross-instance currency."""
     return int(time() * 1000)
+
+
+def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
+    """The chunk pass's CPU pipeline, whole — runs on the offload pool.
+
+    Assess eligibility and the fingerprint skip per row, split the
+    remainder in byte-bounded batches, and assemble the fresh chunk
+    rows. Pure over its inputs: no session, no shared state.
+    """
+    eligible: list[tuple[str, int]] = []
+    ineligible: list[tuple[str, int]] = []
+    resplit_ids: list[str] = []
+    split_targets: list[Any] = []
+    for row in rows:
+        body_ok = row.content is not None and _indexable(row.content)
+        (eligible if body_ok else ineligible).append((row.entry_id, row.version))
+        skipped = (
+            row.content_hash is not None
+            and row.content_hash == row.chunk_source_hash
+            and row.chunk_generation == generation
+        )
+        if skipped:
+            continue
+        resplit_ids.append(row.entry_id)
+        if body_ok:
+            split_targets.append(row)
+    chunk_rows: list[dict[str, object]] = []
+    for batch in _split_batches(split_targets):
+        batches = Chunk.split_batch([(Path(row.path), row.content, row.ext) for row in batch])
+        chunk_rows.extend(
+            {
+                "entry_id": row.entry_id,
+                "chunk_index": piece.chunk_index,
+                "line_start": piece.line_start,
+                "line_end": piece.line_end,
+                "content_hash": piece.content_hash,
+                "encoded": False,
+                "content": piece.content,
+            }
+            for row, pieces in zip(batch, batches, strict=True)
+            for piece in pieces
+        )
+    return _ChunkWork(eligible, ineligible, resplit_ids, chunk_rows)
+
+
+def _split_batches(rows: Sequence[Any]) -> Iterator[list[Any]]:
+    """Byte-bounded slices of the split targets, one oversized body alone.
+
+    Content length in characters is the byte proxy — exact in the
+    ASCII-dominant regime; the budget shapes transient residency,
+    never results (batch boundaries change nothing the splitter emits).
+    """
+    batch: list[Any] = []
+    total = 0
+    for row in rows:
+        size = len(row.content)
+        if batch and total + size > _SPLIT_BATCH_BYTES:
+            yield batch
+            batch, total = [], 0
+        batch.append(row)
+        total += size
+    if batch:
+        yield batch
+
+
+def _feed_docs(builder: Any, batch: list[tuple[int, str]]) -> None:
+    """Fold and feed one extract batch — the build's CPU, off the loop."""
+    builder.add_docs([(row_id, folded_bytes(content)) for row_id, content in batch])
 
 
 def _indexable(content: str) -> bool:

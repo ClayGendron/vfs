@@ -1,14 +1,18 @@
-"""Verify leaves the event loop: the matcher offload seam.
+"""CPU-bound work leaves the event loop: the backend's offload seam.
 
-The verify stage is CPU-bound — up to a full wall budget of matching
-per grep call — and running it inline holds the event loop against
-every concurrent caller on the host. :class:`VerifyOffload` decorates a
-compiled :class:`~vfs.pattern_matching.ContentMatcher` so each
+Two verbs run real CPU inside their coroutines — grep's verify stage
+(up to a full wall budget of matching per call) and reindex's chunk
+and posting stages — and running either inline holds the event loop
+against every concurrent caller on the host. Both hop through one
+small executor the backend owns: :func:`call_offloaded` is the shared
+hop (submit, await, and the close-window inline fallback), and
+:class:`VerifyOffload` decorates a compiled
+:class:`~vfs.pattern_matching.ContentMatcher` over it so each
 per-batch ``count_lines``/``hit_lines`` call runs on a worker thread
-from a small executor the backend owns, while the loop keeps ticking.
-Engines stay synchronous and thread-ignorant: the wrapper is the only
-threaded code, and these are the tree's only deliberate threads — a
-declared exception, owned here.
+while the loop keeps ticking. Engines stay synchronous and
+thread-ignorant: this seam is the only threaded code, and these are
+the tree's only deliberate threads — a declared exception, owned
+here.
 
 Three laws govern the hop:
 
@@ -55,12 +59,27 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-# Verify pool width: available parallelism, no knob. Measured (10-core,
+# Offload pool width: available parallelism, no knob. Measured (10-core,
 # 32 MiB batches): throughput plateaus by 4 workers and holds flat at
 # cores — rayon inside one native call already saturates the CPUs, and
 # co-running callers queue cleanly; only past-cores oversubscription
 # degrades, and this size never oversubscribes.
-VERIFY_WORKERS: Final = os.cpu_count() or 1
+OFFLOAD_WORKERS: Final = os.cpu_count() or 1
+
+
+async def call_offloaded(executor: Executor, work: Callable[[], T]) -> T:
+    """Run *work* on the backend's pool; the loop keeps ticking meanwhile.
+
+    The one hop every offloaded stage takes. A pool shut by ``close()``
+    mid-call serves the work inline — one on-loop call in the close
+    window, never a raw escape — and the next verb re-mints a fresh
+    pool from the host.
+    """
+    try:
+        future = executor.submit(work)
+    except RuntimeError:
+        return work()
+    return await asyncio.wrap_future(future)
 
 
 class VerifyOffload:
@@ -118,10 +137,4 @@ class VerifyOffload:
             finally:
                 self._in_flight = False
 
-        try:
-            future = self._executor.submit(guarded)
-        except RuntimeError:
-            # close() shut this pool mid-call: serve the batch inline —
-            # one on-loop batch in the close window, never a raw escape.
-            return guarded()
-        return await asyncio.wrap_future(future)
+        return await call_offloaded(self._executor, guarded)

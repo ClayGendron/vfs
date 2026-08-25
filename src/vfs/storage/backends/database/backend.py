@@ -264,7 +264,7 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.parameter_budget,
                 self._host.membership_budget,
-                self._host.verify_executor,
+                self._host.offload_executor,
                 pattern=pattern,
                 ext=ext,
                 ext_not=ext_not,
@@ -553,14 +553,21 @@ class DatabaseStorage:
         result = await self._execute_write(
             "reindex",
             lambda session: chunk_dirty(
-                session, tables, self._host.profile, self._host.parameter_budget, self._host.membership_budget
+                session,
+                tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                self._host.membership_budget,
+                self._host.offload_executor,
             ),
         )
         if not result.success:
             return result
         if lost.is_set():
             return lease_lost_result()
-        result = await self._execute_write("reindex", lambda session: build_epoch(session, tables, state))
+        result = await self._execute_write(
+            "reindex", lambda session: build_epoch(session, tables, state, self._host.offload_executor)
+        )
         if not result.success or state.epoch is None:
             return result
         await seam("reindex:before-publish")

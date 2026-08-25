@@ -1,6 +1,35 @@
 # 120 — Reindex leaves the event loop: whole-verb offload, split-batch byte budget, honest residency
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  Slices A+B: every CPU-bound reindex stage hops through the
+  backend's pool — ``chunk_dirty``'s assessment-and-split runs whole
+  on the worker (one hop for the pass), ``build_epoch``'s
+  fold-and-feed hops per extract batch, and every drain call hops —
+  all via the new shared ``call_offloaded`` (submit, await, and the
+  close-window inline fallback), which ``VerifyOffload`` now rides
+  too. The pool decision: the verify pool is shared and renamed to
+  what it now is — ``EngineHost.offload_executor`` /
+  ``OFFLOAD_WORKERS`` — with spec 122's close rules unchanged and
+  ledger row P8's anchor renamed. Measured on the 2,000-file probe
+  corpus: worst loop gap 483 ms inline → 50 ms offloaded (native)
+  and 1,327 ms inline (at 1,000 files) → 36 ms offloaded (pure);
+  the residual gap is the session's own on-loop statement work.
+  §4's pin took the house tick-gap shape (sleeping doubles per hop,
+  threshold 0.25 s — deterministic where a real-corpus threshold
+  would flake on loaded runners; the real-corpus figures live here
+  and in ADR 048's amendment): ledger row P14, all three inline
+  mutations executed and killed. Slice C: ``_SPLIT_BATCH_BYTES``
+  (32 MiB, ``_EXTRACT_BATCH_BYTES``'s declared twin) bounds the
+  split feed with the singleton exemption; equality with the
+  whole-batch answer pinned (ledger row P15, the trailing-batch
+  mutant executed and killed); ``chunk_dirty`` discloses the ~6.1x
+  residency profile and names the streaming-flush future direction;
+  ADR 048 §2 carries the F1 amendment with the measured
+  post-offload bound. Gates: 3.13 CI leg green at 100 % coverage
+  (native 2,661, pure 2,648); all four engine legs green; the linux
+  gate re-run whole — write 48 s, **reindex 51 s** (≤60 s target
+  held, 54 s pre-offload), db 4.9 GB, all 25 query rows in the
+  healthy profile with the one designed truncation flagged.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   finding F1 (the loop stall — the arc's headline major), its
@@ -120,7 +149,16 @@ Laws that bind the slices:
 
 - Whether the offload executor is the verify pool or a sibling —
   a planning decision, made where spec 122's lifecycle rules can
-  see it.
+  see it. **Resolved at landing: shared** — one backend pool, one
+  lifecycle, no deadlock shape (no offloaded stage ever submits to
+  the pool from a worker); renamed ``offload_executor`` to say what
+  it now serves.
 - The loop-gap threshold for §4's pin: tight enough to catch a
   regression to inline execution, loose enough to survive CI noise —
-  set it from measured runs, and record the measurement.
+  set it from measured runs, and record the measurement. **Resolved
+  at landing:** real-corpus thresholds flake (offloaded residual
+  50 ms scales with machine load; native inline 483 ms could halve
+  on faster hardware), so the pin is the house sleeping-double
+  shape — 0.5 s sleeps per hop against a 0.25 s threshold,
+  deterministic on any runner — and the real-corpus measurements
+  are recorded in the status line and ADR 048's amendment instead.

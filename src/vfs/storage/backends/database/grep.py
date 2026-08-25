@@ -11,7 +11,7 @@ truncation can never drop in-scope rows — apply the structural gates
 off the rows' own stored facts (no per-candidate ``Path``) before any
 content fetch, verify every candidate through the shared matcher (the
 Rust core where the extension serves, its Python approximation
-otherwise — batched per content batch on the backend-owned verify
+otherwise — batched per content batch on the backend-owned offload
 pool, the absolute wall deadline crossing the hop), and union the
 flag-partitioned scan side
 (``NOT encoded``) so index staleness can never lose a match.

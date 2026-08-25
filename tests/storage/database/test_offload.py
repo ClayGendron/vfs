@@ -310,15 +310,15 @@ class TestExecutorOwnership:
     async def test_the_pool_is_lazy_and_minted_once(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         host = storage._host
-        assert host._verify_executor is None
-        first = host.verify_executor
-        assert host.verify_executor is first
+        assert host._offload_executor is None
+        first = host.offload_executor
+        assert host.offload_executor is first
         await storage.close()
 
     async def test_close_shuts_the_pool_down_without_waiting(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         gate = threading.Event()
-        pool = storage._host.verify_executor
+        pool = storage._host.offload_executor
         pool.submit(gate.wait, 5.0)
         start = monotonic()
         await storage.close()
@@ -328,19 +328,19 @@ class TestExecutorOwnership:
             pool.submit(time.sleep, 0)
         # The slot is cleared, never left holding the dead pool: the
         # next grep re-mints fresh (the sibling serve-after-close law).
-        assert storage._host._verify_executor is None
-        assert storage._host.verify_executor is not pool
+        assert storage._host._offload_executor is None
+        assert storage._host.offload_executor is not pool
         await storage.close()
 
     async def test_a_pool_minted_after_close_is_shut_by_the_next_close(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.close()
-        reminted = storage._host.verify_executor
+        reminted = storage._host.offload_executor
         assert reminted.submit(time.sleep, 0).result(timeout=5.0) is None
         await storage.close()
         with pytest.raises(RuntimeError):
             reminted.submit(time.sleep, 0)
-        assert storage._host._verify_executor is None
+        assert storage._host._offload_executor is None
 
     async def test_a_grep_racing_close_is_served_whole(self, tmp_path) -> None:
         # close lands mid-grep, after the call captured its pool: the
@@ -364,7 +364,7 @@ class TestExecutorOwnership:
         engine = create_async_engine(_url(tmp_path))
         factory = async_sessionmaker(engine, expire_on_commit=False)
         storage = DatabaseStorage(session_factory=factory)
-        pool = storage._host.verify_executor
+        pool = storage._host.offload_executor
         await storage.close()
         with pytest.raises(RuntimeError):
             pool.submit(time.sleep, 0)
@@ -373,4 +373,4 @@ class TestExecutorOwnership:
     async def test_close_without_a_grep_never_mints_the_pool(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.close()
-        assert storage._host._verify_executor is None
+        assert storage._host._offload_executor is None

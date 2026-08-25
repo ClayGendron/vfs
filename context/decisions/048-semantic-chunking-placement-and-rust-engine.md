@@ -88,7 +88,17 @@ year-plus stale, 4 missing).
    worker, and returns chunk spans for a batch of files in one call.
    Expected profile: the linux-corpus chunk wall drops from 161 s to
    ~25 s at 8 workers, and the reindex verb's event-loop occupancy
-   for chunking goes to approximately zero.
+   for chunking goes to approximately zero. *Amendment (2026-08-25,
+   chunking-arc landing review, F1):* GIL detachment alone never
+   delivered the occupancy claim — it frees threads, not the calling
+   coroutine, and the loop measured dead for the whole chunk wall
+   (2,000 files → 2,250 ms worst gap). Spec 120 makes the claim true
+   by hopping every CPU-bound reindex stage through the backend's
+   offload pool; the measured post-offload bound is ~50 ms worst
+   loop gap at a 2,000-file probe corpus on both engines (inline:
+   483 ms native at that corpus, 1,327 ms pure at 1,000 files), the
+   residual gap set by the session's own on-loop statement work,
+   not the chunk or posting CPU.
 3. **All 68 mapped grammars are bundled statically**, as generated
    `parser.c` sources vendored at exactly the `repo` + `rev` pins of
    the pack's `language_definitions.json` at adoption time, compiled

@@ -61,7 +61,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.offload import VERIFY_WORKERS
+from vfs.storage.backends.database.offload import OFFLOAD_WORKERS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -142,8 +142,8 @@ class EngineHost:
         # loop-free so construct-here, first-touch-elsewhere works.
         self._lock: asyncio.Lock | None = None
         # Owned either way (built or borrowed) — connectivity etiquette
-        # never applies to the host's own verify pool.
-        self._verify_executor: ThreadPoolExecutor | None = None
+        # never applies to the host's own offload pool.
+        self._offload_executor: ThreadPoolExecutor | None = None
 
     @property
     def engine(self) -> AsyncEngine:
@@ -168,16 +168,18 @@ class EngineHost:
         return membership_budget(self.profile, self.parameter_budget)
 
     @property
-    def verify_executor(self) -> ThreadPoolExecutor:
-        """The verify offload pool — lazy on first grep, shut and cleared at close.
+    def offload_executor(self) -> ThreadPoolExecutor:
+        """The CPU offload pool — lazy on first use, shut and cleared at close.
 
-        Cleared, not just shut: a grep after close re-mints a fresh pool
-        and serves, the same transparent re-establishment every sibling
-        verb already has; any re-minted pool is shut by the next close.
+        Serves every offloaded stage (grep verify, reindex's chunk and
+        posting passes). Cleared, not just shut: a call after close
+        re-mints a fresh pool and serves, the same transparent
+        re-establishment every sibling verb already has; any re-minted
+        pool is shut by the next close.
         """
-        if self._verify_executor is None:
-            self._verify_executor = ThreadPoolExecutor(max_workers=VERIFY_WORKERS, thread_name_prefix="vfs-verify")
-        return self._verify_executor
+        if self._offload_executor is None:
+            self._offload_executor = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-offload")
+        return self._offload_executor
 
     @property
     def topology_key(self) -> int:
@@ -264,17 +266,18 @@ class EngineHost:
     async def close(self) -> None:
         """Dispose iff built; idempotent; borrowed connectivity is never touched.
 
-        The verify pool is the host's own either way and every close
+        The offload pool is the host's own either way and every close
         shuts whatever pool exists — without waiting: an abandoned
-        worker mid-match finishes into the void rather than holding
-        close hostage. Queued batches are never cancelled: their greps
-        are still awaiting, and a served call beats a poisoned one. The
-        slot is cleared so the next grep re-mints (the sibling posture:
-        verbs serve after close), owned by whichever close comes next.
+        worker mid-call finishes into the void rather than holding
+        close hostage. Queued work is never cancelled: its callers are
+        still awaiting, and a served call beats a poisoned one. The
+        slot is cleared so the next offloaded call re-mints (the
+        sibling posture: verbs serve after close), owned by whichever
+        close comes next.
         """
-        if self._verify_executor is not None:
-            self._verify_executor.shutdown(wait=False)
-            self._verify_executor = None
+        if self._offload_executor is not None:
+            self._offload_executor.shutdown(wait=False)
+            self._offload_executor = None
         if self._closed:
             return
         self._closed = True
