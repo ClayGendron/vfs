@@ -53,6 +53,15 @@
   stays loudly truncated), and the decision set is recorded as
   **ADR 039**. The story's one open fork is tree-sitter chunking on
   the reindex path (§2, needs Clay); everything else is done.
+  **Fork resolved 2026-08-25:** Clay decided it via **ADR 048**
+  (chunking reindex-side by law; the split moves to a rayon-parallel
+  Rust engine in vfs-core with all 68 grammars vendored at the
+  pack's pinned revs; pure fallback degrades to the character
+  splitter; fingerprint-skip stamped by chunk generation), on the
+  two 2026-08-25 research memos (write-vs-reindex measurements;
+  Rust spike with 500/500 span parity and 6.6× on 8 workers).
+  `specs/active/117-rust-chunking-engine/` owns the landing; this
+  spec archives when 117 lands.
 - **Date:** 2026-08-16
 - **Owner:** Clay Gendron
 - **Kind:** performance rewrite of the grep hot loops behind

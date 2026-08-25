@@ -165,14 +165,6 @@
 - **Options considered:** memo §8.1 and §8.6; ADR 022's refresh notes in §8.4 (stale fastmcp citation, "session state" wording).
 - **Status:** open
 
-## Semantic chunking is 84% of the reindex wall — process pool, off-path, accept, or Rust tree-sitter?
-
-- **Asked:** 2026-08-16 by Claude (spec 103 slice B's full-corpus measurement; needs Clay)
-- **Context:** With the build side in Rust, the linux reindex fell 672 s → 191 s — and tree-sitter `Chunk.split` surfaced as 161 s of what remains (it was hiding inside the pure baseline's 672 s, unattributed). Chunk rows serve only the embedding pipeline; no gram-path code reads them, so the grep-index build proper is ~30 s and already inside spec 103's ≤60 s target — the *verb* misses it only because of chunking. In-process parallelism is measured dead: the tree_sitter pyo3 binding holds the GIL through `parse` and its `Parser` is thread-pinned (1.0× on 8 threads).
-- **Blocking:** spec 103 §2's ≤60 s reindex target as a *verb* claim; nothing else — the landing is correct and 3.5× faster as-is.
-- **Options considered:** (a) process-pool the splits inside `chunk_dirty` (~8× on typical laptops; but a library verb spawning worker processes is a posture question — daemonized hosts, uvicorn workers); (b) move chunking off the reindex path to its own verb or the embedding pipeline's schedule (contract change); (c) accept the verb wall and record the split honestly; (d) tree-sitter in Rust inside vfs-core (real threads, big grammar-parity scope).
-- **Status:** open
-
 ## vfs-js and vfs-rs sibling implementations
 
 - **Asked:** 2026-08-16 by Clay (at spec 103's packaging-fork review)
@@ -180,29 +172,3 @@
 - **Blocking:** nothing current; it shaped spec 103 §1's crate layout (recorded there). Its own research → decide arc starts when Clay prioritizes it.
 - **Options considered:** none yet — the fork space (shared Rust core with bindings everywhere vs independent idiomatic implementations vs wasm-first) is the future research question.
 - **Status:** parked
-
-## Grep verify occupies the event loop
-
-- **Asked:** 2026-08-18, out of the glob/grep review campaign (adversarial-lens lead; recorded by spec 110 §4)
-- **Context:** The verify stage runs synchronously inside the grep coroutine on both engines: up to a full `grep_wall_seconds` (default 10 s) of matching holds the event loop, so concurrent calls on the same host stall behind one heavy grep. Spec 110 bounded the pure engine's within-body worst case (deadline consulted between 16-line slices; residual is one slice's backtracking, measured 273 ms on a pathological shape) — but even bounded, wall-budget-sized synchronous matching is real occupancy for the high-concurrency agent audience, Rust engine included.
-- **Blocking:** nothing shipped; it shapes the concurrency story whenever that becomes active work.
-- **Options considered (none decided):** (a) offload verify to a worker thread through the seam — the Rust core can release the GIL, pure `re` cannot, and ordering/cancellation semantics need design; (b) cooperative yields between content batches — cheap, bounds the stall at one batch, no true parallelism; (c) accept occupancy and document it.
-- **Research:** `research/2026-08-18-matcher-offload.md` (commissioned by the remediation-landing decision pass) — measured: the Rust seam already detaches the GIL, so thread offload fully fixes occupancy there (1.5 s stall → ≤41 ms) and bounds pure-engine stalls at the longest single `re` call; per-call tax ~38 µs; recommendation is a decorating wrapper with a small owned executor, taken up when the concurrency story activates.
-- **Status:** open — research done; decision deferred to the concurrency story (decision pass 2026-08-18)
-
-## Bounding the pure scan's backtracking residual
-
-- **Asked:** 2026-08-18, out of the remediation-landing review (scale-lens major; recorded by spec 112 §4)
-- **Context:** The pure engine consults its deadline between 16-line slices, and one slice of `re` backtracking is uninterruptible and exponential in line content under a pathological pattern — measured for `(a+)+bcd`: 273 ms for a 16-line slice of 18-char lines, doubling per two characters, 75 s for a single 30-char line under a declared 1 s budget. Single-slice bodies pay it whole after their one entry check. Results after an overrun are exact (a wall breach, never wrong data), the incomplete flag stays a data-completeness signal by law, and the storage caller's per-batch deadline check records any breach that could cost data — so this is a wall-fidelity gap, not a correctness one. The `_PureMatcher` docstring names the magnitude honestly; the Rust engine is linear and unaffected.
-- **Blocking:** nothing shipped; it matters when a hostile or unlucky pattern on the pure engine must not hold a worker for minutes.
-- **Options considered (none decided):** (a) finer-grain interruption — a wrapping scan that re-checks the clock per match attempt; per-match overhead on every budgeted scan, and still floored by one attempt's backtracking; (b) a pattern-complexity gate on the pure path — refuses shapes the language gate admits today, colliding with the no-designed-caps rule; needs its own decision pass; (c) offload the scan to a worker thread where a true timeout is possible — the same territory as the event-loop occupancy fork above; one decision should settle both.
-- **Research:** `research/2026-08-18-matcher-offload.md` — option (c) is measured **not viable against this residual**: one sre backtracking episode holds the GIL as a single C call, so a worker thread stalls the loop identically (2,151 vs 2,141 ms), `wait_for`'s timer cannot fire until sre finishes, and the abandoned thread burns to completion. The only hard stop is process death (kill measured at 0.507 s; ~255 ms respawn, broken pool per kill) — a posture question shared with the semantic-chunking entry. The memo's lean: settled-by-engine-choice (the Rust engine is the linear-time answer; the pure fallback keeps its disclosed residual), with process workers considered only as one joint library-posture decision.
-- **Status:** open — research done; the thread half of the joint fork is answered (it settles occupancy, not this residual); any hard bound waits on the worker-posture decision shared with chunking
-
-## A standing mutation harness for the pinned laws?
-
-- **Asked:** 2026-08-18 by Claude (spec 109's open question, re-raised by spec 113 and the remediation-landing decision pass, which routed the ladder-defer comparator-strictness question here); recorded 2026-08-19 at the 107–116 mining pass
-- **Context:** Every review campaign has found laws that held by authorship and were proven unpinned by a hand-run mutant surviving the whole suite (specs 109 and 113 landed nine such pins, each hand-proven under the safe-restore rule; `standards/testing.md` now states the discipline). The question is whether the curated mutants should run as a standing harness — in CI or a periodic leg — so the pins stay armed against future rewrites, at real suite-time cost.
-- **Blocking:** nothing; the pins land hand-proven today. The ladder-defer comparator tie at the exact crossover (`allow_size=80`, observationally inert) is the first candidate row such a harness would carry.
-- **Options considered (none decided):** (a) a curated-mutant leg (a list of one-line mutations with their expected killing tests, run nightly or on demand, outside the coverage gate); (b) a general mutation tool (mutmut-style) scoped to the matching and storage modules, accepting its run time; (c) keep the hand-proven discipline only and re-run the ledger at each review campaign.
-- **Status:** open

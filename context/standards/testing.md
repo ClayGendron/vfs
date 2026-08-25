@@ -61,8 +61,12 @@ shapes, or unbudgeted paths. So:
   promises get exact-equality rows (`==`, not `<=`); budgeted paths
   get budgeted parity rows.
 
-Whether curated mutants become a standing CI harness is an open
-question (`../open-questions.md`); today pins land hand-proven.
+Pinned mutations also land as rows in `mutant-ledger.md` (intent +
+anchor, scoped selection, advisory killers), and review campaigns
+replay them — the `test_review` skill owns the procedure, always in
+an isolated worktree, never the live tree (ADR 050). A replayed row
+reports killed, survived (a pin regressed), or stale (re-prove or
+retire); recorded killers are diagnosis, never the assertion.
 
 ## Engine legs are reentrant
 

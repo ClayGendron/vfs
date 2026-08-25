@@ -44,18 +44,66 @@ A clause is pinned only if some assertion *distinguishes* the promised
 behavior from a plausible wrong one. "A test calls this function" is
 not pinning.
 
-### 2. Think in mutations
+### 2. Think in mutations — and execute the ones that matter
 
 For each key changed line, ask: if I flipped this condition, off-by-
 one'd this bound, swapped `<` for `<=`, reordered these two calls, or
 deleted this call entirely — **which test fails?** Name the test. If
-you cannot name one, that surviving mutation is a finding: the line is
-executed but unchecked. Prioritize mutations on branches (error
-classification, capability gates, chunk boundaries) and on calls whose
-effect is only visible later (version stamps, cleanup, ordering).
-Do not run a mutation tool; reason it out and cite the lines.
+you cannot name one, that surviving mutation is a candidate finding.
+Prioritize mutations on branches (error classification, capability
+gates, chunk boundaries) and on calls whose effect is only visible
+later (version stamps, cleanup, ordering).
 
-### 3. Audit error paths
+Then **execute the strongest candidates** — a reasoned "no test would
+catch this" is a hypothesis; a mutant that runs green is proof. Do not
+run a mutation tool; apply each candidate by hand under the
+**mutation protocol**. The live repo stays read-only — other agents
+run against it concurrently, so even a briefly-mutated `src/` poisons
+their reads and test runs. All mutation work happens in an isolated
+tree under the session scratchpad:
+
+1. **Once per review**, make the isolated tree:
+   `git -C <repo> worktree add <scratchpad>/mutant-tree <tip-sha>`
+   (detached at the reviewed tip; if the review covers uncommitted
+   state, copy those dirty files in on top). Then prime it once:
+   `uv sync` inside the worktree (wheel and deps come from uv's
+   cache; slow only on the first prime).
+2. Apply the one-line mutation **in the worktree**; run the scoped
+   tests from there (`uv run --project <worktree> pytest
+   <worktree>/tests/...` — the test file or directory owning that
+   surface, never the full suite).
+3. Between mutants, restore the worktree file from its own committed
+   state (`git -C <worktree> checkout -- <file>` — safe there and
+   only there: the worktree holds nothing uncommitted by design) and
+   confirm `git -C <worktree> status --porcelain` is clean.
+4. When done, `git -C <repo> worktree remove <scratchpad>/mutant-tree
+   --force`. Never point a mutation, a restore, or a test run at the
+   live repo path.
+
+An executed mutant that survives its scope is a **finding with a
+repro** (report the exact mutation and the green run); one that dies
+names its killer and goes in the coverage ledger as verified-pinned.
+When a landing later pins a proven survivor, the mutation belongs in
+`context/standards/mutant-ledger.md` as a new row.
+
+### 3. Replay the mutant ledger
+
+`context/standards/mutant-ledger.md` holds every mutation a past
+campaign proved and pinned. Replay the rows whose target files
+intersect the review scope — and when the scope is broad or time
+allows, the whole ledger (~2 minutes) — under the same mutation
+protocol (in the isolated worktree, never the live repo), following
+the ledger's own replay rules: rows record intent
+plus a best-known anchor, so a moved anchor means re-deriving the
+mutation from intent, not declaring failure; the assertion is **≥1
+failure in the row's scope**, never a named test (recorded killers
+are advisory diagnosis — mapping drift is normal and healthy).
+Report per row: **killed** (note it in coverage), **survived** (a pin
+regressed — a high-severity finding with the mutation as repro), or
+**stale** (the concept the row mutates no longer exists — propose
+retiring the row, with reasoning). Never skip a row silently.
+
+### 4. Audit error paths
 
 Untested error handling is where catastrophic failures live. Every
 classified error the changed code can return (each `VFSErrorKind` it

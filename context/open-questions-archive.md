@@ -352,3 +352,51 @@ resolve to this file.
 - **Blocking:** spec 103 slices B–D (`specs/active/103-grep-pipeline-rust-core/`); resolved by slice A's packaging memo.
 - **Options considered:** required extension (one path, no drift risk, sdist needs a toolchain); optional accelerator + fallback seam (installs anywhere, CI runs both sides, bench gate binds the accelerated path); numpy-only vectorization (declined by Clay 2026-08-16 — clears one loop, not the class).
 - **Status:** resolved 2026-08-16 (Clay, in session, in two steps: "lets keep a pure python fallback", then — rejecting the two-package shape at review — the pendulum model) — one package: maturin mixed layout with the complete pure-Python implementation inside every wheel, extension beside it where wheels exist, sdist self-bootstrapping Rust elsewhere; Rust engine logic in binding-free core crates for the vfs-js/vfs-rs future. Engineering facts and the review addendum in `research/2026-08-16-rust-accelerator-packaging.md`; recorded in spec 103 §1.
+
+## Semantic chunking is 84% of the reindex wall — process pool, off-path, accept, or Rust tree-sitter?
+
+- **Asked:** 2026-08-16 by Claude (spec 103 slice B's full-corpus measurement; needs Clay)
+- **Context:** With the build side in Rust, the linux reindex fell 672 s → 191 s — and tree-sitter `Chunk.split` surfaced as 161 s of what remains (it was hiding inside the pure baseline's 672 s, unattributed). Chunk rows serve only the embedding pipeline; no gram-path code reads them, so the grep-index build proper is ~30 s and already inside spec 103's ≤60 s target — the *verb* misses it only because of chunking. In-process parallelism is measured dead: the tree_sitter pyo3 binding holds the GIL through `parse` and its `Parser` is thread-pinned (1.0× on 8 threads).
+- **Blocking:** spec 103 §2's ≤60 s reindex target as a *verb* claim; nothing else — the landing is correct and 3.5× faster as-is.
+- **Options considered:** (a) process-pool the splits inside `chunk_dirty` (~8× on typical laptops; but a library verb spawning worker processes is a posture question — daemonized hosts, uvicorn workers); (b) move chunking off the reindex path to its own verb or the embedding pipeline's schedule (contract change); (c) accept the verb wall and record the split honestly; (d) tree-sitter in Rust inside vfs-core (real threads, big grammar-parity scope).
+- **Research:** `research/2026-08-25-semantic-chunking-write-vs-reindex.md` (write-path placement measured closed: +8 % single small write, +106 % per mid-size edit, 10–12× on a 10k ETL batch; the pack's thread-pinned `Parser` panics across threads with a `BaseException` that escapes the fallback; nine-system prior-art consensus defers this work class) and `research/2026-08-25-rust-tree-sitter-chunking.md` (executed Rust spike: 500/500 exact span parity, 1.1× serial, 6.6× on 8 rayon workers; grammar supply chain: the pack ≥1.8 downloads grammar dylibs at first use, crates.io grammars 25/68 stale and 4 missing; vendored parser.c at the pack's pinned revs is the hermetic route, ~25 MB wheel growth for all 68).
+- **Status:** resolved 2026-08-25 (Clay, in session, via the decision-question pass) → **ADR 048** (`decisions/048-semantic-chunking-placement-and-rust-engine.md`): chunking is reindex-side by law and never on the write path; the split engine moves to Rust in vfs-core (rayon-parallel, GIL-detached) with all 68 mapped grammars vendored statically at the pack's pinned revs; the pure fallback degrades to the recursive character splitter and the tree-sitter-language-pack dependency is deleted; fingerprint-skip with an engine/grammar stamp joins the dirty pass. The implementing spec owns the rest.
+
+## Grep verify occupies the event loop
+
+- **Asked:** 2026-08-18, out of the glob/grep review campaign (adversarial-lens lead; recorded by spec 110 §4)
+- **Context:** The verify stage runs synchronously inside the grep coroutine on both engines: up to a full `grep_wall_seconds` (default 10 s) of matching holds the event loop, so concurrent calls on the same host stall behind one heavy grep. Spec 110 bounded the pure engine's within-body worst case — but even bounded, wall-budget-sized synchronous matching is real occupancy for the high-concurrency agent audience, Rust engine included.
+- **Options considered:** (a) offload verify to a worker thread through the seam; (b) cooperative yields between content batches; (c) accept occupancy and document it.
+- **Research:** `research/2026-08-18-matcher-offload.md` — the Rust seam already detaches the GIL, so thread offload fully fixes occupancy there (1.5 s stall → ≤41 ms) and bounds pure-engine stalls at the longest single `re` call; per-call tax ~38 µs; recommendation: a decorating wrapper with a small owned executor.
+- **Status:** resolved 2026-08-25 (Clay, in session — pulled forward of the concurrency story: nothing blocked it but sequencing) → **ADR 049** (`decisions/049-matcher-offload-and-residual-by-engine-choice.md`): thread offload adopted as a decorating wrapper around `ContentMatcher` with a small backend-owned executor, absolute deadline across the hop, cancellation-as-abandonment. `specs/active/118-matcher-offload/` owns the landing.
+
+## Bounding the pure scan's backtracking residual
+
+- **Asked:** 2026-08-18, out of the remediation-landing review (scale-lens major; recorded by spec 112 §4)
+- **Context:** The pure engine consults its deadline between 16-line slices, and one slice of `re` backtracking is uninterruptible and exponential under a pathological pattern (measured: 273 ms per 16-line slice at 18-char lines, 75 s for one 30-char line under a 1 s budget). A wall-fidelity gap, never wrong data; the Rust engine is linear and unaffected.
+- **Options considered:** (a) finer-grain interruption (still floored by one attempt's backtracking); (b) a pattern-complexity gate on the pure path (collides with the no-designed-caps rule); (c) worker-thread offload with a true timeout.
+- **Research:** `research/2026-08-18-matcher-offload.md` — option (c) measured not viable against this residual: one sre episode holds the GIL as a single C call (2,151 vs 2,141 ms; `wait_for` cannot fire; the abandoned thread burns to completion). Only process death is a hard stop — a posture no studied library adopted.
+- **Status:** resolved 2026-08-25 (Clay, in session — ratified the memo's lean) → **ADR 049** §3: settled by engine choice. The Rust engine — the default wheel — is the linear-time answer (codesearch's posture: the engine choice *is* the timeout story); the pure fallback keeps its disclosed, budget-stacked residual, mirroring ADR 048's declared-degraded-fallback posture. Process workers stay rejected (ADR 049 §4); with chunking's half dissolved by ADR 048 (rayon threads, not processes), no joint worker-posture entry stays open.
+
+## A standing mutation harness for the pinned laws?
+
+- **Asked:** 2026-08-18 by Claude (spec 109's open question, re-raised by spec 113 and the remediation-landing decision pass, which routed the ladder-defer comparator-strictness question here); recorded 2026-08-19 at the 107–116 mining pass
+- **Context:** Every review campaign has found laws that held by authorship and were proven unpinned by a hand-run mutant surviving the whole suite (specs 109 and 113 landed nine such pins, each hand-proven under the safe-restore rule; `standards/testing.md` now states the discipline). The question is whether the curated mutants should run as a standing harness — in CI or a periodic leg — so the pins stay armed against future rewrites, at real suite-time cost.
+- **Blocking:** nothing; the pins land hand-proven today. The ladder-defer comparator tie at the exact crossover (`allow_size=80`, observationally inert) is the first candidate row such a harness would carry.
+- **Options considered (none decided):** (a) a curated-mutant leg (a list of one-line mutations with their expected killing tests, run nightly or on demand, outside the coverage gate); (b) a general mutation tool (mutmut-style) scoped to the matching and storage modules, accepting its run time; (c) keep the hand-proven discipline only and re-run the ledger at each review campaign.
+- **Research:** `research/2026-08-25-standing-mutation-harness.md`
+  (commissioned by Clay) — executed replays: all 13 recorded sites
+  survived the week's refactors and both replayed mutants still die,
+  but M5's *recorded* killing test no longer kills it (three other
+  tests do) — the pins hold, the mutant→killer mapping already
+  drifted, and only a harness would have noticed. Costs measured:
+  ~5 s/mutant at file scope, ~70 s serial for the whole ledger.
+  Field study: no tool replays a fixed named-mutant ledger (bespoke
+  leg required); SQLite's TH3 runs exactly this shape as
+  infrastructure policy; the long-standing-mutants literature
+  endorses curated evolution-robust suites; general tools (mutmut 3,
+  cargo-mutants `--in-diff`) are a complement — diff-scoped,
+  report-only — not an alternative. Memo §4 carries the lean:
+  option (a) with three loud statuses (killed / survived / stale),
+  scoped-selection kills with recorded killers as advisory only.
+- **Status:** resolved 2026-08-25 (Clay, in session; mechanism revised same day pre-commit) → **ADR 050** (`decisions/050-curated-mutant-leg.md`): the ledger (`standards/mutant-ledger.md` — 13 founding rows + the designed-inert comparator tie) is the durable artifact, and **review campaigns are the runner** — `test_review` now executes its strongest suspected mutations and replays the ledger rows intersecting the scope, always in an isolated scratchpad worktree (never the live repo — concurrent agents share it), ≥1 scoped failure as the assertion with recorded killers advisory-only, statuses killed / survived / stale→re-prove-or-retire. No standing script or CI leg; a drafted spec 119 for one was withdrawn unlanded. Diff-scoped general tools deferred; revisit if campaign cadence slows.
