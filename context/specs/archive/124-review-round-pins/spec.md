@@ -1,6 +1,23 @@
 # 124 — Pins for the round's surviving mutants: the EOF discard and the grep mask
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  §1: the parity battery gains the zero-width-at-EOF corner three
+  ways — the `$` CASE (riding every sweep on both engines, no
+  divergence found), the minimal unterminated body, and a targeted
+  engine-independent row (`$` on ``abc`` and on ``one\ntail``,
+  budgeted and unbudgeted, str and bytes) — the over-discard mutant
+  now dies with 4 failures. §2: ledger row P12 records the slice-end
+  guard intent-first, both directions. §3: the exact-mask grep row
+  gains the value-direction assert (``size_bytes is None``), and the
+  conformance mask law gains narrow-``columns=`` glob and grep rows —
+  with a non-vacuous guard, because the drafted ``pattern="x"``
+  turned out sub-trigram: grep *refused* on the database legs and the
+  row refereed nothing (the same silent-vacuity failure mode the
+  finding was about). The projection-widening mutant now dies with 3
+  failures across the memory leg, the sqlite leg, and the direct row.
+  §4: M3's anchor tightened to name the hoist and both directions.
+  Gates: 3.13 CI leg green at 100 % coverage; all four engine legs
+  green re-running the changed battery row.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   findings F7 (EOF discard guard unpinned — downgraded major → minor

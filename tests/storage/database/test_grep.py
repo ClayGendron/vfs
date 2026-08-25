@@ -411,10 +411,13 @@ class TestOutputModes:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         expected = {"path", "kind", "version", "content", "matches"}
         scanned = await storage.grep(pattern="needle", columns=frozenset({"content"}))
-        assert scanned.observations[0].populated == expected
         assert (await storage.reindex()).success is True
         indexed = await storage.grep(pattern="needle", columns=frozenset({"content"}))
-        assert indexed.observations[0].populated == expected
+        for row in (scanned.observations[0], indexed.observations[0]):
+            assert row.populated == expected
+            # The value too, not just the mask: a projection widened past
+            # the mask leaks the ride as a valued field the mask denies.
+            assert row.size_bytes is None
         await storage.close()
 
 

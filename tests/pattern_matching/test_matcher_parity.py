@@ -76,6 +76,7 @@ CASES: tuple[tuple[str, dict], ...] = (
     ("καλημέρα", {"case_mode": "insensitive"}),
     ("[a-z]+_probe", {}),
     (r"a[\x00-\x20]b", {}),
+    ("$", {}),
 )
 
 BODIES: tuple[str, ...] = (
@@ -100,6 +101,7 @@ BODIES: tuple[str, ...] = (
     "usb_probe helper_probe2\n",
     "café au lait\nΚΑΛΗΜΈΡΑ κόσμε\n",  # noqa: RUF001
     "x" * 5000 + "\nneedle at end",
+    "abc",  # unterminated: `$` matches only zero-width at end-of-text
     "hé\nwörld🚀\nplain é\n",
     # Slice-boundary shapes: bodies past the 16-line slice grain, so
     # budgeted scans cross boundaries; anchors hit lines 1, 17, 33, last.
@@ -220,6 +222,23 @@ class TestEngineParity:
             for budget in (None, 1e4):
                 rows, completed = verifier.hit_lines([spelling], before=0, after=0, cap=1, invert=False, budget=budget)
                 assert (rows, completed) == ([[(19, 19, 19, "")]], True), budget
+
+    def test_a_zero_width_match_at_eof_is_served(self) -> None:
+        # `$` on an unterminated body matches only zero-width at
+        # end-of-text: the EOF qualifier serves it; over-discard loses
+        # the final line silently, budgeted and unbudgeted alike.
+        verifier = pure_verifier("$", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        for spelling in ("abc", b"abc"):
+            for budget in (None, 1e4):
+                assert verifier.count_lines([spelling], cap=None, invert=False, budget=budget) == ([1], True)
+                mode = {"before": 0, "after": 0, "cap": None, "invert": False}
+                rows, completed = verifier.hit_lines([spelling], budget=budget, **mode)
+                assert ([[span[2] for span in row] for row in rows], completed) == ([[1]], True), budget
+        multi = "one\ntail"
+        for budget in (None, 1e4):
+            assert verifier.count_lines([multi], cap=None, invert=False, budget=budget) == ([2], True)
+            rows, completed = verifier.hit_lines([multi], before=0, after=0, cap=None, invert=False, budget=budget)
+            assert ([[span[2] for span in row] for row in rows], completed) == ([[1, 2]], True), budget
 
     def test_a_genuine_boundary_line_match_is_served_once(self) -> None:
         # Empty lines sitting exactly on slice boundaries are genuine

@@ -1744,16 +1744,27 @@ class StorageContract:
                 assert o.version is not None
                 assert {"path", "kind", "version"} <= o.populated
 
-    @needs("write", "stat", "read", "ls", "glob")
+    @needs("write", "stat", "read", "ls", "glob", "grep")
     async def test_the_mask_never_omits_a_populated_field(self, storage: ConformanceBackend) -> None:
         # The mask may exceed the non-null fields (fetched-but-null is
-        # legal) but must never omit a field that carries a value.
-        await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
+        # legal) but must never omit a field that carries a value. The
+        # narrow-columns rows referee the pattern verbs' internal rides:
+        # a value hoisted past the mask surfaces here as a valued field
+        # outside ``populated``.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        pattern_results = (
+            await storage.glob(patterns=("*.txt",)),
+            await storage.glob(patterns=("*.txt",), columns=frozenset({"path"})),
+            await storage.grep(pattern="needle"),
+            await storage.grep(pattern="needle", columns=frozenset({"path"})),
+        )
+        for result in pattern_results:
+            assert result.observations, result.errors  # a vacuous row referees nothing
         for result in (
             await storage.stat(path=Path("/a.txt")),
             await storage.read(path=Path("/a.txt")),
             await storage.ls(path=Path("/")),
-            await storage.glob(patterns=("*.txt",)),
+            *pattern_results,
         ):
             for o in result.observations:
                 valued = {f for f in OBSERVATION_FIELDS if getattr(o, f) is not None}
