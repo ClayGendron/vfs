@@ -570,7 +570,24 @@ class TestPostingBatches:
         assert all(many is False for _, many in updates)
         flips = [(s, many) for s, many in updates if "version" in s]
         assert len(flips) == 2  # ten pairs fit one statement per flag
-        assert len(updates) == len(flips) + 1  # plus the one set-based generation re-dirty
+        assert len(updates) == len(flips)  # no stale generations: the probe skips the re-dirty
+        await storage.close()
+
+    async def test_steady_state_reindex_issues_no_entry_update(self, tmp_path) -> None:
+        # The probe-guarded re-dirty: a settled store's reindex must not
+        # UPDATE the entry table at all (scan-locking engines lock the scan).
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
+        assert (await storage.write(entries=entries)).success is True
+        assert (await storage.reindex()).success is True
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        assert (await storage.reindex()).success is True
+        assert not [s for s in statements if s.startswith("UPDATE") and "chunked" in s]
         await storage.close()
 
 

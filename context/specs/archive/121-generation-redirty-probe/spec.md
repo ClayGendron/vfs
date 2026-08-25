@@ -1,6 +1,19 @@
 # 121 — A probe before the generation re-dirty: no zero-match table lock
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  The chunk pass opens with a lock-free LIMIT-1 existence probe and
+  issues the generation re-dirty UPDATE only on a hit; the steady
+  state pays one consistent read and no UPDATE. Pinned by the two
+  updated statement-cadence pins (fresh-store reindex shows no
+  re-dirty), a new steady-state pin (a settled store's reindex issues
+  zero entry UPDATEs), and a new live-MySQL race row (a rival
+  single-row write commits while the chunk pass holds its transaction
+  open at the flip seam, 3 s lock-wait ceiling). Both mutants proven
+  under safe-restore and recorded as ledger rows P6 (probe deleted —
+  killed by 2 cadence pins) and P7 (verdict inverted — killed by the
+  generation-change test). Gates: 3.13 CI leg green (2,647 passed,
+  100 % coverage), all four engine legs green — Postgres 210,
+  MySQL 212 (+1 new race row), MSSQL 212, Oracle 209.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   finding F2 — raised minor → major in verification when the lock

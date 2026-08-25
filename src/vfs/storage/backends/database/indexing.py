@@ -196,7 +196,13 @@ async def chunk_dirty(
 
     Two laws govern the pass. The **generation law** first re-dirties every
     entry whose stored chunks derive from a different engine or grammar
-    generation, so shapes from different splitters never silently coexist.
+    generation, so shapes from different splitters never silently coexist —
+    guarded by a lock-free existence probe, because the re-dirty UPDATE has
+    no supporting index and engines that scan-lock unindexed updates (the
+    MySQL family under REPEATABLE READ) would otherwise hold next-key locks
+    on every scanned row for the whole reindex transaction, even when the
+    statement matches nothing. The steady state pays one consistent read
+    and issues no UPDATE at all.
     The **fingerprint-skip law** then spares re-splitting: a dirty entry
     whose current ``content_hash`` equals its stamped ``chunk_source_hash``
     under the current generation keeps its chunk rows untouched — a
@@ -210,7 +216,9 @@ async def chunk_dirty(
     entry, content, chunks = tables.entry, tables.content, tables.chunks
     generation = chunk_generation()
     stale = or_(entry.c.chunk_generation.is_(None), entry.c.chunk_generation != generation)
-    await session.execute(update(entry).where(entry.c.chunked, stale).values(chunked=False))
+    probe = select(literal(1)).where(entry.c.chunked, stale).limit(1)
+    if (await session.execute(probe)).first() is not None:
+        await session.execute(update(entry).where(entry.c.chunked, stale).values(chunked=False))
     dirty = (
         select(
             entry.c.entry_id,

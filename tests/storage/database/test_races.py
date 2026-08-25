@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, ClassVar
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
@@ -720,4 +720,45 @@ class TestGrepEpochConsistency:
             assert error.kind == VFSErrorKind.conflict
             assert error.retryable is True
             assert "already running" in error.message
+
+
+@pytest.mark.mysql
+class TestGenerationRedirtyLockScope:
+    """The probe-guarded re-dirty: a settled store's chunk pass locks nothing.
+
+    REPEATABLE READ scan-locks every row an unindexed UPDATE reads, so an
+    unguarded generation re-dirty — matching zero rows on every reindex
+    after the first — parks every rival entry write on next-key locks
+    until the reindex transaction commits (measured: a single-row rival
+    UPDATE blocked 3 s to lock-wait timeout at 20k rows). The probe skips
+    the UPDATE in the steady state, so the rival commits immediately.
+    """
+
+    async def test_a_rival_row_update_passes_during_the_chunk_pass(self) -> None:
+        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+            settled = [Entry(path=Path(f"/f{i:03}.txt"), content=f"settled body {i:03}") for i in range(50)]
+            assert (await storage.write(entries=settled)).success is True
+            assert (await storage.reindex()).success is True
+            # One fresh body keeps the chunk pass busy enough to reach the
+            # seam with its transaction open; every settled row stays clean.
+            assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="fresh body")])).success
+
+            entry = storage._host.tables.entry
+            rival_engine = create_async_engine(os.environ["VFS_TEST_MYSQL_URL"])
+            served: list[bool] = []
+
+            async def rival() -> None:
+                seams.clear("reindex:before-chunk-flip")
+                async with rival_engine.begin() as conn:
+                    await conn.execute(text("SET SESSION innodb_lock_wait_timeout = 3"))
+                    await conn.execute(update(entry).where(entry.c.path == "/f000.txt").values(name=entry.c.name))
+                served.append(True)
+
+            try:
+                with seams.installed("reindex:before-chunk-flip", rival):
+                    assert (await storage.reindex()).success is True
+            finally:
+                await rival_engine.dispose()
+            assert served == [True]
+            await _audit(storage)
             await _audit(storage)

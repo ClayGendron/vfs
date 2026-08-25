@@ -310,7 +310,7 @@ class TestMySQLFlagFlipRoundTrips:
             assert all(many is False for _, many in updates)
             flips = [(s, many) for s, many in updates if "version" in s]
             assert len(flips) == 2  # ten pairs fit one statement per flag
-            assert len(updates) == len(flips) + 1  # plus the one set-based generation re-dirty
+            assert len(updates) == len(flips)  # no stale generations: the probe skips the re-dirty
 
 
 @pytest.mark.mssql
