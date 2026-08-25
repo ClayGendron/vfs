@@ -5,7 +5,55 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **Last reviewed:** 2026-08-19, at the 107–116 mining pass — the
+- **Last reviewed:** 2026-08-25, at the 103/117/118 mining pass —
+  the close of the chunking-and-concurrency arc, all in one session.
+  Three long-open forks fell in the morning: the chunking fork
+  (spec 103's last) via two executed research memos
+  (`../research/2026-08-25-semantic-chunking-write-vs-reindex.md` —
+  write-path chunking would be +106 % on a mid-size edit and 10–12×
+  the ETL 10k-batch pipeline; nine-system prior art defers;
+  `../research/2026-08-25-rust-tree-sitter-chunking.md` — Rust spike
+  with 500/500 span parity, 6.6× on 8 rayon workers, the pack's
+  download-on-first-use supply chain surfaced) → **ADR 048**
+  (reindex-side by law; Rust engine in vfs-core; pure fallback
+  degrades to the character splitter with the pack deleted — the one
+  declared exception to byte-identical engines; fingerprint-skip
+  with a generation stamp); the verify-occupancy and
+  backtracking-residual forks → **ADR 049** (thread offload via a
+  decorating wrapper on a backend-owned executor; residual settled
+  by engine choice); the standing-mutation-harness question →
+  **ADR 050** (the mutant ledger replays inside review campaigns in
+  isolated worktrees — `../standards/mutant-ledger.md` founded with
+  13 rows + C1, the `test_review` skill owning the procedure; no
+  standing harness). **Spec 117** (Rust chunking engine) drafted and
+  landed the same day, slices A–D: 57 crates.io grammar crates
+  serving 59 names on one tree-sitter 0.26 runtime (ADR 048 §3
+  amended from vendored `parser.c` when the trial measured ~0.5 GB;
+  nine names declared character-splitter fallbacks), the
+  spans-not-text seam (`native.py` restructured as a true leaf),
+  fingerprint-skip on two entry columns (schema format 5 → 6, ledger
+  rows P1/P2), gate: linux reindex 191 s → **54 s** (≤60 s target
+  met; chunk wall 161 s → ~24 s), wheel 449 KB → 9.0 MB. **Spec
+  118** (matcher offload) drafted and landed the same day, slices
+  A–C: `VerifyOffload` + `EngineHost.verify_executor` (lazy, cores,
+  no knob — settled by measurement), absolute deadline across the
+  hop, cancellation-as-abandonment proven end-to-end, tick-gap
+  responsiveness pinned; the three laws are ledger rows P3–P5 —
+  vfs's first deliberate threads. Also landed: the wheel-size gate
+  (50 MB declared budget, half PyPI's cap) in `scripts/ci.sh` and
+  `publish.yml`. Mining residue: ADR 048/049 status-block
+  implementation notes, the ADR 039 fork-closure annotations —
+  everything else was already downstream at landing. End state:
+  suite 2,641 passed / 866 skipped, coverage 100 %,
+  ruff/format/ty zero, full 3.11–3.14 matrix green; all four Docker
+  legs green twice this session (117's gate and 118's re-run:
+  Postgres 210, MySQL 211, MSSQL 212, Oracle 209); linux corpus
+  write 52 s / reindex 54 s, all 25 grep bench rows at their healthy
+  profile (55–742 ms). Specs 103, 117, and 118 archived with mining
+  notes. Still open from before the arc: the MSSQL classification
+  audit, cadence unification, the trash-stamping fork, and the
+  SQL-side allow-list join carry forward.
+- **Previous review:** 2026-08-19, at the 107–116 mining pass — the
   close of the glob/grep review-and-remediation arc. Two review
   campaigns bracketed it: the 34-agent five-lens campaign over
   `0359c8d..da3cee3`
@@ -47,7 +95,7 @@ lines first; regenerate this file when the picture shifts (review the
   SQL-side allow-list join. The full `scripts/ci.sh` 3.11–3.14
   matrix was not run during the arc (single 3.13 legs each landing);
   MySQL remains the least-exercised engine.
-- **Previous review:** 2026-08-17 (fifth pass the same day), at the
+- **Earlier review:** 2026-08-17 (fifth pass the same day), at the
   104/105/106 mining pass. That arc, all in one session after spec
   104's completion: the "close the gaps to rg" optimization landing
   (`1b36b4a` — priced gram ladder with the defer rule, join-built
@@ -358,25 +406,31 @@ lines first; regenerate this file when the picture shifts (review the
 - **102 — set-based scattered delete** (draft 2026-08-14,
   research-first) — owns the 10k-scattered-target topology-lock-hold
   question; research memo before any design.
-- **103 — grep pipeline Rust core** (draft 2026-08-16; slices A and B
-  done same day) — Clay's resolution at the linux-benchmark readout:
-  the measured-slow grep loops move to Rust behind unchanged
-  contracts; acceptance bar = beat rg on every row of the recorded
-  25-query bench. Slice A's three memos landed 2026-08-16 (read-path
-  profile: verify is 82–99.7% of every query and the floor is the
-  366 MB unindexable overlay tail; verify-stage prior art: lines are
-  presentation, not matching; accelerator packaging); the posture
-  fork resolved in two steps — pure-Python fallback stays, one
-  package on the pendulum model (maturin mixed layout, fallback
-  inside every wheel), workspace shaped to seed the vfs-js / vfs-rs
-  roadmap. Slice B landed the build side: `crates/vfs-core` (one
-  crate, edition 2024, pyo3 behind a `python` feature), the
-  `vfs.native` seam with byte-for-byte parity pinned, maturin
-  replacing hatchling, the publish wheel matrix, and the pure-Python
-  CI leg; linux reindex 672 s → 191 s (`build_epoch` 272 s → ~6 s).
-  New fork from the measurement (open-questions): tree-sitter
-  chunking is now 84% of the verb (161 s, GIL-bound) — the grep-index
-  build proper is ~30 s. Slices C–D unblocked.
+- **103 — grep pipeline Rust core** — **landed across 2026-08-16/17**
+  (slices A–D; ADR 039 the decision set: pendulum packaging, the
+  shared Rust verify authority, `CANDIDATE_BUDGET` → 25,000; bench
+  gate passed — all 25 rows beat rg, reindex 672 s → 191 s). Its one
+  surviving fork — tree-sitter chunking at 161 s of the verb —
+  resolved 2026-08-25 by **ADR 048** and closed by spec 117's
+  landing (reindex → 54 s, the ≤60 s target met). **Mined and
+  archived 2026-08-25**: residue was already downstream (ADR 039 as
+  refined by 046 and annotated at this pass; the memos, spike, and
+  studies landed as produced).
+- **117 — Rust chunking engine** — **drafted and landed 2026-08-25**
+  (slices A–D in one session; ADR 048 implemented): 57 crates.io
+  grammar crates on one tree-sitter 0.26 runtime, the spans-not-text
+  seam, the pack dependency deleted (pure installs character-split by
+  declared contract), fingerprint-skip + generation law on two entry
+  columns (schema format 5 → 6; ledger rows P1/P2); linux chunk wall
+  161 s → ~24 s, wheel 9.0 MB. **Mined and archived 2026-08-25**
+  (ADR 048 status notes recorded at the pass).
+- **118 — matcher offload** — **drafted and landed 2026-08-25**
+  (slices A–C same day; ADR 049 implemented): `VerifyOffload` on a
+  backend-owned executor (cores by measurement, no knob), absolute
+  deadline across the hop, cancellation-as-abandonment,
+  tick-gap responsiveness pinned; ledger rows P3–P5; vfs's first
+  deliberate threads. **Mined and archived 2026-08-25** (ADR 049
+  status notes recorded at the pass).
 
 ## Decided but unspecified — the next specs to write
 
@@ -468,20 +522,26 @@ All in `archive/`, each awaiting its backward-flow mining pass:
 075 → 076 → 077 → 078 → 079 → 081 → 082 → 083 → 084/085 → 086/087/088
 → 089 → 090 → 073 → 091 → 092 → 093 → 094 → 095 → 096 → 097 → 098 →
 099 → 100 → 104 → 105 → 106 → 107 → 109 → 108 → 110 → 111 → 112 →
-113 → 114 → 115 → 116. ADRs 001–047 accepted (005 superseded by 016;
-021/022 proposed, awaiting ratification; 018 awaiting its wiring
-spec; 032, 033, 037, and 038 are the retroactive records of 073's,
-093's, 094's, and 100's decision sets, written at their mining passes;
-036 amends 033's chunk-grain clause; 041–043 record the 2026-08-17
-read-path arc — the priced-nomination landing and specs 105/106 —
-written at the 104/105/106 mining pass; 044–047 record the
-2026-08-18 review-and-remediation arc — specs 107–116 — written at
-the 107–116 mining pass; 042 amended by 107, 039 refined by 046, 041
-extended by 047). The 073/091/092 glob arc, 093, 094, the 095–099
-campaign arc, 100, the 104–106 read-path arc, and the 107–116
-remediation arc are all mined and archived (095–099 on 2026-08-14;
-100 on 2026-08-16; 104–106 on 2026-08-17; 107–116 on 2026-08-19).
-Tree green at 2,614 passed / 862 skipped, coverage 100%,
-`ruff`/`ty`/format at zero (2026-08-19, 3.13 leg; full 3.11–3.14
-matrix last run 2026-08-16), all four Docker engine legs green as of
-the 113/114/115 landings (2026-08-18).
+113 → 114 → 115 → 116 → 103 → 117 → 118. ADRs 001–050 accepted (005
+superseded by 016; 021/022 proposed, awaiting ratification; 018
+awaiting its wiring spec; 032, 033, 037, and 038 are the retroactive
+records of 073's, 093's, 094's, and 100's decision sets, written at
+their mining passes; 036 amends 033's chunk-grain clause; 041–043
+record the 2026-08-17 read-path arc — the priced-nomination landing
+and specs 105/106 — written at the 104/105/106 mining pass; 044–047
+record the 2026-08-18 review-and-remediation arc — specs 107–116 —
+written at the 107–116 mining pass; 048–050 record the 2026-08-25
+chunking-and-concurrency decisions — 048 amended same day at spec
+117 slice A (crates.io delivery) and annotated at the 103/117/118
+mining pass, 049 annotated likewise, 050 owns the mutant-ledger
+replay; 042 amended by 107, 039 refined by 046 and closed against
+048/049, 041 extended by 047). The 073/091/092 glob arc, 093, 094,
+the 095–099 campaign arc, 100, the 104–106 read-path arc, the
+107–116 remediation arc, and the 103/117/118 chunking-and-
+concurrency arc are all mined and archived (095–099 on 2026-08-14;
+100 on 2026-08-16; 104–106 on 2026-08-17; 107–116 on 2026-08-19;
+103/117/118 on 2026-08-25). Tree green at 2,641 passed / 866
+skipped, coverage 100%, `ruff`/`ty`/format at zero (2026-08-25, full
+3.11–3.14 matrix), all four Docker engine legs green as of the spec
+118 landing (2026-08-25: Postgres 210, MySQL 211, MSSQL 212,
+Oracle 209).

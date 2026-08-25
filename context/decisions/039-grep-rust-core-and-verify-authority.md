@@ -13,6 +13,14 @@
   grep one. **Refined by ADR 046** (2026-08-18): the pure fallback's
   wall discipline, seam maxima, and partiality law — an unbounded
   hang was never among decision 6's cataloged residuals.
+  **Chunking fork closed by ADR 048** (2026-08-25; spec 117 landed
+  the Rust chunking engine the same day — reindex 191 s → 54 s,
+  inside the ≤60 s verb target spec 103 had to leave unmet — and
+  declared chunking the one exception to this ADR's byte-identical-
+  engines law). **Amended by ADR 049** (2026-08-25): verify leaves
+  the event loop by worker thread; this ADR's linear-time guarantee
+  is the load-bearing fact that settles the pure engine's
+  backtracking residual by engine choice.
 - **Date:** 2026-08-17 (slices B–C landed 2026-08-16/17; recorded at
   slice D)
 - **Deciders:** Clay Gendron

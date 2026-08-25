@@ -62,6 +62,13 @@
   Rust spike with 500/500 span parity and 6.6× on 8 workers).
   `specs/active/117-rust-chunking-engine/` owns the landing; this
   spec archives when 117 lands.
+  **Mined and archived 2026-08-25** (117 landed the same day —
+  reindex 191 s → 54 s, meeting the ≤60 s verb target this spec had
+  to leave unmet): residue was already downstream — the decision set
+  is ADR 039 (refined by 046), the chunking fork's resolution is
+  ADR 048, and the four research memos, the verify-authority spike,
+  and the two studies landed as they were produced. Folder stays as
+  the historical record.
 - **Date:** 2026-08-16
 - **Owner:** Clay Gendron
 - **Kind:** performance rewrite of the grep hot loops behind

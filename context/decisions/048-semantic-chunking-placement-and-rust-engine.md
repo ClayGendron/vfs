@@ -19,7 +19,23 @@
   clojure, csv, json5, tcl, tsv, vb, vue) take the character
   splitter — the same fallback unmapped extensions already take —
   and terraform rides the hcl grammar. Spec 117 records the resolved
-  crate mapping.
+  crate mapping (final: 57 crates serving 59 names; latex joined the
+  fallback set on a broken publish).
+  **Implemented by spec 117, all slices landed 2026-08-25**
+  (`../specs/archive/117-rust-chunking-engine/`; note recorded at
+  the mining pass). Implementation facts that bind: **the seam
+  carries spans, never text** — the engine returns byte spans with
+  line ranges and an oversized flag; the host slices content,
+  filters whitespace-only chunks, and re-splits oversized leaves, so
+  the character splitter and all unicode semantics live only in
+  Python. **§5's skip-key carrier resolved as two entry columns**
+  (`chunk_source_hash`, `chunk_generation`; `SCHEMA_FORMAT_VERSION`
+  5 → 6) stamped inside the existing guarded version flip; the
+  generation value is `{active_core()}:{CHUNK_GENERATION}`, so an
+  engine switch or a declared grammar bump re-dirties by one
+  set-based statement. Measured at the gate: linux chunk wall
+  161 s → ~24 s, reindex verb 54 s, wheel 449 KB → 9.0 MB (the
+  wheel-size number is now CI-gated at a 50 MB budget).
 - **Date:** 2026-08-25
 - **Deciders:** Clay Gendron (all four selections, made against the
   executed evidence: placement ratified reindex-side; the deferred

@@ -7,8 +7,18 @@
   `../open-questions.md` against this ADR). Complements ADR 046
   (wall discipline; partiality stays result-level — untouched here)
   and ADR 039 (the Rust engine as match authority — its linear-time
-  guarantee becomes load-bearing for §2). Implemented by
-  `../specs/active/118-matcher-offload/`.
+  guarantee becomes load-bearing for §2).
+  **Implemented by spec 118, all slices landed 2026-08-25**
+  (`../specs/archive/118-matcher-offload/`; note recorded at the
+  mining pass). Implementation facts that bind: pool **sized to
+  cores, no lower cap, no knob** — settled by measurement (10-core
+  box, 32 MiB batches: native throughput plateaus by 4 workers and
+  holds flat through cores; only past-cores oversubscription
+  degrades; pure is GIL-flat at every size); the one-in-flight
+  invariant is **structural** (the wrapper refuses overlap with a
+  raise, the guard cleared worker-side so an abandoned worker holds
+  its slot until it drains); the three laws are pinned with their
+  mutants as ledger rows P3–P5.
 - **Date:** 2026-08-25
 - **Deciders:** Clay Gendron — the 2026-08-18 decision pass parked
   both forks on the concurrency story; Clay pulled them forward

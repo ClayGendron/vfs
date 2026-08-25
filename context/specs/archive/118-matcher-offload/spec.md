@@ -7,6 +7,13 @@
   open-questions entries this closes archive against ADR 049. The
   spec awaits its backward-flow mining pass; nothing blocks
   archiving.
+  **Mined and archived 2026-08-25:** decision set → ADR 049 (its
+  status block carries the implementation note — sizing settled at
+  cores by measurement, the one-in-flight law made structural —
+  recorded at this pass); the three laws' pins live as mutant-ledger
+  rows P3–P5, and the offload module docstring is the standing
+  statement of the hop's contract. Folder stays as the historical
+  record.
 - **Date:** 2026-08-25
 - **Owner:** Clay Gendron
 - **Kind:** concurrency seam change inside the database backend —

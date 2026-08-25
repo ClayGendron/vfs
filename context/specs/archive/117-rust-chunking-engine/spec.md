@@ -8,6 +8,15 @@
   Spec 103's last open fork is discharged — both specs now await
   their backward-flow mining pass; nothing further blocks archiving
   either.
+  **Mined and archived 2026-08-25:** decision set → ADR 048 (its
+  status block carries the §3 crates.io amendment from slice A and
+  the §5 implementation note — entry-column carrier, schema format
+  5 → 6, the spans-not-text seam — recorded at this pass); both
+  research memos were already downstream; the committed fixtures,
+  the coverage-contract test, and ledger rows P1/P2 are the living
+  pins. The worker-count lean (available parallelism, no knob)
+  stands as implemented — rayon's default, revisit only if a
+  consumer asks. Folder stays as the historical record.
 - **Date:** 2026-08-25
 - **Owner:** Clay Gendron
 - **Kind:** engine move — semantic chunking's tree-sitter walk leaves
