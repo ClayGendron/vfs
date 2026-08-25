@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
@@ -60,6 +61,7 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
+from vfs.storage.backends.database.offload import VERIFY_WORKERS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -139,6 +141,9 @@ class EngineHost:
         # Created lazily on the caller's loop — construction must stay
         # loop-free so construct-here, first-touch-elsewhere works.
         self._lock: asyncio.Lock | None = None
+        # Owned either way (built or borrowed) — connectivity etiquette
+        # never applies to the host's own verify pool.
+        self._verify_executor: ThreadPoolExecutor | None = None
 
     @property
     def engine(self) -> AsyncEngine:
@@ -161,6 +166,13 @@ class EngineHost:
     def membership_budget(self) -> int:
         """Elements per ``IN``-list chunk under this dialect's budgets."""
         return membership_budget(self.profile, self.parameter_budget)
+
+    @property
+    def verify_executor(self) -> ThreadPoolExecutor:
+        """The verify offload pool — lazy on first grep, shut down at close."""
+        if self._verify_executor is None:
+            self._verify_executor = ThreadPoolExecutor(max_workers=VERIFY_WORKERS, thread_name_prefix="vfs-verify")
+        return self._verify_executor
 
     @property
     def topology_key(self) -> int:
@@ -245,10 +257,17 @@ class EngineHost:
         return ResultError(kind=VFSErrorKind.unavailable, message=f"{context} failed: {origin}", retryable=True)
 
     async def close(self) -> None:
-        """Dispose iff built; idempotent; borrowed connectivity is never touched."""
+        """Dispose iff built; idempotent; borrowed connectivity is never touched.
+
+        The verify pool is the host's own either way and always shuts
+        down — without waiting: an abandoned worker mid-match finishes
+        into the void rather than holding close hostage.
+        """
         if self._closed:
             return
         self._closed = True
+        if self._verify_executor is not None:
+            self._verify_executor.shutdown(wait=False, cancel_futures=True)
         if self._engine is not None:
             await self._engine.dispose()
 

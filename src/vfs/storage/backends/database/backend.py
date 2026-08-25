@@ -264,6 +264,7 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.parameter_budget,
                 self._host.membership_budget,
+                self._host.verify_executor,
                 pattern=pattern,
                 ext=ext,
                 ext_not=ext_not,

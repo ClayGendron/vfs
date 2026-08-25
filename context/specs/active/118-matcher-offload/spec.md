@@ -55,8 +55,13 @@
 
 ## Slices
 
-- **A — wrapper + executor:** the decorator, ownership, lifecycle,
-  absolute-deadline pass; conformance suites green untouched.
+- **A — wrapper + executor** *(landed 2026-08-25)*: `offload.py`
+  (`VerifyOffload` + `VERIFY_WORKERS`), `EngineHost.verify_executor`
+  (lazy, shut down `wait=False` at close, built and borrowed alike),
+  `grep_rows` batch loop awaits the wrapper with the absolute
+  deadline; sizing settled by measurement (see open questions);
+  deadline and one-in-flight laws pinned with their mutants (ledger
+  P3/P4); full suite green at 100% coverage, conformance untouched.
 - **B — cancellation and redrive:** abandonment semantics tested;
   seam-staged superseded-worker row; docstrings state the batch
   residency.
@@ -67,10 +72,14 @@
 
 ## Open questions
 
-- Executor sizing: cores vs `min(cores, N)` — settle in slice A by
-  measurement of contention with rayon inside the native call (the
-  native batch is already parallel; over-subscribing threads that
-  each fan into rayon may want a smaller pool).
+- ~~Executor sizing~~ — settled in slice A by measurement (10-core
+  box, 32 MiB batches, both engines): native throughput plateaus by
+  4 workers and holds flat through cores (~190 batches/s; rayon
+  inside one call already saturates the CPUs, and co-running callers
+  queue cleanly); only past-cores oversubscription degrades (16
+  workers, mild); pure is GIL-flat at every size. **Sized to cores**
+  (`os.cpu_count()`), no lower cap, no knob — the pool never
+  oversubscribes at that size and capping buys nothing.
 - zoekt's two-lane scheduler (interactive vs batch demotion) is the
   recorded shape if agent-vs-ETL contention ever measures real; out
   of scope here.

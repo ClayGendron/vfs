@@ -1170,6 +1170,7 @@ class TestPushdownBindAccounting:
                 host.profile,
                 100,
                 40,
+                host.verify_executor,
                 pattern="needle",
                 ext=tuple(f"x{i:02d}" for i in range(32)),
                 ext_not=(),

@@ -11,8 +11,9 @@ truncation can never drop in-scope rows — apply the structural gates
 off the rows' own stored facts (no per-candidate ``Path``) before any
 content fetch, verify every candidate through the shared matcher (the
 Rust core where the extension serves, its Python approximation
-otherwise — batched per content batch, with the wall deadline carried
-into the body loop), and union the flag-partitioned scan side
+otherwise — batched per content batch on the backend-owned verify
+pool, the absolute wall deadline crossing the hop), and union the
+flag-partitioned scan side
 (``NOT encoded``) so index staleness can never lose a match.
 ``invert_match`` is scan-shaped by construction — no occurrence index
 narrows non-matches — and runs the scan tier without ``allow_scan``;
@@ -80,6 +81,7 @@ from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
+from vfs.storage.backends.database.offload import VerifyOffload
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
@@ -92,6 +94,7 @@ from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+    from concurrent.futures import Executor
 
     from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import RowMapping
@@ -176,6 +179,7 @@ async def grep_rows(
     profile: DialectProfile,
     parameter_budget: int,
     membership_budget: int,
+    executor: Executor,
     *,
     pattern: str,
     ext: tuple[str, ...],
@@ -334,6 +338,10 @@ async def grep_rows(
     elif output_mode == "count":
         row_mask = row_mask | {"score"}
     mask = frozenset(row_mask)
+    # Verify leaves the loop: each batch call runs on the backend-owned
+    # pool, the absolute deadline crossing the hop (queue wait shortens
+    # the budget, never the wall). Batches stay sequential by law.
+    verify = VerifyOffload(verifier, executor)
     for batch in _content_batches(ordered):
         if monotonic() > deadline:
             if "wall-time budget" not in truncations:
@@ -345,22 +353,21 @@ async def grep_rows(
         if not paired:
             continue
         texts = [text for _, text in paired]
-        budget = max(0.0, deadline - monotonic())
         if output_mode in ("files", "count"):
             cap = 1 if output_mode == "files" else max_count
-            counts, completed = verifier.count_lines(texts, cap=cap, invert=invert_match, budget=budget)
+            counts, completed = await verify.count_lines(texts, cap=cap, invert=invert_match, deadline=deadline)
             for (mapping, text), count in zip(paired, counts, strict=True):
                 if count:
                     score = float(count) if output_mode == "count" else None
                     rows.append(_observe_hit(mapping, projected, mask, text, None, score, carry_content=carry_content))
         else:
-            spans, completed = verifier.hit_lines(
+            spans, completed = await verify.hit_lines(
                 texts,
                 before=before_context,
                 after=after_context,
                 cap=max_count,
                 invert=invert_match,
-                budget=budget,
+                deadline=deadline,
             )
             for (mapping, text), row in zip(paired, spans, strict=True):
                 if row:
