@@ -9,6 +9,7 @@ gates' scan-side residency, and the publish CAS losing to a rival.
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -658,6 +659,27 @@ class TestChunkProvenance:
         async with storage._host.engine.begin() as conn:
             bodies = (await conn.execute(select(chunks.c.content))).scalars().all()
         assert any("tail_marker" in body for body in bodies)
+        await storage.close()
+
+    async def test_a_malformed_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+        # A user-writable file must not jam the maintenance verb: junk
+        # kernel metadata degrades to the default grammar and chunks.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        body = json.dumps(
+            {
+                "cells": [{"cell_type": "code", "source": "needle_value = 1\n" * 40}],
+                "metadata": {"kernelspec": {"language": 42}},
+            },
+        )
+        assert (await storage.write(entries=[Entry(path=Path("/bad.ipynb"), content=body)])).success is True
+        assert (await storage.reindex()).success is True
+        row = await self._entry_row(storage, "/bad.ipynb")
+        assert row.chunked is True
+        chunks = storage._host.tables.chunks
+        async with storage._host.engine.begin() as conn:
+            bodies = (await conn.execute(select(chunks.c.content))).scalars().all()
+        assert bodies
+        assert all("needle_value" in body for body in bodies)
         await storage.close()
 
     async def test_generation_change_redirties_and_resplits(self, tmp_path) -> None:

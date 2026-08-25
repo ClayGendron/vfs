@@ -1,6 +1,23 @@
 # 123 — The notebook fallback promise kept: no metadata shape wedges reindex
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  The kernel-metadata reads take the cells path's isinstance
+  discipline, refined from the drafted fallback to **degrade in
+  place**: the kernel fields are advisory grammar selection, so junk
+  shapes (metadata-as-list, kernelspec-as-string, `language: 42`,
+  list languages, empty string) select the default ``python`` grammar
+  rather than voiding well-formed cells — strictly better than
+  character-splitting the raw JSON, and the docstring now states the
+  two-tier contract (structural fallback for the cell list, in-place
+  degradation for cell and kernel fields). Pinned three ways: a
+  seven-shape metadata degradation battery on ``split_notebook``, the
+  wedging shape added to the split/split_batch parity battery, and an
+  end-to-end row — a malformed notebook written into a store,
+  ``reindex()`` completes, the body is chunked with its content
+  served. The reverted pre-fix shape proven killed by all three
+  (ledger row P11). Gates: 3.13 CI leg green at 100 % coverage;
+  engine legs not required — the change touches only the models
+  layer.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   finding F9 — pre-existing at the review's base and flagged rather

@@ -328,6 +328,22 @@ class TestSplitNotebook:
         )
         assert split_notebook(notebook) == [("ddd = 4", 3, 3)]
 
+    def test_malformed_metadata_degrades_to_the_default_grammar(self) -> None:
+        # The kernel fields are advisory: every junk shape selects the
+        # default grammar rather than raising or voiding the cells.
+        cell = {"cell_type": "code", "source": "aaa = 1"}
+        for metadata in (
+            ["not", "a", "mapping"],
+            "kernelspec",
+            {"kernelspec": "python"},
+            {"kernelspec": ["python"]},
+            {"kernelspec": {"language": 42}},
+            {"kernelspec": {"language": ["python"]}},
+            {"kernelspec": {"language": ""}},
+        ):
+            notebook = json.dumps({"cells": [cell], "metadata": metadata})
+            assert split_notebook(notebook) == [("aaa = 1", 1, 1)], metadata
+
     def test_malformed_sources_degrade_instead_of_crashing(self) -> None:
         notebook = make_notebook(
             [

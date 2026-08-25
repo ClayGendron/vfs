@@ -317,7 +317,9 @@ def split_notebook(
 
     Markdown cells use the ``markdown`` grammar, code cells the notebook's kernel
     language (default ``python``). Line ranges are absolute over the concatenated
-    cell sources. Malformed notebooks fall back to the recursive splitter.
+    cell sources. A body without a well-formed cell list falls back to the
+    recursive splitter; malformed cell or kernelspec fields degrade in place
+    (empty source, default grammar) — no shape the JSON parse admits raises.
     """
     try:
         notebook = json.loads(content)
@@ -327,9 +329,12 @@ def split_notebook(
     except (ValueError, KeyError, TypeError):
         return split_with_line_ranges(content, chunk_size=chunk_size)
 
-    metadata = notebook.get("metadata") or {}
-    kernelspec = metadata.get("kernelspec") or {}
-    kernel = (kernelspec.get("language") or "python").lower()
+    # The kernel fields are advisory grammar selection: junk shapes take
+    # the default, they never crash the split or void well-formed cells.
+    metadata = notebook.get("metadata")
+    kernelspec = metadata.get("kernelspec") if isinstance(metadata, dict) else None
+    language = kernelspec.get("language") if isinstance(kernelspec, dict) else None
+    kernel = language.lower() if isinstance(language, str) and language else "python"
     code_grammar = _KERNEL_TO_GRAMMAR.get(kernel, kernel)
 
     out: list[tuple[str, int, int]] = []

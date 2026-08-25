@@ -591,6 +591,17 @@ class TestChunk:
             (Path("/nb.ipynb"), notebook, "ipynb"),
             (Path("/notes.txt"), "plain text here\n" * 10, "txt"),
             (Path("/tiny.py"), "hi", "py"),  # sub-trigram: no chunks
+            # Junk kernel metadata: degrades to the default grammar, both forms.
+            (
+                Path("/bad-kernel.ipynb"),
+                json.dumps(
+                    {
+                        "cells": [{"cell_type": "code", "source": "value = 43\n"}],
+                        "metadata": {"kernelspec": {"language": 42}},
+                    },
+                ),
+                "ipynb",
+            ),
         ]
         batch = Chunk.split_batch(files)
         assert batch == [Chunk.split(file=file, content=content, ext=ext) for file, content, ext in files]
