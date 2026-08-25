@@ -137,7 +137,6 @@ class EngineHost:
         self._retry_base_delay = retry_base_delay
         self.mount_identity: str | None = None
         self._ready = False
-        self._closed = False
         # Created lazily on the caller's loop — construction must stay
         # loop-free so construct-here, first-touch-elsewhere works.
         self._lock: asyncio.Lock | None = None
@@ -264,7 +263,15 @@ class EngineHost:
         return ResultError(kind=VFSErrorKind.unavailable, message=f"{context} failed: {origin}", retryable=True)
 
     async def close(self) -> None:
-        """Dispose iff built; idempotent; borrowed connectivity is never touched.
+        """Dispose iff built; every close releases; borrowed connectivity is never touched.
+
+        No close is one-shot: verbs revive after close and re-mint
+        pools and connections, so each close releases whatever the
+        host holds *now*. Idempotence is by cheapness — a second close
+        finds empty pools and does nothing — never by flag, matching
+        the pools underneath; and nothing records teardown ahead of
+        the awaited dispose returning, so a close cancelled mid-dispose
+        leaves a retry that finishes the job.
 
         The offload pool is the host's own either way and every close
         shuts whatever pool exists — without waiting: an abandoned
@@ -278,12 +285,8 @@ class EngineHost:
         if self._offload_executor is not None:
             self._offload_executor.shutdown(wait=False)
             self._offload_executor = None
-        if self._closed:
-            return
-        self._closed = True
-        # The ready latch falls with the connectivity it vouched for: the
-        # next op re-runs the idempotent first touch instead of serving
-        # catalog misses off a disposed pool's stale latch.
+        # The ready latch falls with its connectivity: the next op re-runs
+        # the idempotent first touch instead of serving off a stale latch.
         self._ready = False
         if self._engine is not None:
             await self._engine.dispose()

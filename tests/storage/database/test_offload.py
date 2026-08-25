@@ -22,6 +22,7 @@ from vfs.models import Entry
 from vfs.paths import Path
 from vfs.pattern_matching import compile_verifier
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
@@ -374,3 +375,34 @@ class TestExecutorOwnership:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.close()
         assert storage._host._offload_executor is None
+
+    async def test_queued_work_at_close_is_served_never_cancelled(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Close lands with one batch running and one queued on a one-worker
+        # pool: the queued grep must be served whole, never cancelled.
+        monkeypatch.setattr(engine_module, "OFFLOAD_WORKERS", 1)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="a needle body")])).success is True
+        gated = _GatedMatcher()
+        real = grep_module.compile_verifier
+        compiled = 0
+
+        def gate_first(*args: Any, **kwargs: Any) -> Any:
+            nonlocal compiled
+            compiled += 1
+            return gated if compiled == 1 else real(*args, **kwargs)
+
+        monkeypatch.setattr(grep_module, "compile_verifier", gate_first)
+        pool = storage._host.offload_executor
+        first = asyncio.ensure_future(storage.grep(pattern="needle", allow_scan=True, output_mode="count"))
+        await _until(gated.started.is_set)
+        queued = asyncio.ensure_future(storage.grep(pattern="needle", allow_scan=True, output_mode="count"))
+        await _until(lambda: pool._work_queue.qsize() >= 1)
+        await storage.close()
+        gated.gate.set()
+        result = await queued
+        assert result.success is True, result.errors
+        assert [str(row.path) for row in result.observations] == ["/a.txt"]
+        assert (await first).success is True
+        await _until(lambda: gated.finished)

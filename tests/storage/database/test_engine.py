@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from sqlalchemy import create_engine, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _url
@@ -36,7 +37,7 @@ from vfs.storage.backends.database.engine import (
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +338,47 @@ class TestLifecycle:
         await storage.first_touch()
         await storage.close()
         await storage.close()
+
+    async def test_every_close_releases_what_revival_re_minted(self, tmp_path) -> None:
+        # close → verb → close: the revived verb re-mints connections,
+        # and the second close must release them — close is never one-shot.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        await storage.close()
+        result = await storage.stat(path=Path("/"))
+        assert result.success is True
+        pool = storage._host.engine.sync_engine.pool
+        assert isinstance(pool, QueuePool)
+        assert pool.checkedin() >= 1
+        await storage.close()
+        assert pool.checkedin() == 0
+
+    async def test_a_cancelled_close_retry_finishes_the_job(self, tmp_path) -> None:
+        # A close cancelled mid-dispose records nothing as torn down:
+        # the documented recovery — close again — must reclaim the pool.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        host = storage._host
+        pool = host.engine.sync_engine.pool
+        assert isinstance(pool, QueuePool)
+        assert pool.checkedin() >= 1
+        parked = asyncio.Event()
+
+        class _ParkedEngine:
+            async def dispose(self) -> None:
+                parked.set()
+                await asyncio.sleep(60)
+
+        real_engine = host._engine
+        host._engine = cast("AsyncEngine", _ParkedEngine())
+        closing = asyncio.ensure_future(storage.close())
+        await parked.wait()
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        host._engine = real_engine
+        await storage.close()
+        assert pool.checkedin() == 0
 
     def test_sqlite_transaction_control_installs_once_per_engine(self) -> None:
         # Two hosts borrowing one bind: the second install must be a no-op.
