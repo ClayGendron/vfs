@@ -1,9 +1,12 @@
 # 118 — Matcher offload: verify calls on an owned worker, deadline across the hop
 
-- **Status: drafted 2026-08-25.** Born from ADR 049 (which ratifies
+- **Status: all slices landed 2026-08-25** (A–C, same day drafted —
+  slice statuses inline below). Born from ADR 049 (which ratifies
   `../../../research/2026-08-18-matcher-offload.md` §5); pulled
   forward of the concurrency story by Clay in session. The two
-  open-questions entries this closes archive against ADR 049.
+  open-questions entries this closes archive against ADR 049. The
+  spec awaits its backward-flow mining pass; nothing blocks
+  archiving.
 - **Date:** 2026-08-25
 - **Owner:** Clay Gendron
 - **Kind:** concurrency seam change inside the database backend —
@@ -62,13 +65,22 @@
   deadline; sizing settled by measurement (see open questions);
   deadline and one-in-flight laws pinned with their mutants (ledger
   P3/P4); full suite green at 100% coverage, conformance untouched.
-- **B — cancellation and redrive:** abandonment semantics tested;
-  seam-staged superseded-worker row; docstrings state the batch
-  residency.
-- **C — the proof:** loop-responsiveness test (tick-gap bound with
-  a slow matcher double on both engines), the ~µs-scale tax
-  acknowledged in the module docstring, engine legs re-run, full
-  `scripts/ci.sh` green.
+- **B — cancellation and redrive** *(landed 2026-08-25)*: abandonment
+  rows at the wrapper (cancelled await returns while the worker
+  drains; a cancel before worker start never runs the matcher) and at
+  the seam (a superseded worker drains harmlessly while its
+  successor, on a fresh instance over the shared pool, serves whole);
+  the end-to-end row cancels a real ``storage.grep`` mid-verify and
+  proves the reissued call answers correctly while the abandoned
+  worker still drains — its session closed under it, its results
+  dropped. Batch residency (≤32 MiB) stated in the module docstring.
+- **C — the proof** *(landed 2026-08-25)*: tick-gap row — the loop
+  ticks at ≤0.5 s gaps while a 1 s GIL-releasing matcher double
+  verifies (engine-independent by design; CI's native and pure legs
+  both run it), pinned with the inline-execution mutant (ledger P5,
+  8 failures); the ~40 µs hop tax acknowledged in the module
+  docstring; engine legs re-run green; full `scripts/ci.sh` matrix
+  green.
 
 ## Open questions
 

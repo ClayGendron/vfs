@@ -12,18 +12,21 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from time import monotonic
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.support.database_helpers import _url
+from vfs.models import Entry
+from vfs.paths import Path
 from vfs.pattern_matching import compile_verifier
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from vfs.pattern_matching import Body
     from vfs.pattern_matching.grep import MatchSpan
@@ -58,15 +61,19 @@ class _RecordingMatcher:
 
 
 class _GatedMatcher:
-    """A matcher double that blocks until its gate opens."""
+    """A matcher double that blocks until its gate opens, tracing its life."""
 
     def __init__(self) -> None:
         self.gate = threading.Event()
+        self.started = threading.Event()
+        self.finished = False
 
     def count_lines(
         self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]:
+        self.started.set()
         assert self.gate.wait(timeout=5.0)
+        self.finished = True
         return [0] * len(texts), True
 
     def hit_lines(
@@ -81,6 +88,13 @@ class _GatedMatcher:
     ) -> tuple[list[list[MatchSpan]], bool]:  # pragma: no cover - protocol completeness
         assert self.gate.wait(timeout=5.0)
         return [[] for _ in texts], True
+
+
+async def _until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+    start = monotonic()
+    while not predicate():
+        assert monotonic() - start < timeout, "condition never held"
+        await asyncio.sleep(0.01)
 
 
 @pytest.fixture
@@ -152,6 +166,139 @@ class TestVerifyOffload:
             counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0)
             assert counts == [1] and completed is True
         assert len(matcher.budgets) == 2
+
+
+# ---------------------------------------------------------------------------
+# The proof: the loop keeps ticking while verify runs
+# ---------------------------------------------------------------------------
+
+
+class _SleepingMatcher:
+    """A matcher double whose work releases the GIL — the engines' shape."""
+
+    def count_lines(
+        self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
+    ) -> tuple[list[int], bool]:
+        time.sleep(1.0)
+        return [1] * len(texts), True
+
+    def hit_lines(
+        self,
+        texts: Sequence[Body],
+        *,
+        before: int,
+        after: int,
+        cap: int | None,
+        invert: bool,
+        budget: float | None,
+    ) -> tuple[list[list[MatchSpan]], bool]:  # pragma: no cover - protocol completeness
+        time.sleep(1.0)
+        return [[] for _ in texts], True
+
+
+class TestLoopResponsiveness:
+    async def test_the_loop_keeps_ticking_while_verify_runs(self, pool: ThreadPoolExecutor) -> None:
+        """Guards: `_run` calls the work inline instead of through the pool,
+        holding the loop for the whole batch."""
+        offload = VerifyOffload(_SleepingMatcher(), pool)
+        gaps: list[float] = []
+
+        async def tick() -> None:
+            last = monotonic()
+            while True:
+                await asyncio.sleep(0.01)
+                now = monotonic()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.ensure_future(tick())
+        counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0)
+        ticker.cancel()
+        assert counts == [1] and completed is True
+        assert gaps and max(gaps) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# Cancellation is abandonment made safe
+# ---------------------------------------------------------------------------
+
+
+class TestAbandonment:
+    async def test_a_cancelled_await_returns_while_the_worker_drains_into_the_void(
+        self, pool: ThreadPoolExecutor
+    ) -> None:
+        matcher = _GatedMatcher()
+        offload = VerifyOffload(matcher, pool)
+        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0))
+        await _until(matcher.started.is_set)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert matcher.finished is False
+        matcher.gate.set()
+        await _until(lambda: matcher.finished)
+
+    async def test_a_cancel_before_the_worker_starts_never_runs_the_matcher(self, pool: ThreadPoolExecutor) -> None:
+        blocker = threading.Event()
+        pool.submit(blocker.wait, 5.0)
+        matcher = _RecordingMatcher()
+        offload = VerifyOffload(matcher, pool)
+        task = asyncio.ensure_future(offload.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        blocker.set()
+        await asyncio.sleep(0.05)
+        assert matcher.budgets == []
+
+    async def test_a_superseded_worker_is_harmless_to_its_successor(self, pool: ThreadPoolExecutor) -> None:
+        # The redrive shape at the seam: attempt one's worker drains
+        # abandoned while attempt two, on a fresh instance, serves whole.
+        abandoned = _GatedMatcher()
+        first = VerifyOffload(abandoned, pool)
+        task = asyncio.ensure_future(first.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0))
+        await _until(abandoned.started.is_set)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        matcher = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        second = VerifyOffload(matcher, pool)
+        successor = asyncio.ensure_future(
+            second.count_lines(["a needle", "no hit"], cap=None, invert=False, deadline=monotonic() + 5.0)
+        )
+        abandoned.gate.set()
+        counts, completed = await successor
+        assert counts == [1, 0] and completed is True
+        await _until(lambda: abandoned.finished)
+
+    async def test_a_cancelled_grep_leaves_the_next_call_whole(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The end-to-end law: the abandoned worker holds only its batch —
+        # the cancelled call's session closed under it, and the reissued
+        # grep answers correctly while that worker still drains.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entry = Entry(path=Path("/a.txt"), content="a needle body")
+        assert (await storage.write(entries=[entry])).success is True
+        gated = _GatedMatcher()
+        real = grep_module.compile_verifier
+        compiled = 0
+
+        def gate_first(*args: Any, **kwargs: Any) -> Any:
+            nonlocal compiled
+            compiled += 1
+            return gated if compiled == 1 else real(*args, **kwargs)
+
+        monkeypatch.setattr(grep_module, "compile_verifier", gate_first)
+        task = asyncio.ensure_future(storage.grep(pattern="needle", allow_scan=True, output_mode="count"))
+        await _until(gated.started.is_set)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        result = await storage.grep(pattern="needle", allow_scan=True, output_mode="count")
+        assert [str(row.path) for row in result.observations] == ["/a.txt"]
+        gated.gate.set()
+        await _until(lambda: gated.finished)
+        await storage.close()
 
 
 # ---------------------------------------------------------------------------
