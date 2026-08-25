@@ -179,4 +179,29 @@
 - **Context:** Spec 122 ruled grep's close posture by the sibling law — after and across `close()`, every verb serves, transparently re-establishing what it needs (the ready latch now falls with close, so first touch re-runs; the verify pool re-mints; a call racing close serves its batch inline). What was deliberately *not* ruled: whether that sibling law itself is right. `close()` today releases resources but never ends service — a post-close `write` still mutates (executed in the review's leads) — and `SupportsClose` commits only to idempotence and dead-peer tolerance, taking no position on refusal. A refuse-after-close contract would touch every backend, the router's dispose walk, and the conformance battery's lifecycle row (`test_pattern_search_serves_after_close`, which currently pins serve-after-close for glob and grep).
 - **Blocking:** nothing — the current posture is coherent and pinned; this is a contract question about what `close()` *means*, not a defect.
 - **Options considered:** (a) status quo — close releases, service re-establishes (the POSIX-fd analogy fails here, but the SQLAlchemy-engine analogy holds: dispose then reuse works); (b) closed-means-refuse — every verb returns a classified `unavailable` after close, requiring an explicit reopen; (c) closed-means-refuse only for mutations, reads re-establish. Each needs the router and memory backend ruled together.
+- **Evidence since:** the 2026-08-25 prior-art survey (`research/2026-08-25-close-lifecycle-and-shutdown-race-prior-art.md`) found every surveyed close-latch exists to *refuse* — latch-without-refusal has no precedent — so option (b) is the only shape under which a closed flag would ever return (spec 126 removes the current one as incoherent without it).
 - **Status:** open
+
+## Close-window inline cost: prose disclosure, or a zombie pool?
+
+- **Asked:** 2026-08-25 by Clay + Claude (remediation-round landing review, finding F7's decision pass — `research/2026-08-25-remediation-round-landing-review.md`)
+- **Context:** A verb that captured the offload pool before `close()` serves all its remaining CPU hops inline on the event loop — verb-sized exposure, measured 1.56 s on-loop (1,714 ms worst gap) for a 20,000-file reindex racing close, correct results throughout. The 2026-08-25 prior-art survey found the drain idiom universal (in-flight work finishes on what it captured; the closer owns any deadline) and no precedent for per-hop migration to re-minted resources or for chunking degraded work. Spec 129 rules prose + pin; this entry holds the code question.
+- **Blocking:** nothing — the window is a rare close race and the verb serves; this is loop-latency during teardown, not correctness.
+- **Options considered:** (a) status quo with honest prose (landed by spec 129); (b) zombie pool — the prior-art-faithful shape: close defers executor teardown until in-flight verbs drain (SQLite `close_v2` / SQLAlchemy checked-out-connection shape), so a racing verb finishes on real worker threads and the loop never pays — at the cost of close no longer being instant; (c) a closer-owned drain deadline escalating to the current inline fallback. Per-hop pool re-reads were considered and declined — no prior art, and they move mid-verb ownership.
+- **Status:** open — unblocked by evidence that real workloads hit the window (a latency report during shutdown, or the close-race pin flaking on gap-sensitive infrastructure)
+
+## A shared `_presence_probe` owner for the LIMIT-1 existence shape?
+
+- **Asked:** 2026-08-25 by Clay + Claude (remediation-round landing review, design question Q3's decision pass)
+- **Context:** Spec 121's inline generation probe duplicates `_pending_probe`'s LIMIT-1 shape (`indexing.py`) without its "never a bare SELECT EXISTS" rationale — a rule confirmed real on live MSSQL (error 42000). Mitigations today: spec 121 cites the pattern by name, and an `.exists()` rewrite fails loudly on the MSSQL conformance leg. Two call sites is thin ground for a wrapper.
+- **Blocking:** nothing — both sites are correct and engine-proven.
+- **Options considered:** a shared `_presence_probe(session, whereclause)` helper holding the T-SQL rationale once, plus a Docker-free compile-level legality pin covering both shapes (the strongest argument for the wrapper — `TestStatementLegality` currently holds exactly one such row); or status quo with the rationale living at `_pending_probe` alone.
+- **Status:** parked — unblocked by a third probe site, or by the statement-legality class growing per the review's lead
+
+## A `_Truncations` owner for grep's at-most-once record law?
+
+- **Asked:** 2026-08-25 by Clay + Claude (remediation-round landing review, design question Q2's decision pass)
+- **Context:** Six repeated `if <literal> not in truncations` guards plus an upgrade dance implement the at-most-once truncation-record law per-site in `storage/backends/database/grep.py`. Per-site guards were spec 125's deliberate ruling; every path is at-most-once by construction today, and `Result.merge` dedupes at the facade. The 2026-08-25 decision pass declined to reverse a same-round ruling without new evidence.
+- **Blocking:** nothing — no wrong output exists.
+- **Options considered:** a small `_Truncations` type enforcing at-most-once by construction (a taker must preserve the load-bearing `truncations == ["candidate budget"]` equality gate); status quo. Adjacent unverified lead: whether the facade's `Result.merge` dedupe — the only non-local safety net — is itself pinned.
+- **Status:** parked — the tripwire is a seventh guard site or a duplicate-record bug reaching the seam
