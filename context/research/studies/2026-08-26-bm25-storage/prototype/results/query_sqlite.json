@@ -1,0 +1,3478 @@
+{
+ "reps": 7,
+ "summary": {
+  "1": {
+   "n": 15,
+   "median_postings": 235,
+   "median_blocks": 2,
+   "median_blob_bytes": 1004,
+   "a_ms": 0.042625004425644875,
+   "b_fetch_ms": 0.015750061720609665,
+   "b_full_score_ms": 0.06387499161064625,
+   "b_full_score_perblock_ms": 0.08654105477035046,
+   "b_full_total_ms": 0.07962505333125591,
+   "b_blockmax_score_ms": 0.09108288213610649,
+   "b_blockmax_total_ms": 0.10683294385671616,
+   "rust_full_score_ms": 0.0021,
+   "blocks_skipped_total": 0,
+   "blocks_total": 36,
+   "agree_full": 15,
+   "agree_blockmax": 15,
+   "agree_rust": 15,
+   "min_tau_full": 1.0,
+   "min_tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15
+  },
+  "3": {
+   "n": 15,
+   "median_postings": 10542,
+   "median_blocks": 84,
+   "median_blob_bytes": 41833,
+   "a_ms": 2.0071251783519983,
+   "b_fetch_ms": 0.08874991908669472,
+   "b_full_score_ms": 1.110415905714035,
+   "b_full_score_perblock_ms": 3.6239158362150192,
+   "b_full_total_ms": 1.1991658248007298,
+   "b_blockmax_score_ms": 2.6746250223368406,
+   "b_blockmax_total_ms": 2.7779999654740095,
+   "rust_full_score_ms": 0.1628,
+   "blocks_skipped_total": 845,
+   "blocks_total": 1302,
+   "agree_full": 15,
+   "agree_blockmax": 15,
+   "agree_rust": 15,
+   "min_tau_full": 1.0,
+   "min_tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15
+  },
+  "6": {
+   "n": 15,
+   "median_postings": 11077,
+   "median_blocks": 90,
+   "median_blob_bytes": 44023,
+   "a_ms": 2.2318330593407154,
+   "b_fetch_ms": 0.100292032584548,
+   "b_full_score_ms": 1.2311248574405909,
+   "b_full_score_perblock_ms": 3.9189590606838465,
+   "b_full_total_ms": 1.332207815721631,
+   "b_blockmax_score_ms": 2.8516671154648066,
+   "b_blockmax_total_ms": 2.9453339520841837,
+   "rust_full_score_ms": 0.1818,
+   "blocks_skipped_total": 953,
+   "blocks_total": 1419,
+   "agree_full": 15,
+   "agree_blockmax": 15,
+   "agree_rust": 15,
+   "min_tau_full": 1.0,
+   "min_tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15
+  }
+ },
+ "queries": [
+  {
+   "arity": 1,
+   "terms": [
+    "dn"
+   ],
+   "dfs": {
+    "dn": 81
+   },
+   "postings": 81,
+   "blocks": 1,
+   "blob_bytes": 352,
+   "candidates": 81,
+   "a_ms": 0.02354104071855545,
+   "b_fetch_ms": 0.014333054423332214,
+   "b_full_score_ms": 0.06379210390150547,
+   "b_full_score_perblock_ms": 0.048165908083319664,
+   "b_full_total_ms": 0.07812515832483768,
+   "b_blockmax_score_ms": 0.05516689270734787,
+   "b_blockmax_total_ms": 0.06949994713068008,
+   "blocks_decoded": 1,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     28391,
+     12.327392784
+    ],
+    [
+     17434,
+     12.194485893
+    ],
+    [
+     28387,
+     12.184608876
+    ],
+    [
+     15909,
+     12.146750699
+    ],
+    [
+     4899,
+     12.023461596
+    ],
+    [
+     28398,
+     11.90597222
+    ],
+    [
+     29274,
+     11.86548371
+    ],
+    [
+     28389,
+     11.79701225
+    ],
+    [
+     10714,
+     11.676900244
+    ],
+    [
+     28388,
+     11.484295349
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.001,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "negotiation"
+   ],
+   "dfs": {
+    "negotiation": 70
+   },
+   "postings": 70,
+   "blocks": 1,
+   "blob_bytes": 302,
+   "candidates": 70,
+   "a_ms": 0.02108304761350155,
+   "b_fetch_ms": 0.01500011421740055,
+   "b_full_score_ms": 0.05408283323049545,
+   "b_full_score_perblock_ms": 0.04595820792019367,
+   "b_full_total_ms": 0.069082947447896,
+   "b_blockmax_score_ms": 0.05024997517466545,
+   "b_blockmax_total_ms": 0.065250089392066,
+   "blocks_decoded": 1,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     25614,
+     11.3343972
+    ],
+    [
+     11905,
+     11.11077941
+    ],
+    [
+     13455,
+     10.990318621
+    ],
+    [
+     11904,
+     10.671755105
+    ],
+    [
+     12704,
+     10.234063493
+    ],
+    [
+     13454,
+     10.195464384
+    ],
+    [
+     29617,
+     10.157155344
+    ],
+    [
+     29609,
+     10.150798476
+    ],
+    [
+     25615,
+     10.020631346
+    ],
+    [
+     12711,
+     9.986627365
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0008,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "cmnd"
+   ],
+   "dfs": {
+    "cmnd": 80
+   },
+   "postings": 80,
+   "blocks": 1,
+   "blob_bytes": 326,
+   "candidates": 80,
+   "a_ms": 0.021792016923427582,
+   "b_fetch_ms": 0.014832941815257072,
+   "b_full_score_ms": 0.05316687747836113,
+   "b_full_score_perblock_ms": 0.04600011743605137,
+   "b_full_total_ms": 0.0679998192936182,
+   "b_blockmax_score_ms": 0.05150004290044308,
+   "b_blockmax_total_ms": 0.06633298471570015,
+   "blocks_decoded": 1,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     26277,
+     12.747312582
+    ],
+    [
+     26273,
+     12.696300386
+    ],
+    [
+     26275,
+     12.69000745
+    ],
+    [
+     3223,
+     11.983408386
+    ],
+    [
+     26238,
+     11.308164038
+    ],
+    [
+     26286,
+     11.056753816
+    ],
+    [
+     26282,
+     10.906041454
+    ],
+    [
+     26248,
+     10.742880998
+    ],
+    [
+     26283,
+     10.742880998
+    ],
+    [
+     3222,
+     10.675424872
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0008,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "pdn"
+   ],
+   "dfs": {
+    "pdn": 66
+   },
+   "postings": 66,
+   "blocks": 1,
+   "blob_bytes": 283,
+   "candidates": 66,
+   "a_ms": 0.01995800994336605,
+   "b_fetch_ms": 0.014415942132472992,
+   "b_full_score_ms": 0.0538751482963562,
+   "b_full_score_perblock_ms": 0.04487507976591587,
+   "b_full_total_ms": 0.0682910904288292,
+   "b_blockmax_score_ms": 0.04941597580909729,
+   "b_blockmax_total_ms": 0.06383191794157028,
+   "blocks_decoded": 1,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     3518,
+     12.622047601
+    ],
+    [
+     28411,
+     12.569684743
+    ],
+    [
+     26696,
+     12.307385954
+    ],
+    [
+     28415,
+     12.2407943
+    ],
+    [
+     3522,
+     12.22860512
+    ],
+    [
+     12332,
+     12.18555745
+    ],
+    [
+     28412,
+     12.068479784
+    ],
+    [
+     12330,
+     12.023364556
+    ],
+    [
+     28405,
+     11.958141079
+    ],
+    [
+     3528,
+     11.789384734
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.0007,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "trap"
+   ],
+   "dfs": {
+    "trap": 235
+   },
+   "postings": 235,
+   "blocks": 2,
+   "blob_bytes": 1004,
+   "candidates": 235,
+   "a_ms": 0.042625004425644875,
+   "b_fetch_ms": 0.01579197123646736,
+   "b_full_score_ms": 0.065250089392066,
+   "b_full_score_perblock_ms": 0.0877920538187027,
+   "b_full_total_ms": 0.08104206062853336,
+   "b_blockmax_score_ms": 0.09145797230303288,
+   "b_blockmax_total_ms": 0.10724994353950024,
+   "blocks_decoded": 2,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     11695,
+     10.403030452
+    ],
+    [
+     26464,
+     10.114752194
+    ],
+    [
+     2730,
+     9.928700086
+    ],
+    [
+     27364,
+     9.805655823
+    ],
+    [
+     2404,
+     9.79912337
+    ],
+    [
+     1729,
+     9.610965972
+    ],
+    [
+     14243,
+     9.590380502
+    ],
+    [
+     1728,
+     9.560364477
+    ],
+    [
+     2731,
+     9.508482867
+    ],
+    [
+     20541,
+     9.369687615
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0021,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "sub"
+   ],
+   "dfs": {
+    "sub": 625
+   },
+   "postings": 625,
+   "blocks": 5,
+   "blob_bytes": 2559,
+   "candidates": 625,
+   "a_ms": 0.09354203939437866,
+   "b_fetch_ms": 0.017999904230237007,
+   "b_full_score_ms": 0.09237509220838547,
+   "b_full_score_perblock_ms": 0.20008301362395287,
+   "b_full_total_ms": 0.11037499643862247,
+   "b_blockmax_score_ms": 0.20545907318592072,
+   "b_blockmax_total_ms": 0.22345897741615772,
+   "blocks_decoded": 5,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     5129,
+     8.357399288
+    ],
+    [
+     14149,
+     8.319235107
+    ],
+    [
+     4474,
+     8.272735083
+    ],
+    [
+     13344,
+     8.268858075
+    ],
+    [
+     5130,
+     8.239376217
+    ],
+    [
+     13343,
+     8.217969687
+    ],
+    [
+     5126,
+     8.111075793
+    ],
+    [
+     18529,
+     8.024178267
+    ],
+    [
+     20358,
+     8.022845776
+    ],
+    [
+     1500,
+     8.012790765
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0049,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "merge"
+   ],
+   "dfs": {
+    "merge": 328
+   },
+   "postings": 328,
+   "blocks": 3,
+   "blob_bytes": 1377,
+   "candidates": 328,
+   "a_ms": 0.05270796827971935,
+   "b_fetch_ms": 0.016916077584028244,
+   "b_full_score_ms": 0.07087481208145618,
+   "b_full_score_perblock_ms": 0.120542012155056,
+   "b_full_total_ms": 0.08779088966548443,
+   "b_blockmax_score_ms": 0.12633297592401505,
+   "b_blockmax_total_ms": 0.1432490535080433,
+   "blocks_decoded": 3,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     3700,
+     9.459174036
+    ],
+    [
+     23680,
+     8.754663259
+    ],
+    [
+     24344,
+     8.661009823
+    ],
+    [
+     24342,
+     8.524227319
+    ],
+    [
+     28051,
+     7.96445132
+    ],
+    [
+     9592,
+     7.648446209
+    ],
+    [
+     7091,
+     7.496937787
+    ],
+    [
+     9375,
+     7.442215834
+    ],
+    [
+     7315,
+     7.012122921
+    ],
+    [
+     268,
+     6.995965144
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0025,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "happened"
+   ],
+   "dfs": {
+    "happened": 68
+   },
+   "postings": 68,
+   "blocks": 1,
+   "blob_bytes": 310,
+   "candidates": 68,
+   "a_ms": 0.018666032701730728,
+   "b_fetch_ms": 0.0153339933604002,
+   "b_full_score_ms": 0.05341600626707077,
+   "b_full_score_perblock_ms": 0.044625019654631615,
+   "b_full_total_ms": 0.06874999962747097,
+   "b_blockmax_score_ms": 0.04912493750452995,
+   "b_blockmax_total_ms": 0.06445893086493015,
+   "blocks_decoded": 1,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     10,
+     11.558457928
+    ],
+    [
+     1206,
+     11.366044539
+    ],
+    [
+     4100,
+     10.655831989
+    ],
+    [
+     4101,
+     10.122467482
+    ],
+    [
+     4104,
+     9.887435376
+    ],
+    [
+     4102,
+     9.84720492
+    ],
+    [
+     970,
+     9.276537191
+    ],
+    [
+     23914,
+     8.399292927
+    ],
+    [
+     4892,
+     8.379711438
+    ],
+    [
+     2730,
+     8.305115601
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0007,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "sound"
+   ],
+   "dfs": {
+    "sound": 246
+   },
+   "postings": 246,
+   "blocks": 2,
+   "blob_bytes": 1024,
+   "candidates": 246,
+   "a_ms": 0.044208019971847534,
+   "b_fetch_ms": 0.015750061720609665,
+   "b_full_score_ms": 0.06387499161064625,
+   "b_full_score_perblock_ms": 0.08654105477035046,
+   "b_full_total_ms": 0.07962505333125591,
+   "b_blockmax_score_ms": 0.09108288213610649,
+   "b_blockmax_total_ms": 0.10683294385671616,
+   "blocks_decoded": 2,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     11325,
+     10.113376828
+    ],
+    [
+     10368,
+     10.020052485
+    ],
+    [
+     10369,
+     9.806663017
+    ],
+    [
+     27522,
+     9.677709096
+    ],
+    [
+     24433,
+     9.630810556
+    ],
+    [
+     11534,
+     9.588754334
+    ],
+    [
+     28376,
+     9.546195144
+    ],
+    [
+     3590,
+     9.519280313
+    ],
+    [
+     4267,
+     9.507186373
+    ],
+    [
+     2985,
+     9.502332968
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0022,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "unable"
+   ],
+   "dfs": {
+    "unable": 299
+   },
+   "postings": 299,
+   "blocks": 3,
+   "blob_bytes": 1272,
+   "candidates": 299,
+   "a_ms": 0.05191611126065254,
+   "b_fetch_ms": 0.016124919056892395,
+   "b_full_score_ms": 0.06824987940490246,
+   "b_full_score_perblock_ms": 0.11887517757713795,
+   "b_full_total_ms": 0.08437479846179485,
+   "b_blockmax_score_ms": 0.12458278797566891,
+   "b_blockmax_total_ms": 0.1407077070325613,
+   "blocks_decoded": 3,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     19988,
+     8.530081396
+    ],
+    [
+     2628,
+     8.385612685
+    ],
+    [
+     19987,
+     8.186431423
+    ],
+    [
+     19989,
+     8.079654467
+    ],
+    [
+     29203,
+     8.067028119
+    ],
+    [
+     11707,
+     8.002828486
+    ],
+    [
+     3537,
+     7.975627066
+    ],
+    [
+     26542,
+     7.963050419
+    ],
+    [
+     16580,
+     7.821834601
+    ],
+    [
+     18727,
+     7.807485217
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0026,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "arm"
+   ],
+   "dfs": {
+    "arm": 485
+   },
+   "postings": 485,
+   "blocks": 4,
+   "blob_bytes": 1949,
+   "candidates": 485,
+   "a_ms": 0.07641618140041828,
+   "b_fetch_ms": 0.01733284443616867,
+   "b_full_score_ms": 0.0826660543680191,
+   "b_full_score_perblock_ms": 0.16133300960063934,
+   "b_full_total_ms": 0.09999889880418777,
+   "b_blockmax_score_ms": 0.1680420245975256,
+   "b_blockmax_total_ms": 0.18537486903369427,
+   "blocks_decoded": 4,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     14641,
+     8.937816971
+    ],
+    [
+     30118,
+     8.777304034
+    ],
+    [
+     12791,
+     8.752898995
+    ],
+    [
+     10843,
+     8.627225562
+    ],
+    [
+     29129,
+     8.624997368
+    ],
+    [
+     26779,
+     8.594102448
+    ],
+    [
+     30117,
+     8.417496132
+    ],
+    [
+     27615,
+     8.401405751
+    ],
+    [
+     10842,
+     8.344952503
+    ],
+    [
+     12334,
+     8.282597814
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.004,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "mix"
+   ],
+   "dfs": {
+    "mix": 159
+   },
+   "postings": 159,
+   "blocks": 2,
+   "blob_bytes": 678,
+   "candidates": 159,
+   "a_ms": 0.033333199098706245,
+   "b_fetch_ms": 0.01529185101389885,
+   "b_full_score_ms": 0.05866703577339649,
+   "b_full_score_perblock_ms": 0.08120900020003319,
+   "b_full_total_ms": 0.07395888678729534,
+   "b_blockmax_score_ms": 0.08783279918134212,
+   "b_blockmax_total_ms": 0.10312465019524097,
+   "blocks_decoded": 2,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     4142,
+     11.165022781
+    ],
+    [
+     4141,
+     11.088782539
+    ],
+    [
+     25776,
+     10.955380932
+    ],
+    [
+     27167,
+     10.913097766
+    ],
+    [
+     27168,
+     10.888262578
+    ],
+    [
+     4268,
+     10.835289688
+    ],
+    [
+     25822,
+     10.822738778
+    ],
+    [
+     25777,
+     10.821421141
+    ],
+    [
+     18473,
+     10.818713726
+    ],
+    [
+     26855,
+     10.771459163
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0015,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "speed"
+   ],
+   "dfs": {
+    "speed": 557
+   },
+   "postings": 557,
+   "blocks": 5,
+   "blob_bytes": 2283,
+   "candidates": 557,
+   "a_ms": 0.08283299393951893,
+   "b_fetch_ms": 0.017666025087237358,
+   "b_full_score_ms": 0.08695782162249088,
+   "b_full_score_perblock_ms": 0.1949169673025608,
+   "b_full_total_ms": 0.10462384670972824,
+   "b_blockmax_score_ms": 0.21199998445808887,
+   "b_blockmax_total_ms": 0.22966600954532623,
+   "blocks_decoded": 5,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     29626,
+     8.568108269
+    ],
+    [
+     3567,
+     8.496983736
+    ],
+    [
+     22328,
+     8.427592555
+    ],
+    [
+     3009,
+     8.376280658
+    ],
+    [
+     10362,
+     8.375525649
+    ],
+    [
+     2201,
+     8.340722207
+    ],
+    [
+     6723,
+     8.320267945
+    ],
+    [
+     29362,
+     8.32000365
+    ],
+    [
+     10572,
+     8.309644966
+    ],
+    [
+     14299,
+     8.269663749
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0046,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "routine"
+   ],
+   "dfs": {
+    "routine": 162
+   },
+   "postings": 162,
+   "blocks": 2,
+   "blob_bytes": 709,
+   "candidates": 162,
+   "a_ms": 0.03300001844763756,
+   "b_fetch_ms": 0.015374971553683281,
+   "b_full_score_ms": 0.0610831193625927,
+   "b_full_score_perblock_ms": 0.0855419784784317,
+   "b_full_total_ms": 0.07645809091627598,
+   "b_blockmax_score_ms": 0.08954107761383057,
+   "b_blockmax_total_ms": 0.10491604916751385,
+   "blocks_decoded": 2,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     95,
+     9.308784368
+    ],
+    [
+     9412,
+     9.008582968
+    ],
+    [
+     20431,
+     8.929033498
+    ],
+    [
+     32070,
+     8.896395021
+    ],
+    [
+     28829,
+     8.770145455
+    ],
+    [
+     32069,
+     8.755527748
+    ],
+    [
+     2001,
+     8.561922221
+    ],
+    [
+     21592,
+     8.496830791
+    ],
+    [
+     8741,
+     8.337693489
+    ],
+    [
+     24019,
+     8.181856995
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0016,
+   "agree_rust": true
+  },
+  {
+   "arity": 1,
+   "terms": [
+    "field_prep"
+   ],
+   "dfs": {
+    "field_prep": 263
+   },
+   "postings": 263,
+   "blocks": 3,
+   "blob_bytes": 1110,
+   "candidates": 263,
+   "a_ms": 0.04787510260939598,
+   "b_fetch_ms": 0.015790807083249092,
+   "b_full_score_ms": 0.0653339084237814,
+   "b_full_score_perblock_ms": 0.11520786210894585,
+   "b_full_total_ms": 0.08112471550703049,
+   "b_blockmax_score_ms": 0.12395810335874557,
+   "b_blockmax_total_ms": 0.13974891044199467,
+   "blocks_decoded": 3,
+   "blocks_skipped": 0,
+   "a_top": [
+    [
+     19482,
+     9.899286002
+    ],
+    [
+     13247,
+     9.830784842
+    ],
+    [
+     24165,
+     9.818610366
+    ],
+    [
+     10043,
+     9.816088691
+    ],
+    [
+     13248,
+     9.785071123
+    ],
+    [
+     5691,
+     9.732107776
+    ],
+    [
+     10042,
+     9.720669143
+    ],
+    [
+     12379,
+     9.628722093
+    ],
+    [
+     25940,
+     9.413503493
+    ],
+    [
+     19660,
+     9.330694034
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.0024,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "allocating",
+    "followed",
+    "the"
+   ],
+   "dfs": {
+    "allocating": 67,
+    "followed": 91,
+    "the": 12941
+   },
+   "postings": 13099,
+   "blocks": 104,
+   "blob_bytes": 52052,
+   "candidates": 12957,
+   "a_ms": 2.648124936968088,
+   "b_fetch_ms": 0.10475004091858864,
+   "b_full_score_ms": 1.4556657988578081,
+   "b_full_score_perblock_ms": 4.537208005785942,
+   "b_full_total_ms": 1.5604158397763968,
+   "b_blockmax_score_ms": 2.7718329802155495,
+   "b_blockmax_total_ms": 2.876583021134138,
+   "blocks_decoded": 27,
+   "blocks_skipped": 77,
+   "a_top": [
+    [
+     27548,
+     12.345126933
+    ],
+    [
+     19872,
+     11.916683582
+    ],
+    [
+     3820,
+     11.613115113
+    ],
+    [
+     21606,
+     10.266351797
+    ],
+    [
+     8378,
+     10.247964199
+    ],
+    [
+     12225,
+     9.994180783
+    ],
+    [
+     23970,
+     9.941358086
+    ],
+    [
+     19094,
+     9.894445043
+    ],
+    [
+     2103,
+     9.813941638
+    ],
+    [
+     19093,
+     9.803723358
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2062,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "0x800",
+    "wakeup",
+    "set"
+   ],
+   "dfs": {
+    "0x800": 79,
+    "wakeup": 295,
+    "set": 8859
+   },
+   "postings": 9233,
+   "blocks": 74,
+   "blob_bytes": 36934,
+   "candidates": 9070,
+   "a_ms": 1.85254099778831,
+   "b_fetch_ms": 0.08512497879564762,
+   "b_full_score_ms": 1.0131250601261854,
+   "b_full_score_perblock_ms": 3.1860419549047947,
+   "b_full_total_ms": 1.098250038921833,
+   "b_blockmax_score_ms": 3.207499859854579,
+   "b_blockmax_total_ms": 3.2926248386502266,
+   "blocks_decoded": 47,
+   "blocks_skipped": 27,
+   "a_top": [
+    [
+     30340,
+     11.632349995
+    ],
+    [
+     31717,
+     11.431186291
+    ],
+    [
+     30025,
+     10.693204214
+    ],
+    [
+     29132,
+     10.629288878
+    ],
+    [
+     22060,
+     10.592054729
+    ],
+    [
+     18248,
+     10.522792806
+    ],
+    [
+     19807,
+     10.206587023
+    ],
+    [
+     13429,
+     10.188510206
+    ],
+    [
+     23868,
+     10.08250515
+    ],
+    [
+     19805,
+     10.071640394
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1496,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "128",
+    "mgmt",
+    "of"
+   ],
+   "dfs": {
+    "128": 581,
+    "mgmt": 178,
+    "of": 10515
+   },
+   "postings": 11274,
+   "blocks": 90,
+   "blob_bytes": 44808,
+   "candidates": 11039,
+   "a_ms": 2.154374960809946,
+   "b_fetch_ms": 0.0941248144954443,
+   "b_full_score_ms": 1.171416137367487,
+   "b_full_score_perblock_ms": 3.8012079894542694,
+   "b_full_total_ms": 1.2655409518629313,
+   "b_blockmax_score_ms": 2.731457818299532,
+   "b_blockmax_total_ms": 2.8255826327949762,
+   "blocks_decoded": 31,
+   "blocks_skipped": 59,
+   "a_top": [
+    [
+     620,
+     11.769325831
+    ],
+    [
+     20199,
+     11.475489384
+    ],
+    [
+     17144,
+     11.468289688
+    ],
+    [
+     614,
+     11.274623736
+    ],
+    [
+     17132,
+     11.183820592
+    ],
+    [
+     619,
+     11.119270702
+    ],
+    [
+     22161,
+     11.118406956
+    ],
+    [
+     623,
+     11.10300463
+    ],
+    [
+     16704,
+     11.032112223
+    ],
+    [
+     625,
+     10.853263169
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1803,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "negotiation",
+    "0x8c",
+    "static"
+   ],
+   "dfs": {
+    "negotiation": 70,
+    "0x8c": 101,
+    "static": 14172
+   },
+   "postings": 14343,
+   "blocks": 113,
+   "blob_bytes": 57025,
+   "candidates": 14284,
+   "a_ms": 2.854249905794859,
+   "b_fetch_ms": 0.11212518438696861,
+   "b_full_score_ms": 1.4532080385833979,
+   "b_full_score_perblock_ms": 4.733624868094921,
+   "b_full_total_ms": 1.5653332229703665,
+   "b_blockmax_score_ms": 2.2978330962359905,
+   "b_blockmax_total_ms": 2.409958280622959,
+   "blocks_decoded": 11,
+   "blocks_skipped": 102,
+   "a_top": [
+    [
+     2308,
+     12.732898857
+    ],
+    [
+     11905,
+     12.445634998
+    ],
+    [
+     2306,
+     12.419233131
+    ],
+    [
+     11904,
+     11.857202077
+    ],
+    [
+     2307,
+     11.703613323
+    ],
+    [
+     25614,
+     11.3343972
+    ],
+    [
+     13455,
+     10.990318621
+    ],
+    [
+     25611,
+     10.5443829
+    ],
+    [
+     11902,
+     10.492134094
+    ],
+    [
+     11892,
+     10.312037768
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.2206,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "accept",
+    "ddr",
+    "of"
+   ],
+   "dfs": {
+    "accept": 167,
+    "ddr": 178,
+    "of": 10515
+   },
+   "postings": 10860,
+   "blocks": 87,
+   "blob_bytes": 43174,
+   "candidates": 10737,
+   "a_ms": 2.4127920623868704,
+   "b_fetch_ms": 0.10066619142889977,
+   "b_full_score_ms": 1.2316249776631594,
+   "b_full_score_perblock_ms": 3.782792016863823,
+   "b_full_total_ms": 1.3322911690920591,
+   "b_blockmax_score_ms": 2.8924590442329645,
+   "b_blockmax_total_ms": 2.9931252356618643,
+   "blocks_decoded": 35,
+   "blocks_skipped": 52,
+   "a_top": [
+    [
+     22913,
+     12.743010831
+    ],
+    [
+     22909,
+     12.565022052
+    ],
+    [
+     17896,
+     12.424195042
+    ],
+    [
+     3204,
+     12.112293938
+    ],
+    [
+     22271,
+     11.458728207
+    ],
+    [
+     22277,
+     11.372787269
+    ],
+    [
+     4710,
+     11.283958575
+    ],
+    [
+     29275,
+     11.081735055
+    ],
+    [
+     3205,
+     10.89403258
+    ],
+    [
+     26940,
+     10.844213397
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1774,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "queues",
+    "bandwidth",
+    "define"
+   ],
+   "dfs": {
+    "queues": 308,
+    "bandwidth": 245,
+    "define": 9018
+   },
+   "postings": 9571,
+   "blocks": 76,
+   "blob_bytes": 37947,
+   "candidates": 9481,
+   "a_ms": 1.826833002269268,
+   "b_fetch_ms": 0.08399994112551212,
+   "b_full_score_ms": 0.9319998789578676,
+   "b_full_score_perblock_ms": 3.067958867177367,
+   "b_full_total_ms": 1.0159998200833797,
+   "b_blockmax_score_ms": 3.0413339845836163,
+   "b_blockmax_total_ms": 3.1253339257091284,
+   "blocks_decoded": 43,
+   "blocks_skipped": 33,
+   "a_top": [
+    [
+     27675,
+     13.612265778
+    ],
+    [
+     27636,
+     11.954160068
+    ],
+    [
+     27454,
+     11.918113889
+    ],
+    [
+     30139,
+     11.727775787
+    ],
+    [
+     3778,
+     11.591265565
+    ],
+    [
+     30028,
+     11.391352322
+    ],
+    [
+     3783,
+     11.031544084
+    ],
+    [
+     1780,
+     10.789235523
+    ],
+    [
+     7161,
+     10.632167873
+    ],
+    [
+     29902,
+     10.56000495
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.1569,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "removal",
+    "0x9",
+    "static"
+   ],
+   "dfs": {
+    "removal": 91,
+    "0x9": 427,
+    "static": 14172
+   },
+   "postings": 14690,
+   "blocks": 116,
+   "blob_bytes": 58446,
+   "candidates": 14607,
+   "a_ms": 2.917499979957938,
+   "b_fetch_ms": 0.12083398178219795,
+   "b_full_score_ms": 1.5587080270051956,
+   "b_full_score_perblock_ms": 4.926834022626281,
+   "b_full_total_ms": 1.6795420087873936,
+   "b_blockmax_score_ms": 2.4163329508155584,
+   "b_blockmax_total_ms": 2.5371669325977564,
+   "blocks_decoded": 14,
+   "blocks_skipped": 102,
+   "a_top": [
+    [
+     24088,
+     11.670558191
+    ],
+    [
+     18225,
+     11.542361949
+    ],
+    [
+     26202,
+     11.359238441
+    ],
+    [
+     21592,
+     10.739511489
+    ],
+    [
+     9197,
+     10.466040822
+    ],
+    [
+     8148,
+     10.169698973
+    ],
+    [
+     14487,
+     9.921015086
+    ],
+    [
+     12612,
+     9.749245184
+    ],
+    [
+     17971,
+     9.531298036
+    ],
+    [
+     331,
+     9.52636006
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2324,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "si",
+    "directly",
+    "on"
+   ],
+   "dfs": {
+    "si": 238,
+    "directly": 278,
+    "on": 6812
+   },
+   "postings": 7328,
+   "blocks": 59,
+   "blob_bytes": 29302,
+   "candidates": 7116,
+   "a_ms": 1.4823328237980604,
+   "b_fetch_ms": 0.07287482731044292,
+   "b_full_score_ms": 0.8030838798731565,
+   "b_full_score_perblock_ms": 2.49683391302824,
+   "b_full_total_ms": 0.8759587071835995,
+   "b_blockmax_score_ms": 2.457624999806285,
+   "b_blockmax_total_ms": 2.530499827116728,
+   "blocks_decoded": 38,
+   "blocks_skipped": 21,
+   "a_top": [
+    [
+     3874,
+     13.637768941
+    ],
+    [
+     132,
+     12.510970835
+    ],
+    [
+     29443,
+     12.314431405
+    ],
+    [
+     6888,
+     12.035414296
+    ],
+    [
+     134,
+     12.020160754
+    ],
+    [
+     135,
+     11.96708989
+    ],
+    [
+     133,
+     11.911993233
+    ],
+    [
+     136,
+     11.846177353
+    ],
+    [
+     182,
+     11.793502864
+    ],
+    [
+     157,
+     11.701632868
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.1153,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "backward",
+    "record",
+    "void"
+   ],
+   "dfs": {
+    "backward": 67,
+    "record": 336,
+    "void": 10139
+   },
+   "postings": 10542,
+   "blocks": 84,
+   "blob_bytes": 41833,
+   "candidates": 10393,
+   "a_ms": 2.0071251783519983,
+   "b_fetch_ms": 0.08874991908669472,
+   "b_full_score_ms": 1.110415905714035,
+   "b_full_score_perblock_ms": 3.6239158362150192,
+   "b_full_total_ms": 1.1991658248007298,
+   "b_blockmax_score_ms": 3.173458157107234,
+   "b_blockmax_total_ms": 3.2622080761939287,
+   "blocks_decoded": 42,
+   "blocks_skipped": 42,
+   "a_top": [
+    [
+     19966,
+     11.223318342
+    ],
+    [
+     16345,
+     10.886331547
+    ],
+    [
+     16359,
+     10.836167328
+    ],
+    [
+     16346,
+     10.666083314
+    ],
+    [
+     12202,
+     10.530040003
+    ],
+    [
+     22637,
+     10.477923016
+    ],
+    [
+     12203,
+     10.444499997
+    ],
+    [
+     24786,
+     10.409637983
+    ],
+    [
+     19695,
+     10.350919503
+    ],
+    [
+     9099,
+     9.934620575
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1615,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "effective",
+    "rom",
+    "on"
+   ],
+   "dfs": {
+    "effective": 74,
+    "rom": 132,
+    "on": 6812
+   },
+   "postings": 7018,
+   "blocks": 57,
+   "blob_bytes": 28040,
+   "candidates": 6956,
+   "a_ms": 1.3455830048769712,
+   "b_fetch_ms": 0.06491690874099731,
+   "b_full_score_ms": 0.729875173419714,
+   "b_full_score_perblock_ms": 2.2946251556277275,
+   "b_full_total_ms": 0.7947920821607113,
+   "b_blockmax_score_ms": 2.120999852195382,
+   "b_blockmax_total_ms": 2.1859167609363794,
+   "blocks_decoded": 31,
+   "blocks_skipped": 26,
+   "a_top": [
+    [
+     23029,
+     13.583487274
+    ],
+    [
+     10943,
+     12.313578292
+    ],
+    [
+     23688,
+     12.249082108
+    ],
+    [
+     9424,
+     12.077308777
+    ],
+    [
+     13937,
+     11.748121252
+    ],
+    [
+     29712,
+     11.612477963
+    ],
+    [
+     12199,
+     11.434802932
+    ],
+    [
+     7854,
+     11.341498836
+    ],
+    [
+     29865,
+     11.091313665
+    ],
+    [
+     7855,
+     11.086218481
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1073,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "scnprintf",
+    "eeprom",
+    "dev"
+   ],
+   "dfs": {
+    "scnprintf": 92,
+    "eeprom": 174,
+    "dev": 7572
+   },
+   "postings": 7838,
+   "blocks": 63,
+   "blob_bytes": 31281,
+   "candidates": 7731,
+   "a_ms": 1.551375025883317,
+   "b_fetch_ms": 0.07295794785022736,
+   "b_full_score_ms": 0.8692499250173569,
+   "b_full_score_perblock_ms": 2.6842919178307056,
+   "b_full_total_ms": 0.9422078728675842,
+   "b_blockmax_score_ms": 2.35054106451571,
+   "b_blockmax_total_ms": 2.4234990123659372,
+   "blocks_decoded": 31,
+   "blocks_skipped": 32,
+   "a_top": [
+    [
+     30388,
+     14.532633151
+    ],
+    [
+     30389,
+     14.329896085
+    ],
+    [
+     9431,
+     13.889210171
+    ],
+    [
+     28174,
+     13.695399381
+    ],
+    [
+     3545,
+     13.582783484
+    ],
+    [
+     21923,
+     13.332264767
+    ],
+    [
+     24228,
+     13.328744253
+    ],
+    [
+     21346,
+     13.237439394
+    ],
+    [
+     3546,
+     13.023530438
+    ],
+    [
+     9427,
+     13.008747199
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.1192,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "msr",
+    "snd_kcontrol_new",
+    "in"
+   ],
+   "dfs": {
+    "msr": 262,
+    "snd_kcontrol_new": 107,
+    "in": 9776
+   },
+   "postings": 10145,
+   "blocks": 81,
+   "blob_bytes": 40426,
+   "candidates": 9991,
+   "a_ms": 1.9085831008851528,
+   "b_fetch_ms": 0.08600018918514252,
+   "b_full_score_ms": 1.0971250012516975,
+   "b_full_score_perblock_ms": 3.3229170367121696,
+   "b_full_total_ms": 1.18312519043684,
+   "b_blockmax_score_ms": 2.666250104084611,
+   "b_blockmax_total_ms": 2.7522502932697535,
+   "blocks_decoded": 36,
+   "blocks_skipped": 45,
+   "a_top": [
+    [
+     4138,
+     12.841758229
+    ],
+    [
+     27166,
+     12.316497545
+    ],
+    [
+     2146,
+     12.223541012
+    ],
+    [
+     2145,
+     12.044163588
+    ],
+    [
+     10856,
+     12.014457802
+    ],
+    [
+     10857,
+     11.957705204
+    ],
+    [
+     2717,
+     11.937494879
+    ],
+    [
+     10789,
+     11.661815945
+    ],
+    [
+     30374,
+     11.621919385
+    ],
+    [
+     14648,
+     11.588700047
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1628,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "imx",
+    "0x92",
+    "data"
+   ],
+   "dfs": {
+    "imx": 171,
+    "0x92": 87,
+    "data": 8961
+   },
+   "postings": 9219,
+   "blocks": 74,
+   "blob_bytes": 36764,
+   "candidates": 9149,
+   "a_ms": 1.746542053297162,
+   "b_fetch_ms": 0.07825018838047981,
+   "b_full_score_ms": 1.0477080941200256,
+   "b_full_score_perblock_ms": 3.1806249171495438,
+   "b_full_total_ms": 1.1259582825005054,
+   "b_blockmax_score_ms": 2.1071250084787607,
+   "b_blockmax_total_ms": 2.1853751968592405,
+   "blocks_decoded": 23,
+   "blocks_skipped": 51,
+   "a_top": [
+    [
+     10663,
+     13.649518448
+    ],
+    [
+     10664,
+     13.431192961
+    ],
+    [
+     10667,
+     13.068578712
+    ],
+    [
+     4463,
+     13.017838112
+    ],
+    [
+     29233,
+     13.000040998
+    ],
+    [
+     10678,
+     12.884025985
+    ],
+    [
+     26567,
+     12.741228109
+    ],
+    [
+     29232,
+     12.663077074
+    ],
+    [
+     10666,
+     12.641890646
+    ],
+    [
+     10674,
+     12.636178644
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1449,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "refclk",
+    "devs",
+    "the"
+   ],
+   "dfs": {
+    "refclk": 93,
+    "devs": 89,
+    "the": 12941
+   },
+   "postings": 13123,
+   "blocks": 104,
+   "blob_bytes": 52122,
+   "candidates": 13068,
+   "a_ms": 2.5177919305860996,
+   "b_fetch_ms": 0.10337494313716888,
+   "b_full_score_ms": 1.353790983557701,
+   "b_full_score_perblock_ms": 4.318624967709184,
+   "b_full_total_ms": 1.45716592669487,
+   "b_blockmax_score_ms": 2.6746250223368406,
+   "b_blockmax_total_ms": 2.7779999654740095,
+   "blocks_decoded": 25,
+   "blocks_skipped": 79,
+   "a_top": [
+    [
+     17905,
+     14.105995416
+    ],
+    [
+     25594,
+     12.980435908
+    ],
+    [
+     28053,
+     11.896973683
+    ],
+    [
+     23608,
+     11.824975788
+    ],
+    [
+     17170,
+     11.819555726
+    ],
+    [
+     23633,
+     11.710239302
+    ],
+    [
+     4808,
+     11.685664171
+    ],
+    [
+     4806,
+     11.650465838
+    ],
+    [
+     17028,
+     11.442778956
+    ],
+    [
+     8967,
+     11.412023059
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2059,
+   "agree_rust": true
+  },
+  {
+   "arity": 3,
+   "terms": [
+    "usually",
+    "props",
+    "int"
+   ],
+   "dfs": {
+    "usually": 151,
+    "props": 142,
+    "int": 14753
+   },
+   "postings": 15046,
+   "blocks": 120,
+   "blob_bytes": 59848,
+   "candidates": 14902,
+   "a_ms": 3.028790932148695,
+   "b_fetch_ms": 0.11495803482830524,
+   "b_full_score_ms": 1.5669579152017832,
+   "b_full_score_perblock_ms": 4.961791215464473,
+   "b_full_total_ms": 1.6819159500300884,
+   "b_blockmax_score_ms": 2.834209008142352,
+   "b_blockmax_total_ms": 2.9491670429706573,
+   "blocks_decoded": 23,
+   "blocks_skipped": 97,
+   "a_top": [
+    [
+     27839,
+     12.555328384
+    ],
+    [
+     12287,
+     12.408649907
+    ],
+    [
+     19595,
+     12.156792874
+    ],
+    [
+     10402,
+     11.878941067
+    ],
+    [
+     4570,
+     11.714073074
+    ],
+    [
+     12286,
+     11.611000844
+    ],
+    [
+     20202,
+     11.574697633
+    ],
+    [
+     19593,
+     11.553477858
+    ],
+    [
+     3426,
+     11.503915265
+    ],
+    [
+     27838,
+     11.417478797
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2559,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "0xf822",
+    "0xaa",
+    "super_block",
+    "manager",
+    "1u",
+    "int"
+   ],
+   "dfs": {
+    "0xf822": 2,
+    "0xaa": 119,
+    "super_block": 118,
+    "manager": 162,
+    "1u": 133,
+    "int": 14753
+   },
+   "postings": 15287,
+   "blocks": 123,
+   "blob_bytes": 60834,
+   "candidates": 15012,
+   "a_ms": 3.051915904507041,
+   "b_fetch_ms": 0.13262499123811722,
+   "b_full_score_ms": 1.572917215526104,
+   "b_full_score_perblock_ms": 5.068750120699406,
+   "b_full_total_ms": 1.7055422067642212,
+   "b_blockmax_score_ms": 3.075583139434457,
+   "b_blockmax_total_ms": 3.208208130672574,
+   "blocks_decoded": 27,
+   "blocks_skipped": 96,
+   "a_top": [
+    [
+     9014,
+     13.427422357
+    ],
+    [
+     24531,
+     12.936955409
+    ],
+    [
+     24532,
+     12.650149974
+    ],
+    [
+     6766,
+     12.437824099
+    ],
+    [
+     6767,
+     12.316764288
+    ],
+    [
+     1100,
+     12.154138586
+    ],
+    [
+     6770,
+     12.096329037
+    ],
+    [
+     1662,
+     11.948293544
+    ],
+    [
+     1661,
+     11.911148569
+    ],
+    [
+     8952,
+     11.821689459
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2475,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "drm_mode_config_init",
+    "0x33",
+    "108",
+    "hex",
+    "gpiochip",
+    "data"
+   ],
+   "dfs": {
+    "drm_mode_config_init": 2,
+    "0x33": 167,
+    "108": 86,
+    "hex": 82,
+    "gpiochip": 95,
+    "data": 8961
+   },
+   "postings": 9393,
+   "blocks": 77,
+   "blob_bytes": 37561,
+   "candidates": 9235,
+   "a_ms": 1.896916888654232,
+   "b_fetch_ms": 0.09483308531343937,
+   "b_full_score_ms": 1.1313750874251127,
+   "b_full_score_perblock_ms": 3.177542006596923,
+   "b_full_total_ms": 1.226208172738552,
+   "b_blockmax_score_ms": 2.754500135779381,
+   "b_blockmax_total_ms": 2.84933322109282,
+   "blocks_decoded": 38,
+   "blocks_skipped": 39,
+   "a_top": [
+    [
+     2463,
+     13.720323054
+    ],
+    [
+     2280,
+     13.347445184
+    ],
+    [
+     23198,
+     13.169845167
+    ],
+    [
+     17359,
+     13.057500792
+    ],
+    [
+     8254,
+     12.934844976
+    ],
+    [
+     523,
+     12.873650659
+    ],
+    [
+     514,
+     12.736132812
+    ],
+    [
+     19800,
+     12.709949168
+    ],
+    [
+     2465,
+     12.5340159
+    ],
+    [
+     18326,
+     12.427694818
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.1496,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "6cm",
+    "sysctl",
+    "module_platform_driver",
+    "__always_inline",
+    "certain",
+    "the"
+   ],
+   "dfs": {
+    "6cm": 4,
+    "sysctl": 102,
+    "module_platform_driver": 218,
+    "__always_inline": 103,
+    "certain": 149,
+    "the": 12941
+   },
+   "postings": 13517,
+   "blocks": 109,
+   "blob_bytes": 53803,
+   "candidates": 13215,
+   "a_ms": 2.6200830470770597,
+   "b_fetch_ms": 0.12012501247227192,
+   "b_full_score_ms": 1.5284998808056116,
+   "b_full_score_perblock_ms": 4.765500081703067,
+   "b_full_total_ms": 1.6486248932778835,
+   "b_blockmax_score_ms": 2.7716250624507666,
+   "b_blockmax_total_ms": 2.8917500749230385,
+   "blocks_decoded": 27,
+   "blocks_skipped": 82,
+   "a_top": [
+    [
+     28206,
+     15.347241674
+    ],
+    [
+     28470,
+     13.671104865
+    ],
+    [
+     17578,
+     12.903819158
+    ],
+    [
+     23778,
+     12.66561627
+    ],
+    [
+     23771,
+     12.567716844
+    ],
+    [
+     27565,
+     12.38600254
+    ],
+    [
+     17619,
+     12.321035721
+    ],
+    [
+     5297,
+     11.981468136
+    ],
+    [
+     13040,
+     11.951216074
+    ],
+    [
+     23775,
+     11.915967082
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2176,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "smb2_transport_capabilities",
+    "forward",
+    "0x6",
+    "cdefe",
+    "0x53",
+    "size"
+   ],
+   "dfs": {
+    "smb2_transport_capabilities": 2,
+    "forward": 197,
+    "0x6": 574,
+    "cdefe": 68,
+    "0x53": 103,
+    "size": 7822
+   },
+   "postings": 8766,
+   "blocks": 72,
+   "blob_bytes": 35049,
+   "candidates": 8584,
+   "a_ms": 1.6975000035017729,
+   "b_fetch_ms": 0.08254195563495159,
+   "b_full_score_ms": 0.974792055785656,
+   "b_full_score_perblock_ms": 3.0519170686602592,
+   "b_full_total_ms": 1.0573340114206076,
+   "b_blockmax_score_ms": 1.5785829164087772,
+   "b_blockmax_total_ms": 1.6611248720437288,
+   "blocks_decoded": 11,
+   "blocks_skipped": 61,
+   "a_top": [
+    [
+     31936,
+     17.700867978
+    ],
+    [
+     31933,
+     17.667597889
+    ],
+    [
+     31938,
+     17.584654977
+    ],
+    [
+     31804,
+     14.300500881
+    ],
+    [
+     31814,
+     14.300500881
+    ],
+    [
+     31801,
+     14.261190459
+    ],
+    [
+     31806,
+     14.16389646
+    ],
+    [
+     31816,
+     14.16389646
+    ],
+    [
+     31811,
+     13.935955402
+    ],
+    [
+     31809,
+     13.824832485
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1406,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "ch_element",
+    "mb",
+    "78",
+    "msb",
+    "devid",
+    "size"
+   ],
+   "dfs": {
+    "ch_element": 2,
+    "mb": 183,
+    "78": 122,
+    "msb": 162,
+    "devid": 81,
+    "size": 7822
+   },
+   "postings": 8372,
+   "blocks": 69,
+   "blob_bytes": 33515,
+   "candidates": 8196,
+   "a_ms": 1.654583029448986,
+   "b_fetch_ms": 0.08150003850460052,
+   "b_full_score_ms": 0.8722080383449793,
+   "b_full_score_perblock_ms": 2.835374791175127,
+   "b_full_total_ms": 0.9537080768495798,
+   "b_blockmax_score_ms": 3.002957906574011,
+   "b_blockmax_total_ms": 3.0844579450786114,
+   "blocks_decoded": 47,
+   "blocks_skipped": 22,
+   "a_top": [
+    [
+     5592,
+     16.233153752
+    ],
+    [
+     24067,
+     14.194357564
+    ],
+    [
+     22754,
+     14.090531582
+    ],
+    [
+     16641,
+     13.528235083
+    ],
+    [
+     14479,
+     13.264439892
+    ],
+    [
+     5325,
+     13.1815413
+    ],
+    [
+     31903,
+     12.921847977
+    ],
+    [
+     10472,
+     12.894317414
+    ],
+    [
+     3531,
+     12.668526145
+    ],
+    [
+     4147,
+     12.526610909
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 0.0,
+   "rust_full_score_ms": 0.1293,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "size_s3",
+    "msec",
+    "pipeline",
+    "between",
+    "explicitly",
+    "define"
+   ],
+   "dfs": {
+    "size_s3": 2,
+    "msec": 112,
+    "pipeline": 153,
+    "between": 621,
+    "explicitly": 121,
+    "define": 9018
+   },
+   "postings": 10027,
+   "blocks": 81,
+   "blob_bytes": 39845,
+   "candidates": 9818,
+   "a_ms": 1.9809589721262455,
+   "b_fetch_ms": 0.09479210712015629,
+   "b_full_score_ms": 1.041332958266139,
+   "b_full_score_perblock_ms": 3.4690420143306255,
+   "b_full_total_ms": 1.1361250653862953,
+   "b_blockmax_score_ms": 3.2275840640068054,
+   "b_blockmax_total_ms": 3.3223761711269617,
+   "blocks_decoded": 38,
+   "blocks_skipped": 43,
+   "a_top": [
+    [
+     22163,
+     15.585184019
+    ],
+    [
+     6832,
+     14.310396758
+    ],
+    [
+     22291,
+     14.003887765
+    ],
+    [
+     30170,
+     13.805866339
+    ],
+    [
+     14002,
+     13.722337224
+    ],
+    [
+     23620,
+     13.413633352
+    ],
+    [
+     16445,
+     12.655006534
+    ],
+    [
+     10930,
+     12.536175158
+    ],
+    [
+     14565,
+     12.260674386
+    ],
+    [
+     23375,
+     12.249633811
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1632,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "7890",
+    "parallel",
+    "bug_on",
+    "know",
+    "qs",
+    "size"
+   ],
+   "dfs": {
+    "7890": 3,
+    "parallel": 117,
+    "bug_on": 202,
+    "know": 280,
+    "qs": 195,
+    "size": 7822
+   },
+   "postings": 8619,
+   "blocks": 71,
+   "blob_bytes": 34508,
+   "candidates": 8364,
+   "a_ms": 1.7298748716711998,
+   "b_fetch_ms": 0.08829194121062756,
+   "b_full_score_ms": 0.9974169079214334,
+   "b_full_score_perblock_ms": 3.0183750204741955,
+   "b_full_total_ms": 1.085708849132061,
+   "b_blockmax_score_ms": 2.857042010873556,
+   "b_blockmax_total_ms": 2.9453339520841837,
+   "blocks_decoded": 42,
+   "blocks_skipped": 29,
+   "a_top": [
+    [
+     27608,
+     14.323225752
+    ],
+    [
+     23935,
+     13.952140346
+    ],
+    [
+     12057,
+     13.293576253
+    ],
+    [
+     21398,
+     13.118539669
+    ],
+    [
+     18564,
+     12.773138016
+    ],
+    [
+     2039,
+     12.459562441
+    ],
+    [
+     3674,
+     12.277716697
+    ],
+    [
+     24085,
+     11.914897232
+    ],
+    [
+     22869,
+     11.860447898
+    ],
+    [
+     16749,
+     11.845239438
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1368,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "smb_ace",
+    "wptr",
+    "img",
+    "eth_alen",
+    "dereference",
+    "for"
+   ],
+   "dfs": {
+    "smb_ace": 11,
+    "wptr": 94,
+    "img": 94,
+    "eth_alen": 169,
+    "dereference": 165,
+    "for": 13267
+   },
+   "postings": 13800,
+   "blocks": 111,
+   "blob_bytes": 54945,
+   "candidates": 13546,
+   "a_ms": 2.7425421867519617,
+   "b_fetch_ms": 0.1192090567201376,
+   "b_full_score_ms": 1.4520830009132624,
+   "b_full_score_perblock_ms": 4.719458054751158,
+   "b_full_total_ms": 1.5712920576334,
+   "b_blockmax_score_ms": 2.8516671154648066,
+   "b_blockmax_total_ms": 2.970876172184944,
+   "blocks_decoded": 27,
+   "blocks_skipped": 84,
+   "a_top": [
+    [
+     26124,
+     15.87996223
+    ],
+    [
+     26133,
+     15.23558982
+    ],
+    [
+     26123,
+     15.203889127
+    ],
+    [
+     26122,
+     14.802231204
+    ],
+    [
+     26119,
+     14.166417528
+    ],
+    [
+     26130,
+     13.501476245
+    ],
+    [
+     26129,
+     13.238940466
+    ],
+    [
+     29965,
+     12.960833835
+    ],
+    [
+     18503,
+     12.910441346
+    ],
+    [
+     18501,
+     12.858091266
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2303,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "f_file",
+    "0xff00",
+    "mtd",
+    "describe",
+    "loop",
+    "return"
+   ],
+   "dfs": {
+    "f_file": 3,
+    "0xff00": 71,
+    "mtd": 113,
+    "describe": 85,
+    "loop": 431,
+    "return": 14825
+   },
+   "postings": 15528,
+   "blocks": 124,
+   "blob_bytes": 61868,
+   "candidates": 15170,
+   "a_ms": 2.9592919163405895,
+   "b_fetch_ms": 0.12649991549551487,
+   "b_full_score_ms": 1.6331248916685581,
+   "b_full_score_perblock_ms": 5.309041123837233,
+   "b_full_total_ms": 1.759624807164073,
+   "b_blockmax_score_ms": 2.9659580904990435,
+   "b_blockmax_total_ms": 3.0924580059945583,
+   "blocks_decoded": 24,
+   "blocks_skipped": 100,
+   "a_top": [
+    [
+     256,
+     21.86806443
+    ],
+    [
+     255,
+     21.075700221
+    ],
+    [
+     3210,
+     13.252022555
+    ],
+    [
+     17708,
+     13.152523777
+    ],
+    [
+     17707,
+     13.081633697
+    ],
+    [
+     3565,
+     13.041444074
+    ],
+    [
+     27568,
+     12.99286303
+    ],
+    [
+     17706,
+     12.897979552
+    ],
+    [
+     3564,
+     12.887918588
+    ],
+    [
+     21715,
+     12.879429578
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.2507,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "hdspm_get_tco_sample_rate",
+    "otg",
+    "0xaf",
+    "79",
+    "like",
+    "of"
+   ],
+   "dfs": {
+    "hdspm_get_tco_sample_rate": 4,
+    "otg": 250,
+    "0xaf": 67,
+    "79": 98,
+    "like": 509,
+    "of": 10515
+   },
+   "postings": 11443,
+   "blocks": 92,
+   "blob_bytes": 45540,
+   "candidates": 10996,
+   "a_ms": 2.2318330593407154,
+   "b_fetch_ms": 0.10108295828104019,
+   "b_full_score_ms": 1.2311248574405909,
+   "b_full_score_perblock_ms": 3.9189590606838465,
+   "b_full_total_ms": 1.332207815721631,
+   "b_blockmax_score_ms": 2.3753750137984753,
+   "b_blockmax_total_ms": 2.4764579720795155,
+   "blocks_decoded": 23,
+   "blocks_skipped": 69,
+   "a_top": [
+    [
+     3020,
+     14.013908389
+    ],
+    [
+     3018,
+     12.192162624
+    ],
+    [
+     6350,
+     11.954388486
+    ],
+    [
+     6371,
+     11.954388486
+    ],
+    [
+     6329,
+     11.934684836
+    ],
+    [
+     6308,
+     11.908477835
+    ],
+    [
+     6546,
+     11.856515507
+    ],
+    [
+     6582,
+     11.850047593
+    ],
+    [
+     6510,
+     11.843586731
+    ],
+    [
+     6528,
+     11.837132911
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.1914,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "proto_data_table",
+    "gs",
+    "0x3a",
+    "property",
+    "0xc4",
+    "void"
+   ],
+   "dfs": {
+    "proto_data_table": 3,
+    "gs": 123,
+    "0x3a": 140,
+    "property": 594,
+    "0xc4": 78,
+    "void": 10139
+   },
+   "postings": 11077,
+   "blocks": 90,
+   "blob_bytes": 44023,
+   "candidates": 10808,
+   "a_ms": 2.244375180453062,
+   "b_fetch_ms": 0.100292032584548,
+   "b_full_score_ms": 1.2547080405056477,
+   "b_full_score_perblock_ms": 3.998541971668601,
+   "b_full_total_ms": 1.3550000730901957,
+   "b_blockmax_score_ms": 2.592707984149456,
+   "b_blockmax_total_ms": 2.693000016734004,
+   "blocks_decoded": 26,
+   "blocks_skipped": 64,
+   "a_top": [
+    [
+     16121,
+     16.283008753
+    ],
+    [
+     23561,
+     16.127695494
+    ],
+    [
+     16070,
+     15.402267867
+    ],
+    [
+     10297,
+     14.757515035
+    ],
+    [
+     27058,
+     13.297824754
+    ],
+    [
+     1319,
+     13.141831473
+    ],
+    [
+     10298,
+     13.092439887
+    ],
+    [
+     16115,
+     12.88493806
+    ],
+    [
+     23555,
+     12.660912972
+    ],
+    [
+     23462,
+     12.443814119
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1818,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "itp",
+    "readonly",
+    "encap",
+    "numa",
+    "known",
+    "static"
+   ],
+   "dfs": {
+    "itp": 2,
+    "readonly": 65,
+    "encap": 132,
+    "numa": 137,
+    "known": 188,
+    "static": 14172
+   },
+   "postings": 14696,
+   "blocks": 119,
+   "blob_bytes": 58540,
+   "candidates": 14426,
+   "a_ms": 2.9592090286314487,
+   "b_fetch_ms": 0.128875020891428,
+   "b_full_score_ms": 1.6238328535109758,
+   "b_full_score_perblock_ms": 5.316250026226044,
+   "b_full_total_ms": 1.7527078744024038,
+   "b_blockmax_score_ms": 3.6872909404337406,
+   "b_blockmax_total_ms": 3.8161659613251686,
+   "blocks_decoded": 40,
+   "blocks_skipped": 79,
+   "a_top": [
+    [
+     12397,
+     13.489865363
+    ],
+    [
+     2859,
+     12.586861945
+    ],
+    [
+     24459,
+     12.560734501
+    ],
+    [
+     21641,
+     12.451624626
+    ],
+    [
+     28845,
+     12.386527818
+    ],
+    [
+     17638,
+     12.346513316
+    ],
+    [
+     21638,
+     12.281828814
+    ],
+    [
+     8833,
+     12.218685459
+    ],
+    [
+     24231,
+     12.180773342
+    ],
+    [
+     31658,
+     12.061092834
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.2352,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "george",
+    "invalidate",
+    "reboot",
+    "processes",
+    "0x90150001",
+    "const"
+   ],
+   "dfs": {
+    "george": 4,
+    "invalidate": 202,
+    "reboot": 93,
+    "processes": 84,
+    "0x90150001": 257,
+    "const": 8074
+   },
+   "postings": 8714,
+   "blocks": 72,
+   "blob_bytes": 34737,
+   "candidates": 8633,
+   "a_ms": 1.746084075421095,
+   "b_fetch_ms": 0.09087496437132359,
+   "b_full_score_ms": 0.96287508495152,
+   "b_full_score_perblock_ms": 3.0580838210880756,
+   "b_full_total_ms": 1.0537500493228436,
+   "b_blockmax_score_ms": 2.7831660117954016,
+   "b_blockmax_total_ms": 2.874040976166725,
+   "blocks_decoded": 39,
+   "blocks_skipped": 33,
+   "a_top": [
+    [
+     11549,
+     15.381792799
+    ],
+    [
+     17628,
+     14.022673249
+    ],
+    [
+     10523,
+     13.237212153
+    ],
+    [
+     18978,
+     11.795350839
+    ],
+    [
+     16177,
+     11.544070224
+    ],
+    [
+     26339,
+     11.487650091
+    ],
+    [
+     24304,
+     11.455209644
+    ],
+    [
+     28963,
+     11.021007003
+    ],
+    [
+     21708,
+     11.011728817
+    ],
+    [
+     12436,
+     10.989017274
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1367,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "shdn",
+    "query",
+    "supply",
+    "ib",
+    "damages",
+    "to"
+   ],
+   "dfs": {
+    "shdn": 5,
+    "query": 362,
+    "supply": 310,
+    "ib": 375,
+    "damages": 293,
+    "to": 15247
+   },
+   "postings": 16592,
+   "blocks": 133,
+   "blob_bytes": 66231,
+   "candidates": 15662,
+   "a_ms": 3.2550001051276922,
+   "b_fetch_ms": 0.13208319433033466,
+   "b_full_score_ms": 1.7345829401165247,
+   "b_full_score_perblock_ms": 5.662374896928668,
+   "b_full_total_ms": 1.8666661344468594,
+   "b_blockmax_score_ms": 2.913624979555607,
+   "b_blockmax_total_ms": 3.0457081738859415,
+   "blocks_decoded": 18,
+   "blocks_skipped": 115,
+   "a_top": [
+    [
+     20194,
+     18.139984695
+    ],
+    [
+     20200,
+     18.084364667
+    ],
+    [
+     20201,
+     18.040583482
+    ],
+    [
+     20197,
+     17.618583499
+    ],
+    [
+     20202,
+     17.440583994
+    ],
+    [
+     9990,
+     17.067527882
+    ],
+    [
+     28697,
+     16.594435865
+    ],
+    [
+     21170,
+     16.397016919
+    ],
+    [
+     21169,
+     14.606775853
+    ],
+    [
+     12270,
+     14.419650716
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 3.552713678800501e-15,
+   "rust_full_score_ms": 0.2839,
+   "agree_rust": true
+  },
+  {
+   "arity": 6,
+   "terms": [
+    "0x10e3",
+    "indio_dev",
+    "ensures",
+    "assumes",
+    "outstanding",
+    "define"
+   ],
+   "dfs": {
+    "0x10e3": 6,
+    "indio_dev": 112,
+    "ensures": 90,
+    "assumes": 93,
+    "outstanding": 84,
+    "define": 9018
+   },
+   "postings": 9403,
+   "blocks": 76,
+   "blob_bytes": 37316,
+   "candidates": 9337,
+   "a_ms": 1.8607079982757568,
+   "b_fetch_ms": 0.09512505494058132,
+   "b_full_score_ms": 0.9638748597353697,
+   "b_full_score_perblock_ms": 3.1894580461084843,
+   "b_full_total_ms": 1.058999914675951,
+   "b_blockmax_score_ms": 2.8497078455984592,
+   "b_blockmax_total_ms": 2.9448329005390406,
+   "blocks_decoded": 39,
+   "blocks_skipped": 37,
+   "a_top": [
+    [
+     26193,
+     16.856763946
+    ],
+    [
+     19677,
+     15.348294315
+    ],
+    [
+     7515,
+     14.01309495
+    ],
+    [
+     14996,
+     13.62541864
+    ],
+    [
+     14612,
+     12.541524549
+    ],
+    [
+     24100,
+     12.392727771
+    ],
+    [
+     30493,
+     12.34712341
+    ],
+    [
+     26673,
+     12.314385188
+    ],
+    [
+     31166,
+     12.30619435
+    ],
+    [
+     31047,
+     12.272358867
+    ]
+   ],
+   "agree_full": true,
+   "agree_blockmax": true,
+   "tau_full": 1.0,
+   "tau_blockmax": 1.0,
+   "max_abs_score_diff": 1.7763568394002505e-15,
+   "rust_full_score_ms": 0.1645,
+   "agree_rust": true
+  }
+ ]
+}

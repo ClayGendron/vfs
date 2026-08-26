@@ -147,10 +147,12 @@ of vfs code is written by us. Run `ls ~/Git/Repos` for the full list; the
 most relevant to this project:
 
 - **Always check the license immediately after cloning a new reference
-  repo.** Keep only clones under clearly permissive open-source licenses
-  (MIT, BSD, Apache-2.0, and similar); if the license is copyleft, missing,
-  or unclear, delete the clone and study that project through its public
-  docs and design writing instead.
+  repo, and record it in the memo.** Copyleft licenses (AGPL, GPL, dual
+  AGPL/Elastic) are fine to *study* — the no-copy rule above is what
+  protects us, and it applies to every clone regardless of license
+  (Clay, 2026-08-26). Delete a clone only when it carries no license or
+  the terms are unclear, and study that project through its public docs
+  and design writing instead.
 - **Refresh every clone in a study set to its upstream default branch
   before any subagent studies it** (Clay, 2026-08-26). Reference repos
   drift — graphify moved orgs, relicensed, and switched its default
@@ -170,6 +172,12 @@ most relevant to this project:
 - **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
 - **Code search & indexing** (trigram-index stories): `zoekt`, `codesearch`,
   `scip`
+- **BM25 inside Postgres** (lexical-leg design record): `pg_textsearch`
+  (TigerData/Timescale, PostgreSQL licence — LSM memtable + paged
+  segments, Block-Max WAND), `paradedb` (`pg_search`, AGPL — Tantivy
+  segments on Postgres pages), `VectorChord-bm25` (AGPL/ELv2 — bm25
+  index type with Block WeakAnd), `pg_bestmatch.rs` (Apache-2.0 — BM25
+  as sparse vectors)
 - **Ranked search, fusion & embeddings** (glean stories): `pgvector`,
   `pgvector-python`, `sqlite-vec`, `bm25s`, `tantivy`, `lucene`
   (unified highlighter), `ranx` (rank fusion + IR metrics),

@@ -1,0 +1,10 @@
+{
+ "chunks": 32243,
+ "tokens": 8731415,
+ "python_tokenize_s": 5.006,
+ "rust_tokens_cmd_wall_s": 0.654,
+ "rust_report": "{\"chunks\": 32243, \"tokens\": 8731415, \"tokenize_s\": 0.4600}",
+ "divergent_chunks": 0,
+ "divergences": [],
+ "identical": true
+}

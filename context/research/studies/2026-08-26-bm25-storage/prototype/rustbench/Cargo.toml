@@ -1,0 +1,15 @@
+[package]
+name = "rustbench"
+version = "0.1.0"
+edition = "2021"
+description = "Option B block-posting BM25 prototype: tokenizer parity, build, and decode+score, in Rust"
+
+# Standalone: not a member of the repo's workspace.
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.38", features = ["bundled"] }
+
+[profile.release]
+opt-level = 3
+debug = false

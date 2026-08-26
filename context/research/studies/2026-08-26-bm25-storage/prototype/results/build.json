@@ -1,0 +1,133 @@
+{
+ "store": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/9aca8a65-866f-4cbb-bc2b-685f1963370c/scratchpad/bench_lexical_clean.sqlite",
+ "builds": {
+  "rust_64": {
+   "wall_s": 2.6958,
+   "tokenize_s": 0.4781,
+   "n_docs": 32243,
+   "total_tokens": 8731415,
+   "terms": 487126,
+   "block_rows": 514953,
+   "rows_written": 514953,
+   "blob_bytes": 13462428,
+   "block_size": 64,
+   "wrapper_wall_s": 2.787,
+   "peak_rss_mb_children_running_max": 305.3,
+   "dbstat_bytes": {
+    "lex_df": 18636800,
+    "lex_docs": 1032192,
+    "lex_postings": 33779712,
+    "lex_stats": 4096,
+    "sqlite_schema": 4096
+   },
+   "total_bytes": 53452800,
+   "rows": {
+    "lex_postings": 514953,
+    "lex_docs": 32243,
+    "lex_df": 487126,
+    "lex_stats": 1
+   }
+  },
+  "rust_128": {
+   "wall_s": 2.6211,
+   "tokenize_s": 0.4778,
+   "n_docs": 32243,
+   "total_tokens": 8731415,
+   "terms": 487126,
+   "block_rows": 499590,
+   "rows_written": 499590,
+   "blob_bytes": 13440647,
+   "block_size": 128,
+   "wrapper_wall_s": 2.703,
+   "peak_rss_mb_children_running_max": 306.4,
+   "dbstat_bytes": {
+    "lex_df": 18636800,
+    "lex_docs": 1032192,
+    "lex_postings": 33558528,
+    "lex_stats": 4096,
+    "sqlite_schema": 4096
+   },
+   "total_bytes": 53231616,
+   "rows": {
+    "lex_postings": 499590,
+    "lex_docs": 32243,
+    "lex_df": 487126,
+    "lex_stats": 1
+   }
+  },
+  "rust_256": {
+   "wall_s": 3.2435,
+   "tokenize_s": 0.48,
+   "n_docs": 32243,
+   "total_tokens": 8731415,
+   "terms": 487126,
+   "block_rows": 492492,
+   "rows_written": 492492,
+   "blob_bytes": 13430351,
+   "block_size": 256,
+   "wrapper_wall_s": 3.331,
+   "peak_rss_mb_children_running_max": 308.0,
+   "dbstat_bytes": {
+    "lex_df": 18636800,
+    "lex_docs": 1032192,
+    "lex_postings": 52248576,
+    "lex_stats": 4096,
+    "sqlite_schema": 4096
+   },
+   "total_bytes": 71921664,
+   "rows": {
+    "lex_postings": 492492,
+    "lex_docs": 32243,
+    "lex_df": 487126,
+    "lex_stats": 1
+   }
+  },
+  "python_128": {
+   "wall_s": 9.509,
+   "tokenize_s": 5.201,
+   "n_docs": 32243,
+   "total_tokens": 8731415,
+   "terms": 487126,
+   "block_rows": 499590,
+   "blob_bytes": 13440647,
+   "block_size": 128,
+   "peak_rss_mb": 492.4,
+   "wrapper_wall_s": 10.065,
+   "dbstat_bytes": {
+    "lex_df": 18636800,
+    "lex_docs": 1032192,
+    "lex_postings": 33439744,
+    "lex_stats": 4096,
+    "sqlite_schema": 4096
+   },
+   "total_bytes": 53112832,
+   "rows": {
+    "lex_postings": 499590,
+    "lex_docs": 32243,
+    "lex_df": 487126,
+    "lex_stats": 1
+   }
+  }
+ },
+ "python_rust_tables_identical": true,
+ "option_a": {
+  "dbstat_bytes": {
+   "vfs_lex_df": 19218432,
+   "vfs_lex_docs": 1081344,
+   "vfs_lex_stats": 16384,
+   "vfs_lex_terms": 99155968
+  },
+  "total_bytes": 119472128,
+  "rows": {
+   "vfs_lex_terms": 3094397,
+   "vfs_lex_docs": 32243,
+   "vfs_lex_df": 487126,
+   "vfs_lex_stats": 1
+  },
+  "landing_note": {
+   "build_add_s": 28.8,
+   "term_rows": 3094397,
+   "bytes_mb": 120
+  }
+ }
+}

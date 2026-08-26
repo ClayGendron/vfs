@@ -151,6 +151,20 @@ index on real corpora split by `Chunk.split_batch`.
 
 ## Consequences
 
+> **Amended 2026-08-26 (spike, after spec 130 landed):** pin 3 — own
+> term tables over engine full-text — was measured at query time
+> against SQL Server's full-text search on a 16 k-chunk linux sample
+> (`../research/2026-08-26-bm25-vs-mssql-fulltext.md`). The pin
+> stands: the owned tables keep the planner in index seeks under every
+> scope glean issues, where the native rowset forces scans and hash
+> joins; one-term and scoped queries are faster on the owned tables,
+> multi-term unscoped queries ~2× slower (single-digit ms either way)
+> because a common term's full posting run is summed — the query-time
+> `df` ceiling is the fix, to be decided in spec 132. The recorded cost
+> is build and size on that engine (55× slower, 5× larger than the
+> native index); the levers are in spec 130's landing note.
+
+
 - **Easier:** the same ranking on every engine — the conformance suite
   pins an ordered top-10 per golden query across all six dialects;
   cross-mount merge stays honest because every mount ranks by the same

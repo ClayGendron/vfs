@@ -1,0 +1,858 @@
+{
+ "files": 2000,
+ "seed": 7,
+ "counts": {
+  "chunks": 16307,
+  "term_rows": 1550572,
+  "vocab": 269858
+ },
+ "sizes_kb": {
+  "vfs": 3216,
+  "vfs_chunks": 36760,
+  "vfs_content": 35728,
+  "vfs_edges": 0,
+  "vfs_gram_epochs": 72,
+  "vfs_grams_posting_list": 6728,
+  "vfs_lex_df": 12168,
+  "vfs_lex_docs": 1808,
+  "vfs_lex_stats": 72,
+  "vfs_lex_terms": 110920,
+  "vfs_meta": 72,
+  "vfs_segments": 1168,
+  "vfs_versions": 0
+ },
+ "fulltext_index_bytes": 23552,
+ "fulltext_population_s": 7.077714667189866,
+ "scope": {
+  "ext": "c",
+  "segment": "drivers",
+  "allow_ids": 500
+ },
+ "queries": {
+  "1-term": [
+   [
+    "happy"
+   ],
+   [
+    "causing"
+   ],
+   [
+    "links"
+   ],
+   [
+    "therefore"
+   ],
+   [
+    "0x69"
+   ],
+   [
+    "2005"
+   ],
+   [
+    "rates"
+   ],
+   [
+    "adjusted"
+   ],
+   [
+    "ipproto"
+   ],
+   [
+    "sched"
+   ],
+   [
+    "0x90040001"
+   ],
+   [
+    "positive"
+   ],
+   [
+    "deleted"
+   ],
+   [
+    "0x3f"
+   ],
+   [
+    "accel"
+   ]
+  ],
+  "3-term": [
+   [
+    "mod_devicetable",
+    "mdio",
+    "data"
+   ],
+   [
+    "domains",
+    "adc1",
+    "struct"
+   ],
+   [
+    "metricconstraint",
+    "0x90320000",
+    "this"
+   ],
+   [
+    "bdev",
+    "dev_err_probe",
+    "unsigned"
+   ],
+   [
+    "steps",
+    "sched",
+    "const"
+   ],
+   [
+    "rule",
+    "scratch",
+    "size"
+   ],
+   [
+    "0x70",
+    "detach",
+    "const"
+   ],
+   [
+    "removed",
+    "boot",
+    "else"
+   ],
+   [
+    "meaning",
+    "calculate",
+    "struct"
+   ],
+   [
+    "average",
+    "rising",
+    "else"
+   ],
+   [
+    "requested",
+    "unset",
+    "define"
+   ],
+   [
+    "amdgpu_device",
+    "scaler",
+    "this"
+   ],
+   [
+    "surface",
+    "controls",
+    "return"
+   ],
+   [
+    "aif2",
+    "refs",
+    "void"
+   ],
+   [
+    "0x97",
+    "rest",
+    "const"
+   ]
+  ],
+  "6-term": [
+   [
+    "ethernet0",
+    "pipes",
+    "unknown",
+    "queue_work",
+    "might",
+    "return"
+   ],
+   [
+    "rt5670_jd_mode1",
+    "scratch",
+    "noninfringement",
+    "inuse",
+    "forwarding",
+    "device"
+   ],
+   [
+    "dmcub_outbox1_rptr",
+    "vmid",
+    "driver_name",
+    "__le16",
+    "rssi",
+    "else"
+   ],
+   [
+    "table_type_matches",
+    "pinmux",
+    "implemented",
+    "netdev",
+    "fence",
+    "this"
+   ],
+   [
+    "addr_gic_",
+    "avoid",
+    "preferred",
+    "mdio",
+    "clusters",
+    "return"
+   ],
+   [
+    "ctl_input",
+    "performance",
+    "memblock",
+    "0x43",
+    "trying",
+    "data"
+   ],
+   [
+    "umc_cap_hi",
+    "routine",
+    "goes",
+    "iftype",
+    "verifier",
+    "return"
+   ],
+   [
+    "xfs_refcount_intent",
+    "pitch",
+    "sampling",
+    "nsec",
+    "0xffffffff",
+    "data"
+   ],
+   [
+    "image_size",
+    "override",
+    "view",
+    "transitions",
+    "0xbb",
+    "const"
+   ],
+   [
+    "letting",
+    "tegra",
+    "runs",
+    "unmap",
+    "napi",
+    "else"
+   ],
+   [
+    "pages_in_io",
+    "tuner",
+    "indexed",
+    "0x0a",
+    "of_node",
+    "return"
+   ],
+   [
+    "destroy_workqueue",
+    "snoop",
+    "automatically",
+    "pick",
+    "0x90160001",
+    "device"
+   ],
+   [
+    "irl2",
+    "bist",
+    "dst_addr",
+    "live",
+    "less",
+    "static"
+   ],
+   [
+    "ampdu_len",
+    "cntrl",
+    "netdev_priv",
+    "locking",
+    "reg_update",
+    "else"
+   ],
+   [
+    "compliancy",
+    "missed",
+    "registered",
+    "expires",
+    "whom",
+    "size"
+   ]
+  ]
+ },
+ "results": {
+  "S1 unscoped top-K": {
+   "1-term": {
+    "ours_ms_median": 0.6745830178260803,
+    "ours_ms_p90": 0.7177500519901514,
+    "fts_ms_median": 0.820250017568469,
+    "fts_ms_p90": 0.8509580511599779,
+    "top10_jaccard_median": 0.3333333333333333,
+    "ours_plan": [
+     "Sort",
+     "Compute Scalar",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 3.5709580406546593,
+    "ours_ms_p90": 5.204875022172928,
+    "fts_ms_median": 1.585999969393015,
+    "fts_ms_p90": 2.209374913945794,
+    "top10_jaccard_median": 0.0,
+    "ours_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 3.749749856069684,
+    "ours_ms_p90": 5.9896670281887054,
+    "fts_ms_median": 1.4770000707358122,
+    "fts_ms_p90": 2.2507081739604473,
+    "top10_jaccard_median": 0.1111111111111111,
+    "ours_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort"
+    ]
+   }
+  },
+  "S2 joined to entries (liveness + path)": {
+   "1-term": {
+    "ours_ms_median": 0.8338328916579485,
+    "ours_ms_p90": 0.883874949067831,
+    "fts_ms_median": 1.0240830015391111,
+    "fts_ms_p90": 1.1001250240951777,
+    "top10_jaccard_median": 0.5,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Compute Scalar",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 4.910291871055961,
+    "ours_ms_p90": 8.372250013053417,
+    "fts_ms_median": 2.7335418853908777,
+    "fts_ms_p90": 4.533624975010753,
+    "top10_jaccard_median": 0.125,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 5.19599998369813,
+    "ours_ms_p90": 8.568292018026114,
+    "fts_ms_median": 2.3994590155780315,
+    "fts_ms_p90": 4.494916880503297,
+    "top10_jaccard_median": 0.1111111111111111,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   }
+  },
+  "S3 scoped by extension": {
+   "1-term": {
+    "ours_ms_median": 0.9498328436166048,
+    "ours_ms_p90": 1.087249955162406,
+    "fts_ms_median": 1.1160001158714294,
+    "fts_ms_p90": 1.2461249716579914,
+    "top10_jaccard_median": 0.5,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Compute Scalar",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 5.865749903023243,
+    "ours_ms_p90": 8.3663749974221,
+    "fts_ms_median": 8.414542069658637,
+    "fts_ms_p90": 10.483583202585578,
+    "top10_jaccard_median": 0.18181818181818182,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Hash Match",
+     "Hash Match",
+     "Clustered Index Scan[vfs]",
+     "Index Scan[vfs_chunks]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 5.263167200610042,
+    "ours_ms_p90": 8.724667131900787,
+    "fts_ms_median": 5.547958891838789,
+    "fts_ms_p90": 9.01316711679101,
+    "top10_jaccard_median": 0.125,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   }
+  },
+  "S4 scoped by directory segment": {
+   "1-term": {
+    "ours_ms_median": 0.9546249639242887,
+    "ours_ms_p90": 1.2160420883446932,
+    "fts_ms_median": 1.1496669612824917,
+    "fts_ms_p90": 1.3761247973889112,
+    "top10_jaccard_median": 0.5,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Compute Scalar",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs_segments]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Nested Loops",
+     "Nested Loops",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Nested Loops",
+     "Clustered Index Seek[vfs_chunks]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 5.019415868446231,
+    "ours_ms_p90": 8.547957986593246,
+    "fts_ms_median": 9.146458003669977,
+    "fts_ms_p90": 12.777792057022452,
+    "top10_jaccard_median": 0.08333333333333333,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Clustered Index Seek[vfs_segments]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Hash Match",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Index Scan[vfs_chunks]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 5.464791785925627,
+    "ours_ms_p90": 8.750667097046971,
+    "fts_ms_median": 8.983749896287918,
+    "fts_ms_p90": 12.771292123943567,
+    "top10_jaccard_median": 0.14285714285714285,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Clustered Index Seek[vfs_segments]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Merge Join",
+     "Sort",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Index Scan[vfs_chunks]"
+    ]
+   }
+  },
+  "S5 scoped by an id allow-list (500 ids)": {
+   "1-term": {
+    "ours_ms_median": 1.8285838887095451,
+    "ours_ms_p90": 1.9447500817477703,
+    "fts_ms_median": 1.8511249218136072,
+    "fts_ms_p90": 2.0453750621527433,
+    "top10_jaccard_median": 0.5454545454545454,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Sort",
+     "Compute Scalar",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Filter",
+     "Clustered Index Seek[vfs_lex_docs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Nested Loops",
+     "Filter",
+     "Clustered Index Seek[vfs_chunks]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 6.006499985232949,
+    "ours_ms_p90": 9.638041956350207,
+    "fts_ms_median": 4.07120818272233,
+    "fts_ms_p90": 5.713916150853038,
+    "top10_jaccard_median": 0.125,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Filter",
+     "Clustered Index Seek[vfs_lex_docs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Sort",
+     "Filter",
+     "Clustered Index Seek[vfs_chunks]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 6.611292017623782,
+    "ours_ms_p90": 10.247041005641222,
+    "fts_ms_median": 3.473457880318165,
+    "fts_ms_p90": 5.677499808371067,
+    "top10_jaccard_median": 0.23076923076923078,
+    "ours_plan": [
+     "Top",
+     "Nested Loops",
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Filter",
+     "Clustered Index Seek[vfs_lex_docs]"
+    ],
+    "fts_plan": [
+     "Top",
+     "Nested Loops",
+     "Sort",
+     "Filter",
+     "Clustered Index Seek[vfs_chunks]"
+    ]
+   }
+  },
+  "S6 MaxP to entries": {
+   "1-term": {
+    "ours_ms_median": 0.9863341692835093,
+    "ours_ms_p90": 2.4674159940332174,
+    "fts_ms_median": 1.0796249844133854,
+    "fts_ms_p90": 3.75249981880188,
+    "top10_jaccard_median": 0.5384615384615384,
+    "ours_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Nested Loops",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Nested Loops",
+     "Clustered Index Seek[vfs_chunks]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 7.179832784458995,
+    "ours_ms_p90": 11.340999975800514,
+    "fts_ms_median": 6.464707897976041,
+    "fts_ms_p90": 8.528291014954448,
+    "top10_jaccard_median": 0.17647058823529413,
+    "ours_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Merge Join",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Hash Match",
+     "Hash Match",
+     "Index Scan[vfs_chunks]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 7.459624903276563,
+    "ours_ms_p90": 11.292875045910478,
+    "fts_ms_median": 5.810249829664826,
+    "fts_ms_p90": 8.811625186353922,
+    "top10_jaccard_median": 0.17647058823529413,
+    "ours_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Merge Join",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Hash Match",
+     "Hash Match",
+     "Index Scan[vfs_chunks]"
+    ]
+   }
+  },
+  "S7 ext + segment + MaxP": {
+   "1-term": {
+    "ours_ms_median": 1.2384580913931131,
+    "ours_ms_p90": 2.918875077739358,
+    "fts_ms_median": 1.3925840612500906,
+    "fts_ms_p90": 5.8887500781565905,
+    "top10_jaccard_median": 0.8,
+    "ours_plan": [
+     "Sort",
+     "Nested Loops",
+     "Nested Loops",
+     "Nested Loops",
+     "Stream Aggregate",
+     "Sort",
+     "Nested Loops",
+     "Clustered Index Seek[vfs_lex_terms]",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]",
+     "Index Seek[vfs_segments]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Nested Loops",
+     "Nested Loops",
+     "Merge Join",
+     "Stream Aggregate",
+     "Sort",
+     "Nested Loops",
+     "Clustered Index Seek[vfs_chunks]",
+     "Clustered Index Seek[vfs_segments]",
+     "Index Seek[vfs]",
+     "Clustered Index Seek[vfs]"
+    ]
+   },
+   "3-term": {
+    "ours_ms_median": 9.482916910201311,
+    "ours_ms_p90": 14.526499900966883,
+    "fts_ms_median": 10.431417031213641,
+    "fts_ms_p90": 12.530165957286954,
+    "top10_jaccard_median": 0.17647058823529413,
+    "ours_plan": [
+     "Top",
+     "Sort",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Stream Aggregate",
+     "Sort",
+     "Merge Join",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Hash Match",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Index Scan[vfs_chunks]"
+    ]
+   },
+   "6-term": {
+    "ours_ms_median": 11.261916952207685,
+    "ours_ms_p90": 13.565167086198926,
+    "fts_ms_median": 8.379041915759444,
+    "fts_ms_p90": 12.178333010524511,
+    "top10_jaccard_median": 0.1111111111111111,
+    "ours_plan": [
+     "Top",
+     "Sort",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Stream Aggregate",
+     "Sort",
+     "Merge Join",
+     "Clustered Index Seek[vfs_lex_docs]",
+     "Stream Aggregate",
+     "Sort",
+     "Clustered Index Seek[vfs_lex_terms]"
+    ],
+    "fts_plan": [
+     "Sort",
+     "Stream Aggregate",
+     "Sort",
+     "Merge Join",
+     "Sort",
+     "Merge Join",
+     "Merge Join",
+     "Clustered Index Seek[vfs_segments]",
+     "Sort",
+     "Clustered Index Scan[vfs]",
+     "Index Scan[vfs_chunks]"
+    ]
+   }
+  }
+ }
+}
