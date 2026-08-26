@@ -1,6 +1,19 @@
 # 126 — close disposes every close: the latch falls
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  One slice: the one-shot ``_closed`` gate is deleted — every close
+  releases whatever the host holds now (offload pool, ready latch,
+  engine pool), idempotent by cheapness, never by flag, matching the
+  pools underneath; a close cancelled mid-dispose records nothing as
+  torn down, so the router's documented retry recovery is now true
+  (pinned by the cancelled-close retry row); close → verb → close
+  releases the re-minted connections (pinned at the pool), and
+  queued offload work at close is served whole, never cancelled —
+  spec 122's law gains its referee. Ledger rows P16 (gate
+  reintroduced, 2 kills) and P17 (cancel-futures reversion, 1 kill)
+  proven under safe-restore. Gates: 3.13 CI leg green; all four
+  engine legs live (Postgres 211, MySQL 213, MSSQL 213, Oracle 210).
+  Landed at ``0ede8f1``.
 - **Born from** the remediation-round landing review
   (`../../../research/2026-08-25-remediation-round-landing-review.md`),
   finding F1 (the one-shot `_closed` gate stranding re-minted

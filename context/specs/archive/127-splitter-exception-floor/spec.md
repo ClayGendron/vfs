@@ -1,6 +1,13 @@
 # 127 — the splitter's exception floor: no admitted shape raises
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  All slices: ``RecursionError`` joins the notebook parse guard;
+  lone surrogates and null bytes manufactured by ``json.loads`` scrub
+  to U+FFFD once at ``split_code_batch``'s door, one character for
+  one; ``normalize_content`` becomes total via ``surrogatepass``; the
+  sweep found and closed the null-byte cousin and is otherwise
+  clean. Ledger rows P18 (3 kills) and P19 (both directions, 8+2
+  kills). Details in the landing note below. Landed at ``5cfe1ef``.
 - **Born from** the remediation-round landing review
   (`../../../research/2026-08-25-remediation-round-landing-review.md`),
   findings F3 (deep-nested `.ipynb` JSON → raw `RecursionError`) and
