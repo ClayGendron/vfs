@@ -5,6 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **glean arc drafted 2026-08-26** (research leg → ADRs 051–054 →
+  nine ordered specs, each landing green before the next): **130**
+  lexical index and tokenizer (epoch-scoped BM25 tables built by
+  reindex) → **131** ranking evaluation harness (golden sets, BEIR
+  pair, ranx, determinism pins) → **132** glean lexical-only
+  (`SupportsGlean` on the database backend: statement, predicate scope,
+  MaxP, overlay, term-stats export) → **133** previews and the
+  rank-ordered renderer → **134** the embedding provider and embedding
+  as a streaming step of reindex → **135** the vector leg and fusion
+  (`Convex`/`RRF`, dialect distance, tiers, client floor, Docker-leg
+  bumps) → **136** ranking signals (`signals` table at reindex,
+  in-degree with hierarchy smoothing, the `Ranker`) → **137** the
+  cross-mount merge and `Reranker` seam → **138** the reference-edge
+  extractor (imports, markdown links; may land any time after 136).
+  Reads-as-signals deferred by Clay; the accuracy study (SWE-bench
+  Verified, a Wikipedia slice) is the next research leg on 131.
 - **Last reviewed:** 2026-08-25, at the 103/117/118 mining pass —
   the close of the chunking-and-concurrency arc, all in one session.
   Three long-open forks fell in the morning: the chunking fork
