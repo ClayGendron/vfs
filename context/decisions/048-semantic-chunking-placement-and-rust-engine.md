@@ -98,7 +98,18 @@ year-plus stale, 4 missing).
    loop gap at a 2,000-file probe corpus on both engines (inline:
    483 ms native at that corpus, 1,327 ms pure at 1,000 files), the
    residual gap set by the session's own on-loop statement work,
-   not the chunk or posting CPU.
+   not the chunk or posting CPU. *Carve-out (2026-08-25,
+   remediation-round landing review, F7; spec 129):* a close landing
+   mid-verb shuts the pool the running phase captured, and that
+   phase's remaining hops run inline — the chunk pass's whole split,
+   the build's remaining feeds and drains — correct and classified
+   but on the loop (executed: `_assess_and_split` 1.56 s on-loop at
+   20,000 files, 1,714 ms worst gap vs ~242 ms offloaded). The
+   exposure is verb-sized, disclosed rather than bounded (the drain
+   idiom the prior-art survey found universal; any bound is the
+   closer's to impose), and pinned from reindex's side by the
+   reindex-racing-close row; the zombie-pool alternative is an open
+   question.
 3. **All 68 mapped grammars are bundled statically**, as generated
    `parser.c` sources vendored at exactly the `repo` + `rev` pins of
    the pack's `language_definitions.json` at adoption time, compiled

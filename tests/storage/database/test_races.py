@@ -720,6 +720,7 @@ class TestGrepEpochConsistency:
             assert error.kind == VFSErrorKind.conflict
             assert error.retryable is True
             assert "already running" in error.message
+            await _audit(storage)
 
 
 @pytest.mark.mysql
@@ -760,5 +761,4 @@ class TestGenerationRedirtyLockScope:
             finally:
                 await rival_engine.dispose()
             assert served == [True]
-            await _audit(storage)
             await _audit(storage)

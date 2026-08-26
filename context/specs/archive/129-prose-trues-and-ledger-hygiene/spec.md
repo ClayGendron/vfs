@@ -1,6 +1,18 @@
 # 129 — prose trues and ledger hygiene: the close window said out loud
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  One slice: the close-window bound restated verb-sized at every
+  site that claimed it (``offload.py``'s law bullet and
+  ``call_offloaded``, ``chunk_dirty``/``build_epoch``'s carve-outs,
+  ADR 048's occupancy amendment, spec 122's amendment note); the law
+  count trued to four; the abandonment bullet scoped with the
+  char-proxy qualifier; ``_audit`` restored to
+  ``test_a_second_reindex_refuses_while_one_runs`` and the doubled
+  trailing audit dropped; P13 re-worded to the proven both-appends
+  mutation with the index-side-alone direction marked designed-inert
+  (all three directions replayed); the reindex-racing-close pin
+  landed on a new inert ``reindex:before-chunk-split`` seam and
+  joined P9's killers. Details in the landing note below.
 - **Born from** the remediation-round landing review
   (`../../../research/2026-08-25-remediation-round-landing-review.md`),
   findings F5 (the three-laws count), F6 (the lost `_audit`), F7
@@ -102,3 +114,40 @@ One slice — trues, restore, re-word, and the race pin together.
 Gates: `scripts/ci.sh 3.13` at 100 % coverage; the MySQL leg for
 §4's restored audit; other engine legs only if touched files
 require them by the house cadence.
+
+## Landing note (2026-08-25)
+
+- **§1/§3 the prose.** Every site now says the same thing: a call
+  that captured its pool before close serves every remaining hop it
+  holds inline — grep its remaining verify batches; reindex its
+  chunk pass's whole split or its build's remaining feeds and drains
+  — never a raw escape, and only the next capture (the next verb, or
+  reindex's next phase) re-mints. That last clause is a precision
+  the review's "verb-sized" shorthand lacked: reindex reads the
+  executor property per phase, so a close mid-chunk-pass leaves the
+  build phase re-minting a live pool. The law count is four; the
+  abandonment bullet carries the measured 3.00×/4.00× char-proxy
+  overshoot beside ADR 049's byte-exact bound (mirrored, not
+  forked).
+- **§2 the race pin.** `test_a_reindex_racing_close_is_served_whole`
+  stages close on a new `reindex:before-chunk-split` seam (inert in
+  production, the house pattern) after the chunk pass captured its
+  pool, traces `_assess_and_split`'s thread to prove the split ran
+  inline rather than on a re-minted worker, and checks the epoch
+  still published (grep finds every row). It joins P9's killers —
+  the fallback-re-raises mutation now fails twice. No timing
+  assertion, per the spec.
+- **§4 the audit.** Restored and the double dropped; the MySQL leg
+  is this spec's gate for it (see gates).
+- **§5 P13.** Re-worded and replayed in all three directions under
+  safe-restore: both guards deleted — killed (1); scan-side alone —
+  killed (1); index-side alone — survived, as designed and now
+  declared. The guard stays.
+- **Lead, not taken up:** both racing-close rows (grep's and the
+  new reindex one) surface a
+  `PytestUnhandledThreadExceptionWarning` from an aiosqlite worker
+  thread reporting after the test loop closed — the close-mid-verb
+  dispose leaves the verb's checked-out connection to be closed at
+  GC, past the loop. Pre-existing at spec 122's row, sqlite-only,
+  harmless to results; worth a look if the zombie-pool question is
+  ever taken up, since a drain-then-dispose close would close it.

@@ -14,7 +14,7 @@ thread-ignorant: this seam is the only threaded code, and these are
 the tree's only deliberate threads — a declared exception, owned
 here.
 
-Three laws govern the hop:
+Four laws govern the hop:
 
 - **The deadline crosses absolute.** The wrapper takes the caller's
   absolute deadline and computes the relative budget at *worker start*,
@@ -29,11 +29,20 @@ Three laws govern the hop:
   is the batch it holds, bounded by the batcher's content-byte budget
   (a module constant, 32 MiB) *or one body, whichever is larger* — the
   batcher's singleton exemption sends an oversized body through alone.
-  No protocol-level interrupt exists.
+  grep meters that budget in exact stored bytes; the reindex batchers
+  riding the same hop meter characters as a declared ASCII-dominant
+  proxy, so an abandoned reindex batch can hold up to 4x the budget
+  in folded bytes on CJK or emoji corpora (measured 3.00x/4.00x). No
+  protocol-level interrupt exists.
 - **The pool follows the host's close, and calls survive it.** A call
-  that races close and finds its pool shut serves the batch inline —
-  one on-loop batch in the close window, never a raw escape — and the
-  next grep re-mints a fresh pool from the host.
+  that captured its pool before close serves every remaining hop it
+  holds inline once the pool is shut — grep its remaining verify
+  batches, reindex its chunk pass's whole split or its build's
+  remaining feeds and drains — never a raw escape. The exposure is
+  verb-sized, not batch-sized (executed: a reindex racing close at
+  20,000 files ran its split 1.56 s on the loop, correctly), and it
+  is the closer's cost to bear; only the next capture — the next
+  verb, or reindex's next phase — re-mints a fresh pool from the host.
 
 On the Rust engine the matcher detaches the GIL for the whole batch,
 so the offload removes loop occupancy wholesale; on the pure engine it
@@ -71,9 +80,9 @@ async def call_offloaded(executor: Executor, work: Callable[[], T]) -> T:
     """Run *work* on the backend's pool; the loop keeps ticking meanwhile.
 
     The one hop every offloaded stage takes. A pool shut by ``close()``
-    mid-call serves the work inline — one on-loop call in the close
-    window, never a raw escape — and the next verb re-mints a fresh
-    pool from the host.
+    serves the work inline — and a call that captured the pool serves
+    *all* its remaining hops that way, verb-sized, never a raw escape;
+    the next capture re-mints a fresh pool from the host.
     """
     try:
         future = executor.submit(work)

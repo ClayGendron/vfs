@@ -24,6 +24,7 @@ from vfs.pattern_matching import compile_verifier
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
 if TYPE_CHECKING:
@@ -360,6 +361,36 @@ class TestExecutorOwnership:
             raced = await storage.grep(pattern="needle")
         assert raced.success is True, raced.errors
         assert [str(o.path) for o in raced.observations] == ["/a.txt"]
+
+    async def test_a_reindex_racing_close_is_served_whole(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # close lands mid-reindex, after the chunk pass captured its pool:
+        # the shut pool serves the whole split inline on the loop — a
+        # classified success, never a raw escape — and the next capture
+        # re-mints, so the epoch still publishes and grep finds every row.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn{i}():\n    return {i}\n") for i in range(3)]
+        assert (await storage.write(entries=entries)).success is True
+        threads: list[str] = []
+        real = indexing_module._assess_and_split
+
+        def tracing(*args: Any, **kwargs: Any) -> Any:
+            threads.append(threading.current_thread().name)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(indexing_module, "_assess_and_split", tracing)
+
+        async def closer() -> None:
+            seams.clear("reindex:before-chunk-split")
+            await storage.close()
+
+        with seams.installed("reindex:before-chunk-split", closer):
+            raced = await storage.reindex()
+        assert raced.success is True, raced.errors
+        assert len(threads) == 1 and not threads[0].startswith("vfs-offload"), threads
+        found = await storage.grep(pattern="return")
+        assert found.success is True, found.errors
+        assert sorted(str(o.path) for o in found.observations) == ["/f0.py", "/f1.py", "/f2.py"]
+        await storage.close()
 
     async def test_a_borrowed_host_still_shuts_its_own_pool(self, tmp_path) -> None:
         engine = create_async_engine(_url(tmp_path))

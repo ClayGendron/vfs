@@ -239,7 +239,9 @@ async def chunk_dirty(
     The pass's CPU — eligibility assessment, the splits, and chunk-row
     assembly — runs whole on the backend's offload pool
     (:func:`~vfs.storage.backends.database.offload.call_offloaded`), so
-    the event loop keeps serving concurrent callers for its duration.
+    the event loop keeps serving concurrent callers for its duration —
+    except across a close that shuts the captured pool mid-pass, after
+    which the whole split runs inline, correct and classified.
     Residency profile, honestly: the dirty set's rows (bodies included)
     are materialized before the hop, and the pass peaks at ~6.1x dirty
     content on the measured shapes — set by the chunk-insert
@@ -273,6 +275,7 @@ async def chunk_dirty(
     rows = (await session.execute(dirty)).all()
     if not rows:
         return Result(ops=("reindex",))
+    await seam("reindex:before-chunk-split")
     work = await call_offloaded(executor, partial(_assess_and_split, rows, generation))
     for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
@@ -315,10 +318,13 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     ascending row-id order, and the builder's gram-ordered drain feeds
     byte-capped inserts. The build's CPU — the fold-and-feed of each
     batch and every drain call — hops through the backend's offload
-    pool, so the loop keeps serving while the engine works. Peak build
-    memory is the accumulated posting set — compressed delta blobs in
-    the Rust engine, raw id lists in the pure fallback — held for the
-    whole build and paid whenever any entry is dirty. A known
+    pool, so the loop keeps serving while the engine works — except
+    across a close that shuts the captured pool, after which the
+    remaining feeds and drains run inline, correct and classified.
+    Peak build memory is the accumulated posting set — compressed
+    delta blobs in the Rust engine, raw id lists in the pure fallback
+    — held for the whole build and paid whenever any entry is dirty. A
+    known
     suboptimality, deliberately not converted into a designed corpus
     cap; gram-range partitioned passes are the future direction if a
     deployment ever needs a tighter bound.

@@ -21,6 +21,17 @@
   `open-questions.md` as ruled. Gates: 3.13 CI leg green at 100 %
   coverage; engine legs green at +1 — Postgres 211, MySQL 213,
   MSSQL 213, Oracle 210.
+- **Amendment (2026-08-25, spec 129):** "one on-loop batch in the
+  close window" understates the bound. A grep that captured the pool
+  before close serves *all* its remaining verify batches inline
+  (executed: a raced grep over a >32 MiB corpus ran both batches on
+  `MainThread`), and reindex — riding the same hop since spec 120 —
+  serves its captured phase's remaining hops inline (the whole split,
+  1.56 s on-loop at 20,000 files). Behavior is correct throughout;
+  the bound is verb-sized, now stated that way in `offload.py` and
+  ADR 048, and pinned from reindex's side by spec 129's
+  `test_a_reindex_racing_close_is_served_whole`. The zombie-pool
+  alternative is recorded in `open-questions.md`, not ruled.
 - **Born from** the chunking-arc landing review
   (`../../../research/2026-08-25-chunking-arc-landing-review.md`),
   finding F3 (the raw RuntimeError — introduced by spec 118 slice A;
