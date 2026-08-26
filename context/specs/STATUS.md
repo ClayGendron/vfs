@@ -5,10 +5,18 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **130 landed 2026-08-26** — the lexical index: tokenizer, BM25
+  weights precomputed into four epoch-scoped `lex_*` tables built by
+  `build_epoch` as a two-pass stream (memory O(vocabulary)), swept by
+  both reclaims, `lexical_stats` exported; fidelity τ = 1.0 on all
+  five engines. Landing note records the linux-store number: +28.8 s
+  per 4,000 files, tokenizer 34 % of it — the Rust-port trigger is
+  recorded but the bigger lever is the term-row volume (E2 ids, bulk
+  paths). Next in line: **131**.
 - **glean arc drafted 2026-08-26** (research leg → ADRs 051–054 →
   nine ordered specs, each landing green before the next): **130**
   lexical index and tokenizer (epoch-scoped BM25 tables built by
-  reindex) → **131** ranking evaluation harness (golden sets, BEIR
+  reindex; landed, above) → **131** ranking evaluation harness (golden sets, BEIR
   pair, ranx, determinism pins) → **132** glean lexical-only
   (`SupportsGlean` on the database backend: statement, predicate scope,
   MaxP, overlay, term-stats export) → **133** previews and the

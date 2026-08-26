@@ -1,9 +1,19 @@
 # 130 — the lexical index: one code-aware tokenizer and epoch-scoped BM25 tables built by reindex
 
-- **Status:** ready — drafted 2026-08-26 from ADR 051 (pins 3, 4);
-  first of the glean arc (130 → 138), each slice landing green and in
-  order. No verb changes here: this spec builds and publishes the
-  index the glean verb (spec 132) will read.
+- **Status: landed 2026-08-26.**
+  All three slices: the code-aware tokenizer and Lucene-accurate BM25
+  formula in `models/lexical.py` with a two-pass streaming builder;
+  the four epoch-scoped `lex_*` tables (`SCHEMA_FORMAT_VERSION` 6 → 7,
+  `INDEX_FORMAT_VERSION` 2 → 3, the lexical constants in the options
+  hash) built inside `build_epoch` and swept by both reclaims; the
+  `lexical_stats` export; the fidelity referee (`tests/support/
+  lexical_fidelity.py`) green on sqlite and all four Docker legs.
+  One deviation from the sketch, recorded in `plan.md` §1: the build
+  streams the corpus twice instead of holding every posting — the
+  whole-corpus builder would have been an out-of-memory on the linux
+  store, not a slow path. Ledger rows L1–L5 proven. Numbers and the
+  Rust-port trigger in the landing note below. First of the glean arc
+  (130 → 138); no verb changes — spec 132 reads what this builds.
 - **Born from:** ADR 051 §3–4; memo
   `../../../research/2026-08-26-glean-in-the-engine.md` §3; study
   `../../../research/studies/2026-08-26-glean/lexical-leg.md`.
@@ -119,3 +129,66 @@ is a boosted-tf column at build time; a later spec), CJK tokenisation
 E2 term text vs id; E7 CJK; the anchor-text field (ADR 053 F10 /
 ADR 051 E8) as the first BM25F column once the extractor (spec 138)
 produces referring lines.
+
+## Landing note (2026-08-26)
+
+- **Fidelity.** The stored weights summed in SQL rank exactly as a
+  from-scratch BM25 over the same tokens — identical top-10 and
+  Kendall τ = 1.0 on every query of the fixture corpus, on sqlite,
+  Postgres 17, MySQL 8.4, SQL Server 2022, and Oracle 23 (the referee
+  is shared by the sqlite test and the four engine rows in
+  `tests/storage/test_conformance.py`). There is no MariaDB leg in the
+  harness yet (spec 135 adds the image); the MySQL leg covers the
+  family's `VARBINARY` key path.
+- **The linux store, measured on the spec-103 corpus's seeded 4,000-file
+  sample** (59.7 MB, 32,243 chunks, 8.7 M tokens, 3.09 M term rows —
+  96 per chunk — 487 k distinct terms), sqlite, idle machine:
+  reindex without the lexical build 2.7 s; with it 31.4 s — **the
+  lexical build adds 28.8 s per 4,000 files**. The tokenizer alone is
+  4.9 s per pass, 9.9 s for the two passes: **34 % of the build**. The
+  other two thirds are row assembly and the inserts (3.1 M rows
+  through `insertmanyvalues` on aiosqlite). Scaled to the full
+  checkout (76 k eligible files) that is ~9 min against ADR 048's 60 s
+  reindex target — **over it by ~9×**, so the number the spec asked
+  for is recorded: the tokenizer's share is 34 %, and a Rust port of
+  the tokenizer alone would recover at most a third. The larger lever
+  is the row volume: term ids instead of text (fork E2, −22 % bytes
+  and smaller binds), per-dialect bulk paths (`COPY`, `LOAD DATA`,
+  bulk insert) for the term rows, and dropping the per-value
+  `BytewiseString` bind processing on dialects where it is the
+  identity. Those are the follow-up's candidates; none is a cap.
+- **Index bytes.** With the sqlite tables `WITHOUT ROWID` the lexical
+  index is 120 MB for 59.7 MB of content — **2.02× content, 3.7 KB per
+  chunk** (`lex_terms` 99 MB, `lex_df` 19 MB, `lex_docs` 1 MB), inside
+  the study's 2.1–2.8× band. With a rowid it was 211 MB (3.5×): the
+  PK autoindex duplicated every row.
+- **Memory.** The build holds one `df` per distinct term (487 k on the
+  sample) and one batch of rows at a time; nothing scales with the
+  number of postings.
+- **A scale defect the engine legs missed, caught by the MSSQL spike
+  (`../../../research/2026-08-26-bm25-vs-mssql-fulltext.md`).** The
+  first cut streamed the chunk scan with `yield_per` and wrote each
+  batch's rows *inside* the stream; SQL Server over ODBC (no MARS)
+  refuses a write while a cursor is open — `Connection is busy with
+  results for another command` — and the 2,000-file corpus failed
+  its reindex. Every conformance corpus was under one 256-row page,
+  so the stream was fully consumed before the first write and nothing
+  failed. The scan is now keyset-paginated (`_SCAN_PAGE_ROWS = 256`,
+  every page fetched whole before a write), pinned on sqlite by
+  statement shape and on all four engine legs by a 600-chunk corpus
+  (`…LexicalBuildBeyondAPage`). Ledger row L6.
+- **On SQL Server** (the spike memo above, 2,000 files → 16,307
+  chunks, 1.55 M term rows, amd64-emulated server): the whole reindex
+  took 403.7 s and the lexical tables 125 MB, against 7.1 s and
+  23.5 MB for the engine's own full-text index over the same chunks.
+  The gap is the term-row volume through the 2,100-bind cap (~420
+  rows per statement); the levers are the same as above, with the
+  table-valued-parameter / fast-executemany path first on that
+  engine. Query time is single-digit milliseconds on both sides;
+  the memo's verdict and forks carry the rest.
+- **Ledger rows** L1–L6 (`../../../standards/mutant-ledger.md`), each
+  proven in an isolated worktree: the options fingerprint drops the
+  lexical constants; the scan loses its liveness gate; a reclaim
+  forgets the lexical tables; `dl` counts distinct terms; idf loses
+  its smoothing. The `indexable` gate on the scan is designed-inert
+  (plan.md §4) and is not a row.

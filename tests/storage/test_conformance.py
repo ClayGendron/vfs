@@ -26,9 +26,10 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event, inspect, select, text
+from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tests.support.lexical_fidelity import assert_lexical_fidelity
 from tests.support.storage_contract import StorageContract
 from vfs.models import Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -484,6 +485,76 @@ class TestMSSQLEncodedKindIndex:
 class TestOracleEncodedKindIndex:
     async def test_index_serves_the_overlay(self) -> None:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_ORACLE_URL")
+
+
+async def _lexical_fidelity(env_var: str) -> None:
+    """The lexical build lands and the stored BM25 weights rank as pure BM25 does."""
+    async with _server_storage(env_var) as storage:
+        await assert_lexical_fidelity(storage)
+
+
+@pytest.mark.postgres
+class TestPostgresLexicalFidelity:
+    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
+        await _lexical_fidelity("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLLexicalFidelity:
+    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
+        await _lexical_fidelity("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLLexicalFidelity:
+    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
+        await _lexical_fidelity("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleLexicalFidelity:
+    async def test_stored_weights_rank_as_pure_bm25(self) -> None:
+        await _lexical_fidelity("VFS_TEST_ORACLE_URL")
+
+
+async def _lexical_build_beyond_a_page(env_var: str) -> None:
+    """A corpus larger than one scan page builds: the build writes between
+    pages on the same connection, which a driver without multiple active
+    result sets refuses while a cursor is still open (caught on SQL Server
+    at 2,000 files; invisible below one page)."""
+    async with _server_storage(env_var) as storage:
+        entries = [Entry(path=Path(f"/p/{i:04}.txt"), content=f"page body {i} term{i % 7}\n") for i in range(600)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        result = await storage.reindex()
+        assert result.success is True, result.errors
+        tables = storage._host.tables
+        async with storage._host.engine.connect() as conn:
+            docs = (await conn.execute(select(func.count()).select_from(tables.lex_docs))).scalar_one()
+        assert docs == 600
+
+
+@pytest.mark.postgres
+class TestPostgresLexicalBuildBeyondAPage:
+    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
+        await _lexical_build_beyond_a_page("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLLexicalBuildBeyondAPage:
+    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
+        await _lexical_build_beyond_a_page("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLLexicalBuildBeyondAPage:
+    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
+        await _lexical_build_beyond_a_page("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleLexicalBuildBeyondAPage:
+    async def test_a_corpus_larger_than_one_page_builds(self) -> None:
+        await _lexical_build_beyond_a_page("VFS_TEST_ORACLE_URL")
 
 
 async def _content_bytes_audit(env_var: str, cast_sql: str | None) -> None:

@@ -20,7 +20,9 @@ way). The extraction invariant: **every trigram of the entry's folded
 body is in the entry's posted gram set** — no split, cut, or dropped
 span can remove a trigram from the nomination stream. Chunk rows are
 semantic-only (vector/BM25 retrieval units) and no gram-path code reads
-them.
+them; the lexical (BM25) index is built over them under the same epoch
+(:mod:`~vfs.storage.backends.database.lexical`), so one publish and one
+reclaim govern both indexes.
 
 Eligibility gates bound index bloat, never coverage: an oversized,
 gram-saturated, or sub-trigram body is stamped ``NOT indexable`` and
@@ -59,6 +61,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
+from vfs.models.lexical import options_fingerprint
 from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
 from vfs.paths import Path
@@ -71,6 +74,7 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
     supports_values_update,
 )
+from vfs.storage.backends.database.lexical import build_lexical_epoch
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
@@ -87,8 +91,8 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
 
 # The format half of the epoch fingerprint: every fold, extraction-grain,
-# or gram-extraction change must hand-bump this to force the rebuild.
-INDEX_FORMAT_VERSION: Final = 2
+# gram-extraction, or lexical-table change must hand-bump this to force the rebuild.
+INDEX_FORMAT_VERSION: Final = 3
 
 Epoch = Annotated[int, "one published gram-index generation; a missing pointer means no index side"]
 
@@ -119,8 +123,8 @@ REINDEX_HEARTBEAT_SECONDS: Final = 60.0
 
 def index_options_hash() -> str:
     """The options half of the epoch fingerprint; any change forces rebuild."""
-    options = f"gram={GRAM_SIZE};fold=nl+turkic-i+casefold;bytes={MAX_INDEXABLE_BYTES};grams={MAX_DISTINCT_GRAMS}"
-    return hashlib.sha256(options.encode()).hexdigest()
+    grams = f"gram={GRAM_SIZE};fold=nl+turkic-i+casefold;bytes={MAX_INDEXABLE_BYTES};grams={MAX_DISTINCT_GRAMS}"
+    return hashlib.sha256(f"{grams};{options_fingerprint()}".encode()).hexdigest()
 
 
 @dataclass
@@ -316,7 +320,8 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     Extraction and posting encode run in the active engine
     (:mod:`vfs.native`): content streams through in bounded batches in
     ascending row-id order, and the builder's gram-ordered drain feeds
-    byte-capped inserts. The build's CPU — the fold-and-feed of each
+    byte-capped inserts. The lexical index builds under the same epoch
+    after the postings drain, from the chunk rows of the same entries. The build's CPU — the fold-and-feed of each
     batch and every drain call — hops through the backend's offload
     pool, so the loop keeps serving while the engine works — except
     across a close that shuts the captured pool, after which the
@@ -373,6 +378,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
                     for gram, blob, doc_count in drained
                 ],
             )
+        await build_lexical_epoch(session, tables, epoch, executor)
         await session.execute(
             insert(tables.gram_epochs),
             [{"epoch": epoch, "format_version": INDEX_FORMAT_VERSION, "options_hash": index_options_hash()}],
@@ -429,7 +435,7 @@ async def publish_epoch(
 
 
 async def reclaim_epochs(session: AsyncSession, tables: VFSTables) -> Result:
-    """Drop every posting and fingerprint row strictly below the live pointer.
+    """Drop every epoch-scoped row — postings, lexical, fingerprint — strictly below the live pointer.
 
     The pointer is re-read inside this transaction, never taken from the
     caller's memory: reclaim runs after publish in its own transaction,
@@ -441,8 +447,8 @@ async def reclaim_epochs(session: AsyncSession, tables: VFSTables) -> Result:
     current = await current_epoch(session, tables)
     if current is None:
         return Result(ops=("reindex",))
-    await session.execute(delete(tables.posting_list).where(tables.posting_list.c.epoch < current))
-    await session.execute(delete(tables.gram_epochs).where(tables.gram_epochs.c.epoch < current))
+    for table in tables.epoch_scoped():
+        await session.execute(delete(table).where(table.c.epoch < current))
     return Result(ops=("reindex",))
 
 
@@ -451,8 +457,8 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
     current = await current_epoch(session, tables)
     if current == built:
         return Result(ops=("reindex",))
-    await session.execute(delete(tables.posting_list).where(tables.posting_list.c.epoch == built))
-    await session.execute(delete(tables.gram_epochs).where(tables.gram_epochs.c.epoch == built))
+    for table in tables.epoch_scoped():
+        await session.execute(delete(table).where(table.c.epoch == built))
     return Result(ops=("reindex",))
 
 

@@ -632,7 +632,7 @@ class TestChunkProvenance:
 
     @staticmethod
     def _chunk_writes(statements: list[str]) -> list[str]:
-        return [s for s in statements if s.startswith(("DELETE", "INSERT")) and "chunk" in s.lower()]
+        return [s for s in statements if s.startswith(("DELETE", "INSERT")) and "vfs_chunks" in s]
 
     async def _entry_row(self, storage: DatabaseStorage, path: str) -> Any:
         entry = storage._host.tables.entry
