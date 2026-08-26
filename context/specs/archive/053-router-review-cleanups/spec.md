@@ -1,6 +1,16 @@
 # 053 — Router Review Cleanups: Small Findings from the base2 Line-by-Line
 
-- **Status:** draft — collects the minor findings from the 2026-07-07
+- **Status: closed 2026-08-25** (the active-spec closure pass). Item 1
+  ruled rather than rewritten: every `assert` in `src/` (five in
+  `base.py`, one in `pattern_matching/grep.py`, re-surveyed 2026-08-25)
+  is a type-narrowing statement that follows an ingress gate which
+  already refused the bad shape — none is a validation the caller can
+  reach, so `python -O` changes no behavior. The rule is recorded in
+  `CLAUDE.md` (*Code conventions*: asserts narrow, never validate) so
+  the pattern stays consistent. Items 2–4 obsolete or stale as
+  triaged below; item 5's remote-staleness note belongs to the wire
+  contract (045) and is carried there by reference. No code change.
+- **Status (original):** draft — collects the minor findings from the 2026-07-07
   base2 review; each item is independently landable.
   Re-triaged 2026-07-10 against post-069/071 `base.py`: items 3 and 4
   are **obsolete** (the spine and `SPINE_READ_OPS` were deleted by

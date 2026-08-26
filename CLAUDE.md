@@ -250,3 +250,8 @@ private *types and constants* stay next to what they support.
 - **Don't reach for numpy where plain Python suffices** (Clay, 2026-08-17):
   heavy dependencies belong only where measured scale justifies them (grep's
   posting intersections); small sets and lists take stdlib structures.
+- **`assert` narrows, never validates.** An `assert` in `src/` is a
+  type-narrowing statement after an ingress gate that already refused the
+  bad shape (`assert path is not None` once the XOR check has run). It must
+  never be the thing that turns bad input into a refusal — that is a
+  classified `Result`, and `python -O` must change no behavior.

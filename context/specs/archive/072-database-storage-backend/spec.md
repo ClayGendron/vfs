@@ -10,7 +10,21 @@
 > `research-posting-storage.md` → `2026-07-14-database-storage-posting-storage.md`
 
 
-- **Status:** researched — drafted 2026-07-12; §6 resolved 2026-07-12
+- **Status: landed — umbrella closed 2026-08-25.** The backend this
+  spec commissioned is the live production storage: every verb but
+  `mkedge` serves on four real engines, hardened by the 086–090
+  coherence campaign, the 093 grep line, the 107–116 and 120–129
+  review-and-remediation arcs. Residue routed, not dropped —
+  `tasks.md` tasks 13/14 discharged by the real-engine harness
+  (`db_test`) and the coherence/race batteries; task 16 landed as the
+  081–083 trash arc; task 17 (edges + `mkedge`) is ADR 018's wiring
+  spec to write; tasks 15/18 (version content history: store-full on
+  write, `reconstruct_version`, the pack verb) are **unbuilt** — the
+  `versions` table exists in the schema and sweep clears it, but no
+  write path mints a row; ADR 017 holds the numbering ruling and a
+  version-history spec is the next owner (listed under *Decided but
+  unspecified* in `STATUS.md`). Original status kept below.
+- **Status (original):** researched — drafted 2026-07-12; §6 resolved 2026-07-12
   (`research-grep-index.md`); §§4-5, 8-10, 12 resolved 2026-07-13
   (`research-write-pipeline.md`, `research-read-pipeline.md`,
   `spike-results-pipelines.md`); versioning inverted to

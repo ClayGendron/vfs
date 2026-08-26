@@ -1,6 +1,11 @@
 # 039 — Execute Permission Tier for the `run` Verb
 
-- **Status:** draft, superseded in practice by 068 (landed 2026-07-11):
+- **Status: closed as superseded, 2026-08-25** (archived in the
+  active-spec closure pass; nothing here lands). The per-path /
+  per-principal execute policy question that would reopen it is
+  recorded in `../../../open-questions.md`; the identity half is 070's.
+  Original status kept below.
+- **Status (original):** draft, superseded in practice by 068 (landed 2026-07-11):
   `deny_ops` is the execution lever — `run` stays outside the
   permission-map vocabulary. Two deliberate supersessions recorded
   there: denied execution classifies `unsupported` (040's capability

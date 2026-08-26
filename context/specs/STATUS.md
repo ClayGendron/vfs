@@ -230,8 +230,11 @@ lines first; regenerate this file when the picture shifts (review the
 
 ## The active line: finishing the database backend's verb surface
 
-- **072 — database storage backend** (in progress; the umbrella
-  story). Live surface: read/stat/ls/tree/glob/grep +
+- **072 — database storage backend** — **umbrella closed and
+  archived 2026-08-25**: the live surface below is production; the
+  residue is routed (edges → ADR 018's wiring spec; version content
+  history → a spec to write, see *Decided but unspecified*). Live
+  surface as of closure: read/stat/ls/tree/glob/grep +
   write/edit/mkdir + delete/move/copy + restore/sweep + the
   `reindex()` admin verb, hardened by the 086–090 coherence
   campaign. **mkedge is the only remaining classified stub**
@@ -449,6 +452,13 @@ lines first; regenerate this file when the picture shifts (review the
   `../research/2026-07-25-multimodal-result-content.md`): the
   storage-bytes ADR gates the content-channel ADR. Entries in
   `../open-questions.md`.
+- **Version content history** (surfaced by 072's closure,
+  2026-08-25). The `versions` table is in the schema and sweep clears
+  it, but no write path mints a row: store-full-on-write,
+  `reconstruct_version`, and the pack verb (072 tasks 15/18) were
+  never built. ADR 017 rules the numbering (revision values);
+  `models/versioning.py` holds the diff/snapshot provider. **No spec
+  exists yet.**
 - ~~Open decision worth making soon: move/copy `overwrite=True`~~ —
   **resolved 2026-08-14** (Clay): the flag is removed entirely; spec
   101 owns the landing (see the active line above).
@@ -461,9 +471,9 @@ pass):
 - **068 — mount admin completeness**: landed 2026-07-11 (features
   1–3). Features 4 (`move_mount`) and 5 (`LazyStorage`) stay
   demand-gated — split into new stories if picked up.
-- **039 — execute permission tier** (draft; superseded in practice by
-  068's `deny_ops`). Reopen only for per-path/per-principal execute
-  policy.
+- ~~**039 — execute permission tier**~~ — closed as superseded and
+  archived 2026-08-25; the per-path/per-principal question lives in
+  `../open-questions.md`.
 - **051 — fanout deadline** (draft; premise intact). No time budget
   anywhere in fan-out; the `timeout` error kind exists in
   `results/kinds.py` but is unused.
@@ -471,8 +481,10 @@ pass):
   2026-07-10). The largest pending `base.py` change: `user_id` →
   verified `Principal` everywhere. Supersedes 058's `user_id`
   phrasing.
-- **053 — router review cleanups** (draft; mostly stale — only the
-  bare-assert item clearly survives).
+- ~~**053 — router review cleanups**~~ — closed and archived
+  2026-08-25: the bare-assert item ruled (asserts in `src/` narrow
+  types after an ingress gate, never validate — now a `CLAUDE.md`
+  convention), the rest obsolete.
 
 ## Outstanding work that does NOT touch `base.py`
 
