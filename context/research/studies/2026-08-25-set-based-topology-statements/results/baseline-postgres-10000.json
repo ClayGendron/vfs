@@ -1,0 +1,97 @@
+{
+  "engine": "postgres",
+  "profile": "postgresql",
+  "size": 10000,
+  "directory_targets": 100,
+  "write_seconds": 2.897,
+  "delete_seconds": 78.233,
+  "rival_move_blocked_seconds": 77.711,
+  "observations": 10100,
+  "statements": [
+    {
+      "shape": "UPDATE entries SET version=(entries.version + $1::BIGINT) WHERE entries.entry_id = $2::UUID",
+      "count": 20203,
+      "seconds": 23.2374,
+      "rows": 20203,
+      "share": 0.646
+    },
+    {
+      "shape": "UPDATE entries SET parent_id=$1::UUID, path=$2::VARCHAR, name=$3::VARCHAR, version=(entries.version + $4::BIGI",
+      "count": 10100,
+      "seconds": 11.0865,
+      "rows": 10100,
+      "share": 0.308
+    },
+    {
+      "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = $1::VARCHAR AND entries_segments.entry_id IN (\u2026)",
+      "count": 1100,
+      "seconds": 1.1478,
+      "rows": 1100,
+      "share": 0.032
+    },
+    {
+      "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+      "count": 102,
+      "seconds": 0.2443,
+      "rows": 32302,
+      "share": 0.007
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE $1::VARCHAR ESCAPE '\\'",
+      "count": 200,
+      "seconds": 0.1553,
+      "rows": 200,
+      "share": 0.004
+    },
+    {
+      "shape": "[many] UPDATE entries SET path=$1::VARCHAR WHERE entries.entry_id = $2::UUID",
+      "count": 100,
+      "seconds": 0.0835,
+      "rows": 500,
+      "share": 0.002
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+      "count": 1,
+      "seconds": 0.0308,
+      "rows": 1,
+      "share": 0.001
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = $1::VARCHAR",
+      "count": 6,
+      "seconds": 0.0035,
+      "rows": 6,
+      "share": 0.0
+    },
+    {
+      "shape": "INSERT INTO entries (entry_id, parent_id, path, name, kind, version, lines, size_bytes, chunked, encoded, inde",
+      "count": 3,
+      "seconds": 0.0019,
+      "rows": 3,
+      "share": 0.0
+    },
+    {
+      "shape": "SELECT pg_advisory_xact_lock(\u2026) AS pg_advisory_xact_lock_1",
+      "count": 1,
+      "seconds": 0.0015,
+      "rows": 1,
+      "share": 0.0
+    },
+    {
+      "shape": "INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+      "count": 1,
+      "seconds": 0.0008,
+      "rows": 1,
+      "share": 0.0
+    },
+    {
+      "shape": "SAVEPOINT sa_savepoint_1",
+      "count": 1,
+      "seconds": 0.0004,
+      "rows": 1,
+      "share": 0.0
+    }
+  ],
+  "statement_total": 31823
+}

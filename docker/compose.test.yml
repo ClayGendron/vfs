@@ -62,6 +62,26 @@ services:
       retries: 20
       start_period: 10s
 
+  mariadb:
+    profiles: [mariadb]
+    image: mariadb:11.4
+    environment:
+      MARIADB_USER: vfs
+      MARIADB_PASSWORD: vfs
+      MARIADB_DATABASE: vfs
+      MARIADB_ROOT_PASSWORD: vfs-root
+    ports:
+      # the MySQL leg holds 33061; MariaDB is the family's second member
+      - "33062:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   mssql:
     profiles: [mssql]
     image: mcr.microsoft.com/mssql/server:2022-latest

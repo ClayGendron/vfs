@@ -1,0 +1,148 @@
+{
+  "engine": "mariadb",
+  "size": 10000,
+  "directory_targets": 100,
+  "live": {
+    "seconds": 67.99,
+    "rival_move_blocked_seconds": 67.47,
+    "statement_total": 31823,
+    "statements": [
+      {
+        "shape": "UPDATE entries SET version=(entries.version + %s) WHERE entries.entry_id = %s",
+        "count": 20203,
+        "seconds": 15.4946,
+        "rows": 20203,
+        "share": 0.524
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=%s, path=%s, name=%s, version=(entries.version + %s), encoded=%s, original_parent",
+        "count": 10100,
+        "seconds": 11.9609,
+        "rows": 10100,
+        "share": 0.405
+      },
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = %s AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 1.2263,
+        "rows": 1100,
+        "share": 0.041
+      },
+      {
+        "shape": "[many] UPDATE entries SET path=%s WHERE entries.entry_id = %s",
+        "count": 100,
+        "seconds": 0.3356,
+        "rows": 500,
+        "share": 0.011
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 102,
+        "seconds": 0.2536,
+        "rows": 32302,
+        "share": 0.009
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE %s ESCAPE '\\\\'",
+        "count": 200,
+        "seconds": 0.21,
+        "rows": 200,
+        "share": 0.007
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+        "count": 1,
+        "seconds": 0.0608,
+        "rows": 1,
+        "share": 0.002
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = %s",
+        "count": 6,
+        "seconds": 0.0048,
+        "rows": 6,
+        "share": 0.0
+      }
+    ],
+    "outcome": {
+      "observations": 10100
+    },
+    "explain": null
+  },
+  "prototype": {
+    "seconds": 3.963,
+    "rival_move_blocked_seconds": 2.849,
+    "statement_total": 1130,
+    "statements": [
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = %s AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 0.5811,
+        "rows": 1100,
+        "share": 0.469
+      },
+      {
+        "shape": "UPDATE entries, (SELECT %s AS v_id, %s AS v_ver, %s AS v_bucket, %s AS v_name, %s AS v_path, %s AS v_oparent, ",
+        "count": 3,
+        "seconds": 0.3712,
+        "rows": 3,
+        "share": 0.3
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 2,
+        "seconds": 0.1857,
+        "rows": 32302,
+        "share": 0.15
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.name, entries.path, entries.version, entries.kind FROM ent",
+        "count": 1,
+        "seconds": 0.0507,
+        "rows": 1,
+        "share": 0.041
+      },
+      {
+        "shape": "UPDATE entries, (SELECT %s AS v_id, %s AS v_n UNION ALL SELECT %s AS v_id, %s AS v_n UNION ALL SELECT %s AS v_",
+        "count": 1,
+        "seconds": 0.0241,
+        "rows": 1,
+        "share": 0.019
+      },
+      {
+        "shape": "UPDATE entries, (SELECT %s AS v_old, %s AS v_new, %s AS v_len UNION ALL SELECT %s AS v_old, %s AS v_new, %s AS",
+        "count": 1,
+        "seconds": 0.0118,
+        "rows": 1,
+        "share": 0.01
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path, concat(prefixes.v_new, substring(entries.path, prefixes.v_len + %s, %s)",
+        "count": 1,
+        "seconds": 0.0043,
+        "rows": 1,
+        "share": 0.003
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = %s",
+        "count": 6,
+        "seconds": 0.0027,
+        "rows": 6,
+        "share": 0.002
+      }
+    ],
+    "outcome": {
+      "spelling": "union",
+      "chunk_rows": 4671,
+      "targets": 10100,
+      "descendants": 500
+    },
+    "explain": null
+  },
+  "parity": {
+    "entries_equal": true,
+    "postings_equal": true,
+    "entry_diff_sample": [],
+    "posting_diff_count": 0
+  }
+}

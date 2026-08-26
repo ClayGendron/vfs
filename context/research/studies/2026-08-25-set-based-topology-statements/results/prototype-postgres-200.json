@@ -1,0 +1,163 @@
+{
+  "engine": "postgres",
+  "size": 200,
+  "directory_targets": 2,
+  "live": {
+    "seconds": 0.56,
+    "rival_move_blocked_seconds": 0.058,
+    "statement_total": 659,
+    "statements": [
+      {
+        "shape": "UPDATE entries SET version=(entries.version + $1::BIGINT) WHERE entries.entry_id = $2::UUID",
+        "count": 407,
+        "seconds": 0.1581,
+        "rows": 407,
+        "share": 0.569
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=$1::UUID, path=$2::VARCHAR, name=$3::VARCHAR, version=(entries.version + $4::BIGI",
+        "count": 202,
+        "seconds": 0.088,
+        "rows": 202,
+        "share": 0.317
+      },
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = $1::VARCHAR AND entries_segments.entry_id IN (\u2026)",
+        "count": 22,
+        "seconds": 0.0091,
+        "rows": 22,
+        "share": 0.033
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 4,
+        "seconds": 0.0056,
+        "rows": 648,
+        "share": 0.02
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = $1::VARCHAR",
+        "count": 6,
+        "seconds": 0.003,
+        "rows": 6,
+        "share": 0.011
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE $1::VARCHAR ESCAPE '\\'",
+        "count": 4,
+        "seconds": 0.0023,
+        "rows": 4,
+        "share": 0.008
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+        "count": 1,
+        "seconds": 0.0021,
+        "rows": 1,
+        "share": 0.008
+      },
+      {
+        "shape": "INSERT INTO entries (entry_id, parent_id, path, name, kind, version, lines, size_bytes, chunked, encoded, inde",
+        "count": 3,
+        "seconds": 0.0019,
+        "rows": 3,
+        "share": 0.007
+      }
+    ],
+    "outcome": {
+      "observations": 202
+    },
+    "explain": null
+  },
+  "prototype": {
+    "seconds": 0.592,
+    "rival_move_blocked_seconds": 0.089,
+    "statement_total": 50,
+    "statements": [
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = $1::VARCHAR AND entries_segments.entry_id IN (\u2026)",
+        "count": 22,
+        "seconds": 0.0104,
+        "rows": 22,
+        "share": 0.252
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=incoming.v_bucket, path=incoming.v_path, name=incoming.v_name, version=(entries.v",
+        "count": 1,
+        "seconds": 0.0064,
+        "rows": 1,
+        "share": 0.156
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 2,
+        "seconds": 0.0052,
+        "rows": 648,
+        "share": 0.127
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = $1::VARCHAR",
+        "count": 6,
+        "seconds": 0.0029,
+        "rows": 6,
+        "share": 0.071
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.name, entries.path, entries.version, entries.kind FROM ent",
+        "count": 1,
+        "seconds": 0.0019,
+        "rows": 1,
+        "share": 0.047
+      },
+      {
+        "shape": "INSERT INTO entries (entry_id, parent_id, path, name, kind, version, lines, size_bytes, chunked, encoded, inde",
+        "count": 3,
+        "seconds": 0.0018,
+        "rows": 3,
+        "share": 0.045
+      },
+      {
+        "shape": "UPDATE entries SET version=(entries.version + $1::BIGINT) WHERE entries.entry_id = $2::UUID",
+        "count": 3,
+        "seconds": 0.0018,
+        "rows": 3,
+        "share": 0.044
+      },
+      {
+        "shape": "SELECT pg_advisory_xact_lock(\u2026) AS pg_advisory_xact_lock_1",
+        "count": 1,
+        "seconds": 0.0014,
+        "rows": 1,
+        "share": 0.034
+      }
+    ],
+    "outcome": {
+      "spelling": "values",
+      "chunk_rows": 4671,
+      "targets": 202,
+      "descendants": 10
+    },
+    "explain": {
+      "range": [
+        "Nested Loop  (cost=0.00..17.79 rows=7 width=16)",
+        "  Join Filter: (((vfs_3de49ede51.path)::text > (\"*VALUES*\".column1 || '/'::text)) AND ((vfs_3de49ede51.path)::text < (\"*VALUES*\".column1 || '0'::text)))",
+        "  ->  Seq Scan on vfs_3de49ede51  (cost=0.00..16.32 rows=32 width=532)",
+        "  ->  Materialize  (cost=0.00..0.04 rows=2 width=32)",
+        "        ->  Values Scan on \"*VALUES*\"  (cost=0.00..0.03 rows=2 width=32)"
+      ],
+      "like": [
+        "Nested Loop  (cost=0.00..17.47 rows=1 width=16)",
+        "  Join Filter: ((vfs_3de49ede51.path)::text ~~ (\"*VALUES*\".column1 || '/%'::text))",
+        "  ->  Seq Scan on vfs_3de49ede51  (cost=0.00..16.32 rows=32 width=532)",
+        "  ->  Materialize  (cost=0.00..0.04 rows=2 width=32)",
+        "        ->  Values Scan on \"*VALUES*\"  (cost=0.00..0.03 rows=2 width=32)"
+      ]
+    }
+  },
+  "parity": {
+    "entries_equal": true,
+    "postings_equal": true,
+    "entry_diff_sample": [],
+    "posting_diff_count": 0
+  }
+}

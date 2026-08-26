@@ -1,5 +1,8 @@
 # 080 — MySQL-family batch updates go set-based, not per-row
 
+- **Status: researched 2026-08-25** — slice A delivered as
+  `../../../research/2026-08-25-mysql-family-batch-update-shapes.md`: the four research questions answered live on MySQL 8.4 and MariaDB 11.4 — FOUND_ROWS pinned as the semantic SQLAlchemy always sets, the UNION ALL derived-table multi-table UPDATE as the family's one join shape (3.8–4.1× the per-row loop at 10k), savepoint-and-redrive attribution proven, the MariaDB leg green at parity. Design (slice B) waits on
+  Clay's review of the memo.
 - **Status:** draft 2026-07-23 — research first; no implementation
   until the preconditions below are verified on real engines.
 - **Evidence:** `context/open-questions.md` — "MySQL-family batch

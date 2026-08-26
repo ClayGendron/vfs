@@ -1,0 +1,48 @@
+{
+  "corpus": 10600,
+  "prefixes": 100,
+  "plans": {
+    "range": [
+      "Nested Loop  (cost=0.28..1910.25 rows=7111 width=16) (actual time=0.012..0.288 rows=500 loops=1)",
+      "  Buffers: shared hit=312",
+      "  ->  Values Scan on \"*VALUES*\"  (cost=0.00..1.25 rows=100 width=32) (actual time=0.001..0.024 rows=100 loops=1)",
+      "  ->  Index Scan using ix_vfs_24d38bebcb_path on vfs_24d38bebcb  (cost=0.28..18.38 rows=71 width=532) (actual time=0.001..0.002 rows=5 loops=100)",
+      "        Index Cond: (((path)::text > (\"*VALUES*\".column1 || '/'::text)) AND ((path)::text < (\"*VALUES*\".column1 || '0'::text)))",
+      "        Buffers: shared hit=312",
+      "Planning:",
+      "  Buffers: shared hit=47",
+      "Planning Time: 0.195 ms",
+      "Execution Time: 0.322 ms"
+    ],
+    "like": [
+      "Nested Loop  (cost=10000000000.00..10000001447.90 rows=320 width=16) (actual time=249.161..256.096 rows=500 loops=1)",
+      "  Join Filter: ((vfs_24d38bebcb.path)::text ~~ (\"*VALUES*\".column1 || '/%'::text))",
+      "  Rows Removed by Join Filter: 1159800",
+      "  Buffers: shared hit=320",
+      "  ->  Seq Scan on vfs_24d38bebcb  (cost=10000000000.00..10000000326.40 rows=640 width=532) (actual time=0.025..1.784 rows=11603 loops=1)",
+      "        Buffers: shared hit=320",
+      "  ->  Materialize  (cost=0.00..1.75 rows=100 width=32) (actual time=0.009..0.013 rows=100 loops=11603)",
+      "        ->  Values Scan on \"*VALUES*\"  (cost=0.00..1.25 rows=100 width=32) (actual time=101.178..101.205 rows=100 loops=1)",
+      "Planning:",
+      "  Buffers: shared hit=2",
+      "Planning Time: 0.108 ms",
+      "JIT:",
+      "  Functions: 6",
+      "  Options: Inlining true, Optimization true, Expressions true, Deforming true",
+      "  Timing: Generation 0.451 ms (Deform 0.062 ms), Inlining 48.148 ms, Optimization 27.275 ms, Emission 25.778 ms, Total 101.652 ms",
+      "Execution Time: 423.499 ms"
+    ]
+  },
+  "indexes": [
+    "CREATE UNIQUE INDEX vfs_24d38bebcb_pkey ON public.vfs_24d38bebcb USING btree (id)",
+    "CREATE UNIQUE INDEX uq_vfs_24d38bebcb_parent_name ON public.vfs_24d38bebcb USING btree (parent_id, name)",
+    "CREATE INDEX ix_vfs_24d38bebcb_kind ON public.vfs_24d38bebcb USING btree (kind)",
+    "CREATE UNIQUE INDEX ix_vfs_24d38bebcb_entry_id ON public.vfs_24d38bebcb USING btree (entry_id)",
+    "CREATE INDEX ix_vfs_24d38bebcb_ext_kind ON public.vfs_24d38bebcb USING btree (ext, kind)",
+    "CREATE INDEX ix_vfs_24d38bebcb_ext ON public.vfs_24d38bebcb USING btree (ext)",
+    "CREATE INDEX ix_vfs_24d38bebcb_encoded_kind ON public.vfs_24d38bebcb USING btree (encoded, kind)",
+    "CREATE UNIQUE INDEX ix_vfs_24d38bebcb_path ON public.vfs_24d38bebcb USING btree (path)",
+    "CREATE INDEX ix_vfs_24d38bebcb_owner_id ON public.vfs_24d38bebcb USING btree (owner_id)",
+    "CREATE INDEX ix_vfs_24d38bebcb_restore ON public.vfs_24d38bebcb USING btree (original_parent_id, original_name)"
+  ]
+}

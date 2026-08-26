@@ -33,6 +33,7 @@
 - **Preconditions to verify before designing:** (1) rowcount semantics — SQLAlchemy's mysql dialect defaults to `found_rows` (rows *matched*); the guard always bumps `version`, so matched == changed today, but the fix must not silently depend on that; (2) validate on the real mysql/mariadb legs via the db_test cycle.
 - **Options considered:** multi-table UPDATE with a derived-table join (mysql-native); leave as-is and document the cost; raise the driver's executemany capability upstream.
 - **Status:** open — owned by `specs/active/080-mysql-batch-update-statements/` (research questions and acceptance criteria live there); do not fix inline
+- **Researched 2026-08-25:** `research/2026-08-25-mysql-family-batch-update-shapes.md` — FOUND_ROWS pinned as the semantic SQLAlchemy always sets (raw driver 0, SQLAlchemy 1, measured), the UNION ALL derived-table multi-table UPDATE as the family's one join shape (10k rows: 4.05 s → 1.07 s MySQL, 4.72 s → 1.16 s MariaDB, one statement per 10,900 rows), savepoint-and-redrive attribution proven on both members, MariaDB leg green at parity; design waits on Clay's review
 
 ## Row-level grant semantics (spec 058's clarification forks)
 
@@ -148,6 +149,7 @@
   session): owned by `specs/active/102-set-based-scattered-delete/`
   (research-first; preconditions and acceptance criteria live there);
   do not fix inline
+- **Researched 2026-08-25:** `research/2026-08-25-set-based-scattered-delete.md` — the per-target bumps are the measured cost (65 % on Postgres, 83 % on MySQL); a set-based prototype with byte-for-byte parity on all five engines holds the lock 37× (Postgres), 40× (MySQL), 24× (MariaDB), 26× (Oracle), 7.6× (MSSQL, residual = the snapshot IN-list fetch, 10.9 s → 0.4 s as a VALUES join) shorter at 10k; the byte-range predicate is sargable where LIKE is not; chunking not needed; design waits on Clay's review
 
 ## OKF integration: frontmatter as a query surface, and where bundle ingestion lives
 

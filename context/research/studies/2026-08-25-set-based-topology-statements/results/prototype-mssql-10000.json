@@ -1,0 +1,148 @@
+{
+  "engine": "mssql",
+  "size": 10000,
+  "directory_targets": 100,
+  "live": {
+    "seconds": 144.024,
+    "rival_move_blocked_seconds": 143.502,
+    "statement_total": 31858,
+    "statements": [
+      {
+        "shape": "UPDATE entries SET version=(entries.version + ?) WHERE entries.entry_id = ?",
+        "count": 20203,
+        "seconds": 21.4833,
+        "rows": 20203,
+        "share": 0.367
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=?, path=?, name=?, version=(entries.version + ?), encoded=?, original_parent_id=?",
+        "count": 10100,
+        "seconds": 17.6918,
+        "rows": 10100,
+        "share": 0.302
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+        "count": 6,
+        "seconds": 14.7809,
+        "rows": 6,
+        "share": 0.252
+      },
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = ? AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 2.2334,
+        "rows": 1100,
+        "share": 0.038
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 132,
+        "seconds": 1.0193,
+        "rows": 941302,
+        "share": 0.017
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE ? ESCAPE '\\'",
+        "count": 200,
+        "seconds": 0.9134,
+        "rows": 200,
+        "share": 0.016
+      },
+      {
+        "shape": "[many] UPDATE entries SET path=? WHERE entries.entry_id = ?",
+        "count": 100,
+        "seconds": 0.3844,
+        "rows": 500,
+        "share": 0.007
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = ?",
+        "count": 6,
+        "seconds": 0.0155,
+        "rows": 6,
+        "share": 0.0
+      }
+    ],
+    "outcome": {
+      "observations": 10100
+    },
+    "explain": null
+  },
+  "prototype": {
+    "seconds": 19.349,
+    "rival_move_blocked_seconds": 18.848,
+    "statement_total": 1200,
+    "statements": [
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.name, entries.path, entries.version, entries.kind FROM ent",
+        "count": 5,
+        "seconds": 10.4235,
+        "rows": 5,
+        "share": 0.682
+      },
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = ? AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 2.3078,
+        "rows": 1100,
+        "share": 0.151
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=incoming.v_bucket, path=incoming.v_path, name=incoming.v_name, version=(entries.v",
+        "count": 34,
+        "seconds": 1.3939,
+        "rows": 34,
+        "share": 0.091
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 34,
+        "seconds": 0.9416,
+        "rows": 1065902,
+        "share": 0.062
+      },
+      {
+        "shape": "UPDATE entries SET path=(prefixes.v_new + substring(entries.path, prefixes.v_len + ?, ?)) FROM entries, (VALUE",
+        "count": 1,
+        "seconds": 0.0922,
+        "rows": 1,
+        "share": 0.006
+      },
+      {
+        "shape": "UPDATE entries SET version=(entries.version + bumps.v_n) FROM entries, (VALUES (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), (",
+        "count": 4,
+        "seconds": 0.0543,
+        "rows": 4,
+        "share": 0.004
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path, prefixes.v_new + substring(entries.path, prefixes.v_len + ?, ?) AS new_",
+        "count": 1,
+        "seconds": 0.0142,
+        "rows": 1,
+        "share": 0.001
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = ?",
+        "count": 6,
+        "seconds": 0.0138,
+        "rows": 6,
+        "share": 0.001
+      }
+    ],
+    "outcome": {
+      "spelling": "values",
+      "chunk_rows": 299,
+      "targets": 10100,
+      "descendants": 500
+    },
+    "explain": null
+  },
+  "parity": {
+    "entries_equal": true,
+    "postings_equal": true,
+    "entry_diff_sample": [],
+    "posting_diff_count": 0
+  }
+}

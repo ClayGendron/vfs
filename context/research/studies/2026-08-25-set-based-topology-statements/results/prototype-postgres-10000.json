@@ -1,0 +1,163 @@
+{
+  "engine": "postgres",
+  "size": 10000,
+  "directory_targets": 100,
+  "live": {
+    "seconds": 74.386,
+    "rival_move_blocked_seconds": 73.864,
+    "statement_total": 31823,
+    "statements": [
+      {
+        "shape": "UPDATE entries SET version=(entries.version + $1::BIGINT) WHERE entries.entry_id = $2::UUID",
+        "count": 20203,
+        "seconds": 22.0922,
+        "rows": 20203,
+        "share": 0.648
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=$1::UUID, path=$2::VARCHAR, name=$3::VARCHAR, version=(entries.version + $4::BIGI",
+        "count": 10100,
+        "seconds": 10.2196,
+        "rows": 10100,
+        "share": 0.3
+      },
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = $1::VARCHAR AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 1.1156,
+        "rows": 1100,
+        "share": 0.033
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 102,
+        "seconds": 0.2872,
+        "rows": 32302,
+        "share": 0.008
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE $1::VARCHAR ESCAPE '\\'",
+        "count": 200,
+        "seconds": 0.2331,
+        "rows": 200,
+        "share": 0.007
+      },
+      {
+        "shape": "[many] UPDATE entries SET path=$1::VARCHAR WHERE entries.entry_id = $2::UUID",
+        "count": 100,
+        "seconds": 0.1179,
+        "rows": 500,
+        "share": 0.003
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+        "count": 1,
+        "seconds": 0.0302,
+        "rows": 1,
+        "share": 0.001
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = $1::VARCHAR",
+        "count": 6,
+        "seconds": 0.0035,
+        "rows": 6,
+        "share": 0.0
+      }
+    ],
+    "outcome": {
+      "observations": 10100
+    },
+    "explain": null
+  },
+  "prototype": {
+    "seconds": 2.614,
+    "rival_move_blocked_seconds": 1.997,
+    "statement_total": 1130,
+    "statements": [
+      {
+        "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = $1::VARCHAR AND entries_segments.entry_id IN (\u2026)",
+        "count": 1100,
+        "seconds": 0.3457,
+        "rows": 1100,
+        "share": 0.344
+      },
+      {
+        "shape": "UPDATE entries SET parent_id=incoming.v_bucket, path=incoming.v_path, name=incoming.v_name, version=(entries.v",
+        "count": 3,
+        "seconds": 0.2723,
+        "rows": 3,
+        "share": 0.271
+      },
+      {
+        "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+        "count": 2,
+        "seconds": 0.1684,
+        "rows": 32302,
+        "share": 0.168
+      },
+      {
+        "shape": "UPDATE entries SET path=(prefixes.v_new || SUBSTRING(entries.path FROM prefixes.v_len + $1::INTEGER FOR $2::IN",
+        "count": 1,
+        "seconds": 0.0756,
+        "rows": 1,
+        "share": 0.075
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.path, prefixes.v_new || SUBSTRING(entries.path FROM prefixes.v_len + $1::INTE",
+        "count": 1,
+        "seconds": 0.0723,
+        "rows": 1,
+        "share": 0.072
+      },
+      {
+        "shape": "UPDATE entries SET version=(entries.version + bumps.v_n) FROM (VALUES (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), (\u2026), ",
+        "count": 1,
+        "seconds": 0.0302,
+        "rows": 1,
+        "share": 0.03
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.parent_id, entries.name, entries.path, entries.version, entries.kind FROM ent",
+        "count": 1,
+        "seconds": 0.0264,
+        "rows": 1,
+        "share": 0.026
+      },
+      {
+        "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = $1::VARCHAR",
+        "count": 6,
+        "seconds": 0.0029,
+        "rows": 6,
+        "share": 0.003
+      }
+    ],
+    "outcome": {
+      "spelling": "values",
+      "chunk_rows": 4671,
+      "targets": 10100,
+      "descendants": 500
+    },
+    "explain": {
+      "range": [
+        "Nested Loop  (cost=0.00..2492.49 rows=8467 width=16)",
+        "  Join Filter: (((vfs_9e6f86e00d.path)::text > (\"*VALUES*\".column1 || '/'::text)) AND ((vfs_9e6f86e00d.path)::text < (\"*VALUES*\".column1 || '0'::text)))",
+        "  ->  Seq Scan on vfs_9e6f86e00d  (cost=0.00..777.24 rows=1524 width=532)",
+        "  ->  Materialize  (cost=0.00..0.88 rows=50 width=32)",
+        "        ->  Values Scan on \"*VALUES*\"  (cost=0.00..0.62 rows=50 width=32)"
+      ],
+      "like": [
+        "Nested Loop  (cost=0.00..2111.49 rows=381 width=16)",
+        "  Join Filter: ((vfs_9e6f86e00d.path)::text ~~ (\"*VALUES*\".column1 || '/%'::text))",
+        "  ->  Seq Scan on vfs_9e6f86e00d  (cost=0.00..777.24 rows=1524 width=532)",
+        "  ->  Materialize  (cost=0.00..0.88 rows=50 width=32)",
+        "        ->  Values Scan on \"*VALUES*\"  (cost=0.00..0.62 rows=50 width=32)"
+      ]
+    }
+  },
+  "parity": {
+    "entries_equal": true,
+    "postings_equal": true,
+    "entry_diff_sample": [],
+    "posting_diff_count": 0
+  }
+}

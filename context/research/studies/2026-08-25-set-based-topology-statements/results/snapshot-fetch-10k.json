@@ -1,0 +1,62 @@
+{
+  "mssql": {
+    "membership_budget": 2067,
+    "parameter_budget": 2099,
+    "runs": {
+      "in-list": [
+        {
+          "seconds": 10.85,
+          "rows": 10100,
+          "statements": 5
+        },
+        {
+          "seconds": 8.873,
+          "rows": 10100,
+          "statements": 5
+        }
+      ],
+      "values-join": [
+        {
+          "seconds": 0.404,
+          "rows": 10100,
+          "statements": 5
+        },
+        {
+          "seconds": 0.215,
+          "rows": 10100,
+          "statements": 5
+        }
+      ]
+    }
+  },
+  "postgres": {
+    "membership_budget": 32668,
+    "parameter_budget": 32700,
+    "runs": {
+      "in-list": [
+        {
+          "seconds": 0.098,
+          "rows": 10100,
+          "statements": 1
+        },
+        {
+          "seconds": 0.089,
+          "rows": 10100,
+          "statements": 1
+        }
+      ],
+      "values-join": [
+        {
+          "seconds": 0.258,
+          "rows": 10100,
+          "statements": 1
+        },
+        {
+          "seconds": 0.255,
+          "rows": 10100,
+          "statements": 1
+        }
+      ]
+    }
+  }
+}

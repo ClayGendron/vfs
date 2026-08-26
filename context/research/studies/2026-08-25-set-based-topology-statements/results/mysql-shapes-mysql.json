@@ -1,0 +1,89 @@
+{
+  "member": "mysql",
+  "url_scheme": "mysql+aiomysql",
+  "semantics": {
+    "dialect_name": "mysql",
+    "is_mariadb": false,
+    "server_version": "8.4.10",
+    "profile": "mysql",
+    "sqlalchemy_found_rows_flag": 2,
+    "matched_unchanged_rowcount_via_sqlalchemy": 1,
+    "matched_unchanged_rowcount_raw": {
+      "default client_flag": 0,
+      "CLIENT.FOUND_ROWS": 1
+    }
+  },
+  "shapes": [
+    {
+      "shape": "per-row executemany",
+      "rows": 1000,
+      "seconds": 0.355,
+      "matched": 1000,
+      "bumped": 1000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": null,
+      "binds_per_row": 5
+    },
+    {
+      "shape": "UNION ALL derived-table join",
+      "rows": 1000,
+      "seconds": 0.131,
+      "matched": 1000,
+      "bumped": 1000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": 10900,
+      "binds_per_row": 3
+    },
+    {
+      "shape": "CASE-keyed guard over IN",
+      "rows": 1000,
+      "seconds": 0.044,
+      "matched": 1000,
+      "bumped": 1000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": 10900,
+      "binds_per_row": 3
+    },
+    {
+      "shape": "per-row executemany",
+      "rows": 10000,
+      "seconds": 4.054,
+      "matched": 10000,
+      "bumped": 10000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": null,
+      "binds_per_row": 5
+    },
+    {
+      "shape": "UNION ALL derived-table join",
+      "rows": 10000,
+      "seconds": 1.068,
+      "matched": 10000,
+      "bumped": 10000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": 10900,
+      "binds_per_row": 3
+    },
+    {
+      "shape": "CASE-keyed guard over IN",
+      "rows": 10000,
+      "seconds": 1.195,
+      "matched": 10000,
+      "bumped": 10000,
+      "sqlalchemy_statements": 1,
+      "chunk_rows": 10900,
+      "binds_per_row": 3
+    }
+  ],
+  "rendered_union_shape": "UPDATE vfs_1310cf7241, (SELECT %s AS v_id, %s AS v_base, %s AS v_path UNION ALL SELECT %s AS v_id, %s AS v_base, %s AS v_path) AS v SET vfs_1310cf7241.version=(v.v_base + %s), vfs_1310cf7241.updated_at=%s WHERE vfs_1310cf7241.entry_id = v.v_id AND vfs_1310cf7241.version = v.v_base AND vfs_1310cf7241.path = v.v_path",
+  "mismatch": {
+    "rows": 1000,
+    "aggregate_rowcount": 999,
+    "expected_if_all_matched": 1000,
+    "savepoint_rollback_left_others_untouched": true,
+    "per_row_redrive_blamed": [
+      "/d00050/f000500.txt"
+    ],
+    "stale_row": "/d00050/f000500.txt"
+  }
+}

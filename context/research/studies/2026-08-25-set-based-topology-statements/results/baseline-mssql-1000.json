@@ -1,0 +1,97 @@
+{
+  "engine": "mssql",
+  "profile": "mssql",
+  "size": 1000,
+  "directory_targets": 10,
+  "write_seconds": 1.894,
+  "delete_seconds": 15.356,
+  "rival_move_blocked_seconds": 14.849,
+  "observations": 1010,
+  "statements": [
+    {
+      "shape": "UPDATE entries SET version=(entries.version + ?) WHERE entries.entry_id = ?",
+      "count": 2023,
+      "seconds": 3.1331,
+      "rows": 2023,
+      "share": 0.464
+    },
+    {
+      "shape": "UPDATE entries SET parent_id=?, path=?, name=?, version=(entries.version + ?), encoded=?, original_parent_id=?",
+      "count": 1010,
+      "seconds": 2.2414,
+      "rows": 1010,
+      "share": 0.332
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.parent_id, entries.path, entries.name, entries.kind, entries.version, entries",
+      "count": 1,
+      "seconds": 0.6419,
+      "rows": 1,
+      "share": 0.095
+    },
+    {
+      "shape": "[many] INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+      "count": 15,
+      "seconds": 0.3009,
+      "rows": 12322,
+      "share": 0.045
+    },
+    {
+      "shape": "DELETE FROM entries_segments WHERE entries_segments.segment = ? AND entries_segments.entry_id IN (\u2026)",
+      "count": 110,
+      "seconds": 0.2402,
+      "rows": 110,
+      "share": 0.036
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.path FROM entries WHERE entries.path LIKE ? ESCAPE '\\'",
+      "count": 20,
+      "seconds": 0.0753,
+      "rows": 20,
+      "share": 0.011
+    },
+    {
+      "shape": "[many] UPDATE entries SET path=? WHERE entries.entry_id = ?",
+      "count": 10,
+      "seconds": 0.0507,
+      "rows": 50,
+      "share": 0.008
+    },
+    {
+      "shape": "SELECT entries.entry_id, entries.kind FROM entries WHERE entries.path = ?",
+      "count": 6,
+      "seconds": 0.0252,
+      "rows": 6,
+      "share": 0.004
+    },
+    {
+      "shape": "INSERT INTO entries (entry_id, parent_id, path, name, kind, version, lines, size_bytes, chunked, encoded, inde",
+      "count": 3,
+      "seconds": 0.0219,
+      "rows": 3,
+      "share": 0.003
+    },
+    {
+      "shape": "UPDATE entries_meta SET schema_format_version=entries_meta.schema_format_version WHERE entries_meta.id = ?",
+      "count": 1,
+      "seconds": 0.0072,
+      "rows": 1,
+      "share": 0.001
+    },
+    {
+      "shape": "IF @@TRANCOUNT = 0 BEGIN TRANSACTION",
+      "count": 3,
+      "seconds": 0.0037,
+      "rows": 3,
+      "share": 0.001
+    },
+    {
+      "shape": "INSERT INTO entries_segments (segment, entry_id) VALUES (\u2026)",
+      "count": 1,
+      "seconds": 0.0036,
+      "rows": 1,
+      "share": 0.001
+    }
+  ],
+  "statement_total": 3206
+}

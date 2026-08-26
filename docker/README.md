@@ -76,6 +76,9 @@ install.
 **MySQL** carries a tuned profile (3,072-byte key budget, catch-retry
 arbitration, REPEATABLE READ pinned, deadlock/lock-wait errnos
 retryable); MariaDB rides the same policy under its own dialect name.
+A `mariadb` profile (`mariadb:11.4`, host port 33062) is the family's
+second member for family-wide claims — reach it with a
+`mariadb+aiomysql://` URL so the dialect resolves by its own name.
 Keep `?charset=utf8mb4` in the URL — the dialect does not default it,
 and unicode text bodies depend on it. This leg is the regression pin
 for the byte-denominated path limits and the `VARBINARY` key columns

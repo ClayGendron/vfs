@@ -1,5 +1,8 @@
 # 102 — Set-based scattered delete: shrink the topology-lock hold
 
+- **Status: researched 2026-08-25** — slice A delivered as
+  `../../../research/2026-08-25-set-based-scattered-delete.md`: the five research questions answered on all five engines — the per-target bumps are the measured cost, a set-based prototype holds the lock 24–40× shorter on four engines (7.6× on MSSQL, whose residual is the snapshot IN-list fetch) with byte-for-byte parity, the range predicate proven sargable where LIKE is not, cross-transaction chunking not needed. Design (slice B) waits on
+  Clay's review of the memo.
 - **Status: draft 2026-08-14, research-first** — born from the
   open-questions entry "Scattered 10k-target delete holds the
   topology lock for minutes", scheduled by Clay in session
