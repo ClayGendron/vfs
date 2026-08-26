@@ -1,0 +1,34 @@
+chunks: 10000  mean chars 1515  median 1670  max 2048
+lines/chunk: mean 28.4  median 29  max 119
+1 term                                 terms=1     10.56 us/chunk   10k total   105.6 ms
+3 terms                                terms=3     21.90 us/chunk   10k total   219.0 ms
+6 terms                                terms=6     22.05 us/chunk   10k total   220.5 ms
+no lexical hit (vector-only shape)     terms=1      9.05 us/chunk   10k total    90.5 ms
+empty (vector-only)                    terms=0      3.25 us/chunk   10k total    32.5 ms
+10 entries x 3 chunks (30 previews, 3-term query): 314 us per result page
+
+=== examples ===
+
+/src/vfs/models/__init__.py:3-6  (chunk 1-37, score 8.20)
+``entry`` holds the namespace ``Entry`` plus ``Observation``/``Match``;
+``**chunk**``, ``version``, and ``edge`` are the entry-scoped metadata models,
+one per table; ``rows``, ``vector``, ``versioning``, ``**chunk**ing``, and
+``code_grams`` carry the supporting column, **embedding**, and content machinery.
+
+/src/vfs/models/chunk.py:1-4  (chunk 1-56, score 6.96)
+"""The ``**Chunk**`` model — one indexed unit of a file's content.
+
+A **chunk** is entry-scoped metadata, not a namespace entry: its identity is
+``(file, **chunk**_index)`` — the owning file's path plus its position in the
+
+/src/vfs/models/rows.py:471-474  (chunk 442-482, score 25.06, 6-term query)
+        # **Reindex** single-runner **lease**: holder token + last-**heartbeat** **epoch**
+        # millis. NULL holder or a stale **heartbeat** means the **lease** is free.
+        Column("**reindex**_holder", String(ULID_LENGTH)),
+        Column("**reindex**_**heartbeat**", BigInteger),
+
+/src/vfs/__init__.py:1-4  (chunk 1-30, vector-only head)
+__version__ = "0.0.22"
+
+from vfs import permissions
+from vfs.base import MountInfo, VirtualFileSystem

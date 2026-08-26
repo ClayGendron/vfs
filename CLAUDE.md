@@ -151,6 +151,15 @@ most relevant to this project:
   (MIT, BSD, Apache-2.0, and similar); if the license is copyleft, missing,
   or unclear, delete the clone and study that project through its public
   docs and design writing instead.
+- **Refresh every clone in a study set to its upstream default branch
+  before any subagent studies it** (Clay, 2026-08-26). Reference repos
+  drift — graphify moved orgs, relicensed, and switched its default
+  branch between two studies — so a memo built on a stale checkout cites
+  code that no longer exists. Per repo: `git fetch origin`, then check
+  out `origin/<default>` (the branch `origin/HEAD` points at, not
+  assumed `main`); skip a clone `git status` reports dirty and say so in
+  the memo. Re-check the license after refreshing — it can change. Record
+  the refreshed commit and date in the memo's sources line.
 
 - **Filesystem heritage & semantics**: `plan9`, `plan9port`,
   `unix-history-repo`, `freebsd-src`, `linux`, `libfuse`, `pjdfstest`
@@ -161,6 +170,12 @@ most relevant to this project:
 - **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
 - **Code search & indexing** (trigram-index stories): `zoekt`, `codesearch`,
   `scip`
+- **Ranked search, fusion & embeddings** (glean stories): `pgvector`,
+  `pgvector-python`, `sqlite-vec`, `bm25s`, `tantivy`, `lucene`
+  (unified highlighter), `ranx` (rank fusion + IR metrics),
+  `neural-search` (OpenSearch hybrid normalization), `lancedb`,
+  `haystack`, `llama_index`, `pyserini`, `fastembed`, `model2vec`,
+  `openai-python`
 - **Graphs & relation stores** (edge/graph stories): `neo4j`, `kuzu`
   (archived upstream — kept as a frozen design record), `ladybug` (Kuzu's
   community successor), `age` (graph on Postgres), `gel` (typed links

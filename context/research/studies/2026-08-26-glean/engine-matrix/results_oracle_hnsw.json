@@ -1,0 +1,404 @@
+{
+ "system": {
+  "vector_pool": {
+   "ok": true,
+   "rows": [
+    [
+     "vector_memory_size",
+     "268435456"
+    ]
+   ],
+   "ms": 10.9
+  },
+  "grant_cat": {
+   "ok": true,
+   "rows": 0,
+   "ms": 14.3
+  }
+ },
+ "vfs": {
+  "drop_c": {
+   "ok": true,
+   "rows": 0,
+   "ms": 32.2
+  },
+  "chunks": {
+   "ok": true,
+   "rows": 0,
+   "ms": 49.6
+  },
+  "ins_c": {
+   "ok": true,
+   "rows": 400,
+   "ms": 33.5
+  },
+  "commit": {
+   "ok": true,
+   "rows": 0,
+   "ms": 0.7
+  },
+  "hnsw": {
+   "ok": true,
+   "rows": 0,
+   "ms": 924.4
+  },
+  "approx": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     275
+    ],
+    [
+     394
+    ],
+    [
+     222
+    ],
+    [
+     347
+    ]
+   ],
+   "ms": 173.3
+  },
+  "hnsw_cursor_plan": {
+   "ok": true,
+   "rows": [
+    [
+     "EXPLAINED SQL STATEMENT:"
+    ],
+    [
+     "------------------------"
+    ],
+    [
+     "select id from glean_chunks order by vector_distance(embedding, "
+    ],
+    [
+     "to_vector(:q), cosine) fetch approx first 5 rows only with target "
+    ],
+    [
+     "accuracy 90"
+    ],
+    [
+     " "
+    ],
+    [
+     "Plan hash value: 627166218"
+    ],
+    [
+     " "
+    ],
+    [
+     "-------------------------------------------------------"
+    ],
+    [
+     "| Id  | Operation                      | Name         |"
+    ],
+    [
+     "-------------------------------------------------------"
+    ],
+    [
+     "|   0 | SELECT STATEMENT               |              |"
+    ],
+    [
+     "|   1 |  COUNT STOPKEY                 |              |"
+    ],
+    [
+     "|   2 |   VIEW                         |              |"
+    ],
+    [
+     "|   3 |    SORT ORDER BY STOPKEY       |              |"
+    ],
+    [
+     "|   4 |     TABLE ACCESS BY INDEX ROWID| GLEAN_CHUNKS |"
+    ],
+    [
+     "|   5 |      VECTOR INDEX HNSW SCAN    | GLEAN_HNSW   |"
+    ],
+    [
+     "-------------------------------------------------------"
+    ],
+    [
+     " "
+    ]
+   ],
+   "ms": 115.7
+  },
+  "approx_scoped": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     209
+    ],
+    [
+     290
+    ],
+    [
+     251
+    ],
+    [
+     11
+    ]
+   ],
+   "ms": 36.5
+  },
+  "hnsw_scoped_cursor_plan": {
+   "ok": true,
+   "rows": [
+    [
+     "EXPLAINED SQL STATEMENT:"
+    ],
+    [
+     "------------------------"
+    ],
+    [
+     "select id from glean_chunks where entry_id in (:ids_1, :ids_2, :ids_3, "
+    ],
+    [
+     ":ids_4, :ids_5, :ids_6, :ids_7, :ids_8, :ids_9, :ids_10) order by "
+    ],
+    [
+     "vector_distance(embedding, to_vector(:q), cosine) fetch approx first 5 "
+    ],
+    [
+     "rows only with target accuracy 90"
+    ],
+    [
+     " "
+    ],
+    [
+     "Plan hash value: 1433578266"
+    ],
+    [
+     " "
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "| Id  | Operation               | Name         |"
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "|   0 | SELECT STATEMENT        |              |"
+    ],
+    [
+     "|   1 |  COUNT STOPKEY          |              |"
+    ],
+    [
+     "|   2 |   VIEW                  |              |"
+    ],
+    [
+     "|   3 |    SORT ORDER BY STOPKEY|              |"
+    ],
+    [
+     "|   4 |     TABLE ACCESS FULL   | GLEAN_CHUNKS |"
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     " "
+    ]
+   ],
+   "ms": 11.7
+  },
+  "exact_scoped": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     209
+    ],
+    [
+     290
+    ],
+    [
+     251
+    ],
+    [
+     11
+    ]
+   ],
+   "ms": 4.6
+  },
+  "drop_hnsw": {
+   "ok": true,
+   "rows": 0,
+   "ms": 371.3
+  },
+  "ivf": {
+   "ok": true,
+   "rows": 0,
+   "ms": 1246.2
+  },
+  "ivf_approx": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     275
+    ],
+    [
+     394
+    ],
+    [
+     222
+    ],
+    [
+     347
+    ]
+   ],
+   "ms": 36.1
+  },
+  "ivf_cursor_plan": {
+   "ok": true,
+   "rows": [
+    [
+     "SQL_ID  4ntcnftdaubsm, child number 0"
+    ],
+    [
+     "                                     "
+    ],
+    [
+     "select id from glean_chunks order by vector_distance(embedding, "
+    ],
+    [
+     "to_vector(:q), cosine) fetch approx first 5 rows only with target "
+    ],
+    [
+     "accuracy 90"
+    ],
+    [
+     " "
+    ],
+    [
+     "NOTE: cannot fetch plan for SQL_ID: 4ntcnftdaubsm, CHILD_NUMBER: 0"
+    ],
+    [
+     "      Please verify value of SQL_ID and CHILD_NUMBER; "
+    ],
+    [
+     "      It could also be that the plan is no longer in cursor cache (check v$sql_plan)"
+    ],
+    [
+     " "
+    ]
+   ],
+   "ms": 64.8
+  },
+  "ivf_approx_scoped": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     209
+    ],
+    [
+     290
+    ],
+    [
+     251
+    ],
+    [
+     11
+    ]
+   ],
+   "ms": 27.5
+  },
+  "ivf_scoped_cursor_plan": {
+   "ok": true,
+   "rows": [
+    [
+     "EXPLAINED SQL STATEMENT:"
+    ],
+    [
+     "------------------------"
+    ],
+    [
+     "select id from glean_chunks where entry_id in (:ids_1, :ids_2, :ids_3, "
+    ],
+    [
+     ":ids_4, :ids_5, :ids_6, :ids_7, :ids_8, :ids_9, :ids_10) order by "
+    ],
+    [
+     "vector_distance(embedding, to_vector(:q), cosine) fetch approx first 5 "
+    ],
+    [
+     "rows only with target accuracy 90"
+    ],
+    [
+     " "
+    ],
+    [
+     "Plan hash value: 1433578266"
+    ],
+    [
+     " "
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "| Id  | Operation               | Name         |"
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "|   0 | SELECT STATEMENT        |              |"
+    ],
+    [
+     "|   1 |  COUNT STOPKEY          |              |"
+    ],
+    [
+     "|   2 |   VIEW                  |              |"
+    ],
+    [
+     "|   3 |    SORT ORDER BY STOPKEY|              |"
+    ],
+    [
+     "|   4 |     TABLE ACCESS FULL   | GLEAN_CHUNKS |"
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     " "
+    ]
+   ],
+   "ms": 64.7
+  },
+  "drop_ivf": {
+   "ok": true,
+   "rows": 0,
+   "ms": 213.0
+  },
+  "hybrid_no_model": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-29855: Error while processing the ODCIINDEXCREATE routine for index \"VFS\".\"GLEAN_HYB\". | ORA-20000: Oracle Text error: | ORA-20000: Oracle Text error: | DRG-51504: need to specify model name when using hybrid vector index | ORA-06512: at \"CTXSYS.DRUE\", line 192 | ORA-06512: at \"CTXSYS.DRVDML\", line 2341 | ORA-06512: at line 1 | ORA-06512: at \"CTXSYS.DRUE\", line 192 | ORA-06512: at \"CTXSYS.TEXTINDEXMETHODS\", line 359 | Help: https://docs.oracle.com/error-help/db/ora-29855/ | [SQL: create hybrid vector index glean_hyb on glean_chunks (content) parameters ("
+  },
+  "hybrid_search": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-20000: Oracle Text error: | DRG-50857: oracle error in drftfsearch | ORA-20000: Oracle Text error: | DRG-51504: need to specify model name when using search_text | ORA-06512: at \"CTXSYS.DRUE\", line 192 | ORA-06512: at \"CTXSYS.DRVDML\", line 2557 | ORA-06512: at line 1 | ORA-06512: at \"CTXSYS.DRUE\", line 192 | ORA-06512: at \"CTXSYS.DBMS_HYBRID_VECTOR\", line 5237 | [SQL: select dbms_hybrid_vector.search(json('{\"hybrid_index_name\":\"glean_hyb\",\"search_text\":\"lantern\"}')) from dual] | (Background on this error at: https://sqlalche.me/e/20/4xp6)"
+  },
+  "drop_c2": {
+   "ok": true,
+   "rows": 0,
+   "ms": 1053.5
+  }
+ }
+}

@@ -1,0 +1,607 @@
+{
+ "hybrid A/B/C | random | 10 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.21245714855636808,
+  "mrr@10": 0.19903174603174606,
+  "recall@10": 0.2841666666666667
+ },
+ "hybrid A/B/C | random | 10 | (ii) round-robin interleave": {
+  "ndcg@10": 0.47670936107657896,
+  "mrr@10": 0.3962804232804233,
+  "recall@10": 0.7476666666666667
+ },
+ "hybrid A/B/C | random | 10 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.4768007350015576,
+  "mrr@10": 0.39715211640211645,
+  "recall@10": 0.7461666666666666
+ },
+ "hybrid A/B/C | random | 10 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.46932145359382277,
+  "mrr@10": 0.39115873015873015,
+  "recall@10": 0.7301666666666667
+ },
+ "hybrid A/B/C | random | 10 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5050180304842274,
+  "mrr@10": 0.4312116402116402,
+  "recall@10": 0.7518333333333334
+ },
+ "hybrid A/B/C | random | 10 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6390445375849465,
+  "mrr@10": 0.6059074074074075,
+  "recall@10": 0.7648888888888888
+ },
+ "hybrid A/B/C | random | 10 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6684486406396449,
+  "mrr@10": 0.6351164021164021,
+  "recall@10": 0.7887777777777778
+ },
+ "hybrid A/B/C | random | 10 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5759023661669047,
+  "mrr@10": 0.5212063492063492,
+  "recall@10": 0.7766111111111111
+ },
+ "hybrid A/B/C | random | 10 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6092185765354869,
+  "mrr@10": 0.5769219576719576,
+  "recall@10": 0.7417777777777779
+ },
+ "hybrid A/B/C | random | 10 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6066603114568085,
+  "mrr@10": 0.5729920634920636,
+  "recall@10": 0.7381666666666666
+ },
+ "hybrid A/B/C | random | 20 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.21245714855636808,
+  "mrr@10": 0.19903174603174606,
+  "recall@10": 0.2841666666666667
+ },
+ "hybrid A/B/C | random | 20 | (ii) round-robin interleave": {
+  "ndcg@10": 0.47670936107657896,
+  "mrr@10": 0.3962804232804233,
+  "recall@10": 0.7476666666666667
+ },
+ "hybrid A/B/C | random | 20 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.4768007350015576,
+  "mrr@10": 0.39715211640211645,
+  "recall@10": 0.7461666666666666
+ },
+ "hybrid A/B/C | random | 20 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.46244851376545587,
+  "mrr@10": 0.38889814814814816,
+  "recall@10": 0.7093333333333334
+ },
+ "hybrid A/B/C | random | 20 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5032476878557058,
+  "mrr@10": 0.4335238095238095,
+  "recall@10": 0.7451666666666668
+ },
+ "hybrid A/B/C | random | 20 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6404266004066932,
+  "mrr@10": 0.6083862433862434,
+  "recall@10": 0.7632777777777778
+ },
+ "hybrid A/B/C | random | 20 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6656714276853222,
+  "mrr@10": 0.6322380952380953,
+  "recall@10": 0.7872777777777777
+ },
+ "hybrid A/B/C | random | 20 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5838329812531873,
+  "mrr@10": 0.5312751322751322,
+  "recall@10": 0.7749444444444444
+ },
+ "hybrid A/B/C | random | 20 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6400601428595906,
+  "mrr@10": 0.6076878306878307,
+  "recall@10": 0.7599444444444444
+ },
+ "hybrid A/B/C | random | 20 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6259384548685737,
+  "mrr@10": 0.5875436507936507,
+  "recall@10": 0.7676111111111111
+ },
+ "hybrid A/B/C | random | 50 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.21245714855636808,
+  "mrr@10": 0.19903174603174606,
+  "recall@10": 0.2841666666666667
+ },
+ "hybrid A/B/C | random | 50 | (ii) round-robin interleave": {
+  "ndcg@10": 0.47670936107657896,
+  "mrr@10": 0.3962804232804233,
+  "recall@10": 0.7476666666666667
+ },
+ "hybrid A/B/C | random | 50 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.4768007350015576,
+  "mrr@10": 0.39715211640211645,
+  "recall@10": 0.7461666666666666
+ },
+ "hybrid A/B/C | random | 50 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.4618824910259059,
+  "mrr@10": 0.38900000000000007,
+  "recall@10": 0.7076666666666667
+ },
+ "hybrid A/B/C | random | 50 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.4945093626990385,
+  "mrr@10": 0.4247367724867725,
+  "recall@10": 0.7403333333333333
+ },
+ "hybrid A/B/C | random | 50 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6527006068227217,
+  "mrr@10": 0.6220621693121693,
+  "recall@10": 0.7689444444444444
+ },
+ "hybrid A/B/C | random | 50 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6625278689612293,
+  "mrr@10": 0.631021164021164,
+  "recall@10": 0.7799444444444444
+ },
+ "hybrid A/B/C | random | 50 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5731156343896691,
+  "mrr@10": 0.5207195767195768,
+  "recall@10": 0.7656111111111111
+ },
+ "hybrid A/B/C | random | 50 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6577761299009249,
+  "mrr@10": 0.6224854497354497,
+  "recall@10": 0.7864444444444445
+ },
+ "hybrid A/B/C | random | 50 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6451684351953791,
+  "mrr@10": 0.6056309523809523,
+  "recall@10": 0.7872777777777777
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.2742727955033403,
+  "mrr@10": 0.24834523809523812,
+  "recall@10": 0.36677777777777776
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (ii) round-robin interleave": {
+  "ndcg@10": 0.36470932875166945,
+  "mrr@10": 0.29016534391534393,
+  "recall@10": 0.6112222222222222
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.40143085646082804,
+  "mrr@10": 0.3374629629629629,
+  "recall@10": 0.6114999999999999
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.3717145090505705,
+  "mrr@10": 0.29333068783068783,
+  "recall@10": 0.6267777777777778
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.4378127386083533,
+  "mrr@10": 0.3817367724867725,
+  "recall@10": 0.6217777777777778
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6371630545460722,
+  "mrr@10": 0.6087208994708995,
+  "recall@10": 0.7499444444444445
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6536666350912281,
+  "mrr@10": 0.6261521164021164,
+  "recall@10": 0.7614444444444445
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.527105861802148,
+  "mrr@10": 0.47304894179894175,
+  "recall@10": 0.7273333333333333
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.5616397130873413,
+  "mrr@10": 0.5316626984126984,
+  "recall@10": 0.6817777777777778
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 10 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.5611572807909422,
+  "mrr@10": 0.5303253968253968,
+  "recall@10": 0.6823333333333333
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.2742727955033403,
+  "mrr@10": 0.24834523809523812,
+  "recall@10": 0.36677777777777776
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (ii) round-robin interleave": {
+  "ndcg@10": 0.36470932875166945,
+  "mrr@10": 0.29016534391534393,
+  "recall@10": 0.6112222222222222
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.40143085646082804,
+  "mrr@10": 0.3374629629629629,
+  "recall@10": 0.6114999999999999
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.3716443495064995,
+  "mrr@10": 0.2930939153439153,
+  "recall@10": 0.629
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.43795105482939184,
+  "mrr@10": 0.3829365079365079,
+  "recall@10": 0.6251111111111111
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6514991782079611,
+  "mrr@10": 0.620478835978836,
+  "recall@10": 0.767
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6607403191311502,
+  "mrr@10": 0.6288862433862433,
+  "recall@10": 0.7781111111111111
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5197495349762363,
+  "mrr@10": 0.47374206349206344,
+  "recall@10": 0.6874444444444445
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.5946785172275301,
+  "mrr@10": 0.5642513227513227,
+  "recall@10": 0.7141111111111111
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 20 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.578434748918765,
+  "mrr@10": 0.5437328042328043,
+  "recall@10": 0.7124444444444445
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.2742727955033403,
+  "mrr@10": 0.24834523809523812,
+  "recall@10": 0.36677777777777776
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (ii) round-robin interleave": {
+  "ndcg@10": 0.36470932875166945,
+  "mrr@10": 0.29016534391534393,
+  "recall@10": 0.6112222222222222
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.40143085646082804,
+  "mrr@10": 0.3374629629629629,
+  "recall@10": 0.6114999999999999
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.36686514999490377,
+  "mrr@10": 0.2915661375661376,
+  "recall@10": 0.614
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.43662462129986407,
+  "mrr@10": 0.381808201058201,
+  "recall@10": 0.6267777777777778
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6635420714236648,
+  "mrr@10": 0.6333359788359788,
+  "recall@10": 0.7806666666666666
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6626754306512809,
+  "mrr@10": 0.6311640211640211,
+  "recall@10": 0.7799444444444444
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5177212878968876,
+  "mrr@10": 0.4635648148148149,
+  "recall@10": 0.714
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6188575203908828,
+  "mrr@10": 0.584973544973545,
+  "recall@10": 0.7441111111111112
+ },
+ "hybrid A/B/C | topic (k-means k=3 on potion-8M) | 50 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6017602179851751,
+  "mrr@10": 0.5677764550264551,
+  "recall@10": 0.7274444444444444
+ },
+ "C lexical-only | random | 10 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.25262040436209987,
+  "mrr@10": 0.25729100529100524,
+  "recall@10": 0.2781666666666666
+ },
+ "C lexical-only | random | 10 | (ii) round-robin interleave": {
+  "ndcg@10": 0.5063616013198617,
+  "mrr@10": 0.4185767195767196,
+  "recall@10": 0.7954444444444444
+ },
+ "C lexical-only | random | 10 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.5352637458783114,
+  "mrr@10": 0.4605343915343915,
+  "recall@10": 0.7912777777777777
+ },
+ "C lexical-only | random | 10 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.5000378236227268,
+  "mrr@10": 0.41424867724867726,
+  "recall@10": 0.7804444444444444
+ },
+ "C lexical-only | random | 10 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5636895284355198,
+  "mrr@10": 0.4978359788359788,
+  "recall@10": 0.7904444444444444
+ },
+ "C lexical-only | random | 10 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6256602864210453,
+  "mrr@10": 0.5877182539682541,
+  "recall@10": 0.7681111111111111
+ },
+ "C lexical-only | random | 10 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6672642059818564,
+  "mrr@10": 0.6346177248677248,
+  "recall@10": 0.7854444444444444
+ },
+ "C lexical-only | random | 10 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5974642707427279,
+  "mrr@10": 0.5489074074074074,
+  "recall@10": 0.7732777777777777
+ },
+ "C lexical-only | random | 10 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6337415363030083,
+  "mrr@10": 0.5987486772486773,
+  "recall@10": 0.7660555555555555
+ },
+ "C lexical-only | random | 10 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6348521462621409,
+  "mrr@10": 0.5984656084656085,
+  "recall@10": 0.7709444444444444
+ },
+ "C lexical-only | random | 20 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.25262040436209987,
+  "mrr@10": 0.25729100529100524,
+  "recall@10": 0.2781666666666666
+ },
+ "C lexical-only | random | 20 | (ii) round-robin interleave": {
+  "ndcg@10": 0.5063616013198617,
+  "mrr@10": 0.4185767195767196,
+  "recall@10": 0.7954444444444444
+ },
+ "C lexical-only | random | 20 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.5352637458783114,
+  "mrr@10": 0.4605343915343915,
+  "recall@10": 0.7912777777777777
+ },
+ "C lexical-only | random | 20 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.49589726379058324,
+  "mrr@10": 0.41211772486772486,
+  "recall@10": 0.7696111111111111
+ },
+ "C lexical-only | random | 20 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5665092704457184,
+  "mrr@10": 0.5023333333333333,
+  "recall@10": 0.7921111111111111
+ },
+ "C lexical-only | random | 20 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6370511871817719,
+  "mrr@10": 0.6045251322751322,
+  "recall@10": 0.7606111111111111
+ },
+ "C lexical-only | random | 20 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6656714276853222,
+  "mrr@10": 0.6322380952380953,
+  "recall@10": 0.7872777777777777
+ },
+ "C lexical-only | random | 20 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5834195623201343,
+  "mrr@10": 0.530691798941799,
+  "recall@10": 0.766611111111111
+ },
+ "C lexical-only | random | 20 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6477055730832093,
+  "mrr@10": 0.6157949735449736,
+  "recall@10": 0.766611111111111
+ },
+ "C lexical-only | random | 20 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6432569160570415,
+  "mrr@10": 0.6084748677248677,
+  "recall@10": 0.7709444444444444
+ },
+ "C lexical-only | random | 50 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.25262040436209987,
+  "mrr@10": 0.25729100529100524,
+  "recall@10": 0.2781666666666666
+ },
+ "C lexical-only | random | 50 | (ii) round-robin interleave": {
+  "ndcg@10": 0.5063616013198617,
+  "mrr@10": 0.4185767195767196,
+  "recall@10": 0.7954444444444444
+ },
+ "C lexical-only | random | 50 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.5352637458783114,
+  "mrr@10": 0.4605343915343915,
+  "recall@10": 0.7912777777777777
+ },
+ "C lexical-only | random | 50 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.4925474125390766,
+  "mrr@10": 0.4108478835978836,
+  "recall@10": 0.7612777777777777
+ },
+ "C lexical-only | random | 50 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5642359140071073,
+  "mrr@10": 0.5031798941798942,
+  "recall@10": 0.7864444444444445
+ },
+ "C lexical-only | random | 50 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6448027813161733,
+  "mrr@10": 0.6118492063492064,
+  "recall@10": 0.7662777777777777
+ },
+ "C lexical-only | random | 50 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6625278689612293,
+  "mrr@10": 0.631021164021164,
+  "recall@10": 0.7799444444444444
+ },
+ "C lexical-only | random | 50 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5774193954494464,
+  "mrr@10": 0.526063492063492,
+  "recall@10": 0.7620000000000001
+ },
+ "C lexical-only | random | 50 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6591914101814091,
+  "mrr@10": 0.626287037037037,
+  "recall@10": 0.7797777777777778
+ },
+ "C lexical-only | random | 50 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6527594050429079,
+  "mrr@10": 0.6171534391534391,
+  "recall@10": 0.7822777777777777
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.329713132130201,
+  "mrr@10": 0.3180873015873016,
+  "recall@10": 0.38077777777777777
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (ii) round-robin interleave": {
+  "ndcg@10": 0.40462677882884635,
+  "mrr@10": 0.3175727513227513,
+  "recall@10": 0.6906666666666667
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.46788327400984664,
+  "mrr@10": 0.40023015873015877,
+  "recall@10": 0.6899444444444445
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.40823077474782904,
+  "mrr@10": 0.3175277777777778,
+  "recall@10": 0.7030000000000001
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5146984721195407,
+  "mrr@10": 0.4618756613756614,
+  "recall@10": 0.6913333333333334
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6385203600650831,
+  "mrr@10": 0.6074841269841269,
+  "recall@10": 0.7578333333333334
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6577541769030163,
+  "mrr@10": 0.6274933862433861,
+  "recall@10": 0.7747777777777778
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5663755730686817,
+  "mrr@10": 0.5255846560846561,
+  "recall@10": 0.723
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.5973406583364127,
+  "mrr@10": 0.5630873015873016,
+  "recall@10": 0.7291111111111112
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 10 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.5906157100542415,
+  "mrr@10": 0.5552248677248678,
+  "recall@10": 0.7276111111111111
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.329713132130201,
+  "mrr@10": 0.3180873015873016,
+  "recall@10": 0.38077777777777777
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (ii) round-robin interleave": {
+  "ndcg@10": 0.40462677882884635,
+  "mrr@10": 0.3175727513227513,
+  "recall@10": 0.6906666666666667
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.46788327400984664,
+  "mrr@10": 0.40023015873015877,
+  "recall@10": 0.6899444444444445
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.4039233469212725,
+  "mrr@10": 0.31566137566137564,
+  "recall@10": 0.6918888888888889
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5165946002300892,
+  "mrr@10": 0.4679867724867725,
+  "recall@10": 0.6905
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6467433581983558,
+  "mrr@10": 0.6160145502645503,
+  "recall@10": 0.764
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6596829411432616,
+  "mrr@10": 0.6286455026455027,
+  "recall@10": 0.7757777777777778
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.5385932020191109,
+  "mrr@10": 0.49332936507936503,
+  "recall@10": 0.7024444444444445
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6078013508791094,
+  "mrr@10": 0.5720608465608465,
+  "recall@10": 0.7424444444444445
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 20 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.5900390521216003,
+  "mrr@10": 0.5568637566137565,
+  "recall@10": 0.7157777777777778
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (i) naive score sort (Result.top)": {
+  "ndcg@10": 0.329713132130201,
+  "mrr@10": 0.3180873015873016,
+  "recall@10": 0.38077777777777777
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (ii) round-robin interleave": {
+  "ndcg@10": 0.40462677882884635,
+  "mrr@10": 0.3175727513227513,
+  "recall@10": 0.6906666666666667
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (iii) RRF across mounts k=60": {
+  "ndcg@10": 0.46788327400984664,
+  "mrr@10": 0.40023015873015877,
+  "recall@10": 0.6899444444444445
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (iv-a) min-max per mount, then sort": {
+  "ndcg@10": 0.3995259879087848,
+  "mrr@10": 0.31377777777777777,
+  "recall@10": 0.6785555555555556
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (iv-b) z-score per mount, then sort": {
+  "ndcg@10": 0.5193812450313975,
+  "mrr@10": 0.46997089947089954,
+  "recall@10": 0.6996666666666667
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (v) Clay: union + in-process BM25 (union stats)": {
+  "ndcg@10": 0.6586453610819566,
+  "mrr@10": 0.628771164021164,
+  "recall@10": 0.7763333333333333
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (v') union + BM25 with corpus-wide stats": {
+  "ndcg@10": 0.6626754306512809,
+  "mrr@10": 0.6311640211640211,
+  "recall@10": 0.7799444444444444
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (vi-a) union + RRF(union BM25, per-mount minmax cos)": {
+  "ndcg@10": 0.517822147899022,
+  "mrr@10": 0.46988756613756605,
+  "recall@10": 0.6896666666666667
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (vi-b) union + CC 0.5(union BM25 mm, per-mount mm cos)": {
+  "ndcg@10": 0.6094104697403095,
+  "mrr@10": 0.5752433862433863,
+  "recall@10": 0.7341111111111112
+ },
+ "C lexical-only | topic (k-means k=3 on potion-8M) | 50 | (vi-c) union + CC 0.5 with corpus-wide BM25 stats": {
+  "ndcg@10": 0.6078608504395987,
+  "mrr@10": 0.5753227513227513,
+  "recall@10": 0.7291111111111112
+ },
+ "oracle": {
+  "ndcg@10": 0.605657133260063,
+  "mrr@10": 0.5623955026455026,
+  "recall@10": 0.7561111111111112
+ }
+}

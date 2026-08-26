@@ -1,0 +1,167 @@
+{
+ "label": "linux-10000",
+ "corpus": {
+  "files": 1024,
+  "bytes": 19619823,
+  "split_seconds": 0.31995362509042025,
+  "chunks": 11608
+ },
+ "index": {
+  "table_bytes": {
+   "ix_lex_docs_entry": 147456,
+   "lex_df": 3661824,
+   "lex_docs": 188416,
+   "lex_stats": 4096,
+   "lex_terms": 37818368,
+   "segments": 69632,
+   "sqlite_schema": 4096,
+   "lex_terms_norm": 29507584
+  },
+  "n_chunks": 11608,
+  "n_terms_rows": 1166497,
+  "n_vocab": 87862,
+  "avg_dl": 322.16324948311507,
+  "tokenize_seconds": 1.9667185000143945,
+  "insert_seconds": 1.6750571250449866,
+  "db_bytes": 41893888,
+  "tokens_total": 3739671
+ },
+ "timings_ms": {
+  "_allow_sizes": {
+   "small": 51,
+   "half": 512,
+   "segment": "amd",
+   "segment_entries": 1021
+  },
+  "1": {
+   "precomputed": {
+    "median_ms": 0.023,
+    "max_ms": 0.085
+   },
+   "runtime": {
+    "median_ms": 0.051,
+    "max_ms": 0.235
+   },
+   "entry_maxp": {
+    "median_ms": 0.416,
+    "max_ms": 0.634
+   },
+   "scope_ids_small": {
+    "median_ms": 0.208,
+    "max_ms": 0.227
+   },
+   "scope_ids_half": {
+    "median_ms": 1.808,
+    "max_ms": 2.054
+   },
+   "scope_segment": {
+    "median_ms": 0.05,
+    "max_ms": 0.307
+   }
+  },
+  "3": {
+   "precomputed": {
+    "median_ms": 1.016,
+    "max_ms": 2.004
+   },
+   "runtime": {
+    "median_ms": 3.134,
+    "max_ms": 6.02
+   },
+   "entry_maxp": {
+    "median_ms": 2.693,
+    "max_ms": 4.992
+   },
+   "scope_ids_small": {
+    "median_ms": 0.638,
+    "max_ms": 0.712
+   },
+   "scope_ids_half": {
+    "median_ms": 5.867,
+    "max_ms": 6.531
+   },
+   "scope_segment": {
+    "median_ms": 2.492,
+    "max_ms": 4.877
+   }
+  },
+  "6": {
+   "precomputed": {
+    "median_ms": 0.896,
+    "max_ms": 2.116
+   },
+   "runtime": {
+    "median_ms": 2.69,
+    "max_ms": 6.301
+   },
+   "entry_maxp": {
+    "median_ms": 2.38,
+    "max_ms": 8.506
+   },
+   "scope_ids_small": {
+    "median_ms": 1.142,
+    "max_ms": 1.263
+   },
+   "scope_ids_half": {
+    "median_ms": 10.775,
+    "max_ms": 11.675
+   },
+   "scope_segment": {
+    "median_ms": 2.223,
+    "max_ms": 5.271
+   }
+  }
+ },
+ "incremental": {
+  "secondary_index_seconds": 0.4933,
+  "db_bytes_with_index": 71401472,
+  "scope_driven_timings_ms": {
+   "1": {
+    "scope_driven_small": {
+     "median_ms": 0.208,
+     "max_ms": 0.232
+    },
+    "scope_driven_half": {
+     "median_ms": 1.853,
+     "max_ms": 2.076
+    }
+   },
+   "3": {
+    "scope_driven_small": {
+     "median_ms": 680.45,
+     "max_ms": 732.176
+    },
+    "scope_driven_half": {
+     "median_ms": 1072.824,
+     "max_ms": 1506.585
+    }
+   },
+   "6": {
+    "scope_driven_small": {
+     "median_ms": 695.091,
+     "max_ms": 739.07
+    },
+    "scope_driven_half": {
+     "median_ms": 1033.567,
+     "max_ms": 1534.941
+    }
+   }
+  },
+  "reinsert_1000_entries_seconds": 97.3322
+ },
+ "overlay_scan": {
+  "100": {
+   "dirty_entries": 100,
+   "chunks": 1309,
+   "seconds": 0.2015,
+   "hits": 513
+  },
+  "1000": {
+   "dirty_entries": 1000,
+   "chunks": 11251,
+   "seconds": 1.7903,
+   "hits": 6189
+  }
+ },
+ "sqlite_version": "3.50.4"
+}

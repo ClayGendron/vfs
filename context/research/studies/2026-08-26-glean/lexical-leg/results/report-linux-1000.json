@@ -1,0 +1,415 @@
+{
+ "label": "linux-1000",
+ "corpus": {
+  "files": 256,
+  "bytes": 4534682,
+  "split_seconds": 0.09303329093381763,
+  "chunks": 2690
+ },
+ "index": {
+  "table_bytes": {
+   "ix_lex_docs_entry": 36864,
+   "lex_df": 1093632,
+   "lex_docs": 45056,
+   "lex_stats": 4096,
+   "lex_terms": 8978432,
+   "segments": 16384,
+   "sqlite_schema": 4096,
+   "lex_terms_norm": 7000064
+  },
+  "n_chunks": 2690,
+  "n_terms_rows": 286087,
+  "n_vocab": 29880,
+  "avg_dl": 310.7788104089219,
+  "tokenize_seconds": 0.46464616688899696,
+  "insert_seconds": 0.41168095800094306,
+  "db_bytes": 10178560,
+  "tokens_total": 835995
+ },
+ "queries": {
+  "1": [
+   [
+    "llseek"
+   ],
+   [
+    "clip"
+   ],
+   [
+    "pa_sc_vport_scissor_10_br"
+   ],
+   [
+    "amdgpu_display"
+   ],
+   [
+    "amdgpu_ras_error__poison"
+   ],
+   [
+    "transaction"
+   ],
+   [
+    "amdgpu_vkms_ip_block"
+   ],
+   [
+    "num_types"
+   ],
+   [
+    "wptr_shift"
+   ],
+   [
+    "amdgpu_hw_ip_gfx"
+   ],
+   [
+    "src_id"
+   ],
+   [
+    "dword"
+   ],
+   [
+    "amdgpu_bad_page_threshold"
+   ],
+   [
+    "amdgpu_ucode_id_cp_mes_data"
+   ],
+   [
+    "psp_ta_free_shared_buf"
+   ]
+  ],
+  "3": [
+   [
+    "pixel",
+    "amdgpu_ras_block",
+    "and"
+   ],
+   [
+    "unit",
+    "pr_debug",
+    "struct"
+   ],
+   [
+    "block_id",
+    "enospc",
+    "amdgpu"
+   ],
+   [
+    "was",
+    "xarray",
+    "amdgpu"
+   ],
+   [
+    "encoder_object_id_none",
+    "amdgpu_device_should_recover_gpu",
+    "data"
+   ],
+   [
+    "init_microcode",
+    "planes",
+    "size"
+   ],
+   [
+    "badpage",
+    "vm_hub",
+    "static"
+   ],
+   [
+    "del",
+    "apus",
+    "struct"
+   ],
+   [
+    "dig_connector",
+    "output",
+    "static"
+   ],
+   [
+    "amdgpu_irq_src",
+    "vcpu",
+    "true"
+   ],
+   [
+    "drm_exec_prepare_obj",
+    "socket_id",
+    "not"
+   ],
+   [
+    "kref",
+    "rlc_hdr",
+    "num"
+   ],
+   [
+    "num_dw",
+    "is_aligned",
+    "drm"
+   ],
+   [
+    "follows",
+    "amdgpu_sriov_runtime",
+    "gfx"
+   ],
+   [
+    "test",
+    "smp",
+    "null"
+   ]
+  ],
+  "6": [
+   [
+    "amdgpu_ib_flag_preamble",
+    "amdgpu_ras_find_obj",
+    "bamaco",
+    "storage",
+    "pixel",
+    "info"
+   ],
+   [
+    "dmcub_fw_version",
+    "polaris",
+    "amdgpu_bo_kunmap",
+    "amdgpu_reset_in_recovery",
+    "userqueue",
+    "gpu"
+   ],
+   [
+    "map_legacy_queue",
+    "soft_reset",
+    "who",
+    "reporting",
+    "amdgpu_psp",
+    "from"
+   ],
+   [
+    "firmware_capability",
+    "amdgpu_ih_ring",
+    "kgd_gfx_v9_set_wave_launch_stall",
+    "watch_id",
+    "rcu_read_lock",
+    "with"
+   ],
+   [
+    "100m",
+    "addr_in",
+    "retire",
+    "navi",
+    "criu",
+    "out"
+   ],
+   [
+    "acp_i2s_cap_regs_end",
+    "increment",
+    "buffers",
+    "fru_info",
+    "pa_sc_vport_scissor_7_tl",
+    "out"
+   ],
+   [
+    "pixel_clock_v7_deepcolor_ratio_2_1",
+    "red",
+    "pa_sc_vport_zmin_4",
+    "underscan_property",
+    "hqd_sdma_load",
+    "not"
+   ],
+   [
+    "amdgpu_ras_bind_aca",
+    "pfp_fw_version",
+    "node_segment_size",
+    "pa_cl_vport_xscale_13",
+    "exchange",
+    "and"
+   ],
+   [
+    "bios_header_start",
+    "execution",
+    "export_symbol",
+    "2022",
+    "sent",
+    "drm"
+   ],
+   [
+    "psp_prep_securedisplay_cmd_buf",
+    "0x00040007",
+    "chip_navi12",
+    "plane",
+    "trace",
+    "true"
+   ],
+   [
+    "gc_9_4_3_offset",
+    "board",
+    "successful",
+    "amdgpu_gem_domain_vram",
+    "requested_nps_mode",
+    "max"
+   ],
+   [
+    "__amdgpu_i2c_h__",
+    "pa_sc_mode_cntl_0",
+    "aqua_reg_list",
+    "se_broadcast_writes",
+    "pa_sc_vport_zmin_0",
+    "else"
+   ],
+   [
+    "00200",
+    "ras_event_manager",
+    "copy_from_user",
+    "atom_get_dst",
+    "memdup",
+    "bool"
+   ],
+   [
+    "amdgpu_umc_loop_channels",
+    "clocks",
+    "trap_en",
+    "aper_base",
+    "num_jpeg_inst",
+    "amdgpu_device"
+   ],
+   [
+    "amdgpu_cpmec2_ucode_loaded",
+    "cichlid",
+    "gc_wave_size",
+    "mmsdma0_rlc0_rb_rptr_hi",
+    "num_nodes",
+    "const"
+   ]
+  ]
+ },
+ "timings_ms": {
+  "_allow_sizes": {
+   "small": 12,
+   "half": 128,
+   "segment": "amd",
+   "segment_entries": 253
+  },
+  "1": {
+   "precomputed": {
+    "median_ms": 0.016,
+    "max_ms": 0.021
+   },
+   "runtime": {
+    "median_ms": 0.034,
+    "max_ms": 0.039
+   },
+   "entry_maxp": {
+    "median_ms": 0.111,
+    "max_ms": 0.117
+   },
+   "scope_ids_small": {
+    "median_ms": 0.047,
+    "max_ms": 0.05
+   },
+   "scope_ids_half": {
+    "median_ms": 0.41,
+    "max_ms": 0.435
+   },
+   "scope_segment": {
+    "median_ms": 0.026,
+    "max_ms": 0.035
+   }
+  },
+  "3": {
+   "precomputed": {
+    "median_ms": 0.258,
+    "max_ms": 0.59
+   },
+   "runtime": {
+    "median_ms": 0.752,
+    "max_ms": 1.673
+   },
+   "entry_maxp": {
+    "median_ms": 0.664,
+    "max_ms": 1.481
+   },
+   "scope_ids_small": {
+    "median_ms": 0.118,
+    "max_ms": 0.148
+   },
+   "scope_ids_half": {
+    "median_ms": 1.286,
+    "max_ms": 1.51
+   },
+   "scope_segment": {
+    "median_ms": 0.583,
+    "max_ms": 1.359
+   }
+  },
+  "6": {
+   "precomputed": {
+    "median_ms": 0.188,
+    "max_ms": 0.384
+   },
+   "runtime": {
+    "median_ms": 0.524,
+    "max_ms": 1.099
+   },
+   "entry_maxp": {
+    "median_ms": 0.488,
+    "max_ms": 0.945
+   },
+   "scope_ids_small": {
+    "median_ms": 0.184,
+    "max_ms": 0.203
+   },
+   "scope_ids_half": {
+    "median_ms": 2.246,
+    "max_ms": 2.33
+   },
+   "scope_segment": {
+    "median_ms": 0.418,
+    "max_ms": 0.862
+   }
+  }
+ },
+ "incremental": {
+  "secondary_index_seconds": 0.1075,
+  "db_bytes_with_index": 17178624,
+  "scope_driven_timings_ms": {
+   "1": {
+    "scope_driven_small": {
+     "median_ms": 0.046,
+     "max_ms": 0.051
+    },
+    "scope_driven_half": {
+     "median_ms": 0.406,
+     "max_ms": 0.438
+    }
+   },
+   "3": {
+    "scope_driven_small": {
+     "median_ms": 142.757,
+     "max_ms": 160.791
+    },
+    "scope_driven_half": {
+     "median_ms": 163.386,
+     "max_ms": 195.661
+    }
+   },
+   "6": {
+    "scope_driven_small": {
+     "median_ms": 144.393,
+     "max_ms": 146.16
+    },
+    "scope_driven_half": {
+     "median_ms": 159.136,
+     "max_ms": 179.575
+    }
+   }
+  },
+  "reinsert_1000_entries_seconds": 6.713
+ },
+ "overlay_scan": {
+  "100": {
+   "dirty_entries": 100,
+   "chunks": 1041,
+   "seconds": 0.1628,
+   "hits": 765
+  },
+  "1000": {
+   "dirty_entries": 256,
+   "chunks": 2690,
+   "seconds": 0.419,
+   "hits": 2070
+  }
+ },
+ "sqlite_version": "3.50.4"
+}

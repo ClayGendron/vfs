@@ -1,0 +1,371 @@
+{
+ "label": "vfs",
+ "corpus": {
+  "files": 628,
+  "bytes": 7511730,
+  "split_seconds": 0.33044295897707343,
+  "chunks": 4909
+ },
+ "index": {
+  "n_chunks": 4909,
+  "n_terms_rows": 691845,
+  "n_vocab": 29690,
+  "avg_dl": 235.30026481971888,
+  "tokenize_seconds": 0.8839470001403242,
+  "insert_seconds": 1.4640451250597835,
+  "db_bytes": 20873216,
+  "tokens_total": 1155089
+ },
+ "queries": {
+  "1": [
+   [
+    "health"
+   ],
+   [
+    "classes"
+   ],
+   [
+    "lru"
+   ],
+   [
+    "toward"
+   ],
+   [
+    "617"
+   ],
+   [
+    "addressing"
+   ],
+   [
+    "remote"
+   ],
+   [
+    "arm_budget"
+   ],
+   [
+    "keeping"
+   ],
+   [
+    "sha256"
+   ],
+   [
+    "_merge_results"
+   ],
+   [
+    "pushed"
+   ],
+   [
+    "derive_ext"
+   ],
+   [
+    "320"
+   ],
+   [
+    "analyzer"
+   ]
+  ],
+  "3": [
+   [
+    "nesting",
+    "mkdir",
+    "from"
+   ],
+   [
+    "applies",
+    "retire",
+    "are"
+   ],
+   [
+    "sample",
+    "brain",
+    "this"
+   ],
+   [
+    "surgery",
+    "shadow",
+    "single"
+   ],
+   [
+    "shipped",
+    "mainstream",
+    "for"
+   ],
+   [
+    "516",
+    "riding",
+    "into"
+   ],
+   [
+    "model_copy",
+    "check_writable",
+    "can"
+   ],
+   [
+    "scoping",
+    "globally",
+    "vfs"
+   ],
+   [
+    "content_fetch_ms",
+    "audit",
+    "single"
+   ],
+   [
+    "test_models",
+    "corrupted",
+    "but"
+   ],
+   [
+    "resources",
+    "x00",
+    "single"
+   ],
+   [
+    "_probe",
+    "stubs",
+    "result"
+   ],
+   [
+    "users",
+    "regressions",
+    "kind"
+   ],
+   [
+    "part",
+    "shipped",
+    "never"
+   ],
+   [
+    "fsync",
+    "enable",
+    "where"
+   ]
+  ],
+  "6": [
+   [
+    "ownership_review",
+    "allow_scan",
+    "sees",
+    "fts5_index",
+    "recursively",
+    "list"
+   ],
+   [
+    "hipporag",
+    "stand",
+    "admission",
+    "biggest",
+    "raced",
+    "entry"
+   ],
+   [
+    "target_row",
+    "precisely",
+    "more",
+    "351",
+    "unbound",
+    "shape"
+   ],
+   [
+    "pdfs",
+    "in_degree",
+    "visual",
+    "installed",
+    "slicing",
+    "storage"
+   ],
+   [
+    "2611251547932625",
+    "argument",
+    "export_symbol_gpl",
+    "pg_search",
+    "waits",
+    "backend"
+   ],
+   [
+    "lexicographic",
+    "goes",
+    "to_thread",
+    "seps",
+    "utf",
+    "into"
+   ],
+   [
+    "82f9754",
+    "init",
+    "183",
+    "pairing",
+    "intersect1d",
+    "the"
+   ],
+   [
+    "live_grep_to_sql",
+    "_normalize_mount_path",
+    "destruction",
+    "flagged",
+    "bulk",
+    "not"
+   ],
+   [
+    "_edgepathparts",
+    "allocate_revisions",
+    "complete",
+    "operator",
+    "master",
+    "index"
+   ],
+   [
+    "l840",
+    "resulting",
+    "fatal",
+    "with_variant",
+    "mint",
+    "vfs"
+   ],
+   [
+    "connection_type",
+    "classic",
+    "alpha",
+    "consistent",
+    "classifier",
+    "two"
+   ],
+   [
+    "_metachars",
+    "posixpath",
+    "signed",
+    "contradicted",
+    "excludes",
+    "all"
+   ],
+   [
+    "rg_root",
+    "relocated",
+    "know",
+    "star",
+    "satisfied",
+    "content"
+   ],
+   [
+    "localdiskbackend",
+    "transport",
+    "unsupported",
+    "_dispatch_grouped_observations",
+    "overflow",
+    "shape"
+   ],
+   [
+    "2681",
+    "manual",
+    "low",
+    "augmented",
+    "pointing",
+    "not"
+   ]
+  ]
+ },
+ "timings_ms": {
+  "_allow_sizes": {
+   "small": 31,
+   "half": 314,
+   "segment": "specs",
+   "segment_entries": 203
+  },
+  "1": {
+   "precomputed": {
+    "median_ms": 0.018,
+    "max_ms": 0.037
+   },
+   "runtime": {
+    "median_ms": 0.039,
+    "max_ms": 0.089
+   },
+   "entry_maxp": {
+    "median_ms": 0.196,
+    "max_ms": 0.253
+   },
+   "scope_ids_small": {
+    "median_ms": 0.105,
+    "max_ms": 0.154
+   },
+   "scope_ids_half": {
+    "median_ms": 0.989,
+    "max_ms": 1.023
+   },
+   "scope_segment": {
+    "median_ms": 0.031,
+    "max_ms": 0.083
+   }
+  },
+  "3": {
+   "precomputed": {
+    "median_ms": 0.371,
+    "max_ms": 0.895
+   },
+   "runtime": {
+    "median_ms": 0.979,
+    "max_ms": 7.266
+   },
+   "entry_maxp": {
+    "median_ms": 0.969,
+    "max_ms": 2.231
+   },
+   "scope_ids_small": {
+    "median_ms": 0.294,
+    "max_ms": 0.314
+   },
+   "scope_ids_half": {
+    "median_ms": 2.841,
+    "max_ms": 3.192
+   },
+   "scope_segment": {
+    "median_ms": 0.625,
+    "max_ms": 1.491
+   }
+  },
+  "6": {
+   "precomputed": {
+    "median_ms": 0.416,
+    "max_ms": 1.216
+   },
+   "runtime": {
+    "median_ms": 1.234,
+    "max_ms": 3.615
+   },
+   "entry_maxp": {
+    "median_ms": 1.04,
+    "max_ms": 2.793
+   },
+   "scope_ids_small": {
+    "median_ms": 0.482,
+    "max_ms": 0.556
+   },
+   "scope_ids_half": {
+    "median_ms": 5.094,
+    "max_ms": 5.753
+   },
+   "scope_segment": {
+    "median_ms": 0.7,
+    "max_ms": 1.916
+   }
+  }
+ },
+ "incremental": {
+  "reinsert_1000_entries_seconds": 44.7186
+ },
+ "overlay_scan": {
+  "100": {
+   "dirty_entries": 100,
+   "chunks": 755,
+   "seconds": 0.183,
+   "hits": 11
+  },
+  "1000": {
+   "dirty_entries": 628,
+   "chunks": 4909,
+   "seconds": 0.8799,
+   "hits": 108
+  }
+ },
+ "sqlite_version": "3.50.4"
+}

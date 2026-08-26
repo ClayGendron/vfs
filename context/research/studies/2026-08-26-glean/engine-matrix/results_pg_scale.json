@@ -1,0 +1,272 @@
+{
+ "entries": {
+  "ok": true,
+  "rows": -1,
+  "ms": 5.4
+ },
+ "chunks": {
+  "ok": true,
+  "rows": -1,
+  "ms": 1.6
+ },
+ "ins_e": {
+  "ok": true,
+  "rows": 5000,
+  "ms": 12.4
+ },
+ "ins_c": {
+  "ok": true,
+  "rows": 50000,
+  "ms": 123.5
+ },
+ "hnsw": {
+  "ok": true,
+  "rows": -1,
+  "ms": 3231.1
+ },
+ "eidx": {
+  "ok": true,
+  "rows": -1,
+  "ms": 8.1
+ },
+ "pidx": {
+  "ok": true,
+  "rows": -1,
+  "ms": 3.4
+ },
+ "analyze": {
+  "ok": false,
+  "error": "ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.PostgresSyntaxError'>: cannot insert multiple commands into a prepared statement | [SQL: analyze glean_chunks; analyze glean_entries] | (Background on this error at: https://sqlalche.me/e/20/f405)"
+ },
+ "plan_small_scope": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=10 loops=1)"
+   ],
+   [
+    "  ->  Index Scan using glean_chunks_hnsw on glean_chunks c (actual rows=10 loops=1)"
+   ],
+   [
+    "        Order By: (embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector)"
+   ],
+   [
+    "        Filter: (entry_id = ANY ('{1,501,1001,1501,2001,2501,3001,3501,4001,4501}'::integer[]))"
+   ],
+   [
+    "        Rows Removed by Filter: 381"
+   ]
+  ],
+  "ms": 11.6
+ },
+ "plan_half_scope": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=20 loops=1)"
+   ],
+   [
+    "  ->  Sort (actual rows=20 loops=1)"
+   ],
+   [
+    "        Sort Key: ((embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector))"
+   ],
+   [
+    "        Sort Method: top-N heapsort  Memory: 25kB"
+   ],
+   [
+    "        ->  Bitmap Heap Scan on glean_chunks c (actual rows=25000 loops=1)"
+   ],
+   [
+    "              Recheck Cond: ((entry_id >= 1) AND (entry_id <= 2500))"
+   ],
+   [
+    "              Heap Blocks: exact=234"
+   ],
+   [
+    "              ->  Bitmap Index Scan on glean_chunks_entry_id_idx (actual rows=25000 loops=1)"
+   ],
+   [
+    "                    Index Cond: ((entry_id >= 1) AND (entry_id <= 2500))"
+   ]
+  ],
+  "ms": 4.3
+ },
+ "plan_join_scope": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=20 loops=1)"
+   ],
+   [
+    "  ->  Sort (actual rows=20 loops=1)"
+   ],
+   [
+    "        Sort Key: ((c.embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector))"
+   ],
+   [
+    "        Sort Method: top-N heapsort  Memory: 25kB"
+   ],
+   [
+    "        ->  Hash Join (actual rows=5000 loops=1)"
+   ],
+   [
+    "              Hash Cond: (c.entry_id = e.id)"
+   ],
+   [
+    "              ->  Seq Scan on glean_chunks c (actual rows=50000 loops=1)"
+   ],
+   [
+    "              ->  Hash (actual rows=500 loops=1)"
+   ],
+   [
+    "                    Buckets: 1024  Batches: 1  Memory Usage: 26kB"
+   ],
+   [
+    "                    ->  Bitmap Heap Scan on glean_entries e (actual rows=500 loops=1)"
+   ],
+   [
+    "                          Filter: (path ~~ 'src/mod3/%'::text)"
+   ],
+   [
+    "                          Heap Blocks: exact=36"
+   ],
+   [
+    "                          ->  Bitmap Index Scan on glean_entries_path_idx (actual rows=500 loops=1)"
+   ],
+   [
+    "                                Index Cond: ((path ~>=~ 'src/mod3/'::text) AND (path ~<~ 'src/mod30'::text))"
+   ]
+  ],
+  "ms": 4.1
+ },
+ "iter": {
+  "ok": true,
+  "rows": -1,
+  "ms": 0.7
+ },
+ "plan_half_scope_iter": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=20 loops=1)"
+   ],
+   [
+    "  ->  Sort (actual rows=20 loops=1)"
+   ],
+   [
+    "        Sort Key: ((embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector))"
+   ],
+   [
+    "        Sort Method: top-N heapsort  Memory: 25kB"
+   ],
+   [
+    "        ->  Bitmap Heap Scan on glean_chunks c (actual rows=25000 loops=1)"
+   ],
+   [
+    "              Recheck Cond: ((entry_id >= 1) AND (entry_id <= 2500))"
+   ],
+   [
+    "              Heap Blocks: exact=234"
+   ],
+   [
+    "              ->  Bitmap Index Scan on glean_chunks_entry_id_idx (actual rows=25000 loops=1)"
+   ],
+   [
+    "                    Index Cond: ((entry_id >= 1) AND (entry_id <= 2500))"
+   ]
+  ],
+  "ms": 3.7
+ },
+ "plan_join_scope_iter": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=20 loops=1)"
+   ],
+   [
+    "  ->  Sort (actual rows=20 loops=1)"
+   ],
+   [
+    "        Sort Key: ((c.embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector))"
+   ],
+   [
+    "        Sort Method: top-N heapsort  Memory: 25kB"
+   ],
+   [
+    "        ->  Hash Join (actual rows=5000 loops=1)"
+   ],
+   [
+    "              Hash Cond: (c.entry_id = e.id)"
+   ],
+   [
+    "              ->  Seq Scan on glean_chunks c (actual rows=50000 loops=1)"
+   ],
+   [
+    "              ->  Hash (actual rows=500 loops=1)"
+   ],
+   [
+    "                    Buckets: 1024  Batches: 1  Memory Usage: 26kB"
+   ],
+   [
+    "                    ->  Bitmap Heap Scan on glean_entries e (actual rows=500 loops=1)"
+   ],
+   [
+    "                          Filter: (path ~~ 'src/mod3/%'::text)"
+   ],
+   [
+    "                          Heap Blocks: exact=36"
+   ],
+   [
+    "                          ->  Bitmap Index Scan on glean_entries_path_idx (actual rows=500 loops=1)"
+   ],
+   [
+    "                                Index Cond: ((path ~>=~ 'src/mod3/'::text) AND (path ~<~ 'src/mod30'::text))"
+   ]
+  ],
+  "ms": 3.6
+ },
+ "plan_small_scope_iter": {
+  "ok": true,
+  "rows": [
+   [
+    "Limit (actual rows=10 loops=1)"
+   ],
+   [
+    "  ->  Index Scan using glean_chunks_hnsw on glean_chunks c (actual rows=10 loops=1)"
+   ],
+   [
+    "        Order By: (embedding <=> '[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]'::vector)"
+   ],
+   [
+    "        Filter: (entry_id = ANY ('{1,501,1001,1501,2001,2501,3001,3501,4001,4501}'::integer[]))"
+   ],
+   [
+    "        Rows Removed by Filter: 481"
+   ]
+  ],
+  "ms": 0.7
+ },
+ "dim_16000": {
+  "ok": true,
+  "rows": -1,
+  "ms": 1.3
+ },
+ "dim_16001": {
+  "ok": false,
+  "error": "DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.InvalidParameterValueError'>: dimensions for type vector cannot exceed 16000 | [SQL: create table glean_big2 (id int primary key, v vector(16001))] | (Background on this error at: https://sqlalche.me/e/20/dbapi)"
+ },
+ "hnsw_2001": {
+  "ok": false,
+  "error": "ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.PostgresSyntaxError'>: cannot insert multiple commands into a prepared statement | [SQL: create table glean_big3 (id int primary key, v vector(2001)); create index on glean_big3 using hnsw (v vector_cosine_ops)] | (Background on this error at: https://sqlalche.me/e/20/f405)"
+ },
+ "halfvec_hnsw_4000": {
+  "ok": false,
+  "error": "ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.PostgresSyntaxError'>: cannot insert multiple commands into a prepared statement | [SQL: create table glean_big4 (id int primary key, v halfvec(4000)); create index on glean_big4 using hnsw (v halfvec_cosine_ops)] | (Background on this error at: https://sqlalche.me/e/20/f405)"
+ },
+ "cleanup": {
+  "ok": true,
+  "rows": -1,
+  "ms": 3.2
+ }
+}

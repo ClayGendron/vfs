@@ -1,0 +1,161 @@
+{
+ "drop_c": {
+  "ok": true,
+  "rows": -1,
+  "ms": 1.6
+ },
+ "chunks": {
+  "ok": true,
+  "rows": -1,
+  "ms": 5.4
+ },
+ "ins_c0": {
+  "ok": true,
+  "rows": 200,
+  "ms": 47.6
+ },
+ "ins_c200": {
+  "ok": true,
+  "rows": 200,
+  "ms": 12.5
+ },
+ "preview_on": {
+  "ok": true,
+  "rows": -1,
+  "ms": 5.0
+ },
+ "vec_index": {
+  "ok": true,
+  "rows": -1,
+  "ms": 412.0
+ },
+ "index_meta": {
+  "ok": true,
+  "rows": [
+   [
+    "PK__glean_ch__3213E83F9D5FAC1C",
+    "CLUSTERED"
+   ],
+   [
+    "glean_vidx",
+    "VECTOR"
+   ]
+  ],
+  "ms": 13.6
+ },
+ "exact_top5": {
+  "ok": true,
+  "rows": [
+   [
+    130,
+    7.224082946777344e-05
+   ],
+   [
+    275,
+    0.15509366989135742
+   ],
+   [
+    394,
+    0.16204464435577393
+   ],
+   [
+    222,
+    0.18958204984664917
+   ],
+   [
+    347,
+    0.19600987434387207
+   ]
+  ],
+  "ms": 6.2
+ },
+ "vs_top_n": {
+  "ok": true,
+  "rows": [
+   [
+    130,
+    7.224082946777344e-05
+   ],
+   [
+    275,
+    0.15509366989135742
+   ],
+   [
+    394,
+    0.16204464435577393
+   ],
+   [
+    222,
+    0.18958204984664917
+   ],
+   [
+    347,
+    0.19600987434387207
+   ]
+  ],
+  "ms": 27.4
+ },
+ "vs_scoped_postfilter": {
+  "ok": true,
+  "rows": [
+   [
+    130,
+    7.224082946777344e-05
+   ]
+  ],
+  "ms": 23.8
+ },
+ "vs_in_cte": {
+  "ok": true,
+  "rows": [
+   [
+    130,
+    1
+   ],
+   [
+    275,
+    2
+   ],
+   [
+    394,
+    3
+   ],
+   [
+    222,
+    4
+   ],
+   [
+    347,
+    5
+   ]
+  ],
+  "ms": 22.2
+ },
+ "dml_after_index": {
+  "ok": false,
+  "error": "ProgrammingError: (pyodbc.ProgrammingError) ('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Data modification statement failed because table 'glean_chunks' has a vector index on it. (42231) (SQLExecDirectW)\")"
+ },
+ "insert_after_index": {
+  "ok": false,
+  "error": "ProgrammingError: (pyodbc.ProgrammingError) ('42000', \"[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Data modification statement failed because table 'glean_chunks' has a vector index on it. (42231) (SQLExecDirectW)\")"
+ },
+ "vs_plan": {
+  "ok": false,
+  "error": "ProgrammingError: (pyodbc.ProgrammingError) ('42000', '[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]The SET SHOWPLAN statements must be the only statements in the batch. (1067) (SQLExecDirectW)')"
+ },
+ "drop_vidx": {
+  "ok": true,
+  "rows": -1,
+  "ms": 5.1
+ },
+ "drop_c2": {
+  "ok": true,
+  "rows": -1,
+  "ms": 4.1
+ },
+ "preview_off": {
+  "ok": true,
+  "rows": -1,
+  "ms": 5.4
+ }
+}

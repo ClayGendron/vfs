@@ -1,0 +1,59 @@
+{
+ "1000": {
+  "insert_s": 0.92,
+  "avg_json_bytes": 7975.282,
+  "avg_bin_bytes": 1536.0,
+  "json": {
+   "fetch_s": 0.012,
+   "parse_s": 0.08,
+   "score_s": 0.0003,
+   "total_s": 0.092,
+   "top1": 147
+  },
+  "bin": {
+   "fetch_s": 0.005,
+   "parse_s": 0.003,
+   "score_s": 0.0003,
+   "total_s": 0.008,
+   "top1": 147
+  }
+ },
+ "10000": {
+  "insert_s": 8.52,
+  "avg_json_bytes": 7975.3881,
+  "avg_bin_bytes": 1536.0,
+  "json": {
+   "fetch_s": 0.092,
+   "parse_s": 0.814,
+   "score_s": 0.0017,
+   "total_s": 0.907,
+   "top1": 4926
+  },
+  "bin": {
+   "fetch_s": 0.039,
+   "parse_s": 0.027,
+   "score_s": 0.0018,
+   "total_s": 0.068,
+   "top1": 4926
+  }
+ },
+ "50000": {
+  "insert_s": 34.04,
+  "avg_json_bytes": 7975.5605,
+  "avg_bin_bytes": 1536.0,
+  "json": {
+   "fetch_s": 0.446,
+   "parse_s": 4.236,
+   "score_s": 0.0095,
+   "total_s": 4.692,
+   "top1": 45357
+  },
+  "bin": {
+   "fetch_s": 0.19,
+   "parse_s": 0.134,
+   "score_s": 0.0083,
+   "total_s": 0.332,
+   "top1": 45357
+  }
+ }
+}

@@ -1,0 +1,390 @@
+{
+ "system": {
+  "ctxsys": {
+   "ok": true,
+   "rows": [
+    [
+     1
+    ]
+   ],
+   "ms": 4.9
+  },
+  "grant": {
+   "ok": true,
+   "rows": 0,
+   "ms": 14.4
+  },
+  "vector_pool": {
+   "ok": true,
+   "rows": [
+    [
+     "sga_target",
+     "0"
+    ],
+    [
+     "vector_memory_size",
+     "0"
+    ]
+   ],
+   "ms": 62.3
+  },
+  "hybrid_pkg": {
+   "ok": true,
+   "rows": [
+    [
+     "PUBLIC",
+     "SYNONYM"
+    ],
+    [
+     "CTXSYS",
+     "PACKAGE"
+    ]
+   ],
+   "ms": 78.6
+  },
+  "version": {
+   "ok": true,
+   "rows": [
+    [
+     "Oracle AI Database 26ai Free Release 23.26.2.0.0 - Develop, Learn, and Run for Free\nVersion 23.26.2.0.0"
+    ]
+   ],
+   "ms": 5.4
+  }
+ },
+ "vfs": {
+  "drop_c": {
+   "ok": true,
+   "rows": 0,
+   "ms": 33.5
+  },
+  "drop_e": {
+   "ok": true,
+   "rows": 0,
+   "ms": 2.0
+  },
+  "entries": {
+   "ok": true,
+   "rows": 0,
+   "ms": 58.9
+  },
+  "chunks": {
+   "ok": true,
+   "rows": 0,
+   "ms": 10.1
+  },
+  "ctx": {
+   "ok": true,
+   "rows": 0,
+   "ms": 2645.7
+  },
+  "ins_e": {
+   "ok": true,
+   "rows": 100,
+   "ms": 9.0
+  },
+  "ins_c": {
+   "ok": true,
+   "rows": 400,
+   "ms": 208.9
+  },
+  "commit": {
+   "ok": true,
+   "rows": 0,
+   "ms": 6.8
+  },
+  "sync": {
+   "ok": true,
+   "rows": 0,
+   "ms": 22.0
+  },
+  "score_probe": {
+   "ok": true,
+   "rows": [
+    [
+     119,
+     18
+    ],
+    [
+     125,
+     18
+    ],
+    [
+     122,
+     18
+    ]
+   ],
+   "ms": 61.4
+  },
+  "fused": {
+   "ok": true,
+   "rows": [
+    [
+     33,
+     "0.0325224748810153358011634056054997355897",
+     4
+    ],
+    [
+     53,
+     "0.0161290322580645161290322580645161290323",
+     4
+    ],
+    [
+     73,
+     "0.0158730158730158730158730158730158730159",
+     2
+    ],
+    [
+     63,
+     "0.015625",
+     3
+    ],
+    [
+     3,
+     "0.0153846153846153846153846153846153846154",
+     2
+    ]
+   ],
+   "ms": 36.9
+  },
+  "plan": {
+   "ok": true,
+   "rows": 0,
+   "ms": 40.3
+  },
+  "plan_out": {
+   "ok": true,
+   "rows": [
+    [
+     "Plan hash value: 2889146428"
+    ],
+    [
+     " "
+    ],
+    [
+     "-------------------------------------------------------------------"
+    ],
+    [
+     "| Id  | Operation                                  | Name         |"
+    ],
+    [
+     "-------------------------------------------------------------------"
+    ],
+    [
+     "|   0 | SELECT STATEMENT                           |              |"
+    ],
+    [
+     "|   1 |  COUNT STOPKEY                             |              |"
+    ],
+    [
+     "|   2 |   VIEW                                     |              |"
+    ],
+    [
+     "|   3 |    SORT ORDER BY STOPKEY                   |              |"
+    ],
+    [
+     "|   4 |     HASH GROUP BY                          |              |"
+    ],
+    [
+     "|   5 |      VIEW                                  |              |"
+    ],
+    [
+     "|   6 |       HASH GROUP BY                        |              |"
+    ],
+    [
+     "|   7 |        VIEW                                |              |"
+    ],
+    [
+     "|   8 |         UNION-ALL                          |              |"
+    ],
+    [
+     "|   9 |          VIEW                              |              |"
+    ],
+    [
+     "|  10 |           WINDOW NOSORT                    |              |"
+    ],
+    [
+     "|  11 |            VIEW                            |              |"
+    ],
+    [
+     "|  12 |             COUNT STOPKEY                  |              |"
+    ],
+    [
+     "|  13 |              VIEW                          |              |"
+    ],
+    [
+     "|  14 |               SORT ORDER BY STOPKEY        |              |"
+    ],
+    [
+     "|  15 |                NESTED LOOPS                |              |"
+    ],
+    [
+     "|  16 |                 TABLE ACCESS FULL          | GLEAN_CHUNKS |"
+    ],
+    [
+     "|  17 |                 INDEX UNIQUE SCAN          | SYS_C008649  |"
+    ],
+    [
+     "|  18 |          VIEW                              |              |"
+    ],
+    [
+     "|  19 |           WINDOW SORT                      |              |"
+    ],
+    [
+     "|  20 |            VIEW                            |              |"
+    ],
+    [
+     "|  21 |             COUNT STOPKEY                  |              |"
+    ],
+    [
+     "|  22 |              VIEW                          |              |"
+    ],
+    [
+     "|  23 |               SORT ORDER BY STOPKEY        |              |"
+    ],
+    [
+     "|  24 |                NESTED LOOPS                |              |"
+    ],
+    [
+     "|  25 |                 TABLE ACCESS BY INDEX ROWID| GLEAN_CHUNKS |"
+    ],
+    [
+     "|  26 |                  DOMAIN INDEX              | GLEAN_CTX    |"
+    ],
+    [
+     "|  27 |                 INDEX UNIQUE SCAN          | SYS_C008649  |"
+    ],
+    [
+     "-------------------------------------------------------------------"
+    ]
+   ],
+   "ms": 143.9
+  },
+  "hnsw": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-51962: The vector memory area is out of space for the current container."
+  },
+  "approx": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     275
+    ],
+    [
+     394
+    ],
+    [
+     222
+    ],
+    [
+     347
+    ]
+   ],
+   "ms": 2.9
+  },
+  "approx_scoped": {
+   "ok": true,
+   "rows": [
+    [
+     130
+    ],
+    [
+     209
+    ],
+    [
+     290
+    ],
+    [
+     251
+    ],
+    [
+     11
+    ]
+   ],
+   "ms": 4.0
+  },
+  "plan_approx": {
+   "ok": true,
+   "rows": 0,
+   "ms": 3.3
+  },
+  "plan_approx_out": {
+   "ok": true,
+   "rows": [
+    [
+     "Plan hash value: 1433578266"
+    ],
+    [
+     " "
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "| Id  | Operation               | Name         |"
+    ],
+    [
+     "------------------------------------------------"
+    ],
+    [
+     "|   0 | SELECT STATEMENT        |              |"
+    ],
+    [
+     "|   1 |  COUNT STOPKEY          |              |"
+    ],
+    [
+     "|   2 |   VIEW                  |              |"
+    ],
+    [
+     "|   3 |    SORT ORDER BY STOPKEY|              |"
+    ],
+    [
+     "|   4 |     TABLE ACCESS FULL   | GLEAN_CHUNKS |"
+    ],
+    [
+     "------------------------------------------------"
+    ]
+   ],
+   "ms": 12.2
+  },
+  "hybrid_idx_no_model": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-29880: such column list already indexed using another domain index and indextype"
+  },
+  "hybrid_idx_ext_vec": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-02327: cannot create index on expression with data type VECTOR"
+  },
+  "dbms_hybrid_search": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-20000: Oracle Text error:"
+  },
+  "max_dim": {
+   "ok": true,
+   "rows": 0,
+   "ms": 6.9
+  },
+  "max_dim_drop": {
+   "ok": true,
+   "rows": 0,
+   "ms": 44.2
+  },
+  "over_dim": {
+   "ok": false,
+   "error": "DatabaseError: (oracledb.exceptions.DatabaseError) ORA-51801: Invalid VECTOR type specification: Invalid dimension count ('65536'). Valid values can either be * (i.e. flexible) or an integer between 1 and 65535."
+  },
+  "drop_c2": {
+   "ok": true,
+   "rows": 0,
+   "ms": 501.5
+  },
+  "drop_e2": {
+   "ok": true,
+   "rows": 0,
+   "ms": 23.8
+  }
+ }
+}

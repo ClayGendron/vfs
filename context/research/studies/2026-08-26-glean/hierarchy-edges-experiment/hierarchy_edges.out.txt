@@ -1,0 +1,407 @@
+summary: {"nodes": 977, "files": 779, "dirs": 198, "fs_edges": 976, "md_edges": 691, "import_edges": 173, "ref_edges": 864, "ref_incident_nodes": 394, "max_depth": 7, "max_fanout": 113, "extraction_s": 0.168}
+
+== R  edges=864  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0071s katz=0.0131s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 1.0, 'kendall': 1.0} vsT(all)=None floor(all/files)=0.721/0.65 struct={'depth_all': -0.221, 'depth_files': -0.302, 'parent_fanout_all': 0.118, 'parent_fanout_files': 0.317, 'own_fanout_dirs': nan, 'depth_dirs': nan} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 1.0, 'kendall': 1.0} vsT(all)=None floor(all/files)=0.721/0.65 struct={'depth_all': -0.221, 'depth_files': -0.303, 'parent_fanout_all': 0.11, 'parent_fanout_files': 0.304, 'own_fanout_dirs': nan, 'depth_dirs': nan} top25: dirs=0 depth=3.28 pfan=69.4 ovl=25
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 1.0, 'kendall': 1.0} vsT(all)=None floor(all/files)=0.721/0.65 struct={'depth_all': -0.205, 'depth_files': -0.281, 'parent_fanout_all': 0.12, 'parent_fanout_files': 0.32, 'own_fanout_dirs': nan, 'depth_dirs': nan} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== T[down]  edges=976  lambda_max=0.000  katz_alpha=0.900  t(in=0.0003s pr=0.0022s katz=0.0106s eig=0.003s)
+  in_degree  vsR(ref)={'spearman': nan, 'kendall': nan} vsR(all)={'spearman': 0.02, 'kendall': 0.019} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.001/1.0 struct={'depth_all': 0.057, 'depth_files': nan, 'parent_fanout_all': 0.056, 'parent_fanout_files': nan, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=2 depth=2.84 pfan=45.8 ovl=0
+             top10: ['context', 'context/README.md', 'context/decisions', 'context/decisions/001-storage-backend-composition.md', 'context/decisions/002-database-engine-ownership.md', 'context/decisions/003-posix-parent-directories.md', 'context/decisions/004-stable-node-identity.md', 'context/decisions/005-metadata-sidecar-namespace.md', 'context/decisions/006-global-namespace-tenant-permissions.md', 'context/decisions/007-fused-glean-search-surface.md']
+  pagerank   vsR(ref)={'spearman': -0.414, 'kendall': -0.304} vsR(all)={'spearman': -0.188, 'kendall': -0.145} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.001/0.141 struct={'depth_all': 0.443, 'depth_files': 0.446, 'parent_fanout_all': -0.97, 'parent_fanout_files': -0.994, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=3 depth=4.68 pfan=1.0 ovl=0
+             top10: ['context/research/studies/2026-08-12-posting-path-rust-kernel/vfs_postings_rs/src/lib.rs', 'context/research/studies/2026-08-17-verify-authority-spike/rust/src/main.rs', 'crates/vfs-core', 'src/vfs', 'context/product/home-doc-section-1-arc.md', 'context/specs/active/045-verb-wire-contract/spec.md', 'context/specs/active/051-fanout-deadline-budget/spec.md', 'context/specs/active/054-mcp-serve-locks-topology/spec.md', 'context/specs/active/058-row-level-permission-grants/spec.md', 'context/specs/active/067-graph-traversal-only/spec.md']
+  katz       vsR(ref)={'spearman': -0.277, 'kendall': -0.224} vsR(all)={'spearman': -0.205, 'kendall': -0.174} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.001/0.051 struct={'depth_all': 1.0, 'depth_files': 1.0, 'parent_fanout_all': -0.411, 'parent_fanout_files': -0.459, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=1 depth=6.52 pfan=11.1 ovl=0
+             top10: ['context/research/studies/2026-08-12-posting-path-rust-kernel/vfs_postings_rs/src/lib.rs', 'context/research/studies/2026-08-17-verify-authority-spike/rust/src/main.rs', 'context/research/studies/2026-08-26-glean/lexical-leg/results/log-linux-1000.txt', 'context/research/studies/2026-08-26-glean/lexical-leg/results/log-linux-10000.txt', 'context/research/studies/2026-08-26-glean/lexical-leg/results/rankings-linux-10000.json', 'context/research/studies/2026-08-26-glean/lexical-leg/results/rankings-vfs.json', 'context/research/studies/2026-08-26-glean/lexical-leg/results/report-linux-1000.json', 'context/research/studies/2026-08-26-glean/lexical-leg/results/report-linux-10000.json', 'context/research/studies/2026-08-26-glean/lexical-leg/results/report-vfs.json', 'context/research/studies/2026-08-26-glean/lexical-leg/results/scope-plans-analyze.txt']
+
+== H(0.05)[down]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0036s katz=0.0107s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.999, 'kendall': 0.998} vsT(all)={'spearman': 0.07, 'kendall': 0.066} floor(all/files)=0.001/0.65 struct={'depth_all': -0.218, 'depth_files': -0.302, 'parent_fanout_all': 0.121, 'parent_fanout_files': 0.317, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.851, 'kendall': 0.746} vsR(all)={'spearman': 0.717, 'kendall': 0.62} vsT(all)={'spearman': 0.438, 'kendall': 0.465} floor(all/files)=0.001/0.031 struct={'depth_all': 0.039, 'depth_files': -0.08, 'parent_fanout_all': -0.519, 'parent_fanout_files': -0.273, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=0 depth=3.24 pfan=68.9 ovl=23
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 0.99, 'kendall': 0.973} vsR(all)={'spearman': 0.8, 'kendall': 0.737} vsT(all)={'spearman': 0.344, 'kendall': 0.363} floor(all/files)=0.001/0.04 struct={'depth_all': 0.344, 'depth_files': 0.168, 'parent_fanout_all': -0.096, 'parent_fanout_files': 0.163, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.1)[down]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0035s katz=0.0107s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.999, 'kendall': 0.998} vsT(all)={'spearman': 0.07, 'kendall': 0.066} floor(all/files)=0.001/0.65 struct={'depth_all': -0.218, 'depth_files': -0.302, 'parent_fanout_all': 0.121, 'parent_fanout_files': 0.317, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.851, 'kendall': 0.746} vsR(all)={'spearman': 0.717, 'kendall': 0.62} vsT(all)={'spearman': 0.438, 'kendall': 0.465} floor(all/files)=0.001/0.031 struct={'depth_all': 0.039, 'depth_files': -0.08, 'parent_fanout_all': -0.519, 'parent_fanout_files': -0.273, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=0 depth=3.24 pfan=68.9 ovl=23
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 0.99, 'kendall': 0.973} vsR(all)={'spearman': 0.8, 'kendall': 0.737} vsT(all)={'spearman': 0.344, 'kendall': 0.363} floor(all/files)=0.001/0.04 struct={'depth_all': 0.344, 'depth_files': 0.168, 'parent_fanout_all': -0.096, 'parent_fanout_files': 0.163, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.25)[down]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0035s katz=0.0107s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.999, 'kendall': 0.998} vsT(all)={'spearman': 0.07, 'kendall': 0.066} floor(all/files)=0.001/0.65 struct={'depth_all': -0.218, 'depth_files': -0.302, 'parent_fanout_all': 0.121, 'parent_fanout_files': 0.317, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.851, 'kendall': 0.746} vsR(all)={'spearman': 0.717, 'kendall': 0.62} vsT(all)={'spearman': 0.438, 'kendall': 0.465} floor(all/files)=0.001/0.031 struct={'depth_all': 0.039, 'depth_files': -0.08, 'parent_fanout_all': -0.519, 'parent_fanout_files': -0.273, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=0 depth=3.24 pfan=68.9 ovl=23
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 0.99, 'kendall': 0.973} vsR(all)={'spearman': 0.8, 'kendall': 0.737} vsT(all)={'spearman': 0.344, 'kendall': 0.363} floor(all/files)=0.001/0.04 struct={'depth_all': 0.344, 'depth_files': 0.168, 'parent_fanout_all': -0.096, 'parent_fanout_files': 0.163, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.5)[down]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0043s katz=0.0107s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.999, 'kendall': 0.998} vsT(all)={'spearman': 0.07, 'kendall': 0.066} floor(all/files)=0.001/0.65 struct={'depth_all': -0.218, 'depth_files': -0.302, 'parent_fanout_all': 0.121, 'parent_fanout_files': 0.317, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.851, 'kendall': 0.746} vsR(all)={'spearman': 0.717, 'kendall': 0.62} vsT(all)={'spearman': 0.438, 'kendall': 0.465} floor(all/files)=0.001/0.031 struct={'depth_all': 0.039, 'depth_files': -0.08, 'parent_fanout_all': -0.519, 'parent_fanout_files': -0.273, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=0 depth=3.24 pfan=68.9 ovl=23
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 0.99, 'kendall': 0.973} vsR(all)={'spearman': 0.8, 'kendall': 0.737} vsT(all)={'spearman': 0.344, 'kendall': 0.363} floor(all/files)=0.001/0.04 struct={'depth_all': 0.344, 'depth_files': 0.168, 'parent_fanout_all': -0.096, 'parent_fanout_files': 0.163, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(1.0)[down]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0035s katz=0.0107s eig=0.010s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.999, 'kendall': 0.998} vsT(all)={'spearman': 0.07, 'kendall': 0.066} floor(all/files)=0.001/0.65 struct={'depth_all': -0.218, 'depth_files': -0.302, 'parent_fanout_all': 0.121, 'parent_fanout_files': 0.317, 'own_fanout_dirs': -0.085, 'depth_dirs': 0.157} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.851, 'kendall': 0.746} vsR(all)={'spearman': 0.717, 'kendall': 0.62} vsT(all)={'spearman': 0.438, 'kendall': 0.465} floor(all/files)=0.001/0.031 struct={'depth_all': 0.039, 'depth_files': -0.08, 'parent_fanout_all': -0.519, 'parent_fanout_files': -0.273, 'own_fanout_dirs': 0.39, 'depth_dirs': -0.229} top25: dirs=0 depth=3.24 pfan=68.9 ovl=23
+             top10: ['context/open-questions.md', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'docs/reference/glob-patterns.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/design.md', 'docs/explanation/glob-language.md', 'context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md', 'context/research/2026-08-25-remediation-round-landing-review.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-backend.md']
+  katz       vsR(ref)={'spearman': 0.99, 'kendall': 0.973} vsR(all)={'spearman': 0.8, 'kendall': 0.737} vsT(all)={'spearman': 0.344, 'kendall': 0.363} floor(all/files)=0.001/0.04 struct={'depth_all': 0.344, 'depth_files': 0.168, 'parent_fanout_all': -0.096, 'parent_fanout_files': 0.163, 'own_fanout_dirs': -0.253, 'depth_dirs': 1.0} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== T[up]  edges=976  lambda_max=0.000  katz_alpha=0.900  t(in=0.0003s pr=0.0016s katz=0.0109s eig=0.006s)
+  in_degree  vsR(ref)={'spearman': nan, 'kendall': nan} vsR(all)={'spearman': -0.305, 'kendall': -0.279} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.799/1.0 struct={'depth_all': -0.177, 'depth_files': nan, 'parent_fanout_all': 0.363, 'parent_fanout_files': nan, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=25 depth=3.16 pfan=14.4 ovl=0
+             top10: ['context/specs/archive', 'context/research', 'context/decisions', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/research/studies/2026-08-26-glean/engine-matrix', 'scripts', 'context/research/studies', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/research/studies/2026-08-17-search-storage-organizations/chunk-prototype']
+  pagerank   vsR(ref)={'spearman': nan, 'kendall': nan} vsR(all)={'spearman': -0.304, 'kendall': -0.273} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.799/1.0 struct={'depth_all': -0.181, 'depth_files': nan, 'parent_fanout_all': 0.358, 'parent_fanout_files': nan, 'own_fanout_dirs': 0.953, 'depth_dirs': -0.347} top25: dirs=25 depth=2.76 pfan=18.0 ovl=0
+             top10: ['.', 'context', 'context/specs/archive', 'context/research', 'context/specs', 'context/research/studies', 'context/research/studies/2026-08-26-glean', 'tests', 'docs', 'context/decisions']
+  katz       vsR(ref)={'spearman': nan, 'kendall': nan} vsR(all)={'spearman': -0.304, 'kendall': -0.273} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.799/1.0 struct={'depth_all': -0.181, 'depth_files': nan, 'parent_fanout_all': 0.358, 'parent_fanout_files': nan, 'own_fanout_dirs': 0.953, 'depth_dirs': -0.349} top25: dirs=25 depth=2.68 pfan=18.1 ovl=0
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'context/research/studies/2026-08-26-glean', 'tests', 'docs', 'context/decisions']
+
+== H(0.05)[up]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0023s katz=0.0106s eig=0.012s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.844, 'kendall': 0.804} vsT(all)={'spearman': 0.249, 'kendall': 0.264} floor(all/files)=0.52/0.65 struct={'depth_all': -0.325, 'depth_files': -0.302, 'parent_fanout_all': 0.309, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 1.0, 'kendall': 0.994} vsR(all)={'spearman': 0.652, 'kendall': 0.634} vsT(all)={'spearman': 0.493, 'kendall': 0.449} floor(all/files)=0.52/0.65 struct={'depth_all': -0.353, 'depth_files': -0.303, 'parent_fanout_all': 0.316, 'parent_fanout_files': 0.305, 'own_fanout_dirs': 0.81, 'depth_dirs': -0.32} top25: dirs=19 depth=2.48 pfan=29.5 ovl=6
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'docs', 'context/research/studies/2026-08-26-glean', 'tests', 'context/open-questions.md']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 0.999} vsR(all)={'spearman': 0.845, 'kendall': 0.807} vsT(all)={'spearman': 0.249, 'kendall': 0.257} floor(all/files)=0.52/0.65 struct={'depth_all': -0.312, 'depth_files': -0.281, 'parent_fanout_all': 0.31, 'parent_fanout_files': 0.32, 'own_fanout_dirs': 0.982, 'depth_dirs': -0.305} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.1)[up]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0022s katz=0.0106s eig=0.012s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.829, 'kendall': 0.789} vsT(all)={'spearman': 0.272, 'kendall': 0.281} floor(all/files)=0.52/0.65 struct={'depth_all': -0.328, 'depth_files': -0.302, 'parent_fanout_all': 0.306, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=2 depth=3.12 pfan=58.2 ovl=23
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/specs/archive']
+  pagerank   vsR(ref)={'spearman': 1.0, 'kendall': 0.99} vsR(all)={'spearman': 0.647, 'kendall': 0.629} vsT(all)={'spearman': 0.499, 'kendall': 0.454} floor(all/files)=0.52/0.65 struct={'depth_all': -0.353, 'depth_files': -0.304, 'parent_fanout_all': 0.318, 'parent_fanout_files': 0.306, 'own_fanout_dirs': 0.813, 'depth_dirs': -0.319} top25: dirs=20 depth=2.44 pfan=29.6 ovl=5
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'docs', 'context/research/studies/2026-08-26-glean', 'tests', 'context/open-questions.md']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 0.999} vsR(all)={'spearman': 0.835, 'kendall': 0.797} vsT(all)={'spearman': 0.264, 'kendall': 0.269} floor(all/files)=0.52/0.65 struct={'depth_all': -0.314, 'depth_files': -0.281, 'parent_fanout_all': 0.308, 'parent_fanout_files': 0.32, 'own_fanout_dirs': 0.982, 'depth_dirs': -0.306} top25: dirs=1 depth=3.4 pfan=74.9 ovl=24
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.25)[up]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0021s katz=0.0105s eig=0.012s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.792, 'kendall': 0.755} vsT(all)={'spearman': 0.324, 'kendall': 0.322} floor(all/files)=0.52/0.65 struct={'depth_all': -0.337, 'depth_files': -0.302, 'parent_fanout_all': 0.302, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=3 depth=3.08 pfan=58.4 ovl=22
+             top10: ['context/open-questions.md', 'context/specs/archive', 'context/research', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/decisions']
+  pagerank   vsR(ref)={'spearman': 0.999, 'kendall': 0.98} vsR(all)={'spearman': 0.634, 'kendall': 0.614} vsT(all)={'spearman': 0.516, 'kendall': 0.47} floor(all/files)=0.52/0.65 struct={'depth_all': -0.355, 'depth_files': -0.305, 'parent_fanout_all': 0.325, 'parent_fanout_files': 0.307, 'own_fanout_dirs': 0.826, 'depth_dirs': -0.32} top25: dirs=21 depth=2.44 pfan=25.4 ovl=4
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'docs', 'context/research/studies/2026-08-26-glean', 'tests', 'context/open-questions.md']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 0.999} vsR(all)={'spearman': 0.806, 'kendall': 0.771} vsT(all)={'spearman': 0.305, 'kendall': 0.3} floor(all/files)=0.52/0.65 struct={'depth_all': -0.321, 'depth_files': -0.281, 'parent_fanout_all': 0.306, 'parent_fanout_files': 0.32, 'own_fanout_dirs': 0.982, 'depth_dirs': -0.31} top25: dirs=2 depth=3.4 pfan=70.6 ovl=23
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md']
+
+== H(0.5)[up]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0020s katz=0.0113s eig=0.012s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.738, 'kendall': 0.709} vsT(all)={'spearman': 0.396, 'kendall': 0.381} floor(all/files)=0.52/0.65 struct={'depth_all': -0.344, 'depth_files': -0.302, 'parent_fanout_all': 0.316, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=9 depth=3.12 pfan=46.6 ovl=16
+             top10: ['context/specs/archive', 'context/research', 'context/open-questions.md', 'context/decisions', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/research/2026-07-13-database-storage-grep-index.md']
+  pagerank   vsR(ref)={'spearman': 0.996, 'kendall': 0.959} vsR(all)={'spearman': 0.608, 'kendall': 0.587} vsT(all)={'spearman': 0.545, 'kendall': 0.496} floor(all/files)=0.52/0.65 struct={'depth_all': -0.356, 'depth_files': -0.307, 'parent_fanout_all': 0.338, 'parent_fanout_files': 0.308, 'own_fanout_dirs': 0.834, 'depth_dirs': -0.325} top25: dirs=24 depth=2.6 pfan=14.0 ovl=1
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'docs', 'context/research/studies/2026-08-26-glean', 'tests', 'context/research/studies/2026-08-17-search-storage-organizations']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 0.999} vsR(all)={'spearman': 0.767, 'kendall': 0.735} vsT(all)={'spearman': 0.359, 'kendall': 0.342} floor(all/files)=0.52/0.65 struct={'depth_all': -0.327, 'depth_files': -0.281, 'parent_fanout_all': 0.313, 'parent_fanout_files': 0.32, 'own_fanout_dirs': 0.976, 'depth_dirs': -0.324} top25: dirs=4 depth=3.12 pfan=70.1 ovl=21
+             top10: ['context/research', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md']
+
+== H(1.0)[up]  edges=1840  lambda_max=5.929  katz_alpha=0.152  t(in=0.0003s pr=0.0020s katz=0.0106s eig=0.012s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.65, 'kendall': 0.634} vsT(all)={'spearman': 0.507, 'kendall': 0.484} floor(all/files)=0.52/0.65 struct={'depth_all': -0.351, 'depth_files': -0.302, 'parent_fanout_all': 0.354, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.253} top25: dirs=17 depth=3.0 pfan=30.2 ovl=8
+             top10: ['context/specs/archive', 'context/research', 'context/open-questions.md', 'context/decisions', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'src/vfs/paths.py', 'context/research/studies/2026-08-26-glean/engine-matrix', 'scripts', 'context/research/studies']
+  pagerank   vsR(ref)={'spearman': 0.991, 'kendall': 0.934} vsR(all)={'spearman': 0.563, 'kendall': 0.542} vsT(all)={'spearman': 0.596, 'kendall': 0.544} floor(all/files)=0.52/0.65 struct={'depth_all': -0.359, 'depth_files': -0.308, 'parent_fanout_all': 0.364, 'parent_fanout_files': 0.311, 'own_fanout_dirs': 0.853, 'depth_dirs': -0.324} top25: dirs=24 depth=2.6 pfan=14.0 ovl=1
+             top10: ['.', 'context', 'context/research', 'context/specs/archive', 'context/specs', 'context/research/studies', 'docs', 'context/research/studies/2026-08-26-glean', 'tests', 'src/vfs']
+  katz       vsR(ref)={'spearman': 1.0, 'kendall': 0.999} vsR(all)={'spearman': 0.716, 'kendall': 0.69} vsT(all)={'spearman': 0.427, 'kendall': 0.401} floor(all/files)=0.52/0.65 struct={'depth_all': -0.331, 'depth_files': -0.281, 'parent_fanout_all': 0.328, 'parent_fanout_files': 0.32, 'own_fanout_dirs': 0.973, 'depth_dirs': -0.331} top25: dirs=6 depth=3.08 pfan=70.4 ovl=19
+             top10: ['context/research', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/specs/archive', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context', 'context/open-questions.md']
+
+== T[both]  edges=1952  lambda_max=10.753  katz_alpha=0.084  t(in=0.0003s pr=0.0029s katz=0.0107s eig=0.159s)
+  in_degree  vsR(ref)={'spearman': nan, 'kendall': nan} vsR(all)={'spearman': -0.305, 'kendall': -0.279} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.799/1.0 struct={'depth_all': -0.177, 'depth_files': nan, 'parent_fanout_all': 0.363, 'parent_fanout_files': nan, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=25 depth=3.16 pfan=14.4 ovl=0
+             top10: ['context/specs/archive', 'context/research', 'context/decisions', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/research/studies/2026-08-26-glean/engine-matrix', 'scripts', 'context/research/studies', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/research/studies/2026-08-17-search-storage-organizations/chunk-prototype']
+  pagerank   vsR(ref)={'spearman': -0.465, 'kendall': -0.341} vsR(all)={'spearman': -0.451, 'kendall': -0.354} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.003/0.004 struct={'depth_all': 0.241, 'depth_files': 0.516, 'parent_fanout_all': -0.229, 'parent_fanout_files': -0.83, 'own_fanout_dirs': 0.963, 'depth_dirs': -0.2} top25: dirs=25 depth=3.28 pfan=18.6 ovl=0
+             top10: ['context/research', 'context/specs/archive', 'context/decisions', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/research/studies/2026-08-26-glean/engine-matrix', 'scripts', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/research/studies', 'src/vfs/storage/backends/database']
+  katz       vsR(ref)={'spearman': 0.065, 'kendall': 0.049} vsR(all)={'spearman': 0.044, 'kendall': 0.036} vsT(all)={'spearman': 1.0, 'kendall': 1.0} floor(all/files)=0.001/0.001 struct={'depth_all': -0.324, 'depth_files': -0.312, 'parent_fanout_all': 0.603, 'parent_fanout_files': 0.45, 'own_fanout_dirs': 0.068, 'depth_dirs': 0.058} top25: dirs=25 depth=3.56 pfan=91.7 ovl=0
+             top10: ['context/specs/archive', 'context/research', 'context/research/studies', 'context/decisions', 'context', 'context/specs/archive/072-database-storage-backend', 'context/specs', 'context/specs/archive/013-database-agnostic-code-trigram-index', 'context/specs/archive/084-turso-in-memory-backend', 'context/specs/archive/004-postgres-native-meeting-subgraph']
+
+== H(0.05)[both]  edges=2816  lambda_max=5.931  katz_alpha=0.152  t(in=0.0004s pr=0.0032s katz=0.0114s eig=0.161s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.844, 'kendall': 0.804} vsT(all)={'spearman': 0.249, 'kendall': 0.264} floor(all/files)=0.52/0.65 struct={'depth_all': -0.325, 'depth_files': -0.302, 'parent_fanout_all': 0.309, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=0 depth=3.12 pfan=58.6 ovl=25
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md']
+  pagerank   vsR(ref)={'spearman': 0.888, 'kendall': 0.738} vsR(all)={'spearman': 0.376, 'kendall': 0.309} vsT(all)={'spearman': -0.064, 'kendall': -0.055} floor(all/files)=0.031/0.039 struct={'depth_all': -0.308, 'depth_files': -0.29, 'parent_fanout_all': 0.174, 'parent_fanout_files': 0.334, 'own_fanout_dirs': 0.779, 'depth_dirs': -0.279} top25: dirs=18 depth=2.88 pfan=26.2 ovl=7
+             top10: ['context/research', 'context/specs/archive', 'context/open-questions.md', 'context/research/studies/2026-08-17-search-storage-organizations', 'docs/plans', 'scripts', 'context/research/2026-08-25-set-based-scattered-delete.md', 'context/research/2026-08-25-mysql-family-batch-update-shapes.md', 'context/research/studies/2026-08-26-glean/engine-matrix', 'docs']
+  katz       vsR(ref)={'spearman': 0.985, 'kendall': 0.941} vsR(all)={'spearman': 0.783, 'kendall': 0.684} vsT(all)={'spearman': 0.388, 'kendall': 0.294} floor(all/files)=0.001/0.001 struct={'depth_all': -0.405, 'depth_files': -0.383, 'parent_fanout_all': 0.531, 'parent_fanout_files': 0.673, 'own_fanout_dirs': 0.935, 'depth_dirs': -0.239} top25: dirs=0 depth=3.48 pfan=74.8 ovl=25
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.1)[both]  edges=2816  lambda_max=5.940  katz_alpha=0.152  t(in=0.0004s pr=0.0030s katz=0.0118s eig=0.170s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.829, 'kendall': 0.789} vsT(all)={'spearman': 0.272, 'kendall': 0.281} floor(all/files)=0.52/0.65 struct={'depth_all': -0.328, 'depth_files': -0.302, 'parent_fanout_all': 0.306, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=2 depth=3.12 pfan=58.2 ovl=23
+             top10: ['context/open-questions.md', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/research/2026-07-13-database-storage-backend.md', 'context/specs/STATUS.md', 'context/specs/archive']
+  pagerank   vsR(ref)={'spearman': 0.887, 'kendall': 0.736} vsR(all)={'spearman': 0.379, 'kendall': 0.312} vsT(all)={'spearman': -0.066, 'kendall': -0.056} floor(all/files)=0.031/0.039 struct={'depth_all': -0.318, 'depth_files': -0.303, 'parent_fanout_all': 0.186, 'parent_fanout_files': 0.349, 'own_fanout_dirs': 0.785, 'depth_dirs': -0.28} top25: dirs=18 depth=2.88 pfan=26.2 ovl=7
+             top10: ['context/research', 'context/specs/archive', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/open-questions.md', 'docs/plans', 'scripts', 'context/research/studies/2026-08-26-glean/engine-matrix', 'docs', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/research/2026-08-25-set-based-scattered-delete.md']
+  katz       vsR(ref)={'spearman': 0.982, 'kendall': 0.921} vsR(all)={'spearman': 0.774, 'kendall': 0.672} vsT(all)={'spearman': 0.408, 'kendall': 0.306} floor(all/files)=0.001/0.001 struct={'depth_all': -0.412, 'depth_files': -0.386, 'parent_fanout_all': 0.537, 'parent_fanout_files': 0.678, 'own_fanout_dirs': 0.901, 'depth_dirs': -0.241} top25: dirs=1 depth=3.4 pfan=74.9 ovl=24
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-brief.md', 'context/specs/archive/072-database-storage-backend/spike-results-pipelines.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.25)[both]  edges=2816  lambda_max=6.027  katz_alpha=0.149  t(in=0.0004s pr=0.0033s katz=0.0116s eig=0.173s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.792, 'kendall': 0.755} vsT(all)={'spearman': 0.324, 'kendall': 0.322} floor(all/files)=0.52/0.65 struct={'depth_all': -0.337, 'depth_files': -0.302, 'parent_fanout_all': 0.302, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=3 depth=3.08 pfan=58.4 ovl=22
+             top10: ['context/open-questions.md', 'context/specs/archive', 'context/research', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-08-26-glean-brief.md', 'src/vfs/models/__init__.py', 'context/decisions']
+  pagerank   vsR(ref)={'spearman': 0.883, 'kendall': 0.729} vsR(all)={'spearman': 0.378, 'kendall': 0.312} vsT(all)={'spearman': -0.065, 'kendall': -0.058} floor(all/files)=0.031/0.039 struct={'depth_all': -0.341, 'depth_files': -0.332, 'parent_fanout_all': 0.209, 'parent_fanout_files': 0.369, 'own_fanout_dirs': 0.795, 'depth_dirs': -0.285} top25: dirs=20 depth=3.08 pfan=26.3 ovl=5
+             top10: ['context/research', 'context/specs/archive', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/open-questions.md', 'docs/plans', 'scripts', 'context/research/studies/2026-08-26-glean/engine-matrix', 'docs', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/standards']
+  katz       vsR(ref)={'spearman': 0.934, 'kendall': 0.823} vsR(all)={'spearman': 0.699, 'kendall': 0.588} vsT(all)={'spearman': 0.527, 'kendall': 0.402} floor(all/files)=0.001/0.001 struct={'depth_all': -0.429, 'depth_files': -0.391, 'parent_fanout_all': 0.612, 'parent_fanout_files': 0.702, 'own_fanout_dirs': 0.724, 'depth_dirs': -0.135} top25: dirs=2 depth=3.4 pfan=74.5 ovl=23
+             top10: ['context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research', 'context/research/2026-08-26-glean-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(0.5)[both]  edges=2816  lambda_max=6.907  katz_alpha=0.130  t(in=0.0003s pr=0.0031s katz=0.0114s eig=0.168s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.739, 'kendall': 0.709} vsT(all)={'spearman': 0.396, 'kendall': 0.381} floor(all/files)=0.52/0.65 struct={'depth_all': -0.344, 'depth_files': -0.302, 'parent_fanout_all': 0.316, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=9 depth=3.12 pfan=46.6 ovl=16
+             top10: ['context/specs/archive', 'context/research', 'context/open-questions.md', 'context/decisions', 'src/vfs/paths.py', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'src/vfs/results/__init__.py', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'context/research/2026-07-13-database-storage-grep-index.md']
+  pagerank   vsR(ref)={'spearman': 0.876, 'kendall': 0.719} vsR(all)={'spearman': 0.37, 'kendall': 0.305} vsT(all)={'spearman': -0.061, 'kendall': -0.059} floor(all/files)=0.001/0.001 struct={'depth_all': -0.363, 'depth_files': -0.353, 'parent_fanout_all': 0.243, 'parent_fanout_files': 0.4, 'own_fanout_dirs': 0.811, 'depth_dirs': -0.289} top25: dirs=22 depth=3.0 pfan=18.3 ovl=3
+             top10: ['context/research', 'context/specs/archive', 'context/research/studies/2026-08-17-search-storage-organizations', 'docs/plans', 'context/open-questions.md', 'scripts', 'context/research/studies/2026-08-26-glean/engine-matrix', 'docs', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/standards']
+  katz       vsR(ref)={'spearman': 0.84, 'kendall': 0.699} vsR(all)={'spearman': 0.591, 'kendall': 0.487} vsT(all)={'spearman': 0.694, 'kendall': 0.546} floor(all/files)=0.001/0.001 struct={'depth_all': -0.433, 'depth_files': -0.403, 'parent_fanout_all': 0.664, 'parent_fanout_files': 0.665, 'own_fanout_dirs': 0.392, 'depth_dirs': -0.012} top25: dirs=2 depth=3.16 pfan=86.1 ovl=20
+             top10: ['context/research', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-read-pipeline.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-08-26-glean-brief.md', 'context/open-questions.md', 'context/research/2026-08-26-glean-in-the-engine.md']
+
+== H(1.0)[both]  edges=2816  lambda_max=11.438  katz_alpha=0.079  t(in=0.0003s pr=0.0030s katz=0.0114s eig=0.164s)
+  in_degree  vsR(ref)={'spearman': 1.0, 'kendall': 1.0} vsR(all)={'spearman': 0.65, 'kendall': 0.634} vsT(all)={'spearman': 0.507, 'kendall': 0.484} floor(all/files)=0.52/0.65 struct={'depth_all': -0.351, 'depth_files': -0.302, 'parent_fanout_all': 0.355, 'parent_fanout_files': 0.317, 'own_fanout_dirs': 1.0, 'depth_dirs': -0.252} top25: dirs=17 depth=3.0 pfan=30.2 ovl=8
+             top10: ['context/specs/archive', 'context/research', 'context/open-questions.md', 'context/decisions', 'docs/plans', 'context/research/studies/2026-08-17-search-storage-organizations', 'src/vfs/paths.py', 'context/research/studies/2026-08-26-glean/engine-matrix', 'scripts', 'context/research/studies']
+  pagerank   vsR(ref)={'spearman': 0.868, 'kendall': 0.705} vsR(all)={'spearman': 0.357, 'kendall': 0.295} vsT(all)={'spearman': -0.016, 'kendall': -0.026} floor(all/files)=0.001/0.001 struct={'depth_all': -0.386, 'depth_files': -0.362, 'parent_fanout_all': 0.287, 'parent_fanout_files': 0.409, 'own_fanout_dirs': 0.832, 'depth_dirs': -0.291} top25: dirs=24 depth=3.0 pfan=15.1 ovl=1
+             top10: ['context/research', 'context/specs/archive', 'context/research/studies/2026-08-17-search-storage-organizations', 'docs/plans', 'scripts', 'context/research/studies/2026-08-26-glean/engine-matrix', 'docs', 'context/open-questions.md', 'context/research/studies/2026-08-25-set-based-topology-statements/results', 'context/standards']
+  katz       vsR(ref)={'spearman': 0.745, 'kendall': 0.584} vsR(all)={'spearman': 0.482, 'kendall': 0.394} vsT(all)={'spearman': 0.833, 'kendall': 0.677} floor(all/files)=0.001/0.001 struct={'depth_all': -0.429, 'depth_files': -0.406, 'parent_fanout_all': 0.649, 'parent_fanout_files': 0.56, 'own_fanout_dirs': 0.128, 'depth_dirs': 0.035} top25: dirs=5 depth=2.8 pfan=90.2 ovl=17
+             top10: ['context/research', 'context/specs/archive', 'context/open-questions.md', 'context/research/2026-07-13-database-storage-write-pipeline.md', 'context/research/2026-08-26-glean-brief.md', 'context/research/2026-07-13-database-storage-grep-index.md', 'context/research/2026-07-13-database-storage-backend.md', 'context/research/2026-07-14-database-storage-posting-storage.md', 'context/research/2026-07-13-database-storage-pipelines-brief.md', 'context/research/2026-07-13-database-storage-read-pipeline.md']
+
+== w invariance (H(0.05) vs H(1.0), same direction)
+{"down/in_degree": {"all_nodes": {"spearman": 1.0, "kendall": 1.0}, "files": {"spearman": 1.0, "kendall": 1.0}}, "down/pagerank": {"all_nodes": {"spearman": 1.0, "kendall": 1.0}, "files": {"spearman": 1.0, "kendall": 1.0}}, "down/katz": {"all_nodes": {"spearman": 1.0, "kendall": 1.0}, "files": {"spearman": 1.0, "kendall": 1.0}}, "up/in_degree": {"all_nodes": {"spearman": 0.946, "kendall": 0.869}, "files": {"spearman": 1.0, "kendall": 1.0}}, "up/pagerank": {"all_nodes": {"spearman": 0.987, "kendall": 0.923}, "files": {"spearman": 0.999, "kendall": 0.976}}, "up/katz": {"all_nodes": {"spearman": 0.97, "kendall": 0.906}, "files": {"spearman": 1.0, "kendall": 1.0}}, "both/in_degree": {"all_nodes": {"spearman": 0.946, "kendall": 0.869}, "files": {"spearman": 1.0, "kendall": 1.0}}, "both/pagerank": {"all_nodes": {"spearman": 0.943, "kendall": 0.856}, "files": {"spearman": 0.947, "kendall": 0.873}}, "both/katz": {"all_nodes": {"spearman": 0.772, "kendall": 0.581}, "files": {"spearman": 0.785, "kendall": 0.62}}}
+
+== sanity
+{
+ "n_docs": 778,
+ "bm25_index_and_score_s": 1.661,
+ "configs": {
+  "bm25 only": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.15 * pagerank [R])": {
+   "MRR": 0.403,
+   "nDCG@5": 0.246
+  },
+  "bm25 x (1 + 0.5 * pagerank [R])": {
+   "MRR": 0.403,
+   "nDCG@5": 0.249
+  },
+  "bm25 x (1 + 0.15 * in_degree [R])": {
+   "MRR": 0.412,
+   "nDCG@5": 0.279
+  },
+  "bm25 x (1 + 0.5 * in_degree [R])": {
+   "MRR": 0.431,
+   "nDCG@5": 0.284
+  },
+  "bm25 x (1 + 0.15 * pagerank [T[down]])": {
+   "MRR": 0.267,
+   "nDCG@5": 0.188
+  },
+  "bm25 x (1 + 0.5 * pagerank [T[down]])": {
+   "MRR": 0.205,
+   "nDCG@5": 0.123
+  },
+  "bm25 x (1 + 0.15 * in_degree [T[down]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.5 * in_degree [T[down]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.15 * pagerank [T[up]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.5 * pagerank [T[up]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.15 * in_degree [T[up]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.5 * in_degree [T[up]])": {
+   "MRR": 0.414,
+   "nDCG@5": 0.27
+  },
+  "bm25 x (1 + 0.15 * pagerank [H(0.1)[down]])": {
+   "MRR": 0.401,
+   "nDCG@5": 0.243
+  },
+  "bm25 x (1 + 0.5 * pagerank [H(0.1)[down]])": {
+   "MRR": 0.38,
+   "nDCG@5": 0.255
+  },
+  "bm25 x (1 + 0.15 * in_degree [H(0.1)[down]])": {
+   "MRR": 0.426,
+   "nDCG@5": 0.312
+  },
+  "bm25 x (1 + 0.5 * in_degree [H(0.1)[down]])": {
+   "MRR": 0.435,
+   "nDCG@5": 0.312
+  },
+  "bm25 x (1 + 0.15 * pagerank [H(0.5)[down]])": {
+   "MRR": 0.401,
+   "nDCG@5": 0.243
+  },
+  "bm25 x (1 + 0.5 * pagerank [H(0.5)[down]])": {
+   "MRR": 0.38,
+   "nDCG@5": 0.255
+  },
+  "bm25 x (1 + 0.15 * in_degree [H(0.5)[down]])": {
+   "MRR": 0.412,
+   "nDCG@5": 0.279
+  },
+  "bm25 x (1 + 0.5 * in_degree [H(0.5)[down]])": {
+   "MRR": 0.431,
+   "nDCG@5": 0.284
+  },
+  "bm25 x (1 + 0.15 * pagerank [H(0.1)[up]])": {
+   "MRR": 0.403,
+   "nDCG@5": 0.252
+  },
+  "bm25 x (1 + 0.5 * pagerank [H(0.1)[up]])": {
+   "MRR": 0.403,
+   "nDCG@5": 0.249
+  },
+  "bm25 x (1 + 0.15 * in_degree [H(0.1)[up]])": {
+   "MRR": 0.412,
+   "nDCG@5": 0.279
+  },
+  "bm25 x (1 + 0.5 * in_degree [H(0.1)[up]])": {
+   "MRR": 0.431,
+   "nDCG@5": 0.284
+  },
+  "bm25 x (1 + 0.15 * pagerank [H(0.1)[both]])": {
+   "MRR": 0.385,
+   "nDCG@5": 0.237
+  },
+  "bm25 x (1 + 0.5 * pagerank [H(0.1)[both]])": {
+   "MRR": 0.375,
+   "nDCG@5": 0.231
+  },
+  "bm25 x (1 + 0.15 * in_degree [H(0.1)[both]])": {
+   "MRR": 0.426,
+   "nDCG@5": 0.312
+  },
+  "bm25 x (1 + 0.5 * in_degree [H(0.1)[both]])": {
+   "MRR": 0.435,
+   "nDCG@5": 0.312
+  }
+ },
+ "per_query_bm25": [
+  {
+   "query": "how does grep push down glob scope to the database",
+   "labelled": {
+    "src/vfs/storage/backends/database/grep.py": 124,
+    "src/vfs/storage/backends/database/pathterms.py": 266,
+    "context/decisions/040-path-segment-index-and-glob-pushdown.md": 193
+   },
+   "bm25_top3": [
+    "context/specs/archive/019-union-mounts-and-shadow-resolution/spec.md",
+    "context/specs/archive/007-postgres-glob-grep-regex-scaling/spec.md",
+    "context/specs/archive/020-remote-backends-as-mount-targets/spec.md"
+   ]
+  },
+  {
+   "query": "where are dialect budgets declared in list budget bind parameters",
+   "labelled": {
+    "src/vfs/storage/backends/database/dialects.py": 4,
+    "context/decisions/024-byte-denominated-path-limits-mysql-profile.md": 69
+   },
+   "bm25_top3": [
+    "context/specs/archive/108-pushdown-statement-growth/spec.md",
+    "context/research/2026-08-18-glob-grep-review-campaign.md",
+    "src/vfs/storage/backends/database/grep.py"
+   ]
+  },
+  {
+   "query": "what does the reindex lease do",
+   "labelled": {
+    "src/vfs/storage/backends/database/indexing.py": 5,
+    "context/decisions/033-indexed-grep-tier-refusal-gate-and-epoch-lifecycle.md": 26
+   },
+   "bm25_top3": [
+    "context/research/2026-08-26-glean-embedding-seam.md",
+    "context/research/studies/2026-08-26-glean/preview-and-snippets.md",
+    "context/research/studies/2026-08-26-glean/unconstrained-design.md"
+   ]
+  },
+  {
+   "query": "how are fs edges materialised in the edges table",
+   "labelled": {
+    "context/decisions/018-edge-authoring-verbs-and-materialized-fs-edges.md": 13,
+    "src/vfs/models/rows.py": 75,
+    "src/vfs/models/edge.py": 93
+   },
+   "bm25_top3": [
+    "context/specs/archive/031-unified-entry-creation-chokepoint/explanation.md",
+    "context/research/2026-06-12-single-creation-chokepoint.md",
+    "context/research/2026-05-03-database-filesystem-history-and-philosophy.md"
+   ]
+  },
+  {
+   "query": "how does the rust engine fall back to pure python",
+   "labelled": {
+    "src/vfs/native.py": 35,
+    "context/decisions/039-grep-rust-core-and-verify-authority.md": 37
+   },
+   "bm25_top3": [
+    "context/research/2026-08-16-rust-accelerator-packaging.md",
+    "context/research/studies/2026-08-26-glean/landscape.md",
+    "context/research/2026-08-25-rust-tree-sitter-chunking.md"
+   ]
+  },
+  {
+   "query": "self-describing trash names and the restore contract",
+   "labelled": {
+    "context/decisions/026-self-describing-trash-names-and-restore-contract.md": 1,
+    "src/vfs/storage/backends/database/topology.py": 6
+   },
+   "bm25_top3": [
+    "context/decisions/026-self-describing-trash-names-and-restore-contract.md",
+    "context/specs/archive/081-self-describing-trash-names/spec.md",
+    "context/specs/archive/085-sweep-only-destruction/spec.md"
+   ]
+  },
+  {
+   "query": "semantic chunking splitter for embeddings",
+   "labelled": {
+    "src/vfs/models/chunking.py": 24,
+    "context/decisions/048-semantic-chunking-placement-and-rust-engine.md": 2,
+    "crates/vfs-core/src/chunk.rs": 83
+   },
+   "bm25_top3": [
+    "context/specs/archive/013-database-agnostic-code-trigram-index/implementation.md",
+    "context/decisions/048-semantic-chunking-placement-and-rust-engine.md",
+    "context/research/studies/2026-08-26-glean/embedding-seam.md"
+   ]
+  },
+  {
+   "query": "result envelope refusal classification error channel",
+   "labelled": {
+    "src/vfs/results/envelope.py": 13,
+    "context/decisions/010-result-envelope-contract.md": 33,
+    "context/decisions/008-result-only-error-channel.md": 31
+   },
+   "bm25_top3": [
+    "context/research/2026-07-08-result-envelope.md",
+    "context/specs/archive/069-routing-decomposition/spec.md",
+    "context/research/2026-08-18-glob-grep-review-campaign.md"
+   ]
+  },
+  {
+   "query": "run the ci matrix lint format types coverage",
+   "labelled": {
+    "scripts/ci.sh": 1,
+    "docs/contributing.md": 33
+   },
+   "bm25_top3": [
+    "scripts/ci.sh",
+    "docs/plans/everything_is_a_file.md",
+    "context/standards/tooling.md"
+   ]
+  },
+  {
+   "query": "glob pattern language segment semantics",
+   "labelled": {
+    "docs/explanation/glob-language.md": 4,
+    "src/vfs/pattern_matching/glob.py": 6,
+    "context/decisions/032-glob-segment-semantics-and-pushdown-doctrine.md": 1
+   },
+   "bm25_top3": [
+    "context/decisions/032-glob-segment-semantics-and-pushdown-doctrine.md",
+    "context/specs/archive/073-glob-segment-semantics/spec.md",
+    "context/specs/archive/073-glob-segment-semantics/plan.md"
+   ]
+  }
+ ]
+}

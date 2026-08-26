@@ -1,0 +1,65 @@
+chunks=11608 entries=1024 rows=1166497
+
+== allow-list 5%: 51 entries ==
+term_driven_join_ids     arity=1 median=    0.391 ms max=    0.836 ms
+term_driven_join_ids     arity=3 median=   41.978 ms max=   72.812 ms
+term_driven_join_ids     arity=6 median=   34.050 ms max=   62.231 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+scope_driven_join        arity=1 median=    0.399 ms max=    0.829 ms
+scope_driven_join        arity=3 median=   37.939 ms max=   72.874 ms
+scope_driven_join        arity=6 median=   33.895 ms max=   60.755 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+term_driven_semijoin     arity=1 median=    0.098 ms max=    0.109 ms
+term_driven_semijoin     arity=3 median=    0.353 ms max=    0.611 ms
+term_driven_semijoin     arity=6 median=    0.317 ms max=    0.529 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: LIST SUBQUERY 1
+    plan: SEARCH lex_docs USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=?)
+    plan: CREATE BLOOM FILTER
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+scope_driven_pk_probe    arity=1 median=    0.222 ms max=    0.239 ms
+scope_driven_pk_probe    arity=3 median=    0.759 ms max=    0.862 ms
+scope_driven_pk_probe    arity=6 median=    1.369 ms max=    1.446 ms
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=?)
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+
+== allow-list 0.5%: 5 entries ==
+term_driven_join_ids     arity=1 median=    0.039 ms max=    0.082 ms
+term_driven_join_ids     arity=3 median=    3.506 ms max=    6.758 ms
+term_driven_join_ids     arity=6 median=    3.183 ms max=    5.556 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+scope_driven_join        arity=1 median=    0.039 ms max=    0.079 ms
+scope_driven_join        arity=3 median=    3.445 ms max=    6.690 ms
+scope_driven_join        arity=6 median=    3.142 ms max=    5.526 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+term_driven_semijoin     arity=1 median=    0.014 ms max=    0.015 ms
+term_driven_semijoin     arity=3 median=    0.211 ms max=    0.397 ms
+term_driven_semijoin     arity=6 median=    0.200 ms max=    0.341 ms
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=?)
+    plan: LIST SUBQUERY 1
+    plan: SEARCH lex_docs USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=?)
+    plan: CREATE BLOOM FILTER
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
+scope_driven_pk_probe    arity=1 median=    0.023 ms max=    0.025 ms
+scope_driven_pk_probe    arity=3 median=    0.074 ms max=    0.084 ms
+scope_driven_pk_probe    arity=6 median=    0.130 ms max=    0.142 ms
+    plan: SEARCH sd USING COVERING INDEX ix_lex_docs_entry (epoch=? AND entry_id=?)
+    plan: SEARCH t USING PRIMARY KEY (epoch=? AND term=? AND chunk_id=?)
+    plan: USE TEMP B-TREE FOR GROUP BY
+    plan: USE TEMP B-TREE FOR ORDER BY
