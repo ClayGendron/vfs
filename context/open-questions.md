@@ -128,7 +128,11 @@
   ADR. Headline positions: entry-keyed binary sidecar, hash-ready for later
   content addressing; two new byte-denominated `DialectProfile` budgets;
   derived-text table keyed to `(entry, content_hash)` feeding ordinary
-  chunks; glean as multi-space fan-out with rank fusion.
+  chunks; glean as multi-space fan-out with rank fusion. Researched
+  further 2026-08-26 (the glean memos, below): the single-space form of
+  the space registry is the recommended first landing — model identity
+  on the `meta` row, packed float32 vectors, the registry reserved for
+  media spaces.
 
 ## Scattered 10k-target delete holds the topology lock for minutes — set-based batches or cross-transaction chunking?
 
@@ -207,3 +211,11 @@
 - **Blocking:** nothing — no wrong output exists.
 - **Options considered:** a small `_Truncations` type enforcing at-most-once by construction (a taker must preserve the load-bearing `truncations == ["candidate budget"]` equality gate); status quo. Adjacent unverified lead: whether the facade's `Result.merge` dedupe — the only non-local safety net — is itself pinned.
 - **Status:** parked — the tripwire is a seventh guard site or a duplicate-record bug reaching the seam
+
+## glean — what the database backend's fused ranked search must be
+
+- **Asked:** 2026-08-26 by Clay (the glean requirements: in-engine RRF of vector + BM25-style lexical, glob scope pushed down, centrality and read-derived signals through a customisable ranker API, an embedding provider in Storage with LangChain/OpenAI adapters, top-*n* entries with fast query-biased previews, and an honest merge of top-*n* lists across mounts with different embedders)
+- **Context:** ADR 007 pins the verb and no backend implements `SupportsGlean`; the reindex pipeline mints chunk rows with an `embedding` column nothing fills; no lexical ranking index exists; edges are user-minted only; reads leave no trace; glean's render path falls through to the path list, which sorts alphabetically. Brief: `research/2026-08-26-glean-brief.md`.
+- **Blocking:** any glean implementation; the compose-file bumps the engine legs need (pgvector image, MariaDB 11.8, MySQL 9, SQL Server 2025 + FTS, Oracle regular image).
+- **Options considered:** recorded as named forks in each memo — fusion in SQL vs Python (E1), term text vs id (E2), precomputed weight vs runtime formula (E3), epoch rebuild vs incremental (E4), native vector types on MSSQL/MariaDB (E5), convex combination vs RRF as the reference (A-series), aggregate-then-fuse vs fuse-then-max (A3), router re-fusion of cosine (B2), in-degree vs PageRank/Katz first (signals F1), prior as factor vs rank list (F2), read capture default (F3), identity home and mismatch policy (embedding 1–2), preview field placement (previews 1).
+- **Status:** **decided 2026-08-26** — ADRs 051 (the fused statement, the owned lexical index, vector tiers, predicate scope, freshness), 052 (convex fusion amending ADR 007, aggregate-then-fuse, bounded priors, download-and-rerank across mounts with corpus-wide statistics as a `SupportsGlean` requirement and `min(limit×3, 256)` fetch depth, the result shape), 053 (a `signals` table computed at reindex, in-degree with hierarchy smoothing, `fs` edges excluded from the walk, the declarative `Ranker`; reads deferred), 054 (the vfs-owned `EmbeddingProvider`, identity on the meta row, embedding as a streaming step of `reindex`). Next: the spec; the reference-edge extractor as its own spec; the accuracy study (signals memo §9) as the next research leg. Research record: eight studies plus three hierarchy-edge studies under `research/studies/2026-08-26-glean/` (engine matrix verified on running containers, lexical leg built and timed, fusion and cross-mount merge simulated on BEIR with labels, centrality and read signals, embedding seam measured, previews prototyped, landscape, and one no-requirements design) synthesised into five memos: `research/2026-08-26-glean-in-the-engine.md`, `-fusion-and-cross-mount-merge.md`, `-ranking-signals-and-ranker-api.md`, `-embedding-seam.md`, `-previews-and-result-shape.md`. Awaiting Clay's review; then ADRs (storage statement + lexical index; fusion + merge; signals + ranker API; embedding provider), an ADR 007 amendment (reference fusion), then the spec.

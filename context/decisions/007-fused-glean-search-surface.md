@@ -95,7 +95,17 @@ derived-capabilities rule of ADR 001.
   (neither `memory.py` nor the database backend); when one lands, it
   must fuse internally rather than grow a mode parameter, and any
   future "give me just vector results" need is a new capability
-  discussion, not a `glean` flag.
+  discussion, not a `glean` flag. *Amendment (2026-08-26, ADR 052):* the
+  reference fusion is a **convex combination of normalised leg scores**,
+  not reciprocal rank fusion — RRF at the universal k = 60 measured
+  below BM25 alone on labelled data (Bruch et al. 2023, reproduced) and
+  survives only as the rank-only floor; the "re-fusing at the router"
+  road not taken is now taken as download-and-rerank (union of each
+  mount's top-n re-scored by one BM25 with corpus-wide statistics),
+  which makes cross-mount lists comparable by construction. The verb
+  surface, the no-selector rule and the capability split are
+  unchanged; ADRs 051, 053 and 054 decide the statement, the signals
+  and the provider beneath the surface.
 
 Decided and executed in story 036
 (`context/specs/archive/036-router-verb-surface/spec.md`, "Decided
