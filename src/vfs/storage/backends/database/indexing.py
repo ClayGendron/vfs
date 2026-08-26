@@ -64,7 +64,9 @@ from vfs.models.rows import ENCODING_DELTA_VARINT
 from vfs.paths import Path
 from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
+    ByteBatcher,
     StaleSnapshot,
+    byte_chunked,
     chunked,
     statement_budget,
     supports_values_update,
@@ -74,7 +76,7 @@ from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
     from concurrent.futures import Executor
 
     from sqlalchemy import Select, Table, Update
@@ -337,18 +339,16 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     covered: dict[str, int] = {}
     # Content length in characters is the batch's byte proxy (exact for
     # ASCII-dominant code); the fold itself runs inside the hop.
-    batch: list[tuple[int, str]] = []
-    batch_bytes = 0
+    batcher: ByteBatcher[tuple[int, str]] = ByteBatcher(_doc_size, _EXTRACT_BATCH_BYTES)
     rows = await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS))
     async for row in rows:
         covered[row.entry_id] = row.version
-        batch.append((row.id, row.content))
-        batch_bytes += len(row.content)
-        if batch_bytes >= _EXTRACT_BATCH_BYTES:
-            await call_offloaded(executor, partial(_feed_docs, builder, batch))
-            batch, batch_bytes = [], 0
-    if batch:
-        await call_offloaded(executor, partial(_feed_docs, builder, batch))
+        full = batcher.add((row.id, row.content))
+        if full is not None:
+            await call_offloaded(executor, partial(_feed_docs, builder, full))
+    final = batcher.flush()
+    if final is not None:
+        await call_offloaded(executor, partial(_feed_docs, builder, final))
     state.covered = list(covered.items())
     drain = partial(builder.next_batch, _POSTING_BATCH_BYTES)
     try:
@@ -485,7 +485,9 @@ def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
         if body_ok:
             split_targets.append(row)
     chunk_rows: list[dict[str, object]] = []
-    for batch in _split_batches(split_targets):
+    # Content length in characters is the byte proxy — exact in the
+    # ASCII-dominant regime; boundaries change nothing the splitter emits.
+    for batch in byte_chunked(split_targets, _row_content_size, _SPLIT_BATCH_BYTES):
         batches = Chunk.split_batch([(Path(row.path), row.content, row.ext) for row in batch])
         chunk_rows.extend(
             {
@@ -503,24 +505,15 @@ def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
     return _ChunkWork(eligible, ineligible, resplit_ids, chunk_rows)
 
 
-def _split_batches(rows: Sequence[Any]) -> Iterator[list[Any]]:
-    """Byte-bounded slices of the split targets, one oversized body alone.
+def _row_content_size(row: Any) -> int:
+    """The split batcher's metering: content length, chars as byte proxy."""
+    return len(row.content)
 
-    Content length in characters is the byte proxy — exact in the
-    ASCII-dominant regime; the budget shapes transient residency,
-    never results (batch boundaries change nothing the splitter emits).
-    """
-    batch: list[Any] = []
-    total = 0
-    for row in rows:
-        size = len(row.content)
-        if batch and total + size > _SPLIT_BATCH_BYTES:
-            yield batch
-            batch, total = [], 0
-        batch.append(row)
-        total += size
-    if batch:
-        yield batch
+
+def _doc_size(doc: tuple[int, str]) -> int:
+    """The extract batcher's metering: content length, chars as byte proxy."""
+    _row_id, content = doc
+    return len(content)
 
 
 def _feed_docs(builder: Any, batch: list[tuple[int, str]]) -> None:

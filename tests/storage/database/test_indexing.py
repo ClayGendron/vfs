@@ -21,6 +21,7 @@ from sqlalchemy.dialects import mssql, postgresql
 
 from tests.support.database_helpers import _url
 from vfs.models import Entry
+from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import pack_gram
 from vfs.models.postings import decode_postings, encode_postings
@@ -502,13 +503,42 @@ class TestPostingBatches:
         # Several engine feeds, one build: the corpus outgrows a shrunken
         # extract budget, and the flushed batches still index completely.
         monkeypatch.setattr(indexing, "_EXTRACT_BATCH_BYTES", 8)
+        feeds = 0
+        real_feed = indexing._feed_docs
+
+        def counting(builder: Any, batch: Any) -> None:
+            nonlocal feeds
+            feeds += 1
+            real_feed(builder, batch)
+
+        monkeypatch.setattr(indexing, "_feed_docs", counting)
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i}.txt"), content=f"needle {i} padding") for i in range(5)]
         assert (await storage.write(entries=entries)).success is True
         assert (await storage.reindex()).success is True
+        # The existence referee: each over-budget body fed alone — a
+        # whole-corpus reversion collapses this to one feed.
+        assert feeds == 5
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert sum(len(o.matches or ()) for o in result.observations) == 5
+        await storage.close()
+
+    async def test_posting_drain_actually_slices_by_the_byte_cap(self, tmp_path, monkeypatch) -> None:
+        # The existence referee: a voided or bypassed drain budget would
+        # collapse the posting inserts into one statement.
+        monkeypatch.setattr(indexing, "_POSTING_BATCH_BYTES", 1)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="abcd")])
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        assert (await storage.reindex()).success is True
+        inserts = [s for s in statements if s.startswith("INSERT") and "posting" in s.lower()]
+        assert len(inserts) > 1
         await storage.close()
 
     async def test_posting_insert_rides_uncapped_past_the_parameter_budget(self, tmp_path, monkeypatch) -> None:
@@ -962,3 +992,29 @@ class TestSplitBatchBudget:
         whole, batched = answers
         assert whole and len(whole) > len(files)  # multi-chunk bodies referee the split
         assert batched == whole
+
+    async def test_the_split_batcher_actually_slices(self, tmp_path, monkeypatch) -> None:
+        # The existence referee: a whole-set reversion would serve every
+        # target through one splitter call and still match the answer.
+        monkeypatch.setattr(indexing, "_SPLIT_BATCH_BYTES", 1)
+        calls = 0
+        real = Chunk.split_batch
+
+        def counting(files: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            return real(files)
+
+        monkeypatch.setattr(Chunk, "split_batch", counting)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn{i}():\n    return {i}\n") for i in range(3)]
+        assert (await storage.write(entries=entries)).success is True
+        assert (await storage.reindex()).success is True
+        assert calls == 3
+        await storage.close()
+
+    def test_budgets_keep_their_declared_identities(self) -> None:
+        # Voiding a budget must fail without a monkeypatch: split and extract
+        # are declared twins; an insert's payload is far under a feed's.
+        assert indexing._SPLIT_BATCH_BYTES == indexing._EXTRACT_BATCH_BYTES
+        assert 0 < indexing._POSTING_BATCH_BYTES < indexing._EXTRACT_BATCH_BYTES

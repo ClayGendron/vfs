@@ -79,7 +79,7 @@ from vfs.pattern_matching import (
 )
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
-from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.offload import VerifyOffload
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
@@ -94,7 +94,7 @@ from vfs.storage.backends.database.reads import (
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
     from concurrent.futures import Executor
 
     from sqlalchemy import ColumnElement, Table
@@ -344,7 +344,7 @@ async def grep_rows(
     # pool, the absolute deadline crossing the hop (queue wait shortens
     # the budget, never the wall). Batches stay sequential by law.
     verify = VerifyOffload(verifier, executor)
-    for batch in _content_batches(ordered):
+    for batch in byte_chunked(ordered, _content_size, CONTENT_BYTE_BUDGET):
         if monotonic() > deadline:
             if "wall-time budget" not in truncations:
                 truncations.append("wall-time budget")
@@ -766,23 +766,9 @@ def _static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
     return sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in terms)
 
 
-def _content_batches(ordered: Sequence[RowMapping]) -> Iterator[list[RowMapping]]:
-    """Path-ordered slices whose summed ``size_bytes`` fit the byte budget.
-
-    One oversized entry rides alone — the floor of one row per batch
-    keeps progress; the budget bounds residency, never eligibility.
-    """
-    batch: list[RowMapping] = []
-    total = 0
-    for mapping in ordered:
-        size = mapping["size_bytes"] or 0
-        if batch and total + size > CONTENT_BYTE_BUDGET:
-            yield batch
-            batch, total = [], 0
-        batch.append(mapping)
-        total += size
-    if batch:
-        yield batch
+def _content_size(mapping: RowMapping) -> int:
+    """The verify batcher's exact metering: the row's stored byte size."""
+    return mapping["size_bytes"] or 0
 
 
 async def _content_for_entries(

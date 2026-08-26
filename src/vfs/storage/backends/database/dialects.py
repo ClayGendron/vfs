@@ -24,12 +24,12 @@ integer driver error number — never by message text.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Final, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, TypeVar
 
 from sqlalchemy.exc import ProgrammingError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from sqlalchemy.engine import Dialect
     from sqlalchemy.sql import ClauseElement
@@ -347,6 +347,61 @@ def chunked(items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
     step = max(1, size)
     for index in range(0, len(items), step):
         yield items[index : index + step]
+
+
+class ByteBatcher(Generic[T]):
+    """Byte-bounded singleton-exempt accumulator — the flush law's one owner.
+
+    Items accumulate until adding the next would exceed *budget*, at
+    which point the full batch flushes *before* the add (bound =
+    ``max(budget, one item)``): one oversized item rides alone, so the
+    budget shapes transient residency, never eligibility or results.
+    *size_of* is the caller's declared metering — exact bytes where it
+    has them, chars-as-proxy where it declares one. This incremental
+    form serves streaming producers (an async row scan cannot feed a
+    sync generator); sequence callers use :func:`byte_chunked`.
+    """
+
+    def __init__(self, size_of: Callable[[T], int], budget: int) -> None:
+        self._size_of = size_of
+        self._budget = budget
+        self._batch: list[T] = []
+        self._total = 0
+
+    def add(self, item: T) -> list[T] | None:
+        """Accumulate *item*; return the batch the flush law completed, if any."""
+        size = self._size_of(item)
+        full = None
+        if self._batch and self._total + size > self._budget:
+            full = self._batch
+            self._batch, self._total = [], 0
+        self._batch.append(item)
+        self._total += size
+        return full
+
+    def flush(self) -> list[T] | None:
+        """Return the final partial batch, or ``None`` when nothing is held."""
+        batch = self._batch or None
+        self._batch, self._total = [], 0
+        return batch
+
+
+def byte_chunked(items: Iterable[T], size_of: Callable[[T], int], budget: int) -> Iterator[list[T]]:
+    """Slices of *items* whose summed *size_of* fits *budget*, in order.
+
+    The byte-bounded twin of :func:`chunked`: every item is emitted in
+    exactly one batch, concatenation preserves order, and the
+    :class:`ByteBatcher` flush law bounds each batch at
+    ``max(budget, one item)``.
+    """
+    batcher: ByteBatcher[T] = ByteBatcher(size_of, budget)
+    for item in items:
+        full = batcher.add(item)
+        if full is not None:
+            yield full
+    final = batcher.flush()
+    if final is not None:
+        yield final
 
 
 def rows_per_statement(parameter_budget: int, rows: Sequence[Mapping[str, object]]) -> int:

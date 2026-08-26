@@ -1,6 +1,21 @@
 # 128 — one owner for the byte-bounded batcher, and the budgets get referees
 
-- **Status: draft, 2026-08-25.**
+- **Status: landed 2026-08-25.**
+  Slices A+B: ``byte_chunked`` (the sequence generator) and
+  ``ByteBatcher`` (the incremental accumulator the async extract
+  scan needs) land beside ``chunked()`` in ``dialects.py`` as the one
+  owner of byte-bounded singleton-exempt slicing; grep's
+  ``_content_batches`` and indexing's ``_split_batches`` die into
+  it, ``build_epoch``'s inline batcher becomes a ``ByteBatcher``, and
+  the flush law unifies on pre-add (bound = max(budget, one item))
+  with no output change anywhere. Every budget now has both
+  referees — a consumption spy under a small monkeypatched budget
+  and a declared-value assert that fails without any monkeypatch;
+  the posting/extract budgets shared F9's gap and took the same
+  treatment. Ledger rows P20 (whole-set reversion, three
+  directions) and P21 (voided declaration, both directions) proven;
+  P15 re-derived to the shared anchor (76 failures). Details in the
+  landing note below.
 - **Born from** the remediation-round landing review
   (`../../../research/2026-08-25-remediation-round-landing-review.md`),
   finding F9 (the split-batch byte budget can be deleted or voided
@@ -109,3 +124,30 @@ Laws that bind the slices:
 
 Gates: `scripts/ci.sh 3.13` at 100 % coverage; all four engine legs
 (grep's batcher and the reindex pipeline both ride the change).
+
+## Landing note (2026-08-25)
+
+- **The owner (§1) landed as two doors over one law:** `byte_chunked`
+  (the sequence generator, `chunked()`'s byte-bounded twin) plus
+  `ByteBatcher` (the incremental accumulator) in `dialects.py`. The
+  second door exists because `build_epoch`'s extract site consumes an
+  async row stream, which no sync generator can wrap; a parity pin
+  holds the two doors to identical batches.
+- **The flush law (law 2) ruled pre-add and held:** the extract site
+  needed nothing from post-add — its mid-stream-flush pin and the
+  postings/epoch fixtures pass unchanged under the unified pre-add
+  law (bound = max(budget, one item), down from budget + one body).
+  No finding to record.
+- **The budget investigation (§3) confirmed the lead:** both
+  `_EXTRACT_BATCH_BYTES` and `_POSTING_BATCH_BYTES` shared F9's gap —
+  their pins monkeypatched the constants and asserted only final
+  correctness, so whole-set reversions and in-place voids survived.
+  Each budget now has the two referees: an existence spy (feed count,
+  posting-insert statement count, splitter call count) and the
+  declared-value assert (`_SPLIT_BATCH_BYTES == _EXTRACT_BATCH_BYTES`;
+  `0 < _POSTING_BATCH_BYTES < _EXTRACT_BATCH_BYTES`).
+- **Ledger:** P20 (whole-set reversion, three directions, 1 kill
+  each), P21 (voided declaration, both directions, killed with no
+  monkeypatch involved), and P15 re-derived to the shared anchor —
+  the tail-loss mutation at `byte_chunked` re-proven with 76 failures
+  across both consumers' suites.
