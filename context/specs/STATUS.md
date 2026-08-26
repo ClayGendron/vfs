@@ -44,7 +44,7 @@ lines first; regenerate this file when the picture shifts (review the
   `publish.yml`. Mining residue: ADR 048/049 status-block
   implementation notes, the ADR 039 fork-closure annotations —
   everything else was already downstream at landing. End state:
-  suite 2,688 passed / 871 skipped, coverage 100 %,
+  suite 2,685 passed / 863 skipped, coverage 100 %,
   ruff/format/ty zero, full 3.11–3.14 matrix green; all four Docker
   legs green twice this session (117's gate and 118's re-run:
   Postgres 210, MySQL 211, MSSQL 212, Oracle 209); linux corpus
@@ -401,11 +401,12 @@ lines first; regenerate this file when the picture shifts (review the
   research-first; owns the per-row executemany cost question in
   `../open-questions.md`). No implementation until its preconditions
   are verified on real engines.
-- **101 — move/copy drop `overwrite`** (draft 2026-08-14) — Clay's
-  resolution of the last agent-reachable destruction: the flag is
-  removed entirely, occupied destinations refuse `exists`,
-  displacement is delete-then-transfer; ADR 027's contract sentence
-  loses its exception. No open forks.
+- **101 — move/copy drop `overwrite`** — **landed and archived
+  2026-08-25**: the flag is removed from move, copy, *and restore*
+  (its occupant arm purged through the same fence), occupied
+  destinations refuse `exists`, displacement is delete-then-transfer,
+  the ancestor cycle branch died as unreachable; ADR 027's contract
+  sentence holds without exception.
 - **102 — set-based scattered delete** (draft 2026-08-14,
   research-first) — owns the 10k-scattered-target topology-lock-hold
   question; research memo before any design.
@@ -552,7 +553,7 @@ the 095–099 campaign arc, 100, the 104–106 read-path arc, the
 107–116 remediation arc, and the 103/117/118 chunking-and-
 concurrency arc are all mined and archived (095–099 on 2026-08-14;
 100 on 2026-08-16; 104–106 on 2026-08-17; 107–116 on 2026-08-19;
-103/117/118 on 2026-08-25). Tree green at 2,688 passed / 871
+103/117/118 on 2026-08-25). Tree green at 2,685 passed / 863
 skipped, coverage 100%, `ruff`/`ty`/format at zero (2026-08-25, full
 3.11–3.14 matrix), all four Docker engine legs green as of the spec
 118 landing (2026-08-25: Postgres 210, MySQL 211, MSSQL 212,

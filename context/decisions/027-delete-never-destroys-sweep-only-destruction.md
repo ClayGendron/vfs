@@ -138,7 +138,12 @@ Six pins:
   `overwrite` still purges the occupant permanently — the last
   agent-reachable destruction, deliberately **not** closed here and
   filed in `open-questions.md` (trash-the-occupant vs POSIX
-  unlink-on-rename parity is its own trade).
+  unlink-on-rename parity is its own trade). *Amendment (2026-08-25,
+  spec 101):* closed — the `overwrite` flag is removed from `move`,
+  `copy`, and `restore` (whose occupant arm purged through the same
+  `_execute_move`); an occupied destination always refuses `exists`,
+  and displacement is delete-then-transfer, so the contract sentence
+  now holds without exception: sweep is the only destroyer.
 - **Committed to:** spec 084 re-platforms the in-memory backend per
   ADR 028 (landing first so the tree stays green); spec 085 executes
   the contract flip (pins 1–4, 6: signatures, the chain-inside refusal,

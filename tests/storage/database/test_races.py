@@ -261,69 +261,28 @@ class TestReverseOrdering:
 # ---------------------------------------------------------------------------
 
 
-class TestOverwriteFence:
-    """The occupant destroy is guarded: the rival's row survives or the verb refuses."""
-
-    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
-    async def test_move_overwrite_never_destroys_a_rival_child(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
-            assert (await storage.mkdir(path=Path("/a"))).success
-            assert (await storage.mkdir(path=Path("/b"))).success
-
-            handler, rival_results = _self_clearing(
-                "transfer:post-collect",
-                lambda: storage.write(entries=[Entry(path=Path("/b/f.txt"), content="precious")]),
-            )
-            with seams.installed("transfer:post-collect", handler):
-                victim = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/b"))], overwrite=True)
-            assert rival_results and rival_results[0].success is True
-            # The fence flipped and the redriven ladder refused honestly —
-            # the rival's committed file is intact, never purged.
-            assert victim.success is False
-            assert [e.kind for e in victim.errors] == [VFSErrorKind.not_empty]
-            assert (await storage.read(path=Path("/b/f.txt"))).observations[0].content == "precious"
-            await _audit(storage)
-
-    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
-    async def test_restore_overwrite_never_destroys_a_rival_child(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
-            assert (await storage.mkdir(path=Path("/r"))).success
-            assert (await storage.delete(path=Path("/r"))).success
-            assert (await storage.mkdir(path=Path("/r"))).success
-
-            handler, rival_results = _self_clearing(
-                "restore:post-resolve",
-                lambda: storage.write(entries=[Entry(path=Path("/r/f.txt"), content="precious")]),
-            )
-            with seams.installed("restore:post-resolve", handler):
-                victim = await storage.restore(path=Path("/r"), overwrite=True)
-            assert rival_results and rival_results[0].success is True
-            assert victim.success is False
-            assert [e.kind for e in victim.errors] == [VFSErrorKind.not_empty]
-            assert (await storage.read(path=Path("/r/f.txt"))).observations[0].content == "precious"
-            await _audit(storage)
+class TestTransferCollision:
+    """A rival lands under the destination mid-window: the redriven ladder refuses honestly."""
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_copy_child_collision_redrives_to_the_honest_refusal(self, env_var: str) -> None:
-        # A rival lands a child at an address the copy is about to mint:
-        # the unique violation redrives, and the fresh ladder blames the
-        # occupant honestly — never `exists` at an already-granted root.
+        # A rival mints the destination and a child at addresses the copy
+        # is about to mint: the unique violation redrives, and the fresh
+        # ladder refuses the now-occupied root honestly — a classified
+        # `exists`, never a driver error leaking across the seam.
         async with _server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/src/a.txt"), content="x")], parents=True)).success
-            assert (await storage.mkdir(path=Path("/dest"))).success
 
             handler, rival_results = _self_clearing(
                 "transfer:post-collect",
-                lambda: storage.write(entries=[Entry(path=Path("/dest/a.txt"), content="rival")]),
+                lambda: storage.write(entries=[Entry(path=Path("/dest/a.txt"), content="rival")], parents=True),
             )
             with seams.installed("transfer:post-collect", handler):
-                victim = await storage.copy(
-                    operations=[ResolvedPair(src=Path("/src"), dest=Path("/dest"))], overwrite=True
-                )
+                victim = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dest"))])
             assert rival_results and rival_results[0].success is True
             assert victim.success is False
             [error] = victim.errors
-            assert error.kind == VFSErrorKind.not_empty
+            assert error.kind == VFSErrorKind.exists
             lowered = error.message.lower()
             assert not any(t in lowered for t in ("unique", "duplicate", "ora-", "sqlstate", "constraint"))
             assert (await storage.read(path=Path("/dest/a.txt"))).observations[0].content == "rival"

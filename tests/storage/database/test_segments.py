@@ -157,11 +157,12 @@ class TestTopologyMirror:
         assert (await storage.move(operations=[ResolvedPair(src=Path("/a/x"), dest=Path("/c/d/e"))])).success is True
         await _assert_mirror(storage)
 
-    async def test_move_onto_an_occupant_purges_its_postings(self, storage: DatabaseStorage) -> None:
+    async def test_move_onto_an_occupant_refuses_and_keeps_the_mirror(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)
-        assert (await storage.write(entries=[Entry(path=Path("/a/y/g.txt"), content="loser")])).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/a/y/g.txt"), content="keeper")])).success is True
         pair = ResolvedPair(src=Path("/a/x/g.txt"), dest=Path("/a/y/g.txt"))
-        assert (await storage.move(operations=[pair], overwrite=True)).success is True
+        refused = await storage.move(operations=[pair])
+        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
         await _assert_mirror(storage)
 
     async def test_copy_mints_postings_for_the_fresh_tree(self, storage: DatabaseStorage) -> None:
@@ -169,11 +170,12 @@ class TestTopologyMirror:
         assert (await storage.copy(operations=[ResolvedPair(src=Path("/a"), dest=Path("/copy"))])).success is True
         await _assert_mirror(storage)
 
-    async def test_copy_onto_an_occupant_keeps_its_identity(self, storage: DatabaseStorage) -> None:
+    async def test_copy_onto_an_occupant_refuses_and_keeps_the_mirror(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)
         assert (await storage.write(entries=[Entry(path=Path("/dest.txt"), content="old")])).success is True
         pair = ResolvedPair(src=Path("/a/x/g.txt"), dest=Path("/dest.txt"))
-        assert (await storage.copy(operations=[pair], overwrite=True)).success is True
+        refused = await storage.copy(operations=[pair])
+        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
         await _assert_mirror(storage)
 
     async def test_delete_mirrors_the_trash_side(self, storage: DatabaseStorage) -> None:

@@ -394,36 +394,45 @@ class TestRestore:
         assert (await storage.stat(path=trash_path)).success is True
         await storage.close()
 
-    async def test_restore_onto_a_wrong_kind_occupant(self, tmp_path) -> None:
+    async def test_restore_onto_a_wrong_kind_occupant_is_exists(self, tmp_path) -> None:
+        # Existence outranks kind: no restore displaces, whatever squats.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         await storage.delete(path=Path("/a.txt"))
         await storage.mkdir(path=Path("/a.txt"))
-        result = await storage.restore(path=Path("/a.txt"), overwrite=True)
+        result = await storage.restore(path=Path("/a.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == VFSErrorKind.exists
         await storage.close()
 
-    async def test_restore_onto_a_nonempty_directory_occupant(self, tmp_path) -> None:
+    async def test_restore_onto_a_nonempty_directory_occupant_is_exists(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.mkdir(path=Path("/d"))
         await storage.delete(path=Path("/d"))
         await storage.mkdir(path=Path("/d"))
         await storage.write(entries=[Entry(path=Path("/d/new.txt"), content="x")])
-        result = await storage.restore(path=Path("/d"), overwrite=True)
+        result = await storage.restore(path=Path("/d"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_empty
+        assert result.errors[0].kind == VFSErrorKind.exists
         await storage.close()
 
-    async def test_restore_overwrites_an_empty_directory_occupant(self, tmp_path) -> None:
+    async def test_restore_onto_an_empty_directory_occupant_is_exists(self, tmp_path) -> None:
+        # Even an empty occupant holds the site; the trashed tree waits
+        # intact until the caller deletes the squatter and restores it by
+        # its exact trash-side address (the newest row is the squatter's).
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.mkdir(path=Path("/d"))
         await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="kept")])
-        await storage.delete(path=Path("/d"))
+        trashed = (await storage.delete(path=Path("/d"))).observations[0].trash_path
+        assert trashed is not None
         await storage.mkdir(path=Path("/d"))
-        result = await storage.restore(path=Path("/d"), overwrite=True)
+        result = await storage.restore(path=trashed)
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.exists
+        assert (await storage.delete(path=Path("/d"))).success is True
+        result = await storage.restore(path=trashed)
         assert result.success is True
-        assert result.observations[0].status == "updated"
+        assert result.observations[0].status == "created"
         assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "kept"
         await storage.close()
 

@@ -134,7 +134,7 @@ async def test_move_same_terminal_dispatches_localized_pair() -> None:
     result = await root.move(src="/m/a.txt", dest="/m/b.txt")
     assert result.success is True
     assert child.calls == [
-        ("move", {"operations": [ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], "overwrite": True}),
+        ("move", {"operations": [ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))]}),
     ]
 
 
@@ -182,7 +182,7 @@ async def test_copy_gates_dest_only() -> None:
     result = await root.copy(src="/m/frozen/a.txt", dest="/m/b.txt")
     assert result.success is True  # read-only source is fine for copy
     assert child.calls == [
-        ("copy", {"operations": [ResolvedPair(src=Path("/frozen/a.txt"), dest=Path("/b.txt"))], "overwrite": True}),
+        ("copy", {"operations": [ResolvedPair(src=Path("/frozen/a.txt"), dest=Path("/b.txt"))]}),
     ]
 
 
@@ -325,7 +325,7 @@ async def test_copy_from_bind_site_is_not_busy() -> None:
     result = await root.copy(src="/a", dest="/a/backup")
     assert result.success is True
     assert a.calls == [
-        ("copy", {"operations": [ResolvedPair(src=Path("/"), dest=Path("/backup"))], "overwrite": True}),
+        ("copy", {"operations": [ResolvedPair(src=Path("/"), dest=Path("/backup"))]}),
     ]
 
 

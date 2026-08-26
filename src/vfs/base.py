@@ -889,24 +889,22 @@ class VirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        overwrite: bool = False,
         user_id: str | None = None,
     ) -> Result:
         """Restore a trashed entry to its original site.
 
         *path* is either the entry's pre-delete path (the newest matching
         trash row wins) or its exact trash-side path — the address a
-        delete result reports. An occupied site classifies ``exists``
-        unless *overwrite*; a backend that keeps no trash classifies
-        ``unsupported``. Like delete, a live bind site at the address is
-        ``busy``.
+        delete result reports. An occupied site classifies ``exists`` —
+        no verb displaces an occupant; the caller deletes it (which
+        trashes it) and restores again. A backend that keeps no trash
+        classifies ``unsupported``. Like delete, a live bind site at the
+        address is ``busy``.
         """
-        refusal = self._gate_params(
-            "restore", path=path, observations=observations, overwrite=overwrite, user_id=user_id
-        )
+        refusal = self._gate_params("restore", path=path, observations=observations, user_id=user_id)
         if refusal is not None:
             return refusal
-        return await self._route_single("restore", path, observations, overwrite=overwrite, user_id=user_id)
+        return await self._route_single("restore", path, observations, user_id=user_id)
 
     async def sweep(
         self,
@@ -1021,13 +1019,12 @@ class VirtualFileSystem:
         dest: str | None = None,
         moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, overwrite=overwrite, user_id=user_id)
+        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, user_id=user_id)
         if refusal is not None:
             return refusal
-        return await self._route_pairs("move", src, dest, moves, overwrite=overwrite, user_id=user_id)
+        return await self._route_pairs("move", src, dest, moves, user_id=user_id)
 
     async def copy(
         self,
@@ -1035,13 +1032,12 @@ class VirtualFileSystem:
         dest: str | None = None,
         copies: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        refusal = self._gate_params("copy", src=src, dest=dest, copies=copies, overwrite=overwrite, user_id=user_id)
+        refusal = self._gate_params("copy", src=src, dest=dest, copies=copies, user_id=user_id)
         if refusal is not None:
             return refusal
-        return await self._route_pairs("copy", src, dest, copies, overwrite=overwrite, user_id=user_id)
+        return await self._route_pairs("copy", src, dest, copies, user_id=user_id)
 
     # -------------------------------------------------------------------
     # public methods — search
@@ -2174,7 +2170,6 @@ class VirtualFileSystem:
         dest: str | None,
         batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
         *,
-        overwrite: bool,
         user_id: str | None,
     ) -> Result:
         """Shared move/copy front: normalize the src/dest-or-batch input, then route.
@@ -2205,7 +2200,7 @@ class VirtualFileSystem:
                     op=op,
                 )
             operations.append(pair)
-        return await self._route_two_path(op, operations, overwrite=overwrite, user_id=user_id)
+        return await self._route_two_path(op, operations, user_id=user_id)
 
     async def _route_entry_batch(
         self,

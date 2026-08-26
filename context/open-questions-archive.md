@@ -117,7 +117,10 @@ resolve to this file.
   the transfer. ADR 027's contract sentence loses its exception
   rather than gaining a footnote. Owned by
   `specs/active/101-move-copy-drop-overwrite/`, which also audits
-  restore's own `overwrite` arm under the same law.
+  restore's own `overwrite` arm under the same law. **Landed
+  2026-08-25** (`specs/archive/101-move-copy-drop-overwrite/`): the
+  restore audit found its arm purged through the same `_execute_move`,
+  so restore's flag went too — three verbs, one law.
 
 ## Glob path-arm patterns do not cross the mount seam — namespace patterns or entry-local patterns?
 

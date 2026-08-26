@@ -142,7 +142,6 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "restore": (
         ParamSpec("path", "path", doc="the original path — or the exact trash-side path — of the row to restore"),
         _OBSERVATIONS,
-        ParamSpec("overwrite", "bool", nullable=False, default=False, doc="replace an occupant at the original site"),
         _USER,
     ),
     "sweep": (
@@ -171,14 +170,12 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("src", "path", doc="single form: source path"),
         ParamSpec("dest", "path", doc="single form: destination path"),
         ParamSpec("moves", "pairs", doc="batch form: (src, dest) pairs"),
-        ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an occupied destination file"),
         _USER,
     ),
     "copy": (
         ParamSpec("src", "path", doc="single form: source path"),
         ParamSpec("dest", "path", doc="single form: destination path"),
         ParamSpec("copies", "pairs", doc="batch form: (src, dest) pairs"),
-        ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an occupied destination file"),
         _USER,
     ),
     "glob": (

@@ -416,93 +416,88 @@ class StorageContract:
         assert result.errors[0].kind == VFSErrorKind.not_found
 
     @needs("write", "mkdir", "move")
-    async def test_move_cycle_classifies_before_the_occupied_destination(self, storage: ConformanceBackend) -> None:
-        # Destination is both occupied AND inside the source: the cycle
-        # refusal wins over occupied-target kind translation (the Linux
-        # rename ladder — trap checks precede vfs_rename's kind checks).
+    async def test_move_into_itself_is_invalid(self, storage: ConformanceBackend) -> None:
+        # An unoccupied destination inside the source: the cycle refusal
+        # (the Linux rename ladder's trap check), one ``invalid`` kind.
+        await storage.mkdir(path=Path("/a"))
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/inner"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+
+    @needs("write", "mkdir", "move")
+    async def test_move_onto_an_occupied_descendant_is_exists_before_the_cycle(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Destination both occupied AND inside the source: with no
+        # transfer replacing, RENAME_NOREPLACE's EEXIST precedes the trap
+        # check, exactly as do_renameat2 orders it before vfs_rename.
         await storage.mkdir(path=Path("/a"))
         await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/f.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == VFSErrorKind.exists
 
     @needs("write", "mkdir", "move")
-    async def test_move_onto_own_ancestor_is_the_same_cycle_kind(self, storage: ConformanceBackend) -> None:
-        # Both cycle directions collapse to one refusal kind: the target-
-        # ancestor-of-source direction must not surface as the occupied-
-        # target kind (Linux's EINVAL/ENOTEMPTY split deliberately not copied).
+    async def test_move_onto_own_ancestor_is_exists(self, storage: ConformanceBackend) -> None:
+        # An ancestor is an occupant before it is a cycle — it always
+        # exists — so this direction never reaches a cycle check.
         await storage.mkdir(path=Path("/a/b"), parents=True)
         result = await storage.move(operations=[ResolvedPair(src=Path("/a/b"), dest=Path("/a"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == VFSErrorKind.exists
 
     @needs("write", "mkdir", "move")
-    async def test_move_no_replace_occupied_destination_is_exists_before_kind(
-        self, storage: ConformanceBackend
-    ) -> None:
-        # Under no-replace, existence outranks kind translation — the
-        # RENAME_NOREPLACE EEXIST fires before any type check.
+    async def test_move_onto_an_occupied_destination_is_exists_before_kind(self, storage: ConformanceBackend) -> None:
+        # Existence outranks kind translation — no transfer replaces, so
+        # the RENAME_NOREPLACE EEXIST fires before any type check.
         await storage.mkdir(path=Path("/d"))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
-        onto_dir = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))], overwrite=False)
-        onto_file = await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/f.txt"))], overwrite=False)
+        onto_dir = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))])
+        onto_file = await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/f.txt"))])
         assert onto_dir.errors[0].kind == VFSErrorKind.exists
         assert onto_file.errors[0].kind == VFSErrorKind.exists
 
     @needs("write", "mkdir", "move", "stat")
-    async def test_move_dir_over_empty_dir_replaces_it(self, storage: ConformanceBackend) -> None:
-        # POSIX rename: an empty target directory is replaced.
+    async def test_move_dir_over_empty_dir_is_exists(self, storage: ConformanceBackend) -> None:
+        # POSIX rename would replace an empty target directory; vfs never
+        # displaces an occupant — the caller deletes it (trashing it) first.
         await storage.mkdir(path=Path("/src"))
         await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="x")])
         await storage.mkdir(path=Path("/empty"))
         result = await storage.move(operations=[ResolvedPair(src=Path("/src"), dest=Path("/empty"))])
-        assert result.success is True
-        assert (await storage.stat(path=Path("/empty/f.txt"))).success is True
-        assert (await storage.stat(path=Path("/src"))).success is False
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.exists
+        assert (await storage.stat(path=Path("/empty"))).success is True
+        assert (await storage.stat(path=Path("/src/f.txt"))).success is True
 
     @needs("write", "mkdir", "copy", "stat")
-    async def test_copy_dir_over_empty_dir_replaces_it(self, storage: ConformanceBackend) -> None:
+    async def test_copy_dir_over_empty_dir_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/src"))
         await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="x")])
         await storage.mkdir(path=Path("/empty"))
         result = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/empty"))])
-        assert result.success is True
-        assert (await storage.stat(path=Path("/empty/f.txt"))).success is True
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.exists
+        assert (await storage.stat(path=Path("/empty/f.txt"))).success is False
         assert (await storage.stat(path=Path("/src/f.txt"))).success is True
 
     @needs("write", "mkdir", "move", "stat")
-    async def test_move_dir_over_non_empty_dir_is_not_empty(self, storage: ConformanceBackend) -> None:
+    async def test_move_dir_over_non_empty_dir_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/src"))
         await storage.mkdir(path=Path("/dst"))
         await storage.write(entries=[Entry(path=Path("/dst/keep.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_empty
+        assert result.errors[0].kind == VFSErrorKind.exists
         assert (await storage.stat(path=Path("/dst/keep.txt"))).success is True
 
     @needs("write", "move")
-    async def test_move_file_over_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
+    async def test_move_file_over_file_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="b")])
-        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=False)
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.exists
-
-    @needs("write", "mkdir", "move")
-    async def test_move_a_directory_onto_an_occupied_site_is_wrong_kind(self, storage: ConformanceBackend) -> None:
-        await storage.mkdir(path=Path("/a"))
-        await storage.write(entries=[Entry(path=Path("/c.txt"), content="x")])
-        result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/c.txt"))])
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
-
-    @needs("write", "mkdir", "move")
-    async def test_move_a_file_onto_a_directory_is_wrong_kind(self, storage: ConformanceBackend) -> None:
-        await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
-        await storage.mkdir(path=Path("/d"))
-        result = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))])
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
 
     @needs("write", "mkdir", "move", "copy", "read")
     async def test_transfer_classifies_a_row_that_overflows_at_the_destination(
@@ -756,9 +751,9 @@ class StorageContract:
         await storage.mkdir(path=Path("/s2"))
         await storage.write(entries=[Entry(path=Path("/d/kid.txt"), content="x")], parents=True)
         pairs = [ResolvedPair(src=Path("/s1"), dest=Path("/d")), ResolvedPair(src=Path("/s2"), dest=Path("/d"))]
-        result = await storage.move(operations=pairs, overwrite=True)
+        result = await storage.move(operations=pairs)
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.not_empty] * 2
+        assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
         assert {e.data["target"] for e in result.errors if e.data} == {"/s1", "/s2"}
 
     @needs("move")
@@ -780,17 +775,34 @@ class StorageContract:
         assert result.errors[0].data == {"target": "/s"}
 
     @needs("write", "delete", "read")
-    async def test_restore_occupied_site_is_exists_until_overwrite(self, storage: ConformanceBackend) -> None:
+    async def test_restore_onto_an_occupied_site_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="old")])
         await storage.delete(path=Path("/a.txt"))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="squatter")])
         refused = await storage.restore(path=Path("/a.txt"))
         assert refused.success is False
         assert refused.errors[0].kind == VFSErrorKind.exists
-        replaced = await storage.restore(path=Path("/a.txt"), overwrite=True)
-        assert replaced.success is True
-        assert replaced.observations[0].status == "updated"
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "squatter"
+
+    @needs("write", "delete", "move", "read")
+    async def test_displacement_is_delete_then_transfer(self, storage: ConformanceBackend) -> None:
+        # No transfer replaces an occupant: the caller trashes it, moves
+        # onto the freed address, and the trashed row waits — restorable
+        # only once the address frees again. The trash arc owns displacement.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="old")])
+        await storage.write(entries=[Entry(path=Path("/b.txt"), content="incoming")])
+        refused = await storage.move(operations=[ResolvedPair(src=Path("/b.txt"), dest=Path("/a.txt"))])
+        assert refused.success is False
+        assert refused.errors[0].kind == VFSErrorKind.exists
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "old"
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        moved = await storage.move(operations=[ResolvedPair(src=Path("/b.txt"), dest=Path("/a.txt"))])
+        assert moved.success is True
+        assert moved.observations[0].status == "created"
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "incoming"
+        held = await storage.restore(path=Path("/a.txt"))
+        assert held.success is False
+        assert held.errors[0].kind == VFSErrorKind.exists
 
     async def test_restore_with_no_candidate_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.restore(path=Path("/ghost.txt"))
@@ -1054,18 +1066,12 @@ class StorageContract:
 
     @needs("write", "copy", "glob")
     async def test_copy_rederives_the_stored_ext_at_the_new_name(self, storage: ConformanceBackend) -> None:
-        # Both copy arms rename the root: the fresh-row arm and the
-        # overwrite arm that clobbers an occupant's material in place.
+        # The renamed root re-derives its stored ext from the new name.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         copied = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.png"))])
         assert copied.success is True
         fresh = await storage.glob(patterns=("*",), ext=("png",))
         assert [str(o.path) for o in fresh.observations] == ["/b.png"]
-        await storage.write(entries=[Entry(path=Path("/c.md"), content="y")])
-        clobber = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/c.md"))], overwrite=True)
-        assert clobber.success is True
-        clobbered = await storage.glob(patterns=("*",), ext=("md",))
-        assert [str(o.path) for o in clobbered.observations] == ["/c.md"]
 
     @needs("write", "mkdir", "copy", "glob")
     async def test_copy_keeps_interior_row_ext_under_a_renamed_root(self, storage: ConformanceBackend) -> None:
@@ -2097,29 +2103,27 @@ class StorageContract:
         assert result.errors[0].path == "/blocker.txt"
 
     @needs("write", "move", "read", "stat")
-    async def test_move_file_over_an_occupied_file_reports_updated(self, storage: ConformanceBackend) -> None:
+    async def test_move_file_over_an_occupied_file_touches_nothing(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta")])
-        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=True)
-        assert result.success is True
-        assert result.observations[0].status == "updated"
-        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "alpha"
-        assert (await storage.stat(path=Path("/a.txt"))).success is False
+        result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.exists
+        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "beta"
+        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "alpha"
 
     @needs("write", "copy", "read", "stat")
-    async def test_copy_file_over_an_occupied_file_updates_it_in_place(self, storage: ConformanceBackend) -> None:
-        # The occupant keeps its identity: a material update continuing
-        # its version line, never a fresh row at version 1.
+    async def test_copy_file_over_an_occupied_file_touches_nothing(self, storage: ConformanceBackend) -> None:
+        # The occupant keeps its identity, body, and revision — the copy
+        # refuses rather than clobbering material in place.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha")])
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta")])
         before = await _revision_of(storage, "/b.txt")
-        result = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))], overwrite=True)
-        assert result.success is True
-        assert result.observations[0].status == "updated"
-        after = (await storage.stat(path=Path("/b.txt"))).observations[0]
-        assert after.version == before + 1
-        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "alpha"
-        assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "alpha"
+        result = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.exists
+        assert await _revision_of(storage, "/b.txt") == before
+        assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "beta"
 
     @needs("write", "read", "stat", "move", "copy", "delete")
     async def test_non_latin1_names_round_trip_through_every_verb(self, storage: ConformanceBackend) -> None:

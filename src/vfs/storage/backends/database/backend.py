@@ -362,7 +362,6 @@ class DatabaseStorage:
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        overwrite: bool = False,
         user_id: str | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
@@ -374,7 +373,6 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.membership_budget,
                 targets=targets,
-                overwrite=overwrite,
                 user_id=user_id,
                 lock_key=self._host.topology_key,
             ),
@@ -427,19 +425,17 @@ class DatabaseStorage:
         self,
         *,
         operations: list[ResolvedPair],
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        return await self._execute_transfer("move", operations, overwrite=overwrite, user_id=user_id)
+        return await self._execute_transfer("move", operations, user_id=user_id)
 
     async def copy(
         self,
         *,
         operations: list[ResolvedPair],
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result:
-        return await self._execute_transfer("copy", operations, overwrite=overwrite, user_id=user_id)
+        return await self._execute_transfer("copy", operations, user_id=user_id)
 
     async def mkedge(
         self,
@@ -631,7 +627,7 @@ class DatabaseStorage:
         return await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
 
     async def _execute_transfer(
-        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, overwrite: bool, user_id: str | None
+        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, user_id: str | None
     ) -> Result:
         return await self._execute_topology(
             op,
@@ -643,7 +639,6 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 op=op,
                 operations=operations,
-                overwrite=overwrite,
                 user_id=user_id,
                 lock_key=self._host.topology_key,
             ),

@@ -189,7 +189,6 @@ class SupportsMutation(Protocol):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        overwrite: bool = False,
         user_id: str | None = None,
     ) -> Result: ...
 
@@ -213,7 +212,6 @@ class SupportsMutation(Protocol):
         self,
         *,
         operations: list[ResolvedPair],
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result: ...
 
@@ -221,7 +219,6 @@ class SupportsMutation(Protocol):
         self,
         *,
         operations: list[ResolvedPair],
-        overwrite: bool = True,
         user_id: str | None = None,
     ) -> Result: ...
 

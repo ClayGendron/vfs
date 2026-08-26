@@ -1,6 +1,25 @@
 # 101 — Move/copy drop `overwrite`: no agent surface destroys, ever
 
-- **Status: draft 2026-08-14** — born from the open-questions entry
+- **Status: landed 2026-08-25.**
+  Both slices in one landing: ``overwrite`` leaves ``move``, ``copy``,
+  **and ``restore``** — §3's audit found restore's occupant arm purged
+  through the same ``_execute_move`` fence, so it took the same law
+  (a finding, as the spec asked, not a fork). Router signatures and
+  ``ParamSpec`` rows, the seam, the backend, and both ``topology.py``
+  arms drop the flag; an occupied destination refuses ``exists``
+  unconditionally, which deletes the occupant-kind and emptiness
+  sub-ladder, the move fence and its purge, and copy's in-place
+  clobber. One consequence the spec did not foresee: a move onto an
+  ancestor is always an occupied destination (ancestors exist by
+  definition), so the ancestor direction of the cycle check became
+  unreachable and was deleted — the ladder is now exists → into-itself
+  cycle → byte overflow. Conformance rows flipped (no ``overwrite=True``
+  row survives as a skip), the displacement round-trip row landed,
+  and the grep proved sweep's ``_purge_subtree`` / orphan reclaim are
+  the only content-row DELETEs outside a write's own body replacement.
+  ADR 027 amended in place; the open-questions-archive entry closed.
+  Details in the landing note below.
+- **Status (original): draft 2026-08-14** — born from the open-questions entry
   "Move/copy overwrite destroys the occupant permanently — the last
   agent-reachable destruction", resolved by Clay in session
   2026-08-14: **the flag is removed entirely**, not softened. No open
@@ -98,3 +117,48 @@ POSIX rename-unlink parity is knowingly declined, the same divergence
 None — the decision is recorded in `../../open-questions-archive.md`
 (resolved 2026-08-14); §3's audit outcome is a finding to record, not
 a fork.
+
+## Landing note (2026-08-25)
+
+- **§3 audit outcome: restore's flag goes too.** `restore_rows` with
+  `overwrite=True` handed the occupant to `_execute_move`, whose
+  fence-and-purge arm hard-deleted it — the same destruction, one
+  verb over. Three verbs now share one sentence: an occupied site
+  refuses `exists`; displacement is `delete` (which trashes) then the
+  verb again. `restore` by exact trash-side path is how a caller
+  reaches a specific trashed row once the newest one is the squatter
+  (pinned in `test_trash.py`).
+- **The ancestor cycle branch died.** `src.startswith(dest + "/")`
+  could only fire when `dest` was an ancestor of `src` — a row that
+  always exists — and the exists check now precedes it, so the branch
+  was unreachable (the 100 % coverage gate would have said so). The
+  order is the Linux one: `do_renameat2`'s `RENAME_NOREPLACE` EEXIST
+  precedes `vfs_rename`'s trap check. Two conformance rows re-shaped:
+  into-itself with an unoccupied destination stays `invalid`; onto an
+  occupied descendant and onto an ancestor are `exists`.
+- **Rows deleted, not skipped:** the two overwrite-fence race rows in
+  `test_races.py` (the fence no longer exists; the class is now
+  `TestTransferCollision` around the surviving copy-collision row),
+  `test_overwrite_fence_redrives_when_the_occupant_was_bumped` and the
+  fence probe in the shared-executor row of `test_coherence.py`, and
+  the two `wrong_kind`-on-occupant rows that the exists-before-kind
+  row already covers.
+- **The DELETE grep.** Content-row DELETEs in `src/`: sweep's
+  `_purge_subtree` and `_reclaim_orphan_content` (developer plane),
+  and the write path's own body replacement (a content write, in
+  scope for the revision arc, not this spec). Chunk-row DELETEs are
+  derived-index maintenance. No agent-reachable verb destroys.
+- **Observation status:** transfers and restores now only report
+  `created` (or `unchanged` for rename-to-self); `_PendingTransfer`'s
+  status type narrowed to match.
+- **Engine-leg finding:** `test_copy_child_collision_redrives_to_the_
+  honest_refusal` (real engines only) pre-created `/dest` and expected
+  `not_empty` after the redrive — under the new law the copy refused
+  `exists` before the seam ever fired. Re-shaped to keep its intent:
+  `/dest` absent, the rival mints it and a child with `parents=True`
+  mid-window, the unique violation redrives, and the fresh ladder
+  refuses `exists` at the root the rival took, with no driver text
+  leaking. Green on all four engines.
+- **Gates:** `ci.sh 3.13` at 100 % coverage (2,685 passed / 863
+  skipped; pure leg 2,671); Postgres 209, MySQL 211, MSSQL 211,
+  Oracle 208 (capability skips only).

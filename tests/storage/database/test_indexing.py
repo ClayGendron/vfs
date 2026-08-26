@@ -334,24 +334,21 @@ class TestFlagAlgebra:
         assert [str(o.path) for o in found.observations] == [str(trash_path)]
         await storage.close()
 
-    async def test_copy_overwrite_demotes_the_occupant_at_the_claim(self, tmp_path) -> None:
-        # A copy onto an occupant replaces its body — a coverage exit.
-        # Without the demote the occupant stays nominated by dead grams
-        # and its fresh body is permanently invisible to both tiers.
+    async def test_copy_onto_an_occupant_leaves_its_coverage_intact(self, tmp_path) -> None:
+        # No copy replaces a body: the occupant keeps its flags and grams,
+        # and the refused copy changes nothing either tier serves.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/src.txt"), content="alpha needle")])
         await storage.write(entries=[Entry(path=Path("/dst.txt"), content="bravo body")])
         assert (await storage.reindex()).success is True
         pair = ResolvedPair(Path("/src.txt"), Path("/dst.txt"))
-        assert (await storage.copy(operations=[pair], overwrite=True)).success is True
-        assert await _flags(storage, "/dst.txt") == (False, False)
-        found = await storage.grep(pattern="alpha")
-        assert sorted(str(o.path) for o in found.observations) == ["/dst.txt", "/src.txt"]
-        assert (await storage.reindex()).success is True  # and the next build re-covers
+        refused = await storage.copy(operations=[pair])
+        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
         assert await _flags(storage, "/dst.txt") == (True, True)
         found = await storage.grep(pattern="alpha")
-        assert sorted(str(o.path) for o in found.observations) == ["/dst.txt", "/src.txt"]
-        assert (await storage.grep(pattern="bravo")).observations == []
+        assert sorted(str(o.path) for o in found.observations) == ["/src.txt"]
+        found = await storage.grep(pattern="bravo")
+        assert sorted(str(o.path) for o in found.observations) == ["/dst.txt"]
         await storage.close()
 
     async def test_a_write_racing_the_publish_window_stays_scan_side(self, tmp_path) -> None:

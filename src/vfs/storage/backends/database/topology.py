@@ -89,7 +89,7 @@ from ulid import ULID
 
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified, wrong_kind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
     classify_miss,
@@ -140,7 +140,7 @@ class _PendingTransfer(NamedTuple):
     """
 
     dest: Path
-    status: Literal["created", "updated", "unchanged"]
+    status: Literal["created", "unchanged"]
     kind: ObjectKind
     version: int
     size_bytes: int
@@ -271,7 +271,6 @@ async def restore_rows(
     membership_budget: int,
     *,
     targets: list[Path],
-    overwrite: bool,
     user_id: str | None,
     lock_key: int,
 ) -> Result:
@@ -282,9 +281,10 @@ async def restore_rows(
     targets. The per-target ladder: address resolution and metadata
     gate, original-parent gate (fail-and-keep — a refused row stays in
     trash with its metadata intact, since a failed batch never
-    commits), no-replace ``exists``, occupant kind and emptiness, then
-    byte-budget overflow — no statement runs for a target until every
-    check passes. *user_id* is accepted for signature parity; a restore
+    commits), an occupied site refuses ``exists`` (no verb displaces an
+    occupant — the caller deletes it, restorably, and restores again),
+    then byte-budget overflow — no statement runs for a target until
+    every check passes. *user_id* is accepted for signature parity; a restore
     changes no ownership.
     """
     del user_id
@@ -299,17 +299,9 @@ async def restore_rows(
             errors.append(resolved)
             continue
         row, dest_parent_id, dest = resolved
-        occupant = await _point_row(session, entry, str(dest))
-        if occupant is not None and not overwrite:
+        if await _point_row(session, entry, str(dest)) is not None:
             errors.append(already_exists(dest, target=target))
             continue
-        if occupant is not None:
-            if (row["kind"] == "directory") != (occupant["kind"] == "directory"):
-                errors.append(wrong_kind(occupant["kind"], dest, target=target))
-                continue
-            if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
-                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=target))
-                continue
         subtree = await _fetch_subtree(session, tables, profile, row["path"])
         new_paths = (str(dest) + r["path"][len(row["path"]) :] for r in subtree)
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths):
@@ -320,13 +312,12 @@ async def restore_rows(
         # rival write landing here loses honestly at the claim.
         await seam("restore:post-resolve")
         error = await _execute_move(
-            session, tables, profile, membership_budget, row, dest, dest_parent_id, occupant, now, op="restore"
+            session, tables, profile, membership_budget, row, dest, dest_parent_id, now, op="restore"
         )
         if error is not None:
             errors.append(error)
             continue
-        status: Literal["created", "updated"] = "updated" if occupant is not None else "created"
-        pending.append(_PendingTransfer(dest, status, row["kind"], row["version"] + 1, row["size_bytes"]))
+        pending.append(_PendingTransfer(dest, "created", row["kind"], row["version"] + 1, row["size_bytes"]))
     if errors:
         return Result(ops=("restore",), errors=errors)
     finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
@@ -419,7 +410,6 @@ async def transfer_rows(
     *,
     op: Literal["move", "copy"],
     operations: list[ResolvedPair],
-    overwrite: bool,
     user_id: str | None,
     lock_key: int,
 ) -> Result:
@@ -431,10 +421,13 @@ async def transfer_rows(
     reads live state inside the serialized transaction, so later pairs
     see earlier pairs' effects. The per-pair ladder runs in the order
     the conformance suite pins: overlap, source miss, root, rename-to-self,
-    destination parent gate, no-replace ``exists`` before the cycle
-    checks, cycle in both directions as one ``invalid`` kind, occupant
-    kind, occupant emptiness, then destination byte-overflow — no
-    statement runs for a pair until every check has passed.
+    destination parent gate, an occupied destination refuses ``exists``
+    before the cycle check (no transfer replaces an occupant —
+    displacement is the caller's delete, which trashes, then the
+    transfer again; an ancestor is an occupant before it is a cycle),
+    the into-itself cycle as ``invalid``, then destination
+    byte-overflow — no statement runs for a pair until
+    every check has passed.
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
@@ -469,25 +462,14 @@ async def transfer_rows(
         if isinstance(dest_parent_id, ResultError):
             errors.append(dest_parent_id)
             continue
-        # The rename ladder: no-replace exists first, cycle next (one
-        # kind, both directions), then kind, then emptiness — last.
-        occupant = await _point_row(session, entry, str(dest))
-        if occupant is not None and not overwrite:
+        # The rename ladder: exists first (an ancestor destination always
+        # exists), then the into-itself cycle — no arm replaces an occupant.
+        if await _point_row(session, entry, str(dest)) is not None:
             errors.append(already_exists(dest, target=src))
             continue
         if dest.startswith(src + "/"):
             errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
             continue
-        if src.startswith(dest + "/"):
-            errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} onto its own ancestor: {dest}"))
-            continue
-        if occupant is not None:
-            if (src_row["kind"] == "directory") != (occupant["kind"] == "directory"):
-                errors.append(wrong_kind(occupant["kind"], dest, target=src))
-                continue
-            if occupant["kind"] == "directory" and await _has_live_children(session, entry, occupant["entry_id"]):
-                errors.append(classified(VFSErrorKind.not_empty, f"Directory not empty: {dest}", dest, target=src))
-                continue
         subtree = await _fetch_subtree(session, tables, profile, str(src), with_content=op == "copy")
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
@@ -499,14 +481,14 @@ async def transfer_rows(
         await seam("transfer:post-collect")
         if op == "move":
             error = await _execute_move(
-                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, occupant, now, op=op
+                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, now, op=op
             )
             if error is not None:
                 errors.append(error)
                 continue
             version = src_row["version"] + 1
         else:
-            version = await _execute_copy(
+            await _execute_copy(
                 session,
                 tables,
                 parameter_budget,
@@ -514,13 +496,12 @@ async def transfer_rows(
                 src_row=src_row,
                 dest=dest,
                 dest_parent_id=dest_parent_id,
-                occupant=occupant,
                 new_paths=new_paths,
                 user_id=user_id,
                 now=now,
             )
-        status: Literal["created", "updated"] = "updated" if occupant is not None else "created"
-        pending.append(_PendingTransfer(dest, status, src_row["kind"], version, src_row["size_bytes"]))
+            version = 1
+        pending.append(_PendingTransfer(dest, "created", src_row["kind"], version, src_row["size_bytes"]))
     if errors:
         return Result(ops=(op,), errors=errors)
     finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
@@ -1056,42 +1037,23 @@ async def _execute_move(
     src_row: RowMapping,
     dest: Path,
     dest_parent_id: str,
-    occupant: RowMapping | None,
     now: datetime,
     *,
     op: str,
 ) -> ResultError | None:
     """Reparent the root, rewrite descendants, bump both parents.
 
-    An occupant — an empty directory or a file, everything else was
-    refused — is hard-deleted first: POSIX rename unlinks the target,
-    no trash hop. The destroy is fenced by a guarded no-op on the
-    occupant's version at the ladder's probe: a rival's committed child
-    bumps the occupant and flips the guard, so the redriven ladder
-    refuses ``not_empty`` instead of purging a row this pair never
-    judged. The root claim is guarded on the version read this pair
-    (a rival write bumping the source mid-window flips it), and clears
-    the restore columns unconditionally: a move out of trash is the
-    restore gesture, and a live row must not carry trash metadata. A
-    unique violation on the claim — a rival write took the destination
-    address after this pair's occupant probe — redrives too: the fresh
-    ladder returns the honest per-pair refusal, never a classification
-    off mid-race state.
+    The destination was probed empty by the ladder; nothing is ever
+    unlinked here — no transfer destroys. The root claim is guarded on
+    the version read this pair (a rival write bumping the source
+    mid-window flips it), and clears the restore columns
+    unconditionally: a move out of trash is the restore gesture, and a
+    live row must not carry trash metadata. A unique violation on the
+    claim — a rival write took the destination address after this
+    pair's occupant probe — redrives: the fresh ladder returns the
+    honest per-pair refusal, never a classification off mid-race state.
     """
     entry = tables.entry
-    if occupant is not None:
-        # Lock-and-prove: X-locks the occupant row without changing it, so
-        # nothing new can commit beneath it before the purge lands.
-        fence = (
-            update(entry)
-            .where(entry.c.entry_id == occupant["entry_id"], entry.c.version == occupant["version"])
-            .values(version=entry.c.version)
-        )
-        miss = f"a rival write reached {dest} after this {op}'s emptiness check"
-        refused = await _claim(session, profile, fence, entry.c.entry_id, miss=miss)
-        if refused is not None:
-            return refused
-        await _purge_subtree(session, tables, profile, membership_budget, str(dest))
     stmt = (
         update(entry)
         .where(entry.c.entry_id == src_row["entry_id"], entry.c.version == src_row["version"])
@@ -1135,58 +1097,27 @@ async def _execute_copy(
     src_row: RowMapping,
     dest: Path,
     dest_parent_id: str,
-    occupant: RowMapping | None,
     new_paths: dict[str, str],
     user_id: str | None,
     now: datetime,
-) -> int:
-    """Mint the copied tree; the returned version is the root's fallback value.
+) -> None:
+    """Mint the copied tree under a probed-empty destination.
 
-    Fresh rows take new ULIDs at version 1, ownership follows the
-    writer, and neither ``external_id`` nor any edge row is copied. An
-    overwritten occupant keeps its identity — a material update with an
-    SQL-side increment — so rows referencing it stay wired; the update
-    resets ``chunked``/``encoded`` like any content write, because the
-    occupant's new body exits its old index coverage. A rival
-    child committed under the destination mid-window merges rather than
-    refusing: the outcome equals the legal serial history copy-then-
-    write, and a copy destroys nothing, so the overwrite fence's
-    destruction guard has nothing to protect here. Metadata
-    and bodies both come from the caller's single content-joined
-    subtree read, so the stamped ``content_hash``/``size_bytes`` and
-    the copied body cannot straddle a rival's commit. A unique
-    violation on the inserts — a rival write took an address under the
-    destination after the occupant probe — redrives the verb: the
-    fresh ladder returns the honest per-pair refusal at the address
-    the race actually reached.
+    Every row is fresh: new ULIDs at version 1, ownership follows the
+    writer, and neither ``external_id`` nor any edge row is copied. A
+    rival child committed under the destination mid-window merges
+    rather than refusing: the outcome equals the legal serial history
+    copy-then-write, and a copy destroys nothing. Metadata and bodies
+    both come from the caller's single content-joined subtree read, so
+    the stamped ``content_hash``/``size_bytes`` and the copied body
+    cannot straddle a rival's commit. A unique violation on the inserts
+    — a rival write took an address under the destination after the
+    occupant probe — redrives the verb: the fresh ladder returns the
+    honest per-pair refusal at the address the race actually reached.
     """
     entry = tables.entry
     root_id = src_row["entry_id"]
     id_map = {row["entry_id"]: str(ULID()) for row in subtree}
-    if occupant is not None:
-        # The point-read src_row lacks material columns; the subtree row has them.
-        root = next(row for row in subtree if row["entry_id"] == root_id)
-        id_map[root_id] = occupant["entry_id"]
-        await session.execute(
-            update(entry)
-            .where(entry.c.entry_id == occupant["entry_id"])
-            .values(
-                kind=root["kind"],
-                content_hash=root["content_hash"],
-                mime_type=root["mime_type"],
-                ext=dest.ext,
-                lines=root["lines"],
-                size_bytes=root["size_bytes"],
-                chunked=False,
-                encoded=False,
-                indexable=False,
-                owner_id=user_id,
-                updated_at=now,
-                version=entry.c.version + 1,
-            )
-        )
-        await session.execute(delete(tables.content).where(tables.content.c.entry_id == occupant["entry_id"]))
-    fresh = [row for row in subtree if occupant is None or row["entry_id"] != root_id]
     values = [
         {
             "entry_id": id_map[row["entry_id"]],
@@ -1204,19 +1135,16 @@ async def _execute_copy(
             "created_at": now,
             "updated_at": now,
         }
-        for row in fresh
+        for row in subtree
     ]
-    if values:
-        for chunk in chunked(values, rows_per_statement(parameter_budget, values)):
-            try:
-                async with session.begin_nested():
-                    await session.execute(insert(entry), list(chunk))
-            except IntegrityError as exc:
-                raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
-        # Fresh copies get their postings; an overwritten occupant kept
-        # its path, so its postings already hold.
-        copied = [(id_map[row["entry_id"]], new_paths[row["entry_id"]]) for row in fresh]
-        await insert_postings(session, tables.segments, copied)
+    for chunk in chunked(values, rows_per_statement(parameter_budget, values)):
+        try:
+            async with session.begin_nested():
+                await session.execute(insert(entry), list(chunk))
+        except IntegrityError as exc:
+            raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
+    copied = [(id_map[row["entry_id"]], new_paths[row["entry_id"]]) for row in subtree]
+    await insert_postings(session, tables.segments, copied)
     bodies = [
         {"entry_id": id_map[row["entry_id"]], "created_at": now, "content": row["content"]}
         for row in subtree
@@ -1224,10 +1152,7 @@ async def _execute_copy(
     ]
     if bodies:
         await session.execute(insert(tables.content), bodies)
-    if occupant is None:
-        await _bump(session, entry, dest_parent_id)
-        return 1
-    return occupant["version"] + 1
+    await _bump(session, entry, dest_parent_id)
 
 
 async def _final_rows(

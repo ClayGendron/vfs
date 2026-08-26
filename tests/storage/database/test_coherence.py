@@ -261,7 +261,6 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
-                    overwrite=False,
                     user_id=None,
                     lock_key=host.topology_key,
                 )
@@ -327,7 +326,6 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
-                    overwrite=False,
                     user_id=None,
                     lock_key=host.topology_key,
                 )
@@ -370,7 +368,6 @@ class TestWriteVsTopologyCoherence:
                     host.profile,
                     host.membership_budget,
                     targets=[Path("/d/f.txt")],
-                    overwrite=False,
                     user_id=None,
                     lock_key=host.topology_key,
                 )
@@ -567,7 +564,6 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
-                    overwrite=False,
                     user_id=None,
                     lock_key=host.topology_key,
                 )
@@ -609,7 +605,6 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
-                    overwrite=False,
                     user_id=None,
                     lock_key=host.topology_key,
                 )
@@ -901,11 +896,6 @@ class TestWriteVsTopologyCoherence:
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/c.txt"))])
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
-        # The overwrite fence on a directory occupant needs a directory
-        # source; the refusal fires at the fence, before any purge.
-        result = await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/b"))], overwrite=True)
-        assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
         # The restore claim, through the shared executor.
         result = await storage.restore(path=Path("/t.txt"))
         assert result.success is False
@@ -996,36 +986,6 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
-                    user_id=None,
-                    lock_key=host.topology_key,
-                )
-            await session.rollback()
-        await storage.close()
-
-    async def test_overwrite_fence_redrives_when_the_occupant_was_bumped(self, tmp_path) -> None:
-        # The silent-destruction window: a rival's committed child bumps
-        # the occupant after the emptiness check — the fence must flip.
-        storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.mkdir(path=Path("/a"))
-        await storage.mkdir(path=Path("/b"))
-        host = storage._host
-        entry = host.tables.entry
-        async with host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
-
-            async def rival() -> None:
-                await session.execute(update(entry).where(entry.c.path == "/b").values(version=entry.c.version + 1))
-
-            with installed("transfer:post-collect", rival), pytest.raises(StaleSnapshot):
-                await transfer_rows(
-                    session,
-                    host.tables,
-                    host.profile,
-                    host.parameter_budget,
-                    host.membership_budget,
-                    op="move",
-                    operations=[ResolvedPair(src=Path("/a"), dest=Path("/b"))],
-                    overwrite=True,
                     user_id=None,
                     lock_key=host.topology_key,
                 )

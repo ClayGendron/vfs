@@ -76,8 +76,8 @@ All client methods return `VFSResult` on success. The async and sync facades exp
 | `stat(path=None, candidates=None, *, user_id=None)` | Metadata lookup for one path. |
 | `mkdir(path, *, user_id=None)` | Create a directory path. |
 | `mkedge(source, target, edge_type, *, user_id=None)` | Create a canonical outgoing edge row. |
-| `move(src=None, dest=None, moves=None, overwrite=True, *, user_id=None)` | Move one path or a batch of pairs. |
-| `copy(src=None, dest=None, copies=None, overwrite=True, *, user_id=None)` | Copy one path or a batch of pairs. |
+| `move(src=None, dest=None, moves=None, *, user_id=None)` | Move one path or a batch of pairs; an occupied destination refuses `exists`. |
+| `copy(src=None, dest=None, copies=None, *, user_id=None)` | Copy one path or a batch of pairs; an occupied destination refuses `exists`. |
 | `ls(path=None, candidates=None, *, user_id=None)` | Non-recursive listing. |
 | `tree(path, max_depth=None, *, user_id=None)` | Recursive listing. |
 
