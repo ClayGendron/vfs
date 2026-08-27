@@ -61,6 +61,18 @@ async def test_mount_placement_is_invisible_to_grep(kwargs: dict[str, Any]) -> N
     assert sorted(plain.paths) == sorted(mounted.paths)
 
 
+async def test_a_scoped_call_carries_only_its_own_op_and_renders_natively() -> None:
+    # The scope-root probe is a stat on the router's behalf, not a verb of
+    # its own: a scoped grep still says ``grep`` and prints rg-style lines.
+    fs = await _mounted_world()
+    scoped = await fs.grep("needle", paths=("/data",))
+    assert scoped.ops == ("grep",) and scoped.op == "grep"
+    assert scoped.to_str() == "/data/a.txt:1:needle a\n/data/deep/b.py:1:needle b"
+    found = await fs.glob("**/*.txt", paths=("/data",))
+    assert found.ops == ("glob",) and found.to_str() == "/data/a.txt"
+    await fs.close()
+
+
 async def test_scoped_grep_reaches_across_the_seam() -> None:
     fs = await _mounted_world()
     result = await fs.grep("needle", paths=("/data",))

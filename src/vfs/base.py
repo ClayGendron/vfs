@@ -2064,9 +2064,9 @@ class VirtualFileSystem:
         probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
         result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, user_id=user_id)
         kept = [row for row in result.observations if keep(row)]
-        if len(kept) == len(result.observations):
-            return result
-        return result.model_copy(update={"observations": kept})
+        # The probe answers for the caller's verb, not as a verb of its own:
+        # an op-less envelope merges without leaking ``stat`` into the result.
+        return result.model_copy(update={"ops": (), "observations": kept})
 
     @staticmethod
     def _residual_renders(pattern: str, bind_path: Path) -> list[str]:
