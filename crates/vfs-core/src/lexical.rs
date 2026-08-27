@@ -48,6 +48,8 @@ pub const CLASS_ASSIGNED: u8 = 16;
 pub enum LexicalError {
     NonIncreasingDocId { doc_id: i64, last: i64 },
     Sealed,
+    TruncatedSummary,
+    NonMonotoneSummary,
 }
 
 impl std::fmt::Display for LexicalError {
@@ -57,6 +59,8 @@ impl std::fmt::Display for LexicalError {
                 write!(f, "doc ids must be strictly increasing and positive; got {doc_id} after {last}")
             }
             Self::Sealed => write!(f, "statistics are fixed; create a fresh builder"),
+            Self::TruncatedSummary => write!(f, "truncated summary blob"),
+            Self::NonMonotoneSummary => write!(f, "summary first ids not monotone"),
         }
     }
 }
@@ -248,6 +252,78 @@ fn decode_ids(blob: &[u8], scratch: &mut Vec<u64>, out: &mut Vec<i64>) {
         id = id.wrapping_add(delta as i64);
         out.push(id);
     }
+}
+
+/// The inverse of the builder's summary encoding: per block, the varint
+/// delta of its first id and its maximum weight as a little-endian f64.
+/// Refuses a blob that ends mid-block or whose first ids do not climb.
+pub fn decode_summary(blob: &[u8]) -> Result<(Vec<i64>, Vec<f64>), LexicalError> {
+    let mut firsts = Vec::new();
+    let mut maxes = Vec::new();
+    let mut position = 0usize;
+    let mut first: i64 = 0;
+    while position < blob.len() {
+        let mut delta: u64 = 0;
+        let mut shift = 0u32;
+        loop {
+            let Some(&byte) = blob.get(position) else {
+                return Err(LexicalError::TruncatedSummary);
+            };
+            position += 1;
+            delta |= u64::from(byte & 0x7F) << shift.min(63);
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+        }
+        let Some(raw) = blob.get(position..position + 8) else {
+            return Err(LexicalError::TruncatedSummary);
+        };
+        position += 8;
+        let next = first.wrapping_add(delta as i64);
+        if !firsts.is_empty() && next <= first {
+            return Err(LexicalError::NonMonotoneSummary);
+        }
+        first = next;
+        firsts.push(first);
+        maxes.push(f64::from_le_bytes(raw.try_into().expect("8 bytes")));
+    }
+    Ok((firsts, maxes))
+}
+
+/// The block numbers of a term that can still change a top-k.
+///
+/// A block competes when its maximum (plus `rest`, the summed maxima of
+/// the other terms not yet fetched) clears `theta` on its own, or when
+/// the best-scored candidate inside its id range would cross `theta`
+/// with that lift. `candidates` is sorted, `scores` aligned with it; a
+/// candidate before the first block lies in no block.
+pub fn competing_blocks(
+    first_ids: &[i64],
+    max_weights: &[f64],
+    candidates: &[i64],
+    scores: &[f64],
+    theta: f64,
+    rest: f64,
+) -> Vec<usize> {
+    let mut best = vec![f64::NEG_INFINITY; first_ids.len()];
+    if !first_ids.is_empty() {
+        for (&candidate, &score) in candidates.iter().zip(scores) {
+            // The block whose first id is the last one <= candidate.
+            let index = first_ids.partition_point(|&first| first <= candidate);
+            if index > 0 {
+                let slot = &mut best[index - 1];
+                *slot = slot.max(score);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (block, (&max, &lift)) in max_weights.iter().zip(&best).enumerate() {
+        if max + rest >= theta || lift + max + rest >= theta {
+            out.push(block);
+        }
+    }
+    out
 }
 
 pub fn idf(df: u64, n_docs: u64) -> f64 {
@@ -665,5 +741,45 @@ mod tests {
         let only = score(&blocks, &idfs, drained.avg_dl, 10, Some(&[3, 4]));
         assert_eq!(only.iter().map(|r| r.0).collect::<Vec<_>>(), [3]);
         assert_eq!(score(&blocks, &idfs, drained.avg_dl, 0, None), vec![]);
+    }
+
+    #[test]
+    fn summary_round_trips_and_refuses_torn_blobs() {
+        let mut blob = Vec::new();
+        let firsts = [1i64, 129, 5000, 1 << 40];
+        let maxes = [1.5f64, 0.25, 3.0, 1e-9];
+        let mut previous = 0i64;
+        for (&first, &weight) in firsts.iter().zip(&maxes) {
+            append_varint(&mut blob, (first - previous) as u64);
+            blob.extend_from_slice(&weight.to_le_bytes());
+            previous = first;
+        }
+        assert_eq!(decode_summary(&blob).unwrap(), (firsts.to_vec(), maxes.to_vec()));
+        assert_eq!(decode_summary(&[]).unwrap(), (vec![], vec![]));
+        assert_eq!(decode_summary(&blob[..blob.len() - 1]).unwrap_err(), LexicalError::TruncatedSummary);
+        assert_eq!(decode_summary(&[0x81]).unwrap_err(), LexicalError::TruncatedSummary);
+        let mut flat = Vec::new();
+        append_varint(&mut flat, 5);
+        flat.extend_from_slice(&1.0f64.to_le_bytes());
+        append_varint(&mut flat, 0);
+        flat.extend_from_slice(&1.0f64.to_le_bytes());
+        assert_eq!(decode_summary(&flat).unwrap_err(), LexicalError::NonMonotoneSummary);
+    }
+
+    #[test]
+    fn competing_blocks_lift_by_the_best_candidate_inside() {
+        let firsts = [1i64, 129, 257, 385];
+        let maxes = [0.5f64, 2.0, 0.5, 0.5];
+        assert_eq!(competing_blocks(&firsts, &maxes, &[], &[], 0.0, 0.0), vec![0, 1, 2, 3]);
+        let candidates = [130i64, 300];
+        let scores = [0.1f64, 1.7];
+        assert_eq!(competing_blocks(&firsts, &maxes, &candidates, &scores, 2.1, 0.0), vec![1, 2]);
+        assert_eq!(competing_blocks(&firsts, &maxes, &candidates, &scores, 2.25, 0.0), Vec::<usize>::new());
+        assert_eq!(competing_blocks(&firsts, &maxes, &candidates, &scores, 2.25, 0.3), vec![1, 2]);
+        // A candidate before the first block lies in no block; one on a
+        // boundary belongs to the block it starts.
+        assert_eq!(competing_blocks(&[100], &[1.0], &[5], &[9.0], 5.0, 0.0), Vec::<usize>::new());
+        assert_eq!(competing_blocks(&[100], &[1.0], &[100], &[9.0], 5.0, 0.0), vec![0]);
+        assert_eq!(competing_blocks(&[], &[], &[1], &[1.0], 0.0, 0.0), Vec::<usize>::new());
     }
 }

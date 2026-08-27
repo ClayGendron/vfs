@@ -8,7 +8,9 @@
   before any code existed, and drifted from `standards/tooling.md`'s
   "3.12 minimum, 3.13 target". Annotates ADR 032 (the compile
   chokepoint's translation vehicle is now in-house; semantics
-  unchanged).
+  unchanged). **numpy coupling released 2026-08-27** (spec 142, ADR
+  057): numpy left the core dependencies, so holding it at 2.4.x no
+  longer constrains the 3.11 floor.
 - **Date:** 2026-08-11
 - **Deciders:** Clay Gendron
 - **Context source:** a teaching session on the grep/glob landing asked

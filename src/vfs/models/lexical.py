@@ -43,17 +43,14 @@ from __future__ import annotations
 
 import math
 import struct
+from array import array
 from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
-
-import numpy as np
 
 from vfs.models.postings import encode_postings
 from vfs.native import extension
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from numpy.typing import NDArray
 
 # Hand-bumped on any tokenizer change; enters the epoch's options hash so
 # a stored index is never read by a tokenizer that did not build it.
@@ -113,10 +110,15 @@ class ScoreBlock(NamedTuple):
 
 
 class BlockSummary(NamedTuple):
-    """A decoded summary: each block's first chunk id and true maximum weight."""
+    """A decoded summary: each block's first chunk id and true maximum weight.
 
-    first_ids: NDArray[np.int64]
-    max_weights: NDArray[np.float64]
+    Two packed ``array`` values (``'q'`` and ``'d'``, native byte order):
+    indexable and ``tolist()``-able here, and handed back to the engine
+    as their ``tobytes()`` without a conversion.
+    """
+
+    first_ids: array[int]
+    max_weights: array[float]
 
 
 # ---------------------------------------------------------------------------
@@ -179,26 +181,18 @@ def encode_summary(first_ids: Sequence[int], max_weights: Sequence[float]) -> by
 
 
 def decode_summary(blob: bytes) -> BlockSummary:
-    """The inverse of :func:`encode_summary`."""
-    firsts: list[int] = []
-    maxes: list[float] = []
-    position = 0
-    first = 0
-    while position < len(blob):
-        delta = 0
-        shift = 0
-        while True:
-            byte = blob[position]
-            position += 1
-            delta |= (byte & 0x7F) << shift
-            if not byte & 0x80:
-                break
-            shift += 7
-        first += delta
-        firsts.append(first)
-        maxes.append(_SUMMARY_MAX.unpack_from(blob, position)[0])
-        position += _SUMMARY_MAX.size
-    return BlockSummary(np.array(firsts, dtype=np.int64), np.array(maxes, dtype=np.float64))
+    """The inverse of :func:`encode_summary`, from the engine.
+
+    A torn blob (ending mid-block) or non-monotone first ids raise
+    ``ValueError`` — a summary row that fails its own layout is refused,
+    never partially served.
+    """
+    firsts, maxes = extension().decode_summary(blob)
+    first_ids = array("q")
+    first_ids.frombytes(firsts)
+    max_weights = array("d")
+    max_weights.frombytes(maxes)
+    return BlockSummary(first_ids, max_weights)
 
 
 # ---------------------------------------------------------------------------
@@ -241,49 +235,58 @@ def score_blocks(
     avg_dl: float,
     k: int,
     *,
-    candidates: NDArray[np.int64] | None = None,
+    candidates: Sequence[int] | None = None,
 ) -> list[tuple[int, float]]:
     """BM25 top-``k`` over fetched blocks as ``(chunk_id, score)``,
     ``score DESC, chunk_id ASC`` — from the engine.
 
     ``idfs`` is indexed by each block's ``term``; ``candidates``, when
-    given, is a sorted id array the ranking is restricted to. The engine
-    accumulates in a fixed order (terms by descending bound, then block
-    order, then posting order), so its sums are reproducible and the
-    oracle's match them.
+    given, is a sorted id sequence the ranking is restricted to. The
+    engine accumulates in a fixed order (terms by descending bound, then
+    block order, then posting order), so its sums are reproducible and
+    the oracle's match them.
     """
-    raw = None if candidates is None else np.ascontiguousarray(candidates, dtype=np.int64).tobytes()
+    raw = None if candidates is None else _packed("q", candidates)
     return extension().lexical_score(list(blocks), list(idfs), avg_dl, k, raw)
 
 
 def competing_blocks(
     summary: BlockSummary,
-    candidates: NDArray[np.int64],
-    scores: NDArray[np.float64],
+    candidates: Sequence[int],
+    scores: Sequence[float],
     theta: float,
     rest: float = 0.0,
-) -> NDArray[np.int64]:
-    """The block numbers of a term that can still change a top-k.
+) -> list[int]:
+    """The block numbers of a term that can still change a top-k — from the engine.
 
     A block competes when its maximum (plus ``rest``, the summed maxima
     of the other terms not yet fetched) clears ``theta`` — the current
     k-th score, ``0.0`` while fewer than k candidates exist — on its
     own, or when the best-scored candidate inside its id range would
-    cross ``theta`` with that lift. ``candidates`` is sorted; each lies
-    in at most one block, so the answer is bounded by their count.
+    cross ``theta`` with that lift. ``candidates`` is sorted with
+    ``scores`` aligned; each lies in at most one block, so the answer is
+    bounded by their count.
     """
-    maxes = summary.max_weights + rest
-    best = np.full(summary.first_ids.size, -np.inf)
-    if candidates.size and summary.first_ids.size:
-        index = np.searchsorted(summary.first_ids, candidates, side="right") - 1
-        inside = index >= 0
-        np.maximum.at(best, index[inside], scores[inside])
-    return np.flatnonzero((maxes >= theta) | (best + maxes >= theta)).astype(np.int64)
+    return extension().competing_blocks(
+        summary.first_ids.tobytes(),
+        summary.max_weights.tobytes(),
+        _packed("q", candidates),
+        _packed("d", scores),
+        theta,
+        rest,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _packed(code: str, values: Sequence[int] | Sequence[float]) -> bytes:
+    """*values* as native-endian bytes for the seam — no copy when already an ``array`` of *code*."""
+    if isinstance(values, array) and values.typecode == code:
+        return values.tobytes()
+    return array(code, values).tobytes()
 
 
 def _append_varint(out: bytearray, value: int) -> None:

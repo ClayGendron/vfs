@@ -12,6 +12,8 @@ block-max skipping, the slow shape that cannot be wrong.
 from __future__ import annotations
 
 import re
+import struct
+from bisect import bisect_right
 from typing import TYPE_CHECKING, Final
 
 from tests.support.oracles.postings import decode_postings, decode_varints
@@ -239,6 +241,55 @@ class PureLexicalBuilder:
                 self._block_cursor += 1
                 self._block_offset = 0
         return batch
+
+
+# ---------------------------------------------------------------------------
+# Summary decode and block selection
+# ---------------------------------------------------------------------------
+
+
+def decode_summary(blob: bytes) -> tuple[list[int], list[float]]:
+    """Per block, the varint delta of its first id and its maximum as ``<d``."""
+    firsts: list[int] = []
+    maxes: list[float] = []
+    position = 0
+    first = 0
+    while position < len(blob):
+        delta = 0
+        shift = 0
+        while True:
+            byte = blob[position]
+            position += 1
+            delta |= (byte & 0x7F) << shift
+            if not byte & 0x80:
+                break
+            shift += 7
+        first += delta
+        firsts.append(first)
+        maxes.append(struct.unpack_from("<d", blob, position)[0])
+        position += 8
+    return firsts, maxes
+
+
+def competing_blocks(
+    first_ids: Sequence[int],
+    max_weights: Sequence[float],
+    candidates: Sequence[int],
+    scores: Sequence[float],
+    theta: float,
+    rest: float = 0.0,
+) -> list[int]:
+    """A block competes when its max (+ rest) clears theta alone, or lifted by its best candidate."""
+    best = [float("-inf")] * len(first_ids)
+    for candidate, score in zip(candidates, scores, strict=True):
+        index = bisect_right(first_ids, candidate) - 1
+        if index >= 0:
+            best[index] = max(best[index], score)
+    return [
+        block
+        for block, (maximum, lift) in enumerate(zip(max_weights, best, strict=True))
+        if maximum + rest >= theta or lift + maximum + rest >= theta
+    ]
 
 
 # ---------------------------------------------------------------------------

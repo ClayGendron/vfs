@@ -372,7 +372,7 @@ class TestTermStatistics:
         assert stats.n_docs == 3 and stats.avg_dl > 0 and (stats.k1, stats.b) == (BM25_K1, BM25_B)
         rows = stats.terms["rows"]
         assert isinstance(rows, SummaryRow) and (rows.df, rows.idf) == (3, idf(3, 3))
-        assert rows.max_weight == decode_summary(rows.blocks).max_weights.max()
+        assert rows.max_weight == max(decode_summary(rows.blocks).max_weights)
         assert stats.terms["index"].df == 2
         assert "absent_term" not in stats.terms
         await storage.close()

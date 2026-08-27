@@ -19,7 +19,6 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-import numpy as np
 from sqlalchemy import select
 
 from tests.support.oracles.lexical import pure_score_blocks
@@ -182,7 +181,7 @@ async def assert_two_round_fidelity(storage: DatabaseStorage, count: int = 300) 
     skipped: dict[str, int] = {}
     for query in SPANNING_QUERIES:
         blocks, idfs, avg_dl, summaries = await fetch_query(storage, epoch, query)
-        assert any(summary.first_ids.size > HEAD_BLOCKS for _i, summary in summaries.values())
+        assert any(len(summary.first_ids) > HEAD_BLOCKS for _i, summary in summaries.values())
         for k in (10, 1000):
             whole = score_blocks(blocks, idfs, avg_dl, k)
             selected = _two_round(blocks, idfs, avg_dl, k, summaries)
@@ -207,17 +206,17 @@ def _two_round(blocks: list[ScoreBlock], idfs: list[float], avg_dl: float, k: in
     fetched = [b for term, bs in by_term.items() for b in bs[:HEAD_BLOCKS]]
     overflowing = sorted(
         (term for term, bs in by_term.items() if len(bs) > HEAD_BLOCKS),
-        key=lambda term: -float(summaries_of(summaries, term).max_weights.max()),
+        key=lambda term: -max(summaries_of(summaries, term).max_weights),
     )
     for position, term in enumerate(overflowing):
         ranked = score_blocks(fetched, idfs, avg_dl, k)
         theta = ranked[-1][1] if len(ranked) == k else 0.0
-        candidates = np.array(sorted(chunk for chunk, _ in score_blocks(fetched, idfs, avg_dl, 10**9)), dtype=np.int64)
+        candidates = sorted(chunk for chunk, _ in score_blocks(fetched, idfs, avg_dl, 10**9))
         scores = dict(score_blocks(fetched, idfs, avg_dl, 10**9))
-        rest = sum(float(summaries_of(summaries, other).max_weights.max()) for other in overflowing[position + 1 :])
-        tail = np.array([scores[c] for c in candidates.tolist()], dtype=np.float64)
+        rest = sum(max(summaries_of(summaries, other).max_weights) for other in overflowing[position + 1 :])
+        tail = [scores[c] for c in candidates]
         competing = competing_blocks(summaries_of(summaries, term), candidates, tail, theta, rest)
-        fetched += [by_term[term][no] for no in competing.tolist() if no >= HEAD_BLOCKS]
+        fetched += [by_term[term][no] for no in competing if no >= HEAD_BLOCKS]
     return fetched
 
 

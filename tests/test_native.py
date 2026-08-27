@@ -18,12 +18,21 @@ import sys
 import unicodedata
 from time import monotonic
 
-import numpy as np
 import pytest
 
 from tests.support.lexical_fidelity import CORPUS, QUERIES
 from tests.support.oracles.grams import distinct_gram_count as oracle_gram_count
-from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
+from tests.support.oracles.lexical import (
+    PureLexicalBuilder,
+    pure_score_blocks,
+    pure_tokenize,
+)
+from tests.support.oracles.lexical import (
+    competing_blocks as oracle_competing_blocks,
+)
+from tests.support.oracles.lexical import (
+    decode_summary as oracle_decode_summary,
+)
 from tests.support.oracles.postings import PurePostingsBuilder, decode_postings
 from vfs import _native
 from vfs.models.code_grams import (
@@ -36,7 +45,9 @@ from vfs.models.code_grams import (
 from vfs.models.lexical import (
     BLOCK_SIZE,
     ScoreBlock,
+    competing_blocks,
     decode_summary,
+    encode_summary,
     lexical_builder,
     score_blocks,
     tokenize,
@@ -365,23 +376,23 @@ class TestLexicalParity:
     def test_character_classes_are_the_generating_interpreters(self) -> None:
         """On the interpreter that generated them, the tables are exactly
         its ``\\w`` / upper / lower / digit / assigned classes and its casefold."""
-        flags = np.frombuffer(_native.lexical_char_classes(), dtype=np.uint8)
-        points = np.array([cp for cp in range(0x110000) if not 0xD800 <= cp <= 0xDFFF])
-        chars = [chr(cp) for cp in points]
+        flags = _native.lexical_char_classes()
+        points = [cp for cp in range(0x110000) if not 0xD800 <= cp <= 0xDFFF]
         word = re.compile(r"\w")
-        mine = np.zeros(0x110000, dtype=np.uint8)
-        for flag, predicate in (
-            (1, lambda ch: word.fullmatch(ch) is not None),
-            (2, str.isupper),
-            (4, str.islower),
-            (8, str.isdigit),
-            (16, lambda ch: unicodedata.category(ch) != "Cn"),
-        ):
-            mine[points[[predicate(ch) for ch in chars]]] |= flag
-        differing = np.flatnonzero(flags != mine)
-        assert differing.size == 0, differing[:10]
+        mine = bytearray(0x110000)
+        for cp in points:
+            ch = chr(cp)
+            mine[cp] = (
+                (1 if word.fullmatch(ch) else 0)
+                | (2 if ch.isupper() else 0)
+                | (4 if ch.islower() else 0)
+                | (8 if ch.isdigit() else 0)
+                | (16 if unicodedata.category(ch) != "Cn" else 0)
+            )
+        differing = [cp for cp in points if flags[cp] != mine[cp]]
+        assert differing == [], [hex(cp) for cp in differing[:10]]
         folds = dict(_native.lexical_casefolds())
-        for cp in points.tolist():
+        for cp in points:
             ch = chr(cp)
             assert folds.get(cp, ch) == ch.casefold(), hex(cp)
 
@@ -412,8 +423,36 @@ class TestLexicalParity:
             for k in (1, 10, 1000):
                 for candidates in (None, ids[::3], ids[:0]):
                     pure = pure_score_blocks(blocks, idfs, avg_dl, k, candidates=candidates)
-                    raw = None if candidates is None else np.array(candidates, dtype=np.int64)
-                    assert score_blocks(blocks, idfs, avg_dl, k, candidates=raw) == pure, (query, k)
+                    assert score_blocks(blocks, idfs, avg_dl, k, candidates=candidates) == pure, (query, k)
+
+
+class TestLexicalKernels:
+    """Summary decode and block selection against the stdlib oracles."""
+
+    def test_generated_summaries_decode_identically(self) -> None:
+        rng = random.Random(142)
+        for _ in range(100):
+            count = rng.randint(0, 60)
+            firsts = sorted(rng.sample(range(1, 1 << 40), count))
+            maxes = [rng.random() * 10 for _ in range(count)]
+            blob = encode_summary(firsts, maxes)
+            summary = decode_summary(blob)
+            assert (summary.first_ids.tolist(), summary.max_weights.tolist()) == oracle_decode_summary(blob)
+            assert summary.first_ids.tolist() == firsts and summary.max_weights.tolist() == maxes
+
+    def test_generated_selections_match_the_oracle(self) -> None:
+        rng = random.Random(143)
+        for _ in range(200):
+            count = rng.randint(0, 40)
+            firsts = sorted(rng.sample(range(1, 10_000), count))
+            maxes = [rng.random() * 5 for _ in range(count)]
+            summary = decode_summary(encode_summary(firsts, maxes))
+            candidates = sorted(rng.sample(range(0, 10_500), rng.randint(0, 50)))
+            scores = [rng.random() * 8 for _ in candidates]
+            theta, rest = rng.random() * 6, rng.choice((0.0, rng.random()))
+            assert competing_blocks(summary, candidates, scores, theta, rest) == oracle_competing_blocks(
+                firsts, maxes, candidates, scores, theta, rest
+            )
 
 
 class TestLexicalBuilderContract:
@@ -474,7 +513,7 @@ class TestLexicalSeam:
         (_n, avg_dl), summaries, rows = _drain_lexical(builder)
         blocks, idfs = _score_blocks_for("publish scheduler budget", summaries, rows)
         candidates = [10, 11, 12, 40]
-        ranked = score_blocks(blocks, idfs, avg_dl, 5, candidates=np.array(candidates, dtype=np.int64))
+        ranked = score_blocks(blocks, idfs, avg_dl, 5, candidates=candidates)
         assert ranked == pure_score_blocks(blocks, idfs, avg_dl, 5, candidates=candidates)
         assert {chunk for chunk, _ in ranked} <= set(candidates)
 

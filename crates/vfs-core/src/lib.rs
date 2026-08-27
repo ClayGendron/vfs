@@ -25,7 +25,8 @@ pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use lexical::{
     BLOCK_SIZE, BM25_B, BM25_K1, BlockRow, DrainedLexical, LexicalAccumulator, LexicalError, PYTHON_VERSION,
-    ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, score, tokenize,
+    ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, competing_blocks, decode_summary, score,
+    tokenize,
 };
 pub use postings::{AddDocError, DrainedPostings, PostingError, PostingRow, PostingsAccumulator, candidate_ids, decode_postings};
 pub use verify::{BatchOutcome, Hit, Matcher, PatternError, count_batch, hits_batch};

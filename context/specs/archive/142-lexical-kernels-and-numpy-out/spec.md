@@ -1,12 +1,13 @@
 # 142 — the lexical kernels: summary decode and block selection in the crate, the numpy scorer deleted, numpy leaves `pyproject.toml`
 
-- **Status:** ready — drafted 2026-08-27 from ADR 057 decision 3 and
-  the 2026-08-27 memo §5–§7, §9, §12. Third of the ADR 057 arc;
-  depends on specs 140 and 141. The memo suggests these kernels ride
-  spec 132's query path, where they get their first caller; this spec
-  is written standalone so it can land before, with, or after 132 —
-  whichever comes first. If 132 lands first it takes §1–§2 as its own
-  slice and this spec shrinks to §3–§4.
+- **Status: landed 2026-08-27.** Slices A–C in one landing: summary
+  decode and block selection in the crate behind protocol 6,
+  `BlockSummary` on stdlib `array`s, `numpy` out of `src/`, `tests/`
+  and `pyproject.toml`, the import-hygiene pin, the after-measurement
+  in `results/after-142.json`; full matrix green, four engine legs
+  green at τ = 1.0. Third and last of the ADR 057 arc (140 → 141 →
+  142) — numpy is no longer a vfs dependency. Details in the landing
+  note below.
 - **Born from:** ADR 057
   (`../../../decisions/057-one-engine-the-rust-extension-is-required.md`);
   `../../../research/2026-08-27-rust-kernels-replace-numpy.md`; ADR
@@ -125,3 +126,69 @@ dependency change touches every leg); the four engine legs for τ = 1.0.
 | `grep -rn numpy src/` | 3 modules | empty |
 | `numpy` in `pyproject.toml` `dependencies` | present | absent |
 | fidelity τ on five engines | 1.0 | 1.0 |
+
+## Landing note (2026-08-27)
+
+- **What landed.** `crates/vfs-core/src/lexical.rs` gains
+  `decode_summary` (the inverse of the builder's summary encoding —
+  varint delta of each block's first id, then its maximum as a
+  little-endian f64 — refusing a torn blob or non-monotone first ids
+  as `LexicalError`) and `competing_blocks` (a `partition_point` per
+  candidate, the best score per block, the ADR 055 competing rule).
+  The bindings take and return packed native-endian bytes;
+  `PROTOCOL_VERSION` → 6. `BlockSummary` holds `array('q')` /
+  `array('d')` — indexable, `tolist()`-able, and handed back to the
+  engine as `tobytes()`; `decode_summary`, `competing_blocks` and
+  `score_blocks` dispatch to the engine, with `_packed` passing an
+  `array` of the right typecode through without a copy. numpy left
+  `lexical.py`, the five test files and the fidelity referee, and
+  `pyproject.toml`; `uv tree` shows it only under `usearch` (the
+  `search` extra). `tests/test_dependencies.py` walks every `vfs.*`
+  module in a fresh interpreter and pins that numpy never loads
+  (in-process it was polluted by an extra's driver — hence the
+  subprocess). ADR 035's status line records the released coupling.
+- **Tests.** `TestLexicalKernels`: 100 generated summaries decode
+  identically to the stdlib oracle (`tests/support/oracles/lexical.py`),
+  200 generated selections match the oracle's `bisect` spelling; the
+  torn / non-monotone refusals; the boundary case (an id equal to a
+  block's first id belongs to that block — L3); arrays and lists give
+  the same answer through the seam. `cargo test -p vfs-core` 40
+  passed.
+- **Legs.** `scripts/ci.sh` full matrix: 3.11 / 3.12 / 3.14 green;
+  3.13 green at 100 % after the array-path pin (the first run was
+  99.98 % — the `_packed` fast path had no caller in the suite).
+  Postgres 214, MySQL 214, SQL Server 214, Oracle 211 passed — the
+  fidelity referee (τ = 1.0, the two-round pin) on every engine, now
+  without numpy. Oracle ran under a fresh compose project
+  (`vfs-test-b`) because the daemon held a dead record of the earlier
+  container; the record cleared at teardown.
+- **Measurement** (`results/after-142.json`, this machine, the spec 130
+  landing store; the memo's numpy rows for the before):
+
+  | criterion | numpy (memo) | target | shipped |
+  |---|---:|---:|---:|
+  | summary decode, 5,983 blocks | 1.3–1.6 ms | ≤ 0.03 ms | **0.025–0.070 ms** (two runs) |
+  | block selection, 6 terms × 5 K candidates | 0.80 ms | ≤ 0.2 ms | **0.43 ms** |
+  | two-round search, 3-term k=10 | 9.2 ms | ≤ 3.6 ms | **3.42–3.56 ms** |
+  | two-round search, 6-term K=1000 | 38.1 ms | ≤ 10.5 ms | **9.5–10.1 ms** |
+  | scorer, 3 terms / 1,553 blocks | — | unchanged | unchanged (the engine's) |
+  | `grep -rn numpy src/` | 3 modules | empty | empty |
+  | `numpy` in `dependencies` | present | absent | absent |
+  | fidelity τ on five engines | 1.0 | 1.0 | 1.0 |
+
+  Block selection lands at 0.43 ms against a 0.2 ms target. The 0.2
+  was the memo's raw-binding figure with candidates and scores packed
+  once outside the loop; the shipped seam pays four array copies per
+  call (two `tobytes()` on the summary, two allocations on the Rust
+  side) and the benchmark shape makes six calls. It is 2× the numpy
+  path rather than 5×, sub-millisecond, and 4 % of the 6-term query.
+  The right fix is a per-query call shape (all overflowing terms in
+  one call), which is spec 132's to decide when it writes the real
+  round-two loop; the cheaper interim levers (caching the summary's
+  bytes; reading the packed slices in place in Rust) are noted here
+  and not taken.
+- **Residue.** The `test_offload.py` "Event loop is closed" warning
+  still fires on 3.12 (a `PytestUnhandledThreadExceptionWarning`, not
+  a failure) despite spec 140's second `close()` — the leak is
+  timing-dependent and needs its own look. `rustfmt` and
+  `clippy --all-features` remain non-gates (spec 141's residue).

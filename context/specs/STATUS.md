@@ -17,12 +17,15 @@ lines first; regenerate this file when the picture shifts (review the
   scoped grep 36 → 30 ms; numpy out of `postings.py` / `grep.py`; the
   seven refusals routed through `grep`; the blob-type pin green on
   four engines (214/214/214/211). `results/after-141.json`.
-- **142 drafted 2026-08-27** — the rest of the ADR 057 arc:
-  the summary-decode and
-  block-selection kernels, deletes the numpy scorer, and removes numpy
-  from `pyproject.toml`. Numbers from
-  `research/2026-08-27-rust-kernels-replace-numpy.md`. Order:
-  140 → 141 → 142 (142 may fold into 132 if 132 lands first).
+- **142 landed 2026-08-27** — the last of the ADR 057 arc: summary
+  decode and block selection in the crate (protocol 6), `BlockSummary`
+  on stdlib `array`s, **numpy out of `src/`, `tests/` and
+  `pyproject.toml`** with a subprocess import-hygiene pin. Two-round
+  lexical search 9.2 → 3.4 ms (3-term), 38 → 9.5 ms (6-term); block
+  selection 0.43 ms (the per-term seam copies — spec 132's call shape
+  to settle). Full matrix green, four legs green at τ = 1.0
+  (214/214/214/211). `results/after-142.json`. vfs has one engine and
+  no numeric-library dependency.
 - **139 landed 2026-08-26** — bulk inserts through one owner
   (`bulk_insert`): the driver's own executemany where it is measured
   faster (sqlite), asyncpg `COPY` on Postgres, Core's pages where the

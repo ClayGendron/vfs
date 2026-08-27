@@ -17,8 +17,8 @@ import math
 import os
 import subprocess
 import sys
+from array import array
 
-import numpy as np
 import pytest
 
 from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
@@ -194,7 +194,14 @@ class TestSummaryCodec:
         summary = decode_summary(blob)
         assert isinstance(summary, BlockSummary)
         assert summary.first_ids.tolist() == firsts and summary.max_weights.tolist() == maxes
-        assert decode_summary(b"").first_ids.size == 0
+        assert len(decode_summary(b"").first_ids) == 0
+
+    def test_a_torn_or_non_monotone_summary_is_refused(self) -> None:
+        blob = encode_summary([1, 129], [1.5, 0.25])
+        with pytest.raises(ValueError, match="truncated summary"):
+            decode_summary(blob[:-1])
+        with pytest.raises(ValueError, match="not monotone"):
+            decode_summary(encode_summary([5, 5], [1.0, 1.0]))
 
     def test_decode_varints_serves_bare_runs(self) -> None:
         assert decode_varints(_varints([0, 1, 127, 128, 300])) == [0, 1, 127, 128, 300]
@@ -300,28 +307,35 @@ class TestScorer:
 
 
 class TestCompetingBlocks:
-    SUMMARY = BlockSummary(np.array([1, 129, 257, 385], dtype=np.int64), np.array([0.5, 2.0, 0.5, 0.5]))
+    SUMMARY = BlockSummary(array("q", [1, 129, 257, 385]), array("d", [0.5, 2.0, 0.5, 0.5]))
 
     def test_every_block_competes_before_a_full_top_k(self) -> None:
-        none = np.array([], dtype=np.int64)
-        assert competing_blocks(self.SUMMARY, none, np.array([]), 0.0).tolist() == [0, 1, 2, 3]
+        assert competing_blocks(self.SUMMARY, [], [], 0.0) == [0, 1, 2, 3]
 
     def test_a_block_competes_alone_or_by_lifting_a_candidate(self) -> None:
-        candidates = np.array([130, 300], dtype=np.int64)  # in blocks 1 and 2
-        scores = np.array([0.1, 1.7])
+        candidates = [130, 300]  # in blocks 1 and 2
+        scores = [0.1, 1.7]
         # θ = 2.1: block 1 clears it alone with a lifted candidate (0.1 + 2.0),
         # block 2 lifts 1.7 + 0.5 = 2.2, blocks 0 and 3 hold no candidate.
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.1).tolist() == [1, 2]
+        assert competing_blocks(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
         # θ = 2.25: only block 1 (its max 2.0 + 0.1 = 2.1 < θ, but 2.0 alone? no: 2.0 < 2.25).
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25).tolist() == []
+        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25) == []
         # The other overflowing terms' maxima lift every block.
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25, rest=0.3).tolist() == [1, 2]
+        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25, rest=0.3) == [1, 2]
 
     def test_candidates_before_the_first_block_are_ignored(self) -> None:
-        summary = BlockSummary(np.array([100], dtype=np.int64), np.array([1.0]))
-        assert competing_blocks(summary, np.array([5], dtype=np.int64), np.array([9.0]), 5.0).tolist() == []
-        assert competing_blocks(summary, np.array([150], dtype=np.int64), np.array([9.0]), 5.0).tolist() == [0]
+        summary = BlockSummary(array("q", [100]), array("d", [1.0]))
+        assert competing_blocks(summary, [5], [9.0], 5.0) == []
+        assert competing_blocks(summary, [100], [9.0], 5.0) == [0]  # a boundary id belongs to the block it starts
+        assert competing_blocks(summary, [150], [9.0], 5.0) == [0]
+
+    def test_packed_arrays_pass_the_seam_unconverted(self) -> None:
+        # Spec 132 holds candidates and scores as arrays across the
+        # round-two loop; the seam takes them as they are.
+        candidates, scores = array("q", [130, 300]), array("d", [0.1, 1.7])
+        assert competing_blocks(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
+        assert competing_blocks(self.SUMMARY, list(candidates), list(scores), 2.1) == [1, 2]
 
     def test_an_empty_summary_names_nothing(self) -> None:
-        empty = BlockSummary(np.array([], dtype=np.int64), np.array([]))
-        assert competing_blocks(empty, np.array([1], dtype=np.int64), np.array([1.0]), 0.0).size == 0
+        empty = BlockSummary(array("q"), array("d"))
+        assert competing_blocks(empty, [1], [1.0], 0.0) == []

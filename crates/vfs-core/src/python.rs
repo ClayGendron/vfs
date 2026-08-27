@@ -21,7 +21,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 5;
+const PROTOCOL_VERSION: u32 = 6;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -306,14 +306,71 @@ fn lexical_score(
     if blocks.iter().any(|b| b.0 >= idfs.len()) {
         return Err(PyValueError::new_err("block term index outside idfs"));
     }
-    let set: Option<Vec<i64>> = candidates.map(|raw| {
-        raw.as_ref().chunks_exact(8).map(|c| i64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
-    });
+    let set: Option<Vec<i64>> = candidates.map(|raw| unpack_i64(&raw));
     let views: Vec<ScoreBlock> = blocks
         .iter()
         .map(|(term, bound, ids, tfs, dls)| ScoreBlock { term: *term, bound: *bound, doc_ids: ids, tfs, dls })
         .collect();
     Ok(py.detach(|| lexical::score(&views, &idfs, avg_dl, k, set.as_deref())))
+}
+
+/// A term's summary blob decoded to packed native-endian arrays: the
+/// blocks' first ids as int64 and their maximum weights as f64.
+#[pyfunction]
+fn decode_summary<'py>(py: Python<'py>, blob: PyBackedBytes) -> PyResult<(Bound<'py, PyBytes>, Bound<'py, PyBytes>)> {
+    let (firsts, maxes) =
+        py.detach(|| lexical::decode_summary(&blob)).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok((packed_i64(py, &firsts), packed_f64(py, &maxes)))
+}
+
+/// The block numbers of a term that can still change a top-k, over packed
+/// native-endian arrays: the summary's `first_ids` (int64) and
+/// `max_weights` (f64), the sorted round-one `candidates` (int64) with
+/// their `scores` (f64), the current k-th score `theta`, and `rest`, the
+/// summed maxima of the other terms not yet fetched.
+#[pyfunction]
+fn competing_blocks(
+    py: Python<'_>,
+    first_ids: PyBackedBytes,
+    max_weights: PyBackedBytes,
+    candidates: PyBackedBytes,
+    scores: PyBackedBytes,
+    theta: f64,
+    rest: f64,
+) -> Vec<usize> {
+    let firsts = unpack_i64(&first_ids);
+    let maxes = unpack_f64(&max_weights);
+    let ids = unpack_i64(&candidates);
+    let weights = unpack_f64(&scores);
+    py.detach(|| lexical::competing_blocks(&firsts, &maxes, &ids, &weights, theta, rest))
+}
+
+fn packed_i64<'py>(py: Python<'py>, values: &[i64]) -> Bound<'py, PyBytes> {
+    PyBytes::new_with(py, values.len() * 8, |buf| {
+        for (chunk, value) in buf.chunks_exact_mut(8).zip(values) {
+            chunk.copy_from_slice(&value.to_ne_bytes());
+        }
+        Ok(())
+    })
+    .expect("bytes allocation")
+}
+
+fn packed_f64<'py>(py: Python<'py>, values: &[f64]) -> Bound<'py, PyBytes> {
+    PyBytes::new_with(py, values.len() * 8, |buf| {
+        for (chunk, value) in buf.chunks_exact_mut(8).zip(values) {
+            chunk.copy_from_slice(&value.to_ne_bytes());
+        }
+        Ok(())
+    })
+    .expect("bytes allocation")
+}
+
+fn unpack_i64(raw: &[u8]) -> Vec<i64> {
+    raw.chunks_exact(8).map(|c| i64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
+}
+
+fn unpack_f64(raw: &[u8]) -> Vec<f64> {
+    raw.chunks_exact(8).map(|c| f64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
 }
 
 /// The grep candidate kernel: per AND-group, the planner's chosen posting
@@ -347,6 +404,8 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lexical_casefolds, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_score, m)?)?;
     m.add_function(wrap_pyfunction!(candidate_ids, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_summary, m)?)?;
+    m.add_function(wrap_pyfunction!(competing_blocks, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;
