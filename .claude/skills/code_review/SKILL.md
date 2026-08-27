@@ -131,7 +131,7 @@ the §1 checker and the §2 post-launch check both enforce this.
   supported scale, unpinned high-risk behavior), `minor` (bounded
   waste, decay, smells), `question` (design notes, ambiguous intent).
 - **Live engines**: the template's `ENGINES` block puts the four real
-  engines' connection URLs (Postgres, MySQL, MSSQL, Oracle — up,
+  engines' connection URLs (Postgres, MariaDB, MSSQL, Oracle — up,
   ephemeral data) in every prompt. Agents use them for empirical
   evidence — scratch scripts or targeted `-m <engine>` test
   selections, each under its own table namespace so concurrent agents
@@ -151,7 +151,7 @@ observed silently failing to bind — see §2).
    the db_test skill's build-up: start Docker Desktop, bring up all
    four engines with query-level health waits (postgres via plain
    `up -d --wait`, the heavyweights by name), and install every
-   driver in one `uv sync --extra postgres --extra mysql --extra
+   driver in one `uv sync --extra postgres --extra mariadb --extra
    mssql --extra oracle --group dev`. The checker refuses to PASS
    while any engine port is unreachable. Engines stay up for the
    whole run — reviewers and verifiers both use them — and come down

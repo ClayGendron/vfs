@@ -1,6 +1,6 @@
 ---
 name: db_test
-description: Run the storage conformance suite against real database engines (Postgres, MySQL, MSSQL, Oracle) in local Docker containers, end to end — start Docker Desktop, build the containers up, run the engine legs, tear everything down, quit Docker Desktop. Use when the user asks to "test against real databases", "run the postgres/mysql/mssql/oracle leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
+description: Run the storage conformance suite against real database engines (Postgres, MariaDB, MSSQL, Oracle) in local Docker containers, end to end — start Docker Desktop, build the containers up, run the engine legs, tear everything down, quit Docker Desktop. Use when the user asks to "test against real databases", "run the postgres/mysql/mssql/oracle leg", "db test", or before landing a change that touches the database backend, the schema (models/rows.py), or a dialect profile.
 ---
 
 # Local real-engine database testing
@@ -42,7 +42,7 @@ engines start when named (naming a service activates its profile):
 
 ```sh
 docker compose -f docker/compose.test.yml up -d --wait                 # postgres only
-docker compose -f docker/compose.test.yml up -d --wait mysql          # + mysql
+docker compose -f docker/compose.test.yml up -d --wait mariadb        # + mariadb
 docker compose -f docker/compose.test.yml up -d --wait mssql oracle   # heavyweights
 ```
 
@@ -55,7 +55,7 @@ Install the drivers for **every** engine you will test in one sync —
 others' drivers:
 
 ```sh
-uv sync --extra postgres --extra mysql --group dev   # add --extra mssql / oracle as needed
+uv sync --extra postgres --extra mariadb --group dev   # add --extra mssql / oracle as needed
 ```
 
 ## 3. Test
@@ -68,8 +68,8 @@ silently swallowing connections is a known failure mode):
 VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres --tb=short
 
-VFS_TEST_MYSQL_URL="mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4" \
-  uv run pytest -m mysql --tb=short
+VFS_TEST_MARIADB_URL="mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4" \
+  uv run pytest -m mariadb --tb=short
 
 VFS_TEST_MSSQL_URL="mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes" \
   uv run pytest -m mssql --tb=short
@@ -80,7 +80,7 @@ VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_na
 
 A healthy leg matches the sqlite leg's pass count, with the same
 capability skips (mkedge is the last classified stub).
-Keep `?charset=utf8mb4` on the MySQL URL — text bodies depend on it.
+Keep `?charset=utf8mb4` on the MariaDB URL — text bodies depend on it.
 Engine legs are reentrant: each harness run mints its own table
 namespace (`vfs_<hex>`), so concurrent runs against one engine —
 two terminals, parallel review agents on a shared stack — never tear
@@ -102,7 +102,7 @@ the legs mostly wait on their databases, so it runs alongside them.
 
 ```sh
 ( VFS_TEST_POSTGRES_URL=... uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
-( VFS_TEST_MYSQL_URL=...    uv run pytest -m mysql    -q > leg_mysql.log    2>&1 ) &
+( VFS_TEST_MARIADB_URL=...  uv run pytest -m mariadb  -q > leg_mariadb.log  2>&1 ) &
 ( VFS_TEST_MSSQL_URL=...    uv run pytest -m mssql    -q > leg_mssql.log    2>&1 ) &
 ( VFS_TEST_ORACLE_URL=...   uv run pytest -m oracle   -q > leg_oracle.log   2>&1 ) &
 ( scripts/ci.sh 3.13 > leg_ci.log 2>&1 ) &
@@ -126,7 +126,7 @@ outlives compose's default 10 s grace, so a bare `down` SIGKILLs it
 in the past (see the phantom-record note below):
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mysql --profile mssql --profile oracle down -t 60
+docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -t 60
 ```
 
 **If this session used a fresh `-p vfs-test-<letter>` project** (the

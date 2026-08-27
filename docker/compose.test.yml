@@ -5,14 +5,14 @@
 # a service explicitly activates its profile, so both of these work:
 #
 #   docker compose -f docker/compose.test.yml up -d --wait            # postgres only
-#   docker compose -f docker/compose.test.yml up -d --wait oracle     # + oracle
+#   docker compose -f docker/compose.test.yml up -d --wait mariadb    # + mariadb
 #
 # Every service carries a healthcheck so `--wait` blocks until the
 # engine accepts queries, not merely until the container runs. CI uses
 # this same file (.github/workflows/test-dialects.yml) — images, env,
 # and health probes stay identical between a laptop and a runner.
 #
-# Apple Silicon: postgres, mysql, and gvenzl/oracle-free publish native
+# Apple Silicon: postgres, mariadb, and gvenzl/oracle-free publish native
 # arm64 images. SQL Server does not — its service pins linux/amd64 and
 # needs Rosetta emulation enabled in Docker Desktop (Settings > General
 # > "Use Rosetta for x86_64/amd64 emulation") or OrbStack (on by
@@ -26,7 +26,9 @@ name: vfs-test
 
 services:
   postgres:
-    image: postgres:17
+    # The pgvector image is a superset of postgres:17 — the plain image
+    # cannot CREATE EXTENSION vector, which the native vector column needs.
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: vfs
       POSTGRES_PASSWORD: vfs
@@ -42,36 +44,17 @@ services:
       timeout: 3s
       retries: 15
 
-  mysql:
-    profiles: [mysql]
-    image: mysql:8.4
-    environment:
-      MYSQL_USER: vfs
-      MYSQL_PASSWORD: vfs
-      MYSQL_DATABASE: vfs
-      MYSQL_ROOT_PASSWORD: vfs-root
-    ports:
-      # not 33060 — a local MySQL claims that for its X-protocol listener
-      - "33061:3306"
-    tmpfs:
-      - /var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uvfs -pvfs"]
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-
   mariadb:
     profiles: [mariadb]
-    image: mariadb:11.4
+    # 11.8 is the first LTS with VECTOR(n) and VEC_DISTANCE_COSINE.
+    image: mariadb:11.8
     environment:
       MARIADB_USER: vfs
       MARIADB_PASSWORD: vfs
       MARIADB_DATABASE: vfs
       MARIADB_ROOT_PASSWORD: vfs-root
     ports:
-      # the MySQL leg holds 33061; MariaDB is the family's second member
+      # not 33060 — a local MySQL claims that for its X-protocol listener
       - "33062:3306"
     tmpfs:
       - /var/lib/mysql
@@ -84,7 +67,8 @@ services:
 
   mssql:
     profiles: [mssql]
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # 2025 brings the native VECTOR(n) type and VECTOR_DISTANCE.
+    image: mcr.microsoft.com/mssql/server:2025-latest
     # No arm64 image exists; Rosetta emulation covers this on Apple Silicon.
     platform: linux/amd64
     # Emulated checkpoint+shutdown routinely outlives compose's 10s default

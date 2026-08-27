@@ -24,7 +24,7 @@ VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres
 ```
 
-Host ports are offset from the engine defaults (54320, 33061, 14330,
+Host ports are offset from the engine defaults (54320, 33062, 14330,
 15210) so the containers never collide with a Homebrew or Postgres.app
 install already holding 5432 and friends.
 
@@ -32,23 +32,23 @@ Naming a service activates its profile, so the heavier engines start on
 demand:
 
 ```sh
-docker compose -f docker/compose.test.yml up -d --wait mysql oracle mssql
+docker compose -f docker/compose.test.yml up -d --wait mariadb oracle mssql
 ```
 
 Tear everything down (data is tmpfs/ephemeral — nothing persists).
 Plain `down` skips services behind profiles, so name the profiles:
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mysql --profile mssql --profile oracle down
+docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down
 ```
 
 ## Per-engine notes
 
 | Engine | arm64 | Driver extra | URL |
 |---|---|---|---|
-| Postgres 17 | native | `postgres` | `postgresql+asyncpg://vfs:vfs@localhost:54320/vfs` |
-| MySQL 8.4 | native | `mysql` | `mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4` |
-| SQL Server 2022 | Rosetta | `mssql` | `mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes` |
+| Postgres 17 + pgvector | native | `postgres` | `postgresql+asyncpg://vfs:vfs@localhost:54320/vfs` |
+| MariaDB 11.8 | native | `mariadb` | `mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4` |
+| SQL Server 2025 | Rosetta | `mssql` | `mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes` |
 | Oracle Free 23ai | native | `oracle` | `oracle+oracledb_async://vfs:vfs@localhost:15210/?service_name=FREEPDB1` |
 
 **SQL Server** is the one engine with extra macOS setup:
@@ -73,19 +73,21 @@ takes 30–60 s while the pluggable database opens; `--wait` covers it.
 The `oracledb` driver runs in thin mode — no Oracle client libraries to
 install.
 
-**MySQL** carries a tuned profile (3,072-byte key budget, catch-retry
-arbitration, REPEATABLE READ pinned, deadlock/lock-wait errnos
-retryable); MariaDB rides the same policy under its own dialect name.
-A `mariadb` profile (`mariadb:11.4`, host port 33062) is the family's
-second member for family-wide claims — reach it with a
-`mariadb+aiomysql://` URL so the dialect resolves by its own name.
-Keep `?charset=utf8mb4` in the URL — the dialect does not default it,
-and unicode text bodies depend on it. This leg is the regression pin
-for the byte-denominated path limits and the `VARBINARY` key columns
-(ADR 024). With MySQL and Oracle both tuned, no real engine resolves
-to the GENERIC floor anymore — the floor is pinned synthetically in
-the dialect tests, and its budget numbers remain borrowed from
-Oracle's real caps (ORA-01795's 1,000-element `IN`-list).
+**MariaDB** is the MySQL family's supported member and carries the
+family's tuned profile (3,072-byte key budget, catch-retry arbitration,
+REPEATABLE READ pinned, deadlock/lock-wait errnos retryable) plus the
+native `VECTOR(n)` column and `VEC_DISTANCE_COSINE` the vector leg
+needs. Reach it with a `mariadb+aiomysql://` URL so the dialect resolves
+by its own name, and keep `?charset=utf8mb4` in the URL — the dialect
+does not default it, and unicode text bodies depend on it. This leg is
+the regression pin for the byte-denominated path limits and the
+`VARBINARY` key columns (ADR 024). MySQL community is not a supported
+dialect (no distance function, no extension vfs can install — ADR
+059): a `mysql://` URL is served the core verbs on the generic floor
+and withholds `glean`. With MariaDB and Oracle both tuned, no real
+engine resolves to the GENERIC floor anymore — the floor is pinned
+synthetically in the dialect tests, and its budget numbers remain
+borrowed from Oracle's real caps (ORA-01795's 1,000-element `IN`-list).
 
 ## Why these four
 
@@ -94,8 +96,9 @@ Oracle's real caps (ORA-01795's 1,000-element `IN`-list).
   for real.
 - **SQL Server** — READ COMMITTED natively, the ~2,100 bind-parameter
   budget, `OUTPUT inserted.*` as the RETURNING arm.
-- **MySQL** — the byte-typed key columns and byte-denominated path
-  limits under InnoDB's 3,072-byte index cap (ADR 024).
+- **MariaDB** — the byte-typed key columns and byte-denominated path
+  limits under InnoDB's 3,072-byte index cap (ADR 024), and the
+  family's native vector distance.
 - **Oracle** — also READ COMMITTED by default, and the engine whose
   1,000-element `IN`-list cap (ORA-01795) defines the GENERIC budget
   floor; a wrong chunking budget turns into a hard error here.

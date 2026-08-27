@@ -2,7 +2,7 @@ name: Dialect tests
 
 # Real-engine conformance legs. Servers come from docker/compose.test.yml —
 # the same file used locally — so images, credentials, and health probes
-# have one source of truth. Postgres/MySQL gate PRs that touch storage;
+# have one source of truth. Postgres/MariaDB gate PRs that touch storage;
 # the heavyweight engines (SQL Server, Oracle) also run there but their
 # slow cold starts make nightly + manual dispatch the primary cadence.
 
@@ -38,9 +38,9 @@ jobs:
           - dialect: postgres
             env_var: VFS_TEST_POSTGRES_URL
             url: "postgresql+asyncpg://vfs:vfs@localhost:54320/vfs"
-          - dialect: mysql
-            env_var: VFS_TEST_MYSQL_URL
-            url: "mysql+aiomysql://vfs:vfs@localhost:33061/vfs?charset=utf8mb4"
+          - dialect: mariadb
+            env_var: VFS_TEST_MARIADB_URL
+            url: "mariadb+aiomysql://vfs:vfs@localhost:33062/vfs?charset=utf8mb4"
           - dialect: mssql
             env_var: VFS_TEST_MSSQL_URL
             url: "mssql+aioodbc://sa:vfsStr0ngPassw0rd@localhost:14330/master?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"

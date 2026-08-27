@@ -25,7 +25,7 @@ END_MARKER = "// --- end scope constants"
 
 # Host ports from docker/compose.test.yml; the template's ENGINES block
 # promises agents these are live, so the checker verifies before launch.
-ENGINE_PORTS = {"postgres": 54320, "mysql": 33061, "mssql": 14330, "oracle": 15210}
+ENGINE_PORTS = {"postgres": 54320, "mariadb": 33062, "mssql": 14330, "oracle": 15210}
 
 
 # ---------------------------------------------------------------------------
