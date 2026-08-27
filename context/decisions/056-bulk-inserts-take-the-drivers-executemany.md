@@ -135,10 +135,24 @@ of our five dialects), and under the profile rule it is a measured
    86, but engine-wide it rewrote UPDATE executemany's rowcount (nine
    leg failures), a second cursor broke the one-active-statement rule
    (twelve, "invalid cursor state"), and armed on the bulk statement's
-   own cursor it **silently landed 203 of 300 NULL-free entry rows**
-   while landing 1,000 of 1,000 block rows. A mode that can lose rows
-   without an error for some row shapes has no place behind this
-   helper at any speed; the machinery came out of the tree.
+   own cursor it silently landed 203 of 300 NULL-free entry rows while
+   landing 1,000 of 1,000 block rows. **That loss is explained**
+   (`mssql-row-loss.md` in the study): the helper compiled a *one-row*
+   insert, and SQL Server's dialect adds an implicit `OUTPUT inserted.id`
+   to a one-row insert into an identity-keyed table — Core never sends
+   that clause to executemany (`for_executemany=True` drops it). Under a
+   parameter array the driver runs one `sp_execute` per row and each
+   returns its own result set; pyodbc's fast path reads the first and
+   returns, cursor close discards the rest with a TDS attention, and the
+   server cancels the queued executions (3621) — a cancel is not an
+   error. Block rows never lost because `lex_postings` has no identity
+   column. The helper now compiles `.inline()`, and a no-server pin
+   holds the text free of `OUTPUT`/`RETURNING` on all five dialects
+   (Postgres and Oracle inherited `RETURNING` the same way). The
+   `"core"` pin still stands, on performance: fixed, the array mode is
+   still one RPC per row — 126–137 µs/row against Core's 88–99 on
+   4,000 entry rows at the tree's page size — so the machinery stays
+   out of the tree.
 4. **The parameter guard is the dialect's, in both modes.** Core mode
    pages by SQLAlchemy's own `insertmanyvalues_max_parameters` (and
    SQL Server's 1,000-row `VALUES` cap by its page size). Driver and
@@ -185,9 +199,13 @@ of our five dialects), and under the profile rule it is a measured
 - **Forks (recorded, not taken):** MySQL `LOAD DATA LOCAL INFILE`
   (MySQL's own bulk path, security-gated, no bind processors); Oracle
   driver mode with the helper calling `setinputsizes` itself; SQL
-  Server's `fast_executemany` **only** with the silent row loss
-  explained and a per-table proof (the 2.8× is real for NULL-free,
-  narrow rows such as the lexical tables), or table-valued parameters;
+  Server's `fast_executemany` on the inline statement — the loss is
+  explained and the safe form proven at 300/1,000/5,000 entry rows,
+  but it only beats Core on narrow, identity-free rows such as the
+  lexical tables (31 vs 86 µs) and loses on entry-wide rows, so it
+  waits for a measured workload that wants it, with a per-table
+  landing test and a mid-batch failure test — or table-valued
+  parameters;
   bulk *updates* through the driver
   (needs a rowcount contract per driver); the cached compile keyed on a live
   `Dialect` — if borrowed session factories (ADR on mounts) ever hand

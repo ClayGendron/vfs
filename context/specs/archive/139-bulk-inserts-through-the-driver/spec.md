@@ -84,9 +84,12 @@ measurement.
   decides sqlite `"driver"`, Postgres `"copy"`, MySQL `"driver"`;
   the engine legs decide Oracle `"core"` (driver mode drops
   TIMESTAMP microseconds without `setinputsizes`) and SQL Server
-  `"core"` — pyodbc's `fast_executemany` measured 31 µs against 86 but
-  silently landed 203 of 300 NULL-free entry rows (ADR 056 pin 3), so
-  Core's multirow pages stay.
+  `"core"` — pyodbc's `fast_executemany` measured 31 µs against 86 on
+  block rows but is one RPC per row and loses to Core's pages on
+  entry-wide rows (ADR 056 pin 3), so Core's multirow pages stay. The
+  compiled bulk statement is `.inline()`: a one-row insert into an
+  identity-keyed table otherwise carries the dialect's implicit
+  `OUTPUT`/`RETURNING`, a pending result per array row.
 - **§4 The referees.** Unit: rendering per paramstyle (qmark,
   format, numeric_dollar, named) against a stub dialect; processors
   applied (a `DateTime` and a `Boolean` row reach the driver as Core
@@ -161,8 +164,17 @@ the 4,000-file sample improves on every such engine.
   microseconds without `setinputsizes`) → `"core"`; SQL Server's
   `fast_executemany` — 31 µs against 86 — failed nine tests engine-wide
   (UPDATE rowcounts), twelve on a second cursor (one active statement
-  per connection), and **silently landed 203 of 300 entry rows** armed
+  per connection), and silently landed 203 of 300 entry rows armed
   on the bulk cursor alone → `"core"`, machinery removed, fork recorded.
+- **Addendum (2026-08-26, `mssql-row-loss.md`):** the loss is
+  explained — the one-row compile carried SQL Server's implicit
+  `OUTPUT inserted.id`; under a parameter array that is one pending
+  result set per row, pyodbc's fast path reads only the first, and
+  cursor close cancels the rest server-side (attention + 3621, no
+  error). `_bulk_statement` now compiles `.inline()`, pinned by
+  `test_the_bulk_statement_never_returns_the_identity_key` on all five
+  dialects (mutant B8). The `"core"` pin stays on performance: the fixed
+  array mode is 126–137 µs/row against Core's 88–99 on entry rows.
 - **After, 4,000 files:** lexical delta sqlite 5.0 → 4.6 s, Postgres
   57.9 → 43.6 s, MySQL 18.0 → 17.0 s; SQL Server and Oracle unchanged
   by construction; write verb flat within noise everywhere. **Full

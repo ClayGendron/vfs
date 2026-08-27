@@ -64,7 +64,13 @@ Verbs, seconds (4,000 files, 57 MB):
   engine-wide it rewrote UPDATE executemany's rowcount (nine leg
   failures), a second cursor hit "invalid cursor state" (twelve), and
   armed on the bulk statement's own cursor it silently landed 203 of
-  300 NULL-free entry rows (block rows: 1,000 of 1,000) — refused — Oracle `"core"` (the Oracle leg failed 179 tests
+  300 NULL-free entry rows (block rows: 1,000 of 1,000) — refused, then
+  explained in `mssql-row-loss.md`: the one-row compile carried an
+  implicit `OUTPUT inserted.id`, and pyodbc's fast path cancels the
+  batch at cursor close with those results pending; the helper now
+  compiles `.inline()`, and the pin stays `"core"` because the fixed
+  array mode still loses to Core's pages on entry-wide rows — Oracle
+  `"core"` (the Oracle leg failed 179 tests
   under `"driver"`: without Core's `setinputsizes` python-oracledb binds
   datetimes as DATE and drops microseconds), `GENERIC` `"core"`.
 - **Two hazards the reviews raised on `COPY`, closed in the helper:**
