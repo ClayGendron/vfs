@@ -1,4 +1,4 @@
-# VFS: Agentic Search on your Database
+# vfs — the access layer for agents
 
 <p align="center">
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
@@ -8,13 +8,15 @@
   <a href="https://github.com/ClayGendron/vfs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/vfs" alt="License"></a>
 </p>
 
-Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.
+**One namespace of everything an agent can see, search, and change. You decide what's in it.**
+
+Frameworks build the agent. Control planes set the policy. Gateways check the tool call. vfs enforces it on the data itself — the files, rows, and tools the agent actually touches.
 
 ```bash
 pip install vfs-py
 ```
 
-> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now — the router and its fundamentals are implemented at 100% coverage by a 1,600-test suite; the SQL backends are being ported onto it next. The current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change.
+> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now; the current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change. **Which half is built:** the search half — `glob`, `grep`, and `glean` over the database you already run — and the router's mount-level and per-prefix permissions, enforced before anything dispatches. **Which half is not:** agent identity (principals), row-level grants, and tools at paths are designed, not built. The positioning above says where vfs is going; this banner says what is real today.
 
 ## Why a file system?
 
@@ -114,8 +116,8 @@ The namespace is designed to be an agent's whole toolbox behind one MCP tool: ve
 ## Status
 
 - **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, permissions, and the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — at 99–100% coverage across 1,094 tests.
-- **In progress:** porting the SQL backends (`DatabaseStorage` → Postgres/MSSQL) onto the storage protocol.
-- **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), local file backend, and the ranked-search and graph engines re-homed behind their protocol families.
+- **In progress:** the database backend on the storage protocol — reads, writes, `glob`, `grep`, and `glean`'s lexical leg have landed; the vector leg, ranking signals, and the cross-mount rerank are the open specs.
+- **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), the local file backend, the graph engine re-homed behind its protocol family, and the governed half — principals and row-level grants.
 - **Released:** `vfs-py 0.0.22` on PyPI ships the previous-generation API (sync/async clients, database backends, CLI query engine, BM25 and vector search, graph algorithms). See the [CHANGELOG](CHANGELOG.md).
 
 ## Contributing
