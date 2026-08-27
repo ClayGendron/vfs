@@ -15,10 +15,10 @@ from sqlalchemy import event, func, select, update
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.oracles.lexical import pure_tokenize
+from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
-from vfs.models.postings import decode_postings, decode_varints
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage, indexing
@@ -132,12 +132,12 @@ class TestBuild:
         for row in blocks:
             assert row.block_no == 0  # three bodies: one block per term
             ids, tfs, dls = decode_postings(row.doc_ids), decode_varints(row.tfs), decode_varints(row.dls)
-            assert row.doc_count == ids.size == tfs.size == dls.size
-            for chunk_id, tf, dl in zip(ids.tolist(), tfs.tolist(), dls.tolist(), strict=True):
+            assert row.doc_count == len(ids) == len(tfs) == len(dls)
+            for chunk_id, tf, dl in zip(ids, tfs, dls, strict=True):
                 assert tokens[chunk_id].count(row.term) == tf > 0
                 assert len(tokens[chunk_id]) == dl
             summary = decode_summary(dfs[row.term].blocks)
-            assert summary.first_ids.tolist() == [int(ids[0])]
+            assert summary.first_ids.tolist() == [ids[0]]
             truth = max(term_weight(tf, dl, avg_dl, dfs[row.term].idf) for tf, dl in zip(tfs, dls, strict=True))
             assert summary.max_weights.tolist() == [truth] and dfs[row.term].max_weight == truth
             postings += row.doc_count

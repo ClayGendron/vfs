@@ -27,5 +27,5 @@ pub use lexical::{
     BLOCK_SIZE, BM25_B, BM25_K1, BlockRow, DrainedLexical, LexicalAccumulator, LexicalError, PYTHON_VERSION,
     ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, score, tokenize,
 };
-pub use postings::{AddDocError, DrainedPostings, PostingRow, PostingsAccumulator};
+pub use postings::{AddDocError, DrainedPostings, PostingError, PostingRow, PostingsAccumulator, candidate_ids, decode_postings};
 pub use verify::{BatchOutcome, Hit, Matcher, PatternError, count_batch, hits_batch};

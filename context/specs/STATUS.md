@@ -11,11 +11,14 @@ lines first; regenerate this file when the picture shifts (review the
   referees; the 3.11-only Unicode-drift failure (CI run 33037191124)
   became a skip on non-generating interpreters. 3.11/3.13/3.14 green,
   coverage 100 % (2,782 passed).
-- **141 / 142 drafted 2026-08-27** — the rest of the ADR 057 arc.
-  **141** lands the fused grep
-  kernel `candidate_ids` (decode + AND + OR + allow + cap in one call,
-  12–36× numpy, `list[int]` at the seam) and takes numpy out of
-  `postings.py` / `grep.py`. **142** lands the summary-decode and
+- **141 landed 2026-08-27** — the fused grep kernel `candidate_ids`
+  in the crate (decode + AND + OR + allow + cap in one call, protocol
+  5, `list[int]` at the seam): `return`'s ladder 12.8 → 0.69 ms,
+  scoped grep 36 → 30 ms; numpy out of `postings.py` / `grep.py`; the
+  seven refusals routed through `grep`; the blob-type pin green on
+  four engines (214/214/214/211). `results/after-141.json`.
+- **142 drafted 2026-08-27** — the rest of the ADR 057 arc:
+  the summary-decode and
   block-selection kernels, deletes the numpy scorer, and removes numpy
   from `pyproject.toml`. Numbers from
   `research/2026-08-27-rust-kernels-replace-numpy.md`. Order:

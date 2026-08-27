@@ -4,16 +4,16 @@ The read side of content search, one coherent epoch per call: compile
 the caller's pattern (outside the grep pattern language classifies
 invalid), plan folded grams unconditionally, refuse a pattern with no
 gram predicate unless ``allow_scan=True`` opts into the scan tier,
-intersect the rarest posting lists into candidate entries — with a
-segment-bounded glob scope joining as an allow-list *before* the
-candidate budget, so the budget counts scoped candidates and
-truncation can never drop in-scope rows — apply the structural gates
-off the rows' own stored facts (no per-candidate ``Path``) before any
-content fetch, verify every candidate through the shared matcher (the
-Rust core where the extension serves, its Python approximation
-otherwise — batched per content batch on the backend-owned offload
-pool, the absolute wall deadline crossing the hop), and union the
-flag-partitioned scan side
+intersect the rarest posting lists into candidate entries — one call
+into the engine's candidate kernel, which decodes, intersects, unions,
+meets the segment-bounded glob scope's allow-list *before* the
+candidate budget (so the budget counts scoped candidates and
+truncation can never drop in-scope rows), and caps, so doc ids never
+materialize here until capped — apply the structural gates off the
+rows' own stored facts (no per-candidate ``Path``) before any content
+fetch, verify every candidate through the shared matcher (batched per
+content batch on the backend-owned offload pool, the absolute wall
+deadline crossing the hop), and union the flag-partitioned scan side
 (``NOT encoded``) so index staleness can never lose a match.
 ``invert_match`` is scan-shaped by construction — no occurrence index
 narrows non-matches — and runs the scan tier without ``allow_scan``;
@@ -59,13 +59,12 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
-import numpy as np
-from numpy.typing import NDArray
 from sqlalchemy import LargeBinary, and_, case, cast, or_, select
 
 from vfs.models import Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
-from vfs.models.postings import PostingCorruptionError, decode_postings
+from vfs.models.postings import PostingCorruptionError
+from vfs.native import extension
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     ROW_GATE_FIELDS,
@@ -136,7 +135,7 @@ _GROUP_SETUP_US: Final = 500.0
 _REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or scope with paths"
 
 
-DocIds = Annotated[NDArray[np.int64], "sorted entries-table surrogate ids - the posting doc ids"]
+DocIds = Annotated[list[int], "sorted entries-table surrogate ids - the posting doc ids"]
 
 
 class PostingMeta(NamedTuple):
@@ -256,26 +255,23 @@ async def grep_rows(
             deadline=deadline,
         )
         if allow is not None and not allow:
-            doc_ids: DocIds = np.empty(0, dtype=np.int64)
+            doc_ids: DocIds = []
+            nominated_count = 0
         else:
-            allow_size = len(allow) if allow is not None else None
             try:
-                laddered = await _index_doc_ids(session, tables, membership_budget, epoch, plan, deadline, allow_size)
+                laddered = await _index_doc_ids(session, tables, membership_budget, epoch, plan, allow)
             except PostingCorruptionError as exc:
                 error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
             if laddered is None:
                 # The ladder priced above verifying the whole scope: the
                 # allow-list itself is the candidate set, a lawful superset.
-                doc_ids = np.asarray(allow, dtype=np.int64)
-            elif allow is not None:
-                doc_ids = np.intersect1d(laddered, np.asarray(allow, dtype=np.int64), assume_unique=True)
+                assert allow is not None
+                doc_ids, nominated_count = allow[:CANDIDATE_BUDGET], len(allow)
             else:
-                doc_ids = laddered
-        if doc_ids.size > CANDIDATE_BUDGET:
-            doc_ids = doc_ids[:CANDIDATE_BUDGET]
-            if "candidate budget" not in truncations:
-                truncations.append("candidate budget")
+                doc_ids, nominated_count = laddered
+        if nominated_count > CANDIDATE_BUDGET and "candidate budget" not in truncations:
+            truncations.append("candidate budget")
         pushdown = _pushdown_terms(
             tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
@@ -423,10 +419,10 @@ async def _index_doc_ids(
     membership_budget: int,
     epoch: Epoch | None,
     plan: GramQuery,
-    deadline: float,
-    allow_size: int | None,
-) -> DocIds | None:
-    """Candidate entry doc ids for *plan* under the caller-read *epoch*, sorted.
+    allow: DocIds | None,
+) -> tuple[DocIds, int] | None:
+    """At most ``CANDIDATE_BUDGET`` sorted candidate doc ids for *plan*
+    under the caller-read *epoch*, plus the uncapped count.
 
     No published epoch means no encoded entries: the index side is
     empty and the scan side owns everything. The caller owns the epoch
@@ -436,40 +432,33 @@ async def _index_doc_ids(
 
     The ladder is priced before any blob is fetched: one metadata read
     covers every AND-group, the rarest-first choice fixes the byte bill,
-    and when *allow_size* (the scoped allow-list's width) is cheaper to
-    verify outright than that bill, the return is ``None`` — the caller
-    takes the allow-list itself as the candidate set, a lawful superset.
-    OR unions groups and AND intersects grams as ever, with the deadline
-    consulted between groups: an expired union stops, and the caller's
-    post-ladder check records the truncation loudly.
+    and when *allow* (the scoped allow-list) is cheaper to verify
+    outright than that bill, the return is ``None`` — the caller takes
+    the allow-list itself as the candidate set, a lawful superset. The
+    chosen blobs then go to the engine's candidate kernel in one call:
+    AND within each group rarest-first, OR across groups, the allow-list
+    met, the cap applied — sub-millisecond even on the widest ladders,
+    so the wall deadline is the fetches' concern, consulted by the
+    caller after the ladder. A malformed blob raises
+    :class:`PostingCorruptionError` with the codec's refusal.
     """
     if epoch is None:
-        return np.empty(0, dtype=np.int64)
+        return [], 0
     groups = _plan_groups(plan)
     grams = sorted({gram for group in groups for gram in group})
     meta = await _posting_meta(session, tables, membership_budget, epoch, grams)
     chosen = _choose_grams(groups, meta)
-    if allow_size is not None and _ladder_defers(chosen, meta, allow_size):
+    if allow is not None and _ladder_defers(chosen, meta, len(allow)):
         return None
     wanted = sorted({gram for group_chosen in chosen if group_chosen for gram in group_chosen})
     blobs = await _posting_blobs(session, tables, membership_budget, epoch, wanted)
-    parts = [np.empty(0, dtype=np.int64)]
-    for group_chosen in chosen:
-        if monotonic() > deadline:
-            break
-        if not group_chosen:
-            # None: a required gram indexes nothing, the group is empty.
-            # []: a gramless group — it nominates nothing either way.
-            continue
-        ids: NDArray[np.int64] | None = None
-        for gram in group_chosen:
-            decoded = decode_postings(blobs[gram])
-            ids = decoded if ids is None else np.intersect1d(ids, decoded, assume_unique=True)
-            if ids.size == 0:
-                break
-        if ids is not None:
-            parts.append(ids)
-    return np.unique(np.concatenate(parts))
+    # None: a required gram indexes nothing, the group is empty. []: a
+    # gramless group — it nominates nothing either way. Both drop here.
+    fed = [[blobs[gram] for gram in group_chosen] for group_chosen in chosen if group_chosen]
+    try:
+        return extension().candidate_ids(fed, allow, CANDIDATE_BUDGET)
+    except ValueError as exc:
+        raise PostingCorruptionError(str(exc)) from exc
 
 
 def _plan_groups(plan: GramQuery) -> list[tuple[GramKey, ...]]:
@@ -578,7 +567,7 @@ async def _entries_for_docs(
     kinds = kind_membership(entry)
     per_chunk = max(1, membership_budget - pushdown.binds - kinds.binds)
     rows: list[RowMapping] = []
-    for chunk in chunked(doc_ids.tolist(), per_chunk):
+    for chunk in chunked(doc_ids, per_chunk):
         stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, kinds.predicate, *pushdown.terms)
         rows.extend((await session.execute(stmt)).mappings())
     return rows

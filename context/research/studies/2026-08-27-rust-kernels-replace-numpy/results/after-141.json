@@ -1,0 +1,115 @@
+{
+ "machine": {
+  "python": "3.13.11",
+  "numpy": "2.4.2",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M1 Pro",
+  "db": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/9aca8a65-866f-4cbb-bc2b-685f1963370c/scratchpad/landing_full.sqlite",
+  "db_bytes": 7324221440,
+  "date": "2026-08-27"
+ },
+ "protocol": 5,
+ "sites": [
+  {
+   "label": "rare_ident",
+   "pattern": "randomize_kstack_offset",
+   "postings_decoded": 11963,
+   "candidates": 42,
+   "ladder_ms": 0.028041191399097443,
+   "ladder_capped_ms": 0.027125002816319466,
+   "allow10000_survivors": 6,
+   "allow10000_ms": 0.08770800195634365
+  },
+  {
+   "label": "medium_ident",
+   "pattern": "kmalloc",
+   "postings_decoded": 111016,
+   "candidates": 4087,
+   "ladder_ms": 0.3565000370144844,
+   "ladder_capped_ms": 0.3546660300344229,
+   "allow10000_survivors": 537,
+   "allow10000_ms": 0.39808289147913456
+  },
+  {
+   "label": "word_heavy",
+   "pattern": "pr_debug",
+   "postings_decoded": 61058,
+   "candidates": 4708,
+   "ladder_ms": 0.2708749379962683,
+   "ladder_capped_ms": 0.26108301244676113,
+   "allow10000_survivors": 604,
+   "allow10000_ms": 0.3010421060025692
+  },
+  {
+   "label": "punct_neq_null",
+   "pattern": "!= NULL",
+   "postings_decoded": 110071,
+   "candidates": 14479,
+   "ladder_ms": 0.5869159940630198,
+   "ladder_capped_ms": 0.5828328430652618,
+   "allow10000_survivors": 1891,
+   "allow10000_ms": 0.5427920259535313
+  },
+  {
+   "label": "hot_ident",
+   "pattern": "return",
+   "postings_decoded": 198718,
+   "candidates": 46335,
+   "ladder_ms": 0.957750016823411,
+   "ladder_capped_ms": 0.6913330871611834,
+   "allow10000_survivors": 5918,
+   "allow10000_ms": 0.7198329549282789
+  },
+  {
+   "label": "hot_alt",
+   "pattern": "(mutex_lock|spin_lock)",
+   "postings_decoded": 136397,
+   "candidates": 11864,
+   "ladder_ms": 0.7894581649452448,
+   "ladder_capped_ms": 0.7494168821722269,
+   "allow10000_survivors": 1507,
+   "allow10000_ms": 0.7649159524589777
+  }
+ ],
+ "e2e": [
+  {
+   "label": "zero_hit",
+   "pattern": "xyzzy_no_such_symbol_42",
+   "kwargs": {},
+   "files": 0,
+   "warnings": [],
+   "total_ms": 40.72
+  },
+  {
+   "label": "medium_ident",
+   "pattern": "kmalloc",
+   "kwargs": {},
+   "files": 3680,
+   "warnings": [],
+   "total_ms": 157.96
+  },
+  {
+   "label": "hot_ident",
+   "pattern": "return",
+   "kwargs": {},
+   "files": 24608,
+   "warnings": [
+    "grep result truncated at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths"
+   ],
+   "total_ms": 3284.02
+  },
+  {
+   "label": "scoped_medium",
+   "pattern": "kmalloc",
+   "kwargs": {
+    "globs": [
+     "/drivers/net/**"
+    ]
+   },
+   "files": 409,
+   "warnings": [],
+   "total_ms": 32.2
+  }
+ ]
+}

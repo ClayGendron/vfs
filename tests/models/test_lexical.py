@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
+from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import lexical
 from vfs.models.code_grams import fold_content
 from vfs.models.lexical import (
@@ -41,7 +42,6 @@ from vfs.models.lexical import (
     options_fingerprint,
     term_weight,
 )
-from vfs.models.postings import decode_postings, decode_varints
 
 
 def _varints(values: list[int]) -> bytes:
@@ -197,8 +197,8 @@ class TestSummaryCodec:
         assert decode_summary(b"").first_ids.size == 0
 
     def test_decode_varints_serves_bare_runs(self) -> None:
-        assert decode_varints(_varints([0, 1, 127, 128, 300])).tolist() == [0, 1, 127, 128, 300]
-        assert decode_varints(b"").size == 0
+        assert decode_varints(_varints([0, 1, 127, 128, 300])) == [0, 1, 127, 128, 300]
+        assert decode_varints(b"") == []
 
 
 class TestBuilder:
@@ -212,10 +212,10 @@ class TestBuilder:
         summaries, rows = _drained(builder, cap=3)
         shared = [row for row in rows if row[0] == "shared"]
         assert [(row[1], row[2]) for row in shared] == [(0, BLOCK_SIZE), (1, 2)]
-        assert decode_postings(shared[0][3]).tolist() == list(range(1, BLOCK_SIZE + 1))
-        assert decode_postings(shared[1][3]).tolist() == [BLOCK_SIZE + 1, BLOCK_SIZE + 2]  # absolute again
-        assert decode_varints(shared[1][4]).tolist() == [1, 1]  # tfs
-        assert decode_varints(shared[1][5]).tolist() == [2, 1]  # dls: 129 is odd (two tokens), 130 even
+        assert decode_postings(shared[0][3]) == list(range(1, BLOCK_SIZE + 1))
+        assert decode_postings(shared[1][3]) == [BLOCK_SIZE + 1, BLOCK_SIZE + 2]  # absolute again
+        assert decode_varints(shared[1][4]) == [1, 1]  # tfs
+        assert decode_varints(shared[1][5]) == [2, 1]  # dls: 129 is odd (two tokens), 130 even
         # Terms and rows drain in bytewise term order, every term once in the summaries.
         assert [s[0] for s in summaries] == sorted({term for term, *_ in rows})
         assert [row[0] for row in rows] == sorted(row[0] for row in rows)
@@ -247,8 +247,8 @@ class TestBuilder:
         builder.finish()
         rows = builder.next_batch(10)
         assert rows is not None
-        assert {row[0]: decode_varints(row[5]).tolist() for row in rows} == {"foo": [4], "bar": [4]}
-        assert {row[0]: decode_varints(row[4]).tolist() for row in rows} == {"foo": [3], "bar": [1]}
+        assert {row[0]: decode_varints(row[5]) for row in rows} == {"foo": [4], "bar": [4]}
+        assert {row[0]: decode_varints(row[4]) for row in rows} == {"foo": [3], "bar": [1]}
 
     def test_an_empty_corpus_has_zero_stats_and_no_rows(self) -> None:
         builder = PureLexicalBuilder()

@@ -2,8 +2,8 @@
 //!
 //! Thin by contract: bytes and ints in, bytes and ints out, no Python
 //! objects inside the engine. The host seam (`vfs/native.py`) owns fold and
-//! normalization policy, checks `PROTOCOL_VERSION`, and falls back to the
-//! pure-Python reference implementation when this module is absent.
+//! normalization policy and refuses to import on a `PROTOCOL_VERSION`
+//! mismatch — the extension is required, there is no fallback.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -16,12 +16,12 @@ use pyo3::types::PyBytes;
 use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
-use crate::postings::{DrainedPostings, PostingsAccumulator};
+use crate::postings::{DrainedPostings, PostingsAccumulator, candidate_ids as candidates};
 use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
-/// warns and falls back on mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 4;
+/// refuses to import on a mismatch rather than guessing.
+const PROTOCOL_VERSION: u32 = 5;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -316,6 +316,24 @@ fn lexical_score(
     Ok(py.detach(|| lexical::score(&views, &idfs, avg_dl, k, set.as_deref())))
 }
 
+/// The grep candidate kernel: per AND-group, the planner's chosen posting
+/// blobs rarest-first; `allow` a sorted scoped allow-list or `None`; back,
+/// at most `cap` sorted survivor doc ids and the uncapped count. Decode,
+/// AND, OR, allow-intersect and cap happen inside; a malformed blob is a
+/// `ValueError` carrying the codec's refusal message.
+#[pyfunction]
+#[pyo3(signature = (groups, allow, cap))]
+fn candidate_ids(
+    py: Python<'_>,
+    groups: Vec<Vec<PyBackedBytes>>,
+    allow: Option<Vec<i64>>,
+    cap: usize,
+) -> PyResult<(Vec<i64>, usize)> {
+    let views: Vec<Vec<&[u8]>> = groups.iter().map(|group| group.iter().map(|b| b.as_ref()).collect()).collect();
+    py.detach(|| candidates(&views, allow.as_deref(), cap))
+        .map_err(|err| PyValueError::new_err(err.to_string()))
+}
+
 #[pymodule(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PROTOCOL_VERSION", PROTOCOL_VERSION)?;
@@ -328,6 +346,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lexical_char_classes, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_casefolds, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_score, m)?)?;
+    m.add_function(wrap_pyfunction!(candidate_ids, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;

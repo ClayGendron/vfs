@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import unicodedata
+from time import monotonic
 
 import numpy as np
 import pytest
@@ -40,7 +41,7 @@ from vfs.models.lexical import (
     score_blocks,
     tokenize,
 )
-from vfs.models.postings import encode_postings, postings_builder
+from vfs.models.postings import MAX_DOC_ID, encode_postings, postings_builder
 from vfs.native import EXPECTED_PROTOCOL, chunk_spans, structure_grammars
 
 # The oracle tokenizer follows the interpreter's Unicode tables; the engine's
@@ -120,6 +121,80 @@ class TestParity:
         assert decode_postings(rows[pack_gram(*b"abc")]) == [3, 200, 2**62]
         assert decode_postings(rows[pack_gram(*b"bcd")]) == [200]
         assert rows[pack_gram(*b"abc")] == encode_postings([3, 200, 2**62])
+
+
+def _oracle_candidates(groups: list[list[list[int]]], allow: list[int] | None, cap: int) -> tuple[list[int], int]:
+    """Plain sets: AND within a group, OR across, meet the allow-list, cap."""
+    union: set[int] = set()
+    for group in groups:
+        if group:
+            survivors = set(group[0])
+            for ids in group[1:]:
+                survivors &= set(ids)
+            union |= survivors
+    if allow is not None:
+        union &= set(allow)
+    ordered = sorted(union)
+    return ordered[:cap], len(ordered)
+
+
+class TestCandidateKernel:
+    """The fused decode + AND + OR + allow + cap call against a set oracle."""
+
+    def test_generated_ladders_match_the_oracle(self) -> None:
+        rng = random.Random(141)
+        universe = range(1, 50_000)
+        for _ in range(200):
+            groups: list[list[list[int]]] = []
+            for _g in range(rng.randint(1, 4)):
+                core = sorted(rng.sample(universe, rng.randint(0, 300)))
+                blobs = []
+                for _b in range(rng.randint(1, 4)):
+                    extra = rng.sample(universe, rng.randint(0, 3000))
+                    blobs.append(sorted(set(core) | set(extra)) if rng.random() < 0.7 else sorted(set(extra)))
+                groups.append(blobs)
+            allow = None if rng.random() < 0.5 else sorted(rng.sample(universe, rng.randint(0, 5000)))
+            cap = rng.choice((1, 10, 25_000))
+            fed = [[encode_postings(ids) for ids in group] for group in groups]
+            assert _native.candidate_ids(fed, allow, cap) == _oracle_candidates(groups, allow, cap)
+
+    def test_hand_cases(self) -> None:
+        a, b, c, d = [1, 2, 3, 5, 8, 13], [2, 3, 8, 21], [3, 8, 34], [40, 41]
+        enc = encode_postings
+        groups = [[enc(a), enc(b), enc(c)], [enc(d)], []]
+        assert _native.candidate_ids(groups, None, 100) == ([3, 8, 40, 41], 4)
+        # The allow-list meets the union before the cap; the count is pre-cap.
+        assert _native.candidate_ids(groups, [3, 8, 41], 2) == ([3, 8], 3)
+        assert _native.candidate_ids(groups, [9], 100) == ([], 0)
+        assert _native.candidate_ids(groups, None, 0) == ([], 4)
+        # OR deduplicates shared ids; an empty group nominates nothing.
+        assert _native.candidate_ids([[enc(a)], [enc(b)]], None, 100)[0] == sorted(set(a) | set(b))
+        assert _native.candidate_ids([[enc([]), enc(a)]], None, 100) == ([], 0)
+        assert _native.candidate_ids([], None, 100) == ([], 0)
+        assert _native.candidate_ids([[enc([1, MAX_DOC_ID])]], [MAX_DOC_ID], 5) == ([MAX_DOC_ID], 1)
+
+    def test_a_corrupt_blob_is_refused_with_the_codec_message(self) -> None:
+        with pytest.raises(ValueError, match="count header says 2, blob holds 1"):
+            _native.candidate_ids([[b"\x02\x01"]], None, 10)
+        # Refused even after the intersection has already emptied.
+        with pytest.raises(ValueError, match="non-positive delta"):
+            _native.candidate_ids([[encode_postings([]), b"\x02\x01\x00"]], None, 10)
+
+    @pytest.mark.slow
+    def test_the_widest_ladder_stays_sub_millisecond(self) -> None:
+        # The `return` shape from the landing store: ~200 K postings over
+        # four blobs, 46 K survivors. Generous against CI noise.
+        rng = random.Random(7)
+        rare = sorted(rng.sample(range(1, 700_000), 46_000))
+        wider = [sorted(set(rare) | set(rng.sample(range(1, 700_000), 50_000))) for _ in range(3)]
+        fed = [[encode_postings(ids) for ids in (rare, *wider)]]
+        timings = []
+        for _ in range(5):
+            started = monotonic()
+            ids, total = _native.candidate_ids(fed, None, 25_000)
+            timings.append(monotonic() - started)
+        assert (len(ids), total) == (25_000, 46_000)
+        assert sorted(timings)[2] < 0.005, timings
 
 
 class TestBuilderContract:

@@ -15,16 +15,16 @@ from contextlib import suppress
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
-import numpy as np
 from sqlalchemy import event, func, select, update
 from sqlalchemy.dialects import mssql, postgresql
 
 from tests.support.database_helpers import _url
+from tests.support.oracles.postings import decode_postings
 from vfs.models import Entry
 from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import pack_gram
-from vfs.models.postings import decode_postings, encode_postings
+from vfs.models.postings import encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import Result, ResultError, VFSErrorKind
@@ -83,7 +83,7 @@ class TestReindex:
             ).one()
             fingerprint = (await conn.execute(select(tables.gram_epochs))).one()
         assert (chunk.line_start, chunk.line_end) == (1, 2)  # semantic chunks still refresh
-        assert np.array_equal(decode_postings(posting.postings), np.array([doc_id]))
+        assert decode_postings(posting.postings) == [doc_id]
         assert posting.doc_count == 1
         assert posting.byte_size == len(posting.postings)
         assert (fingerprint.epoch, fingerprint.format_version) == (1, indexing.INDEX_FORMAT_VERSION)

@@ -31,6 +31,7 @@ from typing import Protocol
 
 import pytest
 
+from vfs import _native
 from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
@@ -1484,6 +1485,29 @@ class StorageContract:
         assert (await reindexer.reindex()).success is True
         found = await storage.grep(pattern="magnet")
         assert [o.path for o in found.observations] == ["/idx.txt"]
+
+    @needs("write", "grep")
+    async def test_grep_posting_blobs_reach_the_engine_as_bytes(
+        self, storage: ConformanceBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The candidate kernel borrows ``bytes`` without a copy and copies
+        # anything else; every driver must hand LargeBinary back as bytes.
+        if not _indexed_grep_tier(storage):
+            pytest.skip("scan-tier backends fetch no posting blobs")
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/idx.txt"), content="magnet needle here")])
+        assert (await reindexer.reindex()).success is True
+        seen: list[type] = []
+        real = _native.candidate_ids
+
+        def spy(groups: list[list[bytes]], allow: list[int] | None, cap: int) -> tuple[list[int], int]:
+            seen.extend(type(blob) for group in groups for blob in group)
+            return real(groups, allow, cap)
+
+        monkeypatch.setattr(_native, "candidate_ids", spy)
+        found = await storage.grep(pattern="magnet")
+        assert [o.path for o in found.observations] == ["/idx.txt"]
+        assert seen and set(seen) == {bytes}
 
     @needs("write", "grep")
     async def test_grep_mixed_channel_serves_the_fact_free_arm_in_both_worlds(

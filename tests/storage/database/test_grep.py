@@ -39,6 +39,10 @@ async def _fresh(tmp_path, files: dict[str, str]) -> DatabaseStorage:
     return storage
 
 
+# int64's maximum as a varint: two of these as deltas wrap the id space.
+_VARINT_MAX = bytes([0xFF] * 8 + [0x7F])
+
+
 def _paths(result: Result) -> list[str]:
     return [str(o.path) for o in result.observations]
 
@@ -210,15 +214,29 @@ class TestOverlayPartition:
         assert _paths(published) == ["/a.txt"]
         await storage.close()
 
-    async def test_a_corrupt_posting_blob_classifies_internal(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        ("blob", "message"),
+        [
+            (b"", "empty posting blob"),
+            (b"\x01\x81", "truncated varint"),
+            (b"\x01" + b"\x80" * 10 + b"\x01", "over-wide varint"),
+            (b"\x01\x81\x00", "non-canonical varint spelling"),
+            (b"\x05\x01", "count header says 5, blob holds 1"),
+            (b"\x02\x01\x00", "non-positive delta"),
+            (b"\x02" + _VARINT_MAX + _VARINT_MAX, "doc ids not monotone"),
+        ],
+        ids=["empty", "truncated", "over-wide", "non-canonical", "count", "delta", "wrap"],
+    )
+    async def test_a_corrupt_posting_blob_classifies_internal(self, tmp_path, blob: bytes, message: str) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
         posting = storage._host.tables.posting_list
         async with storage._host.engine.begin() as conn:
-            await conn.execute(update(posting).values(postings=b"\x05\x01"))
+            await conn.execute(update(posting).values(postings=blob))
         result = await storage.grep(pattern="needle")
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.internal
+        assert message in result.errors[0].message
         await storage.close()
 
 

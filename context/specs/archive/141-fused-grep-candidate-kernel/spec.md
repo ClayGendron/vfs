@@ -1,8 +1,11 @@
 # 141 — the fused grep candidate kernel: `candidate_ids` in the crate, numpy leaves `postings.py` and `grep.py`
 
-- **Status:** ready — drafted 2026-08-27 from ADR 057 decision 3 and
-  the 2026-08-27 memo's recommendation (land this kernel first).
-  Second of the ADR 057 arc; depends on spec 140.
+- **Status: landed 2026-08-27.** Slices A–C in one landing:
+  `candidate_ids` in the crate behind protocol 5, `grep.py` and
+  `postings.py` free of numpy, the refusal catalog routed through
+  `grep`, the blob-type pin green on all four engines, the after-
+  measurement in `results/after-141.json`. Second of the ADR 057 arc
+  (140 → 141 → 142). Details in the landing note below.
 - **Born from:** ADR 057
   (`../../../decisions/057-one-engine-the-rust-extension-is-required.md`);
   `../../../research/2026-08-27-rust-kernels-replace-numpy.md` §3, §4,
@@ -140,3 +143,67 @@ four engine legs (the blob-type pin); the criteria table.
 | unscoped grep end-to-end, `kmalloc` | 152 ms (numpy 157) | ≤ 157 ms |
 | `import numpy` in `postings.py`, `grep.py` | present | absent |
 | corruption refusals through `grep` | 7 cases | 7 cases, same messages |
+
+## Landing note (2026-08-27)
+
+- **What landed.** `crates/vfs-core/src/postings.rs` gains the read
+  side: a streaming `Varints` reader and `Postings` iterator carrying
+  the codec's seven refusals as `PostingError` (messages identical to
+  the deleted pure decoder's), `decode_postings`, and
+  `candidate_ids(groups, allow, cap) -> (survivors, total)` — the
+  rarest blob decoded once, every later blob stream-merged against
+  the shrinking survivors, groups unioned (the sort skipped when only
+  one group survives), the allow-list met by a sorted merge, the cap
+  applied last. Every blob is validated even after the intersection
+  empties. The binding takes `Vec<Vec<PyBackedBytes>>` (zero-copy from
+  `bytes`), runs detached from the GIL, and maps `PostingError` to
+  `ValueError`; `PROTOCOL_VERSION` → 5. `grep.py`'s `_index_doc_ids`
+  fetches the planner's chosen blobs and makes the one call;
+  `DocIds` is `list[int]`; `.size`, the slice, `.tolist()` and
+  `np.` are gone; the caller reads the pre-cap count for the
+  candidate-budget truncation. `postings.py` keeps the encoder, the
+  refusal type and the builder contract; `decode_varints` /
+  `decode_postings` left `src/` (the oracle codec in
+  `tests/support/oracles/postings.py` serves every test that decodes).
+- **Tests.** `TestCandidateKernel`: 200 generated ladders against a
+  set oracle, the hand cases (K2 cap-after-allow, K3 pre-cap count,
+  K5 dedup, K6 empty group, `MAX_DOC_ID`), refusal after an emptied
+  intersection, and a `slow` timing pin on the `return` shape (< 5 ms
+  median, generous against CI noise). `test_postings.py` decodes
+  through a single-blob kernel call and pins all seven refusals as
+  `ValueError` with the codec's messages; `test_grep.py` routes the
+  same seven blobs through `storage.grep` and pins
+  `PostingCorruptionError`'s message in the `internal` error.
+  `StorageContract.test_grep_posting_blobs_reach_the_engine_as_bytes`
+  spies on `_native.candidate_ids` and pins `bytes` on every engine.
+- **Legs.** `scripts/ci.sh 3.13`: 2,794 passed, 100 % coverage.
+  Postgres 214, MySQL 214, SQL Server 214, Oracle 211 passed — each one
+  more than the spec 139 landing, the new pin. `cargo test -p vfs-core`
+  38 passed.
+- **Measurement** (`results/after-141.json`, this machine, the spec 130
+  landing store, medians; the memo's like-for-like comparator is its
+  `ladder_rust_tolist_ms` row — the throwaway packed bytes, and boxing
+  to a list is the seam ADR 057 chose):
+
+  | criterion | numpy (memo) | throwaway + tolist (memo) | shipped |
+  |---|---:|---:|---:|
+  | ladder, `return` (199 K postings → 46 K), capped at 25 K | 12.8 ms | 0.85 ms | **0.69 ms** |
+  | ladder, `kmalloc` (111 K → 4 K) | 4.5 ms | 0.24 ms | **0.36 ms** |
+  | ladder + 10 K allow-list, `return` | 12.8 + 1.7 ms | — | **0.72 ms** |
+  | scoped grep e2e, `kmalloc` under `/drivers/net/**` | 36 ms | 31 ms | **30–32 ms** |
+  | unscoped grep e2e, `kmalloc` | 157 ms | 152 ms | **157 ms** |
+  | `import numpy` in `postings.py`, `grep.py` | present | — | absent |
+  | corruption refusals through `grep` | 1 case | — | 7 cases, same messages |
+
+  The spec's ≤ 0.6 ms / ≤ 0.3 ms targets were written against the
+  throwaway's packed-bytes rows (0.35 / 0.20 ms) — the wrong
+  comparator once the seam boxes to a list; against the boxing rows
+  the shipped kernel is at or under on `return` and ~0.1 ms over on
+  `kmalloc` (4 K ids boxed plus the group's extra validation). The
+  end-to-end rows match the memo's Rust arm within noise, and the
+  index stage is now ≤ 1 ms on every shape this store produces.
+- **Residue.** `rustfmt --check` is not a gate in this repo
+  (pre-existing diffs in `chunk.rs`); `cargo clippy --all-features`
+  needs a Python for pyo3-ffi and is not run by CI. The union's k-way
+  merge is a sort+dedup — fine at ≤ 4 groups; a heap merge is the
+  next lever if wide alternations ever show in a profile.

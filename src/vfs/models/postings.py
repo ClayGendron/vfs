@@ -3,15 +3,18 @@
 One gram's doc list is one blob: a varint count, then LEB128 varints of
 the strictly positive deltas between consecutive ids. Sorted input makes
 every delta small (a dense run costs one byte per doc), and the count
-header makes truncation and trailing garbage detectable. Decode is
-numpy-vectorized — posting reads are the hot path of every indexed grep.
+header makes truncation and trailing garbage detectable.
 
-The codec refuses rather than guesses: `encode_postings` raises
-`ValueError` on caller bugs (unsorted or out-of-range ids), and
-`decode_postings` raises `PostingCorruptionError` on every malformed
-blob class — truncated or over-wide varints, non-canonical spellings,
-count mismatches, non-positive deltas, and int64 wraps — so blob
-corruption is loud, never silently-wrong search results.
+This module owns the encoder and the refusal type. The decoder lives in
+the engine (``crates/vfs-core/src/postings.rs``), fused with the grep
+ladder's set algebra so doc ids never materialize on the host until
+capped; the readable decoder is a test oracle. The codec refuses rather
+than guesses: `encode_postings` raises `ValueError` on caller bugs
+(unsorted or out-of-range ids), and the engine's decode raises on every
+malformed blob class — truncated or over-wide varints, non-canonical
+spellings, count mismatches, non-positive deltas, and int64 wraps —
+which grep surfaces as `PostingCorruptionError`, so blob corruption is
+loud, never silently-wrong search results.
 
 This module also owns the posting-set **builder** surface: the
 `PostingsBuilder` contract the engine implements and `postings_builder()`,
@@ -24,20 +27,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, Protocol
 
-import numpy as np
-
 from vfs.native import extension
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from numpy.typing import NDArray
-
 MAX_DOC_ID: Final = 2**63 - 1
 """Doc ids live in the signed-BIGINT range the chunk PK allocates from."""
-
-# ceil(63 / 7): the widest canonical varint a legal value can need.
-_MAX_VARINT_BYTES: Final = 9
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +42,7 @@ _MAX_VARINT_BYTES: Final = 9
 
 
 class PostingCorruptionError(Exception):
-    """A posting blob failed structural validation during decode."""
+    """A posting blob failed structural validation in the engine's decode."""
 
 
 def encode_postings(doc_ids: Iterable[int]) -> bytes:
@@ -63,57 +59,6 @@ def encode_postings(doc_ids: Iterable[int]) -> bytes:
         _append_varint(out, doc_id - prev)
         prev = doc_id
     return bytes(out)
-
-
-def decode_varints(blob: bytes) -> NDArray[np.int64]:
-    """Decode every LEB128 varint of *blob* to an int64 array, refusing corruption.
-
-    The structural half of the codec — truncated, over-wide and
-    non-canonical varints are refused; an empty blob decodes to an empty
-    array. The lexical blobs (``tfs``, ``dls``) are bare varint runs and
-    decode through this directly.
-    """
-    data = np.frombuffer(blob, dtype=np.uint8)
-    if data.size == 0:
-        return np.empty(0, dtype=np.int64)
-    continues = (data & 0x80) != 0
-    if bool(continues[-1]):
-        raise PostingCorruptionError("truncated varint at end of blob")
-    ends = np.flatnonzero(~continues)
-    starts = np.empty(ends.size, dtype=np.int64)
-    starts[0] = 0
-    starts[1:] = ends[:-1] + 1
-    lengths = ends - starts + 1
-    if int(lengths.max()) > _MAX_VARINT_BYTES:
-        raise PostingCorruptionError("over-wide varint")
-    if bool(np.any((lengths > 1) & (data[ends] == 0))):
-        raise PostingCorruptionError("non-canonical varint spelling")
-    groups = np.repeat(np.arange(ends.size), lengths)
-    shifts = 7 * (np.arange(data.size, dtype=np.int64) - starts[groups])
-    payloads = (data & 0x7F).astype(np.int64) << shifts
-    values = np.zeros(ends.size, dtype=np.int64)
-    np.add.at(values, groups, payloads)
-    return values
-
-
-def decode_postings(blob: bytes) -> NDArray[np.int64]:
-    """Decode a posting blob to the int64 doc-id array, refusing corruption."""
-    values = decode_varints(blob)
-    if values.size == 0:
-        raise PostingCorruptionError("empty posting blob (a valid empty list is one zero byte)")
-    count, deltas = int(values[0]), values[1:]
-    if count != deltas.size:
-        raise PostingCorruptionError(f"count header says {count}, blob holds {deltas.size}")
-    if count == 0:
-        return np.empty(0, dtype=np.int64)
-    if int(deltas.min()) < 1:
-        raise PostingCorruptionError("non-positive delta")
-    # Positive deltas keep true ids monotone and positive; an int64 wrap
-    # always passes through a non-positive value, so sign is the check.
-    ids = np.cumsum(deltas)
-    if int(ids.min()) <= 0:
-        raise PostingCorruptionError("doc ids not monotone (int64 wrap)")
-    return ids
 
 
 # ---------------------------------------------------------------------------
