@@ -7,7 +7,10 @@
   reopens spec 130 for a superseding rewrite before spec 132 builds
   the query path. Companions: ADR 052 (fusion — unchanged in
   substance, now client-side on every engine), ADR 048/049 (the Rust
-  engine and the offload seam this rides).
+  engine and the offload seam this rides). **§4's numpy fallback
+  superseded by ADR 057** (2026-08-27): the Rust scorer is the only
+  scorer; `pure_score_blocks` becomes a test oracle and numpy leaves
+  the core dependencies.
 - **Date:** 2026-08-26
 - **Deciders:** Clay Gendron
 - **Decided by:** human

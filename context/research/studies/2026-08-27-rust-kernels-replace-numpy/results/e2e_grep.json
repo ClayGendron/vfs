@@ -1,0 +1,323 @@
+{
+ "machine": {
+  "python": "3.13.11",
+  "numpy": "2.4.2",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M1 Pro",
+  "db": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/9aca8a65-866f-4cbb-bc2b-685f1963370c/scratchpad/landing_full.sqlite",
+  "db_bytes": 7324221440,
+  "date": "2026-08-27"
+ },
+ "runs": 3,
+ "rows": [
+  {
+   "label": "zero_hit",
+   "pattern": "xyzzy_no_such_symbol_42",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 0.0408,
+     "index_total_ms": 0.89,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 0.42,
+     "content_ms": 27.73,
+     "lines": 0,
+     "files": 0,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.0404,
+     "index_total_ms": 0.77,
+     "index_algebra_ms": 0.13,
+     "entries_ms": 0.39,
+     "content_ms": 27.41,
+     "lines": 0,
+     "files": 0,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.0396,
+     "index_total_ms": 0.65,
+     "index_algebra_ms": 0.01,
+     "entries_ms": 0.36,
+     "content_ms": 27.23,
+     "lines": 0,
+     "files": 0,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "rare_ident",
+   "pattern": "randomize_kstack_offset",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 0.042,
+     "index_total_ms": 1.27,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 0.64,
+     "content_ms": 28.41,
+     "lines": 9,
+     "files": 4,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.0426,
+     "index_total_ms": 2.49,
+     "index_algebra_ms": 1.86,
+     "entries_ms": 0.62,
+     "content_ms": 27.95,
+     "lines": 9,
+     "files": 4,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.0406,
+     "index_total_ms": 0.68,
+     "index_algebra_ms": 0.04,
+     "entries_ms": 0.62,
+     "content_ms": 27.72,
+     "lines": 9,
+     "files": 4,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "medium_ident",
+   "pattern": "kmalloc",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 0.1565,
+     "index_total_ms": 5.59,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 24.32,
+     "content_ms": 82.5,
+     "lines": 8201,
+     "files": 3680,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.1692,
+     "index_total_ms": 17.65,
+     "index_algebra_ms": 16.81,
+     "entries_ms": 24.73,
+     "content_ms": 81.77,
+     "lines": 8201,
+     "files": 3680,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.1523,
+     "index_total_ms": 1.07,
+     "index_algebra_ms": 0.22,
+     "entries_ms": 25.13,
+     "content_ms": 82.22,
+     "lines": 8201,
+     "files": 3680,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "word_heavy",
+   "pattern": "pr_debug",
+   "kwargs": {
+    "word_regexp": true
+   },
+   "arms": {
+    "numpy": {
+     "total_s": 0.1698,
+     "index_total_ms": 3.86,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 28.29,
+     "content_ms": 91.42,
+     "lines": 13168,
+     "files": 2252,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.1765,
+     "index_total_ms": 10.47,
+     "index_algebra_ms": 9.66,
+     "entries_ms": 28.44,
+     "content_ms": 92.58,
+     "lines": 13168,
+     "files": 2252,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.1669,
+     "index_total_ms": 1.04,
+     "index_algebra_ms": 0.2,
+     "entries_ms": 28.27,
+     "content_ms": 92.11,
+     "lines": 13168,
+     "files": 2252,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "regex_probe",
+   "pattern": "static\\s+int\\s+\\w+_probe",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 0.3557,
+     "index_total_ms": 7.31,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 73.78,
+     "content_ms": 175.32,
+     "lines": 10974,
+     "files": 9308,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.37,
+     "index_total_ms": 20.5,
+     "index_algebra_ms": 19.59,
+     "entries_ms": 78.49,
+     "content_ms": 185.8,
+     "lines": 10974,
+     "files": 9308,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.3649,
+     "index_total_ms": 1.22,
+     "index_algebra_ms": 0.33,
+     "entries_ms": 79.42,
+     "content_ms": 186.4,
+     "lines": 10974,
+     "files": 9308,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "punct_neq_null",
+   "pattern": "!= NULL",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 0.3578,
+     "index_total_ms": 6.96,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 81.35,
+     "content_ms": 208.18,
+     "lines": 7810,
+     "files": 2873,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.3682,
+     "index_total_ms": 18.56,
+     "index_algebra_ms": 17.67,
+     "entries_ms": 82.49,
+     "content_ms": 204.79,
+     "lines": 7810,
+     "files": 2873,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.3489,
+     "index_total_ms": 1.32,
+     "index_algebra_ms": 0.41,
+     "entries_ms": 83.4,
+     "content_ms": 204.29,
+     "lines": 7810,
+     "files": 2873,
+     "warnings": []
+    }
+   }
+  },
+  {
+   "label": "hot_ident",
+   "pattern": "return",
+   "kwargs": {},
+   "arms": {
+    "numpy": {
+     "total_s": 2.4227,
+     "index_total_ms": 13.99,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 134.17,
+     "content_ms": 254.31,
+     "lines": 657290,
+     "files": 24608,
+     "warnings": [
+      "grep result truncated at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths"
+     ]
+    },
+    "stdlib": {
+     "total_s": 2.5197,
+     "index_total_ms": 31.67,
+     "index_algebra_ms": 30.73,
+     "entries_ms": 135.91,
+     "content_ms": 253.77,
+     "lines": 657290,
+     "files": 24608,
+     "warnings": [
+      "grep result truncated at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths"
+     ]
+    },
+    "rust": {
+     "total_s": 2.4775,
+     "index_total_ms": 1.37,
+     "index_algebra_ms": 0.43,
+     "entries_ms": 136.16,
+     "content_ms": 254.36,
+     "lines": 657290,
+     "files": 24608,
+     "warnings": [
+      "grep result truncated at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths"
+     ]
+    }
+   }
+  },
+  {
+   "label": "scoped_medium",
+   "pattern": "kmalloc",
+   "kwargs": {
+    "globs": [
+     "/drivers/net/**"
+    ]
+   },
+   "arms": {
+    "numpy": {
+     "total_s": 0.0358,
+     "index_total_ms": 5.56,
+     "index_algebra_ms": 0.0,
+     "entries_ms": 3.09,
+     "content_ms": 6.25,
+     "lines": 728,
+     "files": 409,
+     "warnings": []
+    },
+    "stdlib": {
+     "total_s": 0.0482,
+     "index_total_ms": 17.84,
+     "index_algebra_ms": 16.98,
+     "entries_ms": 3.2,
+     "content_ms": 6.41,
+     "lines": 728,
+     "files": 409,
+     "warnings": []
+    },
+    "rust": {
+     "total_s": 0.0309,
+     "index_total_ms": 1.12,
+     "index_algebra_ms": 0.22,
+     "entries_ms": 3.09,
+     "content_ms": 6.37,
+     "lines": 728,
+     "files": 409,
+     "warnings": []
+    }
+   }
+  }
+ ]
+}

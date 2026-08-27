@@ -92,12 +92,38 @@ Consequences that bind design work:
   exactly; green here means green there.
 - **The Rust engine** lives in `crates/vfs-core` (pyo3 binding behind its
   `python` cargo feature; maturin builds it into the wheel as
-  `vfs._native`, fronted by the `vfs/native.py` seam with a pure-Python
-  fallback — `VFS_PURE_PYTHON=1` forces the fallback). Keep
-  `cargo test -p vfs-core` green, and keep the two engines byte-identical
-  (pinned by `tests/test_native.py`). **After editing Rust, run
+  `vfs._native`, fronted by the `vfs/native.py` seam). **The extension
+  is required** (ADR 057, 2026-08-27): vfs has one engine, the seam
+  fails loudly when it is missing, and there is no pure-Python runtime
+  fallback. Until the ADR 057 spec lands, the tree still carries the
+  old pure engine and its `VFS_PURE_PYTHON=1` CI leg — treat that code
+  as the test oracle it is becoming, not as a product to extend. Keep
+  `cargo test -p vfs-core` green. **After editing Rust, run
   `uv sync --reinstall-package vfs-py`** — uv caches the built wheel and
   does not rebuild on Rust-only edits.
+- **Performance work goes in our own Rust crate; pure Python is a test
+  oracle, not a fallback** (Clay, 2026-08-27; ADR 057).
+  - *The engine*: when a hot path needs vectorized or compiled speed,
+    build a kernel in `crates/vfs-core`. Do not reach for a numeric
+    acceleration library (numpy, scipy, numba) as a middle tier — it
+    is a compiled wheel with all of the portability cost of our own
+    Rust and none of the control, and it is slower than what we own.
+    numpy is leaving `dependencies` and does not come back.
+  - *Why no pure-Python fallback*: "runs on any interpreter" was never
+    true — `pydantic-core` is compiled Rust with no pure edition, so
+    vfs is a compiled-extension package already, like pydantic-core,
+    orjson, and polars. A second shipped engine bought no reach and
+    cost a double implementation plus a class of interpreter-drift
+    bugs (the pure tokenizer took its Unicode classes from the running
+    Python; the Rust tables are frozen).
+  - *Oracles*: a readable pure-Python reference implementation lives in
+    `tests/support/`, only where it pins a parity test. It ships in no
+    wheel, carries no coverage obligation, and may skip on interpreters
+    other than the one that generated the Rust tables.
+  - *Scope*: this governs vfs's own engine code (index build, posting
+    decode and intersection, scoring, matching, chunking). Framework
+    dependencies (pydantic, SQLAlchemy) are a separate decision, made
+    on their own merits. Small sets and lists stay stdlib Python.
 
 ## Git workflow
 
@@ -170,6 +196,10 @@ most relevant to this project:
   `opendal`, `juicefs`, `seaweedfs`, `minio`, `libsqlfs`, `agentfs`,
   `jackrabbit-oak`
 - **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
+- **Array kernels** (prior art for our own Rust kernels — decode,
+  sorted-set intersection, `searchsorted`, `unique`, `bincount`,
+  `maximum.at`): `numpy` (BSD-3-Clause; study `numpy/_core/src/`, never
+  copy)
 - **Code search & indexing** (trigram-index stories): `zoekt`, `codesearch`,
   `scip`
 - **BM25 inside Postgres** (lexical-leg design record): `pg_textsearch`
@@ -270,9 +300,13 @@ private *types and constants* stay next to what they support.
 - **A smell is a hint to look closer, not a rule to obey blindly.** When you
   spot one, dig in: understand *why* the code took that shape, and decide
   whether it is justified here.
-- **Don't reach for numpy where plain Python suffices** (Clay, 2026-08-17):
-  heavy dependencies belong only where measured scale justifies them (grep's
-  posting intersections); small sets and lists take stdlib structures.
+- **Don't reach for numpy** (Clay, 2026-08-17; tightened 2026-08-27,
+  ADR 057): small sets and lists take stdlib structures, and where
+  measured scale justifies more the answer is a kernel in our own Rust
+  crate — see *Performance work goes in our own Rust crate* under
+  Tooling. The remaining numpy sites (posting decode/intersect, lexical
+  summary decode, block selection, the BM25 fallback scorer) are slated
+  to move to Rust; do not add new ones.
 - **`assert` narrows, never validates.** An `assert` in `src/` is a
   type-narrowing statement after an ingress gate that already refused the
   bad shape (`assert path is not None` once the XOR check has run). It must

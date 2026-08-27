@@ -5,7 +5,9 @@
   write-vs-reindex question Clay posed against it. Refines ADR 039's
   engine-parity clause: chunking becomes the one declared exception
   to byte-identical engines (see Decision §3). Spec to follow; the
-  open-questions entry archives against this ADR.
+  open-questions entry archives against this ADR. **§3 superseded by
+  ADR 057** (2026-08-27): with the extension required there is no
+  pure engine to degrade and no exception to declare.
   **§3 amended 2026-08-25 (Clay, in session, at spec 117 slice A):**
   grammar delivery is **crates.io grammar crates** (cargo-managed,
   `Cargo.lock` as the pin, the pack's `language_definitions.json` as

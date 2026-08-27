@@ -1,0 +1,2203 @@
+{
+ "machine": {
+  "python": "3.13.11",
+  "numpy": "2.4.2",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M1 Pro",
+  "db": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/9aca8a65-866f-4cbb-bc2b-685f1963370c/scratchpad/landing_full.sqlite",
+  "db_bytes": 7324221440,
+  "date": "2026-08-27"
+ },
+ "runs": 5,
+ "summary": {
+  "1@k10": {
+   "numpy": {
+    "total_ms": 2.463,
+    "sql_ms": 1.039,
+    "compute_ms": 1.421,
+    "blocks_scored": 11.5,
+    "round2_blocks": 3.5
+   },
+   "stdlib": {
+    "total_ms": 3.467,
+    "sql_ms": 1.03,
+    "compute_ms": 2.44,
+    "blocks_scored": 11.5,
+    "round2_blocks": 3.5
+   },
+   "rust": {
+    "total_ms": 1.405,
+    "sql_ms": 0.993,
+    "compute_ms": 0.406,
+    "blocks_scored": 11.5,
+    "round2_blocks": 3.5
+   }
+  },
+  "1@k1000": {
+   "numpy": {
+    "total_ms": 2.875,
+    "sql_ms": 1.05,
+    "compute_ms": 1.825,
+    "blocks_scored": 16.0,
+    "round2_blocks": 8.0
+   },
+   "stdlib": {
+    "total_ms": 4.011,
+    "sql_ms": 1.046,
+    "compute_ms": 2.982,
+    "blocks_scored": 16.0,
+    "round2_blocks": 8.0
+   },
+   "rust": {
+    "total_ms": 1.599,
+    "sql_ms": 1.026,
+    "compute_ms": 0.512,
+    "blocks_scored": 16.0,
+    "round2_blocks": 8.0
+   }
+  },
+  "3@k10": {
+   "numpy": {
+    "total_ms": 9.236,
+    "sql_ms": 1.411,
+    "compute_ms": 7.819,
+    "blocks_scored": 91.0,
+    "round2_blocks": 67.0
+   },
+   "stdlib": {
+    "total_ms": 14.934,
+    "sql_ms": 1.399,
+    "compute_ms": 13.529,
+    "blocks_scored": 91.0,
+    "round2_blocks": 67.0
+   },
+   "rust": {
+    "total_ms": 3.442,
+    "sql_ms": 1.347,
+    "compute_ms": 2.087,
+    "blocks_scored": 91.0,
+    "round2_blocks": 67.0
+   }
+  },
+  "3@k1000": {
+   "numpy": {
+    "total_ms": 17.335,
+    "sql_ms": 1.732,
+    "compute_ms": 15.575,
+    "blocks_scored": 242.0,
+    "round2_blocks": 218.0
+   },
+   "stdlib": {
+    "total_ms": 23.503,
+    "sql_ms": 1.72,
+    "compute_ms": 21.901,
+    "blocks_scored": 242.0,
+    "round2_blocks": 218.0
+   },
+   "rust": {
+    "total_ms": 5.092,
+    "sql_ms": 1.64,
+    "compute_ms": 3.447,
+    "blocks_scored": 242.0,
+    "round2_blocks": 218.0
+   }
+  },
+  "6@k10": {
+   "numpy": {
+    "total_ms": 15.583,
+    "sql_ms": 1.692,
+    "compute_ms": 13.833,
+    "blocks_scored": 156.5,
+    "round2_blocks": 115.5
+   },
+   "stdlib": {
+    "total_ms": 23.024,
+    "sql_ms": 1.655,
+    "compute_ms": 21.41,
+    "blocks_scored": 156.5,
+    "round2_blocks": 115.5
+   },
+   "rust": {
+    "total_ms": 5.123,
+    "sql_ms": 1.557,
+    "compute_ms": 3.608,
+    "blocks_scored": 156.5,
+    "round2_blocks": 115.5
+   }
+  },
+  "6@k1000": {
+   "numpy": {
+    "total_ms": 38.079,
+    "sql_ms": 2.702,
+    "compute_ms": 35.361,
+    "blocks_scored": 592.5,
+    "round2_blocks": 551.5
+   },
+   "stdlib": {
+    "total_ms": 55.927,
+    "sql_ms": 2.576,
+    "compute_ms": 53.619,
+    "blocks_scored": 592.5,
+    "round2_blocks": 551.5
+   },
+   "rust": {
+    "total_ms": 9.773,
+    "sql_ms": 2.386,
+    "compute_ms": 7.577,
+    "blocks_scored": 592.5,
+    "round2_blocks": 551.5
+   }
+  },
+  "all_common@k10": {
+   "numpy": {
+    "total_ms": 157.402,
+    "sql_ms": 7.411,
+    "compute_ms": 149.994,
+    "blocks_scored": 2916,
+    "round2_blocks": 2900
+   },
+   "stdlib": {
+    "total_ms": 560.64,
+    "sql_ms": 7.523,
+    "compute_ms": 553.056,
+    "blocks_scored": 2916,
+    "round2_blocks": 2900
+   },
+   "rust": {
+    "total_ms": 55.146,
+    "sql_ms": 7.127,
+    "compute_ms": 48.019,
+    "blocks_scored": 2916,
+    "round2_blocks": 2900
+   }
+  },
+  "all_common@k1000": {
+   "numpy": {
+    "total_ms": 314.279,
+    "sql_ms": 14.067,
+    "compute_ms": 300.476,
+    "blocks_scored": 5983,
+    "round2_blocks": 5967
+   },
+   "stdlib": {
+    "total_ms": 946.224,
+    "sql_ms": 14.537,
+    "compute_ms": 931.687,
+    "blocks_scored": 5983,
+    "round2_blocks": 5967
+   },
+   "rust": {
+    "total_ms": 95.507,
+    "sql_ms": 13.505,
+    "compute_ms": 81.92,
+    "blocks_scored": 5983,
+    "round2_blocks": 5967
+   }
+  }
+ },
+ "rows": [
+  {
+   "arity": "1",
+   "terms": [
+    "drain"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.537,
+     "sql_ms": 1.078,
+     "compute_ms": 1.454,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "stdlib": {
+     "total_ms": 3.586,
+     "sql_ms": 1.059,
+     "compute_ms": 2.55,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "rust": {
+     "total_ms": 1.439,
+     "sql_ms": 1.023,
+     "compute_ms": 0.42,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "drain"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 3.35,
+     "sql_ms": 1.111,
+     "compute_ms": 2.229,
+     "blocks_scored": 23,
+     "round2_blocks": 15
+    },
+    "stdlib": {
+     "total_ms": 4.933,
+     "sql_ms": 1.046,
+     "compute_ms": 3.888,
+     "blocks_scored": 23,
+     "round2_blocks": 15
+    },
+    "rust": {
+     "total_ms": 1.719,
+     "sql_ms": 1.061,
+     "compute_ms": 0.607,
+     "blocks_scored": 23,
+     "round2_blocks": 15
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "offcore"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.422,
+     "sql_ms": 1.06,
+     "compute_ms": 1.362,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "stdlib": {
+     "total_ms": 3.357,
+     "sql_ms": 1.033,
+     "compute_ms": 2.33,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "rust": {
+     "total_ms": 1.397,
+     "sql_ms": 0.99,
+     "compute_ms": 0.393,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "offcore"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.778,
+     "sql_ms": 1.059,
+     "compute_ms": 1.706,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    },
+    "stdlib": {
+     "total_ms": 3.507,
+     "sql_ms": 1.045,
+     "compute_ms": 2.466,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    },
+    "rust": {
+     "total_ms": 1.611,
+     "sql_ms": 1.139,
+     "compute_ms": 0.491,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "1000000"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.503,
+     "sql_ms": 1.021,
+     "compute_ms": 1.474,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "stdlib": {
+     "total_ms": 3.592,
+     "sql_ms": 1.016,
+     "compute_ms": 2.57,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "rust": {
+     "total_ms": 1.429,
+     "sql_ms": 1.005,
+     "compute_ms": 0.421,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "1000000"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.887,
+     "sql_ms": 1.033,
+     "compute_ms": 1.864,
+     "blocks_scored": 17,
+     "round2_blocks": 9
+    },
+    "stdlib": {
+     "total_ms": 4.107,
+     "sql_ms": 1.026,
+     "compute_ms": 3.088,
+     "blocks_scored": 17,
+     "round2_blocks": 9
+    },
+    "rust": {
+     "total_ms": 1.605,
+     "sql_ms": 1.037,
+     "compute_ms": 0.55,
+     "blocks_scored": 17,
+     "round2_blocks": 9
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "0x93"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.333,
+     "sql_ms": 1.045,
+     "compute_ms": 1.285,
+     "blocks_scored": 9,
+     "round2_blocks": 1
+    },
+    "stdlib": {
+     "total_ms": 3.059,
+     "sql_ms": 1.032,
+     "compute_ms": 2.028,
+     "blocks_scored": 9,
+     "round2_blocks": 1
+    },
+    "rust": {
+     "total_ms": 1.366,
+     "sql_ms": 0.992,
+     "compute_ms": 0.371,
+     "blocks_scored": 9,
+     "round2_blocks": 1
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "0x93"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.812,
+     "sql_ms": 1.052,
+     "compute_ms": 1.76,
+     "blocks_scored": 15,
+     "round2_blocks": 7
+    },
+    "stdlib": {
+     "total_ms": 3.914,
+     "sql_ms": 1.035,
+     "compute_ms": 2.875,
+     "blocks_scored": 15,
+     "round2_blocks": 7
+    },
+    "rust": {
+     "total_ms": 1.519,
+     "sql_ms": 1.01,
+     "compute_ms": 0.508,
+     "blocks_scored": 15,
+     "round2_blocks": 7
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "decoder"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.555,
+     "sql_ms": 1.064,
+     "compute_ms": 1.491,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    },
+    "stdlib": {
+     "total_ms": 3.685,
+     "sql_ms": 1.027,
+     "compute_ms": 2.609,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    },
+    "rust": {
+     "total_ms": 1.425,
+     "sql_ms": 0.982,
+     "compute_ms": 0.446,
+     "blocks_scored": 13,
+     "round2_blocks": 5
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "decoder"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 3.077,
+     "sql_ms": 1.049,
+     "compute_ms": 2.017,
+     "blocks_scored": 19,
+     "round2_blocks": 11
+    },
+    "stdlib": {
+     "total_ms": 4.443,
+     "sql_ms": 1.05,
+     "compute_ms": 3.388,
+     "blocks_scored": 19,
+     "round2_blocks": 11
+    },
+    "rust": {
+     "total_ms": 1.728,
+     "sql_ms": 1.121,
+     "compute_ms": 0.611,
+     "blocks_scored": 19,
+     "round2_blocks": 11
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "backing"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.543,
+     "sql_ms": 1.063,
+     "compute_ms": 1.477,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "stdlib": {
+     "total_ms": 3.577,
+     "sql_ms": 1.035,
+     "compute_ms": 2.555,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    },
+    "rust": {
+     "total_ms": 1.414,
+     "sql_ms": 0.995,
+     "compute_ms": 0.43,
+     "blocks_scored": 12,
+     "round2_blocks": 4
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "backing"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.864,
+     "sql_ms": 1.042,
+     "compute_ms": 1.786,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    },
+    "stdlib": {
+     "total_ms": 3.783,
+     "sql_ms": 1.036,
+     "compute_ms": 2.737,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    },
+    "rust": {
+     "total_ms": 1.522,
+     "sql_ms": 1.013,
+     "compute_ms": 0.485,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "0x97"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.418,
+     "sql_ms": 1.022,
+     "compute_ms": 1.387,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "stdlib": {
+     "total_ms": 3.311,
+     "sql_ms": 1.042,
+     "compute_ms": 2.268,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "rust": {
+     "total_ms": 1.378,
+     "sql_ms": 0.994,
+     "compute_ms": 0.393,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "0x97"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 3.015,
+     "sql_ms": 1.055,
+     "compute_ms": 1.935,
+     "blocks_scored": 18,
+     "round2_blocks": 10
+    },
+    "stdlib": {
+     "total_ms": 4.213,
+     "sql_ms": 1.053,
+     "compute_ms": 3.179,
+     "blocks_scored": 18,
+     "round2_blocks": 10
+    },
+    "rust": {
+     "total_ms": 1.593,
+     "sql_ms": 1.014,
+     "compute_ms": 0.515,
+     "blocks_scored": 18,
+     "round2_blocks": 10
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "distributed"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.401,
+     "sql_ms": 1.023,
+     "compute_ms": 1.342,
+     "blocks_scored": 10,
+     "round2_blocks": 2
+    },
+    "stdlib": {
+     "total_ms": 3.2,
+     "sql_ms": 1.008,
+     "compute_ms": 2.18,
+     "blocks_scored": 10,
+     "round2_blocks": 2
+    },
+    "rust": {
+     "total_ms": 1.377,
+     "sql_ms": 0.991,
+     "compute_ms": 0.385,
+     "blocks_scored": 10,
+     "round2_blocks": 2
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "distributed"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.782,
+     "sql_ms": 1.027,
+     "compute_ms": 1.724,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    },
+    "stdlib": {
+     "total_ms": 3.734,
+     "sql_ms": 1.02,
+     "compute_ms": 2.704,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    },
+    "rust": {
+     "total_ms": 1.513,
+     "sql_ms": 1.024,
+     "compute_ms": 0.466,
+     "blocks_scored": 14,
+     "round2_blocks": 6
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "stall"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.677,
+     "sql_ms": 1.033,
+     "compute_ms": 1.648,
+     "blocks_scored": 16,
+     "round2_blocks": 8
+    },
+    "stdlib": {
+     "total_ms": 4.016,
+     "sql_ms": 1.026,
+     "compute_ms": 2.991,
+     "blocks_scored": 16,
+     "round2_blocks": 8
+    },
+    "rust": {
+     "total_ms": 1.495,
+     "sql_ms": 1.008,
+     "compute_ms": 0.487,
+     "blocks_scored": 16,
+     "round2_blocks": 8
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "stall"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 3.914,
+     "sql_ms": 1.089,
+     "compute_ms": 2.774,
+     "blocks_scored": 36,
+     "round2_blocks": 28
+    },
+    "stdlib": {
+     "total_ms": 6.459,
+     "sql_ms": 1.062,
+     "compute_ms": 5.393,
+     "blocks_scored": 36,
+     "round2_blocks": 28
+    },
+    "rust": {
+     "total_ms": 1.884,
+     "sql_ms": 1.025,
+     "compute_ms": 0.801,
+     "blocks_scored": 36,
+     "round2_blocks": 28
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "independent"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.033,
+     "sql_ms": 0.767,
+     "compute_ms": 1.263,
+     "blocks_scored": 8,
+     "round2_blocks": 0
+    },
+    "stdlib": {
+     "total_ms": 2.714,
+     "sql_ms": 0.75,
+     "compute_ms": 1.947,
+     "blocks_scored": 8,
+     "round2_blocks": 0
+    },
+    "rust": {
+     "total_ms": 1.098,
+     "sql_ms": 0.733,
+     "compute_ms": 0.366,
+     "blocks_scored": 8,
+     "round2_blocks": 0
+    }
+   }
+  },
+  {
+   "arity": "1",
+   "terms": [
+    "independent"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 2.681,
+     "sql_ms": 1.026,
+     "compute_ms": 1.609,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "stdlib": {
+     "total_ms": 3.487,
+     "sql_ms": 1.051,
+     "compute_ms": 2.458,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    },
+    "rust": {
+     "total_ms": 1.49,
+     "sql_ms": 1.028,
+     "compute_ms": 0.443,
+     "blocks_scored": 11,
+     "round2_blocks": 3
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "ai",
+    "funcs",
+    "struct"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 7.267,
+     "sql_ms": 1.199,
+     "compute_ms": 6.048,
+     "blocks_scored": 43,
+     "round2_blocks": 19
+    },
+    "stdlib": {
+     "total_ms": 9.318,
+     "sql_ms": 1.193,
+     "compute_ms": 8.125,
+     "blocks_scored": 43,
+     "round2_blocks": 19
+    },
+    "rust": {
+     "total_ms": 2.622,
+     "sql_ms": 1.158,
+     "compute_ms": 1.484,
+     "blocks_scored": 43,
+     "round2_blocks": 19
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "ai",
+    "funcs",
+    "struct"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 14.067,
+     "sql_ms": 1.615,
+     "compute_ms": 12.458,
+     "blocks_scored": 166,
+     "round2_blocks": 142
+    },
+    "stdlib": {
+     "total_ms": 23.136,
+     "sql_ms": 1.595,
+     "compute_ms": 21.579,
+     "blocks_scored": 166,
+     "round2_blocks": 142
+    },
+    "rust": {
+     "total_ms": 4.816,
+     "sql_ms": 1.444,
+     "compute_ms": 3.369,
+     "blocks_scored": 166,
+     "round2_blocks": 142
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "0x84",
+    "locks",
+    "else"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 10.724,
+     "sql_ms": 1.437,
+     "compute_ms": 9.279,
+     "blocks_scored": 124,
+     "round2_blocks": 100
+    },
+    "stdlib": {
+     "total_ms": 16.519,
+     "sql_ms": 1.563,
+     "compute_ms": 15.09,
+     "blocks_scored": 124,
+     "round2_blocks": 100
+    },
+    "rust": {
+     "total_ms": 3.701,
+     "sql_ms": 1.418,
+     "compute_ms": 2.256,
+     "blocks_scored": 124,
+     "round2_blocks": 100
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "0x84",
+    "locks",
+    "else"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 24.582,
+     "sql_ms": 2.252,
+     "compute_ms": 22.307,
+     "blocks_scored": 387,
+     "round2_blocks": 363
+    },
+    "stdlib": {
+     "total_ms": 32.095,
+     "sql_ms": 1.99,
+     "compute_ms": 30.092,
+     "blocks_scored": 387,
+     "round2_blocks": 363
+    },
+    "rust": {
+     "total_ms": 6.266,
+     "sql_ms": 2.075,
+     "compute_ms": 4.192,
+     "blocks_scored": 387,
+     "round2_blocks": 363
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "modules",
+    "hint",
+    "const"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 12.05,
+     "sql_ms": 1.533,
+     "compute_ms": 10.517,
+     "blocks_scored": 145,
+     "round2_blocks": 121
+    },
+    "stdlib": {
+     "total_ms": 17.164,
+     "sql_ms": 1.523,
+     "compute_ms": 15.625,
+     "blocks_scored": 145,
+     "round2_blocks": 121
+    },
+    "rust": {
+     "total_ms": 3.814,
+     "sql_ms": 1.427,
+     "compute_ms": 2.394,
+     "blocks_scored": 145,
+     "round2_blocks": 121
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "modules",
+    "hint",
+    "const"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 19.468,
+     "sql_ms": 1.815,
+     "compute_ms": 17.635,
+     "blocks_scored": 284,
+     "round2_blocks": 260
+    },
+    "stdlib": {
+     "total_ms": 29.665,
+     "sql_ms": 1.877,
+     "compute_ms": 27.787,
+     "blocks_scored": 284,
+     "round2_blocks": 260
+    },
+    "rust": {
+     "total_ms": 5.853,
+     "sql_ms": 1.73,
+     "compute_ms": 4.138,
+     "blocks_scored": 284,
+     "round2_blocks": 260
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "num_parents",
+    "oneof",
+    "is"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 9.492,
+     "sql_ms": 1.44,
+     "compute_ms": 8.036,
+     "blocks_scored": 94,
+     "round2_blocks": 70
+    },
+    "stdlib": {
+     "total_ms": 16.274,
+     "sql_ms": 1.428,
+     "compute_ms": 14.844,
+     "blocks_scored": 94,
+     "round2_blocks": 70
+    },
+    "rust": {
+     "total_ms": 3.647,
+     "sql_ms": 1.374,
+     "compute_ms": 2.285,
+     "blocks_scored": 94,
+     "round2_blocks": 70
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "num_parents",
+    "oneof",
+    "is"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 10.085,
+     "sql_ms": 1.47,
+     "compute_ms": 8.615,
+     "blocks_scored": 99,
+     "round2_blocks": 75
+    },
+    "stdlib": {
+     "total_ms": 17.262,
+     "sql_ms": 1.419,
+     "compute_ms": 15.843,
+     "blocks_scored": 99,
+     "round2_blocks": 75
+    },
+    "rust": {
+     "total_ms": 3.914,
+     "sql_ms": 1.37,
+     "compute_ms": 2.532,
+     "blocks_scored": 99,
+     "round2_blocks": 75
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "hcd",
+    "addresses",
+    "set"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 7.586,
+     "sql_ms": 1.348,
+     "compute_ms": 6.238,
+     "blocks_scored": 58,
+     "round2_blocks": 34
+    },
+    "stdlib": {
+     "total_ms": 9.854,
+     "sql_ms": 1.301,
+     "compute_ms": 8.553,
+     "blocks_scored": 58,
+     "round2_blocks": 34
+    },
+    "rust": {
+     "total_ms": 2.767,
+     "sql_ms": 1.281,
+     "compute_ms": 1.489,
+     "blocks_scored": 58,
+     "round2_blocks": 34
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "hcd",
+    "addresses",
+    "set"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 13.36,
+     "sql_ms": 1.607,
+     "compute_ms": 11.765,
+     "blocks_scored": 165,
+     "round2_blocks": 141
+    },
+    "stdlib": {
+     "total_ms": 21.311,
+     "sql_ms": 1.549,
+     "compute_ms": 19.719,
+     "blocks_scored": 165,
+     "round2_blocks": 141
+    },
+    "rust": {
+     "total_ms": 4.416,
+     "sql_ms": 1.505,
+     "compute_ms": 2.929,
+     "blocks_scored": 165,
+     "round2_blocks": 141
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "2016",
+    "of_match_table",
+    "size"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 16.214,
+     "sql_ms": 1.663,
+     "compute_ms": 14.553,
+     "blocks_scored": 228,
+     "round2_blocks": 204
+    },
+    "stdlib": {
+     "total_ms": 21.252,
+     "sql_ms": 1.71,
+     "compute_ms": 19.494,
+     "blocks_scored": 228,
+     "round2_blocks": 204
+    },
+    "rust": {
+     "total_ms": 4.429,
+     "sql_ms": 1.635,
+     "compute_ms": 2.783,
+     "blocks_scored": 228,
+     "round2_blocks": 204
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "2016",
+    "of_match_table",
+    "size"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 19.202,
+     "sql_ms": 1.795,
+     "compute_ms": 17.362,
+     "blocks_scored": 277,
+     "round2_blocks": 253
+    },
+    "stdlib": {
+     "total_ms": 35.233,
+     "sql_ms": 1.814,
+     "compute_ms": 33.403,
+     "blocks_scored": 277,
+     "round2_blocks": 253
+    },
+    "rust": {
+     "total_ms": 6.291,
+     "sql_ms": 1.722,
+     "compute_ms": 4.561,
+     "blocks_scored": 277,
+     "round2_blocks": 253
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "nand",
+    "0x8b",
+    "static"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 8.969,
+     "sql_ms": 1.386,
+     "compute_ms": 7.562,
+     "blocks_scored": 80,
+     "round2_blocks": 56
+    },
+    "stdlib": {
+     "total_ms": 13.594,
+     "sql_ms": 1.358,
+     "compute_ms": 12.215,
+     "blocks_scored": 80,
+     "round2_blocks": 56
+    },
+    "rust": {
+     "total_ms": 3.238,
+     "sql_ms": 1.32,
+     "compute_ms": 1.918,
+     "blocks_scored": 80,
+     "round2_blocks": 56
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "nand",
+    "0x8b",
+    "static"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 22.239,
+     "sql_ms": 2.082,
+     "compute_ms": 20.192,
+     "blocks_scored": 329,
+     "round2_blocks": 305
+    },
+    "stdlib": {
+     "total_ms": 22.697,
+     "sql_ms": 1.838,
+     "compute_ms": 20.864,
+     "blocks_scored": 329,
+     "round2_blocks": 305
+    },
+    "rust": {
+     "total_ms": 5.092,
+     "sql_ms": 1.751,
+     "compute_ms": 3.335,
+     "blocks_scored": 329,
+     "round2_blocks": 305
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "iov",
+    "oneof",
+    "of"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 11.665,
+     "sql_ms": 1.513,
+     "compute_ms": 10.193,
+     "blocks_scored": 138,
+     "round2_blocks": 114
+    },
+    "stdlib": {
+     "total_ms": 19.155,
+     "sql_ms": 1.598,
+     "compute_ms": 17.547,
+     "blocks_scored": 138,
+     "round2_blocks": 114
+    },
+    "rust": {
+     "total_ms": 3.977,
+     "sql_ms": 1.445,
+     "compute_ms": 2.551,
+     "blocks_scored": 138,
+     "round2_blocks": 114
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "iov",
+    "oneof",
+    "of"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 15.468,
+     "sql_ms": 1.67,
+     "compute_ms": 13.789,
+     "blocks_scored": 207,
+     "round2_blocks": 183
+    },
+    "stdlib": {
+     "total_ms": 23.871,
+     "sql_ms": 1.625,
+     "compute_ms": 22.224,
+     "blocks_scored": 207,
+     "round2_blocks": 183
+    },
+    "rust": {
+     "total_ms": 5.092,
+     "sql_ms": 1.558,
+     "compute_ms": 3.525,
+     "blocks_scored": 207,
+     "round2_blocks": 183
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "combination",
+    "0xe4",
+    "size"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 8.981,
+     "sql_ms": 1.367,
+     "compute_ms": 7.601,
+     "blocks_scored": 88,
+     "round2_blocks": 64
+    },
+    "stdlib": {
+     "total_ms": 11.919,
+     "sql_ms": 1.331,
+     "compute_ms": 10.595,
+     "blocks_scored": 88,
+     "round2_blocks": 64
+    },
+    "rust": {
+     "total_ms": 3.092,
+     "sql_ms": 1.297,
+     "compute_ms": 1.774,
+     "blocks_scored": 88,
+     "round2_blocks": 64
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "combination",
+    "0xe4",
+    "size"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 36.566,
+     "sql_ms": 2.797,
+     "compute_ms": 33.751,
+     "blocks_scored": 611,
+     "round2_blocks": 587
+    },
+    "stdlib": {
+     "total_ms": 51.479,
+     "sql_ms": 2.52,
+     "compute_ms": 48.959,
+     "blocks_scored": 611,
+     "round2_blocks": 587
+    },
+    "rust": {
+     "total_ms": 9.07,
+     "sql_ms": 2.484,
+     "compute_ms": 6.609,
+     "blocks_scored": 611,
+     "round2_blocks": 587
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "dealings",
+    "pclk",
+    "data"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 8.746,
+     "sql_ms": 1.32,
+     "compute_ms": 7.426,
+     "blocks_scored": 84,
+     "round2_blocks": 60
+    },
+    "stdlib": {
+     "total_ms": 12.641,
+     "sql_ms": 1.371,
+     "compute_ms": 11.259,
+     "blocks_scored": 84,
+     "round2_blocks": 60
+    },
+    "rust": {
+     "total_ms": 3.072,
+     "sql_ms": 1.273,
+     "compute_ms": 1.794,
+     "blocks_scored": 84,
+     "round2_blocks": 60
+    }
+   }
+  },
+  {
+   "arity": "3",
+   "terms": [
+    "dealings",
+    "pclk",
+    "data"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 13.622,
+     "sql_ms": 1.621,
+     "compute_ms": 12.001,
+     "blocks_scored": 171,
+     "round2_blocks": 147
+    },
+    "stdlib": {
+     "total_ms": 17.479,
+     "sql_ms": 1.518,
+     "compute_ms": 15.881,
+     "blocks_scored": 171,
+     "round2_blocks": 147
+    },
+    "rust": {
+     "total_ms": 4.152,
+     "sql_ms": 1.526,
+     "compute_ms": 2.647,
+     "blocks_scored": 171,
+     "round2_blocks": 147
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "_min1",
+    "0xbc",
+    "tma",
+    "mgmt",
+    "120",
+    "int"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 12.701,
+     "sql_ms": 1.572,
+     "compute_ms": 11.118,
+     "blocks_scored": 96,
+     "round2_blocks": 55
+    },
+    "stdlib": {
+     "total_ms": 20.803,
+     "sql_ms": 1.629,
+     "compute_ms": 19.22,
+     "blocks_scored": 96,
+     "round2_blocks": 55
+    },
+    "rust": {
+     "total_ms": 4.916,
+     "sql_ms": 1.485,
+     "compute_ms": 3.431,
+     "blocks_scored": 96,
+     "round2_blocks": 55
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "_min1",
+    "0xbc",
+    "tma",
+    "mgmt",
+    "120",
+    "int"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 21.375,
+     "sql_ms": 1.916,
+     "compute_ms": 19.378,
+     "blocks_scored": 258,
+     "round2_blocks": 217
+    },
+    "stdlib": {
+     "total_ms": 30.043,
+     "sql_ms": 1.998,
+     "compute_ms": 28.027,
+     "blocks_scored": 258,
+     "round2_blocks": 217
+    },
+    "rust": {
+     "total_ms": 6.392,
+     "sql_ms": 1.805,
+     "compute_ms": 4.586,
+     "blocks_scored": 258,
+     "round2_blocks": 217
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "512000000",
+    "0xf7",
+    "i2c_device_id",
+    "hat",
+    "0xb2",
+    "for"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 11.815,
+     "sql_ms": 1.501,
+     "compute_ms": 10.332,
+     "blocks_scored": 85,
+     "round2_blocks": 44
+    },
+    "stdlib": {
+     "total_ms": 17.41,
+     "sql_ms": 1.452,
+     "compute_ms": 15.972,
+     "blocks_scored": 85,
+     "round2_blocks": 44
+    },
+    "rust": {
+     "total_ms": 4.372,
+     "sql_ms": 1.425,
+     "compute_ms": 2.947,
+     "blocks_scored": 85,
+     "round2_blocks": 44
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "512000000",
+    "0xf7",
+    "i2c_device_id",
+    "hat",
+    "0xb2",
+    "for"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 37.659,
+     "sql_ms": 2.69,
+     "compute_ms": 34.995,
+     "blocks_scored": 583,
+     "round2_blocks": 542
+    },
+    "stdlib": {
+     "total_ms": 44.344,
+     "sql_ms": 2.56,
+     "compute_ms": 41.729,
+     "blocks_scored": 583,
+     "round2_blocks": 542
+    },
+    "rust": {
+     "total_ms": 8.629,
+     "sql_ms": 2.373,
+     "compute_ms": 6.235,
+     "blocks_scored": 583,
+     "round2_blocks": 542
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "scaler6_dispx_cob_base",
+    "84",
+    "cfg80211",
+    "pn",
+    "platform_set_drvdata",
+    "size"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 15.48,
+     "sql_ms": 1.689,
+     "compute_ms": 13.668,
+     "blocks_scored": 154,
+     "round2_blocks": 113
+    },
+    "stdlib": {
+     "total_ms": 20.301,
+     "sql_ms": 1.638,
+     "compute_ms": 18.663,
+     "blocks_scored": 154,
+     "round2_blocks": 113
+    },
+    "rust": {
+     "total_ms": 5.046,
+     "sql_ms": 1.554,
+     "compute_ms": 3.471,
+     "blocks_scored": 154,
+     "round2_blocks": 113
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "scaler6_dispx_cob_base",
+    "84",
+    "cfg80211",
+    "pn",
+    "platform_set_drvdata",
+    "size"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 34.165,
+     "sql_ms": 2.504,
+     "compute_ms": 31.662,
+     "blocks_scored": 517,
+     "round2_blocks": 476
+    },
+    "stdlib": {
+     "total_ms": 42.871,
+     "sql_ms": 2.373,
+     "compute_ms": 40.488,
+     "blocks_scored": 517,
+     "round2_blocks": 476
+    },
+    "rust": {
+     "total_ms": 8.59,
+     "sql_ms": 2.294,
+     "compute_ms": 6.256,
+     "blocks_scored": 517,
+     "round2_blocks": 476
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "_sring",
+    "cdev",
+    "0x5c",
+    "msix",
+    "users",
+    "dev"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 13.018,
+     "sql_ms": 1.567,
+     "compute_ms": 11.414,
+     "blocks_scored": 111,
+     "round2_blocks": 70
+    },
+    "stdlib": {
+     "total_ms": 22.896,
+     "sql_ms": 1.532,
+     "compute_ms": 21.364,
+     "blocks_scored": 111,
+     "round2_blocks": 70
+    },
+    "rust": {
+     "total_ms": 4.987,
+     "sql_ms": 1.415,
+     "compute_ms": 3.573,
+     "blocks_scored": 111,
+     "round2_blocks": 70
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "_sring",
+    "cdev",
+    "0x5c",
+    "msix",
+    "users",
+    "dev"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 25.411,
+     "sql_ms": 2.197,
+     "compute_ms": 23.092,
+     "blocks_scored": 342,
+     "round2_blocks": 301
+    },
+    "stdlib": {
+     "total_ms": 47.888,
+     "sql_ms": 2.112,
+     "compute_ms": 45.775,
+     "blocks_scored": 342,
+     "round2_blocks": 301
+    },
+    "rust": {
+     "total_ms": 8.708,
+     "sql_ms": 1.98,
+     "compute_ms": 6.73,
+     "blocks_scored": 342,
+     "round2_blocks": 301
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "card_not_present",
+    "nl",
+    "digest",
+    "much",
+    "thresh",
+    "the"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 15.855,
+     "sql_ms": 1.694,
+     "compute_ms": 14.154,
+     "blocks_scored": 160,
+     "round2_blocks": 119
+    },
+    "stdlib": {
+     "total_ms": 24.646,
+     "sql_ms": 1.745,
+     "compute_ms": 22.879,
+     "blocks_scored": 160,
+     "round2_blocks": 119
+    },
+    "rust": {
+     "total_ms": 5.349,
+     "sql_ms": 1.575,
+     "compute_ms": 3.779,
+     "blocks_scored": 160,
+     "round2_blocks": 119
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "card_not_present",
+    "nl",
+    "digest",
+    "much",
+    "thresh",
+    "the"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 26.402,
+     "sql_ms": 2.208,
+     "compute_ms": 24.219,
+     "blocks_scored": 359,
+     "round2_blocks": 318
+    },
+    "stdlib": {
+     "total_ms": 45.577,
+     "sql_ms": 2.174,
+     "compute_ms": 43.426,
+     "blocks_scored": 359,
+     "round2_blocks": 318
+    },
+    "rust": {
+     "total_ms": 8.293,
+     "sql_ms": 2.015,
+     "compute_ms": 6.334,
+     "blocks_scored": 359,
+     "round2_blocks": 318
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "tmp_word_en",
+    "becomes",
+    "fcp",
+    "1b",
+    "modified",
+    "this"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 14.322,
+     "sql_ms": 1.586,
+     "compute_ms": 12.736,
+     "blocks_scored": 141,
+     "round2_blocks": 100
+    },
+    "stdlib": {
+     "total_ms": 21.652,
+     "sql_ms": 1.577,
+     "compute_ms": 20.056,
+     "blocks_scored": 141,
+     "round2_blocks": 100
+    },
+    "rust": {
+     "total_ms": 5.021,
+     "sql_ms": 1.481,
+     "compute_ms": 3.541,
+     "blocks_scored": 141,
+     "round2_blocks": 100
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "tmp_word_en",
+    "becomes",
+    "fcp",
+    "1b",
+    "modified",
+    "this"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 38.499,
+     "sql_ms": 2.713,
+     "compute_ms": 35.726,
+     "blocks_scored": 602,
+     "round2_blocks": 561
+    },
+    "stdlib": {
+     "total_ms": 63.966,
+     "sql_ms": 2.592,
+     "compute_ms": 61.463,
+     "blocks_scored": 602,
+     "round2_blocks": 561
+    },
+    "rust": {
+     "total_ms": 10.837,
+     "sql_ms": 2.398,
+     "compute_ms": 8.424,
+     "blocks_scored": 602,
+     "round2_blocks": 561
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "efi_dxe_table",
+    "liable",
+    "record",
+    "members",
+    "horizontal",
+    "unsigned"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 18.321,
+     "sql_ms": 1.802,
+     "compute_ms": 16.508,
+     "blocks_scored": 216,
+     "round2_blocks": 175
+    },
+    "stdlib": {
+     "total_ms": 26.874,
+     "sql_ms": 1.821,
+     "compute_ms": 24.985,
+     "blocks_scored": 216,
+     "round2_blocks": 175
+    },
+    "rust": {
+     "total_ms": 5.691,
+     "sql_ms": 1.656,
+     "compute_ms": 4.028,
+     "blocks_scored": 216,
+     "round2_blocks": 175
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "efi_dxe_table",
+    "liable",
+    "record",
+    "members",
+    "horizontal",
+    "unsigned"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 41.167,
+     "sql_ms": 2.859,
+     "compute_ms": 38.381,
+     "blocks_scored": 650,
+     "round2_blocks": 609
+    },
+    "stdlib": {
+     "total_ms": 65.404,
+     "sql_ms": 2.776,
+     "compute_ms": 62.561,
+     "blocks_scored": 650,
+     "round2_blocks": 609
+    },
+    "rust": {
+     "total_ms": 11.15,
+     "sql_ms": 2.525,
+     "compute_ms": 8.625,
+     "blocks_scored": 650,
+     "round2_blocks": 609
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "mc_cmd_get_asserts_out_v2_saved_pc_offs_ofst",
+    "detach",
+    "component",
+    "summary",
+    "b1",
+    "this"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 19.342,
+     "sql_ms": 1.833,
+     "compute_ms": 17.533,
+     "blocks_scored": 233,
+     "round2_blocks": 192
+    },
+    "stdlib": {
+     "total_ms": 26.405,
+     "sql_ms": 1.813,
+     "compute_ms": 24.585,
+     "blocks_scored": 233,
+     "round2_blocks": 192
+    },
+    "rust": {
+     "total_ms": 5.728,
+     "sql_ms": 1.732,
+     "compute_ms": 3.989,
+     "blocks_scored": 233,
+     "round2_blocks": 192
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "mc_cmd_get_asserts_out_v2_saved_pc_offs_ofst",
+    "detach",
+    "component",
+    "summary",
+    "b1",
+    "this"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 39.343,
+     "sql_ms": 2.727,
+     "compute_ms": 36.55,
+     "blocks_scored": 616,
+     "round2_blocks": 575
+    },
+    "stdlib": {
+     "total_ms": 71.468,
+     "sql_ms": 2.678,
+     "compute_ms": 68.792,
+     "blocks_scored": 616,
+     "round2_blocks": 575
+    },
+    "rust": {
+     "total_ms": 11.574,
+     "sql_ms": 2.444,
+     "compute_ms": 9.16,
+     "blocks_scored": 616,
+     "round2_blocks": 575
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "input_add_hotplug_var",
+    "max_register",
+    "legacy",
+    "virtual",
+    "encode",
+    "to"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 17.279,
+     "sql_ms": 1.697,
+     "compute_ms": 15.546,
+     "blocks_scored": 182,
+     "round2_blocks": 141
+    },
+    "stdlib": {
+     "total_ms": 32.87,
+     "sql_ms": 1.759,
+     "compute_ms": 31.111,
+     "blocks_scored": 182,
+     "round2_blocks": 141
+    },
+    "rust": {
+     "total_ms": 6.397,
+     "sql_ms": 1.687,
+     "compute_ms": 4.71,
+     "blocks_scored": 182,
+     "round2_blocks": 141
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "input_add_hotplug_var",
+    "max_register",
+    "legacy",
+    "virtual",
+    "encode",
+    "to"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 46.421,
+     "sql_ms": 2.977,
+     "compute_ms": 43.459,
+     "blocks_scored": 741,
+     "round2_blocks": 700
+    },
+    "stdlib": {
+     "total_ms": 76.802,
+     "sql_ms": 2.948,
+     "compute_ms": 73.864,
+     "blocks_scored": 741,
+     "round2_blocks": 700
+    },
+    "rust": {
+     "total_ms": 12.736,
+     "sql_ms": 2.808,
+     "compute_ms": 9.926,
+     "blocks_scored": 741,
+     "round2_blocks": 700
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "cas_phy_init",
+    "lowest",
+    "hat",
+    "arbitrary",
+    "sizes",
+    "in"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 15.686,
+     "sql_ms": 1.713,
+     "compute_ms": 13.998,
+     "blocks_scored": 159,
+     "round2_blocks": 118
+    },
+    "stdlib": {
+     "total_ms": 23.153,
+     "sql_ms": 1.672,
+     "compute_ms": 21.457,
+     "blocks_scored": 159,
+     "round2_blocks": 118
+    },
+    "rust": {
+     "total_ms": 5.2,
+     "sql_ms": 1.56,
+     "compute_ms": 3.643,
+     "blocks_scored": 159,
+     "round2_blocks": 118
+    }
+   }
+  },
+  {
+   "arity": "6",
+   "terms": [
+    "cas_phy_init",
+    "lowest",
+    "hat",
+    "arbitrary",
+    "sizes",
+    "in"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 53.429,
+     "sql_ms": 3.328,
+     "compute_ms": 50.03,
+     "blocks_scored": 883,
+     "round2_blocks": 842
+    },
+    "stdlib": {
+     "total_ms": 99.548,
+     "sql_ms": 3.251,
+     "compute_ms": 96.367,
+     "blocks_scored": 883,
+     "round2_blocks": 842
+    },
+    "rust": {
+     "total_ms": 15.665,
+     "sql_ms": 3.04,
+     "compute_ms": 12.625,
+     "blocks_scored": 883,
+     "round2_blocks": 842
+    }
+   }
+  },
+  {
+   "arity": "all_common",
+   "terms": [
+    "struct",
+    "if"
+   ],
+   "k": 10,
+   "arms": {
+    "numpy": {
+     "total_ms": 157.402,
+     "sql_ms": 7.411,
+     "compute_ms": 149.994,
+     "blocks_scored": 2916,
+     "round2_blocks": 2900
+    },
+    "stdlib": {
+     "total_ms": 560.64,
+     "sql_ms": 7.523,
+     "compute_ms": 553.056,
+     "blocks_scored": 2916,
+     "round2_blocks": 2900
+    },
+    "rust": {
+     "total_ms": 55.146,
+     "sql_ms": 7.127,
+     "compute_ms": 48.019,
+     "blocks_scored": 2916,
+     "round2_blocks": 2900
+    }
+   }
+  },
+  {
+   "arity": "all_common",
+   "terms": [
+    "struct",
+    "if"
+   ],
+   "k": 1000,
+   "arms": {
+    "numpy": {
+     "total_ms": 314.279,
+     "sql_ms": 14.067,
+     "compute_ms": 300.476,
+     "blocks_scored": 5983,
+     "round2_blocks": 5967
+    },
+    "stdlib": {
+     "total_ms": 946.224,
+     "sql_ms": 14.537,
+     "compute_ms": 931.687,
+     "blocks_scored": 5983,
+     "round2_blocks": 5967
+    },
+    "rust": {
+     "total_ms": 95.507,
+     "sql_ms": 13.505,
+     "compute_ms": 81.92,
+     "blocks_scored": 5983,
+     "round2_blocks": 5967
+    }
+   }
+  }
+ ]
+}

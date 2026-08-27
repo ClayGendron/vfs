@@ -20,7 +20,12 @@
   engines law). **Amended by ADR 049** (2026-08-25): verify leaves
   the event loop by worker thread; this ADR's linear-time guarantee
   is the load-bearing fact that settles the pure engine's
-  backtracking residual by engine choice.
+  backtracking residual by engine choice. **Superseded in part by
+  ADR 057** (2026-08-27): the extension is required and the pure
+  engine becomes a test oracle — decision 1's "complete pure-Python
+  implementation ships inside every wheel" and decision 6 no longer
+  hold; the mixed layout, thin bindings, fold ownership, and verify
+  authority stand.
 - **Date:** 2026-08-17 (slices B–C landed 2026-08-16/17; recorded at
   slice D)
 - **Deciders:** Clay Gendron

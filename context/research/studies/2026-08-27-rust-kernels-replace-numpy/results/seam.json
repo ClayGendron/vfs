@@ -1,0 +1,31 @@
+{
+ "machine": {
+  "python": "3.13.11",
+  "numpy": "2.4.2",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "cpu": "Apple M1 Pro",
+  "db": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/9aca8a65-866f-4cbb-bc2b-685f1963370c/scratchpad/landing_full.sqlite",
+  "db_bytes": 7324221440,
+  "date": "2026-08-27"
+ },
+ "widest_ids": 76258,
+ "budget": 25000,
+ "bytes_to_list_ms": 0.8979591075330973,
+ "bytes_to_numpy_ms": 0.00037509016692638397,
+ "kernel_returns_list_ms": 0.953000271692872,
+ "slice_bytes_ms": 0.0034580007195472717,
+ "slice_list_ms": 0.05820789374411106,
+ "slice_numpy_ms": 0.000125030055642128,
+ "tolist_from_bytes_budget_ms": 0.2618751022964716,
+ "tolist_from_numpy_budget_ms": 0.2867078874260187,
+ "tolist_from_list_budget_ms": 0.11979090049862862,
+ "allow_numpy_ms": 2.4245840031653643,
+ "allow_rust_bytes_ms": 0.14120806008577347,
+ "allow_rust_bytes_incl_pack_ms": 0.2345407847315073,
+ "allow_stdlib_list_ms": 1.5835000667721033,
+ "allow_survivors": 9785,
+ "bytes_payload_kb": 595.765625,
+ "numpy_payload_kb": 595.765625,
+ "list_payload_kb": 2681.0
+}

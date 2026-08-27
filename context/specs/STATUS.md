@@ -5,6 +5,19 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **140 / 141 / 142 drafted 2026-08-27** — the ADR 057 arc: one
+  engine. **140** makes `vfs._native` required (loud `ImportError`,
+  no `VFS_PURE_PYTHON`, no pure CI leg), moves every pure
+  implementation to `tests/support/oracles/` as parity referees, and
+  turns the 3.11-only Unicode-drift failure (CI run 33037191124) into
+  a skip on non-generating interpreters. **141** lands the fused grep
+  kernel `candidate_ids` (decode + AND + OR + allow + cap in one call,
+  12–36× numpy, `list[int]` at the seam) and takes numpy out of
+  `postings.py` / `grep.py`. **142** lands the summary-decode and
+  block-selection kernels, deletes the numpy scorer, and removes numpy
+  from `pyproject.toml`. Numbers from
+  `research/2026-08-27-rust-kernels-replace-numpy.md`. Order:
+  140 → 141 → 142 (142 may fold into 132 if 132 lands first).
 - **139 landed 2026-08-26** — bulk inserts through one owner
   (`bulk_insert`): the driver's own executemany where it is measured
   faster (sqlite), asyncpg `COPY` on Postgres, Core's pages where the
