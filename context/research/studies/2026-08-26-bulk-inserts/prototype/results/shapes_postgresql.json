@@ -1,0 +1,20 @@
+{
+ "label": "shapes",
+ "url_scheme": "postgresql+asyncpg",
+ "micro": {
+  "rows": 100000,
+  "dialect": "postgresql",
+  "driver": "asyncpg",
+  "paramstyle": "numeric_dollar",
+  "use_insertmanyvalues": true,
+  "fast_executemany": false,
+  "rendered": "INSERT INTO bench_shapes_lex_postings (epoch, term, block_no, doc_count, doc_ids, tfs, dls) VALUES ($1::INTEGER, $2::VARCHAR, $3::INTEGER, $4::INTEGER, $5::BYTEA, $6::BYTEA, $7::BYTEA)",
+  "us_per_row": {
+   "sqlalchemy_executemany": 9.07,
+   "driver_executemany": 11.38,
+   "copy_records": 4.25,
+   "multirow_values": 78.78
+  },
+  "multirow_rows_per_statement": 4671
+ }
+}

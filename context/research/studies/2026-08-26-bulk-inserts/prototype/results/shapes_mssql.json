@@ -1,0 +1,19 @@
+{
+ "label": "shapes",
+ "url_scheme": "mssql+aioodbc",
+ "micro": {
+  "rows": 100000,
+  "dialect": "mssql",
+  "driver": "aioodbc",
+  "paramstyle": "qmark",
+  "use_insertmanyvalues": true,
+  "fast_executemany": true,
+  "rendered": "INSERT INTO bench_shapes_lex_postings (epoch, term, block_no, doc_count, doc_ids, tfs, dls) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "us_per_row": {
+   "sqlalchemy_executemany": 41.13,
+   "driver_executemany": 31.05,
+   "multirow_values": 127.21
+  },
+  "multirow_rows_per_statement": 299
+ }
+}

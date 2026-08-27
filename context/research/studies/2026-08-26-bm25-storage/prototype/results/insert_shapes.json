@@ -1,0 +1,12 @@
+{
+ "setup": "real vfs_lex_postings table, sqlite+aiosqlite through SQLAlchemy, block-shaped rows (7 columns, ~560 B blobs), one transaction",
+ "us_per_row_300k": {
+  "session.execute(insert(t), rows) page 20k [lexical build, gram postings, content, chunks, segments today]": 5.23,
+  "session.execute(insert(t).values(rows)) page 4671 [writes.py entry insert, multirow branch]": 40.02,
+  "conn.execute(insert(t), rows) page 20k": 5.15,
+  "conn.exec_driver_sql(rendered INSERT, tuples) page 20k [driver executemany via SQLAlchemy]": 2.23,
+  "sqlite3.executemany sync page 20k [raw reference]": 2.00
+ },
+ "values_page_sweep_100k": {"100": 37.66, "500": 37.64, "1000": 38.23, "4671": 40.95},
+ "executemany_page_sweep_100k": {"1000": 5.52, "20000": 5.80}
+}

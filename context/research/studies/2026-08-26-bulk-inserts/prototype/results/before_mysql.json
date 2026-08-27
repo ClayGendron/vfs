@@ -1,0 +1,28 @@
+{
+ "label": "before",
+ "url_scheme": "mysql+aiomysql",
+ "micro": {
+  "rows": 100000,
+  "dialect": "mysql",
+  "driver": "aiomysql",
+  "paramstyle": "format",
+  "use_insertmanyvalues": true,
+  "fast_executemany": false,
+  "rendered": "INSERT INTO bench_before_lex_postings (epoch, term, block_no, doc_count, doc_ids, tfs, dls) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+  "us_per_row": {
+   "sqlalchemy_executemany": 50.6,
+   "driver_executemany": 44.18,
+   "multirow_values": 85.37
+  },
+  "multirow_rows_per_statement": 4671
+ },
+ "verbs": {
+  "files": 3999,
+  "content_mb": 57.0,
+  "write_s": 4.52,
+  "write_files_per_s": 884,
+  "reindex_no_lexical_s": 7.12,
+  "reindex_with_lexical_s": 25.14,
+  "lexical_delta_s": 18.02
+ }
+}

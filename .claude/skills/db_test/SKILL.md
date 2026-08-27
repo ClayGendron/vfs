@@ -91,6 +91,32 @@ that fails on a real engine while sqlite passes is exactly the signal
 this setup exists to produce (that is how the InnoDB index-cap defect
 was caught).
 
+### Run the legs concurrently, and the sqlite CI leg beside them
+
+Each run mints its own table namespace, so the four legs never
+collide, and each container is its own server — run them **at the
+same time**, not one after another (Clay, 2026-08-26): wall time is
+the slowest leg (~2.5 min, Oracle) instead of the sum (~7 min). The
+sqlite CI leg (`scripts/ci.sh 3.13`) is CPU-bound in one process while
+the legs mostly wait on their databases, so it runs alongside them.
+
+```sh
+( VFS_TEST_POSTGRES_URL=... uv run pytest -m postgres -q > leg_postgres.log 2>&1 ) &
+( VFS_TEST_MYSQL_URL=...    uv run pytest -m mysql    -q > leg_mysql.log    2>&1 ) &
+( VFS_TEST_MSSQL_URL=...    uv run pytest -m mssql    -q > leg_mssql.log    2>&1 ) &
+( VFS_TEST_ORACLE_URL=...   uv run pytest -m oracle   -q > leg_oracle.log   2>&1 ) &
+( scripts/ci.sh 3.13 > leg_ci.log 2>&1 ) &
+wait; tail -n 1 leg_*.log
+```
+
+While iterating on a fix, run only the slice that touches it
+(`-k "<names>"`) on the engine that failed — seconds, not minutes —
+and run the whole legs once, at the gate. **Benchmarks are the
+exception:** a timing run wants a quiet machine, so it runs alone,
+after the legs, and uses a smaller sample on the server engines
+(1,000 linux files; 4,000 on sqlite — the bulk-insert benchmark's
+defaults) because its job is the ratio between shapes, not the seconds.
+
 ## 4. Tear down
 
 Plain `down` skips services behind profiles — name the profiles — and

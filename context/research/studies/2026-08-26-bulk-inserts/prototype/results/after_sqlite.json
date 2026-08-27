@@ -1,0 +1,28 @@
+{
+ "label": "after",
+ "url_scheme": "sqlite+aiosqlite",
+ "micro": {
+  "rows": 100000,
+  "dialect": "sqlite",
+  "driver": "aiosqlite",
+  "paramstyle": "qmark",
+  "use_insertmanyvalues": true,
+  "fast_executemany": false,
+  "rendered": "INSERT INTO bench_after_lex_postings (epoch, term, block_no, doc_count, doc_ids, tfs, dls) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "us_per_row": {
+   "sqlalchemy_executemany": 6.74,
+   "driver_executemany": 1.82,
+   "multirow_values": 45.31
+  },
+  "multirow_rows_per_statement": 4671
+ },
+ "verbs": {
+  "files": 3999,
+  "content_mb": 57.0,
+  "write_s": 1.62,
+  "write_files_per_s": 2470,
+  "reindex_no_lexical_s": 2.84,
+  "reindex_with_lexical_s": 7.48,
+  "lexical_delta_s": 4.64
+ }
+}

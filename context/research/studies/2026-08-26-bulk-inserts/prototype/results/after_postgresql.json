@@ -1,0 +1,29 @@
+{
+ "label": "after",
+ "url_scheme": "postgresql+asyncpg",
+ "micro": {
+  "rows": 100000,
+  "dialect": "postgresql",
+  "driver": "asyncpg",
+  "paramstyle": "numeric_dollar",
+  "use_insertmanyvalues": true,
+  "fast_executemany": false,
+  "rendered": "INSERT INTO bench_after_lex_postings (epoch, term, block_no, doc_count, doc_ids, tfs, dls) VALUES ($1::INTEGER, $2::VARCHAR, $3::INTEGER, $4::INTEGER, $5::BYTEA, $6::BYTEA, $7::BYTEA)",
+  "us_per_row": {
+   "sqlalchemy_executemany": 17.58,
+   "driver_executemany": 10.6,
+   "copy_records": 5.71,
+   "multirow_values": 70.4
+  },
+  "multirow_rows_per_statement": 4671
+ },
+ "verbs": {
+  "files": 3999,
+  "content_mb": 57.0,
+  "write_s": 3.67,
+  "write_files_per_s": 1091,
+  "reindex_no_lexical_s": 4.65,
+  "reindex_with_lexical_s": 48.22,
+  "lexical_delta_s": 43.57
+ }
+}

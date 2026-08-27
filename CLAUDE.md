@@ -278,3 +278,12 @@ private *types and constants* stay next to what they support.
   bad shape (`assert path is not None` once the XOR check has run). It must
   never be the thing that turns bad input into a refusal — that is a
   classified `Result`, and `python -O` must change no behavior.
+
+## Explaining things to Clay
+
+- **Explain simply and repetitively** (Clay, 2026-08-26). Dense, packed
+  prose costs Clay real decoding time. When explaining a result, a
+  design, or a trade-off: short sentences, one idea per sentence, say
+  the key idea more than once in different words, define every term of
+  art the first time it appears, and end with a one-line version.
+  Tables and code are fine; compressed jargon-laden paragraphs are not.

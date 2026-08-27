@@ -5,6 +5,15 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **139 landed 2026-08-26** — bulk inserts through one owner
+  (`bulk_insert`): the driver's own executemany where it is measured
+  faster (sqlite), asyncpg `COPY` on Postgres, Core's pages where the
+  legs said no (SQL Server — `fast_executemany` silently lost rows;
+  Oracle — DATE binds lose microseconds). Every bulk site converted,
+  the write pipeline's 8× multirow shape retired; before/after on five
+  engines in `research/studies/2026-08-26-bulk-inserts/`; two online
+  reviews folded in (ADR 056). Postgres lexical build −25 % at 4,000
+  files. Legs now run concurrently (~3 min a gate).
 - **130 landed (second landing) 2026-08-26** — block postings per
   term with per-term summaries, the Rust lexical engine (tokenizer
   from generated interpreter tables, builder, scorer) behind
