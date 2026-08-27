@@ -1,0 +1,266 @@
+{
+ "vfs_native": {
+  "docs": 200,
+  "queries": 40,
+  "arms": {
+   "bm25": {
+    "ndcg@10": 0.7588739344469312,
+    "mrr@10": 0.9833333333333332,
+    "recall@10": 0.41342540496659785,
+    "recall@50": 0.7851548014231116,
+    "mean_ms": 2.66,
+    "p50_ms": 2.5,
+    "max_ms": 4.31
+   },
+   "hash": {
+    "model_id": "hash/blake2b-tokens-bigrams@256",
+    "dimension": 256,
+    "load_s": 0.0,
+    "reindex_s": 0.99,
+    "embed_s": 0.39,
+    "chunks_per_s": 3913.4,
+    "fused": {
+     "ndcg@10": 0.7691999785184602,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.4158731910985944,
+     "recall@50": 0.7668282943048802,
+     "mean_ms": 25.88,
+     "p50_ms": 24.86,
+     "max_ms": 104.94
+    },
+    "vector": {
+     "ndcg@10": 0.3149566370588232,
+     "mrr@10": 0.6539880952380953,
+     "recall@10": 0.13943075562083515,
+     "recall@50": 0.49067714102554894,
+     "mean_ms": 22.74,
+     "p50_ms": 23.99,
+     "max_ms": 41.19
+    }
+   },
+   "potion": {
+    "model_id": "model2vec/minishlab/potion-base-8M@256",
+    "dimension": 256,
+    "load_s": 0.4,
+    "reindex_s": 1.52,
+    "embed_s": 0.93,
+    "chunks_per_s": 1659.1,
+    "fused": {
+     "ndcg@10": 0.7808947280683104,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.4220174390290266,
+     "recall@50": 0.8002766397594254,
+     "mean_ms": 25.04,
+     "p50_ms": 25.98,
+     "max_ms": 36.74
+    },
+    "vector": {
+     "ndcg@10": 0.5764702593207391,
+     "mrr@10": 0.8756944444444444,
+     "recall@10": 0.2575772653619615,
+     "recall@50": 0.6601122940685262,
+     "mean_ms": 24.03,
+     "p50_ms": 25.27,
+     "max_ms": 43.93
+    }
+   },
+   "minilm": {
+    "model_id": "fastembed/sentence-transformers/all-MiniLM-L6-v2@384",
+    "dimension": 384,
+    "load_s": 0.13,
+    "reindex_s": 13.26,
+    "embed_s": 12.66,
+    "chunks_per_s": 121.6,
+    "fused": {
+     "ndcg@10": 0.7998399940617249,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.4336729711484958,
+     "recall@50": 0.7992869930441603,
+     "mean_ms": 35.75,
+     "p50_ms": 37.5,
+     "max_ms": 44.22
+    },
+    "vector": {
+     "ndcg@10": 0.6272555179895273,
+     "mrr@10": 0.89375,
+     "recall@10": 0.30011420214538836,
+     "recall@50": 0.7033579843630825,
+     "mean_ms": 34.84,
+     "p50_ms": 36.5,
+     "max_ms": 50.94
+    }
+   },
+   "arctic-xs": {
+    "model_id": "fastembed/snowflake/snowflake-arctic-embed-xs@384",
+    "dimension": 384,
+    "load_s": 4.99,
+    "reindex_s": 63.11,
+    "embed_s": 62.52,
+    "chunks_per_s": 24.6,
+    "fused": {
+     "ndcg@10": 0.778579058967739,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.4219794695401558,
+     "recall@50": 0.7908892820959685,
+     "mean_ms": 27.82,
+     "p50_ms": 30.49,
+     "max_ms": 36.84
+    },
+    "vector": {
+     "ndcg@10": 0.6925041995497834,
+     "mrr@10": 0.9333333333333332,
+     "recall@10": 0.32841691245990745,
+     "recall@50": 0.6845920210853462,
+     "mean_ms": 26.86,
+     "p50_ms": 28.41,
+     "max_ms": 44.36
+    }
+   },
+   "arctic-s": {
+    "model_id": "fastembed/snowflake/snowflake-arctic-embed-s@384",
+    "dimension": 384,
+    "load_s": 6.62,
+    "reindex_s": 120.64,
+    "embed_s": 120.04,
+    "chunks_per_s": 12.8,
+    "fused": {
+     "ndcg@10": 0.7588739344469312,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.41342540496659785,
+     "recall@50": 0.7851548014231116,
+     "mean_ms": 34.89,
+     "p50_ms": 37.79,
+     "max_ms": 53.45
+    },
+    "vector": {
+     "empty": true,
+     "mean_ms": 24.76,
+     "p50_ms": 24.86,
+     "max_ms": 41.81
+    }
+   },
+   "jina-small": {
+    "model_id": "fastembed/jinaai/jina-embeddings-v2-small-en@512",
+    "dimension": 512,
+    "load_s": 5.06,
+    "reindex_s": 120.67,
+    "embed_s": 120.07,
+    "chunks_per_s": 12.8,
+    "fused": {
+     "ndcg@10": 0.7588739344469312,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.41342540496659785,
+     "recall@50": 0.7851548014231116,
+     "mean_ms": 28.63,
+     "p50_ms": 30.73,
+     "max_ms": 56.92
+    },
+    "vector": {
+     "empty": true,
+     "mean_ms": 17.73,
+     "p50_ms": 18.24,
+     "max_ms": 37.7
+    }
+   },
+   "openai-large": {
+    "model_id": "openai/text-embedding-3-large@1024",
+    "dimension": 1024,
+    "load_s": 0.5,
+    "reindex_s": 7.38,
+    "embed_s": 6.75,
+    "chunks_per_s": 228.0,
+    "fused": {
+     "ndcg@10": 0.7958788675908562,
+     "mrr@10": 0.9833333333333332,
+     "recall@10": 0.43369254292740533,
+     "recall@50": 0.8286221986983842,
+     "mean_ms": 333.94,
+     "p50_ms": 240.83,
+     "max_ms": 1894.09
+    },
+    "vector": {
+     "ndcg@10": 0.7392894239946914,
+     "mrr@10": 0.9675,
+     "recall@10": 0.35431458633231055,
+     "recall@50": 0.7567570223303173,
+     "mean_ms": 269.2,
+     "p50_ms": 258.05,
+     "max_ms": 579.9
+    }
+   }
+  },
+  "chunks": 1540,
+  "write_s": 0.08,
+  "lexical_reindex_s": 0.63
+ },
+ "scifact": {
+  "docs": 5183,
+  "queries": 300,
+  "arms": {
+   "bm25": {
+    "ndcg@10": 0.6579836598670192,
+    "mrr@10": 0.6234828042328042,
+    "recall@10": 0.7889999999999999,
+    "recall@50": 0.8737222222222223,
+    "mean_ms": 5.84,
+    "p50_ms": 5.66,
+    "max_ms": 71.84
+   },
+   "openai-large": {
+    "model_id": "openai/text-embedding-3-large@1024",
+    "dimension": 1024,
+    "load_s": 0.18,
+    "reindex_s": 62.65,
+    "embed_s": 61.12,
+    "chunks_per_s": 103.5,
+    "fused": {
+     "ndcg@10": 0.6933890865901077,
+     "mrr@10": 0.6594325396825397,
+     "recall@10": 0.8207777777777778,
+     "recall@50": 0.9125555555555555,
+     "mean_ms": 337.12,
+     "p50_ms": 270.37,
+     "max_ms": 4065.29
+    },
+    "vector": {
+     "ndcg@10": 0.7658539603362751,
+     "mrr@10": 0.7323888888888889,
+     "recall@10": 0.893888888888889,
+     "recall@50": 0.9583333333333334,
+     "mean_ms": 291.58,
+     "p50_ms": 263.51,
+     "max_ms": 1825.62
+    }
+   },
+   "minilm": {
+    "model_id": "fastembed/sentence-transformers/all-MiniLM-L6-v2@384",
+    "dimension": 384,
+    "load_s": 0.22,
+    "reindex_s": 36.8,
+    "embed_s": 35.22,
+    "chunks_per_s": 179.5,
+    "fused": {
+     "ndcg@10": 0.6903151872481451,
+     "mrr@10": 0.6494775132275132,
+     "recall@10": 0.8322777777777778,
+     "recall@50": 0.8992222222222221,
+     "mean_ms": 48.16,
+     "p50_ms": 46.61,
+     "max_ms": 138.63
+    },
+    "vector": {
+     "ndcg@10": 0.6232763841450373,
+     "mrr@10": 0.5784021164021165,
+     "recall@10": 0.7743333333333333,
+     "recall@50": 0.8776666666666667,
+     "mean_ms": 46.31,
+     "p50_ms": 45.31,
+     "max_ms": 139.85
+    }
+   }
+  },
+  "chunks": 6324,
+  "write_s": 0.92,
+  "lexical_reindex_s": 1.58
+ }
+}
