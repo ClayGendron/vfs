@@ -1,0 +1,41 @@
+qid	query	need
+q01	why is vfs database backed	The argument for putting the filesystem in a database rather than on disk: transactions, sharing, indexes, one store for content and search.
+q02	how mounts expand what an agent can do	Mounts as the mechanism that grows an agent's reach: composing backends into one namespace, capability by mount.
+q03	what happens when a file is written	The write pipeline step by step: staging, validation, parent rules, chunking or indexing hooks, version stamping, commit.
+q04	delete never destroys sweep is the only destroyer	The deletion doctrine: delete moves to trash and keeps rows; only sweep permanently destroys.
+q05	trash restore contract self-describing names	How trashed entries are named and restored, including collision behaviour on restore.
+q06	why reciprocal rank fusion loses to convex combination	The measured case against RRF as the fusion of the lexical and vector legs, and the convex score combination that replaced it.
+q07	aggregate chunks to entries then fuse MaxP	Turning chunk-level scores into entry-level rankings by max over chunks, and doing that before fusion.
+q08	semantic chunking at write time or reindex time	Where chunking runs in the pipeline and why reindex-side won.
+q09	what happens when the rust extension is missing	The seam's behaviour when vfs._native is absent or mismatched: loud failure, no pure fallback, the required-extension decision and its history.
+q10	tenant isolation as a permission layer not a path prefix	One global namespace with per-tenant access enforced by permissions rather than path scoping.
+q11	metadata lives in a hidden sidecar tree	The metadata namespace: where an entry's metadata lives and how its paths are formed.
+q12	python version floor 3.11	Which Python versions vfs supports and why the floor is 3.11 (what 3.10/3.11/3.12 each cost and buy).
+q13	result envelope evidence in verdict derived	The Result contract: records as evidence, success derived from them, one failure channel.
+q14	how to expose vfs over MCP	Serving vfs as an MCP server: the how-to, the serve verb, topology lock and wire binding.
+q15	membership_budget	The declared per-dialect IN-list element cap and the bind-parameter budget that chunk every membership list.
+q16	PostingsBuilder	The gram/posting builder type: the Rust engine's builder and its pure oracle, the posting codec.
+q17	candidate_ids fused grep kernel	The single Rust call that decodes postings, intersects, unions, applies the allow-list and cap for grep.
+q18	ensure_ready schema format version	The first-touch readiness check that verifies the stored schema format version and identity stamps.
+q19	fast_executemany silently lost rows	The SQL Server bulk-insert defect: pyodbc's fast_executemany dropping rows, and what bulk inserts use instead.
+q20	ORA-01795 in-list limit	Oracle's 1,000-element IN-list ceiling and how statements chunk around it.
+q21	StaleSnapshot redrive	Re-driving a whole batch when a snapshot is stale: the conflict redrive doctrine and where it fires.
+q22	chunk_generation stamp re-dirties chunks	The generation stamp on chunk rows that marks them dirty when the chunker or its grammars change.
+q23	insertmanyvalues_max_parameters	SQLAlchemy's modelled bind-parameter ceiling and how vfs reads dialect facts off the live Dialect rather than hardcoding.
+q24	ByteBatcher byte-bounded batches	Batching rows by a byte budget rather than a row count on the build and write paths.
+q25	glob pattern brace alternation	The glob language's {a,b} alternation: syntax, field parity, how it compiles.
+q26	gitignore-exact anchoring of glob segments	How a glob's segments anchor (leading slash, ** semantics) exactly as gitignore does, and pushdown soundness.
+q27	metadata path format	The reference for how metadata paths are spelled (the sidecar prefix, per-entry sub-paths).
+q28	mount points are stored plain directories runtime bindings	Mount points persisted as ordinary directories with the binding to a backend held as runtime table state.
+q29	getting started tutorial	The first-steps guide: install, create a filesystem, write and read a file.
+q30	how to add a backend	Implementing a new storage backend: the protocols to satisfy, conformance suite, capability declaration.
+q31	block-max skip summaries per term	Per-term block summaries carrying max weights so a query skips blocks that cannot change the top-k (block-max WAND family).
+q32	Kendall tau fidelity referee	The τ = 1.0 ranking-agreement test between the stored index's scorer and a pure BM25.
+q33	advisory lock reindex lease	The reindex lease and advisory locking that keep one builder per store and let a rival redrive.
+q34	keyset pagination scan page	Scanning large tables by keyset (id > last) pages instead of offsets or streaming cursors.
+q35	ULID entry identity binary 16	ULIDs as the stable referential identity for entries, stored as 16 bytes, versus integer surrogates.
+q36	in-degree hierarchy smoothing prior	The ranking signal: in-degree centrality smoothed over the directory hierarchy as a bounded prior.
+q37	hermetic runtime wasm sandbox	Running agent-generated code in a sandbox inside vfs (wasm, WASI, monty) so it cannot reach the process filesystem.
+q38	SQL Server full-text search versus owned BM25	The comparison of SQL Server's built-in full-text index with vfs's own BM25 tables at build and query time.
+q39	mutant ledger replay in review	The ledger of proven bugs replayed inside review campaigns instead of a standing mutation harness.
+q40	Grover market research YC application	The early Grover-era product positioning: market need, YC readiness and application answers.

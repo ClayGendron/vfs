@@ -18,6 +18,14 @@
   scorer; `competing_blocks` and the summary decode become crate
   kernels (spec 142); the scope intersect is spec 141's
   `candidate_ids` kernel. No numpy enters this spec.
+- **Inherits from spec 131 (landed 2026-08-27):** the harness's BM25
+  driver (`tests/ranking/driver.py`) is the referee this leg must equal;
+  its two laws carry over — the score is rounded to nine decimals
+  before the order-by, and the tie-break is `path ASC`, not `entry_id`
+  (entry ids are ULIDs minted per write; a cross-engine pin must
+  survive a rebuild). The engine-leg pin rows already exist
+  (`TestPostgresRankingPin` and siblings); this spec points them at
+  `glean`.
 - **Kind:** new verb implementation in `DatabaseStorage` (a new
   `glean.py` beside `grep.py`, in grep's shape: id resolution, posting
   fetch, engine scoring, a ladder); result-shape change on

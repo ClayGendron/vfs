@@ -30,6 +30,7 @@ from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from tests.ranking.pins import assert_top10_pin
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.storage_contract import StorageContract
 from vfs.models import Entry, Observation
@@ -568,6 +569,36 @@ class TestMSSQLLexicalFidelity:
 class TestOracleLexicalFidelity:
     async def test_stored_weights_rank_as_pure_bm25(self) -> None:
         await _lexical_fidelity("VFS_TEST_ORACLE_URL")
+
+
+async def _ranking_pin(env_var: str) -> None:
+    """The golden corpus ranks to the same ordered top-10 on this engine as on sqlite."""
+    async with _server_storage(env_var) as storage:
+        await assert_top10_pin(storage)
+
+
+@pytest.mark.postgres
+class TestPostgresRankingPin:
+    async def test_ordered_top10_matches_the_pin(self) -> None:
+        await _ranking_pin("VFS_TEST_POSTGRES_URL")
+
+
+@pytest.mark.mysql
+class TestMySQLRankingPin:
+    async def test_ordered_top10_matches_the_pin(self) -> None:
+        await _ranking_pin("VFS_TEST_MYSQL_URL")
+
+
+@pytest.mark.mssql
+class TestMSSQLRankingPin:
+    async def test_ordered_top10_matches_the_pin(self) -> None:
+        await _ranking_pin("VFS_TEST_MSSQL_URL")
+
+
+@pytest.mark.oracle
+class TestOracleRankingPin:
+    async def test_ordered_top10_matches_the_pin(self) -> None:
+        await _ranking_pin("VFS_TEST_ORACLE_URL")
 
 
 async def _lexical_build_beyond_a_page(env_var: str) -> None:

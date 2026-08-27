@@ -1,0 +1,44 @@
+{
+ "nfcorpus": {
+  "bm25": {
+   "mrr@10": 0.5152,
+   "ndcg@10": 0.3052,
+   "recall@10": 0.1459,
+   "recall@50": 0.2045
+  }
+ },
+ "scifact": {
+  "bm25": {
+   "mrr@10": 0.6235,
+   "ndcg@10": 0.658,
+   "recall@10": 0.789,
+   "recall@50": 0.8737
+  }
+ },
+ "vfs_native": {
+  "bm25": {
+   "mrr@10": 0.9833,
+   "ndcg@10": 0.7589,
+   "recall@10": 0.4134,
+   "recall@50": 0.7852
+  },
+  "control/uninformative_prior": {
+   "mrr@10": 0.9833,
+   "ndcg@10": 0.7355,
+   "recall@10": 0.4054,
+   "recall@50": 0.7852
+  },
+  "merge/naive_score_sort": {
+   "mrr@10": 0.9688,
+   "ndcg@10": 0.7353,
+   "recall@10": 0.3989,
+   "recall@50": 0.7725
+  },
+  "merge/round_robin": {
+   "mrr@10": 0.7542,
+   "ndcg@10": 0.56,
+   "recall@10": 0.3187,
+   "recall@50": 0.7503
+  }
+ }
+}

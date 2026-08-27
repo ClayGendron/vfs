@@ -5,6 +5,15 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **131 landed 2026-08-27** — the ranking evaluation harness under
+  `tests/ranking/`: the frozen vfs-native golden set (200 files, 40
+  queries, 1,577 graded judgments), the BEIR pair fetched outside the
+  repo and skipped when absent, the two-round BM25 baseline driver
+  (score rounded to 9 decimals, `path` tie-break), ranx metrics with
+  the 0.005 nDCG@10 gate, embedder pins, the merge floors and the
+  uninformative-prior control, and the ordered-top-10 pin identical on
+  six backends (215/215/215/212). Baselines: vfs-native 0.759, SciFact
+  0.658, NFCorpus 0.305 nDCG@10. Next in line: **132**.
 - **140 landed 2026-08-27** — one engine: `vfs._native` required
   (loud `ImportError`, no `VFS_PURE_PYTHON`, no pure CI leg); every
   pure implementation moved to `tests/support/oracles/` as parity
@@ -45,7 +54,7 @@ lines first; regenerate this file when the picture shifts (review the
   ~50–60 s target — a fork), round-two fetch 9.7 % of blocks at k = 10.
   The staff review's corrections (validated in
   `research/studies/2026-08-26-bm25-storage/review-validation.md`) are
-  in ADR 055 pins 1, 2, 4. Next in line: **131**, then **132**.
+  in ADR 055 pins 1, 2, 4. 131 landed 2026-08-27 (above); next in line: **132**.
 - **130 landed and reopened 2026-08-26** — the first landing
   (a351e7b: relational `lex_terms`, in-engine `SUM`, fidelity τ = 1.0
   on five engines) measured 32 B/posting, +28.8 s per 4,000 files, 55×
