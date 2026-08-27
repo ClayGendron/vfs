@@ -52,9 +52,13 @@ provider stays in.
    chunk_id` order; **round two**, for each term with blocks past the
    head — spec 130's `competing_blocks` over the summary, the round-one
    candidates and θ names the blocks that can still change the top-k,
-   fetched by key as `(term = :t1 AND block_no IN (…)) OR (term = :t2
-   AND block_no IN (…))` (never a row-value `(term, block_no) IN`,
-   which SQL Server refuses), each list under `membership_budget`; the
+   fetched by key as `(epoch = :e AND term = :t1 AND block_no IN (…))
+   OR (epoch = :e AND term = :t2 AND block_no IN (…))` — the epoch
+   equality inside every arm so each is a full key prefix (factored
+   outside the OR, sqlite scans the epoch: 470 ms vs 0.03 ms measured,
+   ADR 055 pin 4; never a row-value `(term, block_no) IN`, which SQL
+   Server refuses), each list under `membership_budget`; the plan on
+   every engine leg is a landing measurement (*Landing criteria*); the
    scorer runs again over the union. Then **MaxP client-side**:
    `lex_docs` rows for the top chunks (one `IN` probe on chunk ids)
    give `entry_id`; `MAX(score)` per entry with the top-K chunks
@@ -137,6 +141,11 @@ then; single-mount is the supported case).
 
 - `scripts/ci.sh 3.13` green; 100 % coverage; engine legs green on all
   five real engines with the ordered-top-10 pin identical across them.
+- The round-two statement plans as key seeks on every engine leg
+  (`EXPLAIN` recorded per dialect in the landing note) — sqlite scans
+  the epoch when the epoch equality sits outside the OR
+  (`research/studies/2026-08-26-bm25-storage/landing-comparison.md`),
+  so the shape is measured on each engine, not assumed.
 - Harness: lexical-only glean ≥ the BM25 baseline of spec 131 on all
   three corpora (it *is* that baseline through the statement — any gap
   is a bug).

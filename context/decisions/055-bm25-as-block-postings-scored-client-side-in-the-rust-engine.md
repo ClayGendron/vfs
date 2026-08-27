@@ -148,10 +148,16 @@ a measured cost ladder.
    the summaries and the round-one candidates decide which blocks can
    still change the top-k — the block alone clears θ, or a candidate
    inside its id range could cross θ with it — and round two fetches
-   exactly those by key: `(term = ? AND block_no IN (…)) OR (term = ?
-   AND block_no IN (…))`, each list under `membership_budget`, never a
-   row-value `(term, block_no) IN (…)` (SQL Server has no row-value
-   constructors in `IN`). Decode + BM25 + top-k in the Rust engine with
+   exactly those by key: `(epoch = ? AND term = ? AND block_no IN (…))
+   OR (epoch = ? AND term = ? AND block_no IN (…))` — **the epoch
+   equality repeated inside every arm**, so each arm is a complete
+   primary-key prefix (measured on the full linux store,
+   `studies/2026-08-26-bm25-storage/landing-comparison.md`: with the
+   epoch factored outside the OR, sqlite plans only `epoch = ?` from
+   the key and scans the epoch's 5.2 M rows, 470 ms; inside each arm
+   it plans a multi-index OR, 0.03 ms) — each list under
+   `membership_budget`, never a row-value `(term, block_no) IN (…)`
+   (SQL Server has no row-value constructors in `IN`). Decode + BM25 + top-k in the Rust engine with
    the numpy path as the pinned fallback, both accumulating in the same
    term / block / posting order so the sums are bit-identical, ordered
    `score DESC, chunk_id`; MaxP to entries client-side over `lex_docs`.

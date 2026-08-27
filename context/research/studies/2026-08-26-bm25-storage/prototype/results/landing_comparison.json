@@ -1,0 +1,27 @@
+{
+ "store": "landing_full.sqlite (77,866 files, 674,445 chunks, 1.09 GB chunk text; same store as landing_full.json)",
+ "build_s": {"gram_epoch_rebuild_verb_wall_lexical_skipped": 13.0, "lexical_delta": 108.2},
+ "size": {
+  "grams_posting_list": {"rows": 245399, "postings": 121092035, "blob_bytes": 127831651, "table_bytes": 151093248, "doc_unit": "file"},
+  "lex": {"postings": 65248582, "blob_bytes": 285112121, "summary_bytes": 56562748, "table_bytes": {"lex_postings": 508821504, "lex_df": 324534272, "lex_docs": 23068672}, "doc_unit": "chunk"},
+  "content_bytes": 1630650368, "chunks_bytes": 1295319040
+ },
+ "lexical_query_ms_median (real two-round SQL; epoch inside every OR arm)": {
+  "1term_k10": {"ms": 2.34, "max": 2.94, "round1": 1.02, "blocks": 12, "kb": 6.4},
+  "1term_k1000": {"ms": 2.46, "max": 3.2, "round1": 1.08, "blocks": 19, "kb": 9.7},
+  "3terms_k10": {"ms": 7.86, "max": 9.4, "round1": 1.85, "blocks": 94, "kb": 46.7},
+  "3terms_k1000": {"ms": 9.56, "max": 26.25, "round1": 1.76, "blocks": 277, "kb": 137.1},
+  "6terms_k10": {"ms": 14.55, "max": 16.1, "round1": 1.81, "blocks": 151, "kb": 76.3},
+  "6terms_k1000": {"ms": 19.09, "max": 27.99, "round1": 2.0, "blocks": 578, "kb": 287.6}
+ },
+ "lexical_query_ms_median (epoch factored outside the OR — the shape as first pinned)": {
+  "1term_k10": 1.9, "3terms_k10": 485.68, "3terms_k1000": 486.29, "6terms_k10": 682.21, "6terms_k1000": 692.0
+ },
+ "statement_plans_sqlite_3.50.4": {
+  "epoch outside OR, three arms": {"ms": 469.66, "plan": "SEARCH USING PRIMARY KEY (epoch=?)"},
+  "epoch inside each arm": {"ms": 0.03, "plan": "MULTI-INDEX OR, three PK seeks"},
+  "UNION ALL per term": {"ms": 0.02, "plan": "COMPOUND QUERY, PK seeks"},
+  "row-value IN (sqlite only)": {"ms": 0.02, "plan": "PK seek over VALUES + bloom filter"}
+ },
+ "grep_1term_fixed_strings_ms_median": {"files": {"ms": 172.78, "max": 447.58, "files_matched": 1432}, "lines": {"ms": 174.13, "max": 535.74}}
+}
