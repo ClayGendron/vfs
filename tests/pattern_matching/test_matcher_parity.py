@@ -1,57 +1,27 @@
-"""Rust/pure matcher parity, the shared language gate, and the divergence catalog.
+"""Engine/oracle matcher parity and the shared language gate.
 
-The shared Rust core is the match authority; the pure-Python matcher is
-its approximation for extension-less installs. These rows pin three
-facts: both engines return identical hits over a case battery (parity),
-both refuse the identical out-of-language patterns with the identical
-messages (the gate), and the *known* residual divergences of the pure
-engine — the ``re.IGNORECASE`` Turkic case orbit and Python-only
-spellings the sre walk cannot see — stay exactly as documented, each
-engine's answer asserted separately. A divergence row failing means the
-residual moved: update the catalog knowingly, never silently.
+The shared Rust core is the match authority; the ``re``-based oracle in
+``tests/support/oracles/matcher.py`` is its readable twin. These rows
+pin two facts: both return identical hits over a case battery
+(parity), and the gate refuses the identical out-of-language patterns
+with the identical messages whichever side compiles them.
 """
 
 from __future__ import annotations
 
-from time import monotonic
-
 import pytest
 
-import vfs.pattern_matching.grep as grep_mod
+from tests.support.oracles.matcher import _PureMatcher, pure_verifier
 from vfs.pattern_matching import ContentMatcher, PatternError, compile_verifier
-from vfs.pattern_matching.grep import _PureMatcher
-
-try:
-    from vfs import _native
-except ImportError:  # pragma: no cover - extension-less environment
-    _native = None  # ty: ignore[invalid-assignment]
-
-needs_rust = pytest.mark.skipif(_native is None, reason="vfs._native extension not built")
-
-
-def pure_verifier(pattern: str, **kwargs) -> ContentMatcher:
-    """Compile on the pure engine regardless of the active core."""
-    live = grep_mod.extension
-    grep_mod.extension = lambda: None  # ty: ignore[invalid-assignment]
-    try:
-        return compile_verifier(pattern, **kwargs)
-    finally:
-        grep_mod.extension = live
 
 
 def rust_verifier(pattern: str, **kwargs) -> ContentMatcher:
-    """Compile on the Rust engine regardless of the active core."""
-    live = grep_mod.extension
-    grep_mod.extension = lambda: _native  # ty: ignore[invalid-assignment]
-    try:
-        return compile_verifier(pattern, **kwargs)
-    finally:
-        grep_mod.extension = live
+    """Compile on the engine."""
+    return compile_verifier(pattern, **kwargs)
 
 
-# (pattern, kwargs) cases; every one must behave identically on both
-# engines over every corpus body. Divergence-zone cases (Turkic orbit,
-# Python-only spellings) live in the catalog below, never here.
+# (pattern, kwargs) cases; every one must behave identically on the
+# engine and the oracle over every corpus body.
 CASES: tuple[tuple[str, dict], ...] = (
     ("needle", {}),
     ("needle", {"case_mode": "insensitive"}),
@@ -119,9 +89,8 @@ MODES: tuple[dict, ...] = (
 
 
 class TestEngineParity:
-    """Identical hits and counts from both engines across the battery."""
+    """Identical hits and counts from the engine and the oracle across the battery."""
 
-    @needs_rust
     @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
     def test_hits_and_counts_identical(self, pattern: str, kwargs: dict) -> None:
         options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
@@ -134,7 +103,6 @@ class TestEngineParity:
             counts = {"cap": mode["cap"], "invert": mode["invert"]}
             assert rust.count_lines(BODIES, budget=None, **counts) == pure.count_lines(BODIES, budget=None, **counts)
 
-    @needs_rust
     @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
     def test_bytes_bodies_match_text_bodies_on_both_engines(self, pattern: str, kwargs: dict) -> None:
         options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
@@ -151,14 +119,6 @@ class TestEngineParity:
             for engine in (rust, pure):
                 assert engine.count_lines(encoded, budget=None, **counts) == count_truth
 
-    def test_bytes_bodies_match_text_bodies_on_the_pure_engine(self) -> None:
-        # No extension required: the fallback CI leg pins its own twin.
-        pure = pure_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        encoded = [body.encode("utf-8") for body in BODIES]
-        for mode in MODES:
-            assert pure.hit_lines(encoded, budget=None, **mode) == pure.hit_lines(BODIES, budget=None, **mode)
-
-    @needs_rust
     def test_mixed_batches_verify_each_body_by_its_own_spelling(self) -> None:
         rust = rust_verifier("é", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         pure = pure_verifier("é", fixed_strings=False, word_regexp=False, case_mode="sensitive")
@@ -169,7 +129,6 @@ class TestEngineParity:
             assert [[span[2] for span in row] for row in rows] == [[1], [1], [], [1]]
             assert [span[3] for row in rows for span in row] == ["hé one", "hé two", "hé three"]
 
-    @needs_rust
     def test_pure_per_line_and_whole_text_paths_agree(self) -> None:
         # `[^x]y` walks as newline-capable (per-line path), `xy` does not
         # (whole-text path); both must equal the authority on shared cases.
@@ -193,7 +152,6 @@ class TestEngineParity:
             counts = {"cap": mode["cap"], "invert": mode["invert"]}
             assert pure.count_lines(BODIES, budget=1e6, **counts) == pure.count_lines(BODIES, budget=None, **counts)
 
-    @needs_rust
     @pytest.mark.parametrize(("pattern", "kwargs"), CASES, ids=[c[0] for c in CASES])
     def test_budgeted_pure_scans_match_the_authority(self, pattern: str, kwargs: dict) -> None:
         options = {"fixed_strings": False, "word_regexp": False, "case_mode": "sensitive", **kwargs}
@@ -249,7 +207,6 @@ class TestEngineParity:
             rows, completed = verifier.hit_lines([body], before=0, after=0, cap=None, invert=False, budget=budget)
             assert ([span[2] for span in rows[0]], completed) == ([17, 33], True), budget
 
-    @needs_rust
     def test_exhausted_budget_reports_incomplete_on_both(self) -> None:
         bodies = ["needle\n"] * 64
         for build in (rust_verifier, pure_verifier):
@@ -261,20 +218,6 @@ class TestEngineParity:
             assert completed is False
             assert len(rows) == len(bodies)
 
-    def test_a_backtracking_pattern_stays_inside_the_wall_budget(self) -> None:
-        # The ReDoS shape must stop at an inter-slice check: 20-char lines
-        # cost ~65 ms each (~1.05 s/slice), so the ceiling rides one slice.
-        body = "\n".join("a" * 20 for _ in range(64))
-        verifier = pure_verifier("(a+)+bcd", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        for spelling in (body, body.encode()):
-            started = monotonic()
-            counts, completed = verifier.count_lines([spelling], cap=None, invert=False, budget=0.05)
-            elapsed = monotonic() - started
-            assert elapsed < 3.0, elapsed  # one slice's backtracking, the documented residual
-            assert counts == [0]
-            assert completed is False
-
-    @needs_rust
     def test_the_authority_finishes_the_backtracking_shape_within_budget(self) -> None:
         # The linear engine needs no rescue: same shape, same budget,
         # complete answer.
@@ -344,16 +287,15 @@ REFUSALS: tuple[tuple[str, str], ...] = (
 
 
 class TestLanguageGate:
-    """Both engines refuse the same patterns with the same messages."""
+    """The gate refuses the same patterns with the same messages from either side."""
 
     @pytest.mark.parametrize(("pattern", "message"), REFUSALS, ids=[repr(c[0]) for c in REFUSALS])
-    def test_pure_engine_refuses(self, pattern: str, message: str) -> None:
+    def test_oracle_side_refuses(self, pattern: str, message: str) -> None:
         with pytest.raises(PatternError, match=message):
             pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
 
-    @needs_rust
     @pytest.mark.parametrize(("pattern", "message"), REFUSALS, ids=[repr(c[0]) for c in REFUSALS])
-    def test_rust_engine_refuses(self, pattern: str, message: str) -> None:
+    def test_engine_side_refuses(self, pattern: str, message: str) -> None:
         with pytest.raises(PatternError, match=message):
             rust_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
 
@@ -361,71 +303,15 @@ class TestLanguageGate:
         with pytest.raises(PatternError, match="line terminator"):
             pure_verifier("a\nb", fixed_strings=True, word_regexp=False, case_mode="sensitive")
 
-
-class TestDivergenceCatalog:
-    """The pure engine's accepted residuals, pinned so movement is loud.
-
-    The authority's answer is the contract; the pure rows document the
-    approximation error an extension-less install carries.
-    """
-
-    @needs_rust
-    def test_turkic_orbit_authority_answer(self) -> None:
-        # Unicode simple folding has no i-to-Turkic-dotless/dotted mapping:
-        # the authority (and ripgrep) reject the orbit under case folding.
-        for pattern, body in (("istanbul", "İstanbul\n"), ("isi", "ısı\n")):  # noqa: RUF001
-            verifier = rust_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="insensitive")
-            counts, _ = verifier.count_lines([body], cap=None, invert=False, budget=None)
-            assert counts == [0], pattern
-
-    def test_turkic_orbit_pure_approximation(self) -> None:
-        # sre's extra-cases table unifies the orbit, so the fallback
-        # over-matches here — the documented residual.
-        for pattern, body in (("istanbul", "İstanbul\n"), ("isi", "ısı\n")):  # noqa: RUF001
-            verifier = pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="insensitive")
-            counts, _ = verifier.count_lines([body], cap=None, invert=False, budget=None)
-            assert counts == [1], pattern
-
-    @needs_rust
-    def test_named_escape_spelling_refused_by_authority(self) -> None:
+    def test_a_spelling_the_walk_cannot_see_is_refused_by_the_engine(self) -> None:
+        # sre resolves \N{...} to its literal before the walk; the crate
+        # has no such spelling, and its refusal surfaces as PatternError.
         with pytest.raises(PatternError, match="escape"):
             rust_verifier(r"\N{BULLET}", fixed_strings=False, word_regexp=False, case_mode="sensitive")
 
-    def test_named_escape_spelling_slips_the_pure_gate(self) -> None:
-        # The sre walk sees only the parsed literal, not the spelling —
-        # the fallback serves it. The residual is acceptance, never a
-        # wrong match: the literal means the same codepoint.
-        verifier = pure_verifier(r"\N{BULLET}", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        counts, _ = verifier.count_lines(["a • b\n"], cap=None, invert=False, budget=None)
-        assert counts == [1]
-
-
-class TestPurePathSelection:
-    """The gate's newline-capability walk picks the pure engine's shape."""
-
-    def test_newline_free_patterns_take_the_whole_text_path(self) -> None:
-        for pattern in ("needle", "a|b", "x[yz]", r"\d+"):
-            matcher = pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
-            assert isinstance(matcher, _PureMatcher)
-            assert matcher._multi_rx is not None, pattern
-
-    def test_newline_capable_patterns_take_the_per_line_path(self) -> None:
-        for pattern in ("[^x]y", r"a\s+b", r"a\D", r"a\W"):
-            matcher = pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
-            assert isinstance(matcher, _PureMatcher)
-            assert matcher._multi_rx is None, pattern
-
-    def test_class_with_excluded_newline_is_whole_text_safe(self) -> None:
-        matcher = pure_verifier(r"[^\nx]y", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        assert isinstance(matcher, _PureMatcher)
-        assert matcher._multi_rx is not None
-
-    def test_verbose_flag_stays_in_the_language(self) -> None:
-        matcher = pure_verifier("(?x) a b  # comment", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        counts, _ = matcher.count_lines(["ab\n"], cap=None, invert=False, budget=None)
-        assert counts == [1]
-        if _native is not None:
-            authority = rust_verifier(
-                "(?x) a b  # comment", fixed_strings=False, word_regexp=False, case_mode="sensitive"
-            )
-            assert authority.count_lines(["ab\n"], cap=None, invert=False, budget=None)[0] == [1]
+    def test_classes_that_merely_admit_a_newline_are_served(self) -> None:
+        # A class admitting \n among other members is in-language on both
+        # sides; only a class that matches nothing else is refused.
+        for pattern in (r"[\nx]y", r"[^\nx]y", "[^ab]y"):
+            rust_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
+            pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")

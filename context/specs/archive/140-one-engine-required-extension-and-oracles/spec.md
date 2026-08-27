@@ -1,10 +1,12 @@
 # 140 — one engine: the extension is required, pure Python becomes a test oracle, the pure CI leg retires
 
-- **Status:** ready — drafted 2026-08-27 from ADR 057. First of the
-  three-spec arc that implements it (140 → 141 → 142). Lands first
-  because it is structural: after it there is one engine to write
-  kernels for, and the 3.11-only CI failure of 2026-08-27 stops
-  being a product bug.
+- **Status: landed 2026-08-27.** Slices A–C in one landing: the seam
+  requires the extension, the seven dispatch sites collapsed, the
+  pure implementations moved to `tests/support/oracles/`, the pure CI
+  leg retired; `scripts/ci.sh 3.11 3.13 3.14` green (3.13 at 100 %
+  coverage, 2,782 passed), the 3.11 leg green by the drift skip. First
+  of the three-spec arc that implements ADR 057 (140 → 141 → 142).
+  Details in the landing note below.
 - **Born from:** ADR 057
   (`../../../decisions/057-one-engine-the-rust-extension-is-required.md`),
   decisions 1, 2 and 5; the finding that `pydantic-core` already
@@ -174,3 +176,40 @@ Each row is a deliberate break the suite must catch:
 - `tests/support/oracles/` exists, imports nothing from `vfs.native`,
   and every parity test reads its pure side from it.
 - Specs 132, 135, 136, 137 carry their ADR 057 header line.
+
+## Landing note (2026-08-27)
+
+- **What landed.** `vfs/native.py` imports `vfs._native` unconditionally
+  and raises `ImportError` naming `uv sync --reinstall-package vfs-py`
+  when the module is absent or its protocol mismatches; `active_core`,
+  `_resolve`, and the `VFS_PURE_PYTHON` read are gone; `extension()`
+  never returns `None`. The dispatch sites in `code_grams`, `postings`,
+  `lexical` (×3), `pattern_matching/grep`, and `chunking` call the
+  engine directly; `chunk_generation()` keeps the literal `rust:` stamp
+  so no store re-dirties. `PurePostingsBuilder`, `pure_tokenize` and
+  its helpers, `PureLexicalBuilder`, the pure gram loop, and the
+  `re`-based matcher with its slice/deadline machinery now live in
+  `tests/support/oracles/{postings,lexical,grams,matcher}.py`; the
+  numpy `pure_score_blocks` was replaced there by a stdlib loop, and
+  the oracle codec is a byte-at-a-time LEB128 decoder. `_gate` returns
+  nothing (refusals only); the oracle reads the newline walk itself.
+- **Tests.** `TestSeamGate` pins both import refusals in subprocesses
+  (the two module-level raises carry `pragma: no cover` for that
+  reason); `tests/test_oracles.py` pins that no oracle module names the
+  seam (O3). The Unicode parity test is exact on the generating
+  interpreter and skips elsewhere with a printed reason (O5: 3.11
+  skips, 3.13 asserts, 3.14 skips). The divergence catalog, the
+  pure-path-selection tests, the backtracking-wall timing test, and
+  the pure chunking tests went with the engine they pinned; the
+  `\N{…}` engine refusal and the class-walk branches they covered are
+  pinned again in `TestLanguageGate`. The `test_offload.py` leak (a
+  second `await storage.close()`) rode along.
+- **CI.** The pure-Python step left `test.yml` and `scripts/ci.sh`; the
+  coverage leg runs once on the one engine.
+- **Records.** Specs 132, 135, 136, 137 carry their ADR 057 re-read
+  line; `CLAUDE.md`'s engine bullet points at the oracles.
+- **Criteria.** The `src/` grep is empty — met. `import vfs` without
+  the extension raises the named `ImportError` — met (subprocess pin).
+  Full matrix green, one test step per leg — 3.11/3.13/3.14 run here;
+  3.12 rides the push. Oracle package isolated — met. Spec header
+  lines — met.

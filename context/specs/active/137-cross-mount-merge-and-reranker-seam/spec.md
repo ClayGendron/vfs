@@ -8,6 +8,9 @@
   simulation).
 - **Date:** 2026-08-26
 - **Owner:** Clay Gendron
+- **Re-read under ADR 057 decision 4 (2026-08-27):** `BM25Rerank`'s
+  "numpy fallback" clause is void — the Rust scorer already serves and
+  there is no fallback engine. No new kernel needed.
 - **Kind:** router change in `base.py` (`_route_fanout` / `_cap_rows`
   for glean), a `Reranker` protocol and the `BM25Rerank` stage, a
   `Candidate` model.

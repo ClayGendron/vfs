@@ -13,6 +13,11 @@
   §3.
 - **Date:** 2026-08-26
 - **Owner:** Clay Gendron
+- **Re-read under ADR 057 decision 4 (2026-08-27):** the scorer's
+  "numpy fallback" clause is void — the Rust scorer is the only
+  scorer; `competing_blocks` and the summary decode become crate
+  kernels (spec 142); the scope intersect is spec 141's
+  `candidate_ids` kernel. No numpy enters this spec.
 - **Kind:** new verb implementation in `DatabaseStorage` (a new
   `glean.py` beside `grep.py`, in grep's shape: id resolution, posting
   fetch, engine scoring, a ladder); result-shape change on

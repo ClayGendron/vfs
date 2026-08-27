@@ -14,9 +14,10 @@ from sqlalchemy import event, func, select, update
 
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
+from tests.support.oracles.lexical import pure_tokenize
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
-from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, pure_tokenize, term_weight
+from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
 from vfs.models.postings import decode_postings, decode_varints
 from vfs.paths import Path
 from vfs.results import VFSErrorKind

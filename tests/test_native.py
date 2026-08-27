@@ -1,28 +1,30 @@
-"""The engine seam: selection, protocol gate, and Rust/pure parity.
+"""The engine seam: the required extension, the protocol gate, and parity.
 
-Parity is the seam's soundness law: both engines must produce
-byte-identical posting rows and identical gate counts for the same
-folded stream — and, for the lexical index, identical tokens, summary
-and block rows, and scores — so a wheel with the extension and a wheel
-without it build and rank the same index. The parity classes run every
-case against both engines directly; the Rust legs skip themselves when
-the extension is absent (the pure reference is then the only engine,
-and the rest of the suite already exercises it).
+Parity is the seam's soundness law: the engine must produce the same
+posting rows, gate counts, tokens, summary and block rows, and scores
+as the readable oracles in ``tests/support/oracles`` — so the crate is
+pinned to a specification a reader can follow. The oracle tokenizer
+takes its character classes from the running interpreter, so the tests
+that would see Unicode-version drift skip off the interpreter that
+generated the engine's tables.
 """
 
 from __future__ import annotations
 
-import os
 import random
 import re
+import subprocess
+import sys
 import unicodedata
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-import vfs.native as native
 from tests.support.lexical_fidelity import CORPUS, QUERIES
+from tests.support.oracles.grams import distinct_gram_count as oracle_gram_count
+from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
+from tests.support.oracles.postings import PurePostingsBuilder, decode_postings
+from vfs import _native
 from vfs.models.code_grams import (
     distinct_gram_count,
     folded_bytes,
@@ -32,47 +34,27 @@ from vfs.models.code_grams import (
 )
 from vfs.models.lexical import (
     BLOCK_SIZE,
-    PureLexicalBuilder,
     ScoreBlock,
     decode_summary,
     lexical_builder,
-    pure_score_blocks,
-    pure_tokenize,
     score_blocks,
     tokenize,
 )
-from vfs.models.postings import (
-    PurePostingsBuilder,
-    decode_postings,
-    encode_postings,
-    postings_builder,
+from vfs.models.postings import encode_postings, postings_builder
+from vfs.native import EXPECTED_PROTOCOL, chunk_spans, structure_grammars
+
+# The oracle tokenizer follows the interpreter's Unicode tables; the engine's
+# are generated once. Off the generating interpreter they may differ.
+DRIFTING_INTERPRETER = unicodedata.unidata_version != _native.LEXICAL_UNICODE_VERSION
+skip_on_drift = pytest.mark.skipif(
+    DRIFTING_INTERPRETER,
+    reason=f"oracle follows Unicode {unicodedata.unidata_version}; engine tables are {_native.LEXICAL_UNICODE_VERSION}",
 )
-from vfs.native import (
-    EXPECTED_PROTOCOL,
-    _resolve,
-    active_core,
-    chunk_spans,
-    structure_grammars,
-)
-
-# The pure-fallback CI leg runs this same suite with VFS_PURE_PYTHON=1, so
-# expectations derive from the resolved engine, not extension importability.
-FORCED_PURE = bool(os.environ.get("VFS_PURE_PYTHON"))
-
-try:
-    from vfs import _native
-except ImportError:  # pragma: no cover - extension-less environment
-    _native = None  # ty: ignore[invalid-assignment]
-
-needs_rust = pytest.mark.skipif(_native is None, reason="vfs._native extension not built")
 
 
 def builders() -> list:
-    """Both engines' builders where available; the pure one always."""
-    engines = [PurePostingsBuilder()]
-    if _native is not None:
-        engines.append(_native.PostingsBuilder())
-    return engines
+    """The oracle builder and the engine's."""
+    return [PurePostingsBuilder(), _native.PostingsBuilder()]
 
 
 def drain_rows(builder, byte_cap: int = 1 << 20) -> list[tuple[int, bytes, int]]:
@@ -97,7 +79,6 @@ class TestParity:
     """Byte-identical rows and identical gate counts across engines."""
 
     @pytest.mark.parametrize("name", sorted(CORPORA))
-    @needs_rust
     def test_rows_identical(self, name: str) -> None:
         docs = [(doc_id, folded_bytes(text)) for doc_id, text in CORPORA[name]]
         results = []
@@ -106,7 +87,6 @@ class TestParity:
             results.append(drain_rows(builder))
         assert results[0] == results[1]
 
-    @needs_rust
     def test_fuzz_rows_identical(self) -> None:
         rng = random.Random(103)
         alphabet = "ab\n\r\x00é☂ iıİxyz"  # noqa: RUF001
@@ -123,29 +103,22 @@ class TestParity:
             rust.add_docs(chunk)
         assert drain_rows(pure, byte_cap=97) == drain_rows(rust, byte_cap=97)
 
-    @needs_rust
     def test_distinct_gram_count_parity(self) -> None:
         cases = [b"", b"ab", b"abc", b"abcabc", b"abcdefghij", bytes(range(256)) * 3, folded_bytes("İstanbul ısı")]  # noqa: RUF001
         for data in cases:
             exact = len(set(iter_byte_trigrams(data)))
             for cap in (0, 1, 5, 1 << 24):
-                rust = _native.distinct_gram_count(data, cap)
-                pure_seen: set[int] = set()
-                for gram in iter_byte_trigrams(data):
-                    pure_seen.add(gram)
-                    if len(pure_seen) > cap:
-                        break
-                assert rust == len(pure_seen), (data[:16], cap)
+                rust = distinct_gram_count(data, cap)
+                assert rust == oracle_gram_count(data, cap), (data[:16], cap)
                 if exact <= cap:
                     assert rust == exact
 
-    @needs_rust
     def test_blobs_decode_to_the_fed_doc_ids(self) -> None:
         builder = _native.PostingsBuilder()
         builder.add_docs([(3, b"abc"), (200, b"abcd"), (2**62, b"abc")])
         rows = {gram: blob for gram, blob, _count in drain_rows(builder)}
-        assert list(decode_postings(rows[pack_gram(*b"abc")])) == [3, 200, 2**62]
-        assert list(decode_postings(rows[pack_gram(*b"bcd")])) == [200]
+        assert decode_postings(rows[pack_gram(*b"abc")]) == [3, 200, 2**62]
+        assert decode_postings(rows[pack_gram(*b"bcd")]) == [200]
         assert rows[pack_gram(*b"abc")] == encode_postings([3, 200, 2**62])
 
 
@@ -155,8 +128,6 @@ class TestBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_non_increasing_doc_ids_refused(self, index: int) -> None:
         engines = builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         builder.add_docs([(5, b"abc")])
         for bad in (5, 4, 0, -3):
@@ -166,8 +137,6 @@ class TestBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_add_after_drain_refused(self, index: int) -> None:
         engines = builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         builder.add_docs([(1, b"abc")])
         assert builder.next_batch(1 << 20)
@@ -177,15 +146,11 @@ class TestBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_empty_builder_drains_nothing(self, index: int) -> None:
         engines = builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         assert engines[index].next_batch(1 << 20) is None
 
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_tiny_byte_cap_still_progresses(self, index: int) -> None:
         engines = builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         builder.add_docs([(1, b"abcdefgh")])
         batches = []
@@ -194,65 +159,43 @@ class TestBuilderContract:
         assert [len(b) for b in batches] == [1] * 6
 
 
-class TestSeamSelection:
-    """_resolve's acceptance rules and the diagnostics surface."""
+# A subprocess that swaps the extension for *stand_in* before importing the
+# seam: the seam's module-level refusals cannot be exercised in-process.
+def _import_seam_with(stand_in: str) -> subprocess.CompletedProcess[str]:
+    script = f"import sys, types\nsys.modules['vfs._native'] = {stand_in}\nimport vfs.native\n"
+    return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
 
-    def test_active_core_matches_extension_presence(self) -> None:
-        assert active_core() == ("python" if _native is None or FORCED_PURE else "rust")
 
-    def test_postings_builder_comes_from_the_active_core(self) -> None:
-        builder = postings_builder()
-        if _native is None or FORCED_PURE:
-            assert isinstance(builder, PurePostingsBuilder)
-        else:
-            assert isinstance(builder, _native.PostingsBuilder)
+class TestSeamGate:
+    """The extension is required: absent or mismatched, import fails and names the fix."""
 
-    def test_resolve_rejects_absent_extension(self) -> None:
-        assert _resolve(None) is None
+    def test_absent_extension_fails_the_import(self) -> None:
+        run = _import_seam_with("None")
+        assert run.returncode != 0
+        assert "ImportError: vfs requires its compiled extension vfs._native" in run.stderr
+        assert "uv sync --reinstall-package vfs-py" in run.stderr
 
-    def test_resolve_rejects_protocol_mismatch_with_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("VFS_PURE_PYTHON", raising=False)
-        stranger = SimpleNamespace(PROTOCOL_VERSION=EXPECTED_PROTOCOL + 1)
-        with pytest.warns(RuntimeWarning, match="protocol"):
-            assert _resolve(stranger) is None
+    def test_protocol_mismatch_fails_the_import(self) -> None:
+        run = _import_seam_with(f"types.SimpleNamespace(PROTOCOL_VERSION={EXPECTED_PROTOCOL + 1})")
+        assert run.returncode != 0
+        assert f"speaks protocol {EXPECTED_PROTOCOL + 1} but this vfs expects {EXPECTED_PROTOCOL}" in run.stderr
 
-    def test_resolve_accepts_protocol_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("VFS_PURE_PYTHON", raising=False)
-        speaker = SimpleNamespace(PROTOCOL_VERSION=EXPECTED_PROTOCOL)
-        assert _resolve(speaker) is speaker
+    def test_the_live_extension_speaks_the_expected_protocol(self) -> None:
+        assert _native.PROTOCOL_VERSION == EXPECTED_PROTOCOL
 
-    def test_pure_python_env_forces_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VFS_PURE_PYTHON", "1")
-        speaker = SimpleNamespace(PROTOCOL_VERSION=EXPECTED_PROTOCOL)
-        assert _resolve(speaker) is None
-
-    def test_dispatch_serves_pure_when_no_engine_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(native, "_active", None)
-        assert native.active_core() == "python"
-        assert isinstance(postings_builder(), PurePostingsBuilder)
-        assert distinct_gram_count(b"abcabc", 10) == 3
-        assert distinct_gram_count(b"abcdefgh", 3) == 4
+    def test_builders_come_from_the_engine(self) -> None:
+        assert isinstance(postings_builder(), _native.PostingsBuilder)
+        assert isinstance(lexical_builder(), _native.LexicalBuilder)
 
 
 class TestChunkSeam:
-    """The structure-aware chunk surface: native rows, pure absence."""
+    """The structure-aware chunk surface."""
 
-    def test_pure_engine_serves_no_structure_grammars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(native, "_active", None)
-        assert native.structure_grammars() == frozenset()
-        assert native.chunk_spans([(b"def f(): pass\n", "python")] * 3, chunk_size=8) == [None, None, None]
-
-    @needs_rust
-    def test_rust_engine_serves_the_registry(self) -> None:
-        if FORCED_PURE:
-            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
+    def test_the_engine_serves_the_registry(self) -> None:
         grammars = structure_grammars()
         assert {"python", "c", "rust", "markdown"} <= grammars
 
-    @needs_rust
     def test_rows_carry_spans_lines_and_the_oversized_flag(self) -> None:
-        if FORCED_PURE:
-            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
         body = b"def f(x):\n    return x + 1\n\n\ndef g(y):\n    return y * 2\n"
         (rows,) = chunk_spans([(body, "python")], chunk_size=32)
         assert rows is not None and len(rows) >= 2
@@ -260,10 +203,7 @@ class TestChunkSeam:
         assert rows[0][2] == 1  # 1-indexed lines
         assert all(not oversized for _s, _e, _ls, _le, oversized in rows)
 
-    @needs_rust
     def test_unknown_grammar_rows_are_none(self) -> None:
-        if FORCED_PURE:
-            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
         good = b"x = 1\n" * 400
         assert chunk_spans([(good, "no_such_grammar"), (good, "python")], chunk_size=64)[0] is None
 
@@ -335,24 +275,21 @@ def _score_blocks_for(query: str, summaries: list, rows: list) -> tuple[list[Sco
 
 
 class TestLexicalParity:
-    """Identical tokens, rows and scores from both lexical engines."""
+    """Identical tokens, rows and scores from the engine and the oracle."""
 
-    @needs_rust
     @pytest.mark.parametrize("name", sorted(LEXICAL_CORPORA))
     def test_tokens_identical(self, name: str) -> None:
         for _doc_id, text in LEXICAL_CORPORA[name]:
-            assert _native.tokenize(text) == pure_tokenize(text)
+            assert tokenize(text) == pure_tokenize(text)
 
-    @needs_rust
     def test_fuzz_tokens_identical(self) -> None:
         for _doc_id, text in _fuzz_docs(11, 500):
-            assert _native.tokenize(text) == pure_tokenize(text), text
+            assert tokenize(text) == pure_tokenize(text), text
 
-    @needs_rust
-    def test_character_classes_match_the_interpreter(self) -> None:
-        """The generated tables are this interpreter's classes wherever both
-        assign the code point; an unassigned code point on either side is a
-        Unicode-version drift, not a bug, and the versions must then differ."""
+    @skip_on_drift
+    def test_character_classes_are_the_generating_interpreters(self) -> None:
+        """On the interpreter that generated them, the tables are exactly
+        its ``\\w`` / upper / lower / digit / assigned classes and its casefold."""
         flags = np.frombuffer(_native.lexical_char_classes(), dtype=np.uint8)
         points = np.array([cp for cp in range(0x110000) if not 0xD800 <= cp <= 0xDFFF])
         chars = [chr(cp) for cp in points]
@@ -366,26 +303,19 @@ class TestLexicalParity:
             (16, lambda ch: unicodedata.category(ch) != "Cn"),
         ):
             mine[points[[predicate(ch) for ch in chars]]] |= flag
-        differing = np.flatnonzero((flags ^ mine) & 0x0F)
-        both_assigned = (flags[differing] & 16) & (mine[differing] & 16)
-        assert not both_assigned.any(), differing[:10]
+        differing = np.flatnonzero(flags != mine)
+        assert differing.size == 0, differing[:10]
         folds = dict(_native.lexical_casefolds())
         for cp in points.tolist():
             ch = chr(cp)
-            expected = ch.casefold()
-            if folds.get(cp, ch) != expected:
-                assert not (flags[cp] & 16 and mine[cp] & 16), hex(cp)
-        if unicodedata.unidata_version == _native.LEXICAL_UNICODE_VERSION:
-            assert differing.size == 0
+            assert folds.get(cp, ch) == ch.casefold(), hex(cp)
 
-    @needs_rust
     @pytest.mark.parametrize("name", sorted(LEXICAL_CORPORA))
     def test_rows_identical(self, name: str) -> None:
         pure, rust = PureLexicalBuilder(), _native.LexicalBuilder()
         assert pure.add_docs(LEXICAL_CORPORA[name]) == rust.add_docs(LEXICAL_CORPORA[name])
         assert _drain_lexical(pure) == _drain_lexical(rust)
 
-    @needs_rust
     def test_fuzz_rows_identical_across_batch_boundaries(self) -> None:
         docs = _fuzz_docs(23, 300)
         pure, rust = PureLexicalBuilder(), _native.LexicalBuilder()
@@ -395,21 +325,20 @@ class TestLexicalParity:
         assert pure_out == rust_out
         assert any(row[1] > 0 for row in pure_out[2])  # the fuzz vocabulary spans blocks
 
-    @needs_rust
     @pytest.mark.parametrize("name", ["fixture", "spanning"])
     def test_scores_identical(self, name: str) -> None:
         builder = _native.LexicalBuilder()
         builder.add_docs(LEXICAL_CORPORA[name])
         (_n, avg_dl), summaries, rows = _drain_lexical(builder)
-        ids = np.array([doc_id for doc_id, _ in LEXICAL_CORPORA[name]], dtype=np.int64)
+        ids = [doc_id for doc_id, _ in LEXICAL_CORPORA[name]]
         queries = [*QUERIES, "shared filler2", "run xx filler4 filler1", "absent_term"]
         for query in queries:
             blocks, idfs = _score_blocks_for(query, summaries, rows)
             for k in (1, 10, 1000):
                 for candidates in (None, ids[::3], ids[:0]):
                     pure = pure_score_blocks(blocks, idfs, avg_dl, k, candidates=candidates)
-                    raw = None if candidates is None else candidates.tobytes()
-                    assert _native.lexical_score(blocks, idfs, avg_dl, k, raw) == pure, (query, k)
+                    raw = None if candidates is None else np.array(candidates, dtype=np.int64)
+                    assert score_blocks(blocks, idfs, avg_dl, k, candidates=raw) == pure, (query, k)
 
 
 class TestLexicalBuilderContract:
@@ -417,16 +346,11 @@ class TestLexicalBuilderContract:
 
     @staticmethod
     def _builders() -> list:
-        engines = [PureLexicalBuilder()]
-        if _native is not None:
-            engines.append(_native.LexicalBuilder())
-        return engines
+        return [PureLexicalBuilder(), _native.LexicalBuilder()]
 
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_non_increasing_doc_ids_refused(self, index: int) -> None:
         engines = self._builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         assert builder.add_docs([(5, "abc def")]) == [2]
         for bad in (5, 4, 0, -3):
@@ -436,8 +360,6 @@ class TestLexicalBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_add_after_finish_refused(self, index: int) -> None:
         engines = self._builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         builder.add_docs([(1, "abc")])
         assert builder.finish() == (1, 1.0)
@@ -448,8 +370,6 @@ class TestLexicalBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_empty_builder_drains_nothing(self, index: int) -> None:
         engines = self._builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         assert builder.finish() == (0, 0.0)
         assert builder.next_df_batch(10) is None
@@ -458,8 +378,6 @@ class TestLexicalBuilderContract:
     @pytest.mark.parametrize("index", [0, 1], ids=["pure", "rust"])
     def test_drains_seal_without_an_explicit_finish(self, index: int) -> None:
         engines = self._builders()
-        if index >= len(engines):
-            pytest.skip("vfs._native extension not built")
         builder = engines[index]
         builder.add_docs([(1, "abc abc"), (2, "abc")])
         assert [row[0] for row in builder.next_batch(0)] == ["abc"]  # a zero cap still yields one row
@@ -468,38 +386,22 @@ class TestLexicalBuilderContract:
 
 
 class TestLexicalSeam:
-    """The lexical surfaces dispatch through the active engine."""
+    """The lexical surfaces dispatch through the engine."""
 
-    def test_builder_and_tokenizer_come_from_the_active_core(self) -> None:
-        builder = lexical_builder()
-        if _native is None or FORCED_PURE:
-            assert isinstance(builder, PureLexicalBuilder)
-        else:
-            assert isinstance(builder, _native.LexicalBuilder)
+    def test_builder_and_tokenizer_come_from_the_engine(self) -> None:
+        assert isinstance(lexical_builder(), _native.LexicalBuilder)
         assert tokenize("PostingsBuilder pthread_create") == pure_tokenize("PostingsBuilder pthread_create")
-
-    def test_pure_when_no_engine_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(native, "_active", None)
-        assert isinstance(lexical_builder(), PureLexicalBuilder)
         assert tokenize("HTTPServer") == ["httpserver", "http", "server"]
-        builder = PureLexicalBuilder()
-        builder.add_docs(LEXICAL_CORPORA["fixture"])
-        (_n, avg_dl), summaries, rows = _drain_lexical(builder)
-        blocks, idfs = _score_blocks_for("flush cache", summaries, rows)
-        assert score_blocks(blocks, idfs, avg_dl, 3) == pure_score_blocks(blocks, idfs, avg_dl, 3)
 
-    @needs_rust
-    def test_rust_scorer_serves_the_dispatch(self) -> None:
-        if FORCED_PURE:
-            pytest.skip("VFS_PURE_PYTHON forces the pure engine")
+    def test_the_scorer_serves_the_dispatch(self) -> None:
         builder = lexical_builder()
         builder.add_docs(LEXICAL_CORPORA["fixture"])
         (_n, avg_dl), summaries, rows = _drain_lexical(builder)
         blocks, idfs = _score_blocks_for("publish scheduler budget", summaries, rows)
-        candidates = np.array([10, 11, 12, 40], dtype=np.int64)
-        ranked = score_blocks(blocks, idfs, avg_dl, 5, candidates=candidates)
+        candidates = [10, 11, 12, 40]
+        ranked = score_blocks(blocks, idfs, avg_dl, 5, candidates=np.array(candidates, dtype=np.int64))
         assert ranked == pure_score_blocks(blocks, idfs, avg_dl, 5, candidates=candidates)
-        assert {chunk for chunk, _ in ranked} <= set(candidates.tolist())
+        assert {chunk for chunk, _ in ranked} <= set(candidates)
 
 
 class TestFoldedBytes:

@@ -14,6 +14,12 @@
   the floor benchmark).
 - **Date:** 2026-08-26
 - **Owner:** Clay Gendron
+- **Re-read under ADR 057 decision 4 (2026-08-27):** `Fusion.fuse`
+  over two short arrays is plain Python, not numpy; the MySQL /
+  `GENERIC` client-floor cosine over `membership_budget` batches is a
+  measured-scale kernel candidate — its own slice in `crates/vfs-core`,
+  `bytes in, top-K out`, with its own measurement. No numpy enters
+  this spec.
 - **Kind:** statement extension, a `Fusion` protocol with `Convex` and
   `RRF` built-ins, a dialect distance factory, two `UserDefinedType`s,
   declared `DialectProfile` facts, Docker-leg image bumps.

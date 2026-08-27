@@ -177,18 +177,10 @@ def distinct_gram_count(data: bytes, cap: int) -> int:
     """Distinct trigrams of *data*, early-exiting past *cap*.
 
     Any return value greater than *cap* means "over cap" — the exact count
-    is not computed beyond that point. Dispatches to the active engine;
-    this module owns the pure reference, per the seam's ownership rule.
+    is not computed beyond that point. Served by the engine; this module
+    owns the dispatch, per the seam's ownership rule.
     """
-    ext = extension()
-    if ext is not None:
-        return ext.distinct_gram_count(data, cap)
-    seen: set[GramKey] = set()
-    for gram in iter_byte_trigrams(data):
-        seen.add(gram)
-        if len(seen) > cap:
-            break
-    return len(seen)
+    return extension().distinct_gram_count(data, cap)
 
 
 # ---------------------------------------------------------------------------

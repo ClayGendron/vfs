@@ -21,6 +21,7 @@ import sys
 import numpy as np
 import pytest
 
+from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
 from vfs.models import lexical
 from vfs.models.code_grams import fold_content
 from vfs.models.lexical import (
@@ -31,7 +32,6 @@ from vfs.models.lexical import (
     MIN_TERM_CHARS,
     TOKENIZER_VERSION,
     BlockSummary,
-    PureLexicalBuilder,
     ScoreBlock,
     competing_blocks,
     decode_summary,
@@ -39,8 +39,6 @@ from vfs.models.lexical import (
     encode_summary,
     idf,
     options_fingerprint,
-    pure_score_blocks,
-    pure_tokenize,
     term_weight,
 )
 from vfs.models.postings import decode_postings, decode_varints
@@ -127,7 +125,7 @@ class TestTokenizer:
         """Nothing in the pipeline depends on set or dict order."""
         script = (
             "import json, sys\n"
-            "from vfs.models.lexical import PureLexicalBuilder, pure_tokenize\n"
+            "from tests.support.oracles.lexical import PureLexicalBuilder, pure_tokenize\n"
             "text = 'PostingsBuilder pthread_create HTTPServer foo bar foo 0x1f zebra apple'\n"
             "docs = [(1, text), (2, 'apple zebra'), (3, text.upper())]\n"
             "b = PureLexicalBuilder()\n"
@@ -296,9 +294,9 @@ class TestScorer:
 
     def test_candidates_restrict_the_ranking(self) -> None:
         blocks = [_block(0, 1.0, [1, 2, 3, 4], [1, 1, 1, 1], [10, 10, 10, 10])]
-        ranked = pure_score_blocks(blocks, [1.0], self.AVG, 10, candidates=np.array([2, 4, 9], dtype=np.int64))
+        ranked = pure_score_blocks(blocks, [1.0], self.AVG, 10, candidates=[2, 4, 9])
         assert [chunk for chunk, _ in ranked] == [2, 4]
-        assert pure_score_blocks(blocks, [1.0], self.AVG, 10, candidates=np.array([], dtype=np.int64)) == []
+        assert pure_score_blocks(blocks, [1.0], self.AVG, 10, candidates=[]) == []
 
 
 class TestCompetingBlocks:

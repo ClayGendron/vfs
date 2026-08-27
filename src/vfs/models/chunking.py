@@ -56,7 +56,7 @@ from bisect import bisect_left
 from typing import Final
 
 from vfs.models.code_grams import GRAM_SIZE, normalize_content
-from vfs.native import active_core, chunk_spans
+from vfs.native import chunk_spans
 
 # Separator priority for the recursive character splitter.
 DEFAULT_SEPARATORS: tuple[str, ...] = ("\n\n", "\n", " ", "")
@@ -182,11 +182,13 @@ NOTEBOOK_EXTENSION = "ipynb"
 def chunk_generation() -> str:
     """The engine + grammar generation stamped onto stored chunk state.
 
-    Stored chunks derived under any other value are stale by law: an
-    engine switch (pure ↔ native) or a declared generation bump re-dirties
-    them, so shapes from different splitters never silently coexist.
+    Stored chunks derived under any other value are stale by law: a
+    declared generation bump re-dirties them, so shapes from different
+    splitters never silently coexist. The ``rust:`` prefix is the stamp
+    existing stores carry from when an engine could be selected; it stays
+    a literal so no store is re-dirtied for nothing.
     """
-    return f"{active_core()}:{CHUNK_GENERATION}"
+    return f"rust:{CHUNK_GENERATION}"
 
 
 # ---------------------------------------------------------------------------

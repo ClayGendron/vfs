@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from sqlalchemy import select
 
+from tests.support.oracles.lexical import pure_score_blocks
 from vfs.models import Entry
 from vfs.models.lexical import (
     BM25_B,
@@ -30,7 +31,6 @@ from vfs.models.lexical import (
     ScoreBlock,
     competing_blocks,
     decode_summary,
-    pure_score_blocks,
     score_blocks,
     tokenize,
 )

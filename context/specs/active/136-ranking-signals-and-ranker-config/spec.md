@@ -8,6 +8,11 @@
   `hierarchy-edges-*.md`.
 - **Date:** 2026-08-26
 - **Owner:** Clay Gendron
+- **Re-read under ADR 057 decision 4 (2026-08-27):** the PageRank /
+  Katz power iteration is a crate kernel in the reindex phase (the
+  `bincount`-over-edges shape Rust wins by 15–35× in the 2026-08-27
+  memo), not a numpy kernel; the "pure-Python fallback" clause is void.
+  No numpy enters this spec.
 - **Kind:** new table, a new reindex phase, a numpy kernel behind the
   offload hop, the `Ranker` configuration object compiled into the
   fused statement; schema format bump.

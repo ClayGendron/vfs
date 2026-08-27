@@ -7,15 +7,15 @@ under the gram epoch and stored the way grams are: one row per
 delta+varint blobs, plus one summary row per term that bounds every
 block without touching a posting. This module is the database-agnostic
 half — the tokenizer both indexer and query share, the formula with
-its constants, the codecs, and the pure-Python builder and scorer that
-are the reference the Rust engine (``crates/vfs-core/src/lexical.rs``)
-must match byte for byte. Per the seam's ownership rule, dispatch to the
-active engine lives here beside the pure implementation.
+its constants, the codecs, and the dispatch to the Rust engine
+(``crates/vfs-core/src/lexical.rs``) for tokenizing, building and
+scoring. The readable reference implementations the engine is pinned
+against are test oracles (``tests/support/oracles/lexical.py``).
 
 The tokenizer is code-aware and deliberately plain. Runs of word
-characters (``\\w+`` — letters, numerics, underscore) are the
-identifiers; each identifier is emitted whole *and* split on
-underscores and case changes into its parts::
+characters (letters, numerics, underscore — the engine's generated
+Unicode tables) are the identifiers; each identifier is emitted whole
+*and* split on underscores and case changes into its parts::
 
     PostingsBuilder  ->  postingsbuilder, postings, builder
     pthread_create   ->  pthread_create, pthread, create
@@ -42,14 +42,12 @@ them (:func:`competing_blocks`).
 from __future__ import annotations
 
 import math
-import re
 import struct
 from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 import numpy as np
 
-from vfs.models.code_grams import fold_content
-from vfs.models.postings import decode_postings, decode_varints, encode_postings
+from vfs.models.postings import encode_postings
 from vfs.native import extension
 
 if TYPE_CHECKING:
@@ -72,10 +70,6 @@ MIN_TERM_CHARS: Final = 2
 # Postings per block, and the wire format's name in the options hash.
 BLOCK_SIZE: Final = 128
 BLOCK_CODEC: Final = "ids:count+delta+varint;tfs,dls:varint;summary:delta+varint,le-f64"
-
-# Word runs: Python's ``\w`` is the Unicode alphanumerics plus underscore
-# — the letters, numerics, and joiner an identifier is made of.
-_WORD_RUN: Final = re.compile(r"\w+")
 
 _SUMMARY_MAX: Final = struct.Struct("<d")
 
@@ -131,32 +125,16 @@ class BlockSummary(NamedTuple):
 
 
 def tokenize(content: str) -> list[str]:
-    """Folded terms in order, duplicates kept — from the active engine."""
-    ext = extension()
-    if ext is not None:
-        return ext.tokenize(content)
-    return pure_tokenize(content)
-
-
-def pure_tokenize(content: str) -> list[str]:
-    """The reference tokenizer: folded terms in order, duplicates kept.
+    """Folded terms in order, duplicates kept — from the engine.
 
     Each word run is emitted whole; a run with more than one part (split
     on ``_`` and on case change) also emits each part. Digit-led pieces
     stay whole (``0x1f``), one-character terms are dropped, and a term
     over :data:`MAX_TERM_BYTES` after folding is dropped rather than
-    truncated. Deterministic across processes: nothing here depends on
-    hash order.
+    truncated. Deterministic across processes and interpreters: the
+    character classes are the engine's generated tables.
     """
-    terms: list[str] = []
-    for match in _WORD_RUN.finditer(content):
-        run = match.group()
-        parts = _identifier_parts(run)
-        _emit(terms, run)
-        if len(parts) > 1:
-            for part in parts:
-                _emit(terms, part)
-    return terms
+    return extension().tokenize(content)
 
 
 def options_fingerprint() -> str:
@@ -229,7 +207,7 @@ def decode_summary(blob: bytes) -> BlockSummary:
 
 
 class LexicalBuilder(Protocol):
-    """The one builder contract both engines implement.
+    """The builder contract the engine implements (and the oracle mirrors).
 
     ``add_docs`` takes ``(chunk_id, content)`` pairs in strictly increasing
     id order and returns each document's token count; ``finish`` fixes
@@ -248,101 +226,8 @@ class LexicalBuilder(Protocol):
 
 
 def lexical_builder() -> LexicalBuilder:
-    """A fresh lexical builder from the active engine."""
-    ext = extension()
-    if ext is not None:
-        return ext.LexicalBuilder()
-    return PureLexicalBuilder()
-
-
-class PureLexicalBuilder:
-    """The reference builder: one streaming pass, blocks held until ``finish``.
-
-    Per document: tokenize, count, append ``(delta, tf, dl)`` to each
-    term's open block, seal a block at :data:`BLOCK_SIZE`. A block's true
-    maximum weight needs the final ``idf`` and ``avg_dl``, so the sealed
-    blocks stay resident (compressed) until :meth:`finish` computes every
-    summary. Residency is dominated by the vocabulary, not the postings:
-    each distinct term costs a few hundred bytes of per-term structure
-    against a few bytes of blob (the Rust engine measured ~660 B per term
-    on a 487 k-term corpus). An arena layout for the term streams, and a
-    sharded build past one core, are the directions — never a declared
-    corpus limit.
-    """
-
-    def __init__(self) -> None:
-        self._terms: dict[str, _TermList] = {}
-        self._n_docs = 0
-        self._total_dl = 0
-        self._last_doc = 0
-        self._drained: list[tuple[str, _TermList, SummaryRow]] | None = None
-        self._stats = CorpusStats(0, 0.0)
-        self._df_cursor = 0
-        self._block_cursor = 0
-        self._block_offset = 0
-
-    def add_docs(self, docs: list[tuple[int, str]]) -> list[int]:
-        if self._drained is not None:
-            raise ValueError("statistics are fixed; create a fresh builder")
-        lengths: list[int] = []
-        for doc_id, content in docs:
-            if doc_id <= self._last_doc:
-                message = f"doc ids must be strictly increasing and positive; got {doc_id} after {self._last_doc}"
-                raise ValueError(message)
-            tokens = pure_tokenize(content)
-            counts: dict[str, int] = {}
-            for term in tokens:
-                counts[term] = counts.get(term, 0) + 1
-            dl = len(tokens)
-            for term, tf in counts.items():
-                lst = self._terms.get(term)
-                if lst is None:
-                    lst = self._terms[term] = _TermList()
-                lst.push(doc_id, tf, dl)
-            self._last_doc = doc_id
-            self._n_docs += 1
-            self._total_dl += dl
-            lengths.append(dl)
-        return lengths
-
-    def finish(self) -> tuple[int, float]:
-        if self._drained is None:
-            avg_dl = self._total_dl / self._n_docs if self._n_docs else 0.0
-            self._stats = CorpusStats(self._n_docs, avg_dl)
-            self._drained = [
-                (term, lst, lst.summary(term, self._n_docs, avg_dl)) for term, lst in sorted(self._terms.items())
-            ]
-            self._terms = {}
-        return self._stats
-
-    def next_df_batch(self, row_cap: int) -> list[tuple[str, int, float, float, bytes]] | None:
-        self.finish()
-        assert self._drained is not None
-        if self._df_cursor >= len(self._drained):
-            return None
-        end = min(self._df_cursor + max(row_cap, 1), len(self._drained))
-        batch = [tuple(summary) for _term, _lst, summary in self._drained[self._df_cursor : end]]
-        self._df_cursor = end
-        return batch
-
-    def next_batch(self, row_cap: int) -> list[tuple[str, int, int, bytes, bytes, bytes]] | None:
-        self.finish()
-        assert self._drained is not None
-        if self._block_cursor >= len(self._drained):
-            return None
-        row_cap = max(row_cap, 1)
-        batch: list[tuple[str, int, int, bytes, bytes, bytes]] = []
-        while self._block_cursor < len(self._drained) and len(batch) < row_cap:
-            term, lst, _summary = self._drained[self._block_cursor]
-            blocks = lst.blocks()
-            while self._block_offset < len(blocks) and len(batch) < row_cap:
-                batch.append(lst.row(term, self._block_offset, blocks[self._block_offset]))
-                self._block_offset += 1
-            if self._block_offset >= len(blocks):
-                lst.release()
-                self._block_cursor += 1
-                self._block_offset = 0
-        return batch
+    """A fresh lexical builder from the engine."""
+    return extension().LexicalBuilder()
 
 
 # ---------------------------------------------------------------------------
@@ -359,54 +244,16 @@ def score_blocks(
     candidates: NDArray[np.int64] | None = None,
 ) -> list[tuple[int, float]]:
     """BM25 top-``k`` over fetched blocks as ``(chunk_id, score)``,
-    ``score DESC, chunk_id ASC`` — from the active engine.
+    ``score DESC, chunk_id ASC`` — from the engine.
 
     ``idfs`` is indexed by each block's ``term``; ``candidates``, when
-    given, is a sorted id array the ranking is restricted to. Both
-    engines accumulate in the same order (terms by descending bound,
-    then block order, then posting order), so their sums are identical.
+    given, is a sorted id array the ranking is restricted to. The engine
+    accumulates in a fixed order (terms by descending bound, then block
+    order, then posting order), so its sums are reproducible and the
+    oracle's match them.
     """
-    ext = extension()
-    if ext is not None:
-        raw = None if candidates is None else np.ascontiguousarray(candidates, dtype=np.int64).tobytes()
-        return ext.lexical_score(list(blocks), list(idfs), avg_dl, k, raw)
-    return pure_score_blocks(blocks, idfs, avg_dl, k, candidates=candidates)
-
-
-def pure_score_blocks(
-    blocks: Sequence[ScoreBlock],
-    idfs: Sequence[float],
-    avg_dl: float,
-    k: int,
-    *,
-    candidates: NDArray[np.int64] | None = None,
-) -> list[tuple[int, float]]:
-    """The reference scorer: full evaluation in one numpy pipeline.
-
-    Every block is decoded and every posting weighted — no block-max
-    skipping (the Python loop would lose to the batched decode); the
-    Rust engine skips, and lands on the same top-k because a skipped
-    block, by construction, could not have changed it.
-    """
-    if not blocks or k <= 0:
-        return []
-    bound = [max(b.bound for b in blocks if b.term == term) for term in range(len(idfs))]
-    ordered = sorted(blocks, key=lambda b: (-bound[b.term], b.term))
-    ids = np.concatenate([decode_postings(b.doc_ids) for b in ordered])
-    tfs = decode_varints(b"".join(b.tfs for b in ordered))
-    dls = decode_varints(b"".join(b.dls for b in ordered))
-    counts = np.array([len(decode_postings(b.doc_ids)) for b in ordered], dtype=np.int64)
-    term_idf = np.repeat(np.array([idfs[b.term] for b in ordered], dtype=np.float64), counts)
-    weights = term_idf * tfs * (BM25_K1 + 1.0) / (tfs + BM25_K1 * (1.0 - BM25_B + BM25_B * dls / avg_dl))
-    if candidates is not None:
-        keep = np.isin(ids, candidates)
-        ids, weights = ids[keep], weights[keep]
-    if ids.size == 0:
-        return []
-    uniq, inverse = np.unique(ids, return_inverse=True)
-    scores = np.bincount(inverse, weights=weights, minlength=uniq.size)
-    order = np.lexsort((uniq, -scores))[:k]
-    return [(int(uniq[i]), float(scores[i])) for i in order]
+    raw = None if candidates is None else np.ascontiguousarray(candidates, dtype=np.int64).tobytes()
+    return extension().lexical_score(list(blocks), list(idfs), avg_dl, k, raw)
 
 
 def competing_blocks(
@@ -439,119 +286,11 @@ def competing_blocks(
 # ---------------------------------------------------------------------------
 
 
-def _emit(terms: list[str], raw: str) -> None:
-    """Fold *raw* and append it when it clears the length gates."""
-    term = fold_content(raw)
-    if len(term) >= MIN_TERM_CHARS and len(term.encode()) <= MAX_TERM_BYTES:
-        terms.append(term)
-
-
-def _identifier_parts(run: str) -> list[str]:
-    """Split one word run on underscores, then on case changes.
-
-    A digit-led piece is kept whole (``0x1f`` never splits at ``f``); a
-    case change is lower/digit→upper (``getValue``, ``sha256Hash``) or
-    the last capital of an acronym run (``HTTPServer`` → ``HTTP``,
-    ``Server``).
-    """
-    parts: list[str] = []
-    for piece in run.split("_"):
-        if not piece:
-            continue
-        if piece[0].isdigit():
-            parts.append(piece)
-            continue
-        start = 0
-        for index in range(1, len(piece)):
-            if piece[index].isupper() and _case_boundary(piece, index):
-                parts.append(piece[start:index])
-                start = index
-        parts.append(piece[start:])
-    return parts
-
-
-def _case_boundary(piece: str, index: int) -> bool:
-    """True when the capital at *index* starts a new part."""
-    previous = piece[index - 1]
-    if previous.islower() or previous.isdigit():
-        return True
-    return previous.isupper() and index + 1 < len(piece) and piece[index + 1].islower()
-
-
 def _append_varint(out: bytearray, value: int) -> None:
     while value >= 0x80:
         out.append((value & 0x7F) | 0x80)
         value >>= 7
     out.append(value)
-
-
-# One block's (count, ids, tfs, dls) byte slices inside a term's streams.
-_BlockSlices = tuple[int, slice, slice, slice]
-
-
-class _TermList:
-    """One term's postings as three byte streams, blocks back to back.
-
-    Deltas restart at each block so a block decodes alone; ``sealed``
-    holds each full block's ``(count, ids_end, tfs_end, dls_end)``.
-    """
-
-    __slots__ = ("df", "dls", "ids", "last_id", "open_count", "sealed", "tfs")
-
-    def __init__(self) -> None:
-        self.df = 0
-        self.ids = bytearray()
-        self.tfs = bytearray()
-        self.dls = bytearray()
-        self.sealed: list[tuple[int, int, int, int]] = []
-        self.open_count = 0
-        self.last_id = 0
-
-    def push(self, doc_id: int, tf: int, dl: int) -> None:
-        _append_varint(self.ids, doc_id - self.last_id)
-        _append_varint(self.tfs, tf)
-        _append_varint(self.dls, dl)
-        self.last_id = doc_id
-        self.open_count += 1
-        self.df += 1
-        if self.open_count == BLOCK_SIZE:
-            self.sealed.append((self.open_count, len(self.ids), len(self.tfs), len(self.dls)))
-            self.open_count = 0
-            self.last_id = 0
-
-    def blocks(self) -> list[_BlockSlices]:
-        """Every block's ``(count, ids, tfs, dls)`` byte slices, the open block last."""
-        out: list[_BlockSlices] = []
-        a = b = c = 0
-        for count, ia, ib, ic in self.sealed:
-            out.append((count, slice(a, ia), slice(b, ib), slice(c, ic)))
-            a, b, c = ia, ib, ic
-        if self.open_count:
-            out.append((self.open_count, slice(a, len(self.ids)), slice(b, len(self.tfs)), slice(c, len(self.dls))))
-        return out
-
-    def summary(self, term: str, n_docs: int, avg_dl: float) -> SummaryRow:
-        """The term's row: idf, its maximum over every block, the summary blob."""
-        term_idf = idf(self.df, n_docs)
-        firsts: list[int] = []
-        maxes: list[float] = []
-        for _count, ids, tfs, dls in self.blocks():
-            firsts.append(int(decode_varints(bytes(self.ids[ids]))[0]))
-            block_tfs = decode_varints(bytes(self.tfs[tfs]))
-            block_dls = decode_varints(bytes(self.dls[dls]))
-            pairs = zip(block_tfs, block_dls, strict=True)
-            maxes.append(max(term_weight(int(tf), int(dl), avg_dl, term_idf) for tf, dl in pairs))
-        return SummaryRow(term, self.df, term_idf, max(maxes, default=0.0), encode_summary(firsts, maxes))
-
-    def row(self, term: str, block_no: int, block: _BlockSlices) -> tuple[str, int, int, bytes, bytes, bytes]:
-        count, ids, tfs, dls = block
-        prefix = bytearray()
-        _append_varint(prefix, count)
-        return (term, block_no, count, bytes(prefix + self.ids[ids]), bytes(self.tfs[tfs]), bytes(self.dls[dls]))
-
-    def release(self) -> None:
-        self.ids = self.tfs = self.dls = bytearray()
-        self.sealed = []
 
 
 __all__ = [
@@ -566,7 +305,6 @@ __all__ = [
     "BlockSummary",
     "CorpusStats",
     "LexicalBuilder",
-    "PureLexicalBuilder",
     "ScoreBlock",
     "SummaryRow",
     "competing_blocks",
@@ -576,8 +314,6 @@ __all__ = [
     "idf",
     "lexical_builder",
     "options_fingerprint",
-    "pure_score_blocks",
-    "pure_tokenize",
     "score_blocks",
     "term_weight",
     "tokenize",

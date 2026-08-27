@@ -437,3 +437,5 @@ class TestExecutorOwnership:
         assert [str(row.path) for row in result.observations] == ["/a.txt"]
         assert (await first).success is True
         await _until(lambda: gated.finished)
+        # The queued grep re-touched the disposed engine; the next close owns it.
+        await storage.close()

@@ -95,10 +95,9 @@ Consequences that bind design work:
   `vfs._native`, fronted by the `vfs/native.py` seam). **The extension
   is required** (ADR 057, 2026-08-27): vfs has one engine, the seam
   fails loudly when it is missing, and there is no pure-Python runtime
-  fallback. Until the ADR 057 spec lands, the tree still carries the
-  old pure engine and its `VFS_PURE_PYTHON=1` CI leg — treat that code
-  as the test oracle it is becoming, not as a product to extend. Keep
-  `cargo test -p vfs-core` green. **After editing Rust, run
+  fallback. The readable reference implementations live in
+  `tests/support/oracles/` and pin the engine through parity tests.
+  Keep `cargo test -p vfs-core` green. **After editing Rust, run
   `uv sync --reinstall-package vfs-py`** — uv caches the built wheel and
   does not rebuild on Rust-only edits.
 - **Performance work goes in our own Rust crate; pure Python is a test

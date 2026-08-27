@@ -5,12 +5,14 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **140 / 141 / 142 drafted 2026-08-27** — the ADR 057 arc: one
-  engine. **140** makes `vfs._native` required (loud `ImportError`,
-  no `VFS_PURE_PYTHON`, no pure CI leg), moves every pure
-  implementation to `tests/support/oracles/` as parity referees, and
-  turns the 3.11-only Unicode-drift failure (CI run 33037191124) into
-  a skip on non-generating interpreters. **141** lands the fused grep
+- **140 landed 2026-08-27** — one engine: `vfs._native` required
+  (loud `ImportError`, no `VFS_PURE_PYTHON`, no pure CI leg); every
+  pure implementation moved to `tests/support/oracles/` as parity
+  referees; the 3.11-only Unicode-drift failure (CI run 33037191124)
+  became a skip on non-generating interpreters. 3.11/3.13/3.14 green,
+  coverage 100 % (2,782 passed).
+- **141 / 142 drafted 2026-08-27** — the rest of the ADR 057 arc.
+  **141** lands the fused grep
   kernel `candidate_ids` (decode + AND + OR + allow + cap in one call,
   12–36× numpy, `list[int]` at the seam) and takes numpy out of
   `postings.py` / `grep.py`. **142** lands the summary-decode and

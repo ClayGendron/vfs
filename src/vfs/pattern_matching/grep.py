@@ -2,27 +2,23 @@
 
 Match semantics are defined once, in the shared Rust core: a grep
 pattern is judged by ``vfs-core``'s regex-crate matcher, and the grep
-pattern language is the regex-crate language (ripgrep's). Python ``re``
-is not the authority — it serves only the pure-Python fallback engine,
-whose rare divergences from the core (case-orbit corners of
-``re.IGNORECASE``, spelling gaps like ``\\N{...}``) are the documented
-residual of extension-less installs.
+pattern language is the regex-crate language (ripgrep's).
 
-Both engines serve one language. A shared gate walks the sre AST and
-refuses what the regex crate refuses — backreferences, look-arounds,
-atomic groups, possessive quantifiers, conditional groups, the text
-anchors ``\\A``/``\\Z``, the ASCII/locale flags — and refuses a pattern
-that can only match a line terminator, so an extension-less install
-never quietly serves a wider language than a wheel does.
+A gate in front of the engine walks the pattern's sre AST and refuses
+what the regex crate refuses — backreferences, look-arounds, atomic
+groups, possessive quantifiers, conditional groups, the text anchors
+``\\A``/``\\Z``, the ASCII/locale flags — and refuses a pattern that can
+only match a line terminator, so every refusal carries one message and
+the language is declared here rather than discovered per engine error.
 
 Matching is line-shaped everywhere (*lines are presentation, not
 matching*): bodies are scanned whole, each hit's enclosing line is
 recovered around it, and ``\\n`` never participates in a match — the
-core strips it from classes structurally; the fallback scans whole
-bodies only when the walk proves the pattern cannot touch ``\\n``,
-else it matches per line. Storage tiers verify their index/scan
-candidates through these functions and the router filters chained
-rows through the same ones, so the two surfaces cannot drift.
+core strips it from classes structurally. Storage tiers verify their
+index/scan candidates through these functions and the router filters
+chained rows through the same ones, so the two surfaces cannot drift.
+The readable ``re``-based reference matcher is a test oracle
+(``tests/support/oracles/matcher.py``).
 
     verifier = compile_verifier("needle", fixed_strings=False,
                                 word_regexp=False, case_mode="smart")
@@ -38,7 +34,6 @@ import re
 # the live modules directly, matching the planner's convention.
 from re import _constants as sre_constants  # ty: ignore[unresolved-import]
 from re import _parser as sre_parse  # ty: ignore[unresolved-import]
-from time import monotonic
 from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 from vfs.models import Match
@@ -47,7 +42,7 @@ from vfs.paths import normalize_ext_channel
 from vfs.pattern_matching.glob import PatternError, compile_filter, passes_filters
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Sequence
     from typing import Any
 
     from vfs.ops import CaseMode, GrepOutputMode
@@ -58,12 +53,12 @@ if TYPE_CHECKING:
 MatchSpan = tuple[int, int, int, str]
 
 # One candidate body: text, or its UTF-8 bytes fetched straight from
-# storage — the two spellings verify identically on both engines.
+# storage — the two spellings verify identically.
 Body = str | bytes
 
 
 class ContentMatcher(Protocol):
-    """The compiled verifier contract both engines implement.
+    """The compiled verifier contract the engine implements (and the oracle mirrors).
 
     Texts go in as plain strings or as their UTF-8 bytes — content is
     valid UTF-8 by construction, so the spellings are interchangeable;
@@ -187,31 +182,23 @@ def split_lines(text: str) -> list[str]:
 
 
 def compile_verifier(pattern: str, *, fixed_strings: bool, word_regexp: bool, case_mode: CaseMode) -> ContentMatcher:
-    """The conformance-pinned modifier wrapping, gated, on the live engine.
+    """The conformance-pinned modifier wrapping, gated, on the engine.
 
     Escape (fixed strings), word-wrap, and smart case — judged on the raw
     pattern, any uppercase letter makes the search sensitive, ripgrep's
-    rule — then the language gate, then the engine: the shared core where
-    the extension serves, the Python ``re`` approximation otherwise.
-    Refusals raise :class:`PatternError` with the reason.
+    rule — then the language gate, then the shared core. Refusals raise
+    :class:`PatternError` with the reason.
     """
     text = _escape_fixed(pattern) if fixed_strings else pattern
     if word_regexp:
         text = rf"\b(?:{text})\b"
     insensitive = case_mode == "insensitive" or (case_mode == "smart" and not any(ch.isupper() for ch in pattern))
-    whole_text_safe = _gate(text)
-    ext = extension()
-    if ext is not None:
-        try:
-            return _RustMatcher(ext.ContentMatcher(text, insensitive))
-        except ValueError as exc:
-            # The crate refuses a spelling the walk cannot see (e.g. \N{...}).
-            raise PatternError(str(exc)) from exc
-    flags = re.IGNORECASE if insensitive else 0
-    return _PureMatcher(
-        re.compile(text, flags),
-        re.compile(text, flags | re.MULTILINE) if whole_text_safe else None,
-    )
+    _gate(text)
+    try:
+        return _RustMatcher(extension().ContentMatcher(text, insensitive))
+    except ValueError as exc:
+        # The crate refuses a spelling the walk cannot see (e.g. \N{...}).
+        raise PatternError(str(exc)) from exc
 
 
 def verify(
@@ -288,24 +275,18 @@ def _as_bytes(body: Body) -> bytes:
     return body if isinstance(body, bytes) else body.encode("utf-8", "surrogatepass")
 
 
-def _as_text(body: Body) -> str:
-    """The pure engine's spelling: text passes through, bytes decode."""
-    return body if isinstance(body, str) else body.decode("utf-8", "surrogatepass")
-
-
 def _escape_fixed(text: str) -> str:
     """Escape a fixed string with the meta set both regex languages share."""
     return "".join("\\" + ch if ch in _FIXED_META else ch for ch in text)
 
 
-def _gate(text: str) -> bool:
+def _gate(text: str) -> None:
     """The language gate: refuse what the regex crate refuses.
 
-    Returns whether whole-text scanning is law-safe for the pure engine —
-    true when no construct in the pattern can match ``\\n`` (the core
-    needs no such fact: it strips ``\\n`` structurally). Raises
-    :class:`PatternError` on refusal; unknown constructs degrade to
-    per-line matching, never to acceptance of a wider language.
+    Raises :class:`PatternError` on refusal. The walk also reports
+    whether any atom can match ``\\n`` — the core needs no such fact (it
+    strips ``\\n`` structurally); the oracle matcher reads it to pick its
+    whole-text path.
     """
     try:
         parsed = sre_parse.parse(text)
@@ -313,7 +294,7 @@ def _gate(text: str) -> bool:
         raise PatternError(str(exc)) from exc
     if parsed.state.flags & re.ASCII:
         raise PatternError("the ASCII flag (?a) is not supported")
-    return not _walk_newline_capable(parsed)
+    _walk_newline_capable(parsed)
 
 
 def _walk_newline_capable(subpattern: Any) -> bool:
@@ -370,8 +351,8 @@ def _class_admits_newline(items: list[Any]) -> bool:
             if av in _NEWLINE_CATEGORIES:
                 admits = True
         else:  # pragma: no cover - sre emits no other class atoms today
-            # Unknown class atom: assume it can match \n (degrades the
-            # pure engine to per-line, never widens the language).
+            # Unknown class atom: assume it can match \n (never widens
+            # the language).
             only_newline = False
             admits = True
     if negated:
@@ -410,199 +391,3 @@ class _RustMatcher:
         )
         decoded = [[(s, e, m, content.decode("utf-8", "surrogatepass")) for s, e, m, content in row] for row in rows]
         return decoded, completed
-
-
-# Lines per deadline slice on the pure engine: the clock is consulted
-# between slices, so one slice's worth of matching is the check's grain.
-_SLICE_LINES: Final = 16
-
-
-def _line_slices(text: str, bounded: bool) -> Iterator[tuple[int, int]]:
-    """``(begin, stop)`` offsets on line boundaries, ``_SLICE_LINES`` per slice.
-
-    Unbounded calls get the whole body as one slice — the fast path pays
-    nothing. Boundaries land just after ``\\n``, so no match is ever
-    split and begin-side context (``^``, word boundaries) judges as an
-    unsliced scan would; the end side is weaker: a zero-width match at
-    ``stop`` is ``endpos`` posing as end-of-string, and discarding it is
-    the consumer's obligation — the guard the whole-text driver carries
-    (the language gate already refused look-arounds and text anchors).
-    """
-    if not bounded:
-        yield 0, len(text)
-        return
-    begin = 0
-    while begin < len(text):
-        stop = begin
-        for _ in range(_SLICE_LINES):
-            newline = text.find("\n", stop)
-            if newline == -1:
-                stop = len(text)
-                break
-            stop = newline + 1
-        yield begin, stop
-        begin = stop
-
-
-class _PureMatcher:
-    """The fallback engine: Python ``re`` under the same line law.
-
-    Scans whole bodies (``\\n``-free patterns, ``re.MULTILINE`` keeping
-    the per-line anchor law) when the gate proved it safe and the call
-    has no context or inversion to shape; otherwise splits and matches
-    per line — always correct, the reference shape.
-
-    A budgeted call consults the deadline *within* each body, between
-    ``_SLICE_LINES``-line slices: expiry mid-body returns the partial
-    hits found so far — a lawful subset — reported incomplete. The
-    residual between checks is one slice's matching, and it is a floor,
-    not a bound: ``re`` backtracking cannot be interrupted, and its
-    cost grows exponentially with line content under a pathological
-    pattern — measured for ``(a+)+bcd``: 273 ms for a 16-line slice of
-    18-character lines, 65 ms for one 20-character line, doubling per
-    two characters from there. A body inside one slice pays that cost
-    whole after the single check at body entry. An overrun leaves the
-    results exact — the wall is breached, never the answer — and the
-    incomplete flag stays a data-completeness signal, not a wall one.
-
-    Before its first deadline consult, a budgeted body also pays linear
-    pre-work the clock never sees: the bytes decode (``_as_text``) on
-    both paths, and on the split path an eager line split — about 2.4 times
-    the body's size in transient residency, measured as a ~7 % overrun
-    of the 10 s default wall at 512 MiB. A lazy line iterator alone
-    would not close it; the decode is a second linear pass.
-    """
-
-    def __init__(self, line_rx: re.Pattern[str], multi_rx: re.Pattern[str] | None) -> None:
-        self._line_rx = line_rx
-        self._multi_rx = multi_rx
-
-    def count_lines(
-        self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
-    ) -> tuple[list[int], bool]:
-        deadline = None if budget is None else monotonic() + budget
-        counts: list[int] = []
-        for body in texts:
-            if deadline is not None and monotonic() > deadline:
-                return counts + [0] * (len(texts) - len(counts)), False
-            text = _as_text(body)
-            if self._multi_rx is not None and not invert:
-                count, completed = self._count_whole(text, cap, deadline)
-            else:
-                count, completed = self._count_split(text, cap, invert, deadline)
-            counts.append(count)
-            if not completed:
-                return counts + [0] * (len(texts) - len(counts)), False
-        return counts, True
-
-    def hit_lines(
-        self,
-        texts: Sequence[Body],
-        *,
-        before: int,
-        after: int,
-        cap: int | None,
-        invert: bool,
-        budget: float | None,
-    ) -> tuple[list[list[MatchSpan]], bool]:
-        deadline = None if budget is None else monotonic() + budget
-        rows: list[list[MatchSpan]] = []
-        for body in texts:
-            if deadline is not None and monotonic() > deadline:
-                return rows + [[] for _ in range(len(texts) - len(rows))], False
-            text = _as_text(body)
-            if self._multi_rx is not None and not invert and not before and not after:
-                spans, completed = self._hits_whole(text, cap, deadline)
-            else:
-                spans, completed = self._hits_split(text, before, after, cap, invert, deadline)
-            rows.append(spans)
-            if not completed:
-                return rows + [[] for _ in range(len(texts) - len(rows))], False
-        return rows, True
-
-    def _whole_matches(self, text: str, deadline: float | None) -> Iterator[tuple[int, int] | None]:
-        """Whole-text hits as ``(line_start, match_end)``, one per hit line.
-
-        The shared skeleton both whole-text consumers drive: the slice
-        loop with its between-slice deadline consult, the zero-width
-        discard at slice ends, and the line-start recovery with per-line
-        dedup. Expiry yields one ``None`` and stops — consumers map it
-        to an incomplete verdict; a consumer's early ``cap`` break just
-        abandons the iterator (a generator *return* value would be
-        unobservable there).
-        """
-        assert self._multi_rx is not None
-        last_start = -1
-        expired = False
-        for begin, stop in _line_slices(text, deadline is not None):
-            if deadline is not None and begin and monotonic() > deadline:
-                expired = True
-                break
-            for found in self._multi_rx.finditer(text, begin, stop):
-                # A zero-width match at the slice end is ``endpos`` posing as
-                # end-of-string; the next slice judges it with real context.
-                if found.start() == stop and stop < len(text):
-                    continue
-                start = text.rfind("\n", 0, found.start()) + 1
-                if start >= len(text) or start == last_start:
-                    continue
-                last_start = start
-                yield start, found.end()
-        if expired:
-            # The sentinel is the generator's last act: consumers abandon
-            # on it, so a statement after this yield could never run.
-            yield None
-
-    def _count_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[int, bool]:
-        count = 0
-        for site in self._whole_matches(text, deadline):
-            if site is None:
-                return count, False
-            count += 1
-            if cap is not None and count >= cap:
-                return count, True
-        return count, True
-
-    def _hits_whole(self, text: str, cap: int | None, deadline: float | None) -> tuple[list[MatchSpan], bool]:
-        hits: list[MatchSpan] = []
-        cursor = 0
-        line_no = 1
-        for site in self._whole_matches(text, deadline):
-            if site is None:
-                return hits, False
-            start, match_end = site
-            line_no += text.count("\n", cursor, start)
-            cursor = start
-            end = text.find("\n", match_end)
-            content = text[start:] if end == -1 else text[start:end]
-            hits.append((line_no, line_no, line_no, content))
-            if cap is not None and len(hits) >= cap:
-                return hits, True
-        return hits, True
-
-    def _count_split(self, text: str, cap: int | None, invert: bool, deadline: float | None) -> tuple[int, bool]:
-        count = 0
-        for index, line in enumerate(split_lines(text)):
-            if deadline is not None and index and index % _SLICE_LINES == 0 and monotonic() > deadline:
-                return count, False
-            if (self._line_rx.search(line) is not None) is not invert:
-                count += 1
-                if cap is not None and count >= cap:
-                    break
-        return count, True
-
-    def _hits_split(
-        self, text: str, before: int, after: int, cap: int | None, invert: bool, deadline: float | None
-    ) -> tuple[list[MatchSpan], bool]:
-        lines = split_lines(text)
-        hits: list[MatchSpan] = []
-        for number, line in enumerate(lines, start=1):
-            if deadline is not None and number > 1 and number % _SLICE_LINES == 1 and monotonic() > deadline:
-                return hits, False
-            if (self._line_rx.search(line) is not None) is not invert:
-                start = max(1, number - before)
-                end = min(len(lines), number + after)
-                hits.append((start, end, number, "\n".join(lines[start - 1 : end])))
-                if cap is not None and len(hits) >= cap:
-                    break
-        return hits, True

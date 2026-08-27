@@ -1,10 +1,4 @@
-"""Tests for chunking: recursive splitter, structure-aware splits, notebooks.
-
-Structure-aware splitting is a native-engine capability by contract, so
-the tree-boundary cases carry ``needs_structure``; the pure engine's
-declared degradation (character splitter for everything) has its own pin,
-exercised on the coverage leg by disabling the seam directly.
-"""
+"""Tests for chunking: recursive splitter, structure-aware splits, notebooks."""
 
 from __future__ import annotations
 
@@ -14,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import vfs.native
 from vfs.models.chunking import (
     CHUNK_GENERATION,
     DEFAULT_SEPARATORS,
@@ -29,12 +22,7 @@ from vfs.models.chunking import (
     split_notebook,
     split_with_line_ranges,
 )
-from vfs.native import active_core, structure_grammars
-
-needs_structure = pytest.mark.skipif(
-    active_core() == "python",
-    reason="structure-aware chunking is native-only; the pure engine character-splits by contract",
-)
+from vfs.native import structure_grammars
 
 
 def assert_true_line_ranges(content: str, chunks: list[tuple[str, int, int]]) -> None:
@@ -138,7 +126,6 @@ class TestGrammarResolution:
     def test_mapped_extension_resolves(self) -> None:
         assert grammar_for_extension("py") == "python"
 
-    @needs_structure
     def test_native_registry_covers_the_map_minus_declared_fallbacks(self) -> None:
         # The coverage contract: every mapped grammar is either served by
         # the native registry or on the declared character-splitter list —
@@ -159,7 +146,6 @@ class TestSplitCode:
         content = "def f():\n    return 1\n"
         assert split_code(content, language="python") == split_with_line_ranges(content)
 
-    @needs_structure
     def test_python_splits_on_structure_with_true_line_ranges(self) -> None:
         content = "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(8))
         chunks = split_code(content, language="python", chunk_size=48)
@@ -167,14 +153,12 @@ class TestSplitCode:
         assert all(len(text.encode()) <= 48 for text, _ls, _le in chunks)
         assert_true_line_ranges(content, chunks)
 
-    @needs_structure
     def test_adjacent_chunks_never_overlap_lines(self) -> None:
         content = "".join(f"def f{i}():\n    return {i}\n" for i in range(8))
         chunks = split_code(content, language="python", chunk_size=48)
         for (_t1, _ls1, le1), (_t2, ls2, _le2) in pairwise(chunks):
             assert le1 < ls2
 
-    @needs_structure
     def test_oversized_indivisible_leaf_falls_back_with_true_ranges(self) -> None:
         body = "\n".join(f"line {i} of the long docstring text" for i in range(12))
         content = f'doc = """\n{body}\n"""\n\nx = 1\n'
@@ -182,14 +166,12 @@ class TestSplitCode:
         assert len(chunks) > 2
         assert_true_line_ranges(content, chunks)
 
-    @needs_structure
     def test_gap_spans_between_nodes_are_covered(self) -> None:
         content = "{" + ", ".join(f'"k{i}": "{"v" * 20}"' for i in range(20)) + "}"
         chunks = split_code(content, language="json", chunk_size=64)
         assert len(chunks) > 1
         assert_true_line_ranges(content, chunks)
 
-    @needs_structure
     def test_whitespace_only_spans_are_dropped(self) -> None:
         content = "x = 1\n" + "\n" * 120 + "y = 2\n"
         chunks = split_code(content, language="python", chunk_size=8)
@@ -198,7 +180,6 @@ class TestSplitCode:
         (y_chunk,) = [c for c in chunks if "y = 2" in c[0]]
         assert y_chunk[1] == 122
 
-    @needs_structure
     def test_multibyte_content_keeps_lines_and_loses_nothing(self) -> None:
         content = "".join(f'w{i} = "🎉🎉🎉"\n' for i in range(10))
         chunks = split_code(content, language="python", chunk_size=64)
@@ -210,14 +191,6 @@ class TestSplitCode:
         content = "some plain text\n" * 8
         expected = split_with_line_ranges(content, chunk_size=32)
         assert split_code(content, language="no_such_grammar", chunk_size=32) == expected
-
-    def test_pure_engine_degrades_to_the_character_splitter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The ADR-declared divergence: with no native engine there is no
-        # tree-sitter at all, and a mapped grammar character-splits.
-        monkeypatch.setattr(vfs.native, "_active", None)
-        content = "".join(f"def f{i}():\n    return {i}\n\n\n" for i in range(8))
-        expected = split_with_line_ranges(content, chunk_size=48)
-        assert split_code(content, language="python", chunk_size=48) == expected
 
 
 class TestSplitCodeBatch:
@@ -235,12 +208,8 @@ class TestSplitCodeBatch:
 
 
 class TestChunkGeneration:
-    def test_generation_names_the_engine_and_the_declared_constant(self) -> None:
-        assert chunk_generation() == f"{active_core()}:{CHUNK_GENERATION}"
-
-    def test_pure_engine_yields_a_distinct_generation(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(vfs.native, "_active", None)
-        assert chunk_generation() == f"python:{CHUNK_GENERATION}"
+    def test_generation_carries_the_engine_stamp_and_the_declared_constant(self) -> None:
+        assert chunk_generation() == f"rust:{CHUNK_GENERATION}"
 
 
 class TestChunkFixtures:
@@ -254,7 +223,6 @@ class TestChunkFixtures:
 
     FIXTURES = Path(__file__).parent / "fixtures" / "chunking"
 
-    @needs_structure
     @pytest.mark.parametrize(
         ("name", "grammar"),
         [("sample.py", "python"), ("sample.c", "c"), ("sample.md", "markdown")],
@@ -436,15 +404,13 @@ class TestExceptionFloor:
         pieces = recursive_text_split(content, chunk_size=16)
         assert "".join(pieces) == content
 
-    def test_pure_engine_scrubs_identically(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The scrub is pre-seam Python: the pure engine's character split
-        # sees the same scrubbed body the native structure path sees.
-        monkeypatch.setattr(vfs.native, "_active", None)
+    def test_the_character_splitter_sees_the_scrubbed_body(self) -> None:
+        # The scrub is pre-seam Python: an unknown grammar's character
+        # split sees the same scrubbed body the structure path sees.
         content = "dirty = 1  # \ud800 padded line here\n" * 20
-        pieces = split_code(content, language="python", chunk_size=64)
+        pieces = split_code(content, language="no_such_grammar", chunk_size=64)
         assert pieces == split_with_line_ranges(content.replace("\ud800", "�"), chunk_size=64)
 
-    @needs_structure
     def test_structure_path_chunks_carry_the_scrub_with_true_ranges(self) -> None:
         content = "".join(f"def f{i}():\n    return '\ud800{i}'\n\n\n" for i in range(20))
         pieces = split_code(content, language="python", chunk_size=128)

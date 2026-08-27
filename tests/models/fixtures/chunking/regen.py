@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 
 from vfs.models.chunking import split_code
-from vfs.native import active_core
 
 HERE = Path(__file__).parent
 CHUNK_SIZE = 256
@@ -31,7 +30,5 @@ def expectations() -> dict[str, list[list[object]]]:
 
 
 if __name__ == "__main__":
-    if active_core() != "rust":
-        raise SystemExit("fixtures pin the native engine; run with the extension installed")
     (HERE / "expected.json").write_text(json.dumps(expectations(), indent=1) + "\n")
     print(f"wrote {HERE / 'expected.json'}")  # noqa: T201 - operator-facing script output

@@ -59,8 +59,6 @@ run_leg() {
         step "types (py${v})" uv run --no-sync --python "$v" ty check src/ tests/ || return 1
         step "tests+cov (py${v})" uv run --no-sync --python "$v" pytest --tb=short \
             --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100 || return 1
-        step "tests pure-python (py${v})" env VFS_PURE_PYTHON=1 \
-            uv run --no-sync --python "$v" pytest --tb=short || return 1
         step "wheel size" check_wheel_size || return 1
     else
         step "tests (py${v})" uv run --no-sync --python "$v" pytest --tb=short || return 1
