@@ -68,12 +68,16 @@ if TYPE_CHECKING:
 # Declared operating-quality traits — how a backend serves its verbs, not
 # which verbs it serves (that is ``capabilities()``). An absent key means
 # the trait is not declared, never a default.
-TraitKey = Literal["grep_tier", "grep_staleness", "version_encoding", "durability", "arbitration"]
+TraitKey = Literal[
+    "grep_tier", "grep_staleness", "glean_signals", "glean_staleness", "version_encoding", "durability", "arbitration"
+]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
 TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "grep_tier": frozenset({"indexed", "scan"}),
     "grep_staleness": frozenset({"none", "overlay"}),
+    "glean_signals": frozenset({"lexical", "vector", "hybrid"}),
+    "glean_staleness": frozenset({"none", "overlay"}),
     "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
@@ -287,7 +291,11 @@ class SupportsGlean(Protocol):
     """The ranked-search family: text in, one fused ranked list out.
 
     Its own family because it rides on retrieval indexes (vector, lexical,
-    graph) a backend may not have even when it can glob/grep.
+    graph) a backend may not have even when it can glob/grep. Scoping
+    crosses this seam exactly as grep's does — as pattern text on the
+    ``globs``/``globs_not`` channels the router composes per scope root,
+    with the ``ext`` channels verbatim; piped rows arrive as
+    ``observations`` in entry coordinates.
     """
 
     async def glean(
@@ -295,7 +303,10 @@ class SupportsGlean(Protocol):
         *,
         query: str,
         limit: int = 10,
-        paths: tuple[Path, ...] = (),
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
         user_id: str | None = None,

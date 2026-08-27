@@ -26,6 +26,7 @@ def test_capabilities_pin_the_landed_set() -> None:
             "tree",
             "glob",
             "grep",
+            "glean",
             "write",
             "edit",
             "mkdir",

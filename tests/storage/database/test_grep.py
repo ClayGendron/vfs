@@ -27,6 +27,7 @@ from vfs.results import Result, Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
 from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.seams import installed
@@ -551,13 +552,13 @@ class TestBudgets:
         # split, and no batch may exceed the budget (singletons exempt).
         monkeypatch.setattr(grep_module, "CONTENT_BYTE_BUDGET", 64)
         batches: list[list[str]] = []
-        real = grep_module._content_for_entries
+        real = grep_module.content_for_entries
 
         async def recording(session, tables, profile, membership_budget, entry_ids):
             batches.append(list(entry_ids))
             return await real(session, tables, profile, membership_budget, entry_ids)
 
-        monkeypatch.setattr(grep_module, "_content_for_entries", recording)
+        monkeypatch.setattr(grep_module, "content_for_entries", recording)
         files = {f"/f{i}.txt": f"needle padding padding {i:04d}" for i in range(3)}
         storage = await _fresh(tmp_path, files)
         result = await storage.grep(pattern="needle")
@@ -570,13 +571,13 @@ class TestBudgets:
         # The deadline is consulted before each fetch batch: an expired
         # call must stop cold, never materialize one more body.
         fetches: list[object] = []
-        real = grep_module._content_for_entries
+        real = grep_module.content_for_entries
 
         async def counting(session, tables, profile, membership_budget, entry_ids):
             fetches.append(entry_ids)
             return await real(session, tables, profile, membership_budget, entry_ids)
 
-        monkeypatch.setattr(grep_module, "_content_for_entries", counting)
+        monkeypatch.setattr(grep_module, "content_for_entries", counting)
         storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle")], parents=True)).success
         result = await storage.grep(pattern="needle")
@@ -699,7 +700,7 @@ class TestScanMergeBounds:
         host = storage._host
         gates = [compile_filter("*.txt", ())]
         async with host.session_factory() as session:
-            nominated, overflow = await grep_module._entries_for_scan(
+            nominated, overflow = await grep_module.entries_for_scan(
                 session,
                 host.tables,
                 host.profile,
@@ -719,13 +720,13 @@ class TestScanMergeBounds:
     async def test_the_merge_prunes_to_the_lowest_paths_across_chunks(self, tmp_path, monkeypatch) -> None:
         # Two arm chunks each return limit+1 rows: the merge must hold
         # only the lowest limit+1 paths, and truncate with overflow.
-        monkeypatch.setattr(grep_module, "arm_budget", lambda profile, parameter_budget, arm_binds: 1)
+        monkeypatch.setattr(scope_module, "arm_budget", lambda profile, parameter_budget, arm_binds: 1)
         files = dict.fromkeys(("/a1.txt", "/a2.txt", "/b1.log", "/b2.log"), "needle body")
         storage = await _fresh(tmp_path, files)
         host = storage._host
         gates = [compile_filter("*.txt", ()), compile_filter("*.log", ())]
         async with host.session_factory() as session:
-            nominated, overflow = await grep_module._entries_for_scan(
+            nominated, overflow = await scope_module.entries_for_scan(
                 session,
                 host.tables,
                 host.profile,
@@ -750,13 +751,13 @@ class TestOverlayGate:
     @pytest.fixture
     def scan_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
         calls: list[bool] = []
-        original = grep_module._entries_for_scan
+        original = grep_module.entries_for_scan
 
         async def spying(*args: Any, **kwargs: Any) -> Any:
             calls.append(kwargs["everything"])
             return await original(*args, **kwargs)
 
-        monkeypatch.setattr(grep_module, "_entries_for_scan", spying)
+        monkeypatch.setattr(grep_module, "entries_for_scan", spying)
         return calls
 
     async def test_empty_overlay_skips_the_scan_statement(self, tmp_path: Any, scan_spy: list[bool]) -> None:
@@ -806,7 +807,7 @@ class TestOverlayGate:
         host = storage._host
         async with host.session_factory() as session:
             await session.execute(host.tables.meta.delete())
-            assert await grep_module._pointer_with_overlay(session, host.tables) == (None, False)
+            assert await grep_module.pointer_with_overlay(session, host.tables) == (None, False)
         await storage.close()
 
     async def test_a_rival_demotion_between_verdict_and_fetch_serves_the_row(self, tmp_path: Any) -> None:
@@ -833,7 +834,7 @@ class TestOverlayGate:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
-        real = grep_module._pointer_with_overlay
+        real = grep_module.pointer_with_overlay
         calls = {"n": 0}
 
         async def blind_preamble(session, tables):
@@ -850,7 +851,7 @@ class TestOverlayGate:
             epoch_calls["n"] += 1
             return await real_epoch(session, tables)
 
-        monkeypatch.setattr(grep_module, "_pointer_with_overlay", blind_preamble)
+        monkeypatch.setattr(grep_module, "pointer_with_overlay", blind_preamble)
         monkeypatch.setattr(grep_module, "current_epoch", counting_epoch)
         result = await storage.grep(pattern="needle")
         assert result.success is True, result.errors
@@ -869,7 +870,7 @@ class TestOverlayGate:
         # redrive once, then serve whole from current state.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
-        real = grep_module._pointer_with_overlay
+        real = grep_module.pointer_with_overlay
         calls = {"n": 0}
 
         async def moved_at_recheck(session, tables):
@@ -879,7 +880,7 @@ class TestOverlayGate:
                 return ((pointer or 0) + 1), overlay_empty
             return pointer, overlay_empty
 
-        monkeypatch.setattr(grep_module, "_pointer_with_overlay", moved_at_recheck)
+        monkeypatch.setattr(grep_module, "pointer_with_overlay", moved_at_recheck)
         result = await storage.grep(pattern="needle")
         assert result.success is True, result.errors
         assert _paths(result) == ["/a.txt"]
@@ -894,7 +895,7 @@ class TestOverlayGate:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.reindex()).success is True
         counts = {"combined": 0, "pointer": 0}
-        real_combined = grep_module._pointer_with_overlay
+        real_combined = grep_module.pointer_with_overlay
         real_pointer = grep_module.current_epoch
 
         async def counting_combined(session, tables):
@@ -905,7 +906,7 @@ class TestOverlayGate:
             counts["pointer"] += 1
             return await real_pointer(session, tables)
 
-        monkeypatch.setattr(grep_module, "_pointer_with_overlay", counting_combined)
+        monkeypatch.setattr(grep_module, "pointer_with_overlay", counting_combined)
         monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
@@ -921,7 +922,7 @@ class TestOverlayGate:
         assert (await storage.reindex()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         counts = {"combined": 0, "pointer": 0}
-        real_combined = grep_module._pointer_with_overlay
+        real_combined = grep_module.pointer_with_overlay
         real_pointer = grep_module.current_epoch
 
         async def counting_combined(session, tables):
@@ -932,7 +933,7 @@ class TestOverlayGate:
             counts["pointer"] += 1
             return await real_pointer(session, tables)
 
-        monkeypatch.setattr(grep_module, "_pointer_with_overlay", counting_combined)
+        monkeypatch.setattr(grep_module, "pointer_with_overlay", counting_combined)
         monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
@@ -960,7 +961,7 @@ class TestBytesContentPath:
         host = storage._host
         async with host.session_factory() as session:
             entries = (await session.execute(select(host.tables.entry.c.entry_id))).scalars().all()
-            contents = await grep_module._content_for_entries(
+            contents = await grep_module.content_for_entries(
                 session, host.tables, host.profile, host.membership_budget, list(entries)
             )
         assert list(contents.values()) == ["hé body\n".encode()]
@@ -972,7 +973,7 @@ class TestBytesContentPath:
         floor = replace(host.profile, content_bytes=False)
         async with host.session_factory() as session:
             entries = (await session.execute(select(host.tables.entry.c.entry_id))).scalars().all()
-            contents = await grep_module._content_for_entries(
+            contents = await grep_module.content_for_entries(
                 session, host.tables, floor, host.membership_budget, list(entries)
             )
         assert list(contents.values()) == ["hé body\n"]
@@ -1018,7 +1019,7 @@ class TestChannelFacts:
 
     def _facts(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> Any:
         entry = build_vfs_tables(table_name="vfs").entry
-        return grep_module._channel_facts(entry, profile, compile_channel(patterns))
+        return scope_module.channel_facts(entry, profile, compile_channel(patterns))
 
     def _sql(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> str:
         facts, _ = self._facts(patterns, profile)
@@ -1142,7 +1143,7 @@ class TestPushdownBindAccounting:
         entry = build_vfs_tables(table_name="vfs").entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
         channel = compile_channel(("*.py", "**/Makefile"))
-        pushdown = grep_module._pushdown_terms(entry, SQLITE, 64, 2000, channel, wanted, hide_meta=True)
+        pushdown = scope_module.pushdown_terms(entry, SQLITE, 64, 2000, channel, wanted, hide_meta=True)
         executed = sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in pushdown.terms)
         assert pushdown.binds == executed
         assert pushdown.binds >= 32  # the ext ride is charged at width
@@ -1164,8 +1165,8 @@ class TestPushdownBindAccounting:
         entry = build_vfs_tables(table_name="vfs").entry
         compilers = [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]
         for profile in (*PROFILES.values(), GENERIC):
-            liveness = grep_module.liveness_filters(entry, profile, include_meta=False)
-            charged = grep_module._static_binds(liveness)
+            liveness = scope_module.liveness_filters(entry, profile, include_meta=False)
+            charged = scope_module.static_binds(liveness)
             for compiler in compilers:
                 executed = sum(
                     len(term.compile(dialect=compiler, compile_kwargs={"render_postcompile": True}).params)
@@ -1178,7 +1179,7 @@ class TestPushdownBindAccounting:
         # always keeps room, so per-chunk can never collapse toward 1.
         entry = build_vfs_tables(table_name="vfs").entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
-        pushdown = grep_module._pushdown_terms(entry, SQLITE, 64, 40, compile_channel(()), wanted, hide_meta=True)
+        pushdown = scope_module.pushdown_terms(entry, SQLITE, 64, 40, compile_channel(()), wanted, hide_meta=True)
         assert all("IN" not in str(term) for term in pushdown.terms)
         assert pushdown.binds <= 20
 

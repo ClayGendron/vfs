@@ -740,6 +740,7 @@ class TestUnlandedVerbStubs:
             "tree",
             "glob",
             "grep",
+            "glean",
             "write",
             "edit",
             "mkdir",

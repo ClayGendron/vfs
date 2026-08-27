@@ -59,36 +59,38 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
-from sqlalchemy import LargeBinary, and_, case, cast, or_, select
+from sqlalchemy import select
 
 from vfs.models import Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError
 from vfs.native import extension
-from vfs.paths import Path, _under_meta_root, normalize_ext_channel
+from vfs.paths import Path, normalize_ext_channel
 from vfs.pattern_matching import (
-    ROW_GATE_FIELDS,
     Body,
-    GlobFilter,
     PatternError,
     compile_filter,
     compile_verifier,
     expand_channel,
-    passes_row_filters,
 )
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.offload import VerifyOffload
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
-    ARM_FIXED_BINDS,
+    content_for_entries,
     effective_columns,
-    ext_membership,
     kind_membership,
-    meta_scoped,
-    pattern_arm,
+    pointer_with_overlay,
+)
+from vfs.storage.backends.database.scope import (
+    CHANNEL_ARM_BINDS,
+    FETCH_RIDE,
+    Pushdown,
+    entries_for_scan,
+    passes_gates,
+    pushdown_terms,
 )
 from vfs.storage.backends.database.seams import seam
 
@@ -96,16 +98,14 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.code_grams import GramKey, GramQuery
-    from vfs.models.rows import EntryId, VFSTables
+    from vfs.models.rows import VFSTables
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
-    from vfs.storage.backends.database.pathterms import ChannelTerms
 
 # Runtime budgets: candidates fetched and verified, posting bytes
 # decoded, and a wall-time deadline checked between ladder stages and
@@ -143,34 +143,6 @@ class PostingMeta(NamedTuple):
 
     doc_count: int
     byte_size: int
-
-
-class ScanNominees(NamedTuple):
-    """Scan-tier entry rows in path order, and whether the cap cut them."""
-
-    rows: list[RowMapping]
-    overflow: bool
-
-
-class Pushdown(NamedTuple):
-    """The candidate fetch's rideable predicates and their true bind spend.
-
-    Every predicate is charged at its executed width — an expanding
-    membership at its element count, not its compiled placeholder count
-    — so the id-chunk arithmetic can never overdraw an engine's
-    parameter budget.
-    """
-
-    terms: tuple[ColumnElement[bool], ...]
-    binds: int
-
-
-# Ceiling of one channel arm's bind slots: the ext pair and the name fact.
-_CHANNEL_ARM_BINDS: Final = 3
-
-# Columns every candidate fetch rides beside the caller's mask: the
-# row-gate facts plus size_bytes, which prices the content read.
-_FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes"}
 
 
 async def grep_rows(
@@ -235,14 +207,14 @@ async def grep_rows(
     deadline = monotonic() + wall_seconds
     # Channel fan in arms: the pruning loop spends one statement per arm
     # and the fetch one OR branch per arm, so both consumers share it.
-    fan_arms = arm_budget(profile, parameter_budget, _CHANNEL_ARM_BINDS)
+    fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
 
     candidates: dict[str, RowMapping] = {}
     truncations: list[str] = []
     epoch: Epoch | None = None
     overlay_empty = False
     if not scan_all:
-        epoch, overlay_empty = await _pointer_with_overlay(session, tables)
+        epoch, overlay_empty = await pointer_with_overlay(session, tables)
         await seam("grep:after-pointer-read")
         # The allow-list joins nomination before the budget: the budget
         # counts scoped candidates, so truncation cannot drop in-scope rows.
@@ -272,11 +244,11 @@ async def grep_rows(
                 doc_ids, nominated_count = laddered
         if nominated_count > CANDIDATE_BUDGET and "candidate budget" not in truncations:
             truncations.append("candidate budget")
-        pushdown = _pushdown_terms(
+        pushdown = pushdown_terms(
             tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
         for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
-            if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
+            if not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
@@ -294,12 +266,12 @@ async def grep_rows(
             if not scan_all and overlay_empty:
                 # The preamble verdict was advisory: the verdict that skips
                 # the scan is read after the statements it vouches for.
-                current, overlay_empty = await _pointer_with_overlay(session, tables)
+                current, overlay_empty = await pointer_with_overlay(session, tables)
                 if current != epoch:
                     raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
                 skip_verified = overlay_empty
             if not overlay_empty:
-                nominated, overflow = await _entries_for_scan(
+                nominated, overflow = await entries_for_scan(
                     session,
                     tables,
                     profile,
@@ -315,7 +287,7 @@ async def grep_rows(
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
                 for mapping in nominated:
-                    if not gated or _passes_gates(mapping, gates, not_gates, wanted, unwanted):
+                    if not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted):
                         candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
@@ -346,7 +318,7 @@ async def grep_rows(
                 truncations.append("wall-time budget")
             break
         ids = [m["entry_id"] for m in batch]
-        contents = await _content_for_entries(session, tables, profile, membership_budget, ids)
+        contents = await content_for_entries(session, tables, profile, membership_budget, ids)
         paired = [(m, text) for m in batch if (text := contents.get(m["entry_id"])) is not None]
         if not paired:
             continue
@@ -387,30 +359,6 @@ async def grep_rows(
 # ---------------------------------------------------------------------------
 # The ladder — posting metadata, rarest-first intersection, doc→entry
 # ---------------------------------------------------------------------------
-
-
-async def _pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
-    """The epoch pointer plus an overlay-emptiness verdict, one statement.
-
-    Issued twice on the skip path, once when the preamble verdict is
-    non-empty: the preamble read is advisory (non-empty settles it —
-    the scan tier will run, and no second combined read is issued),
-    while the authoritative post-fetch read's empty verdict alone
-    permits skipping the scan — with results identical to scanning —
-    and doubles as the epoch recheck. The predicate stays ORM-built — the
-    negation renders as an inline literal on every dialect, which keeps
-    the seek on the composite (encoded, kind) index reachable; the CASE
-    wrapper is what lets engines without boolean select-list expressions
-    (SQL Server) carry the EXISTS.
-    """
-    entry = tables.entry
-    pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
-    stmt = select(tables.meta.c.current_gram_epoch, case((pending, 1), else_=0)).where(tables.meta.c.id == 1)
-    row = (await session.execute(stmt)).one_or_none()
-    if row is None:
-        return None, False
-    pointer, has_pending = row
-    return pointer, not has_pending
 
 
 async def _index_doc_ids(
@@ -561,7 +509,7 @@ async def _entries_for_docs(
     facts so the executed parameter count stays inside the budgets.
     """
     entry = tables.entry
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
+    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
     # The kind membership charges its element width; the encoded flag
     # renders as an inline literal on every dialect and binds nothing.
     kinds = kind_membership(entry)
@@ -578,208 +526,14 @@ async def _entries_for_docs(
 # ---------------------------------------------------------------------------
 
 
-async def _entries_for_scan(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    parameter_budget: int,
-    membership_budget: int,
-    gates: list[GlobFilter],
-    wanted: frozenset[str],
-    *,
-    everything: bool,
-    fetched: frozenset[str],
-    limit: int,
-    deadline: float,
-) -> ScanNominees:
-    """Scan-tier candidate entry rows in path order, capped at *limit*.
-
-    Serves three callers with one executor: the permanent ``NOT
-    encoded`` overlay (*everything* false), the ``allow_scan`` opt-out,
-    and ``invert_match`` (*everything* true). Structural narrowing rides
-    the same LIKE-superset arms as glob; the flag partition and the
-    content-kind gate ride beside the fan — the id-bounded fetch, not
-    the fan plan, is what the budget protects here. The merge is pruned
-    to the lowest ``limit + 1`` paths as arm chunks arrive (per-chunk
-    top-``limit + 1`` is a correct merge input), and the deadline is
-    consulted between chunks — an expired loop stops, and the caller's
-    post-scan check records the truncation loudly.
-    """
-    entry = tables.entry
-    kinds = kind_membership(entry)
-    base = [kinds.predicate]
-    if not everything:
-        base.append(~entry.c.encoded)
-    columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | _FETCH_RIDE) - {"content"}))]
-    merged: dict[str, RowMapping] = {}
-    overflow = False
-    if gates:
-        built = (pattern_arm(entry, gate, wanted, profile, membership_budget) for gate in gates)
-        arms = [arm for arm in built if arm is not None]
-        if not arms:
-            return ScanNominees([], False)
-        ride = ext_membership(entry, wanted, membership_budget)
-        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + kinds.binds)
-        for chunk in chunked(arms, chunk_size):
-            if monotonic() > deadline:
-                break
-            stmt = select(*columns).where(*base, or_(*chunk)).order_by(entry.c.path).limit(limit + 1)
-            fetched_rows = list((await session.execute(stmt)).mappings())
-            overflow = overflow or len(fetched_rows) > limit
-            merged.update({mapping["path"]: mapping for mapping in fetched_rows})
-            if len(merged) > limit + 1:
-                merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
-    else:
-        terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False)]
-        ride = ext_membership(entry, wanted, membership_budget)
-        if ride.predicate is not None:
-            terms.append(ride.predicate)
-        stmt = select(*columns).where(*terms).order_by(entry.c.path).limit(limit + 1)
-        merged = {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
-    rows = [merged[path] for path in sorted(merged)]
-    if len(rows) > limit:
-        return ScanNominees(rows[:limit], True)
-    return ScanNominees(rows, overflow)
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 
-def _passes_gates(
-    mapping: RowMapping,
-    gates: list[GlobFilter],
-    not_gates: list[GlobFilter],
-    wanted: frozenset[str],
-    unwanted: frozenset[str],
-) -> bool:
-    """The authoritative structural gates, per candidate, off the row's own facts.
-
-    Matches raw strings — the stored ``name`` and ``ext`` columns mirror
-    the path by invariant, so no ``Path`` is minted per candidate. A
-    meta row is admitted only by a gate whose literal prefix addresses
-    the meta subtree — default enumeration hides ``/.vfs`` even when a
-    wildcard gate would match it. The rest is the shared filter law.
-    """
-    path, name, ext = mapping["path"], mapping["name"], mapping["ext"]
-    if _under_meta_root(path) and not any(gate.hits(path, name, ext) and meta_scoped(gate.pattern) for gate in gates):
-        return False
-    return passes_row_filters(path, name, ext, gates, not_gates, wanted, unwanted)
-
-
-def _pushdown_terms(
-    entry: Table,
-    profile: DialectProfile,
-    fan_arms: int,
-    membership_budget: int,
-    channel: ChannelTerms,
-    wanted: frozenset[str],
-    *,
-    hide_meta: bool,
-) -> Pushdown:
-    """The SQL terms the candidate fetch may carry beside the id chunk.
-
-    With no admission gates the meta scope moves into SQL — the string
-    gate may then be skipped entirely. The caller's wanted-ext set rides
-    under the membership rule, and the channel's compiled column facts
-    ride as an OR over arms; both only ever narrow toward the authority,
-    never past it. The whole ride is capped at half the membership
-    budget so the id chunk always keeps room, and a channel wider than
-    *fan_arms* (the caller's channel fan, one OR branch per arm) is
-    dropped whole — narrowing is a convenience the statement may
-    decline; ``_passes_gates`` stays the authority.
-    """
-    terms: list[ColumnElement[bool]] = []
-    binds = 0
-    if hide_meta:
-        liveness = liveness_filters(entry, profile, include_meta=False)
-        terms.extend(liveness)
-        binds += _static_binds(liveness)
-    ceiling = membership_budget // 2
-    ride = ext_membership(entry, wanted, membership_budget)
-    if ride.predicate is not None and binds + ride.binds <= ceiling:
-        terms.append(ride.predicate)
-        binds += ride.binds
-    facts, fact_binds = _channel_facts(entry, profile, channel)
-    if facts is not None and len(channel.arms) <= fan_arms and binds + fact_binds <= ceiling:
-        terms.append(facts)
-        binds += fact_binds
-    return Pushdown(tuple(terms), binds)
-
-
-def _channel_facts(
-    entry: Table, profile: DialectProfile, channel: ChannelTerms
-) -> tuple[ColumnElement[bool] | None, int]:
-    """The channel's ``ext``/``name`` facts as one OR over arms, with binds.
-
-    The channel is an OR, so the predicate is sound only when *every*
-    arm pins at least one fact — an arm with none admits everything and
-    makes the disjunction vacuous; the void returns ``(None, 0)``. Each
-    ext fact carries the dotfile rescue (a stored NULL ext with the
-    dot-suffix name), mirroring the scan tier's arm law.
-    """
-    arms: list[ColumnElement[bool]] = []
-    binds = 0
-    for arm in channel.arms:
-        facts: list[ColumnElement[bool]] = []
-        if arm.ext is not None:
-            facts.append(or_(entry.c.ext == arm.ext.ext, entry.c.name == arm.ext.dot_suffix))
-            binds += 2
-        if arm.name is not None:
-            if arm.name.prefix:
-                prefix = escape_like(arm.name.text, profile) + "%"
-                facts.append(entry.c.name.like(prefix, escape=LIKE_ESCAPE))
-            else:
-                facts.append(entry.c.name == arm.name.text)
-            binds += 1
-        if not facts:
-            return None, 0
-        arms.append(and_(*facts))
-    if not arms:
-        return None, 0
-    return or_(*arms), binds
-
-
-def _static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
-    """Executed parameter count of non-expanding predicates.
-
-    Post-compile rendering yields the parameters the engine is actually
-    asked to bind (``binds`` overcounts bookkeeping entries). Expanding
-    memberships never pass through here — they charge their declared
-    element width instead (``ExtMembership.binds``). Counting compiles
-    on the default dialect: inputs must be dialect-count-invariant — a
-    predicate whose bind cardinality varied by dialect would be
-    mischarged here, and the pinned invariant is that none does.
-    """
-    return sum(len(term.compile(compile_kwargs={"render_postcompile": True}).params) for term in terms)
-
-
 def _content_size(mapping: RowMapping) -> int:
     """The verify batcher's exact metering: the row's stored byte size."""
     return mapping["size_bytes"] or 0
-
-
-async def _content_for_entries(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    membership_budget: int,
-    entry_ids: Sequence[EntryId],
-) -> dict[EntryId, Body]:
-    """``entry_id → full body`` for one verification batch.
-
-    Where the profile declares ``content_bytes`` the body comes back as
-    the column's UTF-8 bytes — the driver skips its decode and the
-    matcher takes them as-is; only hit rows ever decode, at assembly.
-    """
-    content = tables.content
-    body = cast(content.c.content, LargeBinary).label("content") if profile.content_bytes else content.c.content
-    out: dict[EntryId, Body] = {}
-    for chunk in chunked(sorted(set(entry_ids)), membership_budget):
-        stmt = select(content.c.entry_id, body).where(content.c.entry_id.in_(chunk))
-        out.update({row.entry_id: row.content for row in await session.execute(stmt)})
-    return out
 
 
 def _observe_hit(

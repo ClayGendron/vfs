@@ -44,6 +44,7 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.glean import glean_rows
 from vfs.storage.backends.database.grep import WALL_TIME_BUDGET, grep_rows
 from vfs.storage.backends.database.indexing import (
     REINDEX_HEARTBEAT_SECONDS,
@@ -97,6 +98,7 @@ class DatabaseStorage:
         description: str | None = None,
         trash_days: int = 90,
         grep_wall_seconds: float = WALL_TIME_BUDGET,
+        glean_wall_seconds: float = WALL_TIME_BUDGET,
     ) -> None:
         if trash_days < 0:
             msg = f"trash_days must be non-negative, got {trash_days}"
@@ -106,7 +108,11 @@ class DatabaseStorage:
             raise ValueError(msg)
         self._host = EngineHost(url=url, session_factory=session_factory, table_name=table_name, schema=schema)
         self._trash_days = trash_days
+        if glean_wall_seconds <= 0:
+            msg = f"glean_wall_seconds must be positive, got {glean_wall_seconds}"
+            raise ValueError(msg)
         self._grep_wall_seconds = grep_wall_seconds
+        self._glean_wall_seconds = glean_wall_seconds
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
         # dialect only at first use, so the default names the tables.
@@ -128,6 +134,8 @@ class DatabaseStorage:
             "arbitration": self._host.profile.arbitration,
             "grep_tier": "indexed",
             "grep_staleness": "overlay",
+            "glean_signals": "lexical",
+            "glean_staleness": "overlay",
         }
         # Tuned engines are the measured ones; only they may claim full
         # durability — unknown dialects resolve to GENERIC-renamed names.
@@ -282,6 +290,44 @@ class DatabaseStorage:
                 allow_scan=allow_scan,
                 columns=columns,
                 wall_seconds=self._grep_wall_seconds,
+            ),
+        )
+
+    # -------------------------------------------------------------------
+    # Ranked search
+    # -------------------------------------------------------------------
+
+    async def glean(
+        self,
+        *,
+        query: str,
+        limit: int = 10,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
+        observations: list[Observation] | None = None,
+        columns: frozenset[str] | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        return await self._execute(
+            "glean",
+            lambda session: glean_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.parameter_budget,
+                self._host.membership_budget,
+                self._host.offload_executor,
+                query=query,
+                limit=limit,
+                ext=ext,
+                ext_not=ext_not,
+                globs=globs,
+                globs_not=globs_not,
+                observations=observations,
+                columns=columns,
+                wall_seconds=self._glean_wall_seconds,
             ),
         )
 

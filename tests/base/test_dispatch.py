@@ -475,15 +475,14 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
         [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "glob"]
         assert kwargs["patterns"] == ("/src/**/*.py",)
         assert [o for o, _ in a.calls] == ["stat", "glob"]
-    elif op == "grep":
-        # Grep's scope crosses as glob text: the composed subtree plus
-        # the root's own literal path (find's operand law), probe beside.
-        [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "grep"]
+    else:
+        # Grep's scope crosses as glob text — glean's too: the composed
+        # subtree plus the root's own literal path (find's operand law),
+        # probe beside.
+        [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == op]
         assert kwargs["globs"] == ("/src", "/src/**")
         assert kwargs["globs_not"] == ()
-        assert [o for o, _ in a.calls] == ["stat", "grep"]
-    else:
-        assert a.calls[0][1]["paths"] == ("/src",)
+        assert [o for o, _ in a.calls] == ["stat", op]
     assert b.calls == []
 
 
@@ -509,9 +508,9 @@ async def test_fanout_includes_self_storage_before_mounts() -> None:
 
 
 async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
-    # The default backend never declares glean, and there are no mounts:
-    # empty success, with the skipped entry on record as info.
-    result = await VirtualFileSystem().glean("anything")
+    # A root backend that declares no glean, and no mounts: empty
+    # success, with the skipped entry on record as info.
+    result = await VirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"}))).glean("anything")
     assert result.success is True
     assert len(result) == 0
     assert result.op == "glean"

@@ -1256,6 +1256,10 @@ class VirtualFileSystem:
         limit: int = 10,
         paths: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
+        ext: tuple[str, ...] = (),
+        ext_not: tuple[str, ...] = (),
+        globs: tuple[str, ...] = (),
+        globs_not: tuple[str, ...] = (),
         columns: frozenset[str] | None = None,
         user_id: str | None = None,
     ) -> Result:
@@ -1268,9 +1272,25 @@ class VirtualFileSystem:
         result, trimmed by score — with the caveat that cross-entry
         scores are only loosely comparable (each entry ranks by its own
         scorer).
+
+        Scope is grep's: *globs*/*globs_not* use glob's segment-aware
+        pattern language and *ext*/*ext_not* filter by extension;
+        *paths* compose into the ``globs`` channel per scope root and
+        residuate into each entry's coordinates before crossing the
+        seam, with a concurrent probe asserting the roots.
         """
         refusal = self._gate_params(
-            "glean", query=query, limit=limit, paths=paths, observations=observations, columns=columns, user_id=user_id
+            "glean",
+            query=query,
+            limit=limit,
+            paths=paths,
+            observations=observations,
+            ext=ext,
+            ext_not=ext_not,
+            globs=globs,
+            globs_not=globs_not,
+            columns=columns,
+            user_id=user_id,
         )
         if refusal is not None:
             return refusal
@@ -1279,6 +1299,7 @@ class VirtualFileSystem:
             paths=paths,
             observations=observations,
             row_cap=limit,
+            filters=_PathFilters(globs, globs_not, ext, ext_not),
             query=query,
             limit=limit,
             columns=columns,
@@ -1720,9 +1741,12 @@ class VirtualFileSystem:
             if plan.refusal is not None:
                 return plan.refusal
 
-            if filters is not None:
-                build = self._glob_dispatches if op == "glob" else self._grep_dispatches
-                named_coros, branches, skips = build(plan, paths, filters, user_id=user_id, **kwargs)
+            if filters is not None and op == "glob":
+                named_coros, branches, skips = self._glob_dispatches(plan, paths, filters, user_id=user_id, **kwargs)
+            elif filters is not None:
+                named_coros, branches, skips = self._grep_dispatches(
+                    plan, paths, filters, op=op, user_id=user_id, **kwargs
+                )
             else:
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
@@ -1884,6 +1908,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...],
         filters: _PathFilters,
         *,
+        op: Op = "grep",
         user_id: str | None,
         **kwargs: object,
     ) -> tuple[
@@ -1891,7 +1916,7 @@ class VirtualFileSystem:
         list[tuple[Path, Coroutine[Any, Any, Result]]],
         list[ResultError],
     ]:
-        """Build grep's dispatches: scoping crosses the seam as glob text.
+        """Build grep's dispatches (glean's too): scoping crosses the seam as glob text.
 
         Glob's dispatch shape on grep's filters (*admissions* is the
         caller's ``globs``, *exclusions* its ``globs_not``, the ext
@@ -1918,7 +1943,7 @@ class VirtualFileSystem:
                     key,
                     self._dispatch_entry(
                         binding,
-                        "grep",
+                        op,
                         globs=tuple(sorted(admitted)) if admitted else (),
                         globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
                         ext=ext,

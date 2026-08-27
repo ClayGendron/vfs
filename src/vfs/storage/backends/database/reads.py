@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
 from vfs.models import CONTENT_KINDS, Observation
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
@@ -57,8 +57,10 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from vfs.models.rows import VFSTables
+    from vfs.models.rows import EntryId, VFSTables
+    from vfs.pattern_matching import Body
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.backends.database.indexing import Epoch
 
 # Observation fields served directly by entries-table columns (the two
 # vocabularies share these names by construction). A file's current version
@@ -299,6 +301,57 @@ def kind_membership(entry: Table) -> KindMembership:
     so no consumer re-spells the set or re-counts its price.
     """
     return KindMembership(entry.c.kind.in_(sorted(CONTENT_KINDS)), len(CONTENT_KINDS))
+
+
+# ---------------------------------------------------------------------------
+# The index-side reads every content search shares
+# ---------------------------------------------------------------------------
+
+
+async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
+    """The epoch pointer plus an overlay-emptiness verdict, one statement.
+
+    Issued twice on the skip path, once when the preamble verdict is
+    non-empty: the preamble read is advisory (non-empty settles it —
+    the scan tier will run, and no second combined read is issued),
+    while the authoritative post-fetch read's empty verdict alone
+    permits skipping the scan — with results identical to scanning —
+    and doubles as the epoch recheck. The predicate stays ORM-built — the
+    negation renders as an inline literal on every dialect, which keeps
+    the seek on the composite (encoded, kind) index reachable; the CASE
+    wrapper is what lets engines without boolean select-list expressions
+    (SQL Server) carry the EXISTS.
+    """
+    entry = tables.entry
+    pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
+    stmt = select(tables.meta.c.current_gram_epoch, case((pending, 1), else_=0)).where(tables.meta.c.id == 1)
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
+        return None, False
+    pointer, has_pending = row
+    return pointer, not has_pending
+
+
+async def content_for_entries(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    entry_ids: Sequence[EntryId],
+) -> dict[EntryId, Body]:
+    """``entry_id → full body`` for one batch of the scan side.
+
+    Where the profile declares ``content_bytes`` the body comes back as
+    the column's UTF-8 bytes — the driver skips its decode and the
+    consumer takes them as-is; only rows that answer ever decode.
+    """
+    content = tables.content
+    body = cast(content.c.content, LargeBinary).label("content") if profile.content_bytes else content.c.content
+    out: dict[EntryId, Body] = {}
+    for chunk in chunked(sorted(set(entry_ids)), membership_budget):
+        stmt = select(content.c.entry_id, body).where(content.c.entry_id.in_(chunk))
+        out.update({row.entry_id: row.content for row in await session.execute(stmt)})
+    return out
 
 
 def pattern_arm(
