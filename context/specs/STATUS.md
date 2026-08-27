@@ -5,6 +5,29 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **135 landed 2026-08-27** — `glean` is hybrid: the vector leg as one
+  in-engine `ORDER BY <cosine distance> LIMIT k` statement on every
+  supported dialect (pgvector, MariaDB, SQL Server 2025, Oracle, SQLite
+  through sqlite-vec), the same scope ladder as the lexical leg, MaxP,
+  `vfs.storage.ranking` (`Convex` reference fusion, `RRF` floor,
+  `Ranker` on the Storage), native vector columns on the four engines
+  that have them, declared `vector_distance` facts, tier and leg
+  records, the query-vector cache, the Rust `cosine_topk` referee
+  (protocol 8) and the hybrid ordered-top-10 pin. **ADR 059 decided
+  mid-landing**: no client floor — every supported dialect has cosine
+  in the engine; sqlite-vec is a core dependency vfs loads on every
+  connection; MySQL community is dropped (MariaDB takes the family's
+  leg); unknown dialects keep the core verbs and withhold `glean`.
+  Harness: fused ≥ lexical on vfs-native for both embedders (hash
+  +0.010, potion +0.022 nDCG@10). Next in line: **136** (signals) →
+  **137** (the cross-mount merge).
+- **134 landed 2026-08-27** — the embedding seam: `vfs.embedding`
+  (the protocol; hash, model2vec, OpenAI, LangChain providers), the
+  `meta` identity pair (schema 9), packed float32 vectors, and embedding
+  as a streaming step of `reindex` (keyset pages, token batches, a
+  semaphore, timeouts, `Retry-After`, the chunk-row cache, migration on
+  a model change, resume after failure); `InMemoryStorage` embeds by
+  default; three conformance rows on every leg.
 - **133 landed 2026-08-27** — previews and the glean renderer:
   `Match.preview` with validated bounds, `select_preview` in
   `results/preview.py` (the density scorer, merged `**…**` spans,
@@ -19,8 +42,7 @@ lines first; regenerate this file when the picture shifts (review the
   Also fixed: the scope-root probe leaked `stat` into a scoped call's
   `ops`, sending every `paths=`-scoped grep/glob/glean to the
   path-sorted table. `examples/glean_walkthrough.ipynb` walks the verb.
-  Next in line: **134** (the embedding seam) → **135** (the vector leg
-  and fusion).
+  (Superseded by 134 and 135, above.)
 - **132 landed 2026-08-27** — the first working `glean`, lexical-only:
   `glean.py` beside `grep.py` (two key-fetch rounds, the Rust scorer,
   MaxP, min-max scores, the `lexical_stats` extra), the scope ladder

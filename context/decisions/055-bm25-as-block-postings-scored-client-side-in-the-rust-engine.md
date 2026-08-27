@@ -1,6 +1,6 @@
 # 055. BM25 the Way grep Is Built: Block Postings per Term, the Rust Lexical Engine, and Client-Side Scoring Under a Client-Side Fusion
 
-- **Status:** accepted 2026-08-26 — decided by Clay on the storage
+- **Status:** decision 6's "client floor" for the vector leg withdrawn by ADR 059 (2026-08-27; fusion stays client-side). Accepted 2026-08-26 — decided by Clay on the storage
   memo ("lets do that exactly, and it seems like this is also a good
   candidate for implementing in rust in vfs-core"). **Amends ADR 051**
   (pin 1 for the lexical leg; pin 3's tables; pin 4's df ceiling) and

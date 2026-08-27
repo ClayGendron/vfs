@@ -53,8 +53,19 @@ Consequences that bind design work:
   (arbitration mode, key-byte budget, `IN`-list cap, isolation pins).
   Before adding a profile constant, check whether SQLAlchemy already
   exposes it.
-- **Unknown dialects are served, not refused** — they resolve to the
-  conservative `GENERIC` floor stamped with their own name.
+- **Unknown dialects are served the core verbs, never the ranked
+  ones** (Clay, 2026-08-27; ADR 059). They resolve to the conservative
+  `GENERIC` floor stamped with their own name and serve read, write,
+  the topology verbs, glob and grep exactly as a tuned engine does;
+  `glean` and `graph` are withheld from their declared capabilities,
+  because those need an engine fact the floor cannot declare — a
+  cosine distance function. **Every supported dialect has one**:
+  native on Postgres/pgvector, MariaDB, SQL Server 2025 and Oracle
+  23ai; sqlite-vec on SQLite, a core dependency vfs loads on every
+  connection. MySQL community has no distance function and no
+  extension vfs can install, so it is not a supported dialect — a
+  `mysql://` URL is served as an unknown one. There is no client-side
+  vector floor; the Rust cosine kernel is the vector leg's referee.
 - **Never design toward a hard scale cap** (Clay, 2026-08-13). Do not
   intentionally limit vfs's scale capacity — no designed corpus
   ceilings, row maximums, or "supported size" limits — unless an

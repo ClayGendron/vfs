@@ -1,6 +1,6 @@
 # 051. glean in the Engine: One Fused Statement, an Owned Lexical Index, Exact-First Vector Tiers, Predicate Scope
 
-- **Status:** accepted 2026-08-26 — the storage half of the glean
+- **Status:** pin 2's client floor withdrawn by ADR 059 (2026-08-27: MySQL community dropped, sqlite-vec loaded by vfs, unknown dialects withhold glean). Original: accepted 2026-08-26 — the storage half of the glean
   decision set, resolved by Clay in session (the R1–R5 review of the
   2026-08-26 research leg). Companions: ADR 052 (ranking and the
   cross-mount merge), ADR 053 (ranking signals and the ranker API), ADR

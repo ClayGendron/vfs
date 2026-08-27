@@ -1,8 +1,9 @@
 # 134 — the embedding provider seam and embedding as a streaming step of `reindex`
 
-- **Status:** ready — drafted 2026-08-26 from ADR 054 (all pins) and
-  ADR 051 pin 2 (packed float32). Fifth of the glean arc: fills the
-  `embedding` column so spec 135 has vectors to rank.
+- **Status:** landed 2026-08-27 (landing note below) — drafted
+  2026-08-26 from ADR 054 (all pins) and ADR 051 pin 2 (packed
+  float32). Fifth of the glean arc: fills the `embedding` column so
+  spec 135 has vectors to rank.
 - **Born from:** ADR 054; memo
   `../../../research/2026-08-26-glean-embedding-seam.md`; study
   `../../../research/studies/2026-08-26-glean/embedding-seam.md`.
@@ -121,3 +122,107 @@ transport). Out: the SQL Server/MariaDB native types and the vector leg
   never re-embedded (cache pin).
 - Landing note records embed throughput for the hash and model2vec
   providers on the linux store.
+
+## Landing note (2026-08-27)
+
+Every pin of ADR 054 is live; the suite runs offline with no key and no
+model download. Landed together with spec 135 and ADR 059 in one
+working tree.
+
+**Landed**
+
+- **`vfs.embedding`** (new package): the `EmbeddingProvider` protocol
+  (`model_id`, `dimension`, the three caps, `estimate_tokens`,
+  `embed_query`, `embed_documents -> Embedded(vectors, tokens)`), the
+  `LocalEmbeddingProvider` base (a sync kernel hopped to an executor —
+  the loop's default pool unless given one; the query embeds inline),
+  `HashEmbeddingProvider(dimension=64)` (the harness's pinned algorithm
+  moved into core: the lexical tokenizer's tokens and bigrams, BLAKE2b
+  buckets, L2-normalised; `tests/ranking/embedders.py` now imports it
+  and its digest pin holds), `Model2VecEmbeddingProvider` behind the
+  new `embed-local` extra (the loader resolves `model2vec` on demand so
+  importing vfs never loads it — or numpy), `OpenAIEmbeddingProvider`
+  (2,048 / 300k / 8,192 caps, `usage.total_tokens`, `dimensions=` for
+  the 3-family; duck-typed on `client.embeddings.create`, tested on a
+  fake transport) and `LangChainEmbeddingProvider` (the async pair;
+  width probed once by a sentinel; identity qualified `provider/model@dim`).
+- **Identity on `meta`**: `embedding_model`, `embedding_dimension`
+  (`SCHEMA_FORMAT_VERSION` 8 → 9), adopted at first touch, re-read at
+  the start of every embed step (a rival may have stamped since). A
+  stored width other than a native column's refuses first touch as
+  `invalid`; a stored model other than the configured provider's is a
+  *stale* space (`host.embedding_stale`) — served lexical-only by glean,
+  migrated by `reindex` (every vector cleared, the pair unstamped, the
+  first batch written re-stamps).
+- **Packed float32** — `VectorType`'s portable path is little-endian
+  float32 in a binary column (`vector_codec.pack_vector` /
+  `unpack_vector`), unit-normalised on write by the embed step; no
+  legacy JSON tolerance (the schema bump is the migration; no
+  production rows existed). The native column follows the embedder's
+  width automatically (see spec 135's note for the four native types).
+- **The embed step** (`embed.py`, orchestrated by `DatabaseStorage._embed_step`
+  after the gram/lexical publish and the segment pass, inside the same
+  lease): keyset pages of `embedding IS NULL` rows of live, chunked
+  entries (`EMBED_PAGE_ROWS = 4,096`), `token_batched` on
+  `max_batch_inputs` exactly and `max_batch_tokens` at 5/6 headroom
+  (a giant rides alone), over-cap inputs truncated by the provider's
+  own estimator and counted, batches embedded with no transaction open
+  under `asyncio.Semaphore(embed_concurrency=4)` with a per-request
+  `embed_timeout_seconds=120` and one `Retry-After` (seconds or ms,
+  duck-typed off the exception's `response.headers`, capped at 60 s)
+  honoured by sleeping, one short write per page (`UPDATE … WHERE id =
+  :id AND embedding IS NULL`, the meta pair stamped with the first
+  vectors landed), the lease's `lost` flag checked between pages. A
+  provider failure ends the step with an `unavailable` warning
+  (retryable) and leaves the rest NULL for the next run. The reindex
+  result carries an `embedding` extra — `model, embedded, cached,
+  tokens, requests, truncated, unembedded`.
+- **The chunk row is the cache**: `cached_vectors` lends one stored
+  vector per `content_hash` (two chunked probes: lowest embedded id
+  per hash, then those rows), rows sharing a hash within a page embed
+  once, and `chunk_dirty` carries vectors across a re-split onto fresh
+  rows with the same hash (`_carried_embeddings`, skipped when the
+  space is stale).
+- **Surface**: `DatabaseStorage(embedder=, native_embedding=,
+  embed_concurrency=, embed_timeout_seconds=)`, `.embedder`;
+  `InMemoryStorage` defaults to the hashing provider; every conformance
+  leg carries it.
+- **Tests**: `tests/embedding/` (37 rows: the protocol on all five
+  providers, the helpers, the CPU base's hop, the hash pin and cosine
+  honesty, the three adapters on doubles, potion's digest pin when
+  cached); `tests/storage/database/test_embed.py` (26 rows: every
+  chunk embedded and stamped, no provider → no step, cross-entry dedup,
+  a later page borrowing a stored vector, carry-over through a re-split,
+  the model-change migration, failure then resume, a failure before any
+  vector leaves the space unstamped, the timeout, `Retry-After` once and
+  a refusal that keeps refusing, the lost lease between pages, the beat
+  through a slow batch, trashed rows skipped, the batcher's laws,
+  truncation, the identity refusals); three conformance rows on every
+  leg (`test_reindex_embeds_every_chunk_and_reports_the_space`,
+  `..._re_embeds_only_the_changed_entry`,
+  `..._identical_bodies_share_one_embedding`); `tests/models/test_vector.py`
+  rewritten for the packed format.
+
+**Deviations from the spec, all deliberate**
+
+- *The hash provider is the harness's algorithm, not the spec's sketch*
+  (`\w+` + `crc32`): spec 131 landed the tokenizer-plus-bigrams BLAKE2b
+  form with a digest pin; core adopts that so the pin is one function.
+- *No truncated-warning when rows remain without a failure*: the loop
+  advances by keyset and stops only on failure or a lost lease, so the
+  branch was unreachable; `unembedded` in the extra is nonzero only
+  beside a failure record.
+- *CPU providers hop to the loop's default executor, not the host's
+  offload pool*: the provider has no host; a caller may hand it any
+  executor. Recorded as a fork.
+- *The pgvector index DDL and extension* (`CREATE EXTENSION IF NOT
+  EXISTS vector`, `CREATE INDEX … USING hnsw`) are PostgreSQL-only DDL
+  events on the table, within pgvector's 2,000-dimension index cap —
+  the scaffold ADR 051 pin 8 anticipated, landed here because the
+  native column now follows the embedder.
+
+**Gates** — `scripts/ci.sh 3.13` green at 100 % coverage and the
+Postgres, MariaDB, SQL Server 2025 and Oracle legs green; the counts,
+the two engine findings and the embed throughput (3,425 chunks/s hash,
+3,301 chunks/s potion on a 3,975-file linux sample, write-bound on
+sqlite) are in the 135 note's *Measurements* and *Gates*.

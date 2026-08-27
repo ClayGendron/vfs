@@ -108,6 +108,50 @@ All client methods return `VFSResult` on success. The async and sync facades exp
 
 Previews are display, not retrieval: the window (4 lines), the per-line cap (160 characters) and the per-preview cap (480 characters) are render-layer constants in `vfs.results.preview`, never `glean` parameters. Row-level projections (`to_str(projection=("path", "score", "size_bytes"))`) fall back to a Markdown table, still in rank order.
 
+### Embedding providers and the reindex embed step
+
+A `DatabaseStorage` takes an embedding provider at construction; `reindex` fills `chunks.embedding` through it, so vectors stay in step with the chunks, grams and lexical postings under one call:
+
+```python
+from openai import AsyncOpenAI
+
+from vfs.embedding import HashEmbeddingProvider, OpenAIEmbeddingProvider
+from vfs.storage.backends.database import DatabaseStorage
+
+storage = DatabaseStorage(url=url, embedder=OpenAIEmbeddingProvider(AsyncOpenAI(), "text-embedding-3-small"))
+storage = DatabaseStorage(url=url, embedder=HashEmbeddingProvider())        # offline, deterministic, no key
+```
+
+| Provider | Where | Notes |
+|---|---|---|
+| `HashEmbeddingProvider(dimension=64)` | core | Signed feature hashing of the lexical tokenizer's tokens and bigrams; deterministic in every process. The conformance suite's provider and `InMemoryStorage`'s default. Cannot rank by meaning. |
+| `Model2VecEmbeddingProvider()` | `vfs-py[embed-local]` | model2vec static embeddings (`minishlab/potion-base-8M`, 256-d, MIT); thousands of chunks a second on one core; the model downloads from the Hub on first use. |
+| `OpenAIEmbeddingProvider(client, model, dimensions=None)` | any `AsyncOpenAI` client | 2,048 inputs / 300k tokens per request, 8,192 tokens per input; `usage.total_tokens` reported; `dimensions=` for the `text-embedding-3` family. |
+| `LangChainEmbeddingProvider(embeddings, *, model_id, dimension=None)` | any LangChain `Embeddings` | The async pair; the width is probed once by a sentinel when not given. |
+
+Every provider satisfies `vfs.embedding.EmbeddingProvider`: a provider- and dimension-qualified `model_id` (`openai/text-embedding-3-small@1536`), `dimension`, the per-request caps, `estimate_tokens`, `embed_query` and `embed_documents` — one batch within the caps, with the model's own query/document prefixes applied. Storage owns batching, the cache and the loop.
+
+The embed step runs after the gram and lexical publish, inside the same reindex lease, as short resumable batches: a keyset page of `embedding IS NULL` rows, token- and input-bounded batches embedded with no transaction open under a small semaphore (`embed_concurrency`, default 4; `embed_timeout_seconds` per request, `Retry-After` honoured once), and one short write per page. A provider failure ends the step with a warning and leaves the rest `NULL` for the next run. The reindex result carries an `embedding` extra — `model`, `embedded`, `cached`, `tokens`, `requests`, `truncated`, `unembedded` — at warning severity when rows remain.
+
+The chunk row is the cache: identical text across entries embeds once, and a re-split carries vectors onto the fresh rows with the same `content_hash`. The mount's space is durable on its `meta` row (`embedding_model`, `embedding_dimension`), stamped by the first embedding written. A different provider at construction is a *stale* space: `reindex` clears every vector and re-embeds under the new identity; nothing migrates on a read. A stored width other than a native column's (`native_embedding=NativeEmbeddingConfig(dimension=…)`, pgvector on PostgreSQL) refuses at first touch as `invalid`.
+
+Vectors are unit-normalised on write. With an embedder configured the chunk column takes each engine's own vector type — pgvector's `vector(<N>)` on PostgreSQL (with an HNSW index within pgvector's 2,000-dimension cap), `VECTOR` on Oracle, `VECTOR(<N>)` on SQL Server 2025 and MariaDB — and SQLite keeps the packed little-endian float32 BLOB that sqlite-vec scores directly. `native_embedding=NativeEmbeddingConfig(...)` only overrides the index options.
+
+### The vector leg and fusion
+
+With an embedder, `glean` is hybrid: the mount embeds the query with its own provider (memoised per space), runs **one in-engine statement** — `ORDER BY <cosine distance> LIMIT k` with the scope predicate inside it, `k = max(10 × limit, 100)` chunks — on every supported dialect (pgvector `<=>`, MariaDB `VEC_DISTANCE_COSINE`, SQL Server `VECTOR_DISTANCE`, Oracle `VECTOR_DISTANCE(…, COSINE)`, SQLite `vec_distance_cosine` through sqlite-vec, which vfs loads on every connection), aggregates each leg to entries by its best chunk, normalises each leg by its own law (cosine by its theoretical range, BM25 by min-max over the candidate union) and fuses them with the mount's `Ranker`:
+
+```python
+from vfs.storage.ranking import RRF, Convex, MaxP, Ranker
+
+DatabaseStorage(url=url, embedder=provider, ranker=Ranker(fusion=Convex({"vector": 0.4, "lexical": 0.6})))
+DatabaseStorage(url=url, embedder=provider, ranker=Ranker(fusion=RRF(k=10), aggregate=MaxP(chunks_per_entry=5)))
+```
+
+`Convex` (the default, an even split, weights renormalised over the legs present so a one-leg mount ranks as that leg) and `RRF` (the rank-only floor, small per-leg `k`) are the built-ins; any object with `fuse(legs)` serves. The answer's `legs` extra names what ran — the lexical leg's hits and terms, the vector leg's tier (`native_exact`, or `native_ann` where pgvector's index may serve an unscoped query), model, depth and hits, and the fusion. A mount with no embedder answers lexical-only with an `info` record; a stale stored space answers lexical-only with a `conflict` warning until `reindex` migrates it; a provider that fails to embed the query answers lexical-only with a retryable warning. Scores stay on the unit scale, best first, ties by path.
+
+An unknown SQLAlchemy dialect serves the core verbs on the generic profile and does not declare `glean`: ranked search needs a cosine distance in the engine, and MySQL community — which has none vfs can install — is served that way.
+
 ### Graph Traversal and Ranking
 
 | Method | Notes |
