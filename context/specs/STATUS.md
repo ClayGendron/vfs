@@ -5,6 +5,20 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **132 landed 2026-08-27** — the first working `glean`, lexical-only:
+  `glean.py` beside `grep.py` (two key-fetch rounds, the Rust scorer,
+  MaxP, min-max scores, the `lexical_stats` extra), the scope ladder
+  priced by the segment allow-list (≤ 5,000 entries → candidate ids;
+  wider → score then gate, one deeper probe, a record), the freshness
+  overlay as query-time blocks on the epoch's scale, ADR 044's two-read
+  protocol; `scope.py` as the one owner of what grep and glean share;
+  `select_blocks` per query in the crate (protocol 7, 0.43 ms/term →
+  0.144 ms/query). The harness arm `glean` equals the BM25 baseline on
+  all three corpora; the ordered top-10 pin holds through the verb on
+  six backends; the round-two statement plans as key seeks on every
+  engine (sqlite with binds, Postgres once analysed). Legs
+  225/225/225/222. `user_id` accepted, not applied (spec 058). Next in
+  line: **133** (previews), **135** (the vector leg and fusion).
 - **131 landed 2026-08-27** — the ranking evaluation harness under
   `tests/ranking/`: the frozen vfs-native golden set (200 files, 40
   queries, 1,577 graded judgments), the BEIR pair fetched outside the
@@ -13,7 +27,7 @@ lines first; regenerate this file when the picture shifts (review the
   the 0.005 nDCG@10 gate, embedder pins, the merge floors and the
   uninformative-prior control, and the ordered-top-10 pin identical on
   six backends (215/215/215/212). Baselines: vfs-native 0.759, SciFact
-  0.658, NFCorpus 0.305 nDCG@10. Next in line: **132**.
+  0.658, NFCorpus 0.305 nDCG@10.
 - **140 landed 2026-08-27** — one engine: `vfs._native` required
   (loud `ImportError`, no `VFS_PURE_PYTHON`, no pure CI leg); every
   pure implementation moved to `tests/support/oracles/` as parity

@@ -8,6 +8,11 @@ the scorer again — then MaxP to entries. Scores are rounded to
 :data:`SCORE_DECIMALS` and ordered ``score DESC, path ASC`` so the
 ordered list is identical on every engine and across rebuilds (entry
 ids are minted per write; paths are not).
+
+``glean_ranking`` and ``glean_run`` are the same questions asked of the
+``glean`` verb — the product path the driver referees. The verb's
+scores are min-max normalised, so its runs carry a different scale and
+the same order.
 """
 
 from __future__ import annotations
@@ -90,6 +95,27 @@ async def bm25_run(loaded: Loaded, k: int = 50) -> Run:
         ranked = await entry_ranking(loaded, query, k)
         run[qid] = {doc_of[path]: score for path, score in ranked}
     return run
+
+
+async def glean_run(loaded: Loaded, k: int = 50) -> Run:
+    """Every query of the corpus ranked to ``k`` entries through the verb, keyed by doc id."""
+    doc_of = loaded.corpus.doc_of
+    run: Run = {}
+    for qid, query in loaded.corpus.queries.items():
+        ranked = await glean_ranking(loaded, query, k)
+        run[qid] = {doc_of[path]: score for path, score in ranked}
+    return run
+
+
+async def glean_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[str, float]]:
+    """Top-``k`` entries as ``(path, score)`` through ``storage.glean`` — the verb's own order."""
+    result = await loaded.storage.glean(query=query, limit=k)
+    assert result.success is True, result.errors
+    ranked: list[tuple[str, float]] = []
+    for row in result.observations:
+        assert row.score is not None
+        ranked.append((str(row.path), row.score))
+    return ranked
 
 
 async def entry_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[str, float]]:

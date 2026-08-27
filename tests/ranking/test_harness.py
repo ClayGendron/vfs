@@ -19,7 +19,7 @@ import pytest
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
-from tests.ranking.driver import Loaded, bm25_run, load_corpus
+from tests.ranking.driver import Loaded, bm25_run, glean_run, load_corpus
 from tests.ranking.merge import naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
 from tests.ranking.pins import assert_top10_pin
@@ -79,6 +79,13 @@ class TestFixture:
             beir("scifact")
 
 
+def assert_arms_agree(left: dict[str, float], right: dict[str, float]) -> None:
+    """Two arms' metrics are the same numbers — the verb is the driver, any gap is a bug."""
+    assert set(left) == set(right)
+    for metric in left:
+        assert left[metric] == pytest.approx(right[metric], abs=1e-9), metric
+
+
 class TestBaseline:
     async def test_bm25_holds_the_gate_on_vfs_native(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
         loaded = await load_corpus(sqlite, golden)
@@ -87,12 +94,29 @@ class TestBaseline:
         assert all(run[qid] for qid in run)  # every golden query finds something
         gate("vfs_native", "bm25", evaluate(golden.qrels, run))
 
+    async def test_glean_equals_the_bm25_baseline_on_vfs_native(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
+        loaded = await load_corpus(sqlite, golden)
+        baseline = evaluate(golden.qrels, await bm25_run(loaded))
+        arm = evaluate(golden.qrels, await glean_run(loaded))
+        assert_arms_agree(arm, baseline)
+        gate("vfs_native", "glean", arm)
+
     @pytest.mark.slow
     @pytest.mark.parametrize("name", ["scifact", "nfcorpus"])
     async def test_bm25_holds_the_gate_on_beir(self, sqlite: DatabaseStorage, name: str) -> None:
         corpus = beir(name)
         loaded = await load_corpus(sqlite, corpus)
         gate(name, "bm25", evaluate(corpus.qrels, await bm25_run(loaded)))
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("name", ["scifact", "nfcorpus"])
+    async def test_glean_equals_the_bm25_baseline_on_beir(self, sqlite: DatabaseStorage, name: str) -> None:
+        corpus = beir(name)
+        loaded = await load_corpus(sqlite, corpus)
+        baseline = evaluate(corpus.qrels, await bm25_run(loaded))
+        arm = evaluate(corpus.qrels, await glean_run(loaded))
+        assert_arms_agree(arm, baseline)
+        gate(name, "glean", arm)
 
 
 class TestDeterminism:

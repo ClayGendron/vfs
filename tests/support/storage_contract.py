@@ -43,6 +43,7 @@ from vfs.storage import (
     ResolvedPair,
     StorageBackend,
     SupportsClose,
+    SupportsGlean,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsReindex,
@@ -54,7 +55,9 @@ needs = pytest.mark.needs
 """Ops a test requires; the gate fixture skips when capabilities lack any."""
 
 
-class ConformanceBackend(StorageBackend, SupportsPatternSearch, SupportsMutation, SupportsClose, Protocol):
+class ConformanceBackend(
+    StorageBackend, SupportsPatternSearch, SupportsGlean, SupportsMutation, SupportsClose, Protocol
+):
     """The full verb surface the suite may call; capability gating trims per test."""
 
 
@@ -1613,6 +1616,128 @@ class StorageContract:
         assert [o.path for o in (await storage.grep(pattern="key_59")).observations] == ["/data.json"]
         assert [o.path for o in (await storage.grep(pattern="marker_after_4k")).observations] == ["/app.log"]
 
+    # ------------------------------------------------------------------
+    # glean — ranked search, one row per entry, in both worlds
+    # ------------------------------------------------------------------
+
+    @needs("glean")
+    async def test_glean_rejects_a_query_with_no_term_as_invalid(self, storage: ConformanceBackend) -> None:
+        result = await storage.glean(query="... !!!")
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.invalid
+
+    @needs("write", "glean")
+    async def test_glean_answers_entries_not_chunks_in_both_worlds(self, storage: ConformanceBackend) -> None:
+        # A long body splits into several chunks at reindex; the answer
+        # is still one row per entry, its best chunks riding as matches.
+        reindexer = _reindexer_of(storage)
+        sections = "".join(f"## Section {i}\n\nlantern words in section {i}, plain prose.\n\n" for i in range(120))
+        await storage.write(entries=[Entry(path=Path("/long.md"), content=sections)])
+        await storage.write(entries=[Entry(path=Path("/short.md"), content="one lantern here\n")])
+        overlay = await storage.glean(query="lantern")
+        assert sorted(str(o.path) for o in overlay.observations) == ["/long.md", "/short.md"]
+        assert (await reindexer.reindex()).success is True
+        indexed = await storage.glean(query="lantern")
+        assert sorted(str(o.path) for o in indexed.observations) == ["/long.md", "/short.md"]
+        [long_row] = [o for o in indexed.observations if str(o.path) == "/long.md"]
+        bounds = [(m.start, m.end) for m in long_row.matches or []]
+        assert len(bounds) >= 2 and len(set(bounds)) == len(bounds)
+
+    @needs("write", "glean")
+    async def test_glean_scores_are_unit_scaled_best_first_with_path_ties(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        files = {"/b.txt": "same words here", "/a.txt": "same words here", "/c.txt": "same words, same words"}
+        await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
+        for _world in ("overlay", "indexed"):
+            result = await storage.glean(query="same words")
+            assert result.success is True, result.errors
+            scores = [o.score for o in result.observations]
+            assert scores[0] == 1.0 and scores == sorted(scores, reverse=True)
+            assert [str(o.path) for o in result.observations][1:] == ["/a.txt", "/b.txt"]  # the tie breaks by path
+            assert (await reindexer.reindex()).success is True
+
+    @needs("write", "glean")
+    async def test_glean_scope_is_exact_in_both_worlds(self, storage: ConformanceBackend) -> None:
+        # Whichever rung the ladder takes, a scoped call never returns an
+        # out-of-scope entry, and the gates compose as grep's do.
+        reindexer = _reindexer_of(storage)
+        for path in ("/src/a.txt", "/src/deep/c.txt", "/docs/b.txt", "/src/d.md"):
+            await storage.write(entries=[Entry(path=Path(path), content="needle body")], parents=True)
+        for _world in ("overlay", "indexed"):
+            scoped = await storage.glean(query="needle", globs=("src/**",))
+            assert sorted(str(o.path) for o in scoped.observations) == ["/src/a.txt", "/src/d.md", "/src/deep/c.txt"]
+            narrowed = await storage.glean(query="needle", globs=("src/**",), ext=("txt",), globs_not=("src/deep/**",))
+            assert [str(o.path) for o in narrowed.observations] == ["/src/a.txt"]
+            excluded = await storage.glean(query="needle", ext_not=("txt",))
+            assert [str(o.path) for o in excluded.observations] == ["/src/d.md"]
+            assert (await reindexer.reindex()).success is True
+
+    @needs("write", "glean")
+    async def test_glean_piped_observations_admit_their_own_paths(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        for path in ("/a.txt", "/b.txt", "/c.txt"):
+            await storage.write(entries=[Entry(path=Path(path), content="needle body")])
+        assert (await reindexer.reindex()).success is True
+        rows = (await storage.glean(query="needle")).observations
+        assert len(rows) == 3
+        piped = await storage.glean(query="needle", observations=rows[:2])
+        assert sorted(str(o.path) for o in piped.observations) == sorted(str(o.path) for o in rows[:2])
+
+    @needs("write", "glean")
+    async def test_glean_serves_the_dirty_set_and_partitions_the_index(self, storage: ConformanceBackend) -> None:
+        # A row written since the last build answers from its live text;
+        # a rewritten row's stale postings never answer for it.
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/idx.txt"), content="first magnet")])
+        assert (await reindexer.reindex()).success is True
+        await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="late magnet")])
+        found = await storage.glean(query="magnet")
+        assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
+        assert (await reindexer.reindex()).success is True
+        found = await storage.glean(query="magnet")
+        assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
+        rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
+        assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
+        stale = await storage.glean(query="magnet")
+        assert [str(o.path) for o in stale.observations] == ["/fresh.txt"]
+        fresh = await storage.glean(query="lodestone")
+        assert [str(o.path) for o in fresh.observations] == ["/idx.txt"]
+
+    @needs("write", "glean")
+    async def test_default_glean_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])
+        await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="needle hidden")], parents=True)
+        default = await storage.glean(query="needle")
+        assert [str(o.path) for o in default.observations] == ["/real.txt"]
+        literal = await storage.glean(query="needle", globs=("/.vfs/state/**",))
+        assert [str(o.path) for o in literal.observations] == ["/.vfs/state/s.txt"]
+        wildcard = await storage.glean(query="needle", globs=("/.v*/state/**",))
+        assert wildcard.success is True
+        assert wildcard.observations == []
+
+    @needs("write", "glean", "delete")
+    async def test_trash_scoped_glean_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
+        assert (await reindexer.reindex()).success is True
+        deleted = await storage.delete(path=Path("/gone.txt"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        assert (await reindexer.reindex()).success is True
+        assert (await storage.glean(query="buried")).observations == []  # default scope hides trash
+        found = await storage.glean(query="buried", globs=(str(trash_path),))
+        assert [str(o.path) for o in found.observations] == [str(trash_path)]
+
+    @needs("write", "glean")
+    async def test_glean_accepts_a_user_id_and_applies_no_grant(self, storage: ConformanceBackend) -> None:
+        # Row-level grants are a later concern of their own; today every
+        # read on a backend accepts ``user_id`` and scopes nothing by it.
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        anonymous = await storage.glean(query="needle")
+        named = await storage.glean(query="needle", user_id="someone-else")
+        assert named.success is True
+        assert [str(o.path) for o in named.observations] == [str(o.path) for o in anonymous.observations] == ["/a.txt"]
+
     @needs("write", "grep")
     async def test_a_needle_with_interior_whitespace_survives_a_rebuild(self, storage: ConformanceBackend) -> None:
         # Splitters may drop whitespace-only spans; extraction must see
@@ -1774,7 +1899,7 @@ class StorageContract:
                 assert o.version is not None
                 assert {"path", "kind", "version"} <= o.populated
 
-    @needs("write", "stat", "read", "ls", "glob", "grep")
+    @needs("write", "stat", "read", "ls", "glob", "grep", "glean")
     async def test_the_mask_never_omits_a_populated_field(self, storage: ConformanceBackend) -> None:
         # The mask may exceed the non-null fields (fetched-but-null is
         # legal) but must never omit a field that carries a value. The
@@ -1787,6 +1912,8 @@ class StorageContract:
             await storage.glob(patterns=("*.txt",), columns=frozenset({"path"})),
             await storage.grep(pattern="needle"),
             await storage.grep(pattern="needle", columns=frozenset({"path"})),
+            await storage.glean(query="needle"),
+            await storage.glean(query="needle", columns=frozenset({"path"})),
         )
         for result in pattern_results:
             assert result.observations, result.errors  # a vacuous row referees nothing
@@ -2209,3 +2336,13 @@ class StorageContract:
         traits = storage.traits()
         assert traits.get("grep_tier") in ("indexed", "scan")
         assert traits.get("grep_staleness") in ("overlay", "none")
+
+    @needs("glean")
+    async def test_glean_traits_are_declared(self, storage: ConformanceBackend) -> None:
+        # A glean-capable backend names its signals and its freshness
+        # posture; popping either must fail here, never skip silently.
+        if not isinstance(storage, SupportsTraits):
+            pytest.fail("a glean-capable backend must declare its glean traits")
+        traits = storage.traits()
+        assert traits.get("glean_signals") in TRAIT_VALUES["glean_signals"]
+        assert traits.get("glean_staleness") in TRAIT_VALUES["glean_staleness"]
