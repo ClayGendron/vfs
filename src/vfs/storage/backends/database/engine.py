@@ -425,8 +425,12 @@ def _engine_kwargs(url: str) -> dict[str, bool]:
     through the database codepage before they reach a UTF-8 column —
     mangling non-Latin1 to ``?``. Disabling setinputsizes restores
     pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
-    the UTF-8 collation is lossless. Borrowed session factories carry
-    their builder's engine and must apply this themselves.
+    the UTF-8 collation is lossless. pyodbc's ``fast_executemany`` is
+    deliberately *not* set: engine-wide it rewrites UPDATE executemany,
+    whose rowcount the guarded bumps verify, and on a bulk cursor it
+    silently dropped entry rows — SQL Server's bulk inserts take Core's
+    pages. Borrowed session factories carry their builder's engine and
+    must apply this themselves.
     """
     if make_url(url).get_backend_name() == "mssql":
         return {"use_setinputsizes": False}

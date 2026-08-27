@@ -99,7 +99,7 @@ from vfs.storage.backends.database.descent import (
     subtree_filter,
     targets_with_ancestors,
 )
-from vfs.storage.backends.database.dialects import StaleSnapshot, chunked, rows_per_statement
+from vfs.storage.backends.database.dialects import StaleSnapshot, bulk_insert, chunked, rows_per_statement
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
@@ -686,7 +686,7 @@ class _TrashChain:
                 # Inside the savepoint: a losing rival rolls the postings
                 # back with the entry row they mirror.
                 if rows := segment_rows(entry_id, link):
-                    await session.execute(insert(self._segments), rows)
+                    await bulk_insert(session, self._segments, rows)
             await _bump(session, self._entry, parent_id)
         except IntegrityError:
             # The benign race: a rival write minted this link first.
@@ -1140,7 +1140,7 @@ async def _execute_copy(
     for chunk in chunked(values, rows_per_statement(parameter_budget, values)):
         try:
             async with session.begin_nested():
-                await session.execute(insert(entry), list(chunk))
+                await bulk_insert(session, entry, list(chunk))
         except IntegrityError as exc:
             raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
     copied = [(id_map[row["entry_id"]], new_paths[row["entry_id"]]) for row in subtree]
@@ -1151,7 +1151,7 @@ async def _execute_copy(
         if row["content"] is not None
     ]
     if bodies:
-        await session.execute(insert(tables.content), bodies)
+        await bulk_insert(session, tables.content, bodies)
     await _bump(session, entry, dest_parent_id)
 
 

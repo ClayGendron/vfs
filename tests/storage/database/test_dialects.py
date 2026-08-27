@@ -8,17 +8,25 @@ pattern fan may grow with batch size, on any engine.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, ClassVar, cast
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-from sqlalchemy.exc import DBAPIError, ProgrammingError
-from sqlalchemy.ext.asyncio import AsyncSession
+import pytest
+from sqlalchemy import Column, Integer, MetaData, String, Table, insert, select
+from sqlalchemy.dialects import mysql as mysql_dialect
+from sqlalchemy.dialects import oracle as oracle_dialect
+from sqlalchemy.dialects import postgresql as postgresql_dialect
+from sqlalchemy.dialects import sqlite as sqlite_dialect
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from tests.support.database_helpers import _SqliteError, _url
 from vfs.models import Entry, Observation
+from vfs.models.rows import build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import DatabaseStorage, dialects
 from vfs.storage.backends.database.descent import escape_like
 from vfs.storage.backends.database.dialects import (
     GENERIC,
@@ -28,8 +36,10 @@ from vfs.storage.backends.database.dialects import (
     POSTGRESQL,
     PROFILES,
     SQLITE,
+    BulkInsertMode,
     ByteBatcher,
     arm_budget,
+    bulk_insert,
     byte_chunked,
     is_permanent_defect,
     is_retryable,
@@ -42,7 +52,10 @@ from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncConnection
+    import pathlib
+    from collections.abc import Callable, Sequence
+
+    from sqlalchemy.engine import Dialect
 
 
 # ---------------------------------------------------------------------------
@@ -449,3 +462,362 @@ class TestByteChunked:
         if (final := batcher.flush()) is not None:
             streamed.append(final)
         assert streamed == list(byte_chunked(items, len, 5))
+
+
+# ---------------------------------------------------------------------------
+# Bulk inserts — one owner, the dialect's mode, the parameter guard
+# ---------------------------------------------------------------------------
+
+
+_ULID_A = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+_ULID_B = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+_BLOCK_KEYS = ("epoch", "term", "block_no", "doc_count", "doc_ids", "tfs", "dls")
+
+
+def _block_rows(count: int) -> list[dict[str, object]]:
+    return [
+        {
+            "epoch": 1,
+            "term": f"t{i:06d}",
+            "block_no": 0,
+            "doc_count": 1,
+            "doc_ids": b"\x01\x02",
+            "tfs": b"\x01",
+            "dls": b"\x03",
+        }
+        for i in range(count)
+    ]
+
+
+def _entry_row(entry_id: str, path: str) -> dict[str, object]:
+    stamp = datetime(2026, 8, 26, 12, 0, 0, 123456, tzinfo=UTC)
+    return {
+        "entry_id": entry_id,
+        "parent_id": None,
+        "path": path,
+        "name": path[1:],
+        "kind": "file",
+        "version": 1,
+        "content_hash": "h",
+        "mime_type": "text/plain",
+        "chunked": True,
+        "created_at": stamp,
+        "updated_at": stamp,
+        "deleted_at": None,
+    }
+
+
+class TestBulkInsert:
+    """Every bulk insert that learns nothing back goes through one owner.
+
+    ``"core"`` is SQLAlchemy's executemany; ``"driver"`` is the driver's
+    own executemany on the session's connection, rendered once per
+    dialect with Core's bind processors applied per row — so the rows
+    that land are the same either way, and the parameter guard pages
+    driver calls exactly as Core would have paged one statement.
+    """
+
+    @staticmethod
+    def _pin_mode(monkeypatch: pytest.MonkeyPatch, mode: BulkInsertMode) -> None:
+        pinned = replace(SQLITE, bulk_insert=mode)
+        monkeypatch.setattr(dialects, "profile_for", lambda _name: pinned)
+
+    @staticmethod
+    def _spy_driver(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        calls: list[int] = []
+        original = AsyncConnection.exec_driver_sql
+
+        async def spy(
+            self: AsyncConnection,
+            statement: str,
+            parameters: Sequence[Sequence[Any]] | None = None,
+            execution_options: dict[str, object] | None = None,
+        ) -> Any:
+            calls.append(len(parameters or ()))
+            return await original(self, statement, parameters, execution_options)
+
+        monkeypatch.setattr(AsyncConnection, "exec_driver_sql", spy)
+        return calls
+
+    @staticmethod
+    def _spy_statements(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        statements: list[str] = []
+        original = AsyncConnection.exec_driver_sql
+
+        async def spy(
+            self: AsyncConnection,
+            statement: str,
+            parameters: Sequence[Any] | None = None,
+            execution_options: dict[str, object] | None = None,
+        ) -> Any:
+            statements.append(statement)
+            return await original(self, statement, parameters, execution_options)
+
+        monkeypatch.setattr(AsyncConnection, "exec_driver_sql", spy)
+        return statements
+
+    async def _landed(self, storage: DatabaseStorage, table: str) -> list[tuple[object, ...]]:
+        tables = storage._host.tables
+        target = tables.lex_postings if table == "lex_postings" else tables.entry
+        async with storage._host.session_factory() as session:
+            rows = (await session.execute(select(target).order_by(*target.primary_key.columns))).all()
+        return [tuple(row) for row in rows]
+
+    @pytest.mark.parametrize("mode", ["core", "driver"])
+    async def test_rows_land_identically_under_either_mode(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, mode: BulkInsertMode
+    ) -> None:
+        # A ULID TypeDecorator, a Boolean, DateTimes and omitted scalar
+        # defaults: the driver path must send what Core's processors send.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session, session.begin():
+            await session.execute(insert(tables.entry), [_entry_row(_ULID_A, "/a")])
+        self._pin_mode(monkeypatch, mode)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, tables.entry, [_entry_row(_ULID_B, "/b")])
+        core_row, bulk_row = [row for row in await self._landed(storage, "entry") if row[4] in ("/a", "/b")]
+        columns = [c.key for c in tables.entry.columns]
+        differing = {k for k, x, y in zip(columns, core_row, bulk_row, strict=True) if x != y}
+        assert differing == {"id", "entry_id", "path", "name"}
+        await storage.close()
+
+    async def test_core_mode_never_touches_the_driver(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "core")
+        calls = self._spy_driver(monkeypatch)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(5))
+        assert calls == []
+        assert len(await self._landed(storage, "lex_postings")) == 5
+        await storage.close()
+
+    async def test_driver_mode_pages_by_the_parameter_budget(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Declared-value referee: no monkeypatched budget — sqlite's own
+        # 32,700 over seven columns is 4,671 rows, so 5,000 rows are two calls.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        calls = self._spy_driver(monkeypatch)
+        budget = storage._host.parameter_budget
+        page = rows_per_statement(budget, [dict.fromkeys(_BLOCK_KEYS)])
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(page + 329))
+        assert calls == [page, 329]
+        assert len(await self._landed(storage, "lex_postings")) == page + 329
+        await storage.close()
+
+    async def test_driver_mode_under_a_squeezed_budget_still_progresses(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Spy referee: a budget narrower than one row pages one row per call.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        calls = self._spy_driver(monkeypatch)
+        dialect = storage._host.engine.dialect
+        monkeypatch.setattr(dialect, "insertmanyvalues_max_parameters", 3)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(3))
+        assert calls == [1, 1, 1]
+        await storage.close()
+
+    async def test_copy_mode_streams_records_on_the_raw_connection(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No asyncpg here: a stub raw connection records what COPY would
+        # receive — rows in column order, paged by the parameter budget.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "copy")
+        copies: list[tuple[str, list[str], int, str | None]] = []
+
+        class _Driver:
+            async def copy_records_to_table(
+                self, name: str, *, records: list[tuple[object, ...]], columns: list[str], schema_name: str | None
+            ) -> None:
+                copies.append((name, columns, len(records), schema_name))
+
+        class _Raw:
+            driver_connection = _Driver()
+
+        async def raw(_self: AsyncConnection) -> _Raw:
+            return _Raw()
+
+        monkeypatch.setattr(AsyncConnection, "get_raw_connection", raw)
+        statements = self._spy_statements(monkeypatch)
+        dialect = storage._host.engine.dialect
+        monkeypatch.setattr(dialect, "insertmanyvalues_max_parameters", 14)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(3))
+        # The adapter opens its transaction on a statement, so one precedes the raw COPY.
+        assert statements == ["SELECT 1"]
+        assert copies == [
+            ("vfs_lex_postings", list(_BLOCK_KEYS), 2, None),
+            ("vfs_lex_postings", list(_BLOCK_KEYS), 1, None),
+        ]
+        await storage.close()
+
+    async def test_driver_mode_hands_a_named_dialect_dicts(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # sqlite3 also speaks the named paramstyle, so the live dialect
+        # can stand in for oracledb/pyodbc: dicts, not tuples, reach the driver.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        dialect = storage._host.engine.dialect
+        monkeypatch.setattr(dialect, "positional", False)
+        monkeypatch.setattr(dialect, "paramstyle", "named")
+        handed: list[object] = []
+        original = AsyncConnection.exec_driver_sql
+
+        async def spy(
+            self: AsyncConnection,
+            statement: str,
+            parameters: Sequence[Any] | None = None,
+            execution_options: dict[str, object] | None = None,
+        ) -> Any:
+            handed.extend(parameters or ())
+            return await original(self, statement, parameters, execution_options)
+
+        monkeypatch.setattr(AsyncConnection, "exec_driver_sql", spy)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(2))
+        assert all(isinstance(row, dict) and set(row) == set(_BLOCK_KEYS) for row in handed)
+        assert len(await self._landed(storage, "lex_postings")) == 2
+        await storage.close()
+
+    @pytest.mark.parametrize(
+        ("sqlstate", "expected", "retryable"),
+        [("23505", IntegrityError, False), ("40001", DBAPIError, True), (None, DBAPIError, False)],
+    )
+    async def test_copy_mode_restores_the_classes_callers_catch(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        sqlstate: str | None,
+        expected: type[DBAPIError],
+        retryable: bool,
+    ) -> None:
+        # A raw driver call bypasses SQLAlchemy's wrapping: an integrity
+        # class lands as IntegrityError (the savepoint re-drive's key), the
+        # rest as DBAPIError carrying the origin the retry ladder classifies.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "copy")
+
+        class _DriverError(Exception):
+            def __init__(self) -> None:
+                super().__init__("copy failed")
+                self.sqlstate = sqlstate
+
+        class _Driver:
+            async def copy_records_to_table(self, name: str, **_kwargs: object) -> None:
+                raise _DriverError
+
+        class _Raw:
+            driver_connection = _Driver()
+
+        async def raw(_self: AsyncConnection) -> _Raw:
+            return _Raw()
+
+        monkeypatch.setattr(AsyncConnection, "get_raw_connection", raw)
+        async with storage._host.session_factory() as session, session.begin():
+            with pytest.raises(expected) as caught:
+                await bulk_insert(session, storage._host.tables.lex_postings, _block_rows(1))
+        assert type(caught.value) is expected
+        assert isinstance(caught.value.orig, _DriverError)
+        assert is_retryable(POSTGRESQL, caught.value) is retryable
+        await storage.close()
+
+    async def test_empty_rows_is_a_noop(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        calls = self._spy_driver(monkeypatch)
+        async with storage._host.session_factory() as session, session.begin():
+            await bulk_insert(session, storage._host.tables.lex_postings, [])
+        assert calls == []
+        await storage.close()
+
+    async def test_mixed_key_sets_are_refused(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        rows = _block_rows(2)
+        del rows[1]["dls"]
+        async with storage._host.session_factory() as session, session.begin():
+            with pytest.raises(TypeError, match="one key set"):
+                await bulk_insert(session, storage._host.tables.lex_postings, rows)
+        await storage.close()
+
+    async def test_callable_defaults_are_refused(self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/warm"))
+        self._pin_mode(monkeypatch, "driver")
+        table = Table(
+            "t_callable",
+            MetaData(),
+            Column("k", Integer, primary_key=True),
+            Column("stamp", Integer, default=lambda: 1),
+        )
+        async with storage._host.session_factory() as session, session.begin():
+            with pytest.raises(TypeError, match="scalar Python-side default"):
+                await bulk_insert(session, table, [{"k": 1}])
+        await storage.close()
+
+    def test_no_bulk_table_declares_a_callable_default(self) -> None:
+        tables = build_vfs_tables(table_name="vfs")
+        callables = [
+            f"{table.name}.{column.key}"
+            for table in tables.metadata.tables.values()
+            for column in table.columns
+            if column.default is not None and not column.default.is_scalar
+        ]
+        assert callables == []
+
+    @pytest.mark.parametrize(
+        ("make", "expected_sql", "positional"),
+        [
+            (lambda: sqlite_dialect.dialect(paramstyle="qmark"), "VALUES (?, ?, ?)", ("epoch", "term", "block_no")),
+            (
+                lambda: postgresql_dialect.dialect(paramstyle="numeric_dollar"),
+                "VALUES ($1, $2, $3)",
+                ("epoch", "term", "block_no"),
+            ),
+            (lambda: mysql_dialect.dialect(paramstyle="format"), "VALUES (%s, %s, %s)", ("epoch", "term", "block_no")),
+            (lambda: oracle_dialect.dialect(paramstyle="named"), "VALUES (:epoch, :term, :block_no)", None),
+        ],
+    )
+    def test_rendering_follows_the_dialects_paramstyle(
+        self, make: Callable[[], Dialect], expected_sql: str, positional: tuple[str, ...] | None
+    ) -> None:
+        table = Table(
+            "t_render",
+            MetaData(),
+            Column("epoch", Integer, primary_key=True),
+            Column("term", String(8)),
+            Column("block_no", Integer),
+        )
+        statement = dialects._bulk_statement(make(), table, ("epoch", "term", "block_no"))
+        assert statement.sql.endswith(expected_sql)
+        assert statement.positional == positional
+
+    def test_profiles_pin_the_measured_mode(self) -> None:
+        # Read from the before/after benchmark on each engine; GENERIC never
+        # assumes an unknown driver's executemany is a batch.
+        assert GENERIC.bulk_insert == "core"
+        assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL, MYSQL, MSSQL, ORACLE)} == {
+            "sqlite": "driver",
+            "postgresql": "copy",
+            "mysql": "driver",
+            "mssql": "core",
+            "oracle": "core",
+        }

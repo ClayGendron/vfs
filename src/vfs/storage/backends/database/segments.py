@@ -32,10 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, select, update
 
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.dialects import bulk_insert, chunked
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -76,13 +76,13 @@ def segment_rows(entry_id: str, path: str) -> list[dict[str, str]]:
 async def insert_postings(session: AsyncSession, segments: Table, entries: Iterable[tuple[str, str]]) -> None:
     """Insert the posting rows for freshly created ``(entry_id, path)`` rows.
 
-    Driver executemany — SQLAlchemy batches it by its own parameter
-    budget, like the content insert beside it. Entries with no ancestor
-    directories contribute nothing.
+    ``bulk_insert`` pages it under the dialect's parameter budget, like
+    the content insert beside it. Entries with no ancestor directories
+    contribute nothing.
     """
     rows = [row for entry_id, path in entries for row in segment_rows(entry_id, path)]
     if rows:
-        await session.execute(insert(segments), rows)
+        await bulk_insert(session, segments, rows)
 
 
 async def move_postings(
@@ -129,7 +129,7 @@ async def move_postings(
         for chunk in chunked(ids, membership_budget):
             await session.execute(delete(segments).where(segments.c.segment == segment, segments.c.entry_id.in_(chunk)))
     if additions:
-        await session.execute(insert(segments), additions)
+        await bulk_insert(session, segments, additions)
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ async def repair_segment_drift(
         for chunk in chunked(segment_ids, membership_budget):
             await session.execute(delete(segments).where(segments.c.segment == segment, segments.c.entry_id.in_(chunk)))
     if additions:
-        await session.execute(insert(segments), additions)
+        await bulk_insert(session, segments, additions)
     warnings = [_drift_warning(delta) for delta in confirmed]
     warnings.extend(_orphan_warning(entry_id, held) for entry_id, held in orphaned.items())
     return Result(ops=("reindex",), errors=warnings)

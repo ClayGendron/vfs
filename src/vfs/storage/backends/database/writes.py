@@ -42,6 +42,7 @@ from vfs.results import Result, ResultError, VFSErrorKind, already_exists, class
 from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
 from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
+    bulk_insert,
     chunked,
     rows_per_statement,
     statement_budget,
@@ -494,23 +495,19 @@ async def _catch_retry_layer(
 ) -> list[ResultError]:
     """Portable arbitration: savepoint per chunk, conflicted chunks re-run row-wise.
 
-    Engines whose live dialect declares multirow ``VALUES`` support the
-    ``INSERT ... VALUES (...), (...)`` fast path; the rest (Oracle among
-    them) take driver executemany. Each budget-sized chunk inserts under
-    its own savepoint, so a conflict rolls back and re-drives only its
-    chunk — O(conflicted chunks), never O(layer). Identity is minted at
+    Each budget-sized chunk goes through ``bulk_insert`` (the dialect's
+    declared bulk mode) under its own savepoint, so a conflict rolls
+    back and re-drives only its chunk — O(conflicted chunks), never
+    O(layer); the driver's executemany and Core's pages fail the chunk
+    the same way. Identity is minted at
     staging, so a clean insert learns nothing back.
     """
-    multirow = session.get_bind().dialect.supports_multivalues_insert
     errors: list[ResultError] = []
     for chunk in chunked(list(zip(layer, rows, strict=True)), per_statement):
         chunk_rows = [values for _, values in chunk]
         try:
             async with session.begin_nested():
-                if multirow:
-                    await session.execute(insert(entry).values(chunk_rows))
-                else:
-                    await session.execute(insert(entry), chunk_rows)
+                await bulk_insert(session, entry, chunk_rows)
         except IntegrityError:
             resolved = await _resolve_rows(session, entry, [s for s, _ in chunk], chunk_rows, overwrite=overwrite)
             errors.extend(resolved)
@@ -849,8 +846,8 @@ async def _replace_content(
 ) -> None:
     """Delete-then-insert the batch's content rows — portable, idempotent.
 
-    The insert is driver executemany — SQLAlchemy batches it by its own
-    parameter budget; only the membership-predicate delete chunks here.
+    The insert is ``bulk_insert`` — paged under the dialect's parameter
+    budget there; only the membership-predicate delete chunks here.
     """
     bearing = [s for s in staged if s.content is not None and s.kind in CONTENT_KINDS]
     if not bearing:
@@ -858,7 +855,7 @@ async def _replace_content(
     for chunk in chunked([s.entry_id for s in bearing], membership_budget):
         await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
     rows = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing]
-    await session.execute(insert(content), rows)
+    await bulk_insert(session, content, rows)
 
 
 async def _bump_parents(

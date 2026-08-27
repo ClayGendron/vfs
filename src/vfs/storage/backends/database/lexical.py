@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 from sqlalchemy import insert, select
 
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
-from vfs.storage.backends.database.dialects import ByteBatcher, chunked
+from vfs.storage.backends.database.dialects import ByteBatcher, bulk_insert, chunked
 from vfs.storage.backends.database.offload import call_offloaded
 
 if TYPE_CHECKING:
@@ -88,14 +88,14 @@ async def build_lexical_epoch(session: AsyncSession, tables: VFSTables, epoch: i
             for (chunk_id, entry_id, _content), dl in zip(batch, lengths, strict=True)
         ]
         for page in chunked(rows, _LEXICAL_INSERT_ROWS):
-            await session.execute(insert(tables.lex_docs), list(page))
+            await bulk_insert(session, tables.lex_docs, list(page))
     n_docs, avg_dl = await call_offloaded(executor, builder.finish)
     stats = {"epoch": epoch, "n_docs": n_docs, "avg_dl": avg_dl, "k1": BM25_K1, "b": BM25_B}
     await session.execute(insert(tables.lex_stats), [stats])
     while (summaries := await call_offloaded(executor, partial(_df_rows, builder, epoch))) is not None:
-        await session.execute(insert(tables.lex_df), summaries)
+        await bulk_insert(session, tables.lex_df, summaries)
     while (blocks := await call_offloaded(executor, partial(_block_rows, builder, epoch))) is not None:
-        await session.execute(insert(tables.lex_postings), blocks)
+        await bulk_insert(session, tables.lex_postings, blocks)
 
 
 # ---------------------------------------------------------------------------

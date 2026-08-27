@@ -69,6 +69,7 @@ from vfs.results import Result, ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     ByteBatcher,
     StaleSnapshot,
+    bulk_insert,
     byte_chunked,
     chunked,
     statement_budget,
@@ -295,7 +296,7 @@ async def chunk_dirty(
     for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
     if work.chunk_rows:
-        await session.execute(insert(chunks), work.chunk_rows)
+        await bulk_insert(session, chunks, work.chunk_rows)
     await seam("reindex:before-chunk-flip")
     provenance = {"chunk_source_hash": entry.c.content_hash, "chunk_generation": generation}
     stamp = {"chunked": True, "indexable": True, **provenance}
@@ -375,8 +376,9 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     drain = partial(builder.next_batch, _POSTING_BATCH_BYTES)
     try:
         while (drained := await call_offloaded(executor, drain)) is not None:
-            await session.execute(
-                insert(tables.posting_list),
+            await bulk_insert(
+                session,
+                tables.posting_list,
                 [
                     {
                         "epoch": epoch,

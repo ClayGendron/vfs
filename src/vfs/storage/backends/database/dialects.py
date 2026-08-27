@@ -24,14 +24,18 @@ integer driver error number — never by message text.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Final, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, NamedTuple, TypeVar, cast
 
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy import bindparam, insert
+from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
+from sqlalchemy.schema import ColumnDefault
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
+    from sqlalchemy import Table
     from sqlalchemy.engine import Dialect
+    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql import ClauseElement
 
 # ---------------------------------------------------------------------------
@@ -59,6 +63,9 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 # ---------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------
+
+
+BulkInsertMode = Literal["driver", "copy", "core"]
 
 
 @dataclass(frozen=True)
@@ -113,6 +120,18 @@ class DialectProfile:
     the database character set may not be UTF-8 — wrong bytes match
     nothing, silently.
 
+    ``bulk_insert`` declares how a bulk insert reaches the engine —
+    ``"core"`` (SQLAlchemy's executemany, paged as multirow statements),
+    ``"driver"`` (the DBAPI's own executemany on the session's
+    connection), or ``"copy"`` (asyncpg's binary ``COPY`` of records on
+    that connection). Which one wins is a per-driver fact SQLAlchemy
+    takes no position on (asyncpg pipelines one execute per row but
+    streams a COPY; sqlite3 has no round trips to lose; pyodbc round
+    trips per row, and its parameter-array mode measured faster but
+    dropped rows silently), so the value is read from the bulk-insert
+    benchmark and the engine legs; the generic floor never assumes an
+    unknown driver's executemany is a batch.
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
@@ -144,6 +163,9 @@ class DialectProfile:
     tuple_in: bool = False
     like_bracket_class: bool = False
     content_bytes: bool = False
+    # How bulk_insert reaches the engine: Core's executemany, or the
+    # driver's own on the session's connection — measured per engine.
+    bulk_insert: BulkInsertMode = "core"
 
 
 SQLITE: Final = DialectProfile(
@@ -171,6 +193,8 @@ SQLITE: Final = DialectProfile(
     retryable_sqlite_codes=frozenset({5}),
     tuple_in=True,
     content_bytes=True,
+    # sqlite3.executemany: no round trips to lose, only Core's per-row work (1.9 vs 6.7 µs).
+    bulk_insert="driver",
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -183,6 +207,8 @@ POSTGRESQL: Final = DialectProfile(
     topology_isolation="READ COMMITTED",
     values_join=True,
     tuple_in=True,
+    # asyncpg pipelines one execute per row; binary COPY halves Core's pages (4.3 vs 9.1 µs).
+    bulk_insert="copy",
 )
 
 MSSQL: Final = DialectProfile(
@@ -195,6 +221,9 @@ MSSQL: Final = DialectProfile(
     # T-SQL LIKE treats [...] as a character class; escape_like must
     # quote "[" here or a bracketed path silently misses its subtree.
     like_bracket_class=True,
+    # pyodbc round-trips per row (560 µs); its parameter-array mode measured
+    # 31 µs but silently dropped entry rows (203 of 300) — Core's pages stay.
+    bulk_insert="core",
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
@@ -215,6 +244,8 @@ MYSQL: Final = DialectProfile(
     # (1205) ships under the HY000 catch-all, so only its errno classifies.
     retryable_driver_codes=frozenset({1213, 1205}),
     tuple_in=True,
+    # aiomysql renders executemany as one multirow statement client-side (44 vs 51 µs).
+    bulk_insert="driver",
 )
 
 MARIADB: Final = replace(MYSQL, name="mariadb")
@@ -232,6 +263,9 @@ ORACLE: Final = DialectProfile(
     guard_miss="reprobe",
     retryable_driver_codes=frozenset({60, 8177}),
     tuple_in=True,
+    # Core already issues array DML here; the bare driver path loses the
+    # setinputsizes typing (DATE binds drop microseconds) — 179 leg failures.
+    bulk_insert="core",
 )
 
 # The floor for engines this project has not measured: the tightest known
@@ -470,6 +504,87 @@ def supports_values_update(profile: DialectProfile, dialect: Dialect) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Bulk inserts
+# ---------------------------------------------------------------------------
+
+
+class _BulkStatement(NamedTuple):
+    """One dialect's rendering of a table insert over a fixed key set."""
+
+    sql: str
+    names: tuple[str, ...]
+    positional: tuple[str, ...] | None
+    processors: tuple[Callable[[Any], Any] | None, ...]
+    defaults: dict[str, object]
+
+
+# A statement the adapter must see before a raw COPY (see bulk_insert).
+_COPY_PROLOGUE: Final = "SELECT 1"
+
+# ISO 9075 class 23: integrity constraint violation — the class the
+# savepoint re-drives key on when a raw driver call raises it.
+_SQLSTATE_INTEGRITY_CLASS: Final = "23"
+
+# Compiled once per (dialect facts, table, key set); bounded by the product
+# of live dialects, mounts and bulk sites, never by rows.
+_BULK_STATEMENTS: dict[tuple[str, str, str, Table, tuple[str, ...]], _BulkStatement] = {}
+
+
+async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mapping[str, object]]) -> None:
+    """Insert *rows* into *table* by the dialect's declared bulk mode.
+
+    The one owner of every bulk insert that learns nothing back — no
+    ``RETURNING``, no rowcount verification. ``"core"`` issues
+    SQLAlchemy's executemany (its insertmanyvalues pages); ``"copy"``
+    streams the rows as a binary ``COPY`` on this session's connection
+    and transaction (asyncpg); ``"driver"`` hands the driver its own
+    executemany there, with the statement compiled once per dialect,
+    table and key set, Core's own bind processors applied per column,
+    and Python-side scalar defaults filled for omitted columns — so the
+    driver receives exactly the values Core would have sent, minus
+    Core's per-row processing. Driver calls are paged by
+    :func:`rows_per_statement` under the live parameter budget, so a
+    driver that renders executemany as one multirow statement never
+    builds one Core would not have. Every row carries the first row's
+    keys; a callable Python-side default is refused (no bulk table
+    declares one). Empty *rows* is a no-op.
+    """
+    if not rows:
+        return
+    dialect = session.get_bind().dialect
+    mode = profile_for(dialect.name).bulk_insert
+    if mode == "core":
+        await session.execute(insert(table), list(rows))
+        return
+    keys = frozenset(rows[0])
+    statement = _bulk_statement(dialect, table, tuple(rows[0]))
+    processed = [_bulk_values(statement, row, keys) for row in rows]
+    page = rows_per_statement(dialect.insertmanyvalues_max_parameters, [dict.fromkeys(statement.names)])
+    connection = await session.connection()
+    if mode == "copy":
+        # The adapter opens the driver transaction lazily on its first
+        # statement; a raw COPY before that would run in autocommit.
+        await connection.exec_driver_sql(_COPY_PROLOGUE)
+        driver = (await connection.get_raw_connection()).driver_connection
+        assert driver is not None
+        for chunk in chunked([tuple(values[n] for n in statement.names) for values in processed], page):
+            try:
+                await driver.copy_records_to_table(
+                    table.name, records=list(chunk), columns=list(statement.names), schema_name=table.schema
+                )
+            except Exception as exc:
+                raise _wrap_driver_error(table, exc) from exc
+        return
+    params: list[tuple[Any, ...]] | list[dict[str, Any]]
+    if statement.positional is None:
+        params = processed
+    else:
+        params = [tuple(values[n] for n in statement.positional) for values in processed]
+    for chunk in chunked(params, page):
+        await connection.exec_driver_sql(statement.sql, list(chunk))
+
+
+# ---------------------------------------------------------------------------
 # Retryable-error classification
 # ---------------------------------------------------------------------------
 
@@ -561,3 +676,43 @@ def _driver_code_of(origin: object) -> int | None:
         return first
     code = getattr(first, "code", None)
     return code if isinstance(code, int) else None
+
+
+def _bulk_statement(dialect: Dialect, table: Table, keys: tuple[str, ...]) -> _BulkStatement:
+    cache_key = (dialect.name, dialect.driver, dialect.paramstyle, table, keys)
+    cached = _BULK_STATEMENTS.get(cache_key)
+    if cached is not None:
+        return cached
+    defaults: dict[str, object] = {}
+    for column in table.columns:
+        default = column.default
+        if column.key in keys or default is None:
+            continue
+        if not isinstance(default, ColumnDefault) or not default.is_scalar:
+            raise TypeError(f"{table.name}.{column.key}: only a scalar Python-side default can ride a bulk insert")
+        defaults[column.key] = default.arg
+    names = keys + tuple(defaults)
+    compiled = insert(table).values({name: bindparam(name) for name in names}).compile(dialect=dialect)
+    processors = tuple(table.c[name].type.dialect_impl(dialect).bind_processor(dialect) for name in names)
+    positional = tuple(compiled.positiontup or ()) if dialect.positional else None
+    statement = _BulkStatement(str(compiled), names, positional, processors, defaults)
+    _BULK_STATEMENTS[cache_key] = statement
+    return statement
+
+
+def _wrap_driver_error(table: Table, exc: BaseException) -> DBAPIError:
+    """A raw driver call bypasses SQLAlchemy's wrapping; restore the classes callers catch."""
+    statement = f"bulk insert {table.name}"
+    if (_sqlstate_of(exc) or "").startswith(_SQLSTATE_INTEGRITY_CLASS):
+        return IntegrityError(statement, None, cast("Exception", exc))
+    return DBAPIError(statement, None, cast("Exception", exc))
+
+
+def _bulk_values(statement: _BulkStatement, row: Mapping[str, object], keys: frozenset[str]) -> dict[str, Any]:
+    if row.keys() != keys:
+        raise TypeError(f"bulk insert rows must share one key set: {sorted(row)} != {sorted(keys)}")
+    values = {**statement.defaults, **row}
+    return {
+        name: (values[name] if processor is None else processor(values[name]))
+        for name, processor in zip(statement.names, statement.processors, strict=True)
+    }

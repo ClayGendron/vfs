@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, func, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
@@ -37,6 +38,7 @@ from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.backends.database.dialects import bulk_insert
 from vfs.storage.backends.database.segments import path_segments
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -95,6 +97,57 @@ class TestPostgresConformance(StorageContract):
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
         async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
             yield storage
+
+
+@pytest.mark.postgres
+class TestPostgresBulkInsertTransaction:
+    """COPY rides the session's transaction — never asyncpg's autocommit.
+
+    The adapter opens its driver transaction on the first statement, so
+    a raw COPY issued first would land outside the rollback; the helper
+    issues a statement before it. A duplicate under a savepoint surfaces
+    as ``IntegrityError`` and leaves the outer transaction usable.
+    """
+
+    @staticmethod
+    def _rows(count: int) -> list[dict[str, object]]:
+        return [
+            {
+                "epoch": 1,
+                "term": f"t{i:04d}",
+                "block_no": 0,
+                "doc_count": 1,
+                "doc_ids": b"\x01",
+                "tfs": b"\x01",
+                "dls": b"\x02",
+            }
+            for i in range(count)
+        ]
+
+    async def test_a_first_statement_bulk_insert_rolls_back(self) -> None:
+        async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
+            await storage.mkdir(path=Path("/warm"))
+            postings = storage._host.tables.lex_postings
+            async with storage._host.session_factory() as session:
+                await bulk_insert(session, postings, self._rows(3))
+                await session.rollback()
+            async with storage._host.session_factory() as session:
+                count = await session.scalar(select(func.count()).select_from(postings))
+            assert count == 0
+
+    async def test_a_duplicate_under_a_savepoint_leaves_the_transaction_usable(self) -> None:
+        async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
+            await storage.mkdir(path=Path("/warm"))
+            postings = storage._host.tables.lex_postings
+            async with storage._host.session_factory() as session, session.begin():
+                await bulk_insert(session, postings, self._rows(2))
+                with pytest.raises(IntegrityError):
+                    async with session.begin_nested():
+                        await bulk_insert(session, postings, self._rows(1))
+                await bulk_insert(session, postings, self._rows(3)[2:])
+            async with storage._host.session_factory() as session:
+                count = await session.scalar(select(func.count()).select_from(postings))
+            assert count == 3
 
 
 @pytest.mark.mysql
