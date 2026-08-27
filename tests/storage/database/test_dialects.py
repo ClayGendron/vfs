@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, insert, select
+from sqlalchemy.dialects import mssql as mssql_dialect
 from sqlalchemy.dialects import mysql as mysql_dialect
 from sqlalchemy.dialects import oracle as oracle_dialect
 from sqlalchemy.dialects import postgresql as postgresql_dialect
@@ -809,6 +810,28 @@ class TestBulkInsert:
         statement = dialects._bulk_statement(make(), table, ("epoch", "term", "block_no"))
         assert statement.sql.endswith(expected_sql)
         assert statement.positional == positional
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            sqlite_dialect.dialect,
+            postgresql_dialect.dialect,
+            mysql_dialect.dialect,
+            mssql_dialect.dialect,
+            oracle_dialect.dialect,
+        ],
+        ids=["sqlite", "postgresql", "mysql", "mssql", "oracle"],
+    )
+    def test_the_bulk_statement_never_returns_the_identity_key(self, make: Callable[[], Dialect]) -> None:
+        # A one-row insert into an identity-keyed table picks up the dialect's
+        # implicit OUTPUT/RETURNING; under a parameter array that is one
+        # pending result per row, and pyodbc's fast path cancels the batch
+        # at cursor close (rows past the first ~80 never ran, no error).
+        entry = build_vfs_tables(table_name="vfs").entry
+        keys = tuple(column.key for column in entry.columns if column.key != "id")
+        statement = dialects._bulk_statement(make(), entry, keys)
+        assert "OUTPUT" not in statement.sql
+        assert "RETURNING" not in statement.sql
 
     def test_profiles_pin_the_measured_mode(self) -> None:
         # Read from the before/after benchmark on each engine; GENERIC never

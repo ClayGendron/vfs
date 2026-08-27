@@ -127,10 +127,10 @@ class DialectProfile:
     that connection). Which one wins is a per-driver fact SQLAlchemy
     takes no position on (asyncpg pipelines one execute per row but
     streams a COPY; sqlite3 has no round trips to lose; pyodbc round
-    trips per row, and its parameter-array mode measured faster but
-    dropped rows silently), so the value is read from the bulk-insert
-    benchmark and the engine legs; the generic floor never assumes an
-    unknown driver's executemany is a batch.
+    trips per row, and its parameter-array mode is still one RPC per
+    row, slower than Core's pages on wide rows), so the value is read
+    from the bulk-insert benchmark and the engine legs; the generic
+    floor never assumes an unknown driver's executemany is a batch.
 
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
@@ -221,8 +221,8 @@ MSSQL: Final = DialectProfile(
     # T-SQL LIKE treats [...] as a character class; escape_like must
     # quote "[" here or a bracketed path silently misses its subtree.
     like_bracket_class=True,
-    # pyodbc round-trips per row (560 µs); its parameter-array mode measured
-    # 31 µs but silently dropped entry rows (203 of 300) — Core's pages stay.
+    # pyodbc round-trips per row (560 µs); its parameter-array mode is still
+    # one RPC per row — slower than Core's multirow pages on entry-wide rows.
     bulk_insert="core",
 )
 
@@ -692,7 +692,9 @@ def _bulk_statement(dialect: Dialect, table: Table, keys: tuple[str, ...]) -> _B
             raise TypeError(f"{table.name}.{column.key}: only a scalar Python-side default can ride a bulk insert")
         defaults[column.key] = default.arg
     names = keys + tuple(defaults)
-    compiled = insert(table).values({name: bindparam(name) for name in names}).compile(dialect=dialect)
+    # Inline: a bare one-row insert would pick up the dialect's implicit
+    # OUTPUT/RETURNING of the identity key, a pending result per array row.
+    compiled = insert(table).inline().values({name: bindparam(name) for name in names}).compile(dialect=dialect)
     processors = tuple(table.c[name].type.dialect_impl(dialect).bind_processor(dialect) for name in names)
     positional = tuple(compiled.positiontup or ()) if dialect.positional else None
     statement = _BulkStatement(str(compiled), names, positional, processors, defaults)

@@ -427,10 +427,10 @@ def _engine_kwargs(url: str) -> dict[str, bool]:
     pyodbc's Unicode default (``SQL_WVARCHAR``), whose conversion into
     the UTF-8 collation is lossless. pyodbc's ``fast_executemany`` is
     deliberately *not* set: engine-wide it rewrites UPDATE executemany,
-    whose rowcount the guarded bumps verify, and on a bulk cursor it
-    silently dropped entry rows — SQL Server's bulk inserts take Core's
-    pages. Borrowed session factories carry their builder's engine and
-    must apply this themselves.
+    whose rowcount the guarded bumps verify, and as a bulk-insert mode it
+    is still one RPC per row, slower than Core's pages on wide rows —
+    SQL Server's bulk inserts take Core's pages. Borrowed session
+    factories carry their builder's engine and must apply this themselves.
     """
     if make_url(url).get_backend_name() == "mssql":
         return {"use_setinputsizes": False}
