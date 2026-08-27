@@ -52,6 +52,7 @@ from vfs.storage.backends.database.indexing import (
     chunk_dirty,
     claim_reindex_lease,
     heartbeat_reindex_lease,
+    lease_lost,
     lease_lost_result,
     publish_epoch,
     reclaim_built_epoch,
@@ -502,13 +503,16 @@ class DatabaseStorage:
         """Pulse the lease heartbeat until cancelled or proven taken.
 
         A transient beat failure is not a lost lease — the TTL absorbs
-        missed pulses; only a zero-row refresh (the ``conflict`` verdict)
-        means a rival claimed through, and then the run must stop.
+        missed pulses, including a beat that never reaches its UPDATE
+        because the build phase holds SQLite's write lock for longer
+        than the beat's retries (that exhaustion is a ``conflict`` too);
+        only the zero-row refresh, the marked lease-lost verdict, means
+        a rival claimed through, and then the run must stop.
         """
         while True:
             await asyncio.sleep(REINDEX_HEARTBEAT_SECONDS)
             beat = await self._execute_write("reindex", lambda session: heartbeat_reindex_lease(session, tables, token))
-            if any(error.kind == VFSErrorKind.conflict for error in beat.errors):
+            if lease_lost(beat):
                 lost.set()
                 return
 

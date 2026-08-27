@@ -29,7 +29,7 @@ import pytest
 from sqlalchemy import event, func, inspect, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from tests.support.lexical_fidelity import assert_lexical_fidelity
+from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.storage_contract import StorageContract
 from vfs.models import Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -521,12 +521,10 @@ async def _lexical_build_beyond_a_page(env_var: str) -> None:
     """A corpus larger than one scan page builds: the build writes between
     pages on the same connection, which a driver without multiple active
     result sets refuses while a cursor is still open (caught on SQL Server
-    at 2,000 files; invisible below one page)."""
+    at 2,000 files; invisible below one page). The same corpus spans
+    blocks, so the two-round fetch is refereed here on every engine."""
     async with _server_storage(env_var) as storage:
-        entries = [Entry(path=Path(f"/p/{i:04}.txt"), content=f"page body {i} term{i % 7}\n") for i in range(600)]
-        assert (await storage.write(entries=entries, parents=True)).success is True
-        result = await storage.reindex()
-        assert result.success is True, result.errors
+        await assert_two_round_fidelity(storage, count=600)
         tables = storage._host.tables
         async with storage._host.engine.connect() as conn:
             docs = (await conn.execute(select(func.count()).select_from(tables.lex_docs))).scalar_one()

@@ -8,10 +8,10 @@ from typing import Union, get_args, get_origin
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Double, Engine, String, insert, inspect, select
+from sqlalchemy import Double, Engine, LargeBinary, String, insert, inspect, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mssql import pymssql
-from sqlalchemy.dialects.mysql import mariadb
+from sqlalchemy.dialects.mysql import LONGBLOB, mariadb
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import ColumnDefault, CreateIndex, CreateTable
 from ulid import ULID
@@ -50,7 +50,7 @@ TABLE_ATTRS = (
     "posting_list",
     "segments",
     "lex_docs",
-    "lex_terms",
+    "lex_postings",
     "lex_df",
     "lex_stats",
 )
@@ -156,7 +156,7 @@ class TestBuildVFSTables:
             "vfs_entries_grams_posting_list",
             "vfs_entries_segments",
             "vfs_entries_lex_docs",
-            "vfs_entries_lex_terms",
+            "vfs_entries_lex_postings",
             "vfs_entries_lex_df",
             "vfs_entries_lex_stats",
         }
@@ -250,28 +250,44 @@ class TestBuildVFSTables:
         assert {"epoch", "format_version", "options_hash", "created_at"} == set(tables.gram_epochs.c.keys())
 
     def test_lexical_tables_are_epoch_scoped_and_keyed_for_term_runs(self, tables: VFSTables) -> None:
-        # One term's postings are a contiguous run under (epoch, term, chunk_id);
+        # One term's blocks are a contiguous run under (epoch, term, block_no);
         # terms are folded text, bytewise — an accent-unifying collation
         # would collide the key — and capped at the tokenizer's byte ceiling.
         assert [c.name for c in tables.lex_docs.primary_key.columns] == ["epoch", "chunk_id"]
-        assert [c.name for c in tables.lex_terms.primary_key.columns] == ["epoch", "term", "chunk_id"]
+        assert [c.name for c in tables.lex_postings.primary_key.columns] == ["epoch", "term", "block_no"]
         assert [c.name for c in tables.lex_df.primary_key.columns] == ["epoch", "term"]
         assert [c.name for c in tables.lex_stats.primary_key.columns] == ["epoch"]
-        for table in (tables.lex_terms, tables.lex_df):
+        for table in (tables.lex_postings, tables.lex_df):
             assert isinstance(table.c.term.type, BytewiseString)
             assert table.c.term.type.length == MAX_TERM_BYTES
         assert isinstance(tables.lex_docs.c.entry_id.type, ULIDKey)
         by_name = {str(index.name): index for index in tables.lex_docs.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_lex_docs_entry"].columns] == ["epoch", "entry_id"]
-        for column in (tables.lex_terms.c.weight, tables.lex_df.c.idf, tables.lex_stats.c.avg_dl):
+        for column in (
+            tables.lex_df.c.idf,
+            tables.lex_df.c.max_weight,
+            tables.lex_stats.c.avg_dl,
+            tables.lex_stats.c.k1,
+            tables.lex_stats.c.b,
+        ):
             assert isinstance(column.type, Double)
-        for table in (tables.lex_docs, tables.lex_terms, tables.lex_df, tables.lex_stats):
+        # Blobs take the mysql-family LONGBLOB variant: a bare BLOB truncates at 64 KB.
+        blobs = (
+            tables.lex_postings.c.doc_ids,
+            tables.lex_postings.c.tfs,
+            tables.lex_postings.c.dls,
+            tables.lex_df.c.blocks,
+        )
+        for column in blobs:
+            assert isinstance(column.type, LargeBinary)
+            assert isinstance(column.type.dialect_impl(mysql.dialect()), LONGBLOB)
+        for table in (tables.lex_docs, tables.lex_postings, tables.lex_df, tables.lex_stats):
             assert table.kwargs["sqlite_with_rowid"] is False
-        assert "WITHOUT ROWID" in str(CreateTable(tables.lex_terms).compile(dialect=sqlite.dialect()))
+        assert "WITHOUT ROWID" in str(CreateTable(tables.lex_postings).compile(dialect=sqlite.dialect()))
         assert tables.epoch_scoped() == (
             tables.posting_list,
             tables.lex_docs,
-            tables.lex_terms,
+            tables.lex_postings,
             tables.lex_df,
             tables.lex_stats,
             tables.gram_epochs,

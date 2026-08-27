@@ -1,19 +1,20 @@
 """The lexical index's storage half: the epoch build and the statistics probe.
 
-The build is one step of the gram epoch's build phase: two streams
-over the chunk rows of every ``chunked ∧ indexable ∧ live`` entry —
-the same coverage set the gram scan flips ``encoded`` for — fed to the
-pure builder in byte-bounded batches (statistics first, weighted rows
-second) and written into the four ``lex_*`` tables under the epoch
-being built as each batch completes. Publish and reclaim are
-the gram epoch's own: the one pointer flip makes the lexical rows
-current, and the epoch sweep drops them with the postings. The
-invariant extends verbatim — **``encoded=True`` implies the entry's
-terms are in the current lexical epoch.**
+The build is one step of the gram epoch's build phase: one stream over
+the chunk rows of every ``chunked ∧ indexable ∧ live`` entry — the same
+coverage set the gram scan flips ``encoded`` for — fed to the active
+engine's builder in byte-bounded batches, its doc rows written as each
+batch completes; then the fixed statistics, the term summaries and the
+block rows, drained in term order and written in row-bounded inserts
+under the epoch being built. Publish and reclaim are the gram epoch's
+own: the one pointer flip makes the lexical rows current, and the epoch
+sweep drops them with the postings. The invariant extends verbatim —
+**``encoded=True`` implies the entry's terms are in the current lexical
+epoch.**
 
 The build's CPU — tokenizing each batch, fixing the statistics, and
-assembling every drained row — hops through the backend's offload
-pool so the loop keeps serving while it runs.
+assembling every drained row — hops through the backend's offload pool
+so the loop keeps serving while it runs.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 
 from sqlalchemy import insert, select
 
-from vfs.models.lexical import LexicalIndexBuilder
+from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
 from vfs.storage.backends.database.dialects import ByteBatcher, chunked
 from vfs.storage.backends.database.offload import call_offloaded
 
@@ -33,15 +34,15 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from vfs.models.lexical import DfRow, DocRow, TermRow
+    from vfs.models.lexical import LexicalBuilder
     from vfs.models.rows import VFSTables
 
-# One tokenize call's content payload (chars as the byte proxy): bounds
-# a hop's copy and pass two's transient term rows (~100 per chunk).
+# One tokenize call's content payload (chars as the byte proxy): bounds a
+# hop's copy and the batch's transient token lists.
 _TOKENIZE_BATCH_BYTES: Final = 4 * 1024 * 1024
 
-# Rows per lexical insert. Every ``lex_*`` row is bounded-width (a term
-# is at most 64 bytes), so a row budget bounds the statement's bytes.
+# Rows per lexical insert. A doc or summary row is bounded-width and a
+# block row holds at most a block's postings, so a row budget bounds bytes.
 _LEXICAL_INSERT_ROWS: Final = 20_000
 
 # Chunk rows per keyset page of the build's scan (a page is one round trip).
@@ -51,13 +52,16 @@ _SCAN_PAGE_ROWS: Final = 256
 class TermStatistics(NamedTuple):
     """Corpus-wide BM25 inputs for a query's terms, from one epoch.
 
-    ``terms`` maps each probed term present in the epoch to its
-    ``(df, idf)``; a term absent from the corpus is absent here.
+    ``terms`` maps each probed term present in the epoch to its summary
+    row; a term absent from the corpus is absent here. ``k1`` and ``b``
+    are the constants the epoch was weighted under.
     """
 
-    terms: dict[str, tuple[int, float]]
+    terms: dict[str, SummaryRow]
     n_docs: int
     avg_dl: float
+    k1: float
+    b: float
 
 
 # ---------------------------------------------------------------------------
@@ -66,30 +70,32 @@ class TermStatistics(NamedTuple):
 
 
 async def build_lexical_epoch(session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor) -> None:
-    """Stream every covered chunk twice and write the epoch's four row sets.
+    """Stream every covered chunk once and write the epoch's four row sets.
 
-    Pass one streams the chunk rows in ascending id order, counting
-    document frequencies and lengths and writing ``lex_docs`` as it
-    goes; the fixed statistics then write ``lex_stats`` and ``lex_df``;
-    pass two streams the same rows again and writes each batch's
-    weighted ``lex_terms`` rows. Nothing but the vocabulary is held
-    across batches. A rival building the same epoch collides on a
-    primary key here exactly as on the postings table, and the caller's
-    stale-snapshot redrive owns that.
+    The chunk rows stream in ascending id order into the builder, which
+    returns each document's length for ``lex_docs`` as it goes; the
+    fixed statistics then write ``lex_stats``, and the two drains write
+    ``lex_df`` and ``lex_postings`` in term order. A rival building the
+    same epoch collides on a primary key here exactly as on the postings
+    table, and the caller's stale-snapshot redrive owns that.
     """
-    builder = LexicalIndexBuilder()
+    builder = lexical_builder()
     async for batch in _chunk_batches(session, tables):
-        docs = await call_offloaded(executor, partial(builder.observe, batch))
-        for rows in chunked(docs, _LEXICAL_INSERT_ROWS):
-            await session.execute(insert(tables.lex_docs), _doc_rows(epoch, rows))
-    stats = await call_offloaded(executor, builder.finish)
-    await session.execute(insert(tables.lex_stats), [{"epoch": epoch, "n_docs": stats.n_docs, "avg_dl": stats.avg_dl}])
-    for dfs in chunked(builder.dfs, _LEXICAL_INSERT_ROWS):
-        await session.execute(insert(tables.lex_df), _df_rows(epoch, dfs))
-    async for batch in _chunk_batches(session, tables):
-        terms = await call_offloaded(executor, partial(_weigh_rows, builder, epoch, batch))
-        for rows in chunked(terms, _LEXICAL_INSERT_ROWS):
-            await session.execute(insert(tables.lex_terms), list(rows))
+        docs = [(chunk_id, content) for chunk_id, _entry_id, content in batch]
+        lengths = await call_offloaded(executor, partial(builder.add_docs, docs))
+        rows = [
+            {"epoch": epoch, "chunk_id": chunk_id, "entry_id": entry_id, "dl": dl}
+            for (chunk_id, entry_id, _content), dl in zip(batch, lengths, strict=True)
+        ]
+        for page in chunked(rows, _LEXICAL_INSERT_ROWS):
+            await session.execute(insert(tables.lex_docs), list(page))
+    n_docs, avg_dl = await call_offloaded(executor, builder.finish)
+    stats = {"epoch": epoch, "n_docs": n_docs, "avg_dl": avg_dl, "k1": BM25_K1, "b": BM25_B}
+    await session.execute(insert(tables.lex_stats), [stats])
+    while (summaries := await call_offloaded(executor, partial(_df_rows, builder, epoch))) is not None:
+        await session.execute(insert(tables.lex_df), summaries)
+    while (blocks := await call_offloaded(executor, partial(_block_rows, builder, epoch))) is not None:
+        await session.execute(insert(tables.lex_postings), blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -104,22 +110,28 @@ async def lexical_stats(
     terms: Sequence[str],
     membership_budget: int,
 ) -> TermStatistics:
-    """Corpus-wide statistics for *terms* from *epoch*: one chunked
-    ``IN``-list probe on ``lex_df`` plus the epoch's ``lex_stats`` row.
+    """Summary rows for *terms* from *epoch*: one chunked ``IN``-list probe
+    on ``lex_df`` plus the epoch's ``lex_stats`` row.
 
     An epoch with no statistics row (never built) answers zero
     documents; the caller decides what an empty corpus means.
     """
     df, stats = tables.lex_df, tables.lex_stats
-    found: dict[str, tuple[int, float]] = {}
+    found: dict[str, SummaryRow] = {}
     for probe in chunked(list(dict.fromkeys(terms)), membership_budget):
-        lookup = select(df.c.term, df.c.df, df.c.idf).where(df.c.epoch == epoch, df.c.term.in_(probe))
-        for term, df_value, idf_value in await session.execute(lookup):
-            found[term] = (df_value, idf_value)
-    corpus = (await session.execute(select(stats.c.n_docs, stats.c.avg_dl).where(stats.c.epoch == epoch))).one_or_none()
+        lookup = select(df.c.term, df.c.df, df.c.idf, df.c.max_weight, df.c.blocks).where(
+            df.c.epoch == epoch, df.c.term.in_(probe)
+        )
+        for row in await session.execute(lookup):
+            found[row.term] = SummaryRow(row.term, row.df, row.idf, row.max_weight, bytes(row.blocks))
+    corpus = (
+        await session.execute(
+            select(stats.c.n_docs, stats.c.avg_dl, stats.c.k1, stats.c.b).where(stats.c.epoch == epoch)
+        )
+    ).one_or_none()
     if corpus is None:
-        return TermStatistics(found, 0, 0.0)
-    return TermStatistics(found, corpus.n_docs, corpus.avg_dl)
+        return TermStatistics(found, 0, 0.0, BM25_K1, BM25_B)
+    return TermStatistics(found, corpus.n_docs, corpus.avg_dl, corpus.k1, corpus.b)
 
 
 # ---------------------------------------------------------------------------
@@ -164,15 +176,31 @@ def _doc_size(doc: tuple[int, str, str]) -> int:
     return len(content)
 
 
-def _doc_rows(epoch: int, docs: Sequence[DocRow]) -> list[dict[str, object]]:
-    return [{"epoch": epoch, "chunk_id": doc.chunk_id, "entry_id": doc.entry_id, "dl": doc.dl} for doc in docs]
+def _df_rows(builder: LexicalBuilder, epoch: int) -> list[dict[str, object]] | None:
+    """The next batch of summary rows as insert rows — a drain's CPU, off the loop."""
+    batch = builder.next_df_batch(_LEXICAL_INSERT_ROWS)
+    if batch is None:
+        return None
+    return [
+        {"epoch": epoch, "term": term, "df": df, "idf": idf, "max_weight": max_weight, "blocks": blocks}
+        for term, df, idf, max_weight, blocks in batch
+    ]
 
 
-def _df_rows(epoch: int, dfs: Sequence[DfRow]) -> list[dict[str, object]]:
-    return [{"epoch": epoch, "term": row.term, "df": row.df, "idf": row.idf} for row in dfs]
-
-
-def _weigh_rows(builder: LexicalIndexBuilder, epoch: int, batch: list[tuple[int, str, str]]) -> list[dict[str, object]]:
-    """One batch's weighted term rows as insert rows — pass two's CPU, off the loop."""
-    rows: list[TermRow] = builder.weigh(batch)
-    return [{"epoch": epoch, "term": r.term, "chunk_id": r.chunk_id, "tf": r.tf, "weight": r.weight} for r in rows]
+def _block_rows(builder: LexicalBuilder, epoch: int) -> list[dict[str, object]] | None:
+    """The next batch of block rows as insert rows — a drain's CPU, off the loop."""
+    batch = builder.next_batch(_LEXICAL_INSERT_ROWS)
+    if batch is None:
+        return None
+    return [
+        {
+            "epoch": epoch,
+            "term": term,
+            "block_no": block_no,
+            "doc_count": doc_count,
+            "doc_ids": doc_ids,
+            "tfs": tfs,
+            "dls": dls,
+        }
+        for term, block_no, doc_count, doc_ids, tfs, dls in batch
+    ]

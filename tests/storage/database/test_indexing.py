@@ -534,7 +534,7 @@ class TestPostingBatches:
             statements.append(statement)
 
         assert (await storage.reindex()).success is True
-        inserts = [s for s in statements if s.startswith("INSERT") and "posting" in s.lower()]
+        inserts = [s for s in statements if s.startswith("INSERT") and "grams_posting_list" in s]
         assert len(inserts) > 1
         await storage.close()
 
@@ -554,7 +554,7 @@ class TestPostingBatches:
             statements.append((statement, executemany))
 
         assert (await storage.reindex()).success is True
-        inserts = [(s, many) for s, many in statements if s.startswith("INSERT") and "posting" in s]
+        inserts = [(s, many) for s, many in statements if s.startswith("INSERT") and "grams_posting_list" in s]
         assert len(inserts) == 1, inserts  # no vfs-side row cap splits the batch
         statement, many = inserts[0]
         assert many is True and statement.count("?") == 6  # one row's binds per parameter set
@@ -842,6 +842,38 @@ class TestReindexLease:
         task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
         await asyncio.wait_for(lost.wait(), timeout=5)
         await asyncio.wait_for(task, timeout=5)
+        await storage.close()
+
+    async def test_a_transport_conflict_is_not_a_taken_lease(self, tmp_path, monkeypatch) -> None:
+        """A beat that cannot get a writer (the build phase holds SQLite's
+        lock past the beat's retries) comes back a ``conflict`` too; only
+        the marked zero-row verdict stops the run — the TTL absorbs the rest."""
+        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
+        stalled = Result(
+            ops=("reindex",),
+            errors=[ResultError(kind=VFSErrorKind.conflict, message="reindex kept losing", retryable=True)],
+        )
+        beats = 0
+
+        async def stalled_write(op: str, fn: Any) -> Result:
+            nonlocal beats
+            beats += 1
+            return stalled
+
+        monkeypatch.setattr(storage, "_execute_write", stalled_write)
+        lost = asyncio.Event()
+        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            if beats >= 5:
+                break
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        assert beats >= 5 and not lost.is_set()
+        assert indexing.lease_lost(indexing.lease_lost_result()) and not indexing.lease_lost(stalled)
         await storage.close()
 
     async def test_a_successful_beat_advances_the_heartbeat(self, tmp_path, monkeypatch) -> None:

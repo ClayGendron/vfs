@@ -121,7 +121,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 7
+SCHEMA_FORMAT_VERSION: Final = 8
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -292,7 +292,7 @@ class VFSTables(NamedTuple):
     posting_list: Table
     segments: Table
     lex_docs: Table
-    lex_terms: Table
+    lex_postings: Table
     lex_df: Table
     lex_stats: Table
 
@@ -302,7 +302,7 @@ class VFSTables(NamedTuple):
 
     def epoch_scoped(self) -> tuple[Table, ...]:
         """Every table keyed by gram epoch — what a build fills and a reclaim sweeps."""
-        return (self.posting_list, self.lex_docs, self.lex_terms, self.lex_df, self.lex_stats, self.gram_epochs)
+        return (self.posting_list, self.lex_docs, self.lex_postings, self.lex_df, self.lex_stats, self.gram_epochs)
 
 
 def build_vfs_tables(
@@ -535,13 +535,15 @@ def build_vfs_tables(
 
     # The lexical (BM25) index, epoch-scoped beside the gram postings and
     # rebuilt whole per reindex: one doc row per chunk with its exact
-    # token count; one posting row per (term, chunk) carrying the
-    # precomputed weight, keyed so a term's run is contiguous; one row
-    # per term with its document frequency and idf; one row per epoch
-    # with the corpus statistics. ``term`` is folded text, bytewise —
-    # a collation that unified accents would collide the key. Every row is
-    # its primary key: SQLite stores them WITHOUT ROWID, in the key B-tree
-    # itself, as the clustered engines do — no second copy per row.
+    # token count; one row per (term, block) holding up to a block's
+    # postings as three delta+varint blobs, keyed so a term's blocks are
+    # contiguous; one summary row per term with its document frequency,
+    # idf, maximum weight and per-block summary blob; one row per epoch
+    # with the corpus statistics and the constants they were weighted
+    # under. ``term`` is folded text, bytewise — a collation that unified
+    # accents would collide the key. Every row is its primary key: SQLite
+    # stores them WITHOUT ROWID, in the key B-tree itself, as the
+    # clustered engines do — no second copy per row.
     lex_docs = Table(
         f"{table_name}_lex_docs",
         metadata,
@@ -553,14 +555,16 @@ def build_vfs_tables(
         schema=schema,
         sqlite_with_rowid=False,
     )
-    lex_terms = Table(
-        f"{table_name}_lex_terms",
+    lex_postings = Table(
+        f"{table_name}_lex_postings",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("term", BytewiseString(MAX_TERM_BYTES), primary_key=True),
-        Column("chunk_id", BigInteger, primary_key=True, autoincrement=False),
-        Column("tf", Integer, nullable=False),
-        Column("weight", Double, nullable=False),
+        Column("block_no", Integer, primary_key=True, autoincrement=False),
+        Column("doc_count", Integer, nullable=False),
+        Column("doc_ids", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
+        Column("tfs", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
+        Column("dls", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
         schema=schema,
         sqlite_with_rowid=False,
     )
@@ -571,6 +575,8 @@ def build_vfs_tables(
         Column("term", BytewiseString(MAX_TERM_BYTES), primary_key=True),
         Column("df", Integer, nullable=False),
         Column("idf", Double, nullable=False),
+        Column("max_weight", Double, nullable=False),
+        Column("blocks", LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY), nullable=False),
         schema=schema,
         sqlite_with_rowid=False,
     )
@@ -580,6 +586,8 @@ def build_vfs_tables(
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("n_docs", Integer, nullable=False),
         Column("avg_dl", Double, nullable=False),
+        Column("k1", Double, nullable=False),
+        Column("b", Double, nullable=False),
         schema=schema,
         sqlite_with_rowid=False,
     )
@@ -596,7 +604,7 @@ def build_vfs_tables(
         posting_list=posting_list,
         segments=segments,
         lex_docs=lex_docs,
-        lex_terms=lex_terms,
+        lex_postings=lex_postings,
         lex_df=lex_df,
         lex_stats=lex_stats,
     )

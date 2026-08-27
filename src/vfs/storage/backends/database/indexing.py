@@ -92,7 +92,7 @@ if TYPE_CHECKING:
 
 # The format half of the epoch fingerprint: every fold, extraction-grain,
 # gram-extraction, or lexical-table change must hand-bump this to force the rebuild.
-INDEX_FORMAT_VERSION: Final = 3
+INDEX_FORMAT_VERSION: Final = 4
 
 Epoch = Annotated[int, "one published gram-index generation; a missing pointer means no index side"]
 
@@ -119,6 +119,9 @@ _SCAN_YIELD_ROWS: Final = 256
 # interval, so the TTL tolerates four missed beats plus clock skew.
 REINDEX_LEASE_TTL_MS: Final = 5 * 60 * 1000
 REINDEX_HEARTBEAT_SECONDS: Final = 60.0
+
+# The lease-lost verdict's machine-readable mark on its ``ResultError``.
+LEASE_LOST_DATA: Final = {"reindex_lease": "lost"}
 
 
 def index_options_hash() -> str:
@@ -179,9 +182,17 @@ async def heartbeat_reindex_lease(session: AsyncSession, tables: VFSTables, toke
 
 
 def lease_lost_result() -> Result:
-    """The one spelling of "a rival claimed through": conflict, retryable."""
+    """The one spelling of "a rival claimed through": conflict, retryable,
+    marked in ``data`` so the beat task can tell it from a transport
+    conflict (a writer stalled behind the build's own lock, on SQLite)."""
     message = "the reindex lease expired mid-run and was claimed by a rival; this run stopped"
-    return Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
+    error = ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True, data=LEASE_LOST_DATA)
+    return Result(ops=("reindex",), errors=[error])
+
+
+def lease_lost(result: Result) -> bool:
+    """Whether *result* is the lease-lost verdict itself, not another conflict."""
+    return any(error.data == LEASE_LOST_DATA for error in result.errors)
 
 
 async def release_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:

@@ -68,11 +68,17 @@ def encode_postings(doc_ids: Iterable[int]) -> bytes:
     return bytes(out)
 
 
-def decode_postings(blob: bytes) -> NDArray[np.int64]:
-    """Decode a posting blob to the int64 doc-id array, refusing corruption."""
+def decode_varints(blob: bytes) -> NDArray[np.int64]:
+    """Decode every LEB128 varint of *blob* to an int64 array, refusing corruption.
+
+    The structural half of the codec — truncated, over-wide and
+    non-canonical varints are refused; an empty blob decodes to an empty
+    array. The lexical blobs (``tfs``, ``dls``) are bare varint runs and
+    decode through this directly.
+    """
     data = np.frombuffer(blob, dtype=np.uint8)
     if data.size == 0:
-        raise PostingCorruptionError("empty posting blob (a valid empty list is one zero byte)")
+        return np.empty(0, dtype=np.int64)
     continues = (data & 0x80) != 0
     if bool(continues[-1]):
         raise PostingCorruptionError("truncated varint at end of blob")
@@ -90,6 +96,14 @@ def decode_postings(blob: bytes) -> NDArray[np.int64]:
     payloads = (data & 0x7F).astype(np.int64) << shifts
     values = np.zeros(ends.size, dtype=np.int64)
     np.add.at(values, groups, payloads)
+    return values
+
+
+def decode_postings(blob: bytes) -> NDArray[np.int64]:
+    """Decode a posting blob to the int64 doc-id array, refusing corruption."""
+    values = decode_varints(blob)
+    if values.size == 0:
+        raise PostingCorruptionError("empty posting blob (a valid empty list is one zero byte)")
     count, deltas = int(values[0]), values[1:]
     if count != deltas.size:
         raise PostingCorruptionError(f"count header says {count}, blob holds {deltas.size}")

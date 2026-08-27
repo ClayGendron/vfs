@@ -10,17 +10,18 @@ use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::pybacked::PyBackedBytes;
+use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::PyBytes;
 
 use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
+use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
 use crate::postings::{DrainedPostings, PostingsAccumulator};
 use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// warns and falls back on mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 3;
+const PROTOCOL_VERSION: u32 = 4;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -194,13 +195,141 @@ fn chunk_spans(
     })
 }
 
+/// The lexical tokenizer: folded terms in order, duplicates kept.
+#[pyfunction]
+fn tokenize(content: &str) -> Vec<String> {
+    lexical::tokenize(content)
+}
+
+/// One byte of class flags per code point (word 1, upper 2, lower 4,
+/// digit 8, assigned 16) from the generated tables, for the parity check.
+#[pyfunction]
+fn lexical_char_classes(py: Python<'_>) -> Bound<'_, PyBytes> {
+    PyBytes::new(py, &lexical::char_classes())
+}
+
+/// The generated casefold map as `(code point, fold)` pairs.
+#[pyfunction]
+fn lexical_casefolds() -> Vec<(u32, &'static str)> {
+    lexical::casefolds().to_vec()
+}
+
+/// The Python shapes of a summary row and a block row.
+type SummaryTuple<'py> = (String, u32, f64, f64, Bound<'py, PyBytes>);
+type BlockTuple<'py> = (String, u32, u32, Bound<'py, PyBytes>, Bound<'py, PyBytes>, Bound<'py, PyBytes>);
+
+/// Streaming lexical builder: feed `(doc_id, text)` in strictly increasing
+/// doc-id order (each call returns the docs' token counts), `finish` for
+/// `(n_docs, avg_dl)`, then drain term-ordered summary rows and block rows.
+#[pyclass]
+struct LexicalBuilder {
+    accumulator: Option<LexicalAccumulator>,
+    drained: Option<DrainedLexical>,
+}
+
+impl LexicalBuilder {
+    fn sealed(&mut self, py: Python<'_>) -> &mut DrainedLexical {
+        if self.drained.is_none() {
+            let accumulator = self.accumulator.take().expect("one of the two is always present");
+            self.drained = Some(py.detach(|| accumulator.finish()));
+        }
+        self.drained.as_mut().expect("just installed")
+    }
+}
+
+#[pymethods]
+impl LexicalBuilder {
+    #[new]
+    fn new() -> Self {
+        Self { accumulator: Some(LexicalAccumulator::new()), drained: None }
+    }
+
+    fn add_docs(&mut self, py: Python<'_>, docs: Vec<(i64, PyBackedStr)>) -> PyResult<Vec<u32>> {
+        let Some(accumulator) = self.accumulator.as_mut() else {
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
+        };
+        py.detach(|| {
+            docs.iter()
+                .map(|(doc_id, text)| accumulator.add_doc(*doc_id, text).map_err(|err| PyValueError::new_err(err.to_string())))
+                .collect()
+        })
+    }
+
+    fn finish(&mut self, py: Python<'_>) -> (u64, f64) {
+        let drained = self.sealed(py);
+        (drained.n_docs, drained.avg_dl)
+    }
+
+    fn next_df_batch<'py>(&mut self, py: Python<'py>, row_cap: usize) -> Option<Vec<SummaryTuple<'py>>> {
+        let drained = self.sealed(py);
+        let rows = py.detach(|| drained.next_df_batch(row_cap))?;
+        Some(
+            rows.into_iter()
+                .map(|row| (row.term, row.df, row.idf, row.max_weight, PyBytes::new(py, &row.blocks)))
+                .collect(),
+        )
+    }
+
+    fn next_batch<'py>(&mut self, py: Python<'py>, row_cap: usize) -> Option<Vec<BlockTuple<'py>>> {
+        let drained = self.sealed(py);
+        let rows = py.detach(|| drained.next_batch(row_cap))?;
+        Some(
+            rows.into_iter()
+                .map(|row| {
+                    (
+                        row.term,
+                        row.block_no,
+                        row.doc_count,
+                        PyBytes::new(py, &row.doc_ids),
+                        PyBytes::new(py, &row.tfs),
+                        PyBytes::new(py, &row.dls),
+                    )
+                })
+                .collect(),
+        )
+    }
+}
+
+/// BM25 top-`k` over fetched blocks `(term index, bound, doc_ids, tfs,
+/// dls)` with `idfs` by term index; `candidates` is a sorted array of
+/// native-endian int64 ids the result is restricted to.
+#[pyfunction]
+#[pyo3(signature = (blocks, idfs, avg_dl, k, candidates=None))]
+fn lexical_score(
+    py: Python<'_>,
+    blocks: Vec<(usize, f64, PyBackedBytes, PyBackedBytes, PyBackedBytes)>,
+    idfs: Vec<f64>,
+    avg_dl: f64,
+    k: usize,
+    candidates: Option<PyBackedBytes>,
+) -> PyResult<Vec<(i64, f64)>> {
+    if blocks.iter().any(|b| b.0 >= idfs.len()) {
+        return Err(PyValueError::new_err("block term index outside idfs"));
+    }
+    let set: Option<Vec<i64>> = candidates.map(|raw| {
+        raw.as_ref().chunks_exact(8).map(|c| i64::from_ne_bytes(c.try_into().expect("8 bytes"))).collect()
+    });
+    let views: Vec<ScoreBlock> = blocks
+        .iter()
+        .map(|(term, bound, ids, tfs, dls)| ScoreBlock { term: *term, bound: *bound, doc_ids: ids, tfs, dls })
+        .collect();
+    Ok(py.detach(|| lexical::score(&views, &idfs, avg_dl, k, set.as_deref())))
+}
+
 #[pymodule(name = "_native")]
 fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("PROTOCOL_VERSION", PROTOCOL_VERSION)?;
+    m.add("LEXICAL_UNICODE_VERSION", lexical::UNICODE_VERSION)?;
+    m.add("LEXICAL_PYTHON_VERSION", lexical::PYTHON_VERSION)?;
     m.add_function(wrap_pyfunction!(distinct_gram_count, m)?)?;
     m.add_function(wrap_pyfunction!(supported_grammars, m)?)?;
     m.add_function(wrap_pyfunction!(chunk_spans, m)?)?;
+    m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(lexical_char_classes, m)?)?;
+    m.add_function(wrap_pyfunction!(lexical_casefolds, m)?)?;
+    m.add_function(wrap_pyfunction!(lexical_score, m)?)?;
     m.add_class::<PostingsBuilder>()?;
+    m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;
     Ok(())
 }
