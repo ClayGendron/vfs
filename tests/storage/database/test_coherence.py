@@ -26,7 +26,7 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
-    MYSQL,
+    MARIADB,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -485,7 +485,7 @@ class TestWriteVsTopologyCoherence:
         assert "RETURNING" in sql
 
     async def test_guard_miss_mode_is_declared_per_dialect(self) -> None:
-        assert PROFILES["mysql"].guard_miss == "redrive"
+        assert PROFILES["mariadb"].guard_miss == "redrive"
         assert PROFILES["mariadb"].guard_miss == "redrive"
         assert GENERIC.guard_miss == "redrive"
         for name in ("sqlite", "postgresql", "mssql", "oracle"):
@@ -519,7 +519,7 @@ class TestWriteVsTopologyCoherence:
                 await _update_materials(
                     session,
                     entry,
-                    MYSQL,  # redrive-mode profile over the live sqlite session
+                    MARIADB,  # redrive-mode profile over the live sqlite session
                     host.parameter_budget,
                     host.membership_budget,
                     [stale],
@@ -783,7 +783,7 @@ class TestWriteVsTopologyCoherence:
         staged = _staged_material("/x.txt", str(ULID()))
         double = _ReturningSession([])
         with pytest.raises(StaleSnapshot):
-            await _classify_guard_misses(cast("AsyncSession", double), tables.entry, MYSQL, 900, [staged])
+            await _classify_guard_misses(cast("AsyncSession", double), tables.entry, MARIADB, 900, [staged])
 
     async def test_bump_parents_dispatches_by_declared_capability(self) -> None:
         tables = build_vfs_tables(table_name="vfs")

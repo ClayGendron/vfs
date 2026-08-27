@@ -275,7 +275,7 @@ class TestProbes:
         monkeypatch.setattr(glean_module, "PROBE_DEEPEN", 1)
         result = await storage.glean(query="tokens", limit=10)
         assert result.success is True
-        [record] = result.errors
+        [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert record.kind == VFSErrorKind.truncated and record.severity == Severity.warning
         assert record.data == {"window": 1, "found": 1}
         assert "scope probe budget" in record.message
@@ -287,7 +287,7 @@ class TestProbes:
         storage = await _indexed(tmp_path)
         monkeypatch.setattr(glean_module, "FUSION_K", 1)
         result = await storage.glean(query="tokens", limit=3, globs=("src/**",))
-        [record] = result.errors
+        [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert "candidate window" in record.message and record.data == {"window": 1, "found": 1}
         await storage.close()
 
@@ -345,7 +345,7 @@ class TestOverlay:
         monkeypatch.setattr(glean_module, "OVERLAY_BUDGET", 2)
         result = await storage.glean(query="tokens")
         assert result.success is True
-        [record] = result.errors
+        [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert record.kind == VFSErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
         await storage.close()
 

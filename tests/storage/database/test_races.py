@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 ENGINE_LEGS = [
     pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
-    pytest.param("VFS_TEST_MYSQL_URL", marks=pytest.mark.mysql, id="mysql"),
+    pytest.param("VFS_TEST_MARIADB_URL", marks=pytest.mark.mariadb, id="mariadb"),
     pytest.param("VFS_TEST_MSSQL_URL", marks=pytest.mark.mssql, id="mssql"),
     pytest.param("VFS_TEST_ORACLE_URL", marks=pytest.mark.oracle, id="oracle"),
 ]
@@ -336,7 +336,7 @@ class TestObservationHonesty:
     # against fresh state and report what a fresh attempt finds.
     _EXPECTED: ClassVar[dict[str, VFSErrorKind]] = {
         "VFS_TEST_POSTGRES_URL": VFSErrorKind.not_found,
-        "VFS_TEST_MYSQL_URL": VFSErrorKind.not_found,
+        "VFS_TEST_MARIADB_URL": VFSErrorKind.not_found,
         "VFS_TEST_MSSQL_URL": VFSErrorKind.conflict,
         "VFS_TEST_ORACLE_URL": VFSErrorKind.conflict,
     }
@@ -682,7 +682,7 @@ class TestGrepEpochConsistency:
             await _audit(storage)
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestGenerationRedirtyLockScope:
     """The probe-guarded re-dirty: a settled store's chunk pass locks nothing.
 
@@ -695,7 +695,7 @@ class TestGenerationRedirtyLockScope:
     """
 
     async def test_a_rival_row_update_passes_during_the_chunk_pass(self) -> None:
-        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
             settled = [Entry(path=Path(f"/f{i:03}.txt"), content=f"settled body {i:03}") for i in range(50)]
             assert (await storage.write(entries=settled)).success is True
             assert (await storage.reindex()).success is True
@@ -704,7 +704,7 @@ class TestGenerationRedirtyLockScope:
             assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="fresh body")])).success
 
             entry = storage._host.tables.entry
-            rival_engine = create_async_engine(os.environ["VFS_TEST_MYSQL_URL"])
+            rival_engine = create_async_engine(os.environ["VFS_TEST_MARIADB_URL"])
             served: list[bool] = []
 
             async def rival() -> None:

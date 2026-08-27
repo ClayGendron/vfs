@@ -1,9 +1,9 @@
 """Tests for ``vfs.models.vector`` — the Vector runtime type and its column type.
 
 ``Vector[N]`` subclasses validate dimension at construction and through
-pydantic; ``VectorType`` stores JSON text portably and switches to native
-pgvector only on PostgreSQL — bind and result stay dimension- and
-model-guarded on every path.
+pydantic; ``VectorType`` stores packed little-endian float32 portably and
+switches to native pgvector only on PostgreSQL — bind and result stay
+dimension- and model-guarded on every path.
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from __future__ import annotations
 import pytest
 from pgvector.sqlalchemy import Vector as PGVector
 from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import LargeBinary
 from sqlalchemy.dialects import postgresql, sqlite
 
-from vfs.models.vector import Vector, VectorType
+from vfs.models.vector import Vector, VectorType, pack_vector, unpack_vector
 
 SQLITE = sqlite.dialect()
 POSTGRES = postgresql.dialect()
@@ -108,28 +109,52 @@ class TestVectorPydantic:
 class TestVectorTypeConfiguration:
     def test_native_requires_a_fixed_dimension(self) -> None:
         with pytest.raises(ValueError, match="fixed dimension"):
-            VectorType(postgres_native=True)
+            VectorType(native=True)
 
     def test_pgvector_type_requires_a_fixed_dimension(self) -> None:
         with pytest.raises(ValueError, match="fixed dimension"):
             VectorType().pgvector_sqlalchemy_type()
 
     def test_dialect_impl_is_native_only_on_postgres(self) -> None:
-        column = VectorType(dimension=3, postgres_native=True)
+        column = VectorType(dimension=3, native=True)
         assert isinstance(column.load_dialect_impl(POSTGRES), PGVector)
-        assert not isinstance(column.load_dialect_impl(SQLITE), PGVector)
+        assert isinstance(column.load_dialect_impl(SQLITE), LargeBinary)
+        assert column.is_native_on(POSTGRES) and not column.is_native_on(SQLITE)
+        assert not VectorType(dimension=3).is_native_on(POSTGRES)
 
     def test_copy_preserves_configuration(self) -> None:
         column = VectorType(
             dimension=5,
             model_name="m",
-            postgres_native=True,
+            native=True,
             postgres_index_method="ivfflat",
             postgres_operator_class="vector_l2_ops",
         )
         dup = column.copy()
-        assert (dup.dimension, dup.model_name, dup.postgres_native) == (5, "m", True)
+        assert (dup.dimension, dup.model_name, dup.native) == (5, "m", True)
         assert (dup.postgres_index_method, dup.postgres_operator_class) == ("ivfflat", "vector_l2_ops")
+
+
+# ---------------------------------------------------------------------------
+# The packed format
+# ---------------------------------------------------------------------------
+
+
+class TestPackedFormat:
+    def test_little_endian_float32_four_bytes_a_component(self) -> None:
+        packed = pack_vector([1.0, -2.5])
+        assert packed == b"\x00\x00\x80\x3f\x00\x00\x20\xc0"
+        assert unpack_vector(packed) == [1.0, -2.5]
+
+    def test_float32_rounds_the_way_the_engines_store_it(self) -> None:
+        assert unpack_vector(pack_vector([0.1]))[0] == pytest.approx(0.1, abs=1e-7)
+
+    def test_a_torn_payload_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="whole number of float32"):
+            unpack_vector(b"\x00\x00\x00")
+
+    def test_the_empty_vector_round_trips(self) -> None:
+        assert unpack_vector(pack_vector([])) == []
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +166,8 @@ class TestVectorTypeBind:
     def test_none_passes_through(self) -> None:
         assert VectorType().process_bind_param(None, SQLITE) is None
 
-    def test_serializes_json_text_by_default(self) -> None:
-        assert VectorType().process_bind_param([1.0, 2.5], SQLITE) == "[1.0, 2.5]"
+    def test_packs_float32_bytes_by_default(self) -> None:
+        assert VectorType().process_bind_param([1.0, 2.5], SQLITE) == pack_vector([1.0, 2.5])
 
     def test_enforces_dimension(self) -> None:
         with pytest.raises(ValueError, match="expected 3 dims, got 1"):
@@ -155,13 +180,13 @@ class TestVectorTypeBind:
 
     def test_accepts_a_matching_or_unset_model_name(self) -> None:
         column = VectorType(dimension=2, model_name="m")
-        assert column.process_bind_param(Vector[2, "m"]([1.0, 2.0]), SQLITE) == "[1.0, 2.0]"
-        assert column.process_bind_param([1.0, 2.0], SQLITE) == "[1.0, 2.0]"
+        assert column.process_bind_param(Vector[2, "m"]([1.0, 2.0]), SQLITE) == pack_vector([1.0, 2.0])
+        assert column.process_bind_param([1.0, 2.0], SQLITE) == pack_vector([1.0, 2.0])
 
     def test_native_passes_a_list_on_postgres_only(self) -> None:
-        column = VectorType(dimension=2, postgres_native=True)
+        column = VectorType(dimension=2, native=True)
         assert column.process_bind_param([1.0, 2.0], POSTGRES) == [1.0, 2.0]
-        assert column.process_bind_param([1.0, 2.0], SQLITE) == "[1.0, 2.0]"
+        assert column.process_bind_param([1.0, 2.0], SQLITE) == pack_vector([1.0, 2.0])
 
 
 # ---------------------------------------------------------------------------
@@ -173,41 +198,40 @@ class TestVectorTypeResult:
     def test_none_passes_through(self) -> None:
         assert VectorType().process_result_value(None, SQLITE) is None
 
-    def test_parses_json_into_the_configured_subclass(self) -> None:
-        v = VectorType(dimension=2, model_name="m").process_result_value("[1.0, 2.0]", SQLITE)
+    def test_unpacks_into_the_configured_subclass(self) -> None:
+        v = VectorType(dimension=2, model_name="m").process_result_value(pack_vector([1.0, 2.0]), SQLITE)
         assert v is not None
         assert (v.dimension, v.model_name) == (2, "m")
         assert v == [1.0, 2.0]
 
     def test_coercion_covers_every_configuration(self) -> None:
-        dimensioned = VectorType(dimension=1).process_result_value("[1.0]", SQLITE)
+        one = pack_vector([1.0])
+        dimensioned = VectorType(dimension=1).process_result_value(one, SQLITE)
         assert dimensioned is not None and dimensioned.dimension == 1
-        named = VectorType(model_name="m").process_result_value("[1.0]", SQLITE)
+        named = VectorType(model_name="m").process_result_value(one, SQLITE)
         assert named is not None and named.model_name == "m"
-        plain = VectorType().process_result_value("[1.0]", SQLITE)
+        plain = VectorType().process_result_value(one, SQLITE)
         assert plain is not None and (plain.dimension, plain.model_name) == (None, None)
 
-    def test_accepts_numeric_strings(self) -> None:
-        assert VectorType().process_result_value('["1.5", 2]', SQLITE) == [1.5, 2.0]
+    def test_accepts_every_buffer_shape(self) -> None:
+        one = pack_vector([1.5, 2.0])
+        assert VectorType().process_result_value(bytearray(one), SQLITE) == [1.5, 2.0]
+        assert VectorType().process_result_value(memoryview(one), SQLITE) == [1.5, 2.0]
 
-    def test_refuses_non_text(self) -> None:
-        with pytest.raises(ValueError, match="expected JSON text"):
-            VectorType().process_result_value(123, SQLITE)
+    def test_refuses_non_bytes(self) -> None:
+        with pytest.raises(ValueError, match="expected packed float32 bytes"):
+            VectorType().process_result_value("[1.0, 2.0]", SQLITE)
 
-    def test_refuses_non_array_json(self) -> None:
-        with pytest.raises(ValueError, match="expected JSON array"):
-            VectorType().process_result_value('"x"', SQLITE)
-
-    def test_refuses_non_numeric_elements(self) -> None:
-        with pytest.raises(ValueError, match="numeric vector element"):
-            VectorType().process_result_value("[null]", SQLITE)
+    def test_refuses_a_torn_payload(self) -> None:
+        with pytest.raises(ValueError, match="whole number of float32"):
+            VectorType().process_result_value(b"\x00\x00\x00", SQLITE)
 
     def test_enforces_dimension(self) -> None:
         with pytest.raises(ValueError, match="expected 3 dims, got 1"):
-            VectorType(dimension=3).process_result_value("[1.0]", SQLITE)
+            VectorType(dimension=3).process_result_value(pack_vector([1.0]), SQLITE)
 
     def test_native_accepts_list_tuple_and_tolist(self) -> None:
-        column = VectorType(dimension=2, postgres_native=True)
+        column = VectorType(dimension=2, native=True)
         assert column.process_result_value([1.0, 2.0], POSTGRES) == [1.0, 2.0]
         assert column.process_result_value((1.0, 2.0), POSTGRES) == [1.0, 2.0]
 
@@ -217,13 +241,16 @@ class TestVectorTypeResult:
 
         assert column.process_result_value(NumpyLike(), POSTGRES) == [1.0, 2.0]
 
-    def test_native_accepts_any_iterable(self) -> None:
-        column = VectorType(dimension=2, postgres_native=True)
+    def test_native_accepts_any_iterable_and_numeric_strings(self) -> None:
+        column = VectorType(dimension=2, native=True)
         assert column.process_result_value(iter([1.0, 2.0]), POSTGRES) == [1.0, 2.0]
+        assert column.process_result_value(["1.5", 2], POSTGRES) == [1.5, 2.0]
 
-    def test_native_refuses_text_and_non_iterables(self) -> None:
-        column = VectorType(dimension=2, postgres_native=True)
-        with pytest.raises(ValueError, match="iterable pgvector value"):
+    def test_native_refuses_text_non_iterables_and_non_numeric_elements(self) -> None:
+        column = VectorType(dimension=2, native=True)
+        with pytest.raises(ValueError, match="iterable native vector value"):
             column.process_result_value("[1.0, 2.0]", POSTGRES)
-        with pytest.raises(ValueError, match="iterable pgvector value"):
+        with pytest.raises(ValueError, match="iterable native vector value"):
             column.process_result_value(5, POSTGRES)
+        with pytest.raises(ValueError, match="numeric vector element"):
+            column.process_result_value([None, 1.0], POSTGRES)

@@ -39,18 +39,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
-from sqlalchemy import Engine, event, func, insert, select
+from sqlalchemy import Engine, event, func, insert, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.util.concurrency import await_only
 from ulid import ULID
 
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
+from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
@@ -69,9 +73,29 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
+    from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
 
 T = TypeVar("T")
+
+SQLITE_VEC_PROBE = "SELECT vec_version()"
+"""The first-touch statement that proves the extension is in the connection."""
+
+PGVECTOR_VERSION_PROBE = "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+"""The first-touch read of pgvector's version on PostgreSQL — the ANN tier's iterative-scan gate."""
+
+# Some system Pythons build sqlite3 without extension loading; the hook
+# then loads nothing and first touch refuses with the reason.
+_EXTENSIONS_LOADABLE = hasattr(sqlite3.Connection, "enable_load_extension")
+
+# The extension's loadable file, located without importing the package
+# (its ``__init__`` pulls numpy in when numpy is installed).
+_SQLITE_VEC_SPEC = importlib.util.find_spec("sqlite_vec")
+SQLITE_VEC_PATH: str | None = (
+    str(next(iter(_SQLITE_VEC_SPEC.submodule_search_locations or ()), "") or "") + "/vec0"
+    if _SQLITE_VEC_SPEC is not None and _SQLITE_VEC_SPEC.submodule_search_locations
+    else None
+)
 
 
 def advisory_key(text: str) -> int:
@@ -103,6 +127,8 @@ class EngineHost:
         session_factory: Callable[[], AsyncSession] | None = None,
         table_name: str = "vfs",
         schema: str | None = None,
+        embedder: EmbeddingProvider | None = None,
+        native_embedding: NativeEmbeddingConfig | None = None,
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
     ) -> None:
@@ -111,7 +137,25 @@ class EngineHost:
                 "DatabaseStorage takes exactly one of url= (built: the backend owns the engine) "
                 "or session_factory= (borrowed: injected sessions; close() never touches the pool)"
             )
-        self.tables: VFSTables = build_vfs_tables(table_name=table_name, schema=schema)
+        if embedder is not None and native_embedding is not None and embedder.dimension != native_embedding.dimension:
+            raise ValueError(
+                f"native_embedding declares a {native_embedding.dimension}-wide column but the embedder "
+                f"{embedder.model_id!r} produces {embedder.dimension}-wide vectors"
+            )
+        # An embedder fixes the space's width, and a fixed width is what the
+        # engines' own vector columns need: the native column follows.
+        if embedder is not None and native_embedding is None:
+            native_embedding = NativeEmbeddingConfig(dimension=embedder.dimension)
+        self.tables: VFSTables = build_vfs_tables(
+            table_name=table_name, schema=schema, native_embedding=native_embedding
+        )
+        self.embedder = embedder
+        self.native_embedding = native_embedding
+        # The space the stored vectors live in, adopted at first touch and
+        # moved by the embed step; ``None`` until the first embedding lands.
+        self.embedding_identity: tuple[str, int] | None = None
+        # pgvector's version, read at first touch on PostgreSQL; ``None`` elsewhere.
+        self.pgvector_version: tuple[int, ...] | None = None
         self._engine: AsyncEngine | None
         self.session_factory: Callable[[], AsyncSession]
         if session_factory is not None:
@@ -179,6 +223,18 @@ class EngineHost:
         if self._offload_executor is None:
             self._offload_executor = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-offload")
         return self._offload_executor
+
+    @property
+    def embedding_stale(self) -> bool:
+        """Whether the stored vectors belong to a space other than the configured embedder's.
+
+        ``False`` with no embedder or no stored identity: nothing to
+        compare. A stale space is served lexical-only and migrated by
+        the next ``reindex``.
+        """
+        if self.embedder is None or self.embedding_identity is None:
+            return False
+        return self.embedding_identity != (self.embedder.model_id, self.embedder.dimension)
 
     @property
     def topology_key(self) -> int:
@@ -316,6 +372,10 @@ class EngineHost:
         profile = self._policy().profile
         if profile.file_settings:
             await self._apply_file_settings(profile)
+        if profile.name == "sqlite":
+            refusal = await self._probe_sqlite_vec()
+            if refusal is not None:
+                return refusal
         refusal = await self._verify_or_provision()
         if refusal is None:
             self._ready = True
@@ -330,9 +390,33 @@ class EngineHost:
             for statement in profile.file_settings:
                 await conn.exec_driver_sql(statement)
 
+    async def _probe_sqlite_vec(self) -> ResultError | None:
+        """Prove the connection hook loaded sqlite-vec; refuse the mount naming the fix when it did not.
+
+        The load runs on every connection, but an interpreter whose
+        ``sqlite3`` was built without extension loading fails it
+        silently at the hook — so first touch asks the engine for the
+        function the vector leg needs.
+        """
+        async with self.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_no_begin": True})
+            try:
+                await conn.exec_driver_sql(SQLITE_VEC_PROBE)
+            except DBAPIError:
+                return ResultError(
+                    kind=VFSErrorKind.unavailable,
+                    message=(
+                        "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
+                        "(enable_load_extension is missing); use a Python built with extension loading"
+                    ),
+                )
+        return None
+
     async def _verify_or_provision(self) -> ResultError | None:
         meta = self.tables.meta
-        version_and_identity = select(meta.c.schema_format_version, meta.c.mount_identity)
+        version_and_identity = select(
+            meta.c.schema_format_version, meta.c.mount_identity, meta.c.embedding_model, meta.c.embedding_dimension
+        )
         async with self.session_factory() as session:
             # First touch is a topology mutation: writer marker (SQLite's
             # BEGIN IMMEDIATE) plus the declared topology-isolation pin.
@@ -363,7 +447,9 @@ class EngineHost:
                     ),
                 )
             else:
-                outcome = self._adopt(row.schema_format_version, row.mount_identity)
+                outcome = self._adopt(row)
+            if outcome is None and self.profile.name == "postgresql":  # pragma: no cover - the Postgres leg
+                self.pgvector_version = await _pgvector_version(conn)
             await session.commit()
             return outcome
 
@@ -399,16 +485,39 @@ class EngineHost:
         if self.profile.name == "postgresql":
             await conn.execute(select(func.pg_advisory_xact_lock(self._table_key)))
 
-    def _adopt(self, version: int, identity: str) -> ResultError | None:
-        if version != SCHEMA_FORMAT_VERSION:
+    def _adopt(self, row: Any) -> ResultError | None:
+        """Verify the meta row and adopt its identities; a refusal names the mismatch.
+
+        A stored embedding space of another width than a **native**
+        column refuses outright: the column physically cannot hold the
+        configured vectors, and the fix is DDL, out of every verb's
+        reach. A stored *model* mismatch is not refused here — the
+        vector leg declines it per call and ``reindex`` migrates.
+        """
+        if row.schema_format_version != SCHEMA_FORMAT_VERSION:
             return ResultError(
                 kind=VFSErrorKind.schema_mismatch,
                 message=(
-                    f"Database schema format is {version}; this build expects "
+                    f"Database schema format is {row.schema_format_version}; this build expects "
                     f"{SCHEMA_FORMAT_VERSION}. Refusing to serve — upgrade or re-provision the mount."
                 ),
             )
-        self.mount_identity = identity
+        stored = (
+            (row.embedding_model, row.embedding_dimension)
+            if row.embedding_model is not None and row.embedding_dimension is not None
+            else None
+        )
+        native = self.native_embedding
+        if stored is not None and native is not None and stored[1] != native.dimension:
+            return ResultError(
+                kind=VFSErrorKind.invalid,
+                message=(
+                    f"the mount's native vector column is {native.dimension} wide but its stored embeddings "
+                    f"are {stored[0]!r} at {stored[1]}; re-provision the mount or restore the matching embedder"
+                ),
+            )
+        self.mount_identity = row.mount_identity
+        self.embedding_identity = stored
         return None
 
 
@@ -457,6 +566,10 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
     def _on_checkout(dbapi_connection, _record, _proxy) -> None:  # noqa: ANN001
         dbapi_connection.isolation_level = None
         cursor = dbapi_connection.cursor()
+        # Checkout, not connect: a borrowed pool's pre-existing connections
+        # never fire connect. A connection already carrying the function skips the load.
+        if not _has_sqlite_vec(cursor):
+            _load_sqlite_vec(dbapi_connection)
         for statement in profile.session_settings:
             cursor.execute(statement)
         cursor.close()
@@ -468,6 +581,44 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
             return
         mode = "BEGIN IMMEDIATE" if options.get("vfs_writer") else "BEGIN"
         conn.exec_driver_sql(mode)
+
+
+async def _pgvector_version(conn: AsyncConnection) -> tuple[int, ...] | None:
+    """The installed pgvector extension's version as a tuple, or ``None`` when absent."""
+    raw = (await conn.execute(text(PGVECTOR_VERSION_PROBE))).scalar_one_or_none()
+    if raw is None:
+        return None
+    return tuple(int(part) for part in str(raw).split(".") if part.isdigit())
+
+
+def _has_sqlite_vec(cursor: Any) -> bool:
+    """Whether this connection already answers the extension's version function."""
+    try:
+        cursor.execute(SQLITE_VEC_PROBE)
+    except sqlite3.OperationalError:
+        return False
+    cursor.fetchall()
+    return True
+
+
+def _load_sqlite_vec(dbapi_connection: Any) -> None:
+    """Load the sqlite-vec extension into one DBAPI connection.
+
+    The async adapter wraps an ``aiosqlite`` connection whose worker
+    thread owns the real ``sqlite3`` handle, so the load is issued as
+    that connection's own coroutines, awaited from the pool event's
+    greenlet — the adapter's own pattern for ``create_function``. An
+    interpreter without extension loading is left as it is; first touch
+    probes and refuses with the reason.
+    """
+    inner = getattr(dbapi_connection, "_connection", None)
+    if not _EXTENSIONS_LOADABLE or inner is None or SQLITE_VEC_PATH is None:
+        return
+    await_only(inner.enable_load_extension(True))
+    try:
+        await_only(inner.load_extension(SQLITE_VEC_PATH))
+    finally:
+        await_only(inner.enable_load_extension(False))
 
 
 class _SerializedSession:

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple
 
 from sqlalchemy import (
     BINARY,
+    DDL,
     VARBINARY,
     BigInteger,
     Boolean,
@@ -58,6 +59,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
     Uuid,
+    event,
 )
 from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.dialects.oracle import RAW
@@ -121,10 +123,16 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 8
+SCHEMA_FORMAT_VERSION: Final = 9
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
+
+# The widest ``embedding_model`` the meta row stores (``provider/model@dim``).
+MAX_MODEL_ID_LENGTH: Final = 255
+
+# pgvector's HNSW and IVFFlat indexes accept at most this many components.
+PGVECTOR_INDEX_MAX_DIMENSION: Final = 2_000
 
 # Postgres caps identifiers at 63 chars; the longest derived name adds 22
 # ("uq_" + "_chunks_entry_index"), so 63 - 22. A tightness test pins the math.
@@ -334,7 +342,7 @@ def build_vfs_tables(
         VectorType(
             dimension=native_embedding.dimension,
             model_name=native_embedding.model_name,
-            postgres_native=True,
+            native=True,
             postgres_index_method=native_embedding.index_method,
             postgres_operator_class=native_embedding.operator_class,
         )
@@ -447,6 +455,8 @@ def build_vfs_tables(
         schema=schema,
         sqlite_autoincrement=True,
     )
+    if native_embedding is not None:
+        _attach_pgvector_ddl(metadata, chunks, table_name, native_embedding)
 
     # Edges: narrow ID triples with both traversal directions indexed. No
     # path columns — liveness and addressing come from joining entries.
@@ -482,6 +492,10 @@ def build_vfs_tables(
         # millis. NULL holder or a stale heartbeat means the lease is free.
         Column("reindex_holder", String(ULID_LENGTH)),
         Column("reindex_heartbeat", BigInteger),
+        # The mount's one embedding space — the provider- and dimension-
+        # qualified model id and its width, stamped by the first embed.
+        Column("embedding_model", _string(MAX_MODEL_ID_LENGTH)),
+        Column("embedding_dimension", Integer),
         Column("created_at", DateTime(timezone=True)),
         CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),
         schema=schema,
@@ -608,3 +622,27 @@ def build_vfs_tables(
         lex_df=lex_df,
         lex_stats=lex_stats,
     )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, table_name: str, config: NativeEmbeddingConfig) -> None:
+    """The extension and the ANN index behind a native pgvector column — PostgreSQL only.
+
+    Both statements are dialect-conditional DDL events: every other
+    engine provisions its own column with no index, so one table
+    definition serves the whole matrix. A space wider than pgvector's
+    index cap gets the column and an exact scan, never a failing DDL.
+    """
+    extension = DDL("CREATE EXTENSION IF NOT EXISTS vector").execute_if(dialect="postgresql")
+    event.listen(metadata, "before_create", extension)
+    if config.dimension > PGVECTOR_INDEX_MAX_DIMENSION:
+        return
+    index = DDL(
+        f"CREATE INDEX IF NOT EXISTS ix_{table_name}_chunks_embedding ON {chunks.fullname} "
+        f"USING {config.index_method} (embedding {config.operator_class})"
+    ).execute_if(dialect="postgresql")
+    event.listen(chunks, "after_create", index)

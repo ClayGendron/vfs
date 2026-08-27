@@ -22,8 +22,8 @@ from vfs.paths import Path
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
     GENERIC,
+    MARIADB,
     MSSQL,
-    MYSQL,
     POSTGRESQL,
     PROFILES,
     SQLITE,
@@ -52,14 +52,14 @@ class TestTopologyOptions:
         assert topology_execution_options(GENERIC) == {"vfs_writer": True}
 
     def test_topology_options_pin_read_committed_where_declared(self) -> None:
-        for profile in (POSTGRESQL, MYSQL, PROFILES["mariadb"]):
+        for profile in (POSTGRESQL, MARIADB, PROFILES["mariadb"]):
             options = topology_execution_options(profile)
             assert options == {"vfs_writer": True, "isolation_level": "READ COMMITTED"}
 
     def test_topology_pin_never_borrows_the_op_pin(self) -> None:
         # MySQL ops run REPEATABLE READ; its topology pin must differ.
-        assert op_execution_options(MYSQL, writer=True)["isolation_level"] == "REPEATABLE READ"
-        assert topology_execution_options(MYSQL)["isolation_level"] == "READ COMMITTED"
+        assert op_execution_options(MARIADB, writer=True)["isolation_level"] == "REPEATABLE READ"
+        assert topology_execution_options(MARIADB)["isolation_level"] == "READ COMMITTED"
 
 
 class TestTopologyKey:
@@ -111,7 +111,7 @@ class TestSerializationPoint:
         assert str(advisory_key("vfs")) in recorder.statements[0]
 
     async def test_other_engines_x_lock_the_meta_row(self) -> None:
-        for profile in (MSSQL, MYSQL, PROFILES["oracle"], GENERIC):
+        for profile in (MSSQL, MARIADB, PROFILES["oracle"], GENERIC):
             recorder = _StatementRecorder()
             await _serialize(cast("AsyncSession", recorder), profile, self._meta(), lock_key=7)
             assert len(recorder.statements) == 1

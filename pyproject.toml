@@ -38,6 +38,7 @@ dependencies = [
     "unidiff>=0.7",
     "pyyaml>=6.0.3",
     "python-ulid>=3.1.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.urls]
@@ -54,12 +55,13 @@ pinecone = ["pinecone[asyncio]>=5.0"]
 databricks = ["databricks-vectorsearch>=0.40"]
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
-mysql = ["aiomysql>=0.2"]
+mariadb = ["aiomysql>=0.2"]
 oracle = ["oracledb>=2.0"]
 deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mysql,oracle,deepagents,langchain,langgraph]"]
+embed-local = ["model2vec>=0.5"]
+all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mariadb,oracle,deepagents,langchain,langgraph,embed-local]"]
 
 [dependency-groups]
 dev = [
@@ -139,7 +141,7 @@ markers = [
     "integration: marks integration tests",
     "needs(*ops): ops a storage-conformance test requires the backend to declare",
     "postgres: conformance leg against a real PostgreSQL server (VFS_TEST_POSTGRES_URL)",
-    "mysql: conformance leg against a real MySQL server (VFS_TEST_MYSQL_URL)",
+    "mariadb: conformance leg against a real MariaDB server (VFS_TEST_MARIADB_URL)",
     "mssql: conformance leg against a real SQL Server instance (VFS_TEST_MSSQL_URL)",
     "oracle: conformance leg against a real Oracle server (VFS_TEST_ORACLE_URL)",
 ]

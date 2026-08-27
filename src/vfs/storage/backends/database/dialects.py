@@ -6,13 +6,13 @@ copied here: the parameter budget is ``dialect.insertmanyvalues_max_parameters``
 transport-down classification is ``dialect.is_disconnect()``.  What this
 module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
-budgets, and create-arbitration mode.
+budgets, create-arbitration mode, and the vector-distance facts.
 
-Known engines (sqlite, postgresql, mssql, oracle, and the mysql/mariadb
-family) carry tuned policy; **any other SQLAlchemy dialect resolves to
-a conservative generic profile** — the backend runs on any
+Known engines (sqlite, postgresql, mssql, oracle, mariadb) carry tuned
+policy; **any other SQLAlchemy dialect resolves to a conservative
+generic profile** — the backend serves the core verbs on any
 SQLAlchemy-compatible database, degrading to safe defaults rather than
-refusing.
+refusing, and withholds the ranked verbs the floor cannot vouch for.
 
     profile = profile_for(engine.dialect.name)
     if is_retryable(profile, exc): ...
@@ -66,6 +66,7 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 
 
 BulkInsertMode = Literal["driver", "copy", "core"]
+VectorDistance = Literal["none", "exact", "ann"]
 
 
 @dataclass(frozen=True)
@@ -132,12 +133,27 @@ class DialectProfile:
     from the bulk-insert benchmark and the engine legs; the generic
     floor never assumes an unknown driver's executemany is a batch.
 
+    ``vector_distance`` declares the engine's server-side cosine:
+    ``exact`` (a distance function, no usable ANN index — SQL Server
+    2025, whose DiskANN makes the table read-only; SQLite through the
+    sqlite-vec extension vfs loads), ``ann`` (a distance function and an
+    index the planner may use), or ``none`` — only the generic floor,
+    which therefore serves no ranked verb. Facts SQLAlchemy takes no
+    position on, read from the engine matrix.
+    ``vector_dimension_cap`` is the widest native column the engine
+    creates (pgvector 16,000; SQL Server 1,998; MariaDB 16,383 — its
+    65,535-byte row cap binds first; Oracle 65,535); ``ann_dimension_cap``
+    the widest an ANN index accepts (pgvector's HNSW 2,000).
+    ``ann_honours_scope`` declares that a scoped query can still use the
+    ANN index (pgvector filters inside the index scan; MariaDB and
+    Oracle drop to an exact scan the moment a predicate appears).
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
     re-probe of the missed row classifies the miss honestly
     (``not_found`` vs ``conflict``). ``redrive``: the two disagree — on
-    the mysql family at REPEATABLE READ the UPDATE current-reads past
+    MariaDB at REPEATABLE READ the UPDATE current-reads past
     the snapshot the probe would report — so the only honest move is
     :class:`StaleSnapshot`, retrying the whole method from fresh state.
     The generic floor declares ``redrive``: never classify off a probe
@@ -156,7 +172,7 @@ class DialectProfile:
     retryable_sqlstates: frozenset[str] = frozenset({"40001", "40P01"})
     retryable_sqlite_codes: frozenset[int] = frozenset()
     # Integer driver error numbers, for drivers that lead with an errno
-    # instead of a SQLSTATE (the MySQL family: PyMySQL/aiomysql args[0]).
+    # instead of a SQLSTATE (the MySQL family's drivers: aiomysql args[0]).
     retryable_driver_codes: frozenset[int] = frozenset()
     expression_depth_budget: int = 1_000
     values_join: bool = False
@@ -166,6 +182,10 @@ class DialectProfile:
     # How bulk_insert reaches the engine: Core's executemany, or the
     # driver's own on the session's connection — measured per engine.
     bulk_insert: BulkInsertMode = "core"
+    vector_distance: VectorDistance = "none"
+    vector_dimension_cap: int | None = None
+    ann_dimension_cap: int | None = None
+    ann_honours_scope: bool = False
 
 
 SQLITE: Final = DialectProfile(
@@ -195,6 +215,8 @@ SQLITE: Final = DialectProfile(
     content_bytes=True,
     # sqlite3.executemany: no round trips to lose, only Core's per-row work (1.9 vs 6.7 µs).
     bulk_insert="driver",
+    # vec_distance_cosine from sqlite-vec, loaded on every connection; brute force, exact.
+    vector_distance="exact",
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -209,6 +231,10 @@ POSTGRESQL: Final = DialectProfile(
     tuple_in=True,
     # asyncpg pipelines one execute per row; binary COPY halves Core's pages (4.3 vs 9.1 µs).
     bulk_insert="copy",
+    vector_distance="ann",
+    vector_dimension_cap=16_000,
+    ann_dimension_cap=2_000,
+    ann_honours_scope=True,
 )
 
 MSSQL: Final = DialectProfile(
@@ -224,12 +250,17 @@ MSSQL: Final = DialectProfile(
     # pyodbc round-trips per row (560 µs); its parameter-array mode is still
     # one RPC per row — slower than Core's multirow pages on entry-wide rows.
     bulk_insert="core",
+    vector_distance="exact",
+    vector_dimension_cap=1_998,
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
 # target and fires on ANY unique index — unsafe beside two unique keys.
-MYSQL: Final = DialectProfile(
-    name="mysql",
+# MariaDB is the MySQL family's supported member: community MySQL has
+# the VECTOR type but no distance function and no extension vfs can
+# install, so it is served as an unknown dialect.
+MARIADB: Final = DialectProfile(
+    name="mariadb",
     key_byte_budget=3_072,
     in_list_budget=65_535,
     arbitration="catch_retry",
@@ -241,14 +272,17 @@ MYSQL: Final = DialectProfile(
     # READ would pin a pre-lock snapshot. Mirrors the Postgres pin.
     topology_isolation="READ COMMITTED",
     # Deadlock (1213) also carries SQLSTATE 40001; lock-wait timeout
-    # (1205) ships under the HY000 catch-all, so only its errno classifies.
-    retryable_driver_codes=frozenset({1213, 1205}),
+    # (1205) ships under the HY000 catch-all, so only its errno classifies;
+    # 1020 is the snapshot-isolation conflict (11.6+ default), a restart.
+    retryable_driver_codes=frozenset({1213, 1205, 1020}),
     tuple_in=True,
     # aiomysql renders executemany as one multirow statement client-side (44 vs 51 µs).
     bulk_insert="driver",
+    # VEC_DISTANCE_COSINE and an MHNSW index the planner uses only on an
+    # unscoped ORDER BY … LIMIT; the InnoDB row cap binds before 16,383.
+    vector_distance="ann",
+    vector_dimension_cap=16_383,
 )
-
-MARIADB: Final = replace(MYSQL, name="mariadb")
 
 # Budgets stay at the floor Oracle itself defines (ORA-01795's 1,000
 # IN-list cap; the conservative key budget) — the tuning here is retry
@@ -266,6 +300,8 @@ ORACLE: Final = DialectProfile(
     # Core already issues array DML here; the bare driver path loses the
     # setinputsizes typing (DATE binds drop microseconds) — 179 leg failures.
     bulk_insert="core",
+    vector_distance="ann",
+    vector_dimension_cap=65_535,
 )
 
 # The floor for engines this project has not measured: the tightest known
@@ -281,7 +317,6 @@ PROFILES: Final[dict[str, DialectProfile]] = {
     SQLITE.name: SQLITE,
     POSTGRESQL.name: POSTGRESQL,
     MSSQL.name: MSSQL,
-    MYSQL.name: MYSQL,
     MARIADB.name: MARIADB,
     ORACLE.name: ORACLE,
 }
@@ -593,6 +628,9 @@ async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mappin
 # falls through to the driver errno instead of judging by it.
 _SQLSTATE_GENERAL_ERROR: Final = "HY000"
 
+# Exception-context links walked for a transient cause behind an unwind error.
+_UNWIND_DEPTH: Final = 4
+
 
 def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     """Whether *exc* is a transient outcome a whole-method restart can clear.
@@ -602,8 +640,23 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     classification by definition and defers to the driver errno (MySQL
     ships lock-wait timeout 1205 under it). Unique violations (23505)
     are definite exists-outcomes after arbitration and are never in any
-    profile's retryable set.
+    profile's retryable set. An error raised while *unwinding* from a
+    retryable one is retryable too: a deadlock rolls the whole
+    transaction back on InnoDB, so the savepoint release that follows
+    fails with its own error (MariaDB's 1305), and the transient cause
+    sits one link down the exception's context chain.
     """
+    seen = 0
+    current: BaseException | None = exc
+    while current is not None and seen < _UNWIND_DEPTH:
+        if _is_retryable_alone(profile, current):
+            return True
+        current = current.__context__
+        seen += 1
+    return False
+
+
+def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:
     origin = getattr(exc, "orig", None) or exc
     sqlite_code = getattr(origin, "sqlite_errorcode", None)
     if sqlite_code is not None:

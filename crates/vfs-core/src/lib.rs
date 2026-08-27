@@ -1,6 +1,6 @@
 //! The vfs engine: byte-trigram extraction, posting-list building, grep
-//! match verification, structure-aware chunk spans, and the lexical (BM25)
-//! tokenizer, block-posting builder and scorer.
+//! match verification, structure-aware chunk spans, the lexical (BM25)
+//! tokenizer, block-posting builder and scorer, and the cosine top-k kernel.
 //!
 //! This crate is the throughput core behind the vfs gram index and the
 //! semantic chunker. It holds no policy: inputs are UTF-8 bytes prepared by
@@ -16,6 +16,7 @@ mod grams;
 mod lexical;
 mod lexical_tables;
 mod postings;
+mod vectors;
 mod verify;
 
 #[cfg(feature = "python")]
@@ -29,4 +30,5 @@ pub use lexical::{
     tokenize,
 };
 pub use postings::{AddDocError, DrainedPostings, PostingError, PostingRow, PostingsAccumulator, candidate_ids, decode_postings};
+pub use vectors::{VectorError, cosine_topk};
 pub use verify::{BatchOutcome, Hit, Matcher, PatternError, count_batch, hits_batch};

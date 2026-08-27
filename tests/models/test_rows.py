@@ -315,7 +315,7 @@ class TestBuildVFSTables:
     def test_default_embedding_is_portable(self, tables: VFSTables) -> None:
         vector_type = tables.chunks.c.embedding.type
         assert isinstance(vector_type, VectorType)
-        assert vector_type.postgres_native is False
+        assert vector_type.native is False
         assert vector_type.dimension is None
 
     def test_native_embedding_shapes_the_chunk_column(self) -> None:
@@ -325,7 +325,7 @@ class TestBuildVFSTables:
         )
         vector_type = native.chunks.c.embedding.type
         assert isinstance(vector_type, VectorType)
-        assert vector_type.postgres_native is True
+        assert vector_type.native is True
         assert vector_type.dimension == 8
         assert vector_type.model_name == "m"
         assert vector_type.postgres_index_method == "hnsw"
@@ -473,7 +473,7 @@ class TestDDL:
 
     def test_native_embedding_ddl_compiles_off_postgres(self, engine: Engine) -> None:
         native = build_vfs_tables(table_name="t", native_embedding=NativeEmbeddingConfig(dimension=8))
-        native.metadata.create_all(engine)  # VectorType falls back to TEXT
+        native.metadata.create_all(engine)  # VectorType falls back to the packed binary column
 
     def test_entry_splits_into_entries_plus_content_and_reads_back(self, tables: VFSTables, engine: Engine) -> None:
         tables.metadata.create_all(engine)

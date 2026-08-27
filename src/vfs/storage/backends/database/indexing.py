@@ -230,6 +230,8 @@ async def chunk_dirty(
     parameter_budget: int,
     membership_budget: int,
     executor: Executor,
+    *,
+    carry_embeddings: bool = True,
 ) -> Result:
     """Re-derive per-entry state for every live content entry that is stale.
 
@@ -266,6 +268,12 @@ async def chunk_dirty(
     delete/insert flush is the future direction if a deployment needs
     a tighter bound; the profile is a recorded suboptimality, never a
     designed corpus cap.
+
+    **The chunk row is the embedding cache**: with *carry_embeddings*
+    (the stored vectors belong to the configured space) each re-split
+    entry's embedded rows are read before its delete and their vectors
+    carried onto the fresh rows with the same ``content_hash``, so a
+    re-split that yields the same text never re-embeds it.
     """
     entry, content, chunks = tables.entry, tables.content, tables.chunks
     generation = chunk_generation()
@@ -293,10 +301,13 @@ async def chunk_dirty(
         return Result(ops=("reindex",))
     await seam("reindex:before-chunk-split")
     work = await call_offloaded(executor, partial(_assess_and_split, rows, generation))
+    carried = await _carried_embeddings(session, chunks, work, membership_budget) if carry_embeddings else {}
     for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
     if work.chunk_rows:
         await bulk_insert(session, chunks, work.chunk_rows)
+    if carried:
+        await _carry_embeddings(session, chunks, work, carried)
     await seam("reindex:before-chunk-flip")
     provenance = {"chunk_source_hash": entry.c.content_hash, "chunk_generation": generation}
     stamp = {"chunked": True, "indexable": True, **provenance}
@@ -528,6 +539,47 @@ def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
             for piece in pieces
         )
     return _ChunkWork(eligible, ineligible, resplit_ids, chunk_rows)
+
+
+async def _carried_embeddings(
+    session: AsyncSession, chunks: Table, work: _ChunkWork, membership_budget: int
+) -> dict[str, list[float]]:
+    """``content_hash → vector`` for the re-split entries' embedded rows whose hash a fresh row keeps."""
+    wanted = {cast("str", row["content_hash"]) for row in work.chunk_rows}
+    carried: dict[str, list[float]] = {}
+    if not wanted:
+        return carried
+    for ids in chunked(work.resplit_ids, membership_budget):
+        stmt = select(chunks.c.content_hash, chunks.c.embedding).where(
+            chunks.c.entry_id.in_(ids), chunks.c.embedding.isnot(None)
+        )
+        for row in await session.execute(stmt):
+            if row.content_hash in wanted and row.content_hash not in carried:
+                carried[row.content_hash] = list(row.embedding)
+    return carried
+
+
+async def _carry_embeddings(
+    session: AsyncSession, chunks: Table, work: _ChunkWork, carried: dict[str, list[float]]
+) -> None:
+    """Land the carried vectors on the fresh rows by ``(entry, hash)`` — an UPDATE, never part of the bulk insert.
+
+    The bulk insert may be a binary COPY, and a native vector column has
+    no binary codec on that path; an executemany UPDATE binds the vector
+    through the column's own type on every engine.
+    """
+    targets = {
+        (cast("str", row["entry_id"]), cast("str", row["content_hash"]))
+        for row in work.chunk_rows
+        if cast("str", row["content_hash"]) in carried
+    }
+    stmt = (
+        update(chunks)
+        .where(chunks.c.entry_id == bindparam("b_entry"), chunks.c.content_hash == bindparam("b_hash"))
+        .values(embedding=bindparam("b_vec"))
+    )
+    params = [{"b_entry": entry_id, "b_hash": digest, "b_vec": carried[digest]} for entry_id, digest in sorted(targets)]
+    await session.execute(stmt, params)
 
 
 def _row_content_size(row: Any) -> int:

@@ -18,11 +18,12 @@ use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
 use crate::postings::{DrainedPostings, PostingsAccumulator, candidate_ids as candidates};
+use crate::vectors::cosine_topk;
 use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 7;
+const PROTOCOL_VERSION: u32 = 8;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -349,6 +350,31 @@ fn select_blocks(
     })
 }
 
+/// Cosine top-`k` over one fetched page: `query` as packed little-endian
+/// float32, `ids` as packed native-endian int64, and `vectors` the rows
+/// (little-endian float32, `query`'s width) concatenated in id order;
+/// back, `(id, score)` by `score DESC, id ASC`. A torn buffer, an empty
+/// query, or a page whose byte length disagrees with `ids` and `query`
+/// is a `ValueError`.
+#[pyfunction]
+fn vector_topk(
+    py: Python<'_>,
+    query: PyBackedBytes,
+    ids: PyBackedBytes,
+    vectors: PyBackedBytes,
+    k: usize,
+) -> PyResult<Vec<(i64, f32)>> {
+    if query.len() % 4 != 0 {
+        return Err(PyValueError::new_err("query bytes are not whole float32 components"));
+    }
+    if ids.len() % 8 != 0 {
+        return Err(PyValueError::new_err("id bytes are not whole int64 values"));
+    }
+    let components: Vec<f32> = query.chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().expect("4 bytes"))).collect();
+    let rows = view_i64(&ids);
+    py.detach(|| cosine_topk(&components, &rows, &vectors, k)).map_err(|err| PyValueError::new_err(err.to_string()))
+}
+
 /// Packed int64 bytes as a slice: a view when aligned, a copy otherwise.
 fn view_i64(raw: &[u8]) -> Cow<'_, [i64]> {
     // SAFETY: every bit pattern is a valid i64; `align_to` only yields the
@@ -425,6 +451,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(candidate_ids, m)?)?;
     m.add_function(wrap_pyfunction!(decode_summary, m)?)?;
     m.add_function(wrap_pyfunction!(select_blocks, m)?)?;
+    m.add_function(wrap_pyfunction!(vector_topk, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;

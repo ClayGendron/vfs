@@ -447,7 +447,7 @@ class TestBatchBudgets:
 
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            if statement.startswith("SELECT") and "vfs_chunks.content" in statement:
+            if statement.startswith("SELECT") and "vfs_chunks.content" in statement and "content_hash" not in statement:
                 pages.append(statement)
 
         assert (await storage.reindex()).success is True

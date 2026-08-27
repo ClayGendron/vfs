@@ -32,6 +32,7 @@ from typing import Protocol
 import pytest
 
 from vfs import _native
+from vfs.embedding import EmbeddingProvider
 from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
@@ -72,6 +73,14 @@ def _indexed_grep_tier(storage: ConformanceBackend) -> bool:
     if tier not in ("indexed", "scan"):
         pytest.fail(f"backend declares grep_tier={tier!r}; every backend must declare 'indexed' or 'scan'")
     return tier == "indexed"
+
+
+def _embedder_of(storage: ConformanceBackend) -> EmbeddingProvider:
+    """The backend's embedding provider; backends without one skip these rows."""
+    provider = getattr(storage, "embedder", None)
+    if provider is None:
+        pytest.skip("backend has no embedding provider")
+    return provider
 
 
 def _reindexer_of(storage: ConformanceBackend) -> SupportsReindex:
@@ -1721,7 +1730,10 @@ class StorageContract:
         stale = await storage.glean(query="magnet")
         assert [str(o.path) for o in stale.observations] == ["/fresh.txt"]
         fresh = await storage.glean(query="lodestone")
-        assert [str(o.path) for o in fresh.observations] == ["/idx.txt"]
+        # The rewritten row answers first from its fresh text; a hybrid
+        # mount's vector leg may rank other neighbours below it.
+        assert str(fresh.observations[0].path) == "/idx.txt" and fresh.observations[0].score == 1.0
+        assert "/fresh.txt" not in [str(o.path) for o in fresh.observations if o.score == 1.0]
 
     @needs("write", "glean")
     async def test_default_glean_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
@@ -2335,6 +2347,47 @@ class StorageContract:
         grepped = await storage.grep(pattern="needle")
         assert grepped.success is True, grepped.errors
         assert sorted(str(o.path) for o in grepped.observations) == sorted(str(o.path) for o in globbed.observations)
+
+    # ------------------------------------------------------------------
+    # reindex — the embed step, on every leg through the hashing provider
+    # ------------------------------------------------------------------
+
+    @needs("write")
+    async def test_reindex_embeds_every_chunk_and_reports_the_space(self, storage: ConformanceBackend) -> None:
+        reindexer, provider = _reindexer_of(storage), _embedder_of(storage)
+        files = {"/e/a.txt": "alpha bravo\n", "/e/b.txt": "charlie delta\n", "/e/c.txt": "echo foxtrot\n"}
+        await storage.write(entries=[Entry(path=Path(p), content=b) for p, b in files.items()], parents=True)
+        result = await reindexer.reindex()
+        assert result.success is True, result.errors
+        report = result.embedding  # ty: ignore[unresolved-attribute]
+        assert report["model"] == provider.model_id
+        assert (report["embedded"], report["cached"], report["unembedded"]) == (3, 0, 0)
+        assert report["requests"] >= 1 and report["tokens"] >= 3
+        again = await reindexer.reindex()
+        assert again.success is True
+        assert (again.embedding["embedded"], again.embedding["requests"]) == (0, 0)  # ty: ignore[unresolved-attribute]
+
+    @needs("write")
+    async def test_a_rewrite_re_embeds_only_the_changed_entry(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        _embedder_of(storage)
+        pair = [Entry(path=Path("/a.txt"), content="alpha"), Entry(path=Path("/b.txt"), content="bravo")]
+        await storage.write(entries=pair)
+        assert (await reindexer.reindex()).success is True
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")], overwrite=True)
+        result = await reindexer.reindex()
+        assert result.success is True
+        assert (result.embedding["embedded"], result.embedding["unembedded"]) == (1, 0)  # ty: ignore[unresolved-attribute]
+
+    @needs("write")
+    async def test_identical_bodies_share_one_embedding(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        _embedder_of(storage)
+        copies = [Entry(path=Path(f"/v{i}/LICENSE"), content="license text\n") for i in range(3)]
+        await storage.write(entries=copies, parents=True)
+        result = await reindexer.reindex()
+        assert result.success is True
+        assert (result.embedding["embedded"], result.embedding["cached"]) == (1, 2)  # ty: ignore[unresolved-attribute]
 
     # ------------------------------------------------------------------
     # Declared traits

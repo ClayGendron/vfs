@@ -14,8 +14,8 @@ Per-surface dispatch lives with each surface's **owner**, never here —
 this module imports nothing from the rest of vfs, so any module may
 import it without ordering hazards. ``vfs.models.code_grams`` owns the
 gram gate, ``vfs.models.postings`` the builder, ``vfs.models.lexical``
-the tokenizer, lexical builder and scorer, ``vfs.pattern_matching`` the
-match law. The one surface served directly here is structure-aware
+the tokenizer, lexical builder and scorer, ``vfs.models.vector`` the
+cosine top-k, ``vfs.pattern_matching`` the match law. The one surface served directly here is structure-aware
 chunking.
 """
 
@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - pinned by a subprocess test
     )
     raise ImportError(message) from error
 
-EXPECTED_PROTOCOL: Final = 7
+EXPECTED_PROTOCOL: Final = 8
 
 if _ext.PROTOCOL_VERSION != EXPECTED_PROTOCOL:  # pragma: no cover - pinned by a subprocess test
     message = (

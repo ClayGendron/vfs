@@ -32,9 +32,23 @@ scale. The pointer read is advisory and re-issued after the fetch (the
 two-read protocol); a moved pointer raises :class:`StaleSnapshot` for
 the backend to redrive.
 
-Entries out: MaxP over chunks, scores min-max normalised over the
-candidate union, rounded, ordered ``score DESC, path ASC``; the top
-chunks ride as ``Match`` rows with their line bounds and text.
+The **vector leg** is one in-engine statement on every supported
+dialect — ``ORDER BY <cosine distance> LIMIT k`` with the scope
+predicate inside it, only the distance function's spelling varying
+(:mod:`~vfs.storage.backends.database.distance`) — over the chunks of
+live, chunked entries that carry a vector. The backend embeds the
+query with the mount's own provider and hands the vector in; the leg
+takes the same ladder as the lexical one (an allow-list narrows it to
+per-chunk statements merged client-side; a wide scope fetches, gates,
+and deepens once).
+
+Entries out: each leg aggregates to entries by its best chunk (MaxP)
+and is normalised to the unit interval by its own law — cosine by its
+theoretical range, BM25 by min-max over the candidate union — then the
+mount's :class:`~vfs.storage.ranking.Fusion` combines the legs; the
+fused scores are min-max scaled, rounded, ordered ``score DESC, path
+ASC``; each entry's top chunks from either leg ride as ``Match`` rows
+with their line bounds and text.
 """
 
 from __future__ import annotations
@@ -44,7 +58,7 @@ from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 
 from vfs.models import Match, Observation
 from vfs.models.lexical import (
@@ -64,6 +78,7 @@ from vfs.pattern_matching.grep import split_lines
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.results.preview import select_preview
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
+from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import lexical_stats
 from vfs.storage.backends.database.offload import call_offloaded
@@ -82,6 +97,7 @@ from vfs.storage.backends.database.scope import (
     pushdown_terms,
 )
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.ranking import TOP_CHUNKS, Ranker, min_max, unit_cosine
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -104,8 +120,11 @@ HEAD_BLOCKS: Final = 8
 FUSION_K: Final = 1000
 """Chunk depth scored per query, the fusion leg's K; entries come from these chunks."""
 
-TOP_CHUNKS: Final = 3
-"""Chunk ``Match`` rows carried per entry, best first."""
+VECTOR_DEPTH_FACTOR: Final = 10
+"""The vector leg fetches this many chunks per entry asked for …"""
+
+VECTOR_DEPTH_FLOOR: Final = 100
+"""… and never fewer than this: a short list starves fusion of candidates."""
 
 SCOPE_ID_BUDGET: Final = 5_000
 """Entries an allow-list may nominate before the scope counts as wide."""
@@ -138,6 +157,21 @@ class _Gates(NamedTuple):
 
     def admits(self, mapping: RowMapping) -> bool:
         return passes_gates(mapping, self.gates, self.not_gates, self.wanted, self.unwanted)
+
+
+class VectorLeg(NamedTuple):
+    """The vector leg's inputs, minted by the backend per call.
+
+    ``query`` is the embedded query in the mount's space; ``tier`` names
+    what will serve it (``native_exact`` or ``native_ann``); ``prelude``
+    is a session-scoped statement to run first, or ``None`` (pgvector's
+    iterative scan, where the version allows it).
+    """
+
+    query: list[float]
+    model_id: str
+    tier: str
+    prelude: str | None
 
 
 class _Hit(NamedTuple):
@@ -177,15 +211,23 @@ async def glean_rows(
     observations: list[Observation] | None,
     columns: frozenset[str] | None,
     wall_seconds: float = WALL_TIME_BUDGET,
+    dialect_name: str = "sqlite",
+    vector: VectorLeg | None = None,
+    ranker: Ranker | None = None,
+    records: Sequence[ResultError] = (),
 ) -> Result:
-    """One row per entry, best first: the index side unioned with the overlay.
+    """One row per entry, best first: the legs fused, the index side unioned with the overlay.
 
     Scoping arrives as pattern text on the ``globs`` channels; piped
     *observations* are rows in entry coordinates and admit their own
     paths literally. *limit* counts entries. *wall_seconds* is the
     caller-configured wall-clock budget; the declared default keeps
-    direct callers honest.
+    direct callers honest. *vector* is the embedded query and its tier,
+    or ``None`` for a lexical-only answer; *ranker* names the fusion;
+    *records* are the backend's per-call notes (an absent provider, a
+    stale space) that ride the envelope.
     """
+    ranker = ranker or Ranker()
     terms = list(dict.fromkeys(tokenize(query)))
     if not terms:
         message = f"glean query {query!r} has no searchable term after folding"
@@ -222,8 +264,10 @@ async def glean_rows(
     hits: dict[EntryId, _Hit] = {}
     rows: dict[EntryId, RowMapping] = {}
     bodies: dict[EntryId, str] = {}
-    if epoch is not None and present:
+    allow: list[int] | None = None
+    if (epoch is not None and present) or vector is not None:
         allow = await allow_list_ids(session, tables, membership_budget, channel, fan_arms=fan_arms, deadline=deadline)
+    if epoch is not None and present:
         candidates: list[ChunkId] | None = None
         if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
             candidates = await _chunk_ids_for(session, tables, epoch, allow, membership_budget)
@@ -244,6 +288,15 @@ async def glean_rows(
             if window_full and len(hits) < limit:
                 reason = "candidate window" if candidates is not None else "scope probe budget"
                 truncations.append((reason, {"window": depth, "found": len(hits)}))
+
+    vector_hits: dict[EntryId, _Hit] = {}
+    vector_depth = max(VECTOR_DEPTH_FACTOR * limit, VECTOR_DEPTH_FLOOR)
+    if vector is not None and monotonic() <= deadline:
+        vector_hits, vector_rows = await _vector_leg(
+            session, tables, dialect_name, vector, vector_depth, allow, limit, fetched, scope, membership_budget
+        )
+        for entry_id, mapping in vector_rows.items():
+            rows.setdefault(entry_id, mapping)
 
     if monotonic() > deadline:
         truncations.append(("wall-time budget", None))
@@ -276,29 +329,43 @@ async def glean_rows(
     if not skip_verified and epoch is not None and await current_epoch(session, tables) != epoch:
         raise StaleSnapshot("the gram-index epoch pointer moved mid-glean")
 
-    ordered = _order(hits, rows)[:limit]
-    texts = await _chunk_texts(
-        session, tables, [chunk for hit, _ in ordered for chunk, _ in hits[hit].chunks], membership_budget
-    )
+    fused = _fuse(ranker, hits, vector_hits)
+    ordered = _order(fused.entries, rows)[:limit]
+    wanted = [chunk_id for entry_id, _ in ordered for chunk_id, _ in fused.chunks[entry_id]]
+    texts = await _chunk_texts(session, tables, wanted, membership_budget)
     mask = frozenset(fetched | {"score", "matches"})
     projected = tuple(fetched - {"content"})
     sources = _Sources(texts, bodies, terms)
-    observed = [_observe(rows[eid], hits[eid], score, sources, projected, mask) for eid, score in ordered]
+    carried = ranker.aggregate.chunks_per_entry
+    observed = [
+        _observe(rows[eid], _Hit(fused.entries[eid], fused.chunks[eid][:carried]), score, sources, projected, mask)
+        for eid, score in ordered
+    ]
     errors = [
-        ResultError(
-            kind=VFSErrorKind.truncated,
-            severity=Severity.warning,
-            message=f"glean result truncated at the {reason}; {_REFINE_GUIDANCE}",
-            data=data,
-        )
-        for reason, data in truncations
+        *records,
+        *(
+            ResultError(
+                kind=VFSErrorKind.truncated,
+                severity=Severity.warning,
+                message=f"glean result truncated at the {reason}; {_REFINE_GUIDANCE}",
+                data=data,
+            )
+            for reason, data in truncations
+        ),
     ]
     export = {
         "n_docs": stats.n_docs,
         "avg_dl": stats.avg_dl,
         "terms": {term: {"df": stats.terms[term].df, "idf": stats.terms[term].idf} for term in present},
     }
-    return Result(ops=("glean",), observations=observed, errors=errors, lexical_stats=export)
+    legs: dict[str, Any] = {
+        "lexical": {"hits": len(hits), "terms": present},
+        "vector": None
+        if vector is None
+        else {"tier": vector.tier, "model": vector.model_id, "depth": vector_depth, "hits": len(vector_hits)},
+        "fusion": repr(ranker.fusion),
+    }
+    return Result(ops=("glean",), observations=observed, errors=errors, lexical_stats=export, legs=legs)
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +519,89 @@ async def _entries_for_chunks(
 
 
 # ---------------------------------------------------------------------------
+# The vector leg — one in-engine statement, the scope inside it
+# ---------------------------------------------------------------------------
+
+
+async def _vector_leg(
+    session: AsyncSession,
+    tables: VFSTables,
+    dialect_name: str,
+    vector: VectorLeg,
+    depth: int,
+    allow: Sequence[int] | None,
+    limit: int,
+    fetched: frozenset[str],
+    scope: _Gates,
+    membership_budget: int,
+) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping]]:
+    """The *depth* nearest chunks by cosine, resolved to admitted entries and MaxP'd.
+
+    One statement shape on every dialect: the chunk table joined to its
+    entry, ``embedding IS NOT NULL`` and the liveness, kind and pushdown
+    predicates inside, ordered by the engine's cosine distance then
+    chunk id, limited. A narrow allow-list runs it once per id chunk
+    and merges the lists client-side (a per-chunk top-k is not the
+    union's, so every chunk's list is kept whole); a wide scope runs
+    it once, gates the rows it fetched, and deepens once when the
+    gate leaves fewer entries than asked. Scores are similarities
+    (``1 - distance``), best first.
+    """
+    chunks, entry = tables.chunks, tables.entry
+    if vector.prelude is not None:
+        await session.execute(text(vector.prelude))
+    distance = cosine_distance(dialect_name, chunks.c.embedding, vector.query).label("distance")
+    columns = [
+        chunks.c.id.label("chunk_id"),
+        distance,
+        *(entry.c[field] for field in sorted((fetched | FETCH_RIDE | {"entry_id"}) - {"content"})),
+    ]
+    kinds = kind_membership(entry)
+    base = (
+        select(*columns)
+        .select_from(chunks.join(entry, entry.c.entry_id == chunks.c.entry_id))
+        .where(
+            chunks.c.embedding.isnot(None),
+            entry.c.chunked,
+            entry.c.deleted_at.is_(None),
+            kinds.predicate,
+            *scope.pushdown.terms,
+        )
+        .order_by(distance, chunks.c.id)
+    )
+    ranked: list[RowMapping] = []
+    if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
+        per_chunk = max(1, membership_budget - scope.pushdown.binds - kinds.binds)
+        for ids in chunked(list(allow), per_chunk):
+            stmt = base.where(entry.c.id.in_(ids)).limit(depth)
+            ranked.extend((await session.execute(stmt)).mappings().all())
+        ranked.sort(key=lambda mapping: (mapping["distance"], mapping["chunk_id"]))
+        ranked = ranked[:depth]
+    else:
+        window = depth
+        for _probe in range(2):
+            ranked = list((await session.execute(base.limit(window))).mappings().all())
+            admitted = {mapping["entry_id"] for mapping in ranked if scope.admits(mapping)}
+            if len(admitted) >= limit or len(ranked) < window:
+                break
+            window *= PROBE_DEEPEN
+    hits: dict[EntryId, _Hit] = {}
+    rows: dict[EntryId, RowMapping] = {}
+    for mapping in ranked:
+        entry_id = mapping["entry_id"]
+        if entry_id not in rows and not scope.admits(mapping):
+            continue
+        similarity = 1.0 - float(mapping["distance"])
+        hit = hits.get(entry_id)
+        if hit is None:
+            hits[entry_id] = _Hit(similarity, [(mapping["chunk_id"], similarity)])
+            rows[entry_id] = mapping
+        else:
+            hit.chunks.append((mapping["chunk_id"], similarity))
+    return hits, rows
+
+
+# ---------------------------------------------------------------------------
 # The overlay — live bodies as query-time blocks
 # ---------------------------------------------------------------------------
 
@@ -513,8 +663,8 @@ def _overlay_blocks(
     per_term: list[list[tuple[int, int, int]]] = [[] for _ in terms]
     positions = {term: position for position, term in enumerate(terms)}
     total_dl = 0
-    for doc_id, text in docs:
-        tokens = tokenize(text)
+    for doc_id, content in docs:
+        tokens = tokenize(content)
         total_dl += len(tokens)
         counts = Counter(tokens)
         for term, position in positions.items():
@@ -541,17 +691,57 @@ def _overlay_blocks(
 # ---------------------------------------------------------------------------
 
 
-def _order(hits: dict[EntryId, _Hit], rows: dict[EntryId, RowMapping]) -> list[tuple[EntryId, float]]:
-    """Entries by normalised score, then path: min-max over the union, rounded."""
-    if not hits:
-        return []
-    low = min(hit.score for hit in hits.values())
-    high = max(hit.score for hit in hits.values())
-    span = high - low
-    scaled = {
-        entry_id: round(1.0 if span == 0.0 else (hit.score - low) / span, SCORE_DECIMALS)
-        for entry_id, hit in hits.items()
-    }
+class _Fused(NamedTuple):
+    """The fused entry scores and, per entry, its chunks ``(chunk_id, fused score)`` best first."""
+
+    entries: dict[EntryId, float]
+    chunks: dict[EntryId, list[tuple[ChunkId, float]]]
+
+
+def _fuse(ranker: Ranker, lexical: dict[EntryId, _Hit], vector: dict[EntryId, _Hit]) -> _Fused:
+    """Normalise each leg by its own law, fuse entries, then fuse each entry's chunks the same way.
+
+    BM25 is min-max scaled over the lexical candidate union — chunks by
+    the entries' range, so no chunk outranks its own entry — and cosine
+    by its theoretical range. A leg with no hits is absent, and the
+    fusion's weights renormalise over the legs present; an entry the
+    fusion did not score (its only leg carries no weight) is dropped
+    with its chunks. Chunk keys are ``(entry, chunk)``: the overlay's
+    whole-document chunk shares one id across entries.
+    """
+    legs: dict[str, dict[EntryId, float]] = {}
+    chunk_legs: dict[str, dict[tuple[EntryId, ChunkId], float]] = {}
+    if lexical:
+        raw = {entry_id: hit.score for entry_id, hit in lexical.items()}
+        low, high = min(raw.values()), max(raw.values())
+        span = high - low
+        legs["lexical"] = min_max(raw)
+        chunk_legs["lexical"] = {
+            (entry_id, chunk_id): (1.0 if span == 0.0 else max(0.0, (score - low) / span))
+            for entry_id, hit in lexical.items()
+            for chunk_id, score in hit.chunks
+        }
+    if vector:
+        legs["vector"] = {entry_id: unit_cosine(hit.score) for entry_id, hit in vector.items()}
+        chunk_legs["vector"] = {
+            (entry_id, chunk_id): unit_cosine(score)
+            for entry_id, hit in vector.items()
+            for chunk_id, score in hit.chunks
+        }
+    entries = ranker.fusion.fuse(legs)
+    fused_chunks = ranker.fusion.fuse(chunk_legs)
+    chunks: dict[EntryId, list[tuple[ChunkId, float]]] = {entry_id: [] for entry_id in entries}
+    for (entry_id, chunk_id), score in fused_chunks.items():
+        if entry_id in chunks:
+            chunks[entry_id].append((chunk_id, score))
+    for scored in chunks.values():
+        scored.sort(key=lambda item: (-item[1], item[0]))
+    return _Fused(entries, chunks)
+
+
+def _order(scores: dict[EntryId, float], rows: dict[EntryId, RowMapping]) -> list[tuple[EntryId, float]]:
+    """Entries by fused score, then path: min-max over the union, rounded — the unit scale every answer keeps."""
+    scaled = {entry_id: round(score, SCORE_DECIMALS) for entry_id, score in min_max(scores).items()}
     return sorted(scaled.items(), key=lambda item: (-item[1], rows[item[0]]["path"]))
 
 
@@ -587,7 +777,8 @@ def _observe(
     """
     values: dict[str, object] = {field: mapping[field] for field in projected}
     values["path"] = Path._brand(mapping["path"])
-    ratio = score / hit.score  # BM25 weights are positive: a hit's score never is zero
+    # Chunks ride on the entry's scale: the best chunk carries the entry's score.
+    ratio = score / hit.score if hit.score else 0.0
     matches: list[Match] = []
     for chunk_id, chunk_score in hit.chunks:
         chunk_scaled = round(chunk_score * ratio, SCORE_DECIMALS)

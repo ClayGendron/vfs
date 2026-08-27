@@ -31,8 +31,8 @@ from vfs.storage.backends.database import DatabaseStorage, dialects
 from vfs.storage.backends.database.descent import escape_like
 from vfs.storage.backends.database.dialects import (
     GENERIC,
+    MARIADB,
     MSSQL,
-    MYSQL,
     ORACLE,
     POSTGRESQL,
     PROFILES,
@@ -142,21 +142,28 @@ class TestDialectPolicy:
         assert is_permanent_defect(DBAPIError("SELECT 1", None, _SqliteError(5))) is False
         assert is_permanent_defect(DBAPIError("SELECT", None, _PgError("40001"))) is False
 
-    def test_mysql_family_is_tuned_not_generic(self) -> None:
-        for name in ("mysql", "mariadb"):
-            profile = profile_for(name)
-            assert profile.name == name
-            assert profile.key_byte_budget == MYSQL.key_byte_budget
-            assert profile.arbitration == "catch_retry"
-            assert profile.op_isolation == "REPEATABLE READ"
+    def test_mariadb_is_tuned_and_mysql_community_is_an_unknown_dialect(self) -> None:
+        assert profile_for("mariadb") is MARIADB and MARIADB.vector_distance == "ann"
+        assert MARIADB.key_byte_budget == 3_072 and MARIADB.arbitration == "catch_retry"
+        assert MARIADB.op_isolation == "REPEATABLE READ"
+        # Community MySQL has no distance function vfs can install: served
+        # the core verbs on the generic floor under its own name.
+        mysql = profile_for("mysql")
+        assert mysql.name == "mysql" and mysql.key_byte_budget == GENERIC.key_byte_budget
+        assert mysql.vector_distance == "none" and mysql.retryable_driver_codes == frozenset()
+
+    def test_every_tuned_profile_declares_a_distance_function(self) -> None:
+        for profile in PROFILES.values():
+            assert profile.vector_distance in ("exact", "ann"), profile.name
+        assert GENERIC.vector_distance == "none" and SQLITE.vector_distance == "exact"
 
     def test_mysql_deadlock_and_lock_wait_errnos_are_retryable(self) -> None:
-        assert is_retryable(MYSQL, _MySQLError(1213)) is True
+        assert is_retryable(MARIADB, _MySQLError(1213)) is True
         # 1205 ships under the HY000 catch-all: the sqlstate rung must
         # defer to the errno, or the declared code set is dead on MySQL.
-        assert is_retryable(MYSQL, _MySQLError(1205)) is True
+        assert is_retryable(MARIADB, _MySQLError(1205)) is True
         # Duplicate entry is a definite exists-outcome, never retried.
-        assert is_retryable(MYSQL, _MySQLError(1062)) is False
+        assert is_retryable(MARIADB, _MySQLError(1062)) is False
         # The errno rung is profile-scoped: the floor declares no errnos.
         assert is_retryable(GENERIC, _MySQLError(1205)) is False
 
@@ -184,7 +191,7 @@ class TestDialectPolicy:
         # is itself an error (ORA-01424 on Oracle), so the escape is a
         # declared profile fact, off on every other engine and the floor.
         assert MSSQL.like_bracket_class is True
-        for profile in (SQLITE, POSTGRESQL, MYSQL, ORACLE, GENERIC):
+        for profile in (SQLITE, POSTGRESQL, MARIADB, ORACLE, GENERIC):
             assert profile.like_bracket_class is False
         assert escape_like("/a[1]b_c%", MSSQL) == "/a\\[1]b\\_c\\%"
         assert escape_like("/a[1]b_c%", ORACLE) == "/a[1]b\\_c\\%"
@@ -193,14 +200,14 @@ class TestDialectPolicy:
         # The cast must return the column's UTF-8 bytes as a cheap
         # reinterpretation — proven only on sqlite; servers await audit.
         assert SQLITE.content_bytes is True
-        for profile in (POSTGRESQL, MSSQL, MYSQL, ORACLE, GENERIC):
+        for profile in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC):
             assert profile.content_bytes is False
 
     def test_values_join_is_declared_only_where_proven(self) -> None:
         # SQLite rejects the column-aliased VALUES join despite declaring
         # update_returning — the bit is earned per engine, floor stays off.
         assert POSTGRESQL.values_join and MSSQL.values_join
-        assert not SQLITE.values_join and not MYSQL.values_join and not GENERIC.values_join
+        assert not SQLITE.values_join and not MARIADB.values_join and not GENERIC.values_join
 
     def test_parameter_budget_is_read_from_sqlalchemy(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -837,10 +844,10 @@ class TestBulkInsert:
         # Read from the before/after benchmark on each engine; GENERIC never
         # assumes an unknown driver's executemany is a batch.
         assert GENERIC.bulk_insert == "core"
-        assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL, MYSQL, MSSQL, ORACLE)} == {
+        assert {p.name: p.bulk_insert for p in (SQLITE, POSTGRESQL, MARIADB, MSSQL, ORACLE)} == {
             "sqlite": "driver",
             "postgresql": "copy",
-            "mysql": "driver",
+            "mariadb": "driver",
             "mssql": "core",
             "oracle": "core",
         }

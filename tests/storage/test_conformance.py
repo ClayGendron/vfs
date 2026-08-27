@@ -6,8 +6,10 @@ this file only wires backends in. The memory leg is ``InMemoryStorage``
 families as the sqlite-file leg, trash arc included; capability gating
 skips only what a backend leaves undeclared.
 
-Real-server legs activate when their ``VFS_TEST_<ENGINE>_URL`` variable
-is set and skip otherwise, so a plain run never needs Docker. Servers
+Every leg carries the hashing embedder — no key, no download — so the
+reindex embed step runs on every engine. Real-server legs activate when
+their ``VFS_TEST_<ENGINE>_URL`` variable is set and skip otherwise, so a
+plain run never needs Docker. Servers
 come from ``docker/compose.test.yml`` (same file CI uses); each test
 gets a clean slate in its own minted table namespace — created by the
 backend's own first touch, dropped at teardown — because the server
@@ -33,6 +35,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.ranking.pins import assert_top10_pin
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.storage_contract import StorageContract
+from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Observation
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
@@ -61,7 +64,7 @@ class TestMemoryConformance(StorageContract):
 class TestSqliteConformance(StorageContract):
     @pytest.fixture
     async def storage(self, tmp_path: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
-        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/vfs.sqlite")
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/vfs.sqlite", embedder=HashEmbeddingProvider())
         yield storage
         await storage.close()
 
@@ -79,7 +82,7 @@ async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
     if url is None:
         pytest.skip(f"{env_var} is not set")
     table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name)
+    storage = DatabaseStorage(url=url, table_name=table_name, embedder=HashEmbeddingProvider())
     try:
         yield storage
     finally:
@@ -151,11 +154,11 @@ class TestPostgresBulkInsertTransaction:
             assert count == 3
 
 
-@pytest.mark.mysql
-class TestMySQLConformance(StorageContract):
+@pytest.mark.mariadb
+class TestMariaDBConformance(StorageContract):
     @pytest.fixture
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
-        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
             yield storage
 
 
@@ -318,8 +321,8 @@ class TestPostgresTopologyRivals:
         await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
-class TestMySQLTopologyRivals:
+@pytest.mark.mariadb
+class TestMariaDBTopologyRivals:
     async def test_purge_sweeps_a_mid_purge_rival_write(self) -> None:
         await _purge_sweeps_a_mid_purge_rival("VFS_TEST_MYSQL_URL")
 
@@ -345,13 +348,13 @@ class TestOracleTopologyRivals:
         await _serialization_point_blocks_a_rival_topology_verb("VFS_TEST_ORACLE_URL")
 
 
-@pytest.mark.mysql
-class TestMySQLFlagFlipRoundTrips:
+@pytest.mark.mariadb
+class TestMariaDBFlagFlipRoundTrips:
     async def test_flag_flips_are_one_statement_per_chunk_not_per_row(self) -> None:
         """No UPDATE…RETURNING on this family: the flips must ride
         row-constructor IN chunks — the per-row executemany fallback is
         one driver round trip per entry, 20k of them at a 10k batch."""
-        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
             entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
             assert (await storage.write(entries=entries)).success is True
             updates: list[tuple[str, bool]] = []
@@ -395,8 +398,8 @@ class TestMSSQLChunkGuardRegression:
             assert [o.path for o in found.observations] == ["/r.txt"]
 
 
-@pytest.mark.mysql
-class TestMySQLTornRowRegression:
+@pytest.mark.mariadb
+class TestMariaDBTornRowRegression:
     async def test_one_increment_rival_redrives_to_success(self) -> None:
         """InnoDB's REPEATABLE READ current-reads past the rival — no 40001.
 
@@ -407,7 +410,7 @@ class TestMySQLTornRowRegression:
         outcome converges with the Postgres redrive: a clean success on
         top of the rival's version, never a torn row.
         """
-        async with _server_storage("VFS_TEST_MYSQL_URL") as storage:
+        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
             result = await _one_increment_race(storage)
             assert result.success is True
             read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash", "version"}))
@@ -469,7 +472,7 @@ class TestPostgresSegmentCascades:
         await _segment_cascades_hold_the_mirror("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLSegmentCascades:
     async def test_cascades_hold_the_mirror(self) -> None:
         await _segment_cascades_hold_the_mirror("VFS_TEST_MYSQL_URL")
@@ -523,7 +526,7 @@ class TestPostgresEncodedKindIndex:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLEncodedKindIndex:
     async def test_index_serves_the_overlay(self) -> None:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_MYSQL_URL")
@@ -553,7 +556,7 @@ class TestPostgresLexicalFidelity:
         await _lexical_fidelity("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLLexicalFidelity:
     async def test_stored_weights_rank_as_pure_bm25(self) -> None:
         await _lexical_fidelity("VFS_TEST_MYSQL_URL")
@@ -583,7 +586,7 @@ class TestPostgresRankingPin:
         await _ranking_pin("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLRankingPin:
     async def test_ordered_top10_matches_the_pin(self) -> None:
         await _ranking_pin("VFS_TEST_MYSQL_URL")
@@ -621,7 +624,7 @@ class TestPostgresLexicalBuildBeyondAPage:
         await _lexical_build_beyond_a_page("VFS_TEST_POSTGRES_URL")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLLexicalBuildBeyondAPage:
     async def test_a_corpus_larger_than_one_page_builds(self) -> None:
         await _lexical_build_beyond_a_page("VFS_TEST_MYSQL_URL")
@@ -670,7 +673,7 @@ class TestPostgresContentBytesAudit:
         await _content_bytes_audit("VFS_TEST_POSTGRES_URL", "SELECT convert_to(content, 'UTF8') FROM {content}")
 
 
-@pytest.mark.mysql
+@pytest.mark.mariadb
 class TestMySQLContentBytesAudit:
     async def test_cast_yields_utf8_bytes(self) -> None:
         # BINARY yields column-charset bytes: UTF-8 iff the table is utf8mb4.

@@ -904,7 +904,7 @@ class TestReindexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="chunk broke")])
 
-        async def broken(session, tables, profile, parameter_budget, membership_budget, executor) -> Result:
+        async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw) -> Result:
             return failure
 
         monkeypatch.setattr(backend_module, "chunk_dirty", broken)

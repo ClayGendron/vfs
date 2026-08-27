@@ -19,8 +19,14 @@ rivals is exercised on the server engine legs.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from vfs.embedding import HashEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.grep import WALL_TIME_BUDGET
+
+if TYPE_CHECKING:
+    from vfs.embedding import EmbeddingProvider
 
 
 class InMemoryStorage(DatabaseStorage):
@@ -28,7 +34,9 @@ class InMemoryStorage(DatabaseStorage):
 
     Construction-only subclass: every verb, capability, and trait comes
     from ``DatabaseStorage``. Each instance owns a fresh database — two
-    instances never share state.
+    instances never share state. The default embedder is the hashing
+    provider — no key, no download — so ``reindex`` fills vectors here
+    exactly as it does on a server engine.
     """
 
     def __init__(
@@ -38,6 +46,7 @@ class InMemoryStorage(DatabaseStorage):
         description: str = "In-memory storage",
         trash_days: int = 90,
         grep_wall_seconds: float = WALL_TIME_BUDGET,
+        embedder: EmbeddingProvider | None = None,
     ) -> None:
         super().__init__(
             url="sqlite+aiosqlite:///:memory:",
@@ -45,4 +54,5 @@ class InMemoryStorage(DatabaseStorage):
             description=description,
             trash_days=trash_days,
             grep_wall_seconds=grep_wall_seconds,
+            embedder=HashEmbeddingProvider() if embedder is None else embedder,
         )

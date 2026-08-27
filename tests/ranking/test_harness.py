@@ -20,11 +20,14 @@ import pytest
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
 from tests.ranking.driver import Loaded, bm25_run, glean_run, load_corpus
+from tests.ranking.embedders import HASH_DIMENSION, PIN_SENTENCE, POTION_MODEL, potion_embed
 from tests.ranking.merge import naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
 from tests.ranking.pins import assert_top10_pin
+from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.ranking import Convex, Ranker
 
 if TYPE_CHECKING:
     import pathlib
@@ -123,12 +126,57 @@ class TestDeterminism:
     async def test_the_ordered_top10_pin_holds_on_sqlite(self, sqlite: DatabaseStorage) -> None:
         await assert_top10_pin(sqlite)
 
-    async def test_the_ordered_top10_pin_holds_in_memory(self) -> None:
-        storage = InMemoryStorage()
+    async def test_the_hybrid_ordered_top10_pin_holds_on_sqlite(self, tmp_path: pathlib.Path) -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/hybrid.sqlite", embedder=HashEmbeddingProvider())
         try:
             await assert_top10_pin(storage)
         finally:
             await storage.close()
+
+    async def test_the_hybrid_ordered_top10_pin_holds_in_memory(self) -> None:
+        storage = InMemoryStorage()  # the hashing embedder is its default
+        try:
+            await assert_top10_pin(storage)
+        finally:
+            await storage.close()
+
+
+def _embedders() -> dict[str, EmbeddingProvider]:
+    """The harness's embedders: the hash floor always, potion when its model is cached."""
+    embedders: dict[str, EmbeddingProvider] = {"hash": HashEmbeddingProvider(HASH_DIMENSION)}
+    if potion_embed(PIN_SENTENCE) is not None:
+        embedders["potion"] = Model2VecEmbeddingProvider(model_name=POTION_MODEL)
+    return embedders
+
+
+class TestHybridArms:
+    """The vector leg alone and the fused verb, per embedder, recorded beside the lexical baseline.
+
+    The hashing embedder cannot rank by meaning, so its arms are floors
+    the gate keeps honest, never targets; potion's arms are the
+    semantic measurement and run only when the model is cached.
+    """
+
+    @pytest.mark.parametrize("name", ["hash", "potion"])
+    async def test_vector_only_and_fused_are_recorded(self, tmp_path: pathlib.Path, golden: Corpus, name: str) -> None:
+        embedders = _embedders()
+        if name not in embedders:
+            pytest.skip("potion-base-8M is not in the local Hub cache")
+        embedder = embedders[name]
+        arms = {
+            "vector": Ranker(fusion=Convex({"vector": 1.0})),
+            "fused": Ranker(fusion=Convex({"vector": 0.5, "lexical": 0.5})),
+        }
+        for arm, ranker in arms.items():
+            storage = DatabaseStorage(
+                url=f"sqlite+aiosqlite:///{tmp_path}/{name}_{arm}.sqlite", embedder=embedder, ranker=ranker
+            )
+            try:
+                loaded = await load_corpus(storage, golden)
+                numbers = evaluate(golden.qrels, await glean_run(loaded))
+            finally:
+                await storage.close()
+            gate("vfs_native", f"{arm}/{name}", numbers)
 
 
 class TestArms:

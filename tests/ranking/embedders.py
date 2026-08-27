@@ -1,27 +1,25 @@
 """The harness's embedders, pinned by the digest of one sentence's vector.
 
-The hashing embedder is the zero-dependency floor — a local copy of the
-function ``HashEmbeddingProvider`` ships in core once the embedding
-provider lands, after which this module imports it instead. The
-model2vec loader answers ``None`` when the package or the cached model
-is absent, and the tests skip.
+The hashing embedder is core's ``hash_embedding`` — the zero-dependency
+floor the conformance suite and the in-memory backend run on — at the
+harness's wider dimension. The model2vec loader answers ``None`` when
+the package or the cached model is absent, and the tests skip.
 """
 
 from __future__ import annotations
 
 import hashlib
-import math
+import importlib
+import importlib.util
 import os
 import struct
-from itertools import pairwise
-from typing import Final
+from typing import Any, Final
 
-from vfs.models.lexical import tokenize
+from vfs.embedding import hash_embedding
 
-try:
-    from model2vec import StaticModel  # ty: ignore[unresolved-import]
-except ImportError:  # pragma: no cover - the optional semantic embedder
-    StaticModel = None
+StaticModel: Any = None
+if importlib.util.find_spec("model2vec") is not None:
+    StaticModel = importlib.import_module("model2vec").StaticModel
 
 PIN_SENTENCE: Final = "The scheduler publishes and the allocator flushes; the cache is a cache."
 POTION_MODEL: Final = "minishlab/potion-base-8M"
@@ -29,15 +27,8 @@ HASH_DIMENSION: Final = 256
 
 
 def hash_embed(text: str, dimension: int = HASH_DIMENSION) -> list[float]:
-    """Signed feature hashing of the index's tokens and their bigrams, L2-normalised."""
-    buckets = [0.0] * dimension
-    tokens = tokenize(text)
-    for feature in tokens + [f"{left} {right}" for left, right in pairwise(tokens)]:
-        digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
-        value = int.from_bytes(digest, "little")
-        buckets[value % dimension] += 1.0 if value >> 63 else -1.0
-    norm = math.sqrt(sum(weight * weight for weight in buckets)) or 1.0
-    return [weight / norm for weight in buckets]
+    """Core's signed feature hashing of the index's tokens and their bigrams, at the harness width."""
+    return hash_embedding(text, dimension)
 
 
 def potion_embed(text: str) -> list[float] | None:
