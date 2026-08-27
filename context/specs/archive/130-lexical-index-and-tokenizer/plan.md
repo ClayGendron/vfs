@@ -1,79 +1,64 @@
-# 130 — plan
+# 130 — plan (rewrite under ADR 055)
 
-The spec fixes the tables, the formula, the tokenizer rules, and the
-epoch discipline; this plan records the four places where building it
-took a decision the spec left open or where reality disagreed with the
-spec's sketch.
+The executed prototype (`../../../research/studies/2026-08-26-bm25-storage/prototype/`)
+is the design's reference: its numbers are the targets and its
+structure is what `src/` and `crates/` implement — written fresh, not
+copied, and held to the repo's layout and rules.
 
-## 1. The build is a two-pass stream, not a whole-corpus builder
+## 1. Where things live
 
-The spec sketched one builder that tokenizes every chunk, holds the
-postings, and computes weights once the last document fixes `df`. On
-the linux store that residency is not a slow path but an out-of-memory:
-the 4,000-file sample already carries 3.1 M postings (96 per chunk), so
-the full checkout is ~60 M postings held as Python tuples — a reindex
-that succeeded before this spec would fail after it.
+- `crates/vfs-core/src/lexical.rs`: tokenizer (generated tables in
+  `lexical_tables.rs`), block encoder/decoder, `LexicalBuilder`,
+  `score`. Exposed in `python.rs` behind the `python` feature as
+  `Tokenizer`, `LexicalBuilder`, `lexical_score`.
+- `vfs/native.py`: seam entries beside grams (`tokenize`,
+  `lexical_builder()`, `lexical_score`), falling back to
+  `models/lexical.py`'s pure implementations.
+- `models/lexical.py`: keeps the rules, the formula, the pure builder
+  (rewritten to block output), the pure scorer, the summary codec and
+  block selection; owns the codec choice (the gram `encode_postings`
+  for ids; plain varints for tfs/dls; varint delta + LE `f64` per
+  block in the summary).
+- `storage/backends/database/lexical.py`: the build over the paged
+  scan (one pass: `add_docs` per batch, `finish`, two drains), the
+  stats export returning summary rows.
 
-`LexicalIndexBuilder` therefore makes **two passes over the same chunk
-stream**: `observe` counts `df`, `N`, and the length total and hands
-back the batch's `lex_docs` rows; `finish` fixes the statistics and
-every term's idf; `weigh` re-tokenizes each batch into its weighted
-`lex_terms` rows. Nothing but the vocabulary (one `df` per distinct
-term — 487 k entries on the sample) is held across batches, every table
-is written in bounded inserts as batches complete, and the SQL stays
-plain inserts on every dialect (no `UPDATE … FROM`, no `LN()` — both
-dialect-divergent). The price is tokenizing twice, which is precisely
-the number the spec asks to record as the Rust-port trigger (§ landing
-note in `spec.md`).
+## 2. Decisions the spec leaves to the plan
 
-## 2. Insert batches are row-budgeted, not byte-metered
+- **The true maximum at the drain**: a block's maximum needs `idf`
+  and `avg_dl`, fixed only by `finish()`, so sealed blocks are held
+  (compressed) until then and every summary and block row is complete
+  on insert — no UPDATE exists. `finish()` decodes each block once
+  (~tens of milliseconds for 3 M postings) for the maximum; `max_tf`
+  and `min_dl` are not tracked. Residency measured at landing is the
+  *vocabulary*, not the blobs: ~660 B of per-term structure (three
+  byte streams, the sealed-block offsets, the map entry) against
+  ~4.4 B per posting — +320 MB on 487 k terms, ~5 GB peak on the full
+  checkout's 4.82 M terms. An arena for the term streams (one buffer
+  per stream, offsets per term) is the ~5× direction; a sharded build
+  the direction past one core.
+- **Block size 128** (prototype: 64 ties, 256 spills sqlite pages).
+  Declared constant in the options fingerprint.
+- **Blob types**: `LargeBinary` + `LONGBLOB` variant; max blob length
+  measured 256 B at 128 postings — every engine's in-row comfort.
+- **Parity harness**: `tests/test_native.py` gains three rows
+  (tokens, builder rows, scores); the Unicode tables carry
+  `sys.version_info` and `unicodedata.unidata_version`; parity fails
+  loudly on a mismatch rather than silently diverging.
+- **Fallback scorer in numpy**: the batched form (concatenate blobs,
+  decode once, segmented cumsum, `np.unique`/`bincount`) — 1.1 ms at
+  10 k postings; per-block block-max is Rust-only (the Python loop
+  loses to batched decode). Bit-identity with Rust comes from the
+  accumulation order: blocks are laid out terms-by-descending-maximum,
+  block order, posting order, and `bincount` adds sequentially in
+  that order, as the Rust accumulator does; ties break on chunk id.
+- **Block selection in numpy**: `searchsorted` maps each candidate to
+  its block by the summary's first ids, `np.maximum.at` folds the best
+  candidate score per block, and a block competes when its maximum
+  (plus the other overflowing terms' maxima) clears θ alone or lifts
+  its best candidate over θ.
 
-Every `lex_*` row is bounded-width (a term is ≤ 64 bytes post-fold), so
-a row budget *is* a byte budget; `_LEXICAL_INSERT_ROWS = 20_000` bounds
-one insert, and SQLAlchemy's `insertmanyvalues` splits each on the
-dialect's bind cap beneath it. The tokenize batches stay byte-metered
-(`ByteBatcher`, 4 MiB of content per hop — pass two's transient term
-rows are ~100 per chunk, so the hop budget also bounds that transient).
+## 3. Order of work
 
-## 3. Schema choices
-
-- `term` is `BytewiseString(MAX_TERM_BYTES)`: the key must compare
-  bytewise (an accent- or case-unifying collation would collide two
-  folded terms on the PK); the mysql family gets `VARBINARY(64)`,
-  MSSQL the BIN2 UTF-8 collation, Postgres `COLLATE "C"`.
-- `weight`, `idf`, `avg_dl` are `Double` — `Float` is single precision
-  on MySQL, which would make the rounding-before-order law engine-
-  dependent. Oracle maps it to `DOUBLE PRECISION` (a NUMBER subtype
-  wide enough to round-trip a float64).
-- SQLite tables are `WITHOUT ROWID`: a PK-only table with a rowid
-  stores every row twice (98 MB table + 76 MB autoindex on the
-  sample); the clustered engines (InnoDB, MSSQL) already store the row
-  in the key B-tree.
-- `VFSTables.epoch_scoped()` names every epoch-keyed table so the two
-  reclaim sweeps and any future epoch consumer cannot forget one.
-
-## 4. Tokenizer edges the spec left implicit
-
-- One-character terms are dropped whether whole or part (`x_y` keeps
-  `x_y`, drops both parts); the spec said "parts", the rule is applied
-  uniformly because a one-letter whole carries the same non-signal.
-- Case change is lower/digit → upper, or the last capital of an
-  acronym run (`HTTPServer` → `http`, `server`; `sha256Hash` → `sha256`,
-  `hash`). A digit-led piece never splits (`0xDEADbeef` stays whole).
-- `\w+` is the run — Python's Unicode alphanumerics plus underscore,
-  the closest stdlib spelling of `[\p{L}\p{N}_]`.
-- The chunk scan's `indexable` predicate is documentary: `chunk_dirty`
-  writes chunk rows only for eligible bodies, so an ineligible entry
-  never has rows to scan. It is kept for parity with the gram scan's
-  spelling of the coverage set; a mutation dropping it survives the
-  suite by design and is not a ledger row.
-- The options hash reads the lexical constants *live*
-  (`options_fingerprint()`), so a monkeypatched or retuned constant
-  moves the fingerprint and forces the rebuild the ledger row demands.
-
-## Order of work
-
-A — `models/lexical.py` and its pins; B — tables, `build_epoch`
-extension, reclaim parity, format bumps; C — `lexical_stats`, the
-fidelity referee (`tests/support/lexical_fidelity.py`, shared by the
-sqlite test and the four engine legs), the linux-store measurements.
+A (engine + pure twins + parity) → B (tables, build, bumps, ledger)
+→ C (scorer wiring, stats ceilings, referee, landing measurements).

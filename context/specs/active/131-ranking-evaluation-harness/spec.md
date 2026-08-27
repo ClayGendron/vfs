@@ -11,7 +11,9 @@
 - **Owner:** Clay Gendron
 - **Kind:** dev-only test tooling and fixtures; no `src/` behaviour
   change beyond a tiny scoring driver over spec 130's tables.
-- **Depends on:** spec 130 (the BM25 baseline it measures first).
+- **Depends on:** spec 130 as rewritten under ADR 055 (the BM25
+  baseline it measures first is the block-posting index read through
+  the scorer, not an in-engine `SUM`).
 - **Relates to:** every later glean spec (each adds arms and pins here);
   the accuracy research leg (SWE-bench Verified, a Wikipedia slice) runs
   on this harness but is research, not this spec.

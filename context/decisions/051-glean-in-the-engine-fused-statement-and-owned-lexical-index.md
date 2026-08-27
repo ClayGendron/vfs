@@ -151,6 +151,17 @@ index on real corpora split by `Chunk.split_batch`.
 
 ## Consequences
 
+> **Amended 2026-08-26 by ADR 055** (`055-bm25-as-block-postings-scored-client-side-in-the-rust-engine.md`),
+> after the storage research leg (`../research/2026-08-26-bm25-storage-design.md`):
+> **pin 1** now covers the vector leg alone — the lexical leg is block
+> postings fetched by `WHERE epoch = ? AND term IN (…)` and scored in the
+> Rust engine (pure fallback pinned), fused client-side on every engine;
+> **pin 3's** `lex_terms` is replaced by `lex_postings(epoch, term,
+> block_no, …)` with an exact per-block `max_weight` (`lex_docs`,
+> `lex_df`, `lex_stats` stand); **pin 4's** df ceiling becomes a
+> `max_weight` threshold — no query term is dropped; the tokenizer rules
+> stand and the Rust port is decided. Pins 2, 5–9 stand.
+
 > **Amended 2026-08-26 (spike, after spec 130 landed):** pin 3 — own
 > term tables over engine full-text — was measured at query time
 > against SQL Server's full-text search on a 16 k-chunk linux sample

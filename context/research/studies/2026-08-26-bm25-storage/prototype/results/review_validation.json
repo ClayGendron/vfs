@@ -1,0 +1,165 @@
+{
+ "store": {
+  "n_docs": 32243,
+  "avg_dl": 270.8003287535279,
+  "bytes_per_posting": 4.344
+ },
+ "filters_by_arity": {
+  "1": {
+   "queries": 15,
+   "blocks_median": 2,
+   "single_theta_top10_changed": 0,
+   "single_theta_skip_pct": 2.8,
+   "per_term_cut_skip_pct": 2.8,
+   "per_term_cut_skip_pct_true_max": 13.9,
+   "aligned_skip_pct": 2.8,
+   "aligned_bytes_pct": 0.2,
+   "aligned_skip_pct_true_max": 13.9,
+   "aligned_bytes_pct_true_max": 13.2,
+   "common_term_blocks_pct_of_query": 0.0,
+   "common_term_bytes_pct_of_query": 0.0,
+   "two_round_common_skip_pct": 0.0,
+   "two_round_true_common_skip_pct": 0.0,
+   "two_round_prog_common_skip_pct": 0.0,
+   "two_round_prog_true_common_skip_pct": 0.0,
+   "two_round_query_bytes_saved_pct": 0.0,
+   "two_round_true_query_bytes_saved_pct": 0.0,
+   "two_round_prog_query_bytes_saved_pct": 0.0,
+   "two_round_prog_true_query_bytes_saved_pct": 0.0
+  },
+  "3": {
+   "queries": 15,
+   "blocks_median": 84,
+   "single_theta_top10_changed": 15,
+   "single_theta_skip_pct": 98.5,
+   "per_term_cut_skip_pct": 0.0,
+   "per_term_cut_skip_pct_true_max": 0.0,
+   "aligned_skip_pct": 24.2,
+   "aligned_bytes_pct": 23.8,
+   "aligned_skip_pct_true_max": 24.2,
+   "aligned_bytes_pct_true_max": 23.8,
+   "common_term_blocks_pct_of_query": 95.6,
+   "common_term_bytes_pct_of_query": 96.5,
+   "two_round_common_skip_pct": 67.8,
+   "two_round_true_common_skip_pct": 68.8,
+   "two_round_prog_common_skip_pct": 72.0,
+   "two_round_prog_true_common_skip_pct": 72.9,
+   "two_round_query_bytes_saved_pct": 65.2,
+   "two_round_true_query_bytes_saved_pct": 66.1,
+   "two_round_prog_query_bytes_saved_pct": 69.4,
+   "two_round_prog_true_query_bytes_saved_pct": 70.2
+  },
+  "6": {
+   "queries": 15,
+   "blocks_median": 90,
+   "single_theta_top10_changed": 15,
+   "single_theta_skip_pct": 98.7,
+   "per_term_cut_skip_pct": 0.0,
+   "per_term_cut_skip_pct_true_max": 0.0,
+   "aligned_skip_pct": 8.5,
+   "aligned_bytes_pct": 8.4,
+   "aligned_skip_pct_true_max": 8.5,
+   "aligned_bytes_pct_true_max": 8.4,
+   "common_term_blocks_pct_of_query": 91.3,
+   "common_term_bytes_pct_of_query": 93.4,
+   "two_round_common_skip_pct": 73.4,
+   "two_round_true_common_skip_pct": 74.1,
+   "two_round_prog_common_skip_pct": 76.6,
+   "two_round_prog_true_common_skip_pct": 77.3,
+   "two_round_query_bytes_saved_pct": 68.4,
+   "two_round_true_query_bytes_saved_pct": 69.1,
+   "two_round_prog_query_bytes_saved_pct": 71.5,
+   "two_round_prog_true_query_bytes_saved_pct": 72.1
+  }
+ },
+ "bound_tightness": {
+  "blocks_sampled": 15072,
+  "true_over_loose_median": 0.9565,
+  "true_over_loose_p10": 0.8945,
+  "true_over_loose_min": 0.7825,
+  "exact_share_pct": 2.8
+ },
+ "scale_projection": [
+  {
+   "term": "struct",
+   "df_share_pct": 56.7,
+   "linux_blob_mb": 1.5,
+   "ten_million_blob_mb": 23.5,
+   "ten_million_blocks": 44268
+  },
+  {
+   "term": "if",
+   "df_share_pct": 54.5,
+   "linux_blob_mb": 1.5,
+   "ten_million_blob_mb": 22.6,
+   "ten_million_blocks": 42606
+  },
+  {
+   "term": "to",
+   "df_share_pct": 47.3,
+   "linux_blob_mb": 1.3,
+   "ten_million_blob_mb": 19.6,
+   "ten_million_blocks": 36943
+  },
+  {
+   "term": "return",
+   "df_share_pct": 46.0,
+   "linux_blob_mb": 1.2,
+   "ten_million_blob_mb": 19.0,
+   "ten_million_blocks": 35921
+  },
+  {
+   "term": "int",
+   "df_share_pct": 45.8,
+   "linux_blob_mb": 1.2,
+   "ten_million_blob_mb": 19.0,
+   "ten_million_blocks": 35746
+  },
+  {
+   "term": "static",
+   "df_share_pct": 44.0,
+   "linux_blob_mb": 1.2,
+   "ten_million_blob_mb": 18.2,
+   "ten_million_blocks": 34338
+  },
+  {
+   "term": "for",
+   "df_share_pct": 41.1,
+   "linux_blob_mb": 1.1,
+   "ten_million_blob_mb": 17.0,
+   "ten_million_blocks": 32146
+  },
+  {
+   "term": "the",
+   "df_share_pct": 40.1,
+   "linux_blob_mb": 1.1,
+   "ten_million_blob_mb": 16.6,
+   "ten_million_blocks": 31356
+  },
+  {
+   "term": "is",
+   "df_share_pct": 37.6,
+   "linux_blob_mb": 1.0,
+   "ten_million_blob_mb": 15.6,
+   "ten_million_blocks": 29364
+  },
+  {
+   "term": "of",
+   "df_share_pct": 32.6,
+   "linux_blob_mb": 0.9,
+   "ten_million_blob_mb": 13.5,
+   "ten_million_blocks": 25477
+  }
+ ],
+ "all_common_query": {
+  "terms": [
+   "struct",
+   "if"
+  ],
+  "blocks_fetched": 280,
+  "blocks_total": 281,
+  "bytes_fetched": 141693,
+  "bytes_total": 142204,
+  "matches_exact": true
+ }
+}

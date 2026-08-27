@@ -1,0 +1,80 @@
+{
+ "engine": "rust",
+ "build": {
+  "files": 77866,
+  "content_mb": 1087.5,
+  "chunks": 674445,
+  "tokens": 184758892,
+  "vocab": 4819532,
+  "postings": 65248582,
+  "block_rows": 5178051,
+  "reindex_without_lexical_s": 3.27,
+  "reindex_with_lexical_s": 111.52,
+  "lexical_delta_s": 108.24,
+  "tokenizer_s": 14.44,
+  "tokenizer_share_pct": 13.3,
+  "pure_tokenizer_est_s": 106.5,
+  "blob_bytes": 285112121,
+  "blob_bytes_per_posting": 4.37,
+  "summary_bytes": 56562748,
+  "summary_bytes_per_block": 10.92,
+  "table_bytes": {
+   "vfs_chunks": 1295319040,
+   "vfs_lex_df": 324534272,
+   "vfs_lex_docs": 23068672,
+   "vfs_lex_postings": 508821504,
+   "vfs_lex_stats": 16384
+  },
+  "lex_bytes_mb": 816.8,
+  "lex_bytes_per_posting": 13.13,
+  "lex_bytes_per_chunk": 1270,
+  "lex_over_content": 0.75,
+  "rss_mb_after_load": 80.9,
+  "rss_mb_after_build": 5349.7
+ },
+ "queries": {
+  "1": {
+   "blocks_median": 19,
+   "rust_score_ms": 0.226,
+   "numpy_score_ms": 0.883,
+   "k10_round2_blocks_pct": 65.2,
+   "k1000_round2_blocks_pct": 100.0,
+   "k10_bytes_fetched_pct": 66.2,
+   "k1000_bytes_fetched_pct": 100.0
+  },
+  "3": {
+   "blocks_median": 1579,
+   "rust_score_ms": 4.087,
+   "numpy_score_ms": 78.797,
+   "k10_round2_blocks_pct": 9.7,
+   "k1000_round2_blocks_pct": 31.1,
+   "k10_bytes_fetched_pct": 9.7,
+   "k1000_bytes_fetched_pct": 31.1
+  },
+  "6": {
+   "blocks_median": 1632,
+   "rust_score_ms": 3.827,
+   "numpy_score_ms": 81.406,
+   "k10_round2_blocks_pct": 7.5,
+   "k1000_round2_blocks_pct": 37.7,
+   "k10_bytes_fetched_pct": 7.6,
+   "k1000_bytes_fetched_pct": 37.7
+  }
+ },
+ "all_common": {
+  "terms": [
+   "struct",
+   "if"
+  ],
+  "df_share_pct": [
+   58.4,
+   55.2
+  ],
+  "blocks": 5983,
+  "blob_bytes": 3053721,
+  "rust_score_ms": 74.677,
+  "numpy_score_ms": 298.435,
+  "k10_round2_blocks_pct": 99.4,
+  "k1000_round2_blocks_pct": 99.9
+ }
+}

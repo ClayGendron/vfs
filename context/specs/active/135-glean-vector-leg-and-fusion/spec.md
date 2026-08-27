@@ -1,8 +1,12 @@
-# 135 — the vector leg and fusion: dialect distance, exact-first tiers, the client floor, and the `Fusion` seam in one statement
+# 135 — the vector leg and fusion: dialect distance, exact-first tiers, the vector-leg client floor, and the client-side `Fusion` seam
 
 - **Status:** ready — drafted 2026-08-26 from ADR 051 (pins 1, 2, 5,
-  8, 9) and ADR 052 (pins 1, 3). Sixth of the glean arc: turns spec
-  132's lexical glean into the fused verb.
+  8, 9) and ADR 052 (pins 1, 3); **amended the same day under ADR
+  055**: fusion is client-side on every engine (`Fusion.fuse` only —
+  `to_sql` is dropped), the vector leg keeps its in-engine statement
+  and tiers, and the "client floor" is no longer a MySQL/`GENERIC`
+  special case for the lexical side but the one path. Sixth of the
+  glean arc: turns spec 132's lexical glean into the fused verb.
 - **Born from:** ADRs 051, 052; memos
   `../../../research/2026-08-26-glean-in-the-engine.md` §1, §2, §4, §7,
   §8 and `../../../research/2026-08-26-glean-fusion-and-cross-mount-merge.md`
@@ -30,20 +34,25 @@ answer says which tier served.
 ## Decided semantics
 
 1. **`Fusion` protocol** (`src/vfs/storage/ranking.py`):
-   `to_sql(legs, signals) -> Select | None` and `fuse(legs, signals) ->
-   RankedList`. `Convex(weights={"vector": 0.5, "lexical": 0.5})` is the
-   reference: cosine normalised by `(cos + 1)/2`, BM25 by min-max over
-   the leg's candidate union (`MIN()/MAX() OVER ()` in SQL), fused as one
-   arithmetic expression. `RRF(k=10)` is the rank-only floor with per-leg
-   k and weights. Both compile into spec 132's skeleton; both run
-   client-side over per-leg top-K lists. Declared on the Storage
-   (`ranker=`; the full `Ranker` object arrives in spec 136 — here it
-   carries `fusion` and `aggregate` only).
-2. **The vector leg**: a CTE `ORDER BY <DIST(c.embedding, :q)> LIMIT
-   :kv` with the scope predicate and `embedding IS NOT NULL` inside,
-   ranked in the CTE above (never a window inside the limited leg, which
-   defeats an index scan), aggregated to entries inside the leg like the
-   lexical one. Per-leg depth `max(10 × limit, 100)`.
+   `fuse(legs, signals) -> RankedList` over per-leg ranked lists —
+   the vector leg's top-K from its in-engine statement, the lexical
+   leg's top-K from the scorer (spec 132). `Convex(weights={"vector":
+   0.5, "lexical": 0.5})` is the reference: cosine normalised by
+   `(cos + 1)/2`, BM25 by min-max over the leg's candidate union, fused
+   as one arithmetic expression in Python (numpy over two short
+   arrays; a Rust `fuse` is not warranted). `RRF(k=10)` is the
+   rank-only floor with per-leg k and weights. There is no `to_sql`:
+   ADR 055 amended ADR 051 pin 1 to the vector leg alone. Declared on
+   the Storage (`ranker=`; the full `Ranker` object arrives in spec 136
+   — here it carries `fusion` and `aggregate` only).
+2. **The vector leg**: a statement `ORDER BY <DIST(c.embedding, :q)>
+   LIMIT :kv` with the scope predicate and `embedding IS NOT NULL`
+   inside, ranked above the limited leg (never a window inside it,
+   which defeats an index scan), aggregated to entries inside the leg
+   (MaxP in SQL — the vector leg is the one leg that still scores in
+   the engine). Per-leg depth `max(10 × limit, 100)`. The scope
+   predicate is the same id-resolving statement spec 132 compiles for
+   the lexical leg, spelled as a semi-join here.
 3. **Dialect distance factory** keyed by dialect: pgvector `<=>` via
    pgvector-python; Oracle in-tree `VECTOR` comparators; `func.vector_distance('cosine', a, b)`
    on SQL Server; `func.vec_distance_cosine(a, func.vec_fromtext(q))` on
@@ -59,11 +68,13 @@ answer says which tier served.
    exists; ANN only where the planner will use it — unscoped on MariaDB
    and Oracle, Postgres with `SET LOCAL hnsw.iterative_scan =
    relaxed_order` where pgvector ≥ 0.8; SQL Server's `VECTOR_SEARCH` /
-   DiskANN never used (read-only table). The **client floor** (MySQL,
-   `GENERIC`, opted-out SQLite): the statement carries the lexical leg;
-   the vector leg is `SELECT id, entry_id, embedding FROM chunks WHERE
-   <scope> AND embedding IS NOT NULL` fetched in `membership_budget`
-   batches, scored in numpy with a running top-K, then `Fusion.fuse`.
+   DiskANN never used (read-only table). The **client floor for the
+   vector leg** (MySQL, `GENERIC`, opted-out SQLite): `SELECT id,
+   entry_id, embedding FROM chunks WHERE <scope> AND embedding IS NOT
+   NULL` fetched in `membership_budget` batches, scored in numpy with a
+   running top-K. Fusion is `Fusion.fuse` on every engine (ADR 055), so
+   the floor differs from the native tiers only in how the vector list
+   is produced.
    Every answer records the tier per leg (`native_ann | native_exact |
    client_floor`), inferred from configuration (index present + no
    scope) — fork E6's cheaper choice; plan-reading is a later refinement.
@@ -94,13 +105,15 @@ lossy narrowing (unbuilt by decision).
 
 ## Slices
 
-- **A — `Fusion`, `Convex`, `RRF`**: the protocol, SQL compilation and
-  client `fuse`, unit pins that `to_sql` and `fuse` rank identically on
-  fixtures.
-- **B — the vector leg and dialect factory**: the CTE, distance
+- **A — `Fusion`, `Convex`, `RRF`**: the protocol and `fuse`, unit pins
+  on fixtures (the convex reference against a hand-computed fusion;
+  RRF against its definition; determinism with the rounding-before-order
+  law).
+- **B — the vector leg and dialect factory**: the statement, distance
   expressions, native types, `DialectProfile` facts, the sqlite-vec
   opt-in; the ordered-top-10 pin becomes the *fused* pin on all five
-  engines.
+  engines (identical rankings now follow from one client fusion over
+  legs whose own rankings are pinned).
 - **C — the floor and tier records**: MySQL/`GENERIC` path, numpy
   scoring in batches, tier records, unembedded handling; the compose
   bumps and skill/doc updates; harness arms (vector-only, fused) with

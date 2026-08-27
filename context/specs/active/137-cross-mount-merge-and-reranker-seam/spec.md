@@ -43,9 +43,11 @@ with the two amendments (corpus-wide statistics; fetch depth).
    path, mount, chunk text, line bounds, native score, per-leg scores,
    prior values, term stats)` — everything the rows already hold; no
    stage re-fetches.
-4. **`BM25Rerank`**: one BM25 (spec 130's formula and tokenizer) over
-   the union's chunk texts, **with corpus-wide statistics summed across
-   the answering mounts' exported `(df, N, avg_dl)`** — a
+4. **`BM25Rerank`**: one BM25 (spec 130's formula and tokenizer — the
+   same `vfs.native` scorer over freshly tokenized chunk texts, numpy
+   fallback; ADR 055) over the union's chunk texts, **with corpus-wide
+   statistics summed across the answering mounts' exported `(df, N,
+   avg_dl)`** — a
    `SupportsGlean` requirement, so there is no union-only fallback; ties
    broken on `(score, path)`; then MaxP to entries; then `limit`. The
    mounts' exposed scores are not used; there is no cross-mount RRF and

@@ -5,14 +5,28 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **130 landed 2026-08-26** — the lexical index: tokenizer, BM25
-  weights precomputed into four epoch-scoped `lex_*` tables built by
-  `build_epoch` as a two-pass stream (memory O(vocabulary)), swept by
-  both reclaims, `lexical_stats` exported; fidelity τ = 1.0 on all
-  five engines. Landing note records the linux-store number: +28.8 s
-  per 4,000 files, tokenizer 34 % of it — the Rust-port trigger is
-  recorded but the bigger lever is the term-row volume (E2 ids, bulk
-  paths). Next in line: **131**.
+- **130 landed (second landing) 2026-08-26** — block postings per
+  term with per-term summaries, the Rust lexical engine (tokenizer
+  from generated interpreter tables, builder, scorer) behind
+  `vfs._native` protocol 4 with pinned pure twins, client-side block
+  selection for the two-round fetch; schema 8, index format 4. Full
+  linux checkout: 65 M postings at 4.37 B, 0.75× content, 108 s build
+  (engine ~42 s; the SQLAlchemy insert path is the miss against the
+  ~50–60 s target — a fork), round-two fetch 9.7 % of blocks at k = 10.
+  The staff review's corrections (validated in
+  `research/studies/2026-08-26-bm25-storage/review-validation.md`) are
+  in ADR 055 pins 1, 2, 4. Next in line: **131**, then **132**.
+- **130 landed and reopened 2026-08-26** — the first landing
+  (a351e7b: relational `lex_terms`, in-engine `SUM`, fidelity τ = 1.0
+  on five engines) measured 32 B/posting, +28.8 s per 4,000 files, 55×
+  slower and 5× larger than SQL Server's own full-text index. The same
+  day's storage research leg (three prior-art studies, a Python + Rust
+  prototype on sqlite and four engines: exact rankings, 2.25× smaller,
+  11× faster build in Rust) → **ADR 055**: BM25 the way grep is built
+  — block postings per term, the Rust lexical engine with a pinned
+  pure fallback, client-side scoring and client-side fusion. Spec 130
+  is back in `active/`, rewritten; specs 132, 135, 136, 137, 131
+  amended to match (superseded by the second landing, above).
 - **glean arc drafted 2026-08-26** (research leg → ADRs 051–054 →
   nine ordered specs, each landing green before the next): **130**
   lexical index and tokenizer (epoch-scoped BM25 tables built by

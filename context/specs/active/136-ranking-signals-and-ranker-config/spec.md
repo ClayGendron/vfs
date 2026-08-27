@@ -54,13 +54,16 @@ Storage so the verb never grows a selector.
    `parent_id` in the smoothing step and nowhere else in the prior
    path. A zero-edge mount writes no `centrality` rows; the statement
    omits the leg and the envelope carries a warning-severity record.
-5. **Query path**: spec 135's statement gains one `LEFT JOIN signals s
-   ON s.entry_id = e.entry_id AND s.signal = :name AND s.generation =
-   :gen` per configured signal and multiplies the fused score by
-   `(1 + β · COALESCE(transform(s.value), 0))` — nothing else. Transform
-   vocabulary: `Log1p()`, `Saturation(pivot)`, `Sigmoid(pivot,
-   exponent)`, `Linear()`, each a one-line SQL expression and a
-   matching Python function for the floor.
+5. **Query path** (as amended by ADR 055 — fusion is client-side):
+   after the legs' ranked lists are known, one probe `SELECT entry_id,
+   signal, value FROM signals WHERE entry_id IN (<candidate union>) AND
+   signal IN (:names) AND generation = :gen` (chunked under
+   `membership_budget`; the union is at most the legs' depths) and the
+   factor `(1 + β · transform(value))` multiplies the fused score in
+   `Fusion.fuse`'s signal step — nothing else. The vector leg's
+   in-engine statement never joins `signals`. Transform vocabulary:
+   `Log1p()`, `Saturation(pivot)`, `Sigmoid(pivot, exponent)`,
+   `Linear()`, each a one-line Python function (no SQL twin needed).
 6. **`Ranker`** (frozen, hashable, declared on the Storage):
    `Ranker(signals=(Signal(name, measure=…, smoothing=γ, transform=…,
    weight=β), …), fusion=Convex(...) | RRF(...), aggregate=MaxP(chunks_per_entry=3))`;
@@ -88,15 +91,15 @@ and its SQL compilation, `path_shape`, the explain data, harness arms
 - **B — kernel and smoothing**: PageRank/Katz kernel with the pure
   fallback and parity pin; the two tree passes; the zero-edge and
   sparse-graph pins (absent leg vs floor-mapped zero).
-- **C — `Ranker` and the join**: the config object, transforms, the
-  statement's signal join and floor equivalent, the explain data,
+- **C — `Ranker` and the probe**: the config object, transforms, the
+  candidate-union signal probe and the factor step, the explain data,
   conformance rows (a declared signal with no rows is dropped with a
   record; a prior never reorders when uniform), harness arms and the
   landing-note table.
 
 ## Landing criteria
 
-- `scripts/ci.sh 3.13` green; engine legs green (the join compiles and
+- `scripts/ci.sh 3.13` green; engine legs green (the probe runs and
   the fused pin holds with a signal present on all five engines).
 - Harness: the uninformative-prior control arm is not worsened by more
   than 0.005 at the default β; the landing note records nDCG for each
