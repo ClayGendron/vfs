@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from vfs.models import Match
 from vfs.pattern_matching.grep import split_lines
 from vfs.results.kinds import KIND_CONTRACTS, Severity, kind_family
+from vfs.results.preview import select_preview
 from vfs.results.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_projection, validate_projection
 
 if TYPE_CHECKING:
@@ -170,6 +171,8 @@ def _render_body(result: Result, projection: tuple[str, ...]) -> str:
     fn = result.op
     if fn == "grep":
         return _render_grep(result, projection)
+    if fn == "glean":
+        return _render_glean(result, projection)
     if fn == "tree":
         return _render_tree(result)
     if fn == "read":
@@ -206,14 +209,16 @@ def _render_path_list(result: Result, projection: tuple[str, ...]) -> str:
     colon-joined format when cells contain colons (timestamps, tuples).
     Column widths expand to fit the longest cell so pipes line up.
     """
+    return _render_rows(sorted(result.observations, key=lambda x: x.path), projection)
+
+
+def _render_rows(observations: list[Observation], projection: tuple[str, ...]) -> str:
+    """*observations* in the order given — one path per line, or a Markdown table."""
     if projection == ("path",):
-        return "\n".join(sorted(o.path for o in result.observations))
-    if not result.observations:
+        return "\n".join(o.path for o in observations)
+    if not observations:
         return ""
-    rows = [
-        [_format_field(f, getattr(o, f, None)) for f in projection]
-        for o in sorted(result.observations, key=lambda x: x.path)
-    ]
+    rows = [[_format_field(f, getattr(o, f, None)) for f in projection] for o in observations]
     return _markdown_table(list(projection), rows)
 
 
@@ -406,6 +411,51 @@ def _region_lines(
     if region_text is not None:
         return [(n, "") for n in range(start, end + 1)]
     return None
+
+
+_GLEAN_LINE_LEVEL_FIELDS: frozenset[str] = frozenset({"path", "score", "matches"})
+"""Fields glean prints as ranked lines; anything else switches to the table."""
+
+
+def _render_glean(result: Result, projection: tuple[str, ...]) -> str:
+    """Rank-ordered output — a ranked list never renders path-sorted.
+
+    With the native vocabulary (``path`` / ``score`` / ``matches``) each
+    entry prints in rank order: a header line ``path  score=0.8731``,
+    then per region a ``path:start-end`` locator and the preview as
+    quoted lines (``> …``) — quoted, never fenced, so the bold markers
+    style. A region without a preview but with text shows the head of
+    that text; one with neither shows the locator alone.
+
+    Row-level fields (``size_bytes``, ``updated_at``, …) switch to the
+    Markdown table, still in rank order, with ``matches`` as ``start-end``
+    spans.
+    """
+    if not set(projection).issubset(_GLEAN_LINE_LEVEL_FIELDS):
+        return _render_rows(result.observations, projection)
+    include_score = "score" in projection
+    include_matches = "matches" in projection
+    lines_out: list[str] = []
+    for o in result.observations:
+        header = str(o.path)
+        if include_score and o.score is not None:
+            header = f"{header}  score={_format_field('score', o.score)}"
+        lines_out.append(header)
+        if not include_matches:
+            continue
+        for region in o.matches or []:
+            lines_out.append(f"{o.path}:{region.start}-{region.end}")
+            lines_out.extend(f"> {line}" if line else ">" for line in _preview_lines(region))
+    return "\n".join(lines_out)
+
+
+def _preview_lines(region: Match) -> list[str]:
+    """The region's preview lines — the carried preview, else the head of its text."""
+    if region.preview is not None:
+        return split_lines(region.preview)
+    if region.content:
+        return split_lines(select_preview(region.content, region.start, ()).text)
+    return []
 
 
 def _render_tree(result: Result) -> str:

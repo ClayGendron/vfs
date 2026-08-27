@@ -1684,6 +1684,26 @@ class StorageContract:
         assert sorted(str(o.path) for o in piped.observations) == sorted(str(o.path) for o in rows[:2])
 
     @needs("write", "glean")
+    async def test_glean_renders_rank_ordered_bolded_previews_in_both_worlds(self, storage: ConformanceBackend) -> None:
+        # /z outranks /a; the text never renders path-sorted, and every
+        # region carries a preview cut inside its own bounds.
+        reindexer = _reindexer_of(storage)
+        files = {"/z.txt": "beacon beacon beacon\n", "/a.txt": "one beacon, then filler words here\n"}
+        await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
+        for _world in ("overlay", "indexed"):
+            result = await storage.glean(query="beacon")
+            assert [str(o.path) for o in result.observations] == ["/z.txt", "/a.txt"]
+            text = result.to_str()
+            assert text.index("/z.txt") < text.index("/a.txt")
+            assert "> **beacon** **beacon** **beacon**" in text and "/z.txt:1-1" in text
+            for row in result.observations:
+                for match in row.matches or []:
+                    assert match.preview is not None and "**beacon**" in match.preview
+                    assert match.preview_start is not None and match.preview_end is not None
+                    assert match.start <= match.preview_start <= match.preview_end <= match.end
+            assert (await reindexer.reindex()).success is True
+
+    @needs("write", "glean")
     async def test_glean_serves_the_dirty_set_and_partitions_the_index(self, storage: ConformanceBackend) -> None:
         # A row written since the last build answers from its live text;
         # a rewritten row's stale postings never answer for it.

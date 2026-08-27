@@ -87,9 +87,26 @@ All client methods return `VFSResult` on success. The async and sync facades exp
 |--------|-------|
 | `glob(pattern, *, paths=(), ext=(), max_count=None, candidates=None, user_id=None)` | Path matching with optional path and extension filters. |
 | `grep(pattern, *, paths=(), ext=(), ext_not=(), globs=(), globs_not=(), case_mode="sensitive", fixed_strings=False, word_regexp=False, invert_match=False, before_context=0, after_context=0, output_mode="lines", max_count=None, candidates=None, user_id=None)` | Regex or fixed-string content search. |
+| `glean(query, *, limit=10, paths=(), observations=None, ext=(), ext_not=(), globs=(), globs_not=(), columns=None, user_id=None)` | Ranked search: one row per entry, best first, its top chunks riding as `Match` regions with line bounds and a query-biased preview (terms bolded, hard-capped). |
 | `semantic_search(query, k=15, *, candidates=None, user_id=None)` | Embedding-backed search using the mounted embedding provider and vector store. |
 | `vector_search(vector, k=15, *, candidates=None, user_id=None)` | Raw vector lookup. |
 | `lexical_search(query, k=15, *, candidates=None, user_id=None)` | BM25 or backend-native lexical ranking. |
+
+`glean` renders in rank order — a header line per entry, then a `path:start-end` locator per region with the preview quoted beneath it:
+
+```
+/src/vfs/models/rows.py  score=1.0000
+/src/vfs/models/rows.py:442-482
+>         # **Reindex** single-runner **lease**: holder token + last-**heartbeat** **epoch**
+>         # millis. NULL holder or a stale **heartbeat** means the **lease** is free.
+>         Column("**reindex**_holder", String(ULID_LENGTH)),
+>         Column("**reindex**_**heartbeat**", BigInteger),
+/src/vfs/storage/backends/database/indexing.py  score=0.7310
+/src/vfs/storage/backends/database/indexing.py:12-40
+> ...
+```
+
+Previews are display, not retrieval: the window (4 lines), the per-line cap (160 characters) and the per-preview cap (480 characters) are render-layer constants in `vfs.results.preview`, never `glean` parameters. Row-level projections (`to_str(projection=("path", "score", "size_bytes"))`) fall back to a Markdown table, still in rank order.
 
 ### Graph Traversal and Ranking
 

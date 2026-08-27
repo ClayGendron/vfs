@@ -341,6 +341,13 @@ class Match(BaseModel):
     stays the entry's full content — rendering a match never requires
     fetching the file. ``score`` is the region's own relevance (glean); the
     row-level ``Observation.score`` is the aggregate (max) across regions.
+
+    ``preview`` is glean's query-biased excerpt of the region — a few
+    lines, query terms bolded in Markdown, hard-capped — with its own
+    absolute 1-indexed bounds ``preview_start`` / ``preview_end``, a
+    sub-range of ``start..end``. Two fields, two contracts: ``content``
+    stays the raw region text a caller slices by line number; grep never
+    fills the preview. The three preview fields travel together.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -350,6 +357,24 @@ class Match(BaseModel):
     match: int | None = None
     content: str | None = None
     score: float | None = None
+    preview: str | None = None
+    preview_start: int | None = None
+    preview_end: int | None = None
+
+    @model_validator(mode="after")
+    def _preview_travels_with_its_bounds(self) -> Match:
+        fields = (self.preview, self.preview_start, self.preview_end)
+        if any(field is None for field in fields) and any(field is not None for field in fields):
+            msg = "preview and its bounds must be set together"
+            raise ValueError(msg)
+        if (
+            self.preview_start is not None
+            and self.preview_end is not None
+            and not (self.start <= self.preview_start <= self.preview_end <= self.end)
+        ):
+            msg = f"preview bounds {self.preview_start}..{self.preview_end} fall outside {self.start}..{self.end}"
+            raise ValueError(msg)
+        return self
 
 
 class Observation(BaseModel):

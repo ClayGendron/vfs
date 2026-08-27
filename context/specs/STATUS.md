@@ -5,6 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **133 landed 2026-08-27** — previews and the glean renderer:
+  `Match.preview` with validated bounds, `select_preview` in
+  `results/preview.py` (the density scorer, merged `**…**` spans,
+  160/480-char caps, the head fallback; ≈ 20 µs a chunk on the budget
+  pin, 1.3–1.8 ms a 10-entry page on the dense chunks a page selects),
+  the rank-ordered `glean` branch of the renderer (never path-sorted;
+  quoted previews under `path:start-end` locators; the table for
+  row-level projections, also in rank order), glean's default
+  projection now `path, score, matches`, overlay hits previewed from
+  the body already scored (their `Match` spans the whole document).
+  Real pages render at ≈ 2.5–3 k tokens against ≈ 15 k as raw chunks.
+  Also fixed: the scope-root probe leaked `stat` into a scoped call's
+  `ops`, sending every `paths=`-scoped grep/glob/glean to the
+  path-sorted table. `examples/glean_walkthrough.ipynb` walks the verb.
+  Next in line: **134** (the embedding seam) → **135** (the vector leg
+  and fusion).
 - **132 landed 2026-08-27** — the first working `glean`, lexical-only:
   `glean.py` beside `grep.py` (two key-fetch rounds, the Rust scorer,
   MaxP, min-max scores, the `lexical_stats` extra), the scope ladder

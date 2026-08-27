@@ -127,10 +127,12 @@ class TestPathListAndTable:
 
     def test_wider_projection_renders_markdown_table(self) -> None:
         result = Result(
-            ops=("glean",),
-            observations=[obs("/a.md", score=0.5), obs("/b.md", score=0.25)],
+            ops=("ls",),
+            observations=[obs("/b.md", score=0.25), obs("/a.md", score=0.5)],
         )
-        assert str(result) == ("| path  |  score |\n| ----- | -----: |\n| /a.md | 0.5000 |\n| /b.md | 0.2500 |")
+        assert result.to_str(projection=("path", "score")) == (
+            "| path  |  score |\n| ----- | -----: |\n| /a.md | 0.5000 |\n| /b.md | 0.2500 |"
+        )
 
     def test_unknown_function_falls_back_to_path_list(self) -> None:
         result = Result(ops=("future_op",), observations=[obs("/a.md")])
@@ -295,6 +297,73 @@ class TestGrepRendering:
             observations=[obs("/a.py", matches=[Match(start=1, end=3), Match(start=1, end=3, match=2)])],
         )
         assert str(result) == "/a.py:1\n/a.py:2\n/a.py:3"
+
+
+# ---------------------------------------------------------------------------
+# Glean
+# ---------------------------------------------------------------------------
+
+
+def _glean_hit(path: str, score: float, *regions: Match) -> Observation:
+    return obs(path, score=score, matches=list(regions), populated=frozenset({"path", "score", "matches"}))
+
+
+class TestGleanRendering:
+    HIT = Match(
+        start=10,
+        end=30,
+        content="raw chunk text\nneedle here\nmore\n",
+        score=0.9,
+        preview="**needle** here\nmore",
+        preview_start=11,
+        preview_end=12,
+    )
+
+    def test_default_projection_prints_rank_order_with_locators_and_quoted_previews(self) -> None:
+        # /z ranks first: a ranked result never renders path-sorted.
+        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9, self.HIT), _glean_hit("/a.md", 0.4)])
+        assert str(result) == "/z.md  score=0.9000\n/z.md:10-30\n> **needle** here\n> more\n/a.md  score=0.4000"
+
+    def test_path_only_projection_keeps_rank_order(self) -> None:
+        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9), _glean_hit("/a.md", 0.4)])
+        assert result.to_str(projection=("path",)) == "/z.md\n/a.md"
+
+    def test_path_and_score_projection_prints_headers_only(self) -> None:
+        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9, self.HIT)])
+        assert result.to_str(projection=("path", "score")) == "/z.md  score=0.9000"
+
+    def test_a_blank_preview_line_renders_as_a_bare_quote_marker(self) -> None:
+        region = Match(start=1, end=3, preview="one\n\nthree", preview_start=1, preview_end=3)
+        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, region)])
+        assert result.to_str(projection=("matches",)) == "/a.md\n/a.md:1-3\n> one\n>\n> three"
+
+    def test_a_region_without_a_preview_shows_the_head_of_its_text(self) -> None:
+        region = Match(start=5, end=9, content="a\nb\nc\nd\ne\n")
+        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, region)])
+        assert result.to_str(projection=("path", "matches")) == "/a.md\n/a.md:5-9\n> a\n> b\n> c\n> d"
+
+    def test_a_region_with_neither_shows_the_locator_alone(self) -> None:
+        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, Match(start=1, end=1))])
+        assert result.to_str(projection=("path", "matches")) == "/a.md\n/a.md:1-1"
+
+    def test_row_level_fields_switch_to_a_rank_ordered_table(self) -> None:
+        rows = [
+            obs(
+                "/z.md",
+                score=0.9,
+                size_bytes=7,
+                matches=[self.HIT],
+                populated=frozenset({"path", "score", "size_bytes", "matches"}),
+            ),
+            obs("/a.md", score=0.4, size_bytes=3, populated=frozenset({"path", "score", "size_bytes"})),
+        ]
+        out = Result(ops=("glean",), observations=rows).to_str(projection=("path", "score", "size_bytes", "matches"))
+        lines = out.split("\n")
+        assert lines[0].startswith("| path") and lines[2].startswith("| /z.md") and lines[3].startswith("| /a.md")
+        assert "10-30" in lines[2]
+
+    def test_an_empty_result_renders_nothing(self) -> None:
+        assert Result(ops=("glean",), observations=[]).to_str() == ""
 
 
 # ---------------------------------------------------------------------------

@@ -100,6 +100,25 @@ class TestRanking:
         assert {"path", "kind", "version", "score", "matches"} <= row.populated
         await storage.close()
 
+    async def test_a_chunk_hit_carries_a_bolded_preview_inside_its_bounds(self, tmp_path: Any) -> None:
+        storage = await _indexed(tmp_path)
+        [row] = (await storage.glean(query="Tokens", limit=1, globs=("src/**",))).observations
+        for match in row.matches or []:
+            assert match.preview is not None and "**tokens**" in match.preview
+            assert match.preview_start is not None and match.preview_end is not None
+            assert match.start <= match.preview_start <= match.preview_end <= match.end
+        await storage.close()
+
+    async def test_a_query_term_absent_from_a_chunk_leaves_its_head_unbolded(self, tmp_path: Any) -> None:
+        # Both terms are in the index but only one occurs in the chunk that answers.
+        files = {"/a.md": "stream of tokens\n", "/b.md": "a request arrives\nand a stream flows\n"}
+        storage = await _indexed(tmp_path, files)
+        result = await storage.glean(query="tokens request")
+        [b] = [o for o in result.observations if str(o.path) == "/b.md"]
+        [match] = b.matches or []
+        assert match.preview == "a **request** arrives\nand a stream flows"
+        await storage.close()
+
     async def test_a_long_entry_carries_its_best_chunks_with_distinct_bounds(self, tmp_path: Any) -> None:
         sections = (f"## Section {i}\n\nlantern words in section {i}, plain prose sentence.\n\n" for i in range(120))
         storage = await _indexed(tmp_path, {"/doc/big.md": "".join(sections), "/doc/small.md": "no lantern here\n"})
@@ -287,6 +306,9 @@ class TestOverlay:
         assert _paths(result)[0] == "/notes.txt"
         [match] = result.observations[0].matches or []
         assert (match.start, match.end, match.content) == (1, 1, None)
+        # The overlay's preview is cut from the body it already scored — no chunk row, no second read.
+        assert match.preview == "A stream of **tokens**, **tokens**, **tokens**."
+        assert (match.preview_start, match.preview_end) == (1, 1)
         assert result.lexical_stats["n_docs"] == 0  # ty: ignore[unresolved-attribute]
         await storage.close()
 
@@ -392,8 +414,9 @@ class TestOverlay:
         assert result.errors[0].kind == VFSErrorKind.conflict and result.errors[0].retryable is True
         await storage.close()
 
-    def test_overlay_blocks_take_bytes_bodies_and_local_statistics(self) -> None:
-        docs = [(1, b"alpha beta"), (2, "beta beta gamma")]
+    def test_overlay_blocks_take_decoded_bodies_and_local_statistics(self) -> None:
+        assert glean_module._text(b"alpha beta") == glean_module._text("alpha beta") == "alpha beta"
+        docs = [(1, "alpha beta"), (2, "beta beta gamma")]
         blocks, idfs, avg_dl = glean_module._overlay_blocks(
             docs, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75)
         )
@@ -403,6 +426,16 @@ class TestOverlay:
         assert idfs[1] > idfs[0]  # the rarer term (absent) takes the higher idf
         blocks, idfs, avg_dl = glean_module._overlay_blocks([], ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
         assert blocks == [] and avg_dl == 0.0 and len(idfs) == 1
+
+    async def test_an_overlay_hit_spans_its_whole_body_and_previews_the_best_window(self, tmp_path: Any) -> None:
+        body = "".join(f"line {i} of prose\n" for i in range(1, 9)) + "the lantern line\nlast line\n"
+        storage = await _fresh(tmp_path, {"/fresh.md": body})
+        [row] = (await storage.glean(query="lantern")).observations
+        [match] = row.matches or []
+        assert (match.start, match.end, match.content) == (1, 10, None)
+        assert match.preview is not None and match.preview.endswith("line 8 of prose\nthe **lantern** line")
+        assert (match.preview_start, match.preview_end) == (6, 9)  # the earliest window holding the hit
+        await storage.close()
 
 
 class TestBudgets:

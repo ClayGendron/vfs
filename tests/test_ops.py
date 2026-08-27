@@ -90,7 +90,7 @@ def test_projection_derives_action_functions_from_the_shared_set() -> None:
 
 
 def test_glean_and_run_have_default_projections() -> None:
-    assert projection.default_projection("glean") == ("path", "score")
+    assert projection.default_projection("glean") == ("path", "score", "matches")
     assert projection.default_projection("run") == ("path",)
     assert "glean" in projection.KNOWN_FUNCTIONS
     assert "run" in projection.KNOWN_FUNCTIONS

@@ -60,7 +60,9 @@ from vfs.models.lexical import (
 )
 from vfs.paths import Path, normalize_ext_channel
 from vfs.pattern_matching import PatternError, compile_filter, escape_glob, expand_channel
+from vfs.pattern_matching.grep import split_lines
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results.preview import select_preview
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import lexical_stats
@@ -145,6 +147,14 @@ class _Hit(NamedTuple):
     chunks: list[tuple[ChunkId, float]]
 
 
+class _Sources(NamedTuple):
+    """The text a ``Match`` row is cut from: chunk rows by id, overlay bodies by entry, the query's terms."""
+
+    chunks: dict[ChunkId, RowMapping]
+    bodies: dict[EntryId, str]
+    terms: Sequence[str]
+
+
 # ---------------------------------------------------------------------------
 # The verb
 # ---------------------------------------------------------------------------
@@ -211,6 +221,7 @@ async def glean_rows(
 
     hits: dict[EntryId, _Hit] = {}
     rows: dict[EntryId, RowMapping] = {}
+    bodies: dict[EntryId, str] = {}
     if epoch is not None and present:
         allow = await allow_list_ids(session, tables, membership_budget, channel, fan_arms=fan_arms, deadline=deadline)
         candidates: list[ChunkId] | None = None
@@ -257,7 +268,7 @@ async def glean_rows(
             deadline=deadline,
         )
         admitted = [mapping for mapping in nominees.rows if scope.admits(mapping)]
-        scored = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
+        scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
         hits.update(scored)
         rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in scored})
         if nominees.overflow:
@@ -271,7 +282,8 @@ async def glean_rows(
     )
     mask = frozenset(fetched | {"score", "matches"})
     projected = tuple(fetched - {"content"})
-    observed = [_observe(rows[entry_id], hits[entry_id], score, texts, projected, mask) for entry_id, score in ordered]
+    sources = _Sources(texts, bodies, terms)
+    observed = [_observe(rows[eid], hits[eid], score, sources, projected, mask) for eid, score in ordered]
     errors = [
         ResultError(
             kind=VFSErrorKind.truncated,
@@ -453,24 +465,32 @@ async def _overlay(
     admitted: Sequence[RowMapping],
     terms: Sequence[str],
     stats: TermStatistics,
-) -> dict[EntryId, _Hit]:
+) -> tuple[dict[EntryId, _Hit], dict[EntryId, str]]:
     """The admitted ``NOT encoded`` rows scored from their live text on the epoch's scale.
 
     A term the epoch never saw — a word first written since the last
     reindex, or every term of a never-indexed store — takes its idf
     from the overlay itself (its document frequency there, over the
     epoch's corpus size plus the overlay's); with no epoch at all the
-    overlay is the corpus, mean length included.
+    overlay is the corpus, mean length included. The scored entries'
+    bodies ride back beside the hits: their previews are cut from the
+    text already fetched here, never from a second read.
     """
     if not admitted:
-        return {}
+        return {}, {}
     surrogate = await _surrogate_ids(session, tables, [mapping["entry_id"] for mapping in admitted], membership_budget)
     bodies = await content_for_entries(session, tables, profile, membership_budget, list(surrogate))
-    docs = sorted((surrogate[entry_id], body) for entry_id, body in bodies.items())
+    docs = sorted((surrogate[entry_id], _text(body)) for entry_id, body in bodies.items())
     blocks, idfs, avg_dl = await call_offloaded(executor, partial(_overlay_blocks, docs, terms, stats))
     by_surrogate = {doc_id: entry_id for entry_id, doc_id in surrogate.items()}
     ranked = score_blocks(blocks, idfs, avg_dl, OVERLAY_BUDGET)
-    return {by_surrogate[doc_id]: _Hit(score, [(-1, score)]) for doc_id, score in ranked}
+    hits = {by_surrogate[doc_id]: _Hit(score, [(-1, score)]) for doc_id, score in ranked}
+    texts = dict(docs)
+    return hits, {entry_id: texts[surrogate[entry_id]] for entry_id in hits}
+
+
+def _text(body: Body) -> str:
+    return body if isinstance(body, str) else body.decode("utf-8", "surrogatepass")
 
 
 async def _surrogate_ids(
@@ -486,15 +506,14 @@ async def _surrogate_ids(
 
 
 def _overlay_blocks(
-    docs: Sequence[tuple[int, Body]], terms: Sequence[str], stats: TermStatistics
+    docs: Sequence[tuple[int, str]], terms: Sequence[str], stats: TermStatistics
 ) -> tuple[list[ScoreBlock], list[float], float]:
     """Every query term's postings over the overlay documents as blocks, with
     the idfs and mean length they score under — the offloaded CPU."""
     per_term: list[list[tuple[int, int, int]]] = [[] for _ in terms]
     positions = {term: position for position, term in enumerate(terms)}
     total_dl = 0
-    for doc_id, body in docs:
-        text = body if isinstance(body, str) else body.decode("utf-8", "surrogatepass")
+    for doc_id, text in docs:
         tokens = tokenize(text)
         total_dl += len(tokens)
         counts = Counter(tokens)
@@ -555,24 +574,41 @@ def _observe(
     mapping: RowMapping,
     hit: _Hit,
     score: float,
-    texts: dict[ChunkId, RowMapping],
+    sources: _Sources,
     projected: tuple[str, ...],
     mask: frozenset[str],
 ) -> Observation:
-    """One entry row with its best chunks as ``Match`` rows, chunk scores on the entry's scale."""
+    """One entry row with its best chunks as ``Match`` rows, chunk scores on the entry's scale.
+
+    Every region carries its preview, cut from text already in hand: a
+    chunk's own row, or the live body the overlay scored. An overlay
+    entry answers as one whole document — bounds over the whole body,
+    no ``content`` (a file is not a chunk), the preview alone.
+    """
     values: dict[str, object] = {field: mapping[field] for field in projected}
     values["path"] = Path._brand(mapping["path"])
     ratio = score / hit.score  # BM25 weights are positive: a hit's score never is zero
     matches: list[Match] = []
     for chunk_id, chunk_score in hit.chunks:
         chunk_scaled = round(chunk_score * ratio, SCORE_DECIMALS)
-        if chunk_id < 0:  # an overlay entry answers as one whole document
-            matches.append(Match(start=1, end=1, match=None, content=None, score=chunk_scaled))
-            continue
-        text = texts[chunk_id]
+        if chunk_id < 0:
+            body = sources.bodies[mapping["entry_id"]]
+            start, end, content = 1, max(1, len(split_lines(body))), None
+            excerpt = select_preview(body, 1, sources.terms)
+        else:
+            chunk = sources.chunks[chunk_id]
+            start, end, content = chunk["line_start"], chunk["line_end"], chunk["content"]
+            excerpt = select_preview(content, start, sources.terms)
         matches.append(
             Match(
-                start=text["line_start"], end=text["line_end"], match=None, content=text["content"], score=chunk_scaled
+                start=start,
+                end=end,
+                match=None,
+                content=content,
+                score=chunk_scaled,
+                preview=excerpt.text,
+                preview_start=excerpt.start,
+                preview_end=excerpt.end,
             )
         )
     values["score"] = score

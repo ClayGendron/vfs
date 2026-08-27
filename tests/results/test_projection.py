@@ -113,4 +113,4 @@ class TestResolveProjection:
         assert resolve_projection(("all",), "glob", rows) == ("path",)
 
     def test_duplicates_drop_first_win(self) -> None:
-        assert resolve_projection(("score", "default"), "glean", []) == ("score", "path")
+        assert resolve_projection(("score", "default"), "glean", []) == ("score", "path", "matches")

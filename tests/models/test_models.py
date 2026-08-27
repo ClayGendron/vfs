@@ -719,3 +719,16 @@ class TestObservation:
         assert obs.matches[1].match == 5  # grep hit line
         assert obs.matches[1].score is None  # grep rows carry no relevance
         assert [m.content for m in obs.matches] == ["def login(): ...", "retry()"]
+
+    def test_match_preview_travels_with_its_bounds_inside_the_region(self) -> None:
+        hit = Match(start=10, end=42, preview="**login**", preview_start=12, preview_end=13)
+        assert (hit.preview_start, hit.preview_end) == (12, 13)
+        assert Match(start=1, end=1).preview is None  # grep never fills the preview
+        with pytest.raises(ValidationError, match="set together"):
+            Match(start=10, end=42, preview="text")
+        with pytest.raises(ValidationError, match="set together"):
+            Match(start=10, end=42, preview_start=12, preview_end=13)
+        with pytest.raises(ValidationError, match="fall outside"):
+            Match(start=10, end=42, preview="text", preview_start=9, preview_end=13)
+        with pytest.raises(ValidationError, match="fall outside"):
+            Match(start=10, end=42, preview="text", preview_start=13, preview_end=12)
