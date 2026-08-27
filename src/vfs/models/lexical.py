@@ -35,8 +35,8 @@ The formula is Lucene's BM25: ``idf = ln(1 + (N - df + 0.5)/(df + 0.5))``
 retained so a single-term score reads as ``<= (k1 + 1) * idf``. Weights
 are computed at query time from the stored ``tf`` and ``dl``; a block's
 summary carries its *true* maximum weight, so a query can tell which
-blocks of a common term could still change its top-k before fetching
-them (:func:`competing_blocks`).
+blocks of its common terms could still change its top-k before fetching
+them (:func:`select_blocks`, one call per query).
 """
 
 from __future__ import annotations
@@ -180,6 +180,22 @@ def encode_summary(first_ids: Sequence[int], max_weights: Sequence[float]) -> by
     return bytes(out)
 
 
+def encode_block(doc_ids: Sequence[int], tfs: Sequence[int], dls: Sequence[int]) -> tuple[bytes, bytes, bytes]:
+    """One block's three blobs in the wire format: count-prefixed delta
+    varints for the strictly increasing ``doc_ids``, bare varints for
+    ``tfs`` and ``dls`` — what the engine's builder writes, for blocks a
+    caller assembles at query time."""
+    if not len(doc_ids) == len(tfs) == len(dls):
+        raise ValueError("a block's ids, tfs and dls must align")
+    if len(doc_ids) > BLOCK_SIZE:
+        raise ValueError(f"a block holds at most {BLOCK_SIZE} postings; got {len(doc_ids)}")
+    tf_blob, dl_blob = bytearray(), bytearray()
+    for tf, dl in zip(tfs, dls, strict=True):
+        _append_varint(tf_blob, tf)
+        _append_varint(dl_blob, dl)
+    return encode_postings(doc_ids), bytes(tf_blob), bytes(dl_blob)
+
+
 def decode_summary(blob: bytes) -> BlockSummary:
     """The inverse of :func:`encode_summary`, from the engine.
 
@@ -250,30 +266,31 @@ def score_blocks(
     return extension().lexical_score(list(blocks), list(idfs), avg_dl, k, raw)
 
 
-def competing_blocks(
-    summary: BlockSummary,
+def select_blocks(
+    summaries: Sequence[BlockSummary],
     candidates: Sequence[int],
     scores: Sequence[float],
     theta: float,
-    rest: float = 0.0,
-) -> list[int]:
-    """The block numbers of a term that can still change a top-k — from the engine.
+) -> list[list[int]]:
+    """Per term, the block numbers that can still change a top-k — from the engine.
 
-    A block competes when its maximum (plus ``rest``, the summed maxima
-    of the other terms not yet fetched) clears ``theta`` — the current
-    k-th score, ``0.0`` while fewer than k candidates exist — on its
-    own, or when the best-scored candidate inside its id range would
-    cross ``theta`` with that lift. ``candidates`` is sorted with
-    ``scores`` aligned; each lies in at most one block, so the answer is
-    bounded by their count.
+    One call per query: ``summaries`` are the overflowing terms', in
+    any order, and the answer is one block list per summary in that
+    order. A block competes when its maximum plus the summed maxima of
+    the terms still to be fetched (the engine takes terms in descending
+    maximum) clears ``theta`` — the current k-th score, ``0.0`` while
+    fewer than k candidates exist — on its own, or when the best-scored
+    candidate inside its id range would cross ``theta`` with that lift.
+    ``candidates`` is sorted with ``scores`` aligned; each lies in at
+    most one block per term, so the answer is bounded by their count.
+    The arrays cross the seam packed, once per query, and are read in
+    place on the other side.
     """
-    return extension().competing_blocks(
-        summary.first_ids.tobytes(),
-        summary.max_weights.tobytes(),
+    return extension().select_blocks(
+        [(summary.first_ids.tobytes(), summary.max_weights.tobytes()) for summary in summaries],
         _packed("q", candidates),
         _packed("d", scores),
         theta,
-        rest,
     )
 
 
@@ -283,7 +300,7 @@ def competing_blocks(
 
 
 def _packed(code: str, values: Sequence[int] | Sequence[float]) -> bytes:
-    """*values* as native-endian bytes for the seam — no copy when already an ``array`` of *code*."""
+    """*values* as native-endian bytes for the seam — one copy, none through a list."""
     if isinstance(values, array) and values.typecode == code:
         return values.tobytes()
     return array(code, values).tobytes()
@@ -310,14 +327,15 @@ __all__ = [
     "LexicalBuilder",
     "ScoreBlock",
     "SummaryRow",
-    "competing_blocks",
     "decode_summary",
+    "encode_block",
     "encode_postings",
     "encode_summary",
     "idf",
     "lexical_builder",
     "options_fingerprint",
     "score_blocks",
+    "select_blocks",
     "term_weight",
     "tokenize",
 ]

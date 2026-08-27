@@ -28,9 +28,9 @@ from vfs.models.lexical import (
     BM25_K1,
     BlockSummary,
     ScoreBlock,
-    competing_blocks,
     decode_summary,
     score_blocks,
+    select_blocks,
     tokenize,
 )
 from vfs.paths import Path
@@ -198,24 +198,20 @@ async def assert_two_round_fidelity(storage: DatabaseStorage, count: int = 300) 
 
 
 def _two_round(blocks: list[ScoreBlock], idfs: list[float], avg_dl: float, k: int, summaries: dict) -> list[ScoreBlock]:
-    """Round one: every term's head; round two: the competing blocks of
-    each overflowing term, one term at a time in descending maximum."""
+    """Round one: every term's head; round two: the blocks of the
+    overflowing terms that one selection call names against round one."""
     by_term: dict[int, list[ScoreBlock]] = {}
     for block in blocks:
         by_term.setdefault(block.term, []).append(block)
     fetched = [b for term, bs in by_term.items() for b in bs[:HEAD_BLOCKS]]
-    overflowing = sorted(
-        (term for term, bs in by_term.items() if len(bs) > HEAD_BLOCKS),
-        key=lambda term: -max(summaries_of(summaries, term).max_weights),
-    )
-    for position, term in enumerate(overflowing):
-        ranked = score_blocks(fetched, idfs, avg_dl, k)
-        theta = ranked[-1][1] if len(ranked) == k else 0.0
-        candidates = sorted(chunk for chunk, _ in score_blocks(fetched, idfs, avg_dl, 10**9))
-        scores = dict(score_blocks(fetched, idfs, avg_dl, 10**9))
-        rest = sum(max(summaries_of(summaries, other).max_weights) for other in overflowing[position + 1 :])
-        tail = [scores[c] for c in candidates]
-        competing = competing_blocks(summaries_of(summaries, term), candidates, tail, theta, rest)
+    overflowing = [term for term, bs in by_term.items() if len(bs) > HEAD_BLOCKS]
+    ranked = score_blocks(fetched, idfs, avg_dl, k)
+    theta = ranked[-1][1] if len(ranked) == k else 0.0
+    scores = dict(score_blocks(fetched, idfs, avg_dl, 10**9))
+    candidates = sorted(scores)
+    tail = [scores[c] for c in candidates]
+    selected = select_blocks([summaries_of(summaries, term) for term in overflowing], candidates, tail, theta)
+    for term, competing in zip(overflowing, selected, strict=True):
         fetched += [by_term[term][no] for no in competing if no >= HEAD_BLOCKS]
     return fetched
 

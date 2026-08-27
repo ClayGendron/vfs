@@ -18,8 +18,12 @@ import os
 import subprocess
 import sys
 from array import array
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
@@ -34,12 +38,13 @@ from vfs.models.lexical import (
     TOKENIZER_VERSION,
     BlockSummary,
     ScoreBlock,
-    competing_blocks,
     decode_summary,
+    encode_block,
     encode_postings,
     encode_summary,
     idf,
     options_fingerprint,
+    select_blocks,
     term_weight,
 )
 
@@ -207,6 +212,13 @@ class TestSummaryCodec:
         assert decode_varints(_varints([0, 1, 127, 128, 300])) == [0, 1, 127, 128, 300]
         assert decode_varints(b"") == []
 
+    def test_encode_block_refuses_misaligned_or_oversized_input(self) -> None:
+        with pytest.raises(ValueError, match="must align"):
+            encode_block([1, 2], [1], [3, 4])
+        too_many = list(range(1, BLOCK_SIZE + 2))
+        with pytest.raises(ValueError, match="at most"):
+            encode_block(too_many, [1] * len(too_many), [1] * len(too_many))
+
 
 class TestBuilder:
     def test_blocks_seal_at_the_block_size_with_deltas_restarting(self) -> None:
@@ -306,36 +318,48 @@ class TestScorer:
         assert pure_score_blocks(blocks, [1.0], self.AVG, 10, candidates=[]) == []
 
 
-class TestCompetingBlocks:
+class TestSelectBlocks:
     SUMMARY = BlockSummary(array("q", [1, 129, 257, 385]), array("d", [0.5, 2.0, 0.5, 0.5]))
 
+    @staticmethod
+    def _one(summary: BlockSummary, candidates: Sequence[int], scores: Sequence[float], theta: float) -> list[int]:
+        return select_blocks([summary], candidates, scores, theta)[0]
+
     def test_every_block_competes_before_a_full_top_k(self) -> None:
-        assert competing_blocks(self.SUMMARY, [], [], 0.0) == [0, 1, 2, 3]
+        assert self._one(self.SUMMARY, [], [], 0.0) == [0, 1, 2, 3]
 
     def test_a_block_competes_alone_or_by_lifting_a_candidate(self) -> None:
         candidates = [130, 300]  # in blocks 1 and 2
         scores = [0.1, 1.7]
         # θ = 2.1: block 1 clears it alone with a lifted candidate (0.1 + 2.0),
         # block 2 lifts 1.7 + 0.5 = 2.2, blocks 0 and 3 hold no candidate.
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
-        # θ = 2.25: only block 1 (its max 2.0 + 0.1 = 2.1 < θ, but 2.0 alone? no: 2.0 < 2.25).
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25) == []
-        # The other overflowing terms' maxima lift every block.
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.25, rest=0.3) == [1, 2]
+        assert self._one(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
+        # θ = 2.25: block 1's max 2.0 < θ and its lift 0.1 + 2.0 < θ.
+        assert self._one(self.SUMMARY, candidates, scores, 2.25) == []
+
+    def test_later_terms_maxima_lift_the_earlier_term(self) -> None:
+        # A second term with maximum 0.3 is fetched after the 2.0 term, so the
+        # first term sees rest = 0.3 and the second sees rest = 0.0.
+        later = BlockSummary(array("q", [1]), array("d", [0.3]))
+        candidates, scores = [130, 300], [0.1, 1.7]
+        assert select_blocks([self.SUMMARY, later], candidates, scores, 2.25) == [[1, 2], []]
+        # The answer follows the input order, not the fetch order.
+        assert select_blocks([later, self.SUMMARY], candidates, scores, 2.25) == [[], [1, 2]]
 
     def test_candidates_before_the_first_block_are_ignored(self) -> None:
         summary = BlockSummary(array("q", [100]), array("d", [1.0]))
-        assert competing_blocks(summary, [5], [9.0], 5.0) == []
-        assert competing_blocks(summary, [100], [9.0], 5.0) == [0]  # a boundary id belongs to the block it starts
-        assert competing_blocks(summary, [150], [9.0], 5.0) == [0]
+        assert self._one(summary, [5], [9.0], 5.0) == []
+        assert self._one(summary, [100], [9.0], 5.0) == [0]  # a boundary id belongs to the block it starts
+        assert self._one(summary, [150], [9.0], 5.0) == [0]
 
-    def test_packed_arrays_pass_the_seam_unconverted(self) -> None:
-        # Spec 132 holds candidates and scores as arrays across the
-        # round-two loop; the seam takes them as they are.
+    def test_arrays_and_lists_both_cross_the_seam(self) -> None:
+        # The caller holds candidates and scores as arrays across the
+        # round-two loop; the seam packs an array once, and a list via one.
         candidates, scores = array("q", [130, 300]), array("d", [0.1, 1.7])
-        assert competing_blocks(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
-        assert competing_blocks(self.SUMMARY, list(candidates), list(scores), 2.1) == [1, 2]
+        assert self._one(self.SUMMARY, candidates, scores, 2.1) == [1, 2]
+        assert self._one(self.SUMMARY, list(candidates), list(scores), 2.1) == [1, 2]
 
     def test_an_empty_summary_names_nothing(self) -> None:
         empty = BlockSummary(array("q"), array("d"))
-        assert competing_blocks(empty, [1], [1.0], 0.0) == []
+        assert self._one(empty, [1], [1.0], 0.0) == []
+        assert select_blocks([], [1], [1.0], 0.0) == []

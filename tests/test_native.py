@@ -28,10 +28,10 @@ from tests.support.oracles.lexical import (
     pure_tokenize,
 )
 from tests.support.oracles.lexical import (
-    competing_blocks as oracle_competing_blocks,
+    decode_summary as oracle_decode_summary,
 )
 from tests.support.oracles.lexical import (
-    decode_summary as oracle_decode_summary,
+    select_blocks as oracle_select_blocks,
 )
 from tests.support.oracles.postings import PurePostingsBuilder, decode_postings
 from vfs import _native
@@ -45,11 +45,11 @@ from vfs.models.code_grams import (
 from vfs.models.lexical import (
     BLOCK_SIZE,
     ScoreBlock,
-    competing_blocks,
     decode_summary,
     encode_summary,
     lexical_builder,
     score_blocks,
+    select_blocks,
     tokenize,
 )
 from vfs.models.postings import MAX_DOC_ID, encode_postings, postings_builder
@@ -443,15 +443,17 @@ class TestLexicalKernels:
     def test_generated_selections_match_the_oracle(self) -> None:
         rng = random.Random(143)
         for _ in range(200):
-            count = rng.randint(0, 40)
-            firsts = sorted(rng.sample(range(1, 10_000), count))
-            maxes = [rng.random() * 5 for _ in range(count)]
-            summary = decode_summary(encode_summary(firsts, maxes))
+            raw = []
+            for _term in range(rng.randint(0, 6)):
+                count = rng.randint(0, 40)
+                firsts = sorted(rng.sample(range(1, 10_000), count))
+                raw.append((firsts, [rng.random() * 5 for _ in range(count)]))
+            summaries = [decode_summary(encode_summary(firsts, maxes)) for firsts, maxes in raw]
             candidates = sorted(rng.sample(range(0, 10_500), rng.randint(0, 50)))
             scores = [rng.random() * 8 for _ in candidates]
-            theta, rest = rng.random() * 6, rng.choice((0.0, rng.random()))
-            assert competing_blocks(summary, candidates, scores, theta, rest) == oracle_competing_blocks(
-                firsts, maxes, candidates, scores, theta, rest
+            theta = rng.random() * 6
+            assert select_blocks(summaries, candidates, scores, theta) == oracle_select_blocks(
+                raw, candidates, scores, theta
             )
 
 

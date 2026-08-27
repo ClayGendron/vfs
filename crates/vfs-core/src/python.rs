@@ -5,6 +5,7 @@
 //! normalization policy and refuses to import on a `PROTOCOL_VERSION`
 //! mismatch — the extension is required, there is no fallback.
 
+use std::borrow::Cow;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 6;
+const PROTOCOL_VERSION: u32 = 7;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -323,26 +324,44 @@ fn decode_summary<'py>(py: Python<'py>, blob: PyBackedBytes) -> PyResult<(Bound<
     Ok((packed_i64(py, &firsts), packed_f64(py, &maxes)))
 }
 
-/// The block numbers of a term that can still change a top-k, over packed
-/// native-endian arrays: the summary's `first_ids` (int64) and
-/// `max_weights` (f64), the sorted round-one `candidates` (int64) with
-/// their `scores` (f64), the current k-th score `theta`, and `rest`, the
-/// summed maxima of the other terms not yet fetched.
+/// Per-query block selection over packed native-endian arrays: every
+/// term's summary as its `(first_ids, max_weights)` int64/f64 bytes, the
+/// sorted round-one `candidates` (int64) with their `scores` (f64), and
+/// the current k-th score `theta`. The arrays are viewed in place when
+/// their bytes are aligned (always, for `bytes` objects) and copied
+/// otherwise; the answer is one block list per summary, in input order
+/// (`select_blocks` in the crate).
 #[pyfunction]
-fn competing_blocks(
+fn select_blocks(
     py: Python<'_>,
-    first_ids: PyBackedBytes,
-    max_weights: PyBackedBytes,
+    summaries: Vec<(PyBackedBytes, PyBackedBytes)>,
     candidates: PyBackedBytes,
     scores: PyBackedBytes,
     theta: f64,
-    rest: f64,
-) -> Vec<usize> {
-    let firsts = unpack_i64(&first_ids);
-    let maxes = unpack_f64(&max_weights);
-    let ids = unpack_i64(&candidates);
-    let weights = unpack_f64(&scores);
-    py.detach(|| lexical::competing_blocks(&firsts, &maxes, &ids, &weights, theta, rest))
+) -> Vec<Vec<usize>> {
+    let views: Vec<(Cow<'_, [i64]>, Cow<'_, [f64]>)> =
+        summaries.iter().map(|(firsts, maxes)| (view_i64(firsts), view_f64(maxes))).collect();
+    let ids = view_i64(&candidates);
+    let weights = view_f64(&scores);
+    py.detach(|| {
+        let borrowed: Vec<(&[i64], &[f64])> = views.iter().map(|(f, m)| (f.as_ref(), m.as_ref())).collect();
+        lexical::select_blocks(&borrowed, &ids, &weights, theta)
+    })
+}
+
+/// Packed int64 bytes as a slice: a view when aligned, a copy otherwise.
+fn view_i64(raw: &[u8]) -> Cow<'_, [i64]> {
+    // SAFETY: every bit pattern is a valid i64; `align_to` only yields the
+    // aligned middle, and the prefix/suffix check rejects a misaligned start.
+    let (prefix, aligned, suffix) = unsafe { raw.align_to::<i64>() };
+    if prefix.is_empty() && suffix.is_empty() { Cow::Borrowed(aligned) } else { Cow::Owned(unpack_i64(raw)) }
+}
+
+/// Packed f64 bytes as a slice: a view when aligned, a copy otherwise.
+fn view_f64(raw: &[u8]) -> Cow<'_, [f64]> {
+    // SAFETY: as `view_i64` — every bit pattern is a valid f64.
+    let (prefix, aligned, suffix) = unsafe { raw.align_to::<f64>() };
+    if prefix.is_empty() && suffix.is_empty() { Cow::Borrowed(aligned) } else { Cow::Owned(unpack_f64(raw)) }
 }
 
 fn packed_i64<'py>(py: Python<'py>, values: &[i64]) -> Bound<'py, PyBytes> {
@@ -405,7 +424,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lexical_score, m)?)?;
     m.add_function(wrap_pyfunction!(candidate_ids, m)?)?;
     m.add_function(wrap_pyfunction!(decode_summary, m)?)?;
-    m.add_function(wrap_pyfunction!(competing_blocks, m)?)?;
+    m.add_function(wrap_pyfunction!(select_blocks, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;

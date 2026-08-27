@@ -326,6 +326,31 @@ pub fn competing_blocks(
     out
 }
 
+/// Per-query block selection: for every term's summary `(first_ids,
+/// max_weights)`, the blocks that can still change the top-k, aligned to
+/// the input order. Terms are taken in descending maximum (ties by input
+/// position), each with `rest` the summed maxima of the terms after it —
+/// the ones the caller has not fetched yet. A summary without blocks has
+/// maximum zero and names nothing.
+pub fn select_blocks(
+    summaries: &[(&[i64], &[f64])],
+    candidates: &[i64],
+    scores: &[f64],
+    theta: f64,
+) -> Vec<Vec<usize>> {
+    let maxima: Vec<f64> =
+        summaries.iter().map(|(_, maxes)| maxes.iter().copied().fold(0.0, f64::max)).collect();
+    let mut order: Vec<usize> = (0..summaries.len()).collect();
+    order.sort_by(|&a, &b| maxima[b].total_cmp(&maxima[a]));
+    let mut out = vec![Vec::new(); summaries.len()];
+    for (position, &term) in order.iter().enumerate() {
+        let rest = order[position + 1..].iter().map(|&later| maxima[later]).fold(0.0, |acc, m| acc + m);
+        let (firsts, maxes) = summaries[term];
+        out[term] = competing_blocks(firsts, maxes, candidates, scores, theta, rest);
+    }
+    out
+}
+
 pub fn idf(df: u64, n_docs: u64) -> f64 {
     (1.0 + ((n_docs - df) as f64 + 0.5) / (df as f64 + 0.5)).ln()
 }
@@ -781,5 +806,20 @@ mod tests {
         assert_eq!(competing_blocks(&[100], &[1.0], &[5], &[9.0], 5.0, 0.0), Vec::<usize>::new());
         assert_eq!(competing_blocks(&[100], &[1.0], &[100], &[9.0], 5.0, 0.0), vec![0]);
         assert_eq!(competing_blocks(&[], &[], &[1], &[1.0], 0.0, 0.0), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn select_blocks_orders_terms_by_maximum_and_answers_in_input_order() {
+        // Term a (max 2.0) is fetched first with rest = 0.5 + 0.0; term b
+        // (max 0.5) after it with rest = 0; the empty term c contributes
+        // nothing and names nothing.
+        let a: (&[i64], &[f64]) = (&[1, 129], &[2.0, 1.0]);
+        let b: (&[i64], &[f64]) = (&[1], &[0.5]);
+        let c: (&[i64], &[f64]) = (&[], &[]);
+        let selected = select_blocks(&[b, a, c], &[130], &[0.1], 2.4);
+        // a's block 1: 1.0 + 0.5 rest < 2.4 alone, lifted 0.1 + 1.0 + 0.5 < 2.4 -> out;
+        // a's block 0: 2.0 + 0.5 >= 2.4 -> in. b's block 0: 0.5 < 2.4, lift 0.1 -> out.
+        assert_eq!(selected, vec![Vec::<usize>::new(), vec![0], Vec::<usize>::new()]);
+        assert_eq!(select_blocks(&[], &[1], &[1.0], 0.0), Vec::<Vec<usize>>::new());
     }
 }

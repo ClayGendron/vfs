@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 from sqlalchemy import and_, or_, select
 
 from vfs.models import Entry
-from vfs.models.lexical import ScoreBlock, competing_blocks, decode_summary, score_blocks, tokenize
+from vfs.models.lexical import ScoreBlock, decode_summary, score_blocks, select_blocks, tokenize
 from vfs.paths import Path
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.lexical import lexical_stats
@@ -141,14 +141,10 @@ async def chunk_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[int, f
         score_of = dict(everything)
         candidates = array("q", sorted(score_of))
         tail = array("d", [score_of[chunk] for chunk in candidates])
-        overflowing = sorted(
-            (term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS),
-            key=lambda term: -max(summaries[term].max_weights),
-        )
+        overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
+        selected = select_blocks([summaries[term] for term in overflowing], candidates, tail, theta)
         arms = []
-        for position, term in enumerate(overflowing):
-            rest = sum(max(summaries[other].max_weights) for other in overflowing[position + 1 :])
-            competing = competing_blocks(summaries[term], candidates, tail, theta, rest)
+        for term, competing in zip(overflowing, selected, strict=True):
             wanted = [no for no in competing if no >= HEAD_BLOCKS]
             arms.extend(
                 and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(nos)))

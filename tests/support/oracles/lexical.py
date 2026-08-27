@@ -292,6 +292,23 @@ def competing_blocks(
     ]
 
 
+def select_blocks(
+    summaries: Sequence[tuple[Sequence[int], Sequence[float]]],
+    candidates: Sequence[int],
+    scores: Sequence[float],
+    theta: float,
+) -> list[list[int]]:
+    """Per-query selection: terms in descending maximum, each with the later terms' maxima as ``rest``."""
+    maxima = [max(max_weights, default=0.0) for _first_ids, max_weights in summaries]
+    order = sorted(range(len(summaries)), key=lambda term: -maxima[term])
+    selected: list[list[int]] = [[] for _ in summaries]
+    for position, term in enumerate(order):
+        rest = sum(maxima[later] for later in order[position + 1 :])
+        first_ids, max_weights = summaries[term]
+        selected[term] = competing_blocks(first_ids, max_weights, candidates, scores, theta, rest)
+    return selected
+
+
 # ---------------------------------------------------------------------------
 # Scorer
 # ---------------------------------------------------------------------------
