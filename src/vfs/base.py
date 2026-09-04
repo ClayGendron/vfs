@@ -37,7 +37,7 @@ import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple, assert_never, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
 
@@ -952,65 +952,74 @@ class VirtualFileSystem:
 
     async def mkedge(
         self,
-        source: str,
-        target: str,
-        edge_type: str,
+        edges: Sequence[Edge] | None = None,
         *,
+        source: str | None = None,
+        target: str | None = None,
+        edge_type: str | None = None,
+        provenance: Literal["user", "agent", "system"] = "system",
         user_id: str | None = None,
     ) -> Result:
-        """Create a typed edge from *source* to *target*.
+        """Create or touch typed edges — batch-native, touch/upsert.
 
-        Both endpoints must resolve to the same entry (``cross_mount``
-        otherwise — cross-backend edges are a later story).  An edge is
-        entry-scoped metadata on both endpoints, so the write is
-        permission-gated at both endpoint paths; the ``Edge`` model is the
-        validation door for endpoint eligibility and the edge type.
+        *edges* is the native input (validated :class:`Edge` models, so
+        ``weight``/``distance`` are reachable); the *source*/*target*/
+        *edge_type* triple is sugar constructing one ``Edge`` at this
+        gate — the two forms are mutually exclusive. An existing
+        identity is touched, its payload refreshed, and reports
+        ``updated``; a duplicate identity within one batch refuses
+        ``invalid``. Each edge's endpoints must resolve into the same
+        mount (``cross_mount`` otherwise — cross-backend edges are a
+        later story), and the write is permission-gated at both endpoint
+        paths. *provenance* names the author class stamped on every edge
+        in the call; ``extracted`` is reserved to the reindex extractor.
         """
-        refusal = self._gate_params("mkedge", source=source, target=target, edge_type=edge_type, user_id=user_id)
+        refusal = self._gate_params(
+            "mkedge",
+            edges=edges,
+            source=source,
+            target=target,
+            edge_type=edge_type,
+            provenance=provenance,
+            user_id=user_id,
+        )
         if refusal is not None:
             return refusal
-        if not self._bindings:
-            return self._closed_error("mkedge")
-        src = resolve_path(source)
-        if src.path is None:
-            return self._invalid_path(src, source, "mkedge")
-        tgt = resolve_path(target)
-        if tgt.path is None:
-            return self._invalid_path(tgt, target, "mkedge")
-
-        src_terminal = self._resolve_terminal(src.path)
-        tgt_terminal = self._resolve_terminal(tgt.path)
-        # Endpoint eligibility is a path fact and outranks the table fact
-        # below — the same bad endpoint classifies alike on any topology.
-        try:
-            Edge(source=src_terminal.rel, target=tgt_terminal.rel, edge_type=edge_type)
-        except ValidationError as exc:
-            return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="mkedge")
-        if src_terminal.binding.path != tgt_terminal.binding.path:
-            return self._error(
-                f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
-                kind=VFSErrorKind.cross_mount,
-                op="mkedge",
-            )
-        binding = src_terminal.binding
-        err = self._gate_entry(binding, "mkedge")
-        if err is not None:
-            return err
-
-        # An edge write mutates both endpoints' metadata sets, so both
-        # endpoint paths must be writable in global coordinates.
-        for terminal in (src_terminal, tgt_terminal):
-            full = terminal.rel.with_mount(binding.path)
-            denied = check_writable_composed(self._permission_layers(full), "mkedge")
-            if denied is not None:
-                return denied
-        return await self._dispatch_entry(
-            binding,
+        return await self._route_edge_batch(
             "mkedge",
-            source=src_terminal.rel,
-            target=tgt_terminal.rel,
+            edges,
+            source=source,
+            target=target,
             edge_type=edge_type,
             user_id=user_id,
+            provenance=provenance,
+        )
+
+    async def rmedge(
+        self,
+        edges: Sequence[Edge] | None = None,
+        *,
+        source: str | None = None,
+        target: str | None = None,
+        edge_type: str | None = None,
+        user_id: str | None = None,
+    ) -> Result:
+        """Remove typed edges by their exact creating coordinates.
+
+        The mirror of :meth:`mkedge`: batch-native with the triple as
+        sugar, both endpoint paths permission-gated, cross-mount pairs
+        refused. A missing edge is a per-row ``not_found`` warning,
+        never a batch error — removing what is already gone leaves the
+        same end state. The reserved ``"fs"`` type is unaddressable
+        here, so the hierarchy mirror cannot be removed.
+        """
+        refusal = self._gate_params(
+            "rmedge", edges=edges, source=source, target=target, edge_type=edge_type, user_id=user_id
+        )
+        if refusal is not None:
+            return refusal
+        return await self._route_edge_batch(
+            "rmedge", edges, source=source, target=target, edge_type=edge_type, user_id=user_id
         )
 
     async def move(
@@ -2292,6 +2301,94 @@ class VirtualFileSystem:
         )
         return Result.merge(results, op="write")
 
+    async def _route_edge_batch(
+        self,
+        op: Literal["mkedge", "rmedge"],
+        edges: Sequence[Edge] | None,
+        *,
+        source: str | None,
+        target: str | None,
+        edge_type: str | None,
+        user_id: str | None,
+        provenance: str | None = None,
+    ) -> Result:
+        """Route an edge batch, grouped by the mount owning both endpoints.
+
+        The edge analogue of the write batch: every edge's endpoints are
+        resolved and both must be writable before anything dispatches;
+        the rebased models cross the seam. Endpoint eligibility is a
+        path fact and outranks the mount fact — the same bad endpoint
+        classifies alike on any topology — and a duplicate identity
+        within one batch refuses ``invalid``: last-write-wins would hide
+        caller bugs.
+        """
+        if not self._bindings:
+            return self._closed_error(op)
+        if edges is None:
+            assert source is not None and target is not None and edge_type is not None
+            rows: list[tuple[str, str, str, float | None, float | None]] = [(source, target, edge_type, None, None)]
+        else:
+            listed = self._as_list(edges)
+            if listed is None or not all(isinstance(edge, Edge) for edge in listed):
+                return self._error(
+                    f"{op} edges must be an iterable of Edge",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+            if not listed:
+                return Result(ops=(op,))
+            rows = [(str(e.source), str(e.target), e.edge_type, e.weight, e.distance) for e in listed]
+
+        groups: dict[Path, tuple[Binding, list[Edge]]] = {}
+        seen: set[tuple[Path, Path, str]] = set()
+        for raw_source, raw_target, raw_type, weight, distance in rows:
+            src = resolve_path(raw_source)
+            if src.path is None:
+                return self._invalid_path(src, raw_source, op)
+            tgt = resolve_path(raw_target)
+            if tgt.path is None:
+                return self._invalid_path(tgt, raw_target, op)
+            identity = (src.path, tgt.path, raw_type)
+            if identity in seen:
+                return self._error(
+                    f"Duplicate edge identity in batch: {src.path} -> {tgt.path} ({raw_type})",
+                    kind=VFSErrorKind.invalid,
+                    op=op,
+                )
+            seen.add(identity)
+            src_terminal = self._resolve_terminal(src.path)
+            tgt_terminal = self._resolve_terminal(tgt.path)
+            try:
+                edge = Edge(
+                    source=src_terminal.rel,
+                    target=tgt_terminal.rel,
+                    edge_type=raw_type,
+                    weight=weight,
+                    distance=distance,
+                )
+            except ValidationError as exc:
+                return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op=op)
+            if src_terminal.binding.path != tgt_terminal.binding.path:
+                return self._error(
+                    f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
+                    kind=VFSErrorKind.cross_mount,
+                    op=op,
+                )
+            # An edge write mutates both endpoints' metadata sets, so
+            # both endpoint paths must be writable.
+            err = self._gate_entry(src_terminal.binding, op, write_rels=(src_terminal.rel, tgt_terminal.rel))
+            if err is not None:
+                return err
+            _b, group = groups.setdefault(src_terminal.binding.path, (src_terminal.binding, []))
+            group.append(edge)
+
+        extra = {"provenance": provenance} if provenance is not None else {}
+        results = await self._gather_settled(
+            self._dispatch_entry(binding, op, edges=group, user_id=user_id, **extra)
+            for binding, group in groups.values()
+        )
+        return Result.merge(results, op=op)
+
     # -------------------------------------------------------------------
     # hop budget — loops survived, not detected
     # -------------------------------------------------------------------
@@ -2559,6 +2656,10 @@ class VirtualFileSystem:
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
                     return await storage.mkedge(user_id=user_id, **kwargs)
+                case "rmedge":
+                    if not isinstance(storage, SupportsMutation):
+                        return self._backend_unsupported(op)
+                    return await storage.rmedge(user_id=user_id, **kwargs)
                 case "run":
                     if not isinstance(storage, SupportsRun):
                         return self._backend_unsupported(op)

@@ -89,7 +89,7 @@ GARBAGE = [
     ("sweep-non-str-user", lambda fs: fs.sweep("/.vfs/trash", user_id=123)),
     ("mkdir-truthy-parents", lambda fs: fs.mkdir("/d", parents="yes")),
     ("mkdir-truthy-exist-ok", lambda fs: fs.mkdir("/d", exist_ok=1)),
-    ("mkedge-non-str-type", lambda fs: fs.mkedge("/a.py", "/b.py", 123)),
+    ("mkedge-non-str-type", lambda fs: fs.mkedge(source="/a.py", target="/b.py", edge_type=123)),
     ("move-missing-dest", lambda fs: fs.move(src="/a")),
     ("move-both-forms", lambda fs: fs.move(src="/a", dest="/b", moves=[])),
     ("copy-missing-src", lambda fs: fs.copy(dest="/b")),

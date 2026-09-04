@@ -33,7 +33,7 @@ import pytest
 
 from vfs import _native
 from vfs.embedding import EmbeddingProvider
-from vfs.models import Entry, Observation
+from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
 from vfs.results import Severity, VFSErrorKind
@@ -1788,7 +1788,8 @@ class StorageContract:
     @needs("write", "mkedge")
     async def test_mkedge_requires_both_endpoints_to_exist(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
-        result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        result = await storage.mkedge(edges=[edge])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.not_found
         assert result.errors[0].path == "/dst.py"
@@ -1799,28 +1800,83 @@ class StorageContract:
         # observation names the owning source entry, never a derived path.
         await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
         await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
-        result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports", weight=0.5)
+        result = await storage.mkedge(edges=[edge])
         assert result.success is True
         row = result.observations[0]
         assert row.path == "/src.py"
+        assert row.edge_target == "/dst.py"
         assert row.edge_type == "imports"
+        assert row.edge_weight == 0.5
         assert row.status == "created"
-
-    @needs("write", "mkedge")
-    async def test_mkedge_rejects_an_unlawful_edge_type_as_invalid(self, storage: ConformanceBackend) -> None:
-        await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
-        await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
-        result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="im/ports")
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
 
     @needs("write", "mkedge")
     async def test_mkedge_second_call_reports_updated(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
         await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
-        await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
-        result = await storage.mkedge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        await storage.mkedge(edges=[edge])
+        touched = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports", weight=2.0)
+        result = await storage.mkedge(edges=[touched])
         assert result.observations[0].status == "updated"
+        assert result.observations[0].edge_weight == 2.0
+
+    @needs("write", "mkedge", "rmedge")
+    async def test_rmedge_removes_by_triple_and_missing_is_a_warning(self, storage: ConformanceBackend) -> None:
+        # Removal by exact creating coordinates; what is absent is a
+        # per-row warning, never a batch error.
+        await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        assert (await storage.mkedge(edges=[edge])).success is True
+        removed = await storage.rmedge(edges=[edge])
+        assert removed.success is True
+        assert removed.observations[0].status == "deleted"
+        again = await storage.rmedge(edges=[edge])
+        assert again.success is True
+        assert again.observations == []
+        assert again.errors[0].kind == VFSErrorKind.not_found
+        assert again.errors[0].severity == Severity.warning
+
+    @needs("write", "mkedge", "rmedge", "delete")
+    async def test_delete_cascades_edges_naming_the_deleted_entry_as_source(self, storage: ConformanceBackend) -> None:
+        # An authored edge dies when either endpoint is deleted — soft
+        # delete included — never surviving as a dangling reference.
+        await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        assert (await storage.mkedge(edges=[edge])).success is True
+        assert (await storage.delete(path=Path("/src.py"))).success is True
+        gone = await storage.rmedge(edges=[edge])
+        assert gone.observations == []
+        assert gone.errors[0].kind == VFSErrorKind.not_found
+
+    @needs("write", "mkedge", "rmedge", "delete")
+    async def test_delete_cascades_edges_naming_the_deleted_entry_as_target(self, storage: ConformanceBackend) -> None:
+        await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        assert (await storage.mkedge(edges=[edge])).success is True
+        assert (await storage.delete(path=Path("/dst.py"))).success is True
+        gone = await storage.rmedge(edges=[edge])
+        assert gone.observations == []
+        assert gone.errors[0].kind == VFSErrorKind.not_found
+
+    @needs("write", "mkedge", "rmedge", "delete", "restore")
+    async def test_restore_never_re_mints_an_authored_edge(self, storage: ConformanceBackend) -> None:
+        # Restore brings the entry back; the edges it once carried do
+        # not return with it — delete's cascade is never undone.
+        await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        assert (await storage.mkedge(edges=[edge])).success is True
+        deleted = await storage.delete(path=Path("/src.py"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        assert (await storage.restore(path=trash_path)).success is True
+        gone = await storage.rmedge(edges=[edge])
+        assert gone.observations == []
+        assert gone.errors[0].kind == VFSErrorKind.not_found
 
     # ------------------------------------------------------------------
     # Per-row classification for batched reads

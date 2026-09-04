@@ -38,6 +38,7 @@ Op = Literal[
     "stat",
     "mkdir",
     "mkedge",
+    "rmedge",
     "move",
     "copy",
     "ls",
@@ -50,7 +51,7 @@ Op = Literal[
 ]
 
 MUTATING_OPS: Final[frozenset[Op]] = frozenset(
-    {"write", "edit", "delete", "restore", "sweep", "mkdir", "mkedge", "move", "copy"},
+    {"write", "edit", "delete", "restore", "sweep", "mkdir", "mkedge", "rmedge", "move", "copy"},
 )
 """Ops that mutate the backing store — write-gated at every chokepoint."""
 

@@ -100,6 +100,7 @@ from vfs.storage.backends.database.descent import (
     targets_with_ancestors,
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, bulk_insert, chunked, rows_per_statement
+from vfs.storage.backends.database.edges import delete_authored_edges, fs_row, insert_fs_rows, repoint_fs_row
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
@@ -183,7 +184,7 @@ async def delete_rows(
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
     now = datetime.now(UTC)
-    trash = _TrashChain(entry, tables.segments, root_id=snapshot["/"]["entry_id"], user_id=user_id, now=now)
+    trash = _TrashChain(tables, root_id=snapshot["/"]["entry_id"], user_id=user_id, now=now)
     unique = set(targets)
     seen: set[Path] = set()
     rows: list[Observation] = []
@@ -244,10 +245,19 @@ async def delete_rows(
             errors.append(refused)
             continue
         segment_moves.append((row["entry_id"], row["path"], trash_path))
+        # The trashed root keeps its fs mirror row — re-sourced to the
+        # bucket, exactly the move shape; descendants' rows are untouched.
+        await repoint_fs_row(session, tables.edges, row["entry_id"], bucket_id)
         # Rewrites re-collect post-claim: a deep child can land under an
         # unguarded descendant mid-window; the pre-claim list judged bytes.
+        descendant_ids: list[str] = []
         if is_directory:
-            await _rewrite_descendants(session, tables, profile, membership_budget, str(target), trash_path)
+            descendant_ids = await _rewrite_descendants(
+                session, tables, profile, membership_budget, str(target), trash_path
+            )
+        # Soft delete is deletion for authored edges: the whole trashed
+        # subtree loses them, both directions; restore never re-mints.
+        await delete_authored_edges(session, tables.edges, membership_budget, [row["entry_id"], *descendant_ids])
         await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
         local_bumps[bucket_id] += 1
@@ -631,9 +641,10 @@ class _TrashChain:
     is an ordinary writable subtree; a user file may squat there).
     """
 
-    def __init__(self, entry: Table, segments: Table, *, root_id: str, user_id: str | None, now: datetime) -> None:
-        self._entry = entry
-        self._segments = segments
+    def __init__(self, tables: VFSTables, *, root_id: str, user_id: str | None, now: datetime) -> None:
+        self._entry = tables.entry
+        self._segments = tables.segments
+        self._edges = tables.edges
         self._root_id = root_id
         self._user_id = user_id
         self._now = now
@@ -684,9 +695,10 @@ class _TrashChain:
                     )
                 )
                 # Inside the savepoint: a losing rival rolls the postings
-                # back with the entry row they mirror.
+                # and the fs mirror back with the entry row they mirror.
                 if rows := segment_rows(entry_id, link):
                     await bulk_insert(session, self._segments, rows)
+                await session.execute(insert(self._edges).values(**fs_row(parent_id, entry_id)))
             await _bump(session, self._entry, parent_id)
         except IntegrityError:
             # The benign race: a rival write minted this link first.
@@ -940,7 +952,7 @@ async def _rewrite_descendants(
     membership_budget: int,
     old_prefix: str,
     new_prefix: str,
-) -> None:
+) -> list[str]:
     """Recompute descendant path caches under the moved prefix, collected live.
 
     Runs after the root claim, so a child committed inside the pre-claim
@@ -948,7 +960,9 @@ async def _rewrite_descendants(
     byte budget raises :class:`StaleSnapshot` instead of storing it —
     the redriven ladder then refuses the whole target honestly. The
     segment postings ride the same rewrite list, so they mirror the
-    rewritten path caches inside this same transaction.
+    rewritten path caches inside this same transaction. Returns the
+    rewritten descendants' entry ids — delete's edge cascade reuses the
+    same live collection.
     """
     rewrites = await _descendant_rewrites(session, tables.entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
@@ -956,6 +970,7 @@ async def _rewrite_descendants(
     await _apply_rewrites(session, tables.entry, rewrites)
     moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
     await move_postings(session, tables.segments, membership_budget, moves)
+    return [row["b_id"] for row in rewrites]
 
 
 async def _bump(session: AsyncSession, entry: Table, entry_id: str) -> None:
@@ -1078,6 +1093,9 @@ async def _execute_move(
         raise StaleSnapshot(f"a rival write took {dest} before this {op}'s claim") from exc
     if refused is not None:
         return refused
+    # The moved root's fs mirror row re-sources by id — a move out of
+    # trash (the restore gesture) rides the same statement.
+    await repoint_fs_row(session, tables.edges, src_row["entry_id"], dest_parent_id)
     root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
     await move_postings(session, tables.segments, membership_budget, root_move)
     await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest))
@@ -1145,6 +1163,12 @@ async def _execute_copy(
             raise StaleSnapshot(f"a rival write took an address under {dest} mid-copy") from exc
     copied = [(id_map[row["entry_id"]], new_paths[row["entry_id"]]) for row in subtree]
     await insert_postings(session, tables.segments, copied)
+    # Fresh ids get fresh fs mirror rows; authored edges are never copied.
+    mirror = [
+        (dest_parent_id if row["entry_id"] == root_id else id_map[row["parent_id"]], id_map[row["entry_id"]])
+        for row in subtree
+    ]
+    await insert_fs_rows(session, tables.edges, mirror)
     bodies = [
         {"entry_id": id_map[row["entry_id"]], "created_at": now, "content": row["content"]}
         for row in subtree

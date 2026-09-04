@@ -117,9 +117,9 @@ class TestWriteMechanics:
 
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
-        # The round-trip budget is a contract: fetch, insert, content
-        # delete + insert, parent bump.
-        assert len(mutations()) == 5, mutations()
+        # The round-trip budget is a contract: fetch, insert, fs mirror
+        # insert, content delete + insert, parent bump.
+        assert len(mutations()) == 6, mutations()
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
@@ -350,10 +350,11 @@ class TestArbitration:
         created = [o for o in written.observations if str(o.path).endswith(".txt")]
         assert len(created) == 50
         # "Nothing read back" is a pin: one plan-fetch SELECT, three
-        # depth-layer inserts, the segment-posting insert riding the
-        # creates, content delete + insert, parent bump.
+        # depth-layer inserts, the segment-posting and fs-mirror inserts
+        # riding the creates, content delete + insert, parent bump.
         shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
-        assert shapes == ["SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"], statements
+        expected = ["SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"]
+        assert shapes == expected, statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
         assert again.observations[0].status == "updated"

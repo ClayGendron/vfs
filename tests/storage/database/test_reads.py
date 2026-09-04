@@ -17,7 +17,7 @@ from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
-from vfs.models import Entry, Observation
+from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
 from vfs.results import VFSErrorKind
@@ -722,17 +722,14 @@ class TestReadFailureHandling:
 
 
 class TestUnlandedVerbStubs:
-    """Undeclared verbs stay off the capability set; stubs refuse classified.
+    """The backend has no classified stubs; the derived surface is whole.
 
-    mkedge is the last classified stub — its subtraction from the
-    derived surface pins that mid-story honesty.
+    The capability pin is a drift alarm in both directions ("graph" and
+    "run" are the unlanded families, off the set by derivation).
     """
 
-    async def test_unlanded_verbs_refuse_as_unsupported(self, tmp_path) -> None:
+    async def test_the_derived_capability_set_is_whole(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        result = await storage.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports")
-        assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unsupported
         assert storage.capabilities() == {
             "read",
             "stat",
@@ -744,13 +741,14 @@ class TestUnlandedVerbStubs:
             "write",
             "edit",
             "mkdir",
+            "mkedge",
+            "rmedge",
             "delete",
             "restore",
             "sweep",
             "move",
             "copy",
         }
-        assert "mkedge" not in storage.capabilities()
         await storage.close()
 
     async def test_mutation_verbs_surface_the_first_touch_refusal(self, tmp_path) -> None:
@@ -761,9 +759,11 @@ class TestUnlandedVerbStubs:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
         stale = DatabaseStorage(url=_url(tmp_path))
+        edge = Edge(source=Path("/a"), target=Path("/b"), edge_type="imports")
         for call in (
             stale.write(entries=[Entry(path=Path("/a"), content="x")]),
-            stale.mkedge(source=Path("/a"), target=Path("/b"), edge_type="imports"),
+            stale.mkedge(edges=[edge]),
+            stale.rmedge(edges=[edge]),
             stale.reindex(),
         ):
             result = await call

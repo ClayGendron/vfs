@@ -605,5 +605,7 @@ def _verb_for(operation: str | None) -> str:
             return "Created"
         case "mkedge":
             return "Connected"
+        case "rmedge":
+            return "Disconnected"
         case _:
             return operation.replace("_", " ").capitalize() if operation else "Completed"

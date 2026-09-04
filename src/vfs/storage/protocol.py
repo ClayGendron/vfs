@@ -58,7 +58,7 @@ from vfs.ops import MUTATING_OPS
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from vfs.models import Entry, Observation
+    from vfs.models import Edge, Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind, Path
     from vfs.results import Result
@@ -157,8 +157,9 @@ class SupportsRead(Protocol):
 class SupportsMutation(Protocol):
     """The mutation family: exactly the write-gated ops (``MUTATING_OPS``).
 
-    ``mkedge`` lives here, not in the graph family — it writes the edge
-    projection, and the family boundary follows the write gate.
+    ``mkedge`` and ``rmedge`` live here, not in the graph family — they
+    write the edge projection, and the family boundary follows the
+    write gate.
     """
 
     async def write(
@@ -229,9 +230,15 @@ class SupportsMutation(Protocol):
     async def mkedge(
         self,
         *,
-        source: Path,
-        target: Path,
-        edge_type: str,
+        edges: list[Edge],
+        provenance: str = "system",
+        user_id: str | None = None,
+    ) -> Result: ...
+
+    async def rmedge(
+        self,
+        *,
+        edges: list[Edge],
         user_id: str | None = None,
     ) -> Result: ...
 

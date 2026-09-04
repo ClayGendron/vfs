@@ -107,6 +107,9 @@ class RecorderStorage:
     async def mkedge(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("mkedge", kwargs)
 
+    async def rmedge(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
+        return self._answer("rmedge", kwargs)
+
     async def run(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
         return self._answer("run", kwargs)
 
@@ -404,7 +407,8 @@ def _mutate(fs: VirtualFileSystem, op: str, base: str):
         "restore": lambda: fs.restore(path=f"{base}/f.txt"),
         "sweep": lambda: fs.sweep(f"{base}/.vfs/trash"),
         "mkdir": lambda: fs.mkdir(f"{base}/d"),
-        "mkedge": lambda: fs.mkedge(f"{base}/a.py", f"{base}/b.py", "imports"),
+        "mkedge": lambda: fs.mkedge(source=f"{base}/a.py", target=f"{base}/b.py", edge_type="imports"),
+        "rmedge": lambda: fs.rmedge(source=f"{base}/a.py", target=f"{base}/b.py", edge_type="imports"),
         "move": lambda: fs.move(src=f"{base}/a.txt", dest=f"{base}/b.txt"),
         "copy": lambda: fs.copy(src=f"{base}/a.txt", dest=f"{base}/b.txt"),
     }
@@ -420,7 +424,8 @@ def _mutate_at_root(fs: VirtualFileSystem, op: str, target: str):
         "restore": lambda: fs.restore(path=target),
         "sweep": lambda: fs.sweep(target),
         "mkdir": lambda: fs.mkdir(target),
-        "mkedge": lambda: fs.mkedge(target, "/b.py", "imports"),
+        "mkedge": lambda: fs.mkedge(source=target, target="/b.py", edge_type="imports"),
+        "rmedge": lambda: fs.rmedge(source=target, target="/b.py", edge_type="imports"),
         "move": lambda: fs.move(src="/a.txt", dest=target),
         "copy": lambda: fs.copy(src="/a.txt", dest=target),
     }

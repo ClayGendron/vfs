@@ -38,9 +38,10 @@ ParamKind = Literal[
     "entries",  # downstream where their classes live
     "edits",
     "pairs",
+    "edges",
 ]
 
-_MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edits", "pairs"})
+_MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edits", "pairs", "edges"})
 
 CASE_MODES: Final[frozenset[str]] = frozenset(get_args(CaseMode))
 OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
@@ -85,6 +86,10 @@ class ShapeRule(NamedTuple):
 
 
 _USER: Final = ParamSpec("user_id", "str", doc="local caller identity; never on the wire")
+_EDGES: Final = ParamSpec("edges", "edges", doc="batch form: validated Edge models")
+_EDGE_SOURCE: Final = ParamSpec("source", "path", doc="sugar form: edge tail endpoint")
+_EDGE_TARGET: Final = ParamSpec("target", "path", doc="sugar form: edge head endpoint")
+_EDGE_TYPE: Final = ParamSpec("edge_type", "str", doc="sugar form: edge label, one path segment")
 _COLUMNS: Final = ParamSpec("columns", "str_set", doc="observation fields to fetch and render")
 _OBSERVATIONS: Final = ParamSpec("observations", "observations", doc="row-addressed targets")
 _SCOPE_PATHS: Final = ParamSpec(
@@ -161,9 +166,25 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _USER,
     ),
     "mkedge": (
-        ParamSpec("source", "path", required=True, doc="edge tail endpoint"),
-        ParamSpec("target", "path", required=True, doc="edge head endpoint"),
-        ParamSpec("edge_type", "str", required=True, doc="edge label, one path segment"),
+        _EDGES,
+        _EDGE_SOURCE,
+        _EDGE_TARGET,
+        _EDGE_TYPE,
+        ParamSpec(
+            "provenance",
+            "str",
+            nullable=False,
+            default="system",
+            choices=frozenset({"user", "agent", "system"}),
+            doc="author class stamped on every edge in the call; 'extracted' is reserved to reindex",
+        ),
+        _USER,
+    ),
+    "rmedge": (
+        _EDGES,
+        _EDGE_SOURCE,
+        _EDGE_TARGET,
+        _EDGE_TYPE,
         _USER,
     ),
     "move": (
@@ -328,6 +349,22 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             (("paths",), ("observations",)),
             exactly_one=False,
             msg_both="glean takes paths or observations, not both",
+        ),
+    ),
+    "mkedge": (
+        ShapeRule(
+            (("edges",), ("source", "target", "edge_type")),
+            exactly_one=True,
+            msg_both="mkedge takes edges or source/target/edge_type, not both",
+            msg_missing="mkedge requires edges, or source, target, and edge_type",
+        ),
+    ),
+    "rmedge": (
+        ShapeRule(
+            (("edges",), ("source", "target", "edge_type")),
+            exactly_one=True,
+            msg_both="rmedge takes edges or source/target/edge_type, not both",
+            msg_missing="rmedge requires edges, or source, target, and edge_type",
         ),
     ),
 }

@@ -16,8 +16,8 @@ from vfs.storage.backends.memory import InMemoryStorage
 
 
 def test_capabilities_pin_the_landed_set() -> None:
-    # A drift alarm in both directions: when mkedge lands, this pin
-    # must move together with the backend's declaration.
+    # A drift alarm in both directions: this pin must move together
+    # with the backend's declaration ("graph" and "run" are unlanded).
     assert InMemoryStorage().capabilities() == frozenset(
         {
             "read",
@@ -30,6 +30,8 @@ def test_capabilities_pin_the_landed_set() -> None:
             "write",
             "edit",
             "mkdir",
+            "mkedge",
+            "rmedge",
             "delete",
             "restore",
             "sweep",

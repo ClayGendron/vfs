@@ -26,7 +26,7 @@ from tests.support.base_doubles import (
 )
 from vfs.base import VirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
-from vfs.models import Entry, Observation
+from vfs.models import Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
@@ -338,9 +338,10 @@ async def test_mkedge_localizes_endpoints_on_shared_terminal() -> None:
     root = VirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
+    result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
     assert result.success is True
-    assert child.calls == [("mkedge", {"source": "/a.py", "target": "/b.py", "edge_type": "imports"})]
+    expected_edge = Edge(source=Path("/a.py"), target=Path("/b.py"), edge_type="imports")
+    assert child.calls == [("mkedge", {"edges": [expected_edge], "provenance": "system"})]
 
 
 async def test_mkedge_cross_mount_rejected() -> None:
@@ -348,7 +349,7 @@ async def test_mkedge_cross_mount_rejected() -> None:
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
-    result = await root.mkedge("/a/x.py", "/b/y.py", "imports")
+    result = await root.mkedge(source="/a/x.py", target="/b/y.py", edge_type="imports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.cross_mount
     assert a.calls == [] and b.calls == []
@@ -356,7 +357,7 @@ async def test_mkedge_cross_mount_rejected() -> None:
 
 async def test_mkedge_rejects_bad_edge_type() -> None:
     fs = RecorderFS()
-    result = await fs.mkedge("/a.py", "/b.py", "im/ports")
+    result = await fs.mkedge(source="/a.py", target="/b.py", edge_type="im/ports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
     assert fs.calls == []
@@ -369,7 +370,7 @@ async def test_mkedge_missing_endpoints_is_not_found() -> None:
         errors=[ResultError(kind=VFSErrorKind.not_found, message="No such entry: /nope/a.py")],
     )
     root = VirtualFileSystem(storage=CannedStorage({"mkedge": miss}))
-    result = await root.mkedge("/nope/a.py", "/nope/b.py", "imports")
+    result = await root.mkedge(source="/nope/a.py", target="/nope/b.py", edge_type="imports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.not_found
 
@@ -378,24 +379,49 @@ async def test_mkedge_capability_gate_blocks() -> None:
     root = VirtualFileSystem()
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
-    result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
+    result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
     assert result.errors[0].kind is VFSErrorKind.unsupported
     assert child.calls == []
 
 
 async def test_mkedge_invalid_endpoints_rejected() -> None:
     fs = RecorderFS()
-    bad_source = await fs.mkedge("/a\x00.py", "/b.py", "imports")
-    bad_target = await fs.mkedge("/a.py", "/b\x00.py", "imports")
+    bad_source = await fs.mkedge(source="/a\x00.py", target="/b.py", edge_type="imports")
+    bad_target = await fs.mkedge(source="/a.py", target="/b\x00.py", edge_type="imports")
     assert bad_source.errors[0].kind is VFSErrorKind.invalid
     assert bad_target.errors[0].kind is VFSErrorKind.invalid
     assert fs.calls == []
 
 
 async def test_mkedge_rejects_non_string_edge_type() -> None:
-    result = await RecorderFS().mkedge("/a.py", "/b.py", 123)  # ty: ignore[invalid-argument-type]
+    result = await RecorderFS().mkedge(source="/a.py", target="/b.py", edge_type=123)  # ty: ignore[invalid-argument-type]
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
+
+
+async def test_mkedge_refuses_the_reserved_fs_type() -> None:
+    # "fs" is minted only at the row layer, mirroring parent_id — no
+    # caller, sugar or batch, may ever author one.
+    fs = RecorderFS()
+    result = await fs.mkedge(source="/a.py", target="/b.py", edge_type="fs")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert fs.calls == []
+
+
+async def test_mkedge_refuses_extracted_provenance() -> None:
+    # 'extracted' is reserved to the reindex extractor; a caller
+    # stamping it directly refuses at the params gate.
+    fs = RecorderFS()
+    result = await fs.mkedge(
+        source="/a.py",
+        target="/b.py",
+        edge_type="imports",
+        provenance="extracted",  # ty: ignore[invalid-argument-type]
+    )
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert fs.calls == []
 
 
 async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
@@ -404,7 +430,7 @@ async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
     for source in ("/", "/.vfs/ghost.py"):
-        result = await root.mkedge(source, "/m/b.py", "imports")
+        result = await root.mkedge(source=source, target="/m/b.py", edge_type="imports")
         assert result.success is False
         assert result.errors[0].kind is VFSErrorKind.invalid
 
@@ -415,10 +441,51 @@ async def test_mkedge_gates_the_target_endpoint_path() -> None:
     root = VirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions=read_write(read=["/b.py"]))
-    result = await root.mkedge("/m/a.py", "/m/b.py", "imports")
+    result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.read_only
     assert child.calls == []
+
+
+async def test_mkedge_batch_form_dispatches_the_listed_edges() -> None:
+    fs = RecorderFS()
+    edge = Edge(source=Path("/a.py"), target=Path("/b.py"), edge_type="imports")
+    result = await fs.mkedge(edges=[edge])
+    assert result.success is True
+    assert fs.calls == [("mkedge", {"edges": [edge], "provenance": "system"})]
+
+
+async def test_mkedge_batch_rejects_non_edge_items() -> None:
+    fs = RecorderFS()
+    result = await fs.mkedge(edges=["not an edge"])  # ty: ignore[invalid-argument-type]
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert fs.calls == []
+
+
+async def test_mkedge_empty_batch_is_a_no_op() -> None:
+    fs = RecorderFS()
+    result = await fs.mkedge(edges=[])
+    assert result.success is True
+    assert result.observations == []
+    assert fs.calls == []
+
+
+async def test_mkedge_duplicate_identity_in_batch_is_refused() -> None:
+    fs = RecorderFS()
+    edge = Edge(source=Path("/a.py"), target=Path("/b.py"), edge_type="imports")
+    result = await fs.mkedge(edges=[edge, edge])
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert "Duplicate edge identity" in result.errors[0].message
+    assert fs.calls == []
+
+
+async def test_rmedge_requires_edges_or_the_sugar_triple() -> None:
+    result = await RecorderFS().rmedge()
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert "requires edges" in result.errors[0].message
 
 
 # ----------------------------------------------------------------------
@@ -1562,7 +1629,7 @@ async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
         ("edit", lambda fs: fs.edit(path="/nope", old="a", new="b")),
         ("delete", lambda fs: fs.delete("/nope")),
         ("mkdir", lambda fs: fs.mkdir("/nope/d")),
-        ("mkedge", lambda fs: fs.mkedge("/a.txt", "/b.txt", "ref")),
+        ("mkedge", lambda fs: fs.mkedge(source="/a.txt", target="/b.txt", edge_type="ref")),
         ("move", lambda fs: fs.move("/a", "/b")),
         ("copy", lambda fs: fs.copy("/a", "/b")),
         ("graph", lambda fs: fs.graph("descendants", "/nope")),

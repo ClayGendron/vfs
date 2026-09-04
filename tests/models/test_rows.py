@@ -8,7 +8,7 @@ from typing import Union, get_args, get_origin
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Double, Engine, LargeBinary, String, insert, inspect, select
+from sqlalchemy import Double, Engine, LargeBinary, String, create_mock_engine, insert, inspect, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mssql import pymssql
 from sqlalchemy.dialects.mysql import LONGBLOB, mariadb
@@ -237,10 +237,39 @@ class TestBuildVFSTables:
         assert not any("path" in column.name for column in tables.edges.c)
 
     def test_edges_are_narrow_id_triples_indexed_both_directions(self, tables: VFSTables) -> None:
-        assert {"id", "source_id", "target_id", "edge_type", "weight", "distance"} == set(tables.edges.c.keys())
+        expected = {"id", "source_id", "target_id", "edge_type", "weight", "distance", "provenance"}
+        assert expected == set(tables.edges.c.keys())
+        assert tables.edges.c.provenance.nullable is False
+        assert tables.edges.c.provenance.default is None
         by_name = {str(index.name): index for index in tables.edges.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_edges_fwd"].columns] == ["source_id", "edge_type"]
         assert [c.name for c in by_name["ix_vfs_entries_edges_rev"].columns] == ["target_id", "edge_type"]
+
+    def test_single_parent_index_is_filtered_and_gated_by_dialect(self, tables: VFSTables) -> None:
+        # Emitted only where the engine has partial/filtered indexes; a plain
+        # unique index on target_id alone would be wrong everywhere else.
+        by_name = {str(index.name): index for index in tables.edges.indexes}
+        fs_parent = by_name["uq_vfs_entries_edges_fs_parent"]
+        assert fs_parent.unique
+        assert [c.name for c in fs_parent.columns] == ["target_id"]
+        for dialect_name in ("sqlite", "postgresql", "mssql"):
+            assert str(fs_parent.dialect_options[dialect_name]["where"]) == "edge_type = 'fs'"
+
+    @pytest.mark.parametrize(
+        ("url", "emitted"),
+        [("sqlite://", True), ("postgresql://", True), ("mssql://", True), ("mariadb://", False), ("oracle://", False)],
+    )
+    def test_single_parent_index_emission_per_dialect(self, url: str, emitted: bool) -> None:
+        tables = build_vfs_tables(table_name="vfs_entries")
+        statements: list[str] = []
+
+        def record(sql: object, *args: object, **kwargs: object) -> None:
+            statements.append(str(sql.compile(dialect=engine.dialect)))  # ty: ignore[unresolved-attribute]
+
+        engine = create_mock_engine(url, record)
+        tables.metadata.create_all(engine, checkfirst=False)
+        index_ddl = [s for s in statements if "CREATE UNIQUE INDEX uq_vfs_entries_edges_fs_parent" in s]
+        assert bool(index_ddl) is emitted
 
     def test_posting_rows_are_epoch_scoped_with_varint_default(self, tables: VFSTables) -> None:
         assert [c.name for c in tables.posting_list.primary_key.columns] == ["epoch", "gram_key"]

@@ -48,6 +48,7 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
     supports_values_update,
 )
+from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -321,10 +322,11 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
     ):
         return errors
-    # Segment postings ride beside fresh inserts only: a create that
-    # adopted or clobbered a rival's row found its postings already true.
+    # Segment postings and fs mirror rows ride beside fresh inserts only: a
+    # create that adopted or clobbered a rival's row found both already true.
     fresh = [staged for staged in creates if staged.entry_id in minted]
     await insert_postings(session, tables.segments, [(staged.entry_id, str(staged.path)) for staged in fresh])
+    await insert_fs_rows(session, tables.edges, [(plan.parent_id_of(staged), staged.entry_id) for staged in fresh])
     # After the insert pass on purpose: arbitration may re-route a losing
     # create to "absorb", which must be picked up by this pass. "adopt"
     # rows stood down entirely — nothing left to write.

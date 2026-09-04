@@ -7,11 +7,10 @@ projection push-down, ``parent_id`` listings, glob's batched pattern
 fan, grep's indexed pipeline (``grep.py``), and the descent-ladder
 classification chokepoint (``descent.py`` / ``reads.py``) — as are the
 mutation core (write/edit/mkdir batches planned and executed as one
-transaction each, ``writes.py``) and the serialized topology verbs
-delete/restore/move/copy (``topology.py``). ``mkedge`` is stubbed to a
-classified refusal and stays subtracted from the derived capability
-set — capabilities stay honest, and the router never routes to an
-undeclared verb.
+transaction each, ``writes.py``), the serialized topology verbs
+delete/restore/move/copy (``topology.py``), and the edge pair
+``mkedge``/``rmedge`` over the same table as the storage-minted fs
+mirror (``edges.py``).
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
@@ -45,6 +44,13 @@ from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
     op_execution_options,
     topology_execution_options,
+)
+from vfs.storage.backends.database.edges import (
+    EdgeRebuildState,
+    collect_edge_drift,
+    mkedge_rows,
+    repair_edge_drift,
+    rmedge_rows,
 )
 from vfs.storage.backends.database.embed import (
     EMBED_CONCURRENCY,
@@ -95,7 +101,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
-    from vfs.models import Entry, Observation
+    from vfs.models import Edge, Entry, Observation
     from vfs.models.rows import VFSTables
     from vfs.models.vector import NativeEmbeddingConfig
     from vfs.ops import CaseMode, GrepOutputMode, Op
@@ -187,13 +193,11 @@ class DatabaseStorage:
     def capabilities(self) -> frozenset[Op]:
         """The method surface, minus what this mount cannot vouch for.
 
-        ``mkedge``'s classified stub satisfies the mutation family
-        structurally but is not live. An unknown dialect serves the
-        core verbs on the generic floor and withholds ``glean``: ranked
-        search needs a cosine distance in the engine, which only a tuned
-        profile declares.
+        An unknown dialect serves the core verbs on the generic floor
+        and withholds ``glean``: ranked search needs a cosine distance
+        in the engine, which only a tuned profile declares.
         """
-        withheld: set[Op] = {"mkedge"}
+        withheld: set[Op] = set()
         if self._host.profile.vector_distance == "none":
             withheld.add("glean")
         return storage_ops(self) - withheld
@@ -644,12 +648,38 @@ class DatabaseStorage:
     async def mkedge(
         self,
         *,
-        source: Path,
-        target: Path,
-        edge_type: str,
+        edges: list[Edge],
+        provenance: str = "system",
         user_id: str | None = None,
     ) -> Result:
-        return await self._stub("mkedge")
+        return await self._execute_write(
+            "mkedge",
+            lambda session: mkedge_rows(
+                session,
+                self._host.tables,
+                self._host.membership_budget,
+                edges=edges,
+                provenance=provenance,
+                user_id=user_id,
+            ),
+        )
+
+    async def rmedge(
+        self,
+        *,
+        edges: list[Edge],
+        user_id: str | None = None,
+    ) -> Result:
+        return await self._execute_write(
+            "rmedge",
+            lambda session: rmedge_rows(
+                session,
+                self._host.tables,
+                self._host.membership_budget,
+                edges=edges,
+                user_id=user_id,
+            ),
+        )
 
     # -------------------------------------------------------------------
     # Admin verbs — beside close(), outside the routed surface
@@ -726,35 +756,63 @@ class DatabaseStorage:
                 return
 
     async def _reindex_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
-        """The lease-held phases: the gram epochs, then segment re-convergence.
+        """The lease-held phases: the gram epochs, then the re-convergence passes.
 
-        The segment pass rebuilds the path-segment postings — wholesale
+        The segment pass rebuilds the path-segment postings and the edge
+        pass re-converges the fs mirror to ``parent_id`` — each wholesale
         in effect, guarded delta in application: a plain read diffs the
-        table against the recomputed segments of every stored path, and
-        only found drift opens a writer transaction, applied under
-        per-row path guards. Its warnings (drift is a maintenance bug
-        surfacing) ride on the verb's final Result.
+        table against the recomputed truth, and only found drift opens a
+        writer transaction, applied under per-row guards. Their warnings
+        (drift is a maintenance bug surfacing) ride on the verb's final
+        Result.
         """
         result = await self._gram_phases(tables, lost)
         if not result.success:
             return result
+        warnings: list[ResultError] = []
         segment_state = SegmentRebuildState()
-        collected = await self._execute(
-            "reindex", lambda session: collect_segment_drift(session, tables, segment_state)
+        outcome = await self._reconverge(
+            lost,
+            lambda session: collect_segment_drift(session, tables, segment_state),
+            lambda session: repair_segment_drift(session, tables, self._host.membership_budget, segment_state),
+            lambda: segment_state.clean,
         )
+        if isinstance(outcome, Result):
+            return outcome
+        warnings.extend(outcome)
+        edge_state = EdgeRebuildState()
+        outcome = await self._reconverge(
+            lost,
+            lambda session: collect_edge_drift(session, tables, edge_state),
+            lambda session: repair_edge_drift(session, tables, self._host.membership_budget, edge_state),
+            lambda: edge_state.clean,
+        )
+        if isinstance(outcome, Result):
+            return outcome
+        warnings.extend(outcome)
+        if not warnings:
+            return result
+        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *warnings])
+
+    async def _reconverge(
+        self,
+        lost: asyncio.Event,
+        collect: Callable[[AsyncSession], Awaitable[Result]],
+        repair: Callable[[AsyncSession], Awaitable[Result]],
+        clean: Callable[[], bool],
+    ) -> Result | list[ResultError]:
+        """One collect/repair pass: its warnings on success, the failing Result otherwise."""
+        collected = await self._execute("reindex", collect)
         if not collected.success:
             return collected
-        if segment_state.clean:
-            return result
+        if clean():
+            return []
         if lost.is_set():
             return lease_lost_result()
-        repaired = await self._execute_write(
-            "reindex",
-            lambda session: repair_segment_drift(session, tables, self._host.membership_budget, segment_state),
-        )
+        repaired = await self._execute_write("reindex", repair)
         if not repaired.success:
             return repaired
-        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *repaired.errors])
+        return list(repaired.errors)
 
     async def _gram_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
         """The gram-index phases; a lost lease stops at the next boundary."""
@@ -973,17 +1031,3 @@ class DatabaseStorage:
             return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
         except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
-
-    async def _stub(self, op: str) -> Result:
-        refusal = await self._host.ensure_ready()
-        if refusal is not None:
-            return Result(ops=(op,), errors=[refusal])
-        return Result(
-            ops=(op,),
-            errors=[
-                ResultError(
-                    kind=VFSErrorKind.unsupported,
-                    message=f"{op} is not yet implemented on DatabaseStorage",
-                )
-            ],
-        )

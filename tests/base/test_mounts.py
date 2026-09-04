@@ -542,7 +542,8 @@ async def test_close_cancellation_parks_disposal_for_a_retry() -> None:
         lambda fs: fs.ls("/"),
         lambda fs: fs.write(entries=[Entry(path="/f.txt", content="x")]),
         lambda fs: fs.glob("*.py"),
-        lambda fs: fs.mkedge("/a.py", "/b.py", "imports"),
+        lambda fs: fs.mkedge(source="/a.py", target="/b.py", edge_type="imports"),
+        lambda fs: fs.rmedge(source="/a.py", target="/b.py", edge_type="imports"),
         lambda fs: fs.move(src="/a", dest="/b"),
     ],
 )

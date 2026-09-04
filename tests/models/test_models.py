@@ -402,6 +402,12 @@ class TestMountRebasing:
         assert rebased.trash_path == "/data/.vfs/trash/2026-07-24-05/01A-a.md"
         assert rebased.without_mount("/data") == obs
 
+    def test_observation_rebase_carries_edge_target(self) -> None:
+        obs = Observation(path=Path("/a.md"), edge_target=Path("/b.md"), edge_type="links")
+        rebased = obs.with_mount("/data")
+        assert rebased.edge_target == "/data/b.md"
+        assert rebased.without_mount("/data") == obs
+
 
 # ---------------------------------------------------------------------------
 # Entry.with_content — content replacement, copy-returning
@@ -645,7 +651,6 @@ class TestEdge:
         edge = Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="imports")
         assert edge.weight is None
         assert edge.distance is None
-        assert edge.version == 1
 
     def test_root_endpoint_rejected(self) -> None:
         with pytest.raises(ValidationError, match="source must not be the root"):
@@ -660,9 +665,9 @@ class TestEdge:
             with pytest.raises(ValidationError, match="edge_type"):
                 Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type=bad)
 
-    def test_revision_must_be_positive(self) -> None:
-        with pytest.raises(ValidationError, match="version must be >= 1"):
-            Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="imports", version=0)
+    def test_reserved_fs_type_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="reserved for the storage-minted hierarchy mirror"):
+            Edge(source=Path("/a.md"), target=Path("/b.md"), edge_type="fs")
 
 
 # ---------------------------------------------------------------------------

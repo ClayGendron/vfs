@@ -387,7 +387,7 @@ class Observation(BaseModel):
     a drift test — most mirror :class:`Entry`; ``version`` mirrors
     :class:`~vfs.models.version.Version`'s ``number`` (one per-entry sequence:
     a stat's ``version`` is the entry's current value, a version row's is its
-    label) and the ``edge_*`` trio mirrors :class:`~vfs.models.edge.Edge`
+    label) and the ``edge_*`` fields mirror :class:`~vfs.models.edge.Edge`
     (see ``OBSERVATION_MIRROR_OWNERS``). Query fields are facts about
     *(entry, operation)* — a score, the matched regions, a write status, a
     delete's trash destination — and are never persisted. ``name`` / ``ext``
@@ -415,6 +415,7 @@ class Observation(BaseModel):
     size_bytes: int | None = None
     version: int | None = None
     edge_type: str | None = None
+    edge_target: Path | None = None
     edge_weight: float | None = None
     edge_distance: float | None = None
     created_at: datetime | None = None
@@ -464,12 +465,14 @@ class Observation(BaseModel):
     def with_mount(self, mount: str) -> Observation:
         """Frozen copy re-rooted under *mount* — the router's outbound rebase.
 
-        ``trash_path`` names the same mount-local namespace as ``path``,
-        so a populated one rebases alongside it.
+        ``trash_path`` and ``edge_target`` name the same mount-local
+        namespace as ``path``, so a populated one rebases alongside it.
         """
         update: dict[str, Any] = {"path": self.path.with_mount(mount)}
         if self.trash_path is not None:
             update["trash_path"] = self.trash_path.with_mount(mount)
+        if self.edge_target is not None:
+            update["edge_target"] = self.edge_target.with_mount(mount)
         return self.model_copy(update=update)
 
     def without_mount(self, mount: str) -> Observation:
@@ -477,6 +480,8 @@ class Observation(BaseModel):
         update: dict[str, Any] = {"path": self.path.without_mount(mount)}
         if self.trash_path is not None:
             update["trash_path"] = self.trash_path.without_mount(mount)
+        if self.edge_target is not None:
+            update["edge_target"] = self.edge_target.without_mount(mount)
         return self.model_copy(update=update)
 
 
@@ -492,6 +497,7 @@ OBSERVATION_MIRROR_FIELDS: Final[frozenset[str]] = frozenset(Observation.model_f
 _NON_ENTRY_MIRROR_OWNERS: Final[dict[str, tuple[type[BaseModel], str]]] = {
     "version": (Version, "number"),
     "edge_type": (Edge, "edge_type"),
+    "edge_target": (Edge, "target"),
     "edge_weight": (Edge, "weight"),
     "edge_distance": (Edge, "distance"),
 }

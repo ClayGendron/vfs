@@ -94,6 +94,9 @@ class Everything(PatternSearcher):
     async def mkedge(self, **kwargs: Any) -> Result:
         return _ok("mkedge")
 
+    async def rmedge(self, **kwargs: Any) -> Result:
+        return _ok("rmedge")
+
     async def run(self, **kwargs: Any) -> Result:
         return _ok("run")
 
@@ -160,6 +163,9 @@ def test_mutation_family_is_exactly_the_write_gated_ops() -> None:
 
         async def mkedge(self, **kwargs: Any) -> Result:
             return _ok("mkedge")
+
+        async def rmedge(self, **kwargs: Any) -> Result:
+            return _ok("rmedge")
 
     assert storage_ops(Mutating()) == storage_ops(ReadOnly()) | MUTATING_OPS
 

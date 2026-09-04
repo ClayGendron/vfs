@@ -436,6 +436,7 @@ class TestActionRendering:
         assert str(Result(ops=("copy",), observations=[obs("/a.md")])) == "Copied /a.md"
         assert str(Result(ops=("mkdir",), observations=[obs("/d")])) == "Created /d"
         assert str(Result(ops=("mkedge",), observations=[obs("/a.md")])) == "Connected /a.md"
+        assert str(Result(ops=("rmedge",), observations=[obs("/a.md")])) == "Disconnected /a.md"
         assert str(Result(ops=("restore",), observations=[obs("/a.md")])) == "Restored /a.md"
         assert str(Result(ops=("sweep",), observations=[obs("/.vfs/trash/2020-01-01-00")])) == (
             "Swept /.vfs/trash/2020-01-01-00"

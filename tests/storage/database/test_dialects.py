@@ -22,7 +22,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from tests.support.database_helpers import _SqliteError, _url
-from vfs.models import Entry, Observation
+from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import VFSErrorKind
@@ -427,6 +427,27 @@ class TestMembershipChunking:
         stats = await storage.stat(observations=created)
         assert stats.success is True, stats.errors[:3]
         assert len(stats.observations) == 10_000
+        await storage.close()
+
+    async def test_ten_thousand_edge_batch_round_trips(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path("/hub.py"), content="hub")] + [
+            Entry(path=Path(f"/spokes/s{i:05}.py"), content=f"s{i}") for i in range(10_000)
+        ]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        edges = [
+            Edge(source=Path("/hub.py"), target=Path(f"/spokes/s{i:05}.py"), edge_type="imports") for i in range(10_000)
+        ]
+        created = await storage.mkedge(edges=edges)
+        assert created.success is True, created.errors[:3]
+        assert len(created.observations) == 10_000
+        assert all(o.status == "created" for o in created.observations)
+        touched = await storage.mkedge(edges=edges)
+        assert touched.success is True, touched.errors[:3]
+        assert all(o.status == "updated" for o in touched.observations)
+        removed = await storage.rmedge(edges=edges)
+        assert removed.success is True, removed.errors[:3]
+        assert all(o.status == "deleted" for o in removed.observations)
         await storage.close()
 
 

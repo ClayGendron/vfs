@@ -299,7 +299,7 @@ GATE_FAILURES = [
     ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), VFSErrorKind.unsupported, "/dim"),
     (
         "mkedge/incapable",
-        lambda r: r.mkedge("/dim/a.py", "/dim/b.py", "imports"),
+        lambda r: r.mkedge(source="/dim/a.py", target="/dim/b.py", edge_type="imports"),
         VFSErrorKind.unsupported,
         "/dim",
     ),
@@ -321,7 +321,7 @@ async def test_mkedge_permission_denial_reports_the_endpoint_path() -> None:
     # mkedge's write targets are the two endpoint paths; the denial reports
     # the endpoint router-side, rebased under the mount prefix.
     root = await _gated_namespace()
-    result = await root.mkedge("/ro/a.py", "/ro/b.py", "imports")
+    result = await root.mkedge(source="/ro/a.py", target="/ro/b.py", edge_type="imports")
     assert result.errors[0].kind is VFSErrorKind.read_only
     assert result.errors[0].path == "/ro/a.py"
 

@@ -34,7 +34,7 @@ nicety.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, NamedTuple
 
 from sqlalchemy import (
     BINARY,
@@ -60,6 +60,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     event,
+    text,
 )
 from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.dialects.oracle import RAW
@@ -93,7 +94,13 @@ ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset({"content"})
 # the persistence layer resolves to entry identities.
 VERSION_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"entry_id"})
 CHUNK_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "entry_id"})
-EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id"})
+EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id", "provenance"})
+
+# Who authored an edge row. Minted by the layer, never the caller: the verb
+# gate stamps user/agent/system, the fs mirror stamps system, the reindex
+# extractor stamps extracted — and each deleter touches only its own kind.
+EdgeProvenance = Literal["user", "agent", "system", "extracted"]
+EDGE_PROVENANCE_VALUES: Final[frozenset[str]] = frozenset({"user", "agent", "system", "extracted"})
 
 # Owner-reference fields per model: the Path field standing in for the row's
 # id reference. The drift test excuses these from column matching.
@@ -104,12 +111,11 @@ MODEL_OWNER_FIELDS: Final[dict[str, frozenset[str]]] = {
 }
 
 # Model fields with no backing column yet, and the spec that resolves each:
-# Edge.version is the per-edge monotone value (ADR 013) awaiting the
-# edge-wiring spec's column.
+# none today — every model field has its column.
 MODEL_FIELD_ONLY: Final[dict[str, frozenset[str]]] = {
     "Version": frozenset(),
     "Chunk": frozenset(),
-    "Edge": frozenset({"version"}),
+    "Edge": frozenset(),
 }
 
 # Field-name → column-name divergences per model. ``Version.number`` keeps
@@ -123,7 +129,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 9
+SCHEMA_FORMAT_VERSION: Final = 10
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -460,6 +466,9 @@ def build_vfs_tables(
 
     # Edges: narrow ID triples with both traversal directions indexed. No
     # path columns — liveness and addressing come from joining entries.
+    # ``provenance`` has no default on purpose: a mint site that forgets to
+    # stamp the author class must fail loudly, never mislabel a row.
+    fs_where = text("edge_type = 'fs'")
     edges = Table(
         f"{table_name}_edges",
         metadata,
@@ -469,9 +478,22 @@ def build_vfs_tables(
         Column("edge_type", _string(MAX_SEGMENT_LENGTH), nullable=False),
         Column("weight", Float),
         Column("distance", Float),
+        Column("provenance", _string(16), nullable=False),
         UniqueConstraint("source_id", "target_id", "edge_type", name=f"uq_{table_name}_edges_src_tgt_type"),
         Index(f"ix_{table_name}_edges_fwd", "source_id", "edge_type"),
         Index(f"ix_{table_name}_edges_rev", "target_id", "edge_type"),
+        # Single-parent hardening: at most one fs in-edge per entry, emitted
+        # only where the engine has partial/filtered indexes; elsewhere the
+        # conformance invariant is the declared floor.
+        Index(
+            f"uq_{table_name}_edges_fs_parent",
+            "target_id",
+            unique=True,
+            sqlite_where=fs_where,
+            postgresql_where=fs_where,
+            mssql_where=fs_where,
+            # The stub narrows ``dialect`` to str; the runtime accepts a tuple.
+        ).ddl_if(dialect=("sqlite", "postgresql", "mssql")),  # ty: ignore[invalid-argument-type]
         schema=schema,
         sqlite_autoincrement=True,
     )

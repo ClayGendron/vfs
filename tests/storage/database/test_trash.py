@@ -253,11 +253,11 @@ class TestDeleteTrash:
         async with host.session_factory() as session:
             await session.connection(execution_options=op_execution_options(host.profile, writer=True))
             root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
-            chain = _TrashChain(entry, host.tables.segments, root_id=root_id, user_id=None, now=datetime.now(UTC))
+            chain = _TrashChain(host.tables, root_id=root_id, user_id=None, now=datetime.now(UTC))
             first = await chain.ensure(session, Path("/x.txt"))
             assert isinstance(first, str)
             # A fresh chain re-selects the minted links instead of re-minting.
-            rival = _TrashChain(entry, host.tables.segments, root_id=root_id, user_id=None, now=datetime.now(UTC))
+            rival = _TrashChain(host.tables, root_id=root_id, user_id=None, now=datetime.now(UTC))
             second = await rival.ensure(session, Path("/x.txt"))
             assert second == first
             # A direct mint against an occupied link takes the
@@ -593,10 +593,14 @@ class TestSweepPurge:
                 insert(tables.chunks).values(entry_id=target_id, chunk_index=0, line_start=1, line_end=1, content="x")
             )
             await session.execute(
-                insert(tables.edges).values(source_id=target_id, target_id=str(ULID()), edge_type="ref")
+                insert(tables.edges).values(
+                    source_id=target_id, target_id=str(ULID()), edge_type="ref", provenance="user"
+                )
             )
             await session.execute(
-                insert(tables.edges).values(source_id=str(ULID()), target_id=target_id, edge_type="ref")
+                insert(tables.edges).values(
+                    source_id=str(ULID()), target_id=target_id, edge_type="ref", provenance="user"
+                )
             )
             await session.commit()
         assert (await storage.sweep(path=Path("/proj"))).success
@@ -690,7 +694,7 @@ class TestTrashChainRefusal:
 
     def test_chain_inside_matches_ancestors_and_the_bucket_only(self) -> None:
         tables = build_vfs_tables(table_name="vfs")
-        chain = _TrashChain(tables.entry, tables.segments, root_id="r", user_id=None, now=datetime.now(UTC))
+        chain = _TrashChain(tables, root_id="r", user_id=None, now=datetime.now(UTC))
         assert chain.chain_inside(Path("/.vfs")) is True
         assert chain.chain_inside(Path("/.vfs/trash")) is True
         assert chain.chain_inside(Path(chain.bucket_path)) is True
@@ -781,10 +785,14 @@ class TestPurgeHardening:
             ids = [row.entry_id for row in found]
             for eid in ids[:20]:
                 await session.execute(
-                    insert(tables.edges).values(source_id=eid, target_id=str(ULID()), edge_type="ref")
+                    insert(tables.edges).values(
+                        source_id=eid, target_id=str(ULID()), edge_type="ref", provenance="user"
+                    )
                 )
                 await session.execute(
-                    insert(tables.edges).values(source_id=str(ULID()), target_id=eid, edge_type="ref")
+                    insert(tables.edges).values(
+                        source_id=str(ULID()), target_id=eid, edge_type="ref", provenance="user"
+                    )
                 )
             await session.commit()
         counts: list[int] = []

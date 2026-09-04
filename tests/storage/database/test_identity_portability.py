@@ -57,7 +57,10 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
         )
         await conn.execute(
             insert(tables.edges).values(
-                source_id=keys["/projects/docs/a.md"], target_id=keys["/projects/notes.txt"], edge_type="links_to"
+                source_id=keys["/projects/docs/a.md"],
+                target_id=keys["/projects/notes.txt"],
+                edge_type="links_to",
+                provenance="user",
             )
         )
 
@@ -113,7 +116,14 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
                 )
             )
         ).all()
-        assert linked == [("/projects/docs/a.md", "/projects/notes.txt", "links_to")]
+        # The authored edge and the whole fs mirror survive renumbering.
+        assert set(linked) == {
+            ("/projects/docs/a.md", "/projects/notes.txt", "links_to"),
+            ("/", "/projects", "fs"),
+            ("/projects", "/projects/docs", "fs"),
+            ("/projects/docs", "/projects/docs/a.md", "fs"),
+            ("/projects", "/projects/notes.txt", "fs"),
+        }
         history = (
             await conn.execute(
                 select(versions.c.version_number, versions.c.content)
