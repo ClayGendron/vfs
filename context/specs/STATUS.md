@@ -5,6 +5,26 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **143 landed 2026-09-04** — edge wiring and the fs mirror (ADR 018
+  implemented; drafted and built 2026-08-27, verified and archived
+  2026-09-04): schema format 10 (`provenance` on `edges`, the filtered
+  single-parent index on sqlite/postgres/mssql), the fs hierarchy
+  mirror minted/repointed inside every namespace-mutating transaction
+  (trash and restore ride the move shape — the mirror follows
+  `parent_id` uniformly, no restore re-mint), authored edges cascade
+  at soft delete both directions, reindex re-convergence for edge
+  drift sharing the segment pass's `_reconverge` skeleton, and the
+  batch caller pair — `mkedge` touch/upsert + the new `rmedge` — with
+  the sugar triple, per-mount routing, arbitration redrive, and the
+  10k-edge scale row. **The database backend has no classified stubs
+  left.** ADR 018 amended at landing (no per-edge version; pin 9
+  resolved as soft-delete cascade); ADR 013 annotated. Gates: full
+  3.11–3.14 matrix, 100 % coverage (3,091 passed / 942 skipped), four
+  engine legs green — conformance + races, 933 passed / 8 skipped.
+  Recorded follow-ups: the hub-degree cost of the triple probe; a
+  narrow delete-vs-mkedge race that can strand an authored edge on a
+  trashed entry (awaiting a ruling). Next in line: **136** (signals),
+  **138** (the reference-edge extractor).
 - **135 landed 2026-08-27** — `glean` is hybrid: the vector leg as one
   in-engine `ORDER BY <cosine distance> LIMIT k` statement on every
   supported dialect (pgvector, MariaDB, SQL Server 2025, Oracle, SQLite
@@ -567,15 +587,11 @@ lines first; regenerate this file when the picture shifts (review the
 
 ## Decided but unspecified — the next specs to write
 
-- **ADR 018 — edge authoring** (accepted 2026-07-19, `2cf80b7`; docs
-  only). Batch-native `mkedge`/`rmedge`, touch/upsert, materialized
-  reserved-type `"fs"` hierarchy edges minted storage-side,
-  `parent_id` retained as write-side arbiter. **No spec exists yet**;
-  pin 9 (user-edge fate on entry delete) and pin 8's conformance
-  invariant (fs edges mirror `parent_id` after every mutating verb)
-  are explicitly the wiring spec's to own. The live `mkedge`
-  (`base.py`; stubbed in the database backend) predates the ADR.
-  Feeds 067 (graph traversal-only).
+- ~~**ADR 018 — edge authoring**~~ — **landed 2026-09-04 via spec
+  143** (see the top of this file): the batch verb pair, the fs
+  mirror, pin 8's invariant battery, and pin 9's resolution
+  (soft-delete cascade) are all live; the ADR carries its amendment
+  notes. Feeds 067 (graph traversal-only) and 138 (the extractor).
 - **The multimodal ADR chain** — two research memos drafted
   2026-07-25 and awaiting review
   (`../research/2026-07-25-multimodal-storage-and-search.md`,

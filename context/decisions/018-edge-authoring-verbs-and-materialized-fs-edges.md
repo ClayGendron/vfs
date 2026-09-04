@@ -1,6 +1,16 @@
 # 018. Edge Authoring Verbs and Materialized FS Edges — mkedge/rmedge Batches, One Edge Table for Traversal
 
-- **Status:** accepted
+- **Status:** accepted — **implemented by spec 143 (landed 2026-09-04),
+  amended at that landing**: pin 2's per-edge `version` is dropped (no
+  `edges.version` column, `Edge.version` left the model — the touch
+  refreshes `weight`/`distance`/`provenance` only); pin 5's trash
+  clause holds uniformly (the fs mirror follows `parent_id` into trash
+  and back — trash repoints the moved root to its bucket, restore
+  repoints again; no re-mint); pin 9 is resolved (authored edges
+  cascade at **soft** delete, both directions across the trashed
+  subtree; restore never brings them back; sweep/purge unchanged).
+  Post-ADR addition from spec 138 §3: a `provenance` column
+  (`user`/`agent`/`system`/`extracted`, NOT NULL, no default).
 - **Date:** 2026-07-19
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay directed the materialized-hierarchy design and
@@ -80,7 +90,10 @@ Nine pins.
    cross-mount pairs, and chunk by dialect budgets — no hard batch cap;
    the 10,000+ ETL contract holds.
 2. **`mkedge` is touch/upsert.** Per-row status reports `created` or
-   `updated`; the per-edge `version` ticks on re-touch (ADR 013). A
+   `updated`; the per-edge `version` ticks on re-touch (ADR 013).
+   *Amended at spec 143's landing (Clay, 2026-08-27): no per-edge
+   version — the clause before this note is void, and the touch
+   refreshes the payload columns only.* A
    duplicate identity within one batch is `invalid` (SpiceDB/OpenFGA
    precedent — last-write-wins hides caller bugs). No strict-create mode
    until a consumer needs the guard; the per-row status already says what
@@ -106,7 +119,9 @@ Nine pins.
    transactions as the namespace mutation: create (`write`, `mkdir`,
    including a `parents=True` chain) inserts; `move` updates the one moved
    row's source id (id-keyed, ADR 004 — descendants untouched); trash and
-   restore ride the move logic (ADR 014: trash is ordinary writes);
+   restore ride the move logic (ADR 014: trash is ordinary writes;
+   *confirmed as-decided at spec 143's landing — trash repoints the
+   moved root to its bucket and restore repoints back, no re-mint*);
    `copy` mints edges for the new ids; permanent delete removes the
    subtree's fs edges. Bulk writes mint fs edges as one more executemany
    in the write transaction — the ADR 017 version-row pattern.
@@ -146,6 +161,12 @@ Nine pins.
    (spec 076 plan's declared model-only exemption) and the read-side verb
    surface (`edges(path, direction, type)` — ADR 016 pin 4's future
    interface spec).
+   *Resolved at spec 143's landing (Clay, 2026-08-27): cascade at
+   **soft** delete — trashing a subtree removes its authored edges in
+   both directions inside the delete transaction, restore never
+   re-mints them, and the graph covers live entries only. The
+   `edges.version` column will not exist (see the pin-2 amendment);
+   the read-side verb surface stays deferred to spec 067.*
 
 ## Consequences
 

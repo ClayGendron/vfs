@@ -1,6 +1,10 @@
 # 013. Per-Entry Revisions: Drop the Ordered Per-Mount Counter
 
-- **Status:** accepted
+- **Status:** accepted — **annotated at spec 143's landing
+  (2026-09-04)**: the per-edge extension ADR 018 pin 2 read into this
+  ADR (a monotone `version` on edge rows) was dropped by Clay's
+  2026-08-27 ruling — the monotone-version discipline here is
+  per-**entry** only; edge rows carry no version.
 - **Date:** 2026-07-17
 - **Deciders:** Clay Gendron
 - **Decided by:** human (the constituent calls — per-entry versions,

@@ -403,3 +403,19 @@ resolve to this file.
   option (a) with three loud statuses (killed / survived / stale),
   scoped-selection kills with recorded killers as advisory only.
 - **Status:** resolved 2026-08-25 (Clay, in session; mechanism revised same day pre-commit) → **ADR 050** (`decisions/050-curated-mutant-leg.md`): the ledger (`standards/mutant-ledger.md` — 13 founding rows + the designed-inert comparator tie) is the durable artifact, and **review campaigns are the runner** — `test_review` now executes its strongest suspected mutations and replays the ledger rows intersecting the scope, always in an isolated scratchpad worktree (never the live repo — concurrent agents share it), ≥1 scoped failure as the assertion with recorded killers advisory-only, statuses killed / survived / stale→re-prove-or-retire. No standing script or CI leg; a drafted spec 119 for one was withdrawn unlanded. Diff-scoped general tools deferred; revisit if campaign cadence slows.
+
+## Spec 143's edge-wiring fork pack (provenance, trash fate, version, re-convergence)
+
+- **Asked:** 2026-08-27 by Claude (drafting ADR 018's wiring spec,
+  `specs/active/143-edge-wiring-and-the-fs-mirror/`)
+- **Context:** ADR 018 pin 9 deferred user-edge fate and `edges.version`
+  to the wiring spec, and spec 138 §3 routed the extracted-edge
+  provenance decision to the schema owner.
+- **Status:** resolved 2026-08-27 (Clay, in session) → spec 143's
+  decided semantics: (A) a `provenance` column with vocabulary
+  `user`/`agent`/`system`/`extracted` — author class, never a type
+  prefix; (B) edges are deleted only by `rmedge` or endpoint deletion
+  **including soft delete** — trash cascades, restore re-mints fs rows
+  only; (C) no edge versions — `Edge.version` and the planned column
+  dropped (amends ADR 013/018, to be recorded at the mining pass);
+  (D) the guarded re-convergence phase ships as the repair arm.
