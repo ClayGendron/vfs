@@ -9,6 +9,10 @@
   repoints again; no re-mint); pin 9 is resolved (authored edges
   cascade at **soft** delete, both directions across the trashed
   subtree; restore never brings them back; sweep/purge unchanged).
+  **Amended again at spec 144's landing (2026-09-04): pin 9's
+  lifetime law gains its enforcement clause — endpoint liveness is
+  proven insert-side, under row locks, in the transaction that inserts
+  the edge; reindex reclaims any stray, loudly.**
   Post-ADR addition from spec 138 §3: a `provenance` column
   (`user`/`agent`/`system`/`extracted`, NOT NULL, no default).
 - **Date:** 2026-07-19
@@ -167,6 +171,17 @@ Nine pins.
    re-mints them, and the graph covers live entries only. The
    `edges.version` column will not exist (see the pin-2 amendment);
    the read-side verb surface stays deferred to spec 067.*
+   *Amended at spec 144's landing (Clay, 2026-09-04): the cascade is
+   the delete-side half only. A rival delete committing between
+   `mkedge`'s endpoint resolve and its insert strands an authored
+   edge on a trashed entry (staged on all four client/server
+   engines; Oak and gel leave the same window) — so `mkedge`
+   resolves its endpoints under row locks held to commit, spelled
+   per dialect by the profile (`FOR UPDATE`; `UPDLOCK` on SQL
+   Server, where SQLAlchemy drops the clause), and reindex
+   re-convergence reclaims any authored row touching a trashed
+   entry as a warning. Zero authored edge rows touching trashed ids
+   is law at both ends, not an aspiration.*
 
 ## Consequences
 

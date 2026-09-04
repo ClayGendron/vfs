@@ -5,6 +5,24 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **144 landed 2026-09-04** — endpoint liveness under lock (the
+  delete-vs-mkedge race closed; ADR 018 pin 9 amended with its
+  enforcement clause): `mkedge` resolves its endpoints under row
+  locks held to commit, so a rival delete serializes behind the
+  insert or wins first and mkedge refuses `not_found`; reindex
+  re-convergence reclaims any authored edge touching a trashed entry,
+  loudly, guarded so a racing restore wins. The lock is spelled by the
+  profile — `DialectProfile.row_lock_hint` + `dialects.lock_rows` —
+  because SQLAlchemy's T-SQL compiler drops `with_for_update()`
+  (SQL Server takes `UPDLOCK`, measured under locking RC and RCSI);
+  both reindex repair guards now lock for real on SQL Server too.
+  Gates: `ci.sh 3.13` 100 % (3,101 passed / 950 skipped), four engine
+  legs green (941 passed / 8 skipped) including the staged race pin
+  and a mkedge-vs-delete storm; the 10k-edge batch under locks on
+  every leg. Recorded follow-up: SQL Server plans chunked `IN`-list
+  reads as a clustered scan past ~1k elements (a table-lock
+  escalation per statement under the lock) — memo commissioned
+  (`../research/2026-09-04-mssql-membership-reads.md`).
 - **143 landed 2026-09-04** — edge wiring and the fs mirror (ADR 018
   implemented; drafted and built 2026-08-27, verified and archived
   2026-09-04): schema format 10 (`provenance` on `edges`, the filtered

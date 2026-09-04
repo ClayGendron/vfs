@@ -1,16 +1,13 @@
 # 144 — endpoint liveness under lock: closing the delete-vs-mkedge race
 
-- **Status:** in progress — slices A and B landed, slice C's legs and
-  scale rows green on all four engines 2026-09-04; the MSSQL finding
-  (below) resolved the same day: `with_for_update()` is a silent no-op
-  on the T-SQL compiler, and the lock now goes through
+- **Status:** landed and archived 2026-09-04 — commit `d0de6f0`. The
+  MSSQL finding (below) resolved the same day: `with_for_update()` is
+  a silent no-op on the T-SQL compiler, and the lock goes through
   `dialects.lock_rows`, which spells it from the profile's
   `row_lock_hint` (`UPDLOCK` on SQL Server). Drafted 2026-09-04 from
-  the executed race study (the race is real on every client/server
-  engine; restore resurrects the stray; the field closes it
-  insert-side or not at all); Clay adopted the memo's recommendation
-  in session the same day. Discharges the second recorded follow-up
-  of spec 143's landing note.
+  the executed race study; Clay adopted the memo's recommendation in
+  session the same day. Discharges the second recorded follow-up of
+  spec 143's landing note. ADR 018 amended at this landing.
 - **Born from:** memo `../../../research/2026-09-04-delete-vs-mkedge-race.md`
   and its rerunnable study
   (`../../../research/studies/2026-09-04-delete-vs-mkedge-race/`);
