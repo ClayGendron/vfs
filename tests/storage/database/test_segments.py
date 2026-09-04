@@ -329,7 +329,9 @@ class TestSegmentRebuild:
             state = SegmentRebuildState(
                 deltas=[EntryDelta(entry_id=victim, path="/z/b/f.txt", missing=["z"], excess=["a"])]
             )
-            result = await repair_segment_drift(session, tables, storage._host.membership_budget, state)
+            result = await repair_segment_drift(
+                session, tables, storage._host.profile, storage._host.membership_budget, state
+            )
             await session.commit()
         assert result.success is True
         assert result.errors == []
@@ -347,7 +349,9 @@ class TestSegmentRebuild:
             state = SegmentRebuildState(
                 deltas=[EntryDelta(entry_id=victim, path="/a/b/f.txt", missing=["b"], excess=[])]
             )
-            result = await repair_segment_drift(session, tables, storage._host.membership_budget, state)
+            result = await repair_segment_drift(
+                session, tables, storage._host.profile, storage._host.membership_budget, state
+            )
             await session.commit()
         assert result.success is True
         assert len(result.errors) == 1
@@ -398,7 +402,7 @@ class TestSegmentPhaseBoundaries:
             await session.commit()
         failed = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="repair broke")])
 
-        async def broken(session, tables, membership_budget, state) -> Result:
+        async def broken(session, tables, profile, membership_budget, state) -> Result:
             return failed
 
         monkeypatch.setattr(backend_module, "repair_segment_drift", broken)

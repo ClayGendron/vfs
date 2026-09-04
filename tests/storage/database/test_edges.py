@@ -25,7 +25,12 @@ from vfs.paths import Path
 from vfs.results import Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.edges import mkedge_rows
+from vfs.storage.backends.database.edges import (
+    EdgeRebuildState,
+    collect_edge_drift,
+    mkedge_rows,
+    repair_edge_drift,
+)
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.replace import EditOperation
 
@@ -76,6 +81,24 @@ async def _seed_edge(storage: DatabaseStorage, source: str, target: str, *, edge
             insert(tables.edges).values(
                 source_id=ids[source], target_id=ids[target], edge_type=edge_type, provenance="user"
             )
+        )
+        await session.commit()
+
+
+async def _entry_ids(storage: DatabaseStorage) -> dict[str, str]:
+    """Every stored ``path → entry id`` — fetched before trash rewrites paths."""
+    entry = storage._host.tables.entry
+    async with storage._host.session_factory() as session:
+        rows = (await session.execute(select(entry.c.path, entry.c.entry_id))).all()
+    return {row.path: row.entry_id for row in rows}
+
+
+async def _plant_stray(storage: DatabaseStorage, source_id: str, target_id: str) -> None:
+    """Plant one authored edge by raw ids — the row-layer bug the reclaim heals."""
+    edges = storage._host.tables.edges
+    async with storage._host.session_factory() as session:
+        await session.execute(
+            insert(edges).values(source_id=source_id, target_id=target_id, edge_type="ref", provenance="user")
         )
         await session.commit()
 
@@ -276,12 +299,48 @@ class TestMkedgeArbitration:
 
             with installed("mkedge:before-insert", rival):
                 result = await mkedge_rows(
-                    session, tables, storage._host.membership_budget, edges=[edge], provenance="system", user_id=None
+                    session,
+                    tables,
+                    storage._host.profile,
+                    storage._host.membership_budget,
+                    edges=[edge],
+                    provenance="system",
+                    user_id=None,
                 )
             await session.commit()
         assert result.success is True
         assert result.observations[0].status == "updated"
         assert await _authored(storage) == {(ids["/a.md"], ids["/b.md"], "ref")}
+        await _assert_mirror(storage)
+
+
+class TestEndpointLocks:
+    """A rival delete serializes behind mkedge's endpoint resolve."""
+
+    async def test_a_rival_delete_converges_after_the_window(self, storage: DatabaseStorage, tmp_path) -> None:
+        # The rival launches mid-window and must not commit inside it;
+        # after mkedge commits, its cascade sweeps the fresh edge.
+        entries = [Entry(path=Path("/src.py"), content="x"), Entry(path=Path("/dst.py"), content="x")]
+        assert (await storage.write(entries=entries)).success is True
+        rival = DatabaseStorage(url=_url(tmp_path))
+        pending: dict[str, asyncio.Task] = {}
+
+        async def handler() -> None:
+            pending["delete"] = asyncio.ensure_future(rival.delete(path=Path("/dst.py")))
+            done, _ = await asyncio.wait([pending["delete"]], timeout=0.5)
+            assert not done, "the rival delete committed inside mkedge's window"
+
+        edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+        try:
+            with installed("mkedge:before-insert", handler):
+                created = await storage.mkedge(edges=[edge])
+            assert created.success is True
+            assert created.observations[0].status == "created"
+            deleted = await asyncio.wait_for(pending["delete"], timeout=30)
+            assert deleted.success is True
+        finally:
+            await rival.close()
+        assert await _authored(storage) == set()
         await _assert_mirror(storage)
 
 
@@ -358,6 +417,47 @@ class TestEdgeRebuild:
         await _assert_mirror(storage)
         # The dangling authored edge is gone with the drift.
         assert await _authored(storage) == set()
+
+    async def test_a_stray_on_a_trashed_entry_is_reclaimed_and_reported(self, storage: DatabaseStorage) -> None:
+        # Reachable only from a row-layer writer — the verbs' endpoint
+        # locks refuse the interleaving that would mint this.
+        assert (await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])).success
+        assert (await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])).success
+        ids = await _entry_ids(storage)
+        assert (await storage.delete(path=Path("/dst.py"))).success
+        await _plant_stray(storage, ids["/src.py"], ids["/dst.py"])
+        result = await storage.reindex()
+        assert result.success is True
+        messages = " | ".join(e.message for e in result.errors if e.severity == Severity.warning)
+        assert "touching trashed entries" in messages
+        assert await _authored(storage) == set()
+        await _assert_mirror(storage)
+
+    async def test_a_restore_between_collect_and_repair_wins(self, storage: DatabaseStorage) -> None:
+        # The guard: an endpoint restored mid-pass is live truth — the
+        # reclaim skips, and the now-lawful edge survives.
+        assert (await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])).success
+        assert (await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])).success
+        ids = await _entry_ids(storage)
+        deleted = await storage.delete(path=Path("/dst.py"))
+        trash_path = deleted.observations[0].trash_path
+        assert trash_path is not None
+        await _plant_stray(storage, ids["/src.py"], ids["/dst.py"])
+        tables = storage._host.tables
+        state = EdgeRebuildState()
+        async with storage._host.session_factory() as session:
+            assert (await collect_edge_drift(session, tables, state)).success is True
+        assert state.strays
+        assert (await storage.restore(path=trash_path)).success is True
+        async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            repaired = await repair_edge_drift(
+                session, tables, storage._host.profile, storage._host.membership_budget, state
+            )
+            await session.commit()
+        assert all("touching trashed" not in e.message for e in repaired.errors)
+        assert await _authored(storage) == {(ids["/src.py"], ids["/dst.py"], "ref")}
+        await _assert_mirror(storage)
 
     async def test_a_lease_lost_before_edge_repair_stops_the_run(self, storage: DatabaseStorage) -> None:
         # Segments are clean, edge drift is found, and the lease dies at

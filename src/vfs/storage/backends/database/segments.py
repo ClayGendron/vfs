@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select, update
 
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.dialects import bulk_insert, chunked
+from vfs.storage.backends.database.dialects import bulk_insert, chunked, lock_rows
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
+    from vfs.storage.backends.database.dialects import DialectProfile
 
 # Rows the collect pass streams per fetch — bounds driver buffering, not memory.
 _SCAN_YIELD_ROWS = 1024
@@ -185,11 +186,15 @@ async def collect_segment_drift(session: AsyncSession, tables: VFSTables, state:
 
 
 async def repair_segment_drift(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, state: SegmentRebuildState
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    state: SegmentRebuildState,
 ) -> Result:
     """Apply the collected deltas, each guarded by the path it was computed from.
 
-    The guard re-read locks the entry rows (``FOR UPDATE``), so a rival
+    The guard re-read locks the entry rows (:func:`lock_rows`), so a rival
     path rewrite serializes against this repair instead of interleaving
     with it. A delta whose row now holds a different path — or holds one
     where the orphan check expected none — is skipped: the rival's
@@ -201,8 +206,8 @@ async def repair_segment_drift(
     ids = [delta.entry_id for delta in state.deltas] + list(state.orphans)
     current: dict[str, str] = {}
     for chunk in chunked(ids, membership_budget):
-        guard = select(entry.c.entry_id, entry.c.path).where(entry.c.entry_id.in_(chunk)).with_for_update()
-        current.update({row.entry_id: row.path for row in await session.execute(guard)})
+        guard = select(entry.c.entry_id, entry.c.path).where(entry.c.entry_id.in_(chunk))
+        current.update({row.entry_id: row.path for row in await session.execute(lock_rows(guard, entry, profile))})
     confirmed = [delta for delta in state.deltas if current.get(delta.entry_id) == delta.path]
     orphaned = {entry_id: held for entry_id, held in state.orphans.items() if entry_id not in current}
     removals: dict[str, list[str]] = {}

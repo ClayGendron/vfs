@@ -657,6 +657,7 @@ class DatabaseStorage:
             lambda session: mkedge_rows(
                 session,
                 self._host.tables,
+                self._host.profile,
                 self._host.membership_budget,
                 edges=edges,
                 provenance=provenance,
@@ -774,7 +775,9 @@ class DatabaseStorage:
         outcome = await self._reconverge(
             lost,
             lambda session: collect_segment_drift(session, tables, segment_state),
-            lambda session: repair_segment_drift(session, tables, self._host.membership_budget, segment_state),
+            lambda session: repair_segment_drift(
+                session, tables, self._host.profile, self._host.membership_budget, segment_state
+            ),
             lambda: segment_state.clean,
         )
         if isinstance(outcome, Result):
@@ -784,7 +787,9 @@ class DatabaseStorage:
         outcome = await self._reconverge(
             lost,
             lambda session: collect_edge_drift(session, tables, edge_state),
-            lambda session: repair_edge_drift(session, tables, self._host.membership_budget, edge_state),
+            lambda session: repair_edge_drift(
+                session, tables, self._host.profile, self._host.membership_budget, edge_state
+            ),
             lambda: edge_state.clean,
         )
         if isinstance(outcome, Result):

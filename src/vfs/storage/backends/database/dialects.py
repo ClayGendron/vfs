@@ -6,7 +6,8 @@ copied here: the parameter budget is ``dialect.insertmanyvalues_max_parameters``
 transport-down classification is ``dialect.is_disconnect()``.  What this
 module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
-budgets, create-arbitration mode, and the vector-distance facts.
+budgets, create-arbitration mode, the row-lock spelling, and the
+vector-distance facts.
 
 Known engines (sqlite, postgresql, mssql, oracle, mariadb) carry tuned
 policy; **any other SQLAlchemy dialect resolves to a conservative
@@ -33,7 +34,7 @@ from sqlalchemy.schema import ColumnDefault
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
-    from sqlalchemy import Table
+    from sqlalchemy import Select, Table
     from sqlalchemy.engine import Dialect
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql import ClauseElement
@@ -148,6 +149,17 @@ class DialectProfile:
     ANN index (pgvector filters inside the index scan; MariaDB and
     Oracle drop to an exact scan the moment a predicate appears).
 
+    ``row_lock_hint`` declares how a guard read locks the rows it
+    addresses. SQLAlchemy models ``FOR UPDATE`` yet its T-SQL compiler
+    renders ``with_for_update()`` as a bare SELECT (the clause exists
+    only on cursors there), so SQL Server spells the lock as a table
+    hint: ``UPDLOCK`` alone — update locks on the addressed keys, held
+    to commit, exactly what ``FOR UPDATE`` means elsewhere; ``HOLDLOCK``
+    is not taken, its key-range locks guard phantoms the guard never
+    reads. ``None`` means ``FOR UPDATE`` as the compiler renders it —
+    also nothing on SQLite, lawfully: the writer transaction is the
+    lock there. :func:`lock_rows` applies the declared spelling.
+
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
     reads and guarded updates judge the same committed state, so a
@@ -165,6 +177,7 @@ class DialectProfile:
     in_list_budget: int
     arbitration: Literal["upsert", "catch_retry"]
     guard_miss: Literal["reprobe", "redrive"] = "redrive"
+    row_lock_hint: str | None = None
     op_isolation: str | None = None
     topology_isolation: str | None = None
     session_settings: tuple[str, ...] = ()
@@ -243,6 +256,9 @@ MSSQL: Final = DialectProfile(
     in_list_budget=2_100,
     arbitration="catch_retry",
     guard_miss="reprobe",
+    # with_for_update() renders as a bare SELECT on T-SQL; the guard
+    # read locks through this hint instead (measured: blocks a rival delete).
+    row_lock_hint="UPDLOCK",
     values_join=True,
     # T-SQL LIKE treats [...] as a character class; escape_like must
     # quote "[" here or a bracketed path silently misses its subtree.
@@ -364,6 +380,31 @@ def topology_execution_options(profile: DialectProfile) -> dict[str, str | bool]
     if profile.topology_isolation is not None:
         options["isolation_level"] = profile.topology_isolation
     return options
+
+
+# ---------------------------------------------------------------------------
+# Row locks — the guard read's spelling
+# ---------------------------------------------------------------------------
+
+_Row = TypeVar("_Row", bound=tuple[Any, ...])
+
+
+def lock_rows(stmt: Select[_Row], table: Table, profile: DialectProfile) -> Select[_Row]:
+    """*stmt* as a locking read of *table*'s rows, held to the transaction's end.
+
+    The liveness proof every guard rests on: a row read through here
+    cannot be rewritten or deleted by a rival before this transaction
+    commits, so the caller's decision stands on the row it read. Spelled
+    ``FOR UPDATE`` wherever the compiler renders it, and as the
+    profile's table hint where it declares one (T-SQL); the hint is
+    gated on the profile's dialect name, so it never leaks into another
+    engine's SQL. Callers order the rows they lock (sorted keys, chunked)
+    so rival batches lock in one order; a deadlock against a verb with
+    its own claim order classifies retryable and rides the retry channel.
+    """
+    if profile.row_lock_hint is None:
+        return stmt.with_for_update()
+    return stmt.with_hint(table, f"WITH ({profile.row_lock_hint})", dialect_name=profile.name)
 
 
 # ---------------------------------------------------------------------------

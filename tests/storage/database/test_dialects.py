@@ -39,11 +39,13 @@ from vfs.storage.backends.database.dialects import (
     SQLITE,
     BulkInsertMode,
     ByteBatcher,
+    DialectProfile,
     arm_budget,
     bulk_insert,
     byte_chunked,
     is_permanent_defect,
     is_retryable,
+    lock_rows,
     membership_budget,
     op_execution_options,
     profile_for,
@@ -281,6 +283,56 @@ class TestDialectPolicy:
         assert error.kind == VFSErrorKind.internal
         assert error.retryable is False
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Row locks — the guard read's spelling per dialect
+# ---------------------------------------------------------------------------
+
+
+def _lock_sql(profile: DialectProfile, dialect: Dialect) -> str:
+    table = Table("entry", MetaData(), Column("entry_id", String), Column("path", String))
+    stmt = select(table.c.entry_id).where(table.c.path.in_(["/a"]))
+    return " ".join(str(lock_rows(stmt, table, profile).compile(dialect=dialect)).split())
+
+
+class TestLockRows:
+    @pytest.mark.parametrize(
+        ("profile", "dialect"),
+        [
+            (POSTGRESQL, postgresql_dialect.dialect()),
+            (MARIADB, mysql_dialect.dialect()),
+            (ORACLE, oracle_dialect.dialect()),
+        ],
+        ids=["postgresql", "mariadb", "oracle"],
+    )
+    def test_for_update_renders_where_the_compiler_has_it(self, profile: DialectProfile, dialect: Dialect) -> None:
+        assert _lock_sql(profile, dialect).endswith("FOR UPDATE")
+
+    def test_sqlite_renders_no_clause_the_writer_transaction_is_the_lock(self) -> None:
+        sql = _lock_sql(SQLITE, sqlite_dialect.dialect())
+        assert "FOR UPDATE" not in sql
+        assert "WITH (" not in sql
+
+    def test_mssql_spells_the_lock_as_an_updlock_table_hint(self) -> None:
+        # with_for_update() is a bare SELECT on T-SQL; the hint is the lock.
+        sql = _lock_sql(MSSQL, mssql_dialect.dialect())
+        assert "FROM entry WITH (UPDLOCK) WHERE" in sql
+        assert "HOLDLOCK" not in sql
+        assert "FOR UPDATE" not in sql
+
+    def test_the_hint_is_gated_on_the_profile_dialect_and_never_leaks(self) -> None:
+        # A hint declared for one engine renders in no other engine's SQL.
+        sql = _lock_sql(MSSQL, postgresql_dialect.dialect())
+        assert "UPDLOCK" not in sql
+
+    def test_the_generic_floor_trusts_the_compiler(self) -> None:
+        profile = profile_for("duckdb")
+        assert profile.row_lock_hint is None
+        assert _lock_sql(profile, postgresql_dialect.dialect()).endswith("FOR UPDATE")
+
+
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

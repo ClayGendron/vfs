@@ -33,7 +33,7 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
-from vfs.models import Entry
+from vfs.models import Edge, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
@@ -171,6 +171,87 @@ class TestForwardOrdering:
             assert {e.kind for e in victim.errors} <= _RACE_KINDS
             assert (await storage.stat(path=Path(f"{trash_dir}/late.txt"))).success is False
             await _audit(storage)
+
+
+class TestMkedgeEndpointLocks:
+    """The insert-side liveness lock: a rival delete cannot commit mid-window."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_rival_delete_serializes_behind_the_locked_resolve(self, env_var: str) -> None:
+        async with _server_storage(env_var) as storage:
+            entries = [Entry(path=Path("/src.py"), content="x"), Entry(path=Path("/dst.py"), content="x")]
+            assert (await storage.write(entries=entries)).success is True
+            pending: dict[str, asyncio.Task[Result]] = {}
+
+            async def handler() -> None:
+                pending["delete"] = asyncio.ensure_future(storage.delete(path=Path("/dst.py")))
+                done, _ = await asyncio.wait([pending["delete"]], timeout=1.0)
+                assert not done, "the rival delete slipped past the endpoint locks"
+
+            edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
+            with seams.installed("mkedge:before-insert", handler):
+                created = await storage.mkedge(edges=[edge])
+            assert created.success is True
+            assert created.observations[0].status == "created"
+            deleted = await asyncio.wait_for(pending["delete"], timeout=60)
+            assert deleted.success is True
+            # Converged: the cascade swept the edge the lock let land first,
+            # proven by absence through the public verb.
+            gone = await storage.rmedge(edges=[edge])
+            assert gone.observations == []
+            assert gone.errors[0].kind == VFSErrorKind.not_found
+            await _audit(storage)
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_mkedge_bursts_against_deletes_leave_no_stray(self, env_var: str) -> None:
+        # Natural timing: edge batches lock endpoints in sorted order while
+        # rival deletes claim them in their own; every deadlock must ride
+        # the retry channel, and the reclaim must find nothing afterward.
+        rounds = int(os.environ.get("VFS_RACE_STORM_ROUNDS", "10"))
+        batch = int(os.environ.get("VFS_RACE_STORM_N", "300"))
+        rng = random.Random(int(os.environ.get("VFS_RACE_STORM_SEED", "4242")))
+        async with _server_storage(env_var) as writer:
+            rival = _sibling(env_var, writer)
+            try:
+                assert (await rival.first_touch()).success is True
+                for round_no in range(rounds):
+                    base = f"/storm{round_no}"
+                    spokes = [Path(f"{base}/s{i:04d}.py") for i in range(batch)]
+                    hub = Path(f"{base}/hub.py")
+                    assert (await writer.mkdir(path=Path(base), parents=True)).success
+                    entries = [Entry(path=hub, content="h")] + [Entry(path=spoke, content="s") for spoke in spokes]
+                    assert (await writer.write(entries=entries)).success
+
+                    async def edge_burst(edges: list[Edge]) -> Result:
+                        await asyncio.sleep(rng.uniform(0, 0.02))
+                        return await writer.mkedge(edges=edges)
+
+                    async def topology_hit(path: Path) -> Result:
+                        await asyncio.sleep(rng.uniform(0, 0.05))
+                        return await rival.delete(path=path)
+
+                    outward = [Edge(source=hub, target=spoke, edge_type="imports") for spoke in spokes]
+                    inward = [Edge(source=spoke, target=hub, edge_type="ref") for spoke in reversed(spokes)]
+                    victims = rng.sample(spokes, 3)
+                    results = await asyncio.gather(
+                        edge_burst(outward),
+                        edge_burst(inward),
+                        *(topology_hit(victim) for victim in victims),
+                        topology_hit(Path(base)),
+                    )
+                    for result in results:
+                        for error in result.errors:
+                            assert error.kind in _RACE_KINDS, (
+                                f"round {round_no}: unclassified race outcome {error.kind}: {error.message}"
+                            )
+                    reindexed = await writer.reindex()
+                    assert reindexed.success is True
+                    strays = [error.message for error in reindexed.errors if "touching trashed" in error.message]
+                    assert strays == [], f"round {round_no}: {strays}"
+                    await _audit(writer)
+            finally:
+                await rival.close()
 
 
 # ---------------------------------------------------------------------------
