@@ -27,7 +27,7 @@ from tests.ranking.pins import assert_top10_pin
 from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
-from vfs.storage.ranking import Convex, Ranker
+from vfs.storage.ranking import Convex, PathShape, Ranker, Signal
 
 if TYPE_CHECKING:
     import pathlib
@@ -177,6 +177,40 @@ class TestHybridArms:
             finally:
                 await storage.close()
             gate("vfs_native", f"{arm}/{name}", numbers)
+
+
+class TestSignalArms:
+    """The stored priors on the golden set, which carries no reference edges yet.
+
+    A link signal declared on an edge-less mount stores no rows and must
+    leave the lexical order exactly as it was; the path-shape prior does
+    have rows here and is recorded as an arm the gate keeps honest.
+    """
+
+    async def test_a_link_signal_without_edges_leaves_glean_unchanged(
+        self, tmp_path: pathlib.Path, golden: Corpus
+    ) -> None:
+        arms = {"glean": Ranker(), "centrality": Ranker(signals=(Signal("centrality", weight=0.5),))}
+        numbers = {}
+        for arm, ranker in arms.items():
+            storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{arm}.sqlite", ranker=ranker)
+            try:
+                numbers[arm] = evaluate(golden.qrels, await glean_run(await load_corpus(storage, golden)))
+            finally:
+                await storage.close()
+        assert_arms_agree(numbers["glean"], numbers["centrality"])
+
+    async def test_the_path_shape_prior_is_recorded(self, tmp_path: pathlib.Path, golden: Corpus) -> None:
+        ranker = Ranker(signals=(Signal("shape", measure=PathShape(), weight=0.15),))
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/shape.sqlite", ranker=ranker)
+        try:
+            loaded = await load_corpus(storage, golden)
+            numbers = evaluate(golden.qrels, await glean_run(loaded))
+            answered = await loaded.storage.glean(query=next(iter(golden.queries.values())))
+        finally:
+            await storage.close()
+        assert answered.model_extra is not None and answered.model_extra["legs"]["signals"]["shape"]["applied"] is True
+        gate("vfs_native", "signals/path_shape", numbers)
 
 
 class TestArms:

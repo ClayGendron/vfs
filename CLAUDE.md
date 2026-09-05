@@ -109,8 +109,10 @@ Consequences that bind design work:
   fallback. The readable reference implementations live in
   `tests/support/oracles/` and pin the engine through parity tests.
   Keep `cargo test -p vfs-core` green. **After editing Rust, run
-  `uv sync --reinstall-package vfs-py`** — uv caches the built wheel and
-  does not rebuild on Rust-only edits.
+  `uv sync --all-extras --group dev --reinstall-package vfs-py`** — uv
+  caches the built wheel and does not rebuild on Rust-only edits, and a
+  bare `uv sync` is exact: without the extras it strips the database
+  drivers the engine legs need (this happened, 2026-09-04).
 - **Performance work goes in our own Rust crate; pure Python is a test
   oracle, not a fallback** (Clay, 2026-08-27; ADR 057).
   - *The engine*: when a hot path needs vectorized or compiled speed,

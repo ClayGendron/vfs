@@ -1,6 +1,6 @@
 # 053. glean Ranking Signals: a `signals` Table Computed at Reindex, In-Degree with Hierarchy Smoothing, and a Declarative Ranker on the Storage
 
-- **Status:** accepted 2026-08-26 — the signals half of the glean
+- **Status:** implemented by spec 136 (2026-09-04), with three refinements recorded at its landing: the `signals` key carries the generation so a refresh flips whole (pin 1); the kernel is Rust under ADR 057, no numpy (pin 3); the options fingerprint covers the stored measure and γ only, transform and β being query-time. Accepted 2026-08-26 — the signals half of the glean
   decision set, resolved by Clay in session (the R1 review and the
   hierarchy-edges spike of the 2026-08-26 research leg). Read-derived
   signals are **deferred** by Clay; their design is recorded in the memo,

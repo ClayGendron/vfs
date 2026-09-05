@@ -1,7 +1,8 @@
 # 136 — ranking signals: the `signals` table computed at reindex, in-degree with hierarchy smoothing, and the declarative `Ranker`
 
-- **Status:** ready — drafted 2026-08-26 from ADR 053 (all pins) and
-  ADR 052 pin 3. Seventh of the glean arc.
+- **Status:** landed 2026-09-04 (landing note below) — drafted
+  2026-08-26 from ADR 053 (all pins) and ADR 052 pin 3. Seventh of the
+  glean arc.
 - **Born from:** ADR 053; memo
   `../../../research/2026-08-26-glean-ranking-signals-and-ranker-api.md`
   §2.5, §4, §6; studies `centrality-and-read-signals.md`,
@@ -113,3 +114,76 @@ and its SQL compilation, `path_shape`, the explain data, harness arms
 - Ledger rows: no statement on the query path touches `edges`; the
   phase never runs a graph aggregate per query; `fs` edges never enter
   the kernel's arrays.
+
+## Landing note (2026-09-04)
+
+**What landed** — the signals half of the glean decision set, in
+three modules and one kernel:
+
+- `models/rows.py`: schema format 11 — `signals(entry_id, signal,
+  generation, value)` and `signal_epochs(signal → generation,
+  options_hash, row_count)`. **Refinement of semantics 1**: the
+  unique key carries the generation, because a refresh writes the new
+  generation *beside* the old and flips the pointer row in the same
+  transaction — a reader sees the whole prior generation or the whole
+  new one, never a torn mix and never an empty window. The pointer is
+  a plain row update under the reindex lease (no CAS; ADR 053's
+  "advisory data, not on the epoch pointer" holds).
+- `crates/vfs-core/src/signals.rs` (protocol 9) — the kernel: in-degree,
+  PageRank (dangling mass spread, mean rank one) and Katz (less the
+  unit, so nothing-refers-to-it is zero like in-degree) over the
+  reference edges; `log1p`; the two tree passes (directory means
+  bottom-up with empty directories contributing nothing, the
+  `(1 − γ)·own + γ·p(parent)` blend top-down); min-max over files.
+  One call, bit-reproducible (edge order and node index fix every
+  sum). `tests/support/oracles/signals.py` referees it on random
+  forests for every measure × γ ∈ {0, 0.2, 0.3}. **Refinement of
+  semantics 3**: the kernel is Rust under ADR 057, not numpy; there
+  is no pure-Python fallback, only the oracle.
+- `storage/ranking.py`: `Signal(name, measure, smoothing, transform,
+  weight)`, the measures (`InDegree`, `PageRank`, `Katz`, `PathShape`),
+  the transforms (`Linear`, `Log1p`, `Saturation`, `Sigmoid`), and
+  `Ranker(signals=…)`. The options fingerprint covers what is
+  *stored* — measure and γ; transform and β shape the factor at query
+  time and change nothing stored, so retuning them needs no reindex.
+  `smoothing ≤ 0.3`, `0 < weight ≤ 1`.
+- `storage/backends/database/signals.py`: the phase — `collect_graph`
+  (keyset pages of live entries with parent, kind and depth, then of
+  non-`fs` edges between live entries), `compute_signal` (through
+  `call_offloaded`), `publish_signal` (bulk insert, pointer flip,
+  sweep of the prior generation, one transaction), and
+  `sweep_undeclared_signals`; and the probe — `signal_factors`, which
+  reads the pointers, drops a signal that is missing, computed under
+  other options, or empty (each a warning-severity `unavailable`
+  record with `data.leg = "signal"`), probes the stored values for
+  the candidate union in chunks, and answers `∏ (1 + β·t(v))` per
+  entry. glean multiplies the fused entry score by it before the
+  final min-max; the envelope's `legs.signals` explains each signal
+  (applied, generation, entries with a factor, weight, transform) and
+  `legs.fused = "client"` says where fusion ran.
+- The reindex driver runs the phase after the edge re-convergence
+  pass: the graph is collected once, each signal computes and
+  publishes on its own, the lease's `lost` flag checked between them.
+- **A file's stored value is sparse by scaling too**: min-max maps the
+  lowest file to zero, and zero stores no row (factor one). A uniform
+  prior therefore stores nothing and reorders nothing (pinned).
+
+**Harness** (`tests/ranking/test_harness.py::TestSignalArms`) — the
+golden set carries no reference edges until spec 138's extractor
+lands, so the measure × γ table this spec's landing criteria ask for
+is deferred to 138's landing note. What it does record: a declared
+link signal on the edge-less set leaves glean *byte-identical* to the
+baseline (0.7589 nDCG@10), and the `path_shape` prior scores 0.7579
+— within the gate, and above the 0.7355 uninformative control.
+
+**Gates** — `scripts/ci.sh 3.13` green at 100 % coverage (3,168 passed / 960 skipped);
+`cargo test -p vfs-core` green (the kernel's six unit tests among
+them); four engine legs green — signals, conformance, edges and races,
+1,403 passed / 8 skipped across Postgres 17, MariaDB 11.8, SQL Server
+2025 and Oracle 23ai, the prior stored and reordering glean on every
+one. Not run: the full 3.11–3.14 matrix (before the push).
+
+**Environment note** — `uv sync --reinstall-package vfs-py` is exact
+and stripped the database drivers (the extras) from `.venv`; the first
+leg run failed on `No module named 'asyncpg'`. CLAUDE.md now spells
+the command with `--all-extras --group dev`.

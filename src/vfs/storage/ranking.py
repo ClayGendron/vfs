@@ -23,6 +23,10 @@ cross-mount merge is a different decision.
 
 from __future__ import annotations
 
+import hashlib
+import math
+import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
@@ -38,6 +42,14 @@ DEFAULT_RRF_K: Final = 10
 
 TOP_CHUNKS: Final = 3
 """Chunk ``Match`` rows an entry carries by default, best first."""
+
+MAX_SMOOTHING: Final = 0.3
+"""The ceiling on a signal's hierarchy share ``gamma`` — past it the tree outranks the references."""
+
+MAX_SIGNAL_WEIGHT: Final = 1.0
+"""The ceiling on a signal's ``beta``: the factor ``1 + β·t(v)`` never more than doubles a score."""
+
+_SIGNAL_NAME: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
 
 
 # ---------------------------------------------------------------------------
@@ -194,23 +206,198 @@ class MaxP:
         return f"MaxP(chunks_per_entry={self.chunks_per_entry})"
 
 
+# ---------------------------------------------------------------------------
+# Signals — a stored prior per entry, computed at reindex, read at query time
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class InDegree:
+    """Incoming reference edges, counted — the default link measure."""
+
+    def kernel_args(self) -> tuple[str, float, float, int]:
+        return ("in_degree", 0.0, 0.0, 1)
+
+
+@dataclass(frozen=True, slots=True)
+class PageRank:
+    """Power-iterated PageRank over the reference edges, mean rank one."""
+
+    damping: float = 0.85
+    iterations: int = 20
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.damping < 1.0:
+            msg = f"PageRank damping must lie in (0, 1), got {self.damping}"
+            raise ValueError(msg)
+        if self.iterations < 1:
+            msg = f"PageRank iterations must be at least 1, got {self.iterations}"
+            raise ValueError(msg)
+
+    def kernel_args(self) -> tuple[str, float, float, int]:
+        return ("pagerank", self.damping, 0.0, self.iterations)
+
+
+@dataclass(frozen=True, slots=True)
+class Katz:
+    """Katz centrality over the reference edges: paths of every length, attenuated by ``alpha``.
+
+    Converges only while ``alpha`` is under the reciprocal of the graph's
+    largest eigenvalue; a hub of in-degree ``k`` pushes that bound toward
+    ``1/√k``. The iteration count keeps the result finite regardless.
+    """
+
+    alpha: float = 0.1
+    iterations: int = 20
+
+    def __post_init__(self) -> None:
+        if not (self.alpha > 0.0 and math.isfinite(self.alpha)):
+            msg = f"Katz alpha must be positive, got {self.alpha}"
+            raise ValueError(msg)
+        if self.iterations < 1:
+            msg = f"Katz iterations must be at least 1, got {self.iterations}"
+            raise ValueError(msg)
+
+    def kernel_args(self) -> tuple[str, float, float, int]:
+        return ("katz", 0.0, self.alpha, self.iterations)
+
+
+@dataclass(frozen=True, slots=True)
+class PathShape:
+    """A file's depth as the measure, min-max scaled; ``sign=-1`` favours the shallow.
+
+    The structural prior kept apart from the link measures: it reads no
+    edge and takes no smoothing.
+    """
+
+    sign: int = -1
+
+    def __post_init__(self) -> None:
+        if self.sign not in (-1, 1):
+            msg = f"PathShape sign must be -1 or 1, got {self.sign}"
+            raise ValueError(msg)
+
+
+Measure = InDegree | PageRank | Katz | PathShape
+"""What the reindex phase computes for a signal."""
+
+
+@dataclass(frozen=True, slots=True)
+class Linear:
+    """The stored value as it is."""
+
+    def apply(self, value: float) -> float:
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class Log1p:
+    """``ln(1 + v)`` — a gentle compression of the top of the range."""
+
+    def apply(self, value: float) -> float:
+        return math.log1p(value)
+
+
+@dataclass(frozen=True, slots=True)
+class Saturation:
+    """``v / (v + pivot)`` — saturating toward one past the pivot."""
+
+    pivot: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not self.pivot > 0.0:
+            msg = f"Saturation pivot must be positive, got {self.pivot}"
+            raise ValueError(msg)
+
+    def apply(self, value: float) -> float:
+        return value / (value + self.pivot)
+
+
+@dataclass(frozen=True, slots=True)
+class Sigmoid:
+    """``vᵉ / (vᵉ + pivotᵉ)`` — a switch around the pivot, steeper with the exponent."""
+
+    pivot: float = 0.5
+    exponent: float = 2.0
+
+    def __post_init__(self) -> None:
+        if not self.pivot > 0.0 or not self.exponent > 0.0:
+            msg = f"Sigmoid pivot and exponent must be positive, got {self.pivot} and {self.exponent}"
+            raise ValueError(msg)
+
+    def apply(self, value: float) -> float:
+        raised = value**self.exponent
+        return raised / (raised + self.pivot**self.exponent)
+
+
+Transform = Linear | Log1p | Saturation | Sigmoid
+"""How a stored value in ``[0, 1]`` shapes the query-time factor ``1 + β·t(v)``."""
+
+
+@dataclass(frozen=True, slots=True)
+class Signal:
+    """One declared prior: what reindex stores under *name*, and how glean applies it.
+
+    *measure* and *smoothing* (the hierarchy share ``gamma``) decide the
+    stored value and make up its options fingerprint; *transform* and
+    *weight* (``beta``) shape the factor at query time and change nothing
+    stored. The default weight is the memo's conservative starting point.
+    """
+
+    name: str
+    measure: Measure = InDegree()
+    smoothing: float = 0.2
+    transform: Transform = Linear()
+    weight: float = 0.15
+
+    def __post_init__(self) -> None:
+        if _SIGNAL_NAME.fullmatch(self.name) is None:
+            msg = f"signal name {self.name!r} is not a short lowercase token"
+            raise ValueError(msg)
+        if not 0.0 <= self.smoothing <= MAX_SMOOTHING:
+            msg = f"signal smoothing must lie in [0, {MAX_SMOOTHING}], got {self.smoothing}"
+            raise ValueError(msg)
+        if not 0.0 < self.weight <= MAX_SIGNAL_WEIGHT:
+            msg = f"signal weight must lie in (0, {MAX_SIGNAL_WEIGHT}], got {self.weight}"
+            raise ValueError(msg)
+
+    def options_hash(self) -> str:
+        """The fingerprint of what the stored value depends on: the measure and the smoothing."""
+        return hashlib.sha256(f"{self.measure!r}|{self.smoothing!r}".encode()).hexdigest()
+
+    def factor(self, value: float) -> float:
+        """The multiplier a stored *value* earns: ``1 + β·t(v)``."""
+        return 1.0 + self.weight * self.transform.apply(value)
+
+
 class Ranker:
-    """A mount's ranking declaration: its fusion and its chunk-to-entry aggregate."""
+    """A mount's ranking declaration: its signals, its fusion, and its chunk-to-entry aggregate."""
 
-    __slots__ = ("aggregate", "fusion")
+    __slots__ = ("aggregate", "fusion", "signals")
 
-    def __init__(self, *, fusion: Fusion | None = None, aggregate: MaxP | None = None) -> None:
+    def __init__(
+        self, *, signals: tuple[Signal, ...] = (), fusion: Fusion | None = None, aggregate: MaxP | None = None
+    ) -> None:
+        names = [signal.name for signal in signals]
+        if len(set(names)) != len(names):
+            msg = f"Ranker signals repeat a name: {names}"
+            raise ValueError(msg)
+        self.signals: tuple[Signal, ...] = tuple(signals)
         self.fusion: Fusion = Convex() if fusion is None else fusion
         self.aggregate: MaxP = MaxP() if aggregate is None else aggregate
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Ranker) and (other.fusion, other.aggregate) == (self.fusion, self.aggregate)
+        return isinstance(other, Ranker) and (other.signals, other.fusion, other.aggregate) == (
+            self.signals,
+            self.fusion,
+            self.aggregate,
+        )
 
     def __hash__(self) -> int:
-        return hash(("Ranker", self.fusion, self.aggregate))
+        return hash(("Ranker", self.signals, self.fusion, self.aggregate))
 
     def __repr__(self) -> str:
-        return f"Ranker(fusion={self.fusion!r}, aggregate={self.aggregate!r})"
+        return f"Ranker(signals={self.signals!r}, fusion={self.fusion!r}, aggregate={self.aggregate!r})"
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,7 @@ from vfs.storage.backends.database.scope import (
     pushdown_terms,
 )
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.backends.database.signals import signal_factors
 from vfs.storage.ranking import TOP_CHUNKS, Ranker, min_max, unit_cosine
 
 if TYPE_CHECKING:
@@ -343,6 +344,9 @@ async def glean_rows(
         raise StaleSnapshot("the gram-index epoch pointer moved mid-glean")
 
     fused = _fuse(ranker, hits, vector_hits)
+    signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))
+    for entry_id, factor in signals.factors.items():
+        fused.entries[entry_id] *= factor
     ordered = _order(fused.entries, rows)[:limit]
     wanted = [chunk_id for entry_id, _ in ordered for chunk_id, _ in fused.chunks[entry_id]]
     texts = await _chunk_texts(session, tables, wanted, profile, membership_budget)
@@ -356,6 +360,7 @@ async def glean_rows(
     ]
     errors = [
         *records,
+        *signals.records,
         *(
             ResultError(
                 kind=VFSErrorKind.truncated,
@@ -377,6 +382,8 @@ async def glean_rows(
         if vector is None
         else {"tier": vector.tier, "model": vector.model_id, "depth": vector_depth, "hits": len(vector_hits)},
         "fusion": repr(ranker.fusion),
+        "fused": "client",
+        "signals": signals.explain,
     }
     return Result(ops=("glean",), observations=observed, errors=errors, lexical_stats=export, legs=legs)
 

@@ -90,6 +90,12 @@ from vfs.storage.backends.database.segments import (
     collect_segment_drift,
     repair_segment_drift,
 )
+from vfs.storage.backends.database.signals import (
+    collect_graph,
+    compute_signal,
+    publish_signal,
+    sweep_undeclared_signals,
+)
 from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import storage_ops, targets_of
@@ -812,9 +818,37 @@ class DatabaseStorage:
         if isinstance(outcome, Result):
             return outcome
         warnings.extend(outcome)
+        outcome = await self._signal_phase(tables, lost)
+        if isinstance(outcome, Result):
+            return outcome
         if not warnings:
             return result
         return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *warnings])
+
+    async def _signal_phase(self, tables: VFSTables, lost: asyncio.Event) -> Result | None:
+        """Store every declared prior under a fresh generation; signals no longer declared are swept.
+
+        The graph is collected once in a read transaction; each signal
+        computes off the event loop and publishes in its own write
+        transaction, the lease's ``lost`` flag checked between them.
+        """
+        ranker = self._ranker
+        if ranker.signals:
+            graph = await self._rows("reindex", partial(collect_graph, tables=tables))
+            for signal in ranker.signals:
+                if lost.is_set():
+                    return lease_lost_result()
+                values = await compute_signal(self._host.offload_executor, graph, signal)
+                generation = str(ULID())
+                publish = partial(publish_signal, tables=tables, signal=signal, generation=generation, values=values)
+                published = await self._execute_write("reindex", publish)
+                if not published.success:
+                    return published
+        declared = [signal.name for signal in ranker.signals]
+        swept = await self._execute_write(
+            "reindex", partial(sweep_undeclared_signals, tables=tables, profile=self._host.profile, declared=declared)
+        )
+        return None if swept.success else swept
 
     async def _reconverge(
         self,

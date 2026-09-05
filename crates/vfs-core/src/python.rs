@@ -18,12 +18,13 @@ use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
 use crate::postings::{DrainedPostings, PostingsAccumulator, candidate_ids as candidates};
+use crate::signals::{Measure, centrality_prior as prior};
 use crate::vectors::cosine_topk;
 use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 8;
+const PROTOCOL_VERSION: u32 = 9;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -375,6 +376,45 @@ fn vector_topk(
     py.detach(|| cosine_topk(&components, &rows, &vectors, k)).map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
+/// The centrality prior per node as packed float64: `sources`, `targets`
+/// and `parents` are packed int64 node indices (`parents` holds `-1` at
+/// a root), `files` one byte per node, `measure` one of `in_degree`,
+/// `pagerank` or `katz` with its parameters. A malformed graph or tree,
+/// or a parameter out of range, is a `ValueError`.
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+fn centrality_prior<'py>(
+    py: Python<'py>,
+    node_count: usize,
+    sources: PyBackedBytes,
+    targets: PyBackedBytes,
+    parents: PyBackedBytes,
+    files: PyBackedBytes,
+    measure: &str,
+    damping: f64,
+    alpha: f64,
+    iterations: u32,
+    gamma: f64,
+) -> PyResult<Bound<'py, PyBytes>> {
+    for (name, raw) in [("sources", &sources), ("targets", &targets), ("parents", &parents)] {
+        if raw.len() % 8 != 0 {
+            return Err(PyValueError::new_err(format!("{name} bytes are not whole int64 values")));
+        }
+    }
+    let measure = match measure {
+        "in_degree" => Measure::InDegree,
+        "pagerank" => Measure::PageRank { damping, iterations },
+        "katz" => Measure::Katz { alpha, iterations },
+        other => return Err(PyValueError::new_err(format!("unknown measure {other:?}"))),
+    };
+    let (sources, targets, parents) = (view_i64(&sources), view_i64(&targets), view_i64(&parents));
+    let flags: Vec<bool> = files.iter().map(|&flag| flag != 0).collect();
+    let values = py
+        .detach(|| prior(node_count, &sources, &targets, &parents, &flags, measure, gamma))
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(packed_f64(py, &values))
+}
+
 /// Packed int64 bytes as a slice: a view when aligned, a copy otherwise.
 fn view_i64(raw: &[u8]) -> Cow<'_, [i64]> {
     // SAFETY: every bit pattern is a valid i64; `align_to` only yields the
@@ -452,6 +492,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_summary, m)?)?;
     m.add_function(wrap_pyfunction!(select_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(vector_topk, m)?)?;
+    m.add_function(wrap_pyfunction!(centrality_prior, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;

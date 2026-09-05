@@ -70,6 +70,12 @@
    "recall@10": 0.3187,
    "recall@50": 0.7503
   },
+  "signals/path_shape": {
+   "mrr@10": 0.9708,
+   "ndcg@10": 0.7579,
+   "recall@10": 0.4142,
+   "recall@50": 0.7863
+  },
   "vector/hash": {
    "mrr@10": 0.654,
    "ndcg@10": 0.315,

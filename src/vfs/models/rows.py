@@ -129,10 +129,13 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 10
+SCHEMA_FORMAT_VERSION: Final = 11
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
+
+# A ranking signal's name — one short lowercase token, the ``Ranker`` gate.
+MAX_SIGNAL_NAME_LENGTH: Final = 32
 
 # The widest ``embedding_model`` the meta row stores (``provider/model@dim``).
 MAX_MODEL_ID_LENGTH: Final = 255
@@ -309,6 +312,8 @@ class VFSTables(NamedTuple):
     lex_postings: Table
     lex_df: Table
     lex_stats: Table
+    signals: Table
+    signal_epochs: Table
 
     def content_joined(self) -> FromClause:
         """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
@@ -628,6 +633,31 @@ def build_vfs_tables(
         sqlite_with_rowid=False,
     )
 
+    # Ranking signals: one stored prior per (entry, signal), sparse — no
+    # row is factor one. Rows carry the generation they were computed
+    # under; ``signal_epochs`` names each signal's live generation and the
+    # options it was computed with, so a refresh writes the new
+    # generation beside the old, flips the pointer, then sweeps.
+    signals = Table(
+        f"{table_name}_signals",
+        metadata,
+        Column("entry_id", ULIDKey(), primary_key=True),
+        Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
+        Column("generation", String(ULID_LENGTH), primary_key=True),
+        Column("value", Float, nullable=False),
+        schema=schema,
+    )
+    signal_epochs = Table(
+        f"{table_name}_signal_epochs",
+        metadata,
+        Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
+        Column("generation", String(ULID_LENGTH), nullable=False),
+        Column("options_hash", String(64), nullable=False),
+        Column("row_count", Integer, nullable=False),
+        Column("created_at", DateTime(timezone=True)),
+        schema=schema,
+    )
+
     return VFSTables(
         metadata=metadata,
         entry=entry,
@@ -643,6 +673,8 @@ def build_vfs_tables(
         lex_postings=lex_postings,
         lex_df=lex_df,
         lex_stats=lex_stats,
+        signals=signals,
+        signal_epochs=signal_epochs,
     )
 
 
