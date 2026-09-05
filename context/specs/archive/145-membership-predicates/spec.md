@@ -1,8 +1,8 @@
 # 145 — membership predicates: one helper, the profile's form, VALUES on SQL Server
 
-- **Status:** built and verified 2026-09-04 — implementing ADR 061 the
-  day it was decided; every gate green (see the landing note), awaiting
-  commit and archive.
+- **Status:** landed and archived 2026-09-04 — commit `b77ce36`;
+  implements ADR 061 the day it was decided; every gate green (see
+  the landing note).
 - **Born from:** ADR 061; memo
   `../../../research/2026-09-04-mssql-membership-reads.md`; spec 144's
   recorded follow-up (the lock made the scan a table lock).

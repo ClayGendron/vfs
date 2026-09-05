@@ -5,6 +5,23 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **145 landed 2026-09-04** — membership predicates through one helper
+  (ADR 061): `storage/backends/database/membership.py` builds every
+  chunked `IN` (`membership()`) and every guard read that must hold its
+  rows (`locked_lookup()`), and `DialectProfile.membership` declares
+  the form — the expanding list everywhere, a `VALUES` derived table
+  cast through the UTF-8 collation on SQL Server, whose optimizer scans
+  long `IN` lists on small tables and converts every `nvarchar` bind
+  (typed `varchar` binds lose non-Latin paths in the database code
+  page). Locking reads join the table under `UPDLOCK, FORCESEEK`; the
+  MSSQL chunk is a 2,000-row lock budget. The profile now travels
+  beside `membership_budget` through every function that chunks.
+  Gates: `ci.sh 3.13` 100 % (3,114 passed / 956 skipped), four legs
+  green (947 passed / 8 skipped) with the non-Latin canary batch on
+  every leg and the key-lock pin on mssql; SQL Server's 10k-edge create
+  18.1 s → 2.4 s, zero escalations. Recorded, not this spec's: the
+  hub-degree cost of the per-row touch (spec 143's follow-up) shows as
+  run-to-run variance on every engine.
 - **144 landed 2026-09-04** — endpoint liveness under lock (the
   delete-vs-mkedge race closed; ADR 018 pin 9 amended with its
   enforcement clause): `mkedge` resolves its endpoints under row

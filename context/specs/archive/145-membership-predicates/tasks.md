@@ -20,4 +20,4 @@
 - [x] C2 Four legs green (947 passed); SQL Server 10k-edge create
       18.1 s → 2.4 s, zero escalations.
 - [x] C3 `scripts/ci.sh 3.13` green at 100 %; landing note written.
-- [ ] C4 Commit; archive; STATUS bullet.
+- [x] C4 Committed `b77ce36`; archived; STATUS bullet.
