@@ -1,6 +1,6 @@
 # 136 — ranking signals: the `signals` table computed at reindex, in-degree with hierarchy smoothing, and the declarative `Ranker`
 
-- **Status:** landed 2026-09-04 (landing note below) — drafted
+- **Status:** landed and archived 2026-09-04 — commit `3465393`; landing note below — drafted
   2026-08-26 from ADR 053 (all pins) and ADR 052 pin 3. Seventh of the
   glean arc.
 - **Born from:** ADR 053; memo

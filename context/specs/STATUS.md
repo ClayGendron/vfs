@@ -5,6 +5,25 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **136 landed 2026-09-04** — ranking signals (ADR 053 implemented,
+  annotated at landing): schema format 11 with `signals` (the key
+  carries the generation, so a refresh writes beside the old and
+  flips whole) and `signal_epochs` (pointer, options hash, row count);
+  the centrality prior as one Rust kernel (protocol 9 — in-degree,
+  PageRank, Katz over reference edges, `log1p`, the two hierarchy
+  passes, min-max over files; oracle-refereed); `Signal` / the measures
+  / the transforms / `Ranker(signals=…)` in `storage/ranking.py`; the
+  reindex phase in `storage/backends/database/signals.py` (collect in
+  keyset pages, compute off the loop, publish per signal under the
+  lease, sweep the undeclared) and the query probe (`signal_factors`:
+  a signal missing, computed under other options, or empty is dropped
+  with a warning record; the rest multiply the fused score by
+  `∏ (1 + β·t(v))`; `legs.signals` explains). The default `Ranker`
+  declares no signal, so a default mount pays nothing. Harness: a link
+  signal on the edge-less golden set leaves glean byte-identical;
+  `path_shape` 0.7579 vs 0.7589, above the 0.7355 control; the measure
+  × γ table waits for spec 138's edges. Gates: `ci.sh 3.13` 100 %,
+  four legs 1,403 passed / 8 skipped.
 - **143 follow-up closed 2026-09-04** — the hub-degree cost of the
   edge touch: `_existing_triples` probes each chunk's sources, targets,
   and types together (three membership lists sharing the budget, the
