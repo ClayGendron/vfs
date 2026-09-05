@@ -167,6 +167,36 @@ class MountInfo(NamedTuple):
     owned: bool
 
 
+class Location(NamedTuple):
+    """One :meth:`VirtualFileSystem.locate` row — where a path lives, JSON-native.
+
+    A mount-table fact: the binding that owns *path* by longest prefix
+    and the path in that storage's own coordinates. No storage was
+    asked anything — the entry may not exist, and nothing here says
+    whether a verb would accept it.
+    """
+
+    path: str
+    mount: str
+    storage_name: str
+    storage_type: str
+    storage_path: str
+
+
+class EdgeLocation(NamedTuple):
+    """One :meth:`VirtualFileSystem.locate_edge` row — two locations and the boundary verdict.
+
+    ``same_storage`` is the test ``mkedge`` applies before it dispatches:
+    both endpoints on one binding. ``reason`` is a sentence for a person
+    when they are not, never a classified error — nothing failed.
+    """
+
+    source: Location
+    target: Location
+    same_storage: bool
+    reason: str | None
+
+
 class ResolvedTerminal(NamedTuple):
     """Where a routed path landed — a binding plus the residual path.
 
@@ -600,6 +630,45 @@ class VirtualFileSystem:
                 )
             )
         return tuple(rows)
+
+    def locate(self, path: str) -> Location:
+        """Where *path* lives: the binding that owns it and its storage-local path.
+
+        The router's own resolution — longest prefix, the deepest binding
+        under a nested mount, the root entry as the fallback — read from
+        one table snapshot with no lock and no storage I/O. Existence,
+        permissions and capabilities are not consulted, so the answer
+        never depends on a user. A non-canonical path is canonicalised;
+        a structurally invalid one raises ``ValueError`` as :class:`Path`
+        does, and so does a closed filesystem, whose table is empty.
+        """
+        terminal = self._locate_terminal(path)
+        binding = terminal.binding
+        return Location(
+            path=str(terminal.full),
+            mount=str(binding.path),
+            storage_name=binding.storage.name,
+            storage_type=type(binding.storage).__name__,
+            storage_path=str(terminal.rel),
+        )
+
+    def locate_edge(self, source: str, target: str) -> EdgeLocation:
+        """Where an edge's two endpoints live, and whether one storage holds both.
+
+        :meth:`locate` twice plus the verdict ``mkedge`` would reach: an
+        edge never crosses a mount boundary, so ``same_storage`` is the
+        two bindings being one. When they are not, ``reason`` says which
+        mounts the endpoints landed on; the row is an answer, not a
+        refusal.
+        """
+        src, tgt = self.locate(source), self.locate(target)
+        same = src.mount == tgt.mount
+        reason = (
+            None
+            if same
+            else f"an edge cannot cross a mount boundary; the source lives on {src.mount} and the target on {tgt.mount}"
+        )
+        return EdgeLocation(source=src, target=tgt, same_storage=same, reason=reason)
 
     def capabilities(self) -> frozenset[str]:
         """Operations this namespace answers — the union of entry snapshots.
@@ -2443,6 +2512,17 @@ class VirtualFileSystem:
         binding = self._match_mount(path)
         assert binding is not None, "resolve on a closed filesystem"
         return ResolvedTerminal(binding=binding, rel=path.without_mount(binding.path))
+
+    def _locate_terminal(self, path: str) -> ResolvedTerminal:
+        """Gate a caller path and resolve it, raising where no row can answer."""
+        resolved = resolve_path(path)
+        if resolved.path is None:
+            raise ValueError(resolved.error)
+        binding = self._match_mount(resolved.path)
+        if binding is None:
+            msg = f"Cannot locate {resolved.path}: filesystem is closed"
+            raise ValueError(msg)
+        return ResolvedTerminal(binding=binding, rel=resolved.path.without_mount(binding.path))
 
     def _bindings_beneath(self, path: Path) -> list[Binding]:
         """The bindings strictly beneath *path* (router coordinates).

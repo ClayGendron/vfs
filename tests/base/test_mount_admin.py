@@ -17,7 +17,7 @@ from tests.support.base_doubles import (
     RunnerStorage,
     SuspendingProbeStorage,
 )
-from vfs.base import MountMeta, VirtualFileSystem
+from vfs.base import Location, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.permissions import PermissionMap, read_only, read_write, validate_permission
 from vfs.results import VFSErrorKind
@@ -499,3 +499,67 @@ async def test_mask_replace_and_clear_recompute_without_storage_io() -> None:
     await fs.remount("/m", deny_ops=())
     assert {r.path: r for r in fs.mounts()}["/m"].caps == declared
     assert child.capabilities_calls == count  # neither call re-snapshotted
+
+
+# ----------------------------------------------------------------------
+# locate() / locate_edge() — the table answers where a path lives
+# ----------------------------------------------------------------------
+
+
+def test_locate_reports_the_root_binding_for_an_unmounted_path() -> None:
+    fs = VirtualFileSystem()
+    row = fs.locate("/docs/guide.md")
+    assert row == Location(
+        path="/docs/guide.md",
+        mount="/",
+        storage_name=fs.mounts()[0].storage_name,
+        storage_type="InMemoryStorage",
+        storage_path="/docs/guide.md",
+    )
+    assert json.loads(json.dumps(row._asdict()))["mount"] == "/"
+
+
+async def test_locate_reports_the_deepest_binding_and_the_storage_local_path() -> None:
+    fs = VirtualFileSystem(storage=BindableStorage())
+    outer, inner = BindableStorage(name="outer"), RecorderStorage(name="inner")
+    await fs.add_mount(outer, "/vendor")
+    await fs.add_mount(inner, "/vendor/lib")
+    bound = list(outer.calls)
+    assert fs.locate("/vendor/lib/x.md") == Location(
+        "/vendor/lib/x.md", "/vendor/lib", "inner", "RecorderStorage", "/x.md"
+    )
+    assert fs.locate("/vendor/x.md") == Location("/vendor/x.md", "/vendor", "outer", "BindableStorage", "/x.md")
+    assert fs.locate("/vendor/lib") == Location("/vendor/lib", "/vendor/lib", "inner", "RecorderStorage", "/")
+    assert fs.locate("/vendor/../other/./y.md").path == "/other/y.md"
+    assert outer.calls == bound and inner.calls == []  # the table answered; no storage was asked
+    await fs.close()
+
+
+async def test_locate_edge_agrees_with_mkedge_on_the_boundary() -> None:
+    fs = VirtualFileSystem(storage=BindableStorage())
+    a, b = RecorderStorage(name="a"), RecorderStorage(name="b")
+    await fs.add_mount(a, "/a")
+    await fs.add_mount(b, "/b")
+    split = fs.locate_edge("/a/x.md", "/b/y.md")
+    assert split.same_storage is False
+    assert (split.source.mount, split.target.mount) == ("/a", "/b")
+    assert split.reason == "an edge cannot cross a mount boundary; the source lives on /a and the target on /b"
+    refused = await fs.mkedge(source="/a/x.md", target="/b/y.md", edge_type="links")
+    assert refused.errors[0].kind is VFSErrorKind.cross_mount
+    together = fs.locate_edge("/a/x.md", "/a/deep/y.md")
+    assert together.same_storage is True and together.reason is None
+    assert together.target.storage_path == "/deep/y.md"
+    assert (await fs.mkedge(source="/a/x.md", target="/a/deep/y.md", edge_type="links")).success is True
+    assert json.loads(json.dumps(split._asdict()))["source"] == list(split.source)
+    await fs.close()
+
+
+async def test_locate_raises_where_no_row_can_answer() -> None:
+    fs = VirtualFileSystem()
+    with pytest.raises(ValueError, match="null"):
+        fs.locate("/bad\x00name.md")
+    with pytest.raises(ValueError, match="null"):
+        fs.locate_edge("/ok.md", "/bad\x00name.md")
+    await fs.close()
+    with pytest.raises(ValueError, match="closed"):
+        fs.locate("/anything.md")

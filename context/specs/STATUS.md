@@ -5,6 +5,15 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **146 landed 2026-09-05** — `locate(path)` and
+  `locate_edge(source, target)` on the router: where a path lives
+  (owning mount, storage name and type, storage-local path) and, for
+  an edge, whether both endpoints share a storage with a sentence when
+  they do not. Table facts only — the router's own longest-prefix
+  resolution, no storage I/O, no gates — as frozen JSON-native rows
+  beside `MountInfo`; an invalid path or a closed filesystem raises
+  `ValueError` as `Path` does. Pinned against `mkedge`'s own
+  `cross_mount` refusal.
 - **138 markdown slice landed 2026-09-05** — the reference-edge
   extractor, markdown first (Clay's rescope; Python imports stay open
   as slice D): a tree-sitter-markdown kernel in `crates/vfs-core`
