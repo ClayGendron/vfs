@@ -1,6 +1,6 @@
 # 137 — the cross-mount merge: download-and-rerank in the router, under each mount's own order
 
-- **Status:** landed 2026-09-05 (landing note below) — drafted
+- **Status:** landed and archived 2026-09-05 — commit `1f76b67`; landing note below — drafted
   2026-08-26 from ADR 052 (pins 4, 5, 6). Eighth of the glean arc; the
   router half of glean. **Amended 2026-09-05 (Clay) before
   implementation:** (a) the BM25 union rerank is the only stage
