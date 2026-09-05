@@ -38,6 +38,7 @@ from sqlalchemy import bindparam, func, select, update
 
 from vfs.results import Result
 from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
+    from vfs.storage.backends.database.dialects import DialectProfile
 
 EMBED_CONCURRENCY: Final = 4
 """Provider requests in flight per reindex; TPM binds long before latency, so more buys only 429s."""
@@ -181,7 +183,11 @@ async def select_unembedded(session: AsyncSession, tables: VFSTables, after: Chu
 
 
 async def cached_vectors(
-    session: AsyncSession, tables: VFSTables, hashes: Sequence[ContentHash], membership_budget: int
+    session: AsyncSession,
+    tables: VFSTables,
+    hashes: Sequence[ContentHash],
+    profile: DialectProfile,
+    membership_budget: int,
 ) -> dict[ContentHash, list[float]]:
     """One stored vector per hash in *hashes* that some embedded row already carries.
 
@@ -194,13 +200,13 @@ async def cached_vectors(
     for page in chunked(list(dict.fromkeys(hashes)), membership_budget):
         stmt = (
             select(chunks.c.content_hash, func.min(chunks.c.id))
-            .where(chunks.c.content_hash.in_(page), chunks.c.embedding.isnot(None))
+            .where(membership(chunks.c.content_hash, page, profile), chunks.c.embedding.isnot(None))
             .group_by(chunks.c.content_hash)
         )
         lowest.update({row[0]: row[1] for row in await session.execute(stmt)})
     found: dict[ContentHash, list[float]] = {}
     for page in chunked(sorted(lowest.values()), membership_budget):
-        stmt = select(chunks.c.content_hash, chunks.c.embedding).where(chunks.c.id.in_(page))
+        stmt = select(chunks.c.content_hash, chunks.c.embedding).where(membership(chunks.c.id, page, profile))
         found.update({row.content_hash: list(row.embedding) for row in await session.execute(stmt)})
     return found
 

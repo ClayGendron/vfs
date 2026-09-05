@@ -81,6 +81,7 @@ from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, ch
 from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import lexical_stats
+from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
@@ -266,11 +267,13 @@ async def glean_rows(
     bodies: dict[EntryId, str] = {}
     allow: list[int] | None = None
     if (epoch is not None and present) or vector is not None:
-        allow = await allow_list_ids(session, tables, membership_budget, channel, fan_arms=fan_arms, deadline=deadline)
+        allow = await allow_list_ids(
+            session, tables, profile, membership_budget, channel, fan_arms=fan_arms, deadline=deadline
+        )
     if epoch is not None and present:
         candidates: list[ChunkId] | None = None
         if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
-            candidates = await _chunk_ids_for(session, tables, epoch, allow, membership_budget)
+            candidates = await _chunk_ids_for(session, tables, epoch, allow, profile, membership_budget)
         if candidates is None or candidates:
             depth, window_full = FUSION_K, False
             for _probe in range(2):
@@ -278,7 +281,7 @@ async def glean_rows(
                     session, tables, epoch, stats, present, depth, candidates, parameter_budget, membership_budget
                 )
                 hits, rows = await _entries_for_chunks(
-                    session, tables, epoch, ranking, fetched, scope, membership_budget
+                    session, tables, epoch, ranking, fetched, scope, profile, membership_budget
                 )
                 window_full = len(ranking) >= depth
                 short = window_full and len(hits) < limit
@@ -293,7 +296,17 @@ async def glean_rows(
     vector_depth = max(VECTOR_DEPTH_FACTOR * limit, VECTOR_DEPTH_FLOOR)
     if vector is not None and monotonic() <= deadline:
         vector_hits, vector_rows = await _vector_leg(
-            session, tables, dialect_name, vector, vector_depth, allow, limit, fetched, scope, membership_budget
+            session,
+            tables,
+            dialect_name,
+            vector,
+            vector_depth,
+            allow,
+            limit,
+            fetched,
+            scope,
+            profile,
+            membership_budget,
         )
         for entry_id, mapping in vector_rows.items():
             rows.setdefault(entry_id, mapping)
@@ -332,7 +345,7 @@ async def glean_rows(
     fused = _fuse(ranker, hits, vector_hits)
     ordered = _order(fused.entries, rows)[:limit]
     wanted = [chunk_id for entry_id, _ in ordered for chunk_id, _ in fused.chunks[entry_id]]
-    texts = await _chunk_texts(session, tables, wanted, membership_budget)
+    texts = await _chunk_texts(session, tables, wanted, profile, membership_budget)
     mask = frozenset(fetched | {"score", "matches"})
     projected = tuple(fetched - {"content"})
     sources = _Sources(texts, bodies, terms)
@@ -374,7 +387,12 @@ async def glean_rows(
 
 
 async def _chunk_ids_for(
-    session: AsyncSession, tables: VFSTables, epoch: Epoch, doc_ids: Sequence[int], membership_budget: int
+    session: AsyncSession,
+    tables: VFSTables,
+    epoch: Epoch,
+    doc_ids: Sequence[int],
+    profile: DialectProfile,
+    membership_budget: int,
 ) -> list[ChunkId]:
     """The epoch's chunk ids of the entries with surrogate ids *doc_ids*, sorted."""
     entry, docs = tables.entry, tables.lex_docs
@@ -383,7 +401,7 @@ async def _chunk_ids_for(
         stmt = (
             select(docs.c.chunk_id)
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
-            .where(docs.c.epoch == epoch, entry.c.id.in_(chunk))
+            .where(docs.c.epoch == epoch, membership(entry.c.id, chunk, profile))
         )
         found.extend((await session.execute(stmt)).scalars())
     found.sort()
@@ -467,6 +485,7 @@ async def _entries_for_chunks(
     ranking: Ranking,
     fetched: frozenset[str],
     scope: _Gates,
+    profile: DialectProfile,
     membership_budget: int,
 ) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping]]:
     """MaxP: the ranked chunks resolved to their live, encoded, admitted entries' rows.
@@ -493,7 +512,7 @@ async def _entries_for_chunks(
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
             .where(
                 docs.c.epoch == epoch,
-                docs.c.chunk_id.in_(chunk),
+                membership(docs.c.chunk_id, chunk, profile),
                 entry.c.encoded,
                 kinds.predicate,
                 *scope.pushdown.terms,
@@ -533,6 +552,7 @@ async def _vector_leg(
     limit: int,
     fetched: frozenset[str],
     scope: _Gates,
+    profile: DialectProfile,
     membership_budget: int,
 ) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping]]:
     """The *depth* nearest chunks by cosine, resolved to admitted entries and MaxP'd.
@@ -573,7 +593,7 @@ async def _vector_leg(
     if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
         per_chunk = max(1, membership_budget - scope.pushdown.binds - kinds.binds)
         for ids in chunked(list(allow), per_chunk):
-            stmt = base.where(entry.c.id.in_(ids)).limit(depth)
+            stmt = base.where(membership(entry.c.id, ids, profile)).limit(depth)
             ranked.extend((await session.execute(stmt)).mappings().all())
         ranked.sort(key=lambda mapping: (mapping["distance"], mapping["chunk_id"]))
         ranked = ranked[:depth]
@@ -628,7 +648,9 @@ async def _overlay(
     """
     if not admitted:
         return {}, {}
-    surrogate = await _surrogate_ids(session, tables, [mapping["entry_id"] for mapping in admitted], membership_budget)
+    surrogate = await _surrogate_ids(
+        session, tables, [mapping["entry_id"] for mapping in admitted], profile, membership_budget
+    )
     bodies = await content_for_entries(session, tables, profile, membership_budget, list(surrogate))
     docs = sorted((surrogate[entry_id], _text(body)) for entry_id, body in bodies.items())
     blocks, idfs, avg_dl = await call_offloaded(executor, partial(_overlay_blocks, docs, terms, stats))
@@ -644,13 +666,17 @@ def _text(body: Body) -> str:
 
 
 async def _surrogate_ids(
-    session: AsyncSession, tables: VFSTables, entry_ids: Sequence[EntryId], membership_budget: int
+    session: AsyncSession,
+    tables: VFSTables,
+    entry_ids: Sequence[EntryId],
+    profile: DialectProfile,
+    membership_budget: int,
 ) -> dict[EntryId, int]:
     """``entry_id → surrogate id``: the overlay's doc ids, strictly ordered as the codec requires."""
     entry = tables.entry
     out: dict[EntryId, int] = {}
     for chunk in chunked(list(entry_ids), membership_budget):
-        stmt = select(entry.c.entry_id, entry.c.id).where(entry.c.entry_id.in_(chunk))
+        stmt = select(entry.c.entry_id, entry.c.id).where(membership(entry.c.entry_id, chunk, profile))
         out.update({row.entry_id: row.id for row in await session.execute(stmt)})
     return out
 
@@ -746,7 +772,11 @@ def _order(scores: dict[EntryId, float], rows: dict[EntryId, RowMapping]) -> lis
 
 
 async def _chunk_texts(
-    session: AsyncSession, tables: VFSTables, chunk_ids: Sequence[ChunkId], membership_budget: int
+    session: AsyncSession,
+    tables: VFSTables,
+    chunk_ids: Sequence[ChunkId],
+    profile: DialectProfile,
+    membership_budget: int,
 ) -> dict[ChunkId, RowMapping]:
     """The winning chunks' line bounds and text — only what the answer carries."""
     chunks = tables.chunks
@@ -754,7 +784,7 @@ async def _chunk_texts(
     out: dict[ChunkId, RowMapping] = {}
     for page in chunked(wanted, membership_budget):
         stmt = select(chunks.c.id, chunks.c.line_start, chunks.c.line_end, chunks.c.content).where(
-            chunks.c.id.in_(page)
+            membership(chunks.c.id, page, profile)
         )
         out.update({mapping["id"]: mapping for mapping in (await session.execute(stmt)).mappings()})
     return out

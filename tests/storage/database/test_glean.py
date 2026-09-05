@@ -168,9 +168,9 @@ class TestScope:
         narrowed: list[int] = []
         real = glean_module._chunk_ids_for
 
-        async def spying(session, tables, epoch, doc_ids, budget):
+        async def spying(session, tables, epoch, doc_ids, profile, budget):
             narrowed.append(len(doc_ids))
-            return await real(session, tables, epoch, doc_ids, budget)
+            return await real(session, tables, epoch, doc_ids, profile, budget)
 
         monkeypatch.setattr(glean_module, "_chunk_ids_for", spying)
         result = await storage.glean(query="tokens", globs=("src/**",))

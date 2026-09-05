@@ -6,8 +6,8 @@ copied here: the parameter budget is ``dialect.insertmanyvalues_max_parameters``
 transport-down classification is ``dialect.is_disconnect()``.  What this
 module declares is only what SQLAlchemy takes no position on: retryable
 SQLSTATEs, connection/file settings, isolation pins, index-key byte
-budgets, create-arbitration mode, the row-lock spelling, and the
-vector-distance facts.
+budgets, create-arbitration mode, the row-lock and membership
+spellings, and the vector-distance facts.
 
 Known engines (sqlite, postgresql, mssql, oracle, mariadb) carry tuned
 policy; **any other SQLAlchemy dialect resolves to a conservative
@@ -67,6 +67,7 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 
 
 BulkInsertMode = Literal["driver", "copy", "core"]
+MembershipForm = Literal["in_list", "values"]
 VectorDistance = Literal["none", "exact", "ann"]
 
 
@@ -158,7 +159,27 @@ class DialectProfile:
     is not taken, its key-range locks guard phantoms the guard never
     reads. ``None`` means ``FOR UPDATE`` as the compiler renders it —
     also nothing on SQLite, lawfully: the writer transaction is the
-    lock there. :func:`lock_rows` applies the declared spelling.
+    lock there. :func:`lock_rows` applies the declared spelling. SQL
+    Server's hint also names ``FORCESEEK``: under the ``values``
+    membership form a locking read that the optimizer plans as a scan
+    takes an update lock on every row and escalates to a table lock,
+    so the seek is forced where the lock is held (measured: two key
+    locks per row, never a table lock, at 40,000 rows in one
+    transaction).
+
+    ``membership`` declares how a chunked membership predicate
+    (``column IN (...)``) reaches the engine — a plan-quality decision
+    SQLAlchemy takes no position on. ``in_list`` is the expanding bind
+    list every compiler renders. ``values`` joins a ``VALUES`` derived
+    table of the keys instead: SQL Server plans a long ``IN`` list as a
+    clustered scan on small tables and converts every ``nvarchar`` bind
+    against a ``varchar`` key (one non-Latin path makes the seek range
+    swallow the table), while the derived table seeks at every table
+    size and casts the keys once, server-side, in the column's own
+    collation. :mod:`~vfs.storage.backends.database.membership` spells
+    both. ``in_list_budget`` doubles as the lock budget there: two key
+    locks per row under ``UPDLOCK``, kept under the 5,000-lock
+    escalation trigger per statement.
 
     ``guard_miss`` declares what a zero-row guarded UPDATE means on this
     engine — knowledge SQLAlchemy takes no position on. ``reprobe``:
@@ -178,6 +199,7 @@ class DialectProfile:
     arbitration: Literal["upsert", "catch_retry"]
     guard_miss: Literal["reprobe", "redrive"] = "redrive"
     row_lock_hint: str | None = None
+    membership: MembershipForm = "in_list"
     op_isolation: str | None = None
     topology_isolation: str | None = None
     session_settings: tuple[str, ...] = ()
@@ -253,12 +275,15 @@ POSTGRESQL: Final = DialectProfile(
 MSSQL: Final = DialectProfile(
     name="mssql",
     key_byte_budget=1_700,
-    in_list_budget=2_100,
+    # A lock budget as much as a bind budget (2,100): two key locks per
+    # row under UPDLOCK stay under the 5,000-lock escalation trigger.
+    in_list_budget=2_000,
     arbitration="catch_retry",
     guard_miss="reprobe",
-    # with_for_update() renders as a bare SELECT on T-SQL; the guard
-    # read locks through this hint instead (measured: blocks a rival delete).
-    row_lock_hint="UPDLOCK",
+    # with_for_update() renders as a bare SELECT on T-SQL; the guard read
+    # locks through this hint, and seeks, or the lock is a table lock.
+    row_lock_hint="UPDLOCK, FORCESEEK",
+    membership="values",
     values_join=True,
     # T-SQL LIKE treats [...] as a character class; escape_like must
     # quote "[" here or a bracketed path silently misses its subtree.

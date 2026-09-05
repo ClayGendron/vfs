@@ -232,7 +232,9 @@ class DatabaseStorage:
         targets = targets_of(path, observations)
         return await self._execute(
             "read",
-            lambda session: read_rows(session, self._host.tables, self._host.membership_budget, targets, columns),
+            lambda session: read_rows(
+                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+            ),
         )
 
     async def stat(
@@ -246,7 +248,9 @@ class DatabaseStorage:
         targets = targets_of(path, observations)
         return await self._execute(
             "stat",
-            lambda session: stat_rows(session, self._host.tables, self._host.membership_budget, targets, columns),
+            lambda session: stat_rows(
+                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+            ),
         )
 
     async def ls(
@@ -261,7 +265,12 @@ class DatabaseStorage:
         return await self._execute(
             "ls",
             lambda session: ls_rows(
-                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                targets,
+                columns,
             ),
         )
 
@@ -281,7 +290,13 @@ class DatabaseStorage:
         return await self._execute(
             "tree",
             lambda session: tree_rows(
-                session, self._host.tables, self._host.profile, self._host.membership_budget, path, max_depth, columns
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                path,
+                max_depth,
+                columns,
             ),
         )
 
@@ -676,6 +691,7 @@ class DatabaseStorage:
             lambda session: rmedge_rows(
                 session,
                 self._host.tables,
+                self._host.profile,
                 self._host.membership_budget,
                 edges=edges,
                 user_id=user_id,
@@ -898,7 +914,9 @@ class DatabaseStorage:
             hashes = [
                 row.content_hash for row in page if row.content_hash is not None and row.content_hash not in known
             ]
-            lend = partial(cached_vectors, tables=tables, hashes=hashes, membership_budget=budget)
+            lend = partial(
+                cached_vectors, tables=tables, profile=self._host.profile, hashes=hashes, membership_budget=budget
+            )
             known.update(await self._rows("reindex", lend))
             await seam("reindex:before-embed")
             outcome = await embed_page(page, provider, known, report, semaphore, timeout=self._embed_timeout)

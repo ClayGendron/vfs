@@ -76,6 +76,7 @@ from vfs.storage.backends.database.dialects import (
     supports_values_update,
 )
 from vfs.storage.backends.database.lexical import build_lexical_epoch
+from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
@@ -301,9 +302,9 @@ async def chunk_dirty(
         return Result(ops=("reindex",))
     await seam("reindex:before-chunk-split")
     work = await call_offloaded(executor, partial(_assess_and_split, rows, generation))
-    carried = await _carried_embeddings(session, chunks, work, membership_budget) if carry_embeddings else {}
+    carried = await _carried_embeddings(session, chunks, work, profile, membership_budget) if carry_embeddings else {}
     for ids in chunked(work.resplit_ids, membership_budget):
-        await session.execute(delete(chunks).where(chunks.c.entry_id.in_(ids)))
+        await session.execute(delete(chunks).where(membership(chunks.c.entry_id, ids, profile)))
     if work.chunk_rows:
         await bulk_insert(session, chunks, work.chunk_rows)
     if carried:
@@ -542,7 +543,7 @@ def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
 
 
 async def _carried_embeddings(
-    session: AsyncSession, chunks: Table, work: _ChunkWork, membership_budget: int
+    session: AsyncSession, chunks: Table, work: _ChunkWork, profile: DialectProfile, membership_budget: int
 ) -> dict[str, list[float]]:
     """``content_hash → vector`` for the re-split entries' embedded rows whose hash a fresh row keeps."""
     wanted = {cast("str", row["content_hash"]) for row in work.chunk_rows}
@@ -551,7 +552,7 @@ async def _carried_embeddings(
         return carried
     for ids in chunked(work.resplit_ids, membership_budget):
         stmt = select(chunks.c.content_hash, chunks.c.embedding).where(
-            chunks.c.entry_id.in_(ids), chunks.c.embedding.isnot(None)
+            membership(chunks.c.entry_id, ids, profile), chunks.c.embedding.isnot(None)
         )
         for row in await session.execute(stmt):
             if row.content_hash in wanted and row.content_hash not in carried:

@@ -46,7 +46,8 @@ from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
 from vfs.paths import TRASH_ROOT
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
-from vfs.storage.backends.database.dialects import bulk_insert, chunked, lock_rows
+from vfs.storage.backends.database.dialects import bulk_insert, chunked
+from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ async def repoint_fs_row(session: AsyncSession, edges: Table, entry_id: str, new
 
 
 async def delete_authored_edges(
-    session: AsyncSession, edges: Table, membership_budget: int, ids: Iterable[str]
+    session: AsyncSession, edges: Table, profile: DialectProfile, membership_budget: int, ids: Iterable[str]
 ) -> None:
     """Remove every authored (non-fs) edge touching *ids*, both directions.
 
@@ -118,10 +119,10 @@ async def delete_authored_edges(
     """
     for chunk in chunked(sorted(set(ids)), membership_budget):
         await session.execute(
-            delete(edges).where(edges.c.source_id.in_(chunk), edges.c.edge_type != RESERVED_EDGE_TYPE)
+            delete(edges).where(membership(edges.c.source_id, chunk, profile), edges.c.edge_type != RESERVED_EDGE_TYPE)
         )
         await session.execute(
-            delete(edges).where(edges.c.target_id.in_(chunk), edges.c.edge_type != RESERVED_EDGE_TYPE)
+            delete(edges).where(membership(edges.c.target_id, chunk, profile), edges.c.edge_type != RESERVED_EDGE_TYPE)
         )
 
 
@@ -156,14 +157,14 @@ async def mkedge_rows(
     *user_id* is not yet used; edges carry no ownership today.
     """
     table = tables.edges
-    ids = await _endpoint_ids(session, tables, membership_budget, edges, lock=profile)
+    ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
     errors = [
         classified(VFSErrorKind.not_found, f"Not found: {endpoint}", endpoint)
         for endpoint in _missing_endpoints(edges, ids)
     ]
     if errors:
         return Result(ops=("mkedge",), errors=errors)
-    existing = await _existing_triples(session, table, membership_budget, edges, ids)
+    existing = await _existing_triples(session, table, profile, membership_budget, edges, ids)
     creates: list[dict[str, object]] = []
     touches: list[dict[str, object]] = []
     status: dict[_Triple, Literal["created", "updated", "deleted"]] = {}
@@ -209,6 +210,7 @@ async def mkedge_rows(
 async def rmedge_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     *,
     edges: list[Edge],
@@ -224,8 +226,8 @@ async def rmedge_rows(
     *user_id* is not yet used.
     """
     table = tables.edges
-    ids = await _endpoint_ids(session, tables, membership_budget, edges)
-    existing = await _existing_triples(session, table, membership_budget, edges, ids)
+    ids = await _endpoint_ids(session, tables, profile, membership_budget, edges)
+    existing = await _existing_triples(session, table, profile, membership_budget, edges, ids)
     rows: list[Observation] = []
     warnings: list[ResultError] = []
     doomed: list[dict[str, str]] = []
@@ -325,7 +327,7 @@ async def repair_edge_drift(
 ) -> Result:
     """Apply the collected deltas, each guarded by the parent it was computed from.
 
-    The guard re-read locks the entry rows (:func:`lock_rows`), so a rival
+    The guard re-read locks the entry rows (:func:`~vfs.storage.backends.database.membership.locked_lookup`), so a rival
     topology verb serializes against this repair instead of interleaving
     with it. A delta whose row now names a different parent — or whose
     row is gone — is skipped, and a stray whose recorded endpoints were
@@ -337,10 +339,10 @@ async def repair_edge_drift(
     current: dict[str, tuple[str | None, str]] = {}
     guarded = {delta.entry_id for delta in state.deltas} | {eid for ids in state.strays.values() for eid in ids}
     for chunk in chunked(sorted(guarded), membership_budget):
-        guard = select(entry.c.entry_id, entry.c.parent_id, entry.c.path).where(entry.c.entry_id.in_(chunk))
-        current.update(
-            {row.entry_id: (row.parent_id, row.path) for row in await session.execute(lock_rows(guard, entry, profile))}
+        guard = locked_lookup(
+            entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.parent_id, entry.c.path], profile
         )
+        current.update({row.entry_id: (row.parent_id, row.path) for row in await session.execute(guard)})
     confirmed = [
         delta for delta in state.deltas if delta.entry_id in current and current[delta.entry_id][0] == delta.parent_id
     ]
@@ -353,7 +355,7 @@ async def repair_edge_drift(
     ]
     doomed = [row_id for delta in confirmed for row_id in delta.wrong_row_ids] + state.dangling + strays
     for chunk in chunked(doomed, membership_budget):
-        await session.execute(delete(edges).where(edges.c.id.in_(chunk)))
+        await session.execute(delete(edges).where(membership(edges.c.id, chunk, profile)))
     additions = [fs_row(delta.parent_id, delta.entry_id) for delta in confirmed if delta.missing and delta.parent_id]
     if additions:
         await bulk_insert(session, edges, additions)
@@ -373,31 +375,33 @@ async def repair_edge_drift(
 async def _endpoint_ids(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     edges: list[Edge],
     *,
-    lock: DialectProfile | None = None,
+    lock: bool = False,
 ) -> dict[str, str]:
     """``path → entry id`` for every distinct endpoint in the batch.
 
     Trashed rows are unaddressable through here by construction: their
     paths are rewritten under the reserved trash scope, which the
-    ``Edge`` model already refuses as an endpoint. With *lock* — the
-    profile whose spelling locks the rows — the resolve is also the
-    liveness proof: the rows stay locked until the caller's transaction
-    commits, so a rival delete cannot trash an endpoint inside the
-    window — it serializes behind the commit, and its cascade then
-    sweeps whatever landed here.
+    ``Edge`` model already refuses as an endpoint. With *lock* the
+    resolve is also the liveness proof: the rows stay locked until the
+    caller's transaction commits, so a rival delete cannot trash an
+    endpoint inside the window — it serializes behind the commit, and
+    its cascade then sweeps whatever landed here.
     """
     entry = tables.entry
     paths = sorted({str(edge.source) for edge in edges} | {str(edge.target) for edge in edges})
     found: dict[str, str] = {}
     for chunk in chunked(paths, membership_budget):
-        stmt = select(entry.c.path, entry.c.entry_id).where(entry.c.path.in_(chunk))
-        if lock is not None:
+        columns = [entry.c.path, entry.c.entry_id]
+        if lock:
             # Sorted paths order the locks; a deadlock against a rival's
             # claim order classifies retryable and rides the retry channel.
-            stmt = lock_rows(stmt, entry, lock)
+            stmt = locked_lookup(entry, entry.c.path, chunk, columns, profile)
+        else:
+            stmt = select(*columns).where(membership(entry.c.path, chunk, profile))
         result = await session.execute(stmt)
         found.update({row.path: row.entry_id for row in result})
     return found
@@ -414,7 +418,12 @@ def _missing_endpoints(edges: list[Edge], ids: dict[str, str]) -> list[Path]:
 
 
 async def _existing_triples(
-    session: AsyncSession, table: Table, membership_budget: int, edges: list[Edge], ids: dict[str, str]
+    session: AsyncSession,
+    table: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    edges: list[Edge],
+    ids: dict[str, str],
 ) -> set[_Triple]:
     """The batch's identities that already have a row.
 
@@ -434,7 +443,9 @@ async def _existing_triples(
     found: set[_Triple] = set()
     for chunk in chunked(sorted({source_id for source_id, _, _ in wanted}), membership_budget):
         result = await session.execute(
-            select(table.c.source_id, table.c.target_id, table.c.edge_type).where(table.c.source_id.in_(chunk))
+            select(table.c.source_id, table.c.target_id, table.c.edge_type).where(
+                membership(table.c.source_id, chunk, profile)
+            )
         )
         found.update(
             (row.source_id, row.target_id, row.edge_type)

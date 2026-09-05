@@ -49,6 +49,7 @@ from vfs.storage.backends.database.dialects import (
     supports_values_update,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
+from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -113,7 +114,7 @@ async def write_rows(
     the site is ``wrong_kind``; an occupied site needs ``overwrite``).
     Any error fails the whole batch before a statement runs.
     """
-    committed = await _fetch_committed(session, tables, membership_budget, {entry.path for entry in entries})
+    committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for entry in entries:
         if entry.kind == "directory":
@@ -158,7 +159,7 @@ async def mkdir_rows(
     stat. With ``parents``, the minted ancestor chain reports alongside
     the target, shallowest first.
     """
-    committed = await _fetch_committed(session, tables, membership_budget, {path})
+    committed = await _fetch_committed(session, tables, profile, membership_budget, {path})
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     occupant = plan.kind_of(path)
     if occupant is not None:
@@ -200,8 +201,8 @@ async def edit_rows(
     Every update is version-guarded — edits never create and never
     clobber, so a concurrent rival surfaces as ``conflict``.
     """
-    committed = await _fetch_committed(session, tables, membership_budget, set(targets), with_content=True)
-    missing = await miss_errors(session, tables.entry, targets, committed, membership_budget)
+    committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
+    missing = await miss_errors(session, tables.entry, targets, committed, profile, membership_budget)
     plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
     for target in targets:
         row = committed.get(str(target))
@@ -234,6 +235,7 @@ async def edit_rows(
 async def _fetch_committed(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: set[Path],
     *,
@@ -254,7 +256,7 @@ async def _fetch_committed(
         columns.append(tables.content.c.content)
         source = tables.content_joined()
     paths = targets_with_ancestors(targets)
-    return await rows_by_path(session, entry, paths, columns, membership_budget, source=source)
+    return await rows_by_path(session, entry, paths, columns, profile, membership_budget, source=source)
 
 
 async def _finish(
@@ -335,7 +337,7 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, user_id=plan.user_id, now=now
     ):
         return errors
-    await _replace_content(session, tables.content, membership_budget, list(plan.staged.values()), now)
+    await _replace_content(session, tables.content, profile, membership_budget, list(plan.staged.values()), now)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 
@@ -655,7 +657,9 @@ async def _update_materials(
             found_rows: dict[str, Any] = {}
             for chunk in chunked([s.entry_id for s in unguarded], membership_budget):
                 found = await session.execute(
-                    select(entry.c.entry_id, entry.c.version, entry.c.path).where(entry.c.entry_id.in_(chunk))
+                    select(entry.c.entry_id, entry.c.version, entry.c.path).where(
+                        membership(entry.c.entry_id, chunk, profile)
+                    )
                 )
                 found_rows.update({row.entry_id: row for row in found})
             for staged in unguarded:
@@ -805,7 +809,7 @@ async def _classify_guard_misses(
         raise StaleSnapshot(f"{len(missed)} guarded update(s) missed their snapshot")
     present: set[str] = set()
     for chunk in chunked([s.entry_id for s in missed], membership_budget):
-        found = await session.execute(select(entry.c.entry_id).where(entry.c.entry_id.in_(chunk)))
+        found = await session.execute(select(entry.c.entry_id).where(membership(entry.c.entry_id, chunk, profile)))
         present.update(row.entry_id for row in found)
     errors: list[ResultError] = []
     for staged in missed:
@@ -844,7 +848,12 @@ def _conflict(staged: StagedEntry) -> ResultError:
 
 
 async def _replace_content(
-    session: AsyncSession, content: Table, membership_budget: int, staged: list[StagedEntry], now: datetime
+    session: AsyncSession,
+    content: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    staged: list[StagedEntry],
+    now: datetime,
 ) -> None:
     """Delete-then-insert the batch's content rows — portable, idempotent.
 
@@ -855,7 +864,7 @@ async def _replace_content(
     if not bearing:
         return
     for chunk in chunked([s.entry_id for s in bearing], membership_budget):
-        await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
+        await session.execute(delete(content).where(membership(content.c.entry_id, chunk, profile)))
     rows = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing]
     await bulk_insert(session, content, rows)
 
@@ -913,7 +922,9 @@ async def _bump_parents(
     ids = [bumps[path] for path in sorted(needed)]
     plan.bump_versions = {}
     for chunk in chunked(ids, membership_budget):
-        result = await session.execute(select(entry.c.path, entry.c.version).where(entry.c.entry_id.in_(chunk)))
+        result = await session.execute(
+            select(entry.c.path, entry.c.version).where(membership(entry.c.entry_id, chunk, profile))
+        )
         plan.bump_versions.update({row.path: row.version for row in result})
     for staged in plan.staged.values():
         if staged.persistence == "adopt" and (bumped := plan.bump_versions.get(str(staged.path))) is not None:

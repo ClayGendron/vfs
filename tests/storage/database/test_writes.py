@@ -532,7 +532,7 @@ class TestArbitration:
 
         # Snapshot and plan while the site is vacant: a routine create.
         async with host.session_factory() as reader:
-            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+            committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
         plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
         status = plan.put_file(
@@ -590,7 +590,7 @@ class TestArbitration:
 
         # Snapshot and plan while the site is vacant: a routine create.
         async with host.session_factory() as reader:
-            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+            committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
         plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
         status = plan.put_file(
@@ -817,7 +817,7 @@ class TestArbitration:
 
         # Snapshot and plan while the site is vacant: a routine create.
         async with host.session_factory() as reader:
-            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+            committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
         plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
         status = plan.put_file(
@@ -863,7 +863,7 @@ class TestArbitration:
 
         # Snapshot at version 1 and stage a guarded update over it.
         async with host.session_factory() as reader:
-            committed = await _fetch_committed(reader, host.tables, host.membership_budget, {target})
+            committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
         plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
         status = plan.put_file(

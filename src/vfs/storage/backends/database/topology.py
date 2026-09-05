@@ -101,6 +101,7 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, bulk_insert, chunked, rows_per_statement
 from vfs.storage.backends.database.edges import delete_authored_edges, fs_row, insert_fs_rows, repoint_fs_row
+from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
@@ -180,7 +181,7 @@ async def delete_rows(
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
-    snapshot = await _fetch_snapshot(session, entry, membership_budget, targets)
+    snapshot = await _fetch_snapshot(session, entry, profile, membership_budget, targets)
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
     now = datetime.now(UTC)
@@ -257,7 +258,9 @@ async def delete_rows(
             )
         # Soft delete is deletion for authored edges: the whole trashed
         # subtree loses them, both directions; restore never re-mints.
-        await delete_authored_edges(session, tables.edges, membership_budget, [row["entry_id"], *descendant_ids])
+        await delete_authored_edges(
+            session, tables.edges, profile, membership_budget, [row["entry_id"], *descendant_ids]
+        )
         await _bump(session, entry, bucket_id)
         await _bump(session, entry, row["parent_id"])
         local_bumps[bucket_id] += 1
@@ -265,7 +268,7 @@ async def delete_rows(
         rows.append(_observe_deleted(target, row, trash_path=Path(trash_path)))
     if errors:
         return Result(ops=("delete",), errors=errors)
-    await move_postings(session, tables.segments, membership_budget, segment_moves)
+    await move_postings(session, tables.segments, profile, membership_budget, segment_moves)
     return Result(ops=("delete",), observations=rows)
 
 
@@ -304,7 +307,7 @@ async def restore_rows(
     pending: list[_PendingTransfer] = []
     errors: list[ResultError] = []
     for target in targets:
-        resolved = await _resolve_restore(session, entry, target, membership_budget)
+        resolved = await _resolve_restore(session, entry, target, profile, membership_budget)
         if isinstance(resolved, ResultError):
             errors.append(resolved)
             continue
@@ -330,7 +333,7 @@ async def restore_rows(
         pending.append(_PendingTransfer(dest, "created", row["kind"], row["version"] + 1, row["size_bytes"]))
     if errors:
         return Result(ops=("restore",), errors=errors)
-    finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
+    finals = await _final_rows(session, entry, profile, membership_budget, [str(p.dest) for p in pending])
     rows = [_observe_transfer(p, finals.get(str(p.dest))) for p in pending]
     return Result(ops=("restore",), observations=rows)
 
@@ -376,7 +379,7 @@ async def sweep_rows(
     if path != TRASH_ROOT:
         row = await _point_row(session, entry, str(path))
         if row is None:
-            misses = await classify_misses(session, entry, [path], membership_budget)
+            misses = await classify_misses(session, entry, [path], profile, membership_budget)
             return Result(ops=("sweep",), errors=misses)
         await _purge_subtree(session, tables, profile, membership_budget, str(path))
         await _bump(session, entry, row["parent_id"])
@@ -402,7 +405,7 @@ async def sweep_rows(
             await _purge_subtree(session, tables, profile, membership_budget, child["path"])
             await _bump(session, entry, root["entry_id"])
             rows.append(_observe_deleted(Path(child["path"]), child))
-    skips.extend(await _reclaim_orphan_content(session, tables, membership_budget))
+    skips.extend(await _reclaim_orphan_content(session, tables, profile, membership_budget))
     return Result(ops=("sweep",), observations=rows, errors=skips)
 
 
@@ -444,7 +447,7 @@ async def transfer_rows(
     move_srcs = Counter(pair.src for pair in operations) if op == "move" else Counter[Path]()
     committed: dict[str, RowMapping] = {}
     if op == "move":
-        committed = await _fetch_snapshot(session, entry, membership_budget, list(move_srcs))
+        committed = await _fetch_snapshot(session, entry, profile, membership_budget, list(move_srcs))
     committed_kinds = {path: row["kind"] for path, row in committed.items()}
     await seam("transfer:post-snapshot")
     now = datetime.now(UTC)
@@ -457,7 +460,7 @@ async def transfer_rows(
             continue
         src_row = await _point_row(session, entry, str(src))
         if src_row is None:
-            errors.append((await classify_misses(session, entry, [src], membership_budget))[0])
+            errors.append((await classify_misses(session, entry, [src], profile, membership_budget))[0])
             continue
         if src == ROOT or dest == ROOT:
             errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} the root directory", target=src))
@@ -468,7 +471,7 @@ async def transfer_rows(
                 _PendingTransfer(dest, "unchanged", src_row["kind"], src_row["version"], src_row["size_bytes"])
             )
             continue
-        dest_parent_id = await _dest_parent_id(session, entry, dest, membership_budget)
+        dest_parent_id = await _dest_parent_id(session, entry, dest, profile, membership_budget)
         if isinstance(dest_parent_id, ResultError):
             errors.append(dest_parent_id)
             continue
@@ -514,7 +517,7 @@ async def transfer_rows(
         pending.append(_PendingTransfer(dest, "created", src_row["kind"], version, src_row["size_bytes"]))
     if errors:
         return Result(ops=(op,), errors=errors)
-    finals = await _final_rows(session, entry, membership_budget, [str(p.dest) for p in pending])
+    finals = await _final_rows(session, entry, profile, membership_budget, [str(p.dest) for p in pending])
     rows = [_observe_transfer(p, finals.get(str(p.dest))) for p in pending]
     return Result(ops=(op,), observations=rows)
 
@@ -542,11 +545,11 @@ async def _serialize(session: AsyncSession, profile: DialectProfile, meta: Table
 
 
 async def _fetch_snapshot(
-    session: AsyncSession, entry: Table, membership_budget: int, targets: list[Path]
+    session: AsyncSession, entry: Table, profile: DialectProfile, membership_budget: int, targets: list[Path]
 ) -> dict[str, RowMapping]:
     """One bounded fetch: targets, their ancestors, the root."""
     columns = [entry.c[name] for name in _SNAPSHOT_COLUMNS]
-    return await rows_by_path(session, entry, targets_with_ancestors(targets), columns, membership_budget)
+    return await rows_by_path(session, entry, targets_with_ancestors(targets), columns, profile, membership_budget)
 
 
 async def _has_live_children(session: AsyncSession, entry: Table, entry_id: str) -> bool:
@@ -581,23 +584,26 @@ async def _purge_subtree(
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
             await seam("purge:pre-entry-delete")
-            result = cast("CursorResult[Any]", await session.execute(delete(entry).where(entry.c.entry_id.in_(chunk))))
+            result = cast(
+                "CursorResult[Any]",
+                await session.execute(delete(entry).where(membership(entry.c.entry_id, chunk, profile))),
+            )
             # Collected entries cannot vanish under the serialization
             # point; a shortfall (where rowcount is sane) is a stale list.
             if 0 <= result.rowcount != len(chunk):
                 raise StaleSnapshot(f"purge lost {len(chunk) - result.rowcount} collected row(s) mid-transaction")
-            await session.execute(delete(tables.content).where(tables.content.c.entry_id.in_(chunk)))
-            await session.execute(delete(tables.versions).where(tables.versions.c.entry_id.in_(chunk)))
-            await session.execute(delete(tables.chunks).where(tables.chunks.c.entry_id.in_(chunk)))
-            await session.execute(delete(tables.segments).where(tables.segments.c.entry_id.in_(chunk)))
+            await session.execute(delete(tables.content).where(membership(tables.content.c.entry_id, chunk, profile)))
+            await session.execute(delete(tables.versions).where(membership(tables.versions.c.entry_id, chunk, profile)))
+            await session.execute(delete(tables.chunks).where(membership(tables.chunks.c.entry_id, chunk, profile)))
+            await session.execute(delete(tables.segments).where(membership(tables.segments.c.entry_id, chunk, profile)))
             # Two single-list deletes: one OR'd statement would carry the
             # chunk's binds twice, doubling past the tightest engine cap.
-            await session.execute(delete(edges).where(edges.c.source_id.in_(chunk)))
-            await session.execute(delete(edges).where(edges.c.target_id.in_(chunk)))
+            await session.execute(delete(edges).where(membership(edges.c.source_id, chunk, profile)))
+            await session.execute(delete(edges).where(membership(edges.c.target_id, chunk, profile)))
 
 
 async def _reclaim_orphan_content(
-    session: AsyncSession, tables: VFSTables, membership_budget: int
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, membership_budget: int
 ) -> list[ResultError]:
     """Reclaim content rows that reference no entry, once past the age fence.
 
@@ -618,7 +624,7 @@ async def _reclaim_orphan_content(
     if not orphans:
         return []
     for chunk in chunked(orphans, membership_budget):
-        await session.execute(delete(content).where(content.c.entry_id.in_(chunk)))
+        await session.execute(delete(content).where(membership(content.c.entry_id, chunk, profile)))
     return [
         ResultError(
             kind=VFSErrorKind.internal,
@@ -777,7 +783,7 @@ class _RestoreSource(NamedTuple):
 
 
 async def _resolve_restore(
-    session: AsyncSession, entry: Table, target: Path, membership_budget: int
+    session: AsyncSession, entry: Table, target: Path, profile: DialectProfile, membership_budget: int
 ) -> _RestoreSource | ResultError:
     """Resolve *target* to its trash row and destination, or a refusal.
 
@@ -791,7 +797,7 @@ async def _resolve_restore(
     if target == TRASH_ROOT or target.startswith(TRASH_ROOT + "/"):
         row = await _point_restore_row(session, entry, str(target))
         if row is None:
-            return (await classify_misses(session, entry, [target], membership_budget))[0]
+            return (await classify_misses(session, entry, [target], profile, membership_budget))[0]
         if row["original_parent_id"] is None or row["original_name"] is None:
             return classified(VFSErrorKind.invalid, f"No restore metadata: {target}", target)
         parent = await _row_by_id(session, entry, row["original_parent_id"])
@@ -813,7 +819,7 @@ async def _resolve_restore(
             message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
             return classified(VFSErrorKind.unaddressable, message, target)
         return _RestoreSource(row, parent["entry_id"], Path(dest))
-    parent_id = await _dest_parent_id(session, entry, target, membership_budget)
+    parent_id = await _dest_parent_id(session, entry, target, profile, membership_budget)
     if isinstance(parent_id, ResultError):
         return parent_id
     row = await _newest_candidate(session, entry, parent_id, target.name)
@@ -969,7 +975,7 @@ async def _rewrite_descendants(
         raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
     await _apply_rewrites(session, tables.entry, rewrites)
     moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
-    await move_postings(session, tables.segments, membership_budget, moves)
+    await move_postings(session, tables.segments, profile, membership_budget, moves)
     return [row["b_id"] for row in rewrites]
 
 
@@ -1005,7 +1011,9 @@ async def _point_row(session: AsyncSession, entry: Table, path: str) -> RowMappi
     return (await session.execute(select(*columns).where(entry.c.path == path))).mappings().first()
 
 
-async def _dest_parent_id(session: AsyncSession, entry: Table, dest: Path, membership_budget: int) -> str | ResultError:
+async def _dest_parent_id(
+    session: AsyncSession, entry: Table, dest: Path, profile: DialectProfile, membership_budget: int
+) -> str | ResultError:
     """The destination's parent id after the live POSIX parent gate.
 
     A missing ancestor is ``not_found`` at that component, a
@@ -1015,7 +1023,7 @@ async def _dest_parent_id(session: AsyncSession, entry: Table, dest: Path, membe
     chain = ancestor_chain(dest)
     paths = [*(str(ancestor) for ancestor in chain), "/"]
     columns = [entry.c.entry_id, entry.c.path, entry.c.kind]
-    found = await rows_by_path(session, entry, paths, columns, membership_budget)
+    found = await rows_by_path(session, entry, paths, columns, profile, membership_budget)
     for ancestor in chain:
         row = found.get(str(ancestor))
         if row is None:
@@ -1097,7 +1105,7 @@ async def _execute_move(
     # trash (the restore gesture) rides the same statement.
     await repoint_fs_row(session, tables.edges, src_row["entry_id"], dest_parent_id)
     root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
-    await move_postings(session, tables.segments, membership_budget, root_move)
+    await move_postings(session, tables.segments, profile, membership_budget, root_move)
     await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest))
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
@@ -1180,11 +1188,11 @@ async def _execute_copy(
 
 
 async def _final_rows(
-    session: AsyncSession, entry: Table, membership_budget: int, dests: list[str]
+    session: AsyncSession, entry: Table, profile: DialectProfile, membership_budget: int, dests: list[str]
 ) -> dict[str, RowMapping]:
     """One bounded re-read of every pending destination after the batch."""
     columns = [entry.c.path, entry.c.kind, entry.c.version, entry.c.size_bytes]
-    return await rows_by_path(session, entry, dests, columns, membership_budget)
+    return await rows_by_path(session, entry, dests, columns, profile, membership_budget)
 
 
 def _observe_transfer(pending: _PendingTransfer, final: RowMapping | None) -> Observation:

@@ -1,6 +1,6 @@
 # SQL Server membership reads — where `IN (...)` stops seeking, why the binds are `nvarchar`, and the form that fixes both
 
-- **Status:** research memo (commits us to nothing)
+- **Status:** research memo — adopted by ADR 061 and implemented by spec 145 (2026-09-04)
 - **Date:** 2026-09-04
 - **Owner:** Clay Gendron
 - **Method:** executed experiments against the live SQL Server 2025

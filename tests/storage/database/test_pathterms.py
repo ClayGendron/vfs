@@ -240,6 +240,7 @@ async def _allow_list(
         return await allow_list_ids(
             session,
             storage._host.tables,
+            storage._host.profile,
             storage._host.membership_budget,
             channel,
             fan_arms=fan_arms,
@@ -336,11 +337,12 @@ class TestAllowListSeam:
 
             monkeypatch.setattr(session, "execute", spying)
             budget = storage._host.membership_budget
-            counts = await _term_counts(session, storage._host.tables, budget, {"docs", "img1"})
+            counts = await _term_counts(session, storage._host.tables, storage._host.profile, budget, {"docs", "img1"})
             assert counts["img1"] < counts["docs"]  # the pin is non-vacuous
             ids = await allow_list_ids(
                 session,
                 storage._host.tables,
+                storage._host.profile,
                 budget,
                 channel,
                 fan_arms=200,

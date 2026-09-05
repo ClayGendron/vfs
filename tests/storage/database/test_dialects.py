@@ -317,7 +317,7 @@ class TestLockRows:
     def test_mssql_spells_the_lock_as_an_updlock_table_hint(self) -> None:
         # with_for_update() is a bare SELECT on T-SQL; the hint is the lock.
         sql = _lock_sql(MSSQL, mssql_dialect.dialect())
-        assert "FROM entry WITH (UPDLOCK) WHERE" in sql
+        assert "FROM entry WITH (UPDLOCK, FORCESEEK) WHERE" in sql
         assert "HOLDLOCK" not in sql
         assert "FOR UPDATE" not in sql
 
@@ -353,7 +353,9 @@ class TestMembershipChunking:
         # The generic floor is Oracle's 1,000-element IN-list cap.
         assert membership_budget(GENERIC, 32_700) == 1_000
         # A parameter-capped engine binds through the tighter budget.
-        assert membership_budget(MSSQL, 2_099) == 2_099 - 32
+        assert membership_budget(replace(GENERIC, in_list_budget=65_535), 2_099) == 2_099 - 32
+        # SQL Server's declared lock budget binds before its bind cap.
+        assert membership_budget(MSSQL, 2_099) == 2_000
         # Degenerate budgets never chunk below one element.
         assert membership_budget(GENERIC, 8) == 1
 

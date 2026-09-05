@@ -51,6 +51,7 @@ from sqlalchemy import func, select
 
 from vfs.pattern_matching import canonical_pattern, derive_ext, expand_pattern
 from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 
     from vfs.models.rows import VFSTables
     from vfs.pattern_matching import DerivedExt
+    from vfs.storage.backends.database.dialects import DialectProfile
 
 # Characters that make a pattern component non-literal: wildcards and
 # the class opener (an unclosed "[" reads literally, but conservatively
@@ -153,6 +155,7 @@ def compile_channel(patterns: Sequence[str]) -> ChannelTerms:
 async def allow_list_ids(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     channel: ChannelTerms,
     *,
@@ -189,7 +192,7 @@ async def allow_list_ids(
     counts: dict[str, int] | None = None
     if any(len(arm.segments) > 1 for arm in channel.arms):
         terms = {term for arm in channel.arms for term in arm.segments}
-        counts = await _term_counts(session, tables, membership_budget, terms)
+        counts = await _term_counts(session, tables, profile, membership_budget, terms)
     admitted: set[int] = set()
     for arm in channel.arms:
         if monotonic() > deadline:
@@ -243,7 +246,7 @@ def _name_fact(leaf: str) -> NameFact | None:
 
 
 async def _term_counts(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, terms: set[str]
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, membership_budget: int, terms: set[str]
 ) -> dict[str, int]:
     """``term → posting row count``, one grouped indexed aggregate per chunk.
 
@@ -254,7 +257,9 @@ async def _term_counts(
     counts = dict.fromkeys(terms, 0)
     for chunk in chunked(sorted(terms), membership_budget):
         stmt = (
-            select(segments.c.segment, func.count()).where(segments.c.segment.in_(chunk)).group_by(segments.c.segment)
+            select(segments.c.segment, func.count())
+            .where(membership(segments.c.segment, chunk, profile))
+            .group_by(segments.c.segment)
         )
         for segment, count in await session.execute(stmt):
             counts[segment] = count

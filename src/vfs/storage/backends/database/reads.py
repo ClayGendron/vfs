@@ -49,6 +49,7 @@ from vfs.storage.backends.database.descent import (
     rows_by_path,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
+from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -110,24 +111,26 @@ def effective_columns(columns: frozenset[str] | None, *, content: bool) -> froze
 async def read_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=True)
-    rows, errors = await _point_rows(session, tables, membership_budget, targets, fetched, content_only=True)
+    rows, errors = await _point_rows(session, tables, profile, membership_budget, targets, fetched, content_only=True)
     return Result(ops=("read",), observations=rows, errors=errors)
 
 
 async def stat_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    rows, errors = await _point_rows(session, tables, membership_budget, targets, fetched, content_only=False)
+    rows, errors = await _point_rows(session, tables, profile, membership_budget, targets, fetched, content_only=False)
     return Result(ops=("stat",), observations=rows, errors=errors)
 
 
@@ -145,8 +148,8 @@ async def ls_rows(
     columns: frozenset[str] | None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=True)
-    missing = await miss_errors(session, tables.entry, targets, found, membership_budget)
+    found = await _mappings_by_path(session, tables, profile, membership_budget, targets, fetched, with_entry_id=True)
+    missing = await miss_errors(session, tables.entry, targets, found, profile, membership_budget)
     directories = [t for t in targets if (f := found.get(t)) is not None and f["kind"] == "directory"]
     children = await _children_by_parent(session, tables.entry, profile, membership_budget, directories, found, fetched)
     rows: list[Observation] = []
@@ -173,10 +176,10 @@ async def tree_rows(
 ) -> Result:
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    found = await _mappings_by_path(session, tables, membership_budget, [path], fetched, with_entry_id=False)
+    found = await _mappings_by_path(session, tables, profile, membership_budget, [path], fetched, with_entry_id=False)
     target = found.get(path)
     if target is None:
-        return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], membership_budget))
+        return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], profile, membership_budget))
     if target["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(target, fetched)])
     stmt = (
@@ -349,7 +352,7 @@ async def content_for_entries(
     body = cast(content.c.content, LargeBinary).label("content") if profile.content_bytes else content.c.content
     out: dict[EntryId, Body] = {}
     for chunk in chunked(sorted(set(entry_ids)), membership_budget):
-        stmt = select(content.c.entry_id, body).where(content.c.entry_id.in_(chunk))
+        stmt = select(content.c.entry_id, body).where(membership(content.c.entry_id, chunk, profile))
         out.update({row.entry_id: row.content for row in await session.execute(stmt)})
     return out
 
@@ -413,6 +416,7 @@ def meta_scoped(pattern: str) -> bool:
 async def _point_rows(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
     fetched: frozenset[str],
@@ -420,8 +424,8 @@ async def _point_rows(
     content_only: bool,
 ) -> tuple[list[Observation], list[ResultError]]:
     """Fetch, classify, and observe *targets* one row at a time, in order."""
-    found = await _mappings_by_path(session, tables, membership_budget, targets, fetched, with_entry_id=False)
-    missing = await miss_errors(session, tables.entry, targets, found, membership_budget)
+    found = await _mappings_by_path(session, tables, profile, membership_budget, targets, fetched, with_entry_id=False)
+    missing = await miss_errors(session, tables.entry, targets, found, profile, membership_budget)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
@@ -440,6 +444,7 @@ async def _point_rows(
 async def _mappings_by_path(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
     fetched: frozenset[str],
@@ -449,7 +454,7 @@ async def _mappings_by_path(
     """One bounded fetch for the batch, keyed by the stored path string."""
     columns, source = _entry_projection(tables, fetched, with_entry_id=with_entry_id)
     paths = (str(target) for target in targets)
-    return await rows_by_path(session, tables.entry, paths, columns, membership_budget, source=source)
+    return await rows_by_path(session, tables.entry, paths, columns, profile, membership_budget, source=source)
 
 
 async def _pattern_candidates(
@@ -495,7 +500,10 @@ async def _children_by_parent(
         for chunk in chunked(scope, membership_budget):
             stmt = (
                 select(entry.c.parent_id, *_entry_columns(entry, fetched))
-                .where(entry.c.parent_id.in_(chunk), *liveness_filters(entry, profile, include_meta=include_meta))
+                .where(
+                    membership(entry.c.parent_id, chunk, profile),
+                    *liveness_filters(entry, profile, include_meta=include_meta),
+                )
                 .order_by(entry.c.parent_id, entry.c.name)
             )
             for mapping in (await session.execute(stmt)).mappings():

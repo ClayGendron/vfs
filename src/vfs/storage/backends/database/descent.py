@@ -34,6 +34,7 @@ from sqlalchemy import or_, select
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -53,13 +54,13 @@ LIKE_ESCAPE: Final = "\\"
 
 
 async def classify_misses(
-    session: AsyncSession, entry: Table, targets: Sequence[Path], membership_budget: int
+    session: AsyncSession, entry: Table, targets: Sequence[Path], profile: DialectProfile, membership_budget: int
 ) -> list[ResultError]:
     """Classify every missed *target*; one chunked ancestor query serves the batch."""
     ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
     kinds: dict[str, str] = {}
     for chunk in chunked(sorted(ancestors), membership_budget):
-        stmt = select(entry.c.path, entry.c.kind).where(entry.c.path.in_(chunk))
+        stmt = select(entry.c.path, entry.c.kind).where(membership(entry.c.path, chunk, profile))
         kinds.update({row.path: row.kind for row in await session.execute(stmt)})
     return [classify_miss(target, kinds) for target in targets]
 
@@ -85,11 +86,12 @@ async def miss_errors(
     entry: Table,
     targets: Sequence[Path],
     found: Mapping[str, object],
+    profile: DialectProfile,
     membership_budget: int,
 ) -> dict[Path, ResultError]:
     """Descent-classified errors for each *target* absent from *found*, keyed by target."""
     misses = [target for target in dict.fromkeys(targets) if str(target) not in found]
-    return dict(zip(misses, await classify_misses(session, entry, misses, membership_budget), strict=True))
+    return dict(zip(misses, await classify_misses(session, entry, misses, profile, membership_budget), strict=True))
 
 
 def ancestor_chain(path: Path) -> list[Path]:
@@ -112,6 +114,7 @@ async def rows_by_path(
     entry: Table,
     paths: Iterable[str],
     columns: Sequence[ColumnElement[Any]],
+    profile: DialectProfile,
     membership_budget: int,
     *,
     source: FromClause | None = None,
@@ -125,7 +128,7 @@ async def rows_by_path(
     """
     found: dict[str, RowMapping] = {}
     for chunk in chunked(sorted(set(paths)), membership_budget):
-        stmt = select(*columns).where(entry.c.path.in_(chunk))
+        stmt = select(*columns).where(membership(entry.c.path, chunk, profile))
         if source is not None:
             stmt = stmt.select_from(source)
         found.update({mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()})

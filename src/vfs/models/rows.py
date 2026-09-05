@@ -158,7 +158,7 @@ _MYSQL_FAMILY: Final = ("mysql", "mariadb")
 
 # MSSQL's byte-wise UTF-8 collation (SQL Server 2019+ floor): VARCHAR n
 # counts bytes, and non-Latin1 survives the database codepage.
-_MSSQL_UTF8_BIN2: Final = "Latin1_General_100_BIN2_UTF8"
+MSSQL_UTF8_COLLATION: Final = "Latin1_General_100_BIN2_UTF8"
 
 
 def _string(length: int) -> String:
@@ -170,7 +170,7 @@ def _string(length: int) -> String:
     on the column side (the bind side is the engine's
     ``use_setinputsizes=False``).
     """
-    return String(length).with_variant(String(length, collation=_MSSQL_UTF8_BIN2), "mssql")
+    return String(length).with_variant(String(length, collation=MSSQL_UTF8_COLLATION), "mssql")
 
 
 class BytewiseString(TypeDecorator[str]):
@@ -210,7 +210,7 @@ class BytewiseString(TypeDecorator[str]):
         if dialect.name == "postgresql":
             return dialect.type_descriptor(String(self.length, collation="C"))
         if dialect.name == "mssql":
-            return dialect.type_descriptor(String(self.length, collation=_MSSQL_UTF8_BIN2))
+            return dialect.type_descriptor(String(self.length, collation=MSSQL_UTF8_COLLATION))
         return dialect.type_descriptor(String(self.length))
 
     def process_bind_param(self, value: str | None, dialect: Dialect) -> Any:
@@ -234,7 +234,7 @@ def _body_text() -> Text:
     collation: VARCHAR(max) under the database codepage mangles
     non-Latin1 bodies to ``?`` server-side.
     """
-    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY).with_variant(Text(collation=_MSSQL_UTF8_BIN2), "mssql")
+    return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY).with_variant(Text(collation=MSSQL_UTF8_COLLATION), "mssql")
 
 
 def _uuid_native(dialect: Dialect) -> bool:

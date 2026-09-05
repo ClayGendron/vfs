@@ -76,6 +76,7 @@ from vfs.pattern_matching import (
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.indexing import current_epoch
+from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import VerifyOffload
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
@@ -221,6 +222,7 @@ async def grep_rows(
         allow = await allow_list_ids(
             session,
             tables,
+            profile,
             membership_budget,
             channel,
             fan_arms=fan_arms,
@@ -231,7 +233,7 @@ async def grep_rows(
             nominated_count = 0
         else:
             try:
-                laddered = await _index_doc_ids(session, tables, membership_budget, epoch, plan, allow)
+                laddered = await _index_doc_ids(session, tables, profile, membership_budget, epoch, plan, allow)
             except PostingCorruptionError as exc:
                 error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
@@ -247,7 +249,7 @@ async def grep_rows(
         pushdown = pushdown_terms(
             tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
-        for mapping in await _entries_for_docs(session, tables, membership_budget, doc_ids, fetched, pushdown):
+        for mapping in await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown):
             if not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
@@ -364,6 +366,7 @@ async def grep_rows(
 async def _index_doc_ids(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     epoch: Epoch | None,
     plan: GramQuery,
@@ -394,12 +397,12 @@ async def _index_doc_ids(
         return [], 0
     groups = _plan_groups(plan)
     grams = sorted({gram for group in groups for gram in group})
-    meta = await _posting_meta(session, tables, membership_budget, epoch, grams)
+    meta = await _posting_meta(session, tables, profile, membership_budget, epoch, grams)
     chosen = _choose_grams(groups, meta)
     if allow is not None and _ladder_defers(chosen, meta, len(allow)):
         return None
     wanted = sorted({gram for group_chosen in chosen if group_chosen for gram in group_chosen})
-    blobs = await _posting_blobs(session, tables, membership_budget, epoch, wanted)
+    blobs = await _posting_blobs(session, tables, profile, membership_budget, epoch, wanted)
     # None: a required gram indexes nothing, the group is empty. []: a
     # gramless group — it nominates nothing either way. Both drop here.
     fed = [[blobs[gram] for gram in group_chosen] for group_chosen in chosen if group_chosen]
@@ -462,14 +465,19 @@ def _ladder_defers(chosen: Sequence[list[GramKey] | None], meta: dict[GramKey, P
 
 
 async def _posting_meta(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: Epoch, grams: Sequence[GramKey]
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    epoch: Epoch,
+    grams: Sequence[GramKey],
 ) -> dict[GramKey, PostingMeta]:
     """``gram → PostingMeta`` for the grams present in *epoch*."""
     posting = tables.posting_list
     meta: dict[GramKey, PostingMeta] = {}
     for chunk in chunked(list(grams), membership_budget):
         stmt = select(posting.c.gram_key, posting.c.doc_count, posting.c.byte_size).where(
-            posting.c.epoch == epoch, posting.c.gram_key.in_(chunk)
+            posting.c.epoch == epoch, membership(posting.c.gram_key, chunk, profile)
         )
         for row in await session.execute(stmt):
             meta[row.gram_key] = PostingMeta(row.doc_count, row.byte_size)
@@ -477,14 +485,19 @@ async def _posting_meta(
 
 
 async def _posting_blobs(
-    session: AsyncSession, tables: VFSTables, membership_budget: int, epoch: Epoch, grams: Sequence[GramKey]
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    epoch: Epoch,
+    grams: Sequence[GramKey],
 ) -> dict[GramKey, bytes]:
     """``gram → encoded posting blob`` — fetched only for the chosen grams."""
     posting = tables.posting_list
     blobs: dict[GramKey, bytes] = {}
     for chunk in chunked(list(grams), membership_budget):
         stmt = select(posting.c.gram_key, posting.c.postings).where(
-            posting.c.epoch == epoch, posting.c.gram_key.in_(chunk)
+            posting.c.epoch == epoch, membership(posting.c.gram_key, chunk, profile)
         )
         for row in await session.execute(stmt):
             blobs[row.gram_key] = row.postings
@@ -494,6 +507,7 @@ async def _posting_blobs(
 async def _entries_for_docs(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     membership_budget: int,
     doc_ids: DocIds,
     fetched: frozenset[str],
@@ -516,7 +530,9 @@ async def _entries_for_docs(
     per_chunk = max(1, membership_budget - pushdown.binds - kinds.binds)
     rows: list[RowMapping] = []
     for chunk in chunked(doc_ids, per_chunk):
-        stmt = select(*columns).where(entry.c.id.in_(chunk), entry.c.encoded, kinds.predicate, *pushdown.terms)
+        stmt = select(*columns).where(
+            membership(entry.c.id, chunk, profile), entry.c.encoded, kinds.predicate, *pushdown.terms
+        )
         rows.extend((await session.execute(stmt)).mappings())
     return rows
 

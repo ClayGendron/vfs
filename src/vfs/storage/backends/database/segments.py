@@ -35,7 +35,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select, update
 
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
-from vfs.storage.backends.database.dialects import bulk_insert, chunked, lock_rows
+from vfs.storage.backends.database.dialects import bulk_insert, chunked
+from vfs.storage.backends.database.membership import locked_lookup, membership
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -89,6 +90,7 @@ async def insert_postings(session: AsyncSession, segments: Table, entries: Itera
 async def move_postings(
     session: AsyncSession,
     segments: Table,
+    profile: DialectProfile,
     membership_budget: int,
     moves: Sequence[tuple[str, str, str]],
 ) -> None:
@@ -122,13 +124,15 @@ async def move_postings(
         for chunk in chunked(ids, membership_budget):
             stmt = (
                 update(segments)
-                .where(segments.c.segment == old_segment, segments.c.entry_id.in_(chunk))
+                .where(segments.c.segment == old_segment, membership(segments.c.entry_id, chunk, profile))
                 .values(segment=new_segment)
             )
             await session.execute(stmt)
     for segment, ids in removals.items():
         for chunk in chunked(ids, membership_budget):
-            await session.execute(delete(segments).where(segments.c.segment == segment, segments.c.entry_id.in_(chunk)))
+            await session.execute(
+                delete(segments).where(segments.c.segment == segment, membership(segments.c.entry_id, chunk, profile))
+            )
     if additions:
         await bulk_insert(session, segments, additions)
 
@@ -194,7 +198,7 @@ async def repair_segment_drift(
 ) -> Result:
     """Apply the collected deltas, each guarded by the path it was computed from.
 
-    The guard re-read locks the entry rows (:func:`lock_rows`), so a rival
+    The guard re-read locks the entry rows (:func:`~vfs.storage.backends.database.membership.locked_lookup`), so a rival
     path rewrite serializes against this repair instead of interleaving
     with it. A delta whose row now holds a different path — or holds one
     where the orphan check expected none — is skipped: the rival's
@@ -206,8 +210,8 @@ async def repair_segment_drift(
     ids = [delta.entry_id for delta in state.deltas] + list(state.orphans)
     current: dict[str, str] = {}
     for chunk in chunked(ids, membership_budget):
-        guard = select(entry.c.entry_id, entry.c.path).where(entry.c.entry_id.in_(chunk))
-        current.update({row.entry_id: row.path for row in await session.execute(lock_rows(guard, entry, profile))})
+        guard = locked_lookup(entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.path], profile)
+        current.update({row.entry_id: row.path for row in await session.execute(guard)})
     confirmed = [delta for delta in state.deltas if current.get(delta.entry_id) == delta.path]
     orphaned = {entry_id: held for entry_id, held in state.orphans.items() if entry_id not in current}
     removals: dict[str, list[str]] = {}
@@ -221,7 +225,9 @@ async def repair_segment_drift(
             removals.setdefault(segment, []).append(entry_id)
     for segment, segment_ids in removals.items():
         for chunk in chunked(segment_ids, membership_budget):
-            await session.execute(delete(segments).where(segments.c.segment == segment, segments.c.entry_id.in_(chunk)))
+            await session.execute(
+                delete(segments).where(segments.c.segment == segment, membership(segments.c.entry_id, chunk, profile))
+            )
     if additions:
         await bulk_insert(session, segments, additions)
     warnings = [_drift_warning(delta) for delta in confirmed]

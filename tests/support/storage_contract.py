@@ -1928,6 +1928,26 @@ class StorageContract:
         assert result.errors[0].path == "/missing.txt"
 
     @needs("stat")
+    async def test_a_membership_batch_past_the_chunk_finds_every_path_including_non_latin(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # One call, more paths than any engine's membership chunk, with
+        # names outside Latin-1: every key survives the trip to the engine
+        # and back, whatever form the dialect spells the predicate in.
+        canaries = ["/keys/café.txt", "/keys/日本語.txt", "/keys/🚀.txt", "/keys/Ünïcødé ß.txt"]
+        paths = [f"/keys/k{i:05d}.txt" for i in range(2_003)] + canaries
+        entries = [Entry(path=Path(path), content=f"body {i}") for i, path in enumerate(paths)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        stats = await storage.stat(observations=[Observation(path=Path(path)) for path in paths])
+        assert stats.success is True, stats.errors[:3]
+        assert sorted(o.path for o in stats.observations) == sorted(paths)
+        read = await storage.read(observations=[Observation(path=Path(path)) for path in canaries])
+        assert read.success is True, read.errors[:3]
+        assert {o.path: o.content for o in read.observations} == {
+            path: f"body {paths.index(path)}" for path in canaries
+        }
+
+    @needs("stat")
     async def test_stat_single_path_keeps_the_fail_whole_shape(self, storage: ConformanceBackend) -> None:
         result = await storage.stat(path=Path("/missing.txt"))
         assert result.success is False

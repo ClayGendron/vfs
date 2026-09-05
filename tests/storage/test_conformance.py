@@ -43,6 +43,7 @@ from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database.dialects import bulk_insert
+from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.segments import path_segments
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -214,6 +215,50 @@ class TestMSSQLBindBudget:
             files = [Entry(path=Path(f"/p{i:04d}/f.txt"), content="x") for i in range(n)]
             result = await storage.write(entries=files)
             assert result.success is True, result.errors[:3]
+
+
+@pytest.mark.mssql
+class TestMSSQLMembershipForm:
+    _LOCKS = text(
+        "SELECT resource_type, request_mode, COUNT(*) AS n FROM sys.dm_tran_locks "
+        "WHERE request_session_id = @@SPID GROUP BY resource_type, request_mode"
+    )
+
+    async def test_a_locked_lookup_at_the_chunk_seeks_and_never_takes_a_table_lock(self) -> None:
+        """The VALUES join under UPDLOCK, FORCESEEK: two key locks per row,
+        no table-level exclusive lock — the plan shape the lock budget
+        is sized for, pinned on the engine that flips to scans."""
+        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
+            canaries = ["/k/café.txt", "/k/日本語.txt", "/k/🚀.txt"]
+            paths = sorted([f"/k/k{i:05d}.txt" for i in range(1_997)] + canaries)
+            assert (
+                await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)
+            ).success
+            host = storage._host
+            entry = host.tables.entry
+            assert host.membership_budget >= len(paths)
+            async with host.session_factory() as session:
+                await session.connection(execution_options={"vfs_writer": True})
+                guard = locked_lookup(entry, entry.c.path, paths, [entry.c.path, entry.c.entry_id], host.profile)
+                locked = {row.path for row in await session.execute(guard)}
+                assert locked == set(paths)
+                locks = {(row.resource_type, row.request_mode): row.n for row in await session.execute(self._LOCKS)}
+                assert ("OBJECT", "X") not in locks, locks
+                assert locks.get(("KEY", "U"), 0) >= len(paths), locks
+                await session.rollback()
+
+    async def test_the_values_predicate_finds_non_latin_keys(self) -> None:
+        """The nvarchar bind cast through the UTF-8 collation loses nothing —
+        the reason the keys are cast server-side instead of typed by the driver."""
+        async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
+            canaries = ["/k/café.txt", "/k/日本語.txt", "/k/🚀.txt", "/k/Ünïcødé ß.txt"]
+            assert (
+                await storage.write(entries=[Entry(path=Path(p), content="x") for p in canaries], parents=True)
+            ).success
+            entry = storage._host.tables.entry
+            async with storage._host.session_factory() as session:
+                stmt = select(entry.c.path).where(membership(entry.c.path, canaries, storage._host.profile))
+                assert {row.path for row in await session.execute(stmt)} == set(canaries)
 
 
 @pytest.mark.mssql
