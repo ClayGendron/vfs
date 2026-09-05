@@ -1,8 +1,19 @@
 # 067 — Graph is traversal-only; centrality moves to index time
 
-- **Status:** seed — intent and consequences only; full spec to be
-  written when the graph subsystem work starts. `[NEEDS CLARIFICATION]`
-  markers are unresolved design forks, not omissions.
+- **Status:** cancelled and archived 2026-09-05 (Clay) — every
+  decision landed through other specs. The `graph` op is traversal
+  only with a closed method vocabulary (`GRAPH_METHODS` in
+  `src/vfs/ops.py`; the router validates it before dispatch and the
+  envelope reports the one `graph` op); the per-method rendering
+  vocabulary is gone; centrality is index-time row data — spec 136's
+  `signals` table, computed at reindex over the one `edges` table
+  spec 143 wired. What is *not* done is outside this seed's scope:
+  no storage backend implements the graph verb yet
+  (`SupportsGraph` is declared in `storage/protocol.py`; the router
+  routes it; `DatabaseStorage` has no `graph`). That is an
+  implementation spec of its own when the graph work starts. The
+  July 2026 seed follows as the record; `src/vfs/graph/` no longer
+  exists.
 - **Date:** 2026-07-08
 - **Owner:** Clay Gendron
 - **Kind:** refactor (graph subsystem contract + rendering vocabulary)

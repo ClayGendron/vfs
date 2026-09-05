@@ -50,7 +50,7 @@
 
 - **Asked:** 2026-07-10 (flagged in the STATUS true-up)
 - **Context:** Spec 054 decides that `serve()` locks mount topology, but its `allow_child_mounts` premise went stale after 056/068 reshaped mount admin. **Verified 2026-07-22:** `allow_child_mounts` has zero occurrences in live `src/` — the spec's mechanism language is not merely stale but unimplementable as written, and should be deleted rather than re-derived.
-- **Blocking:** `specs/active/054-mcp-serve-locks-topology/` — itself waiting on `serve()` existing
+- **Blocking:** `specs/archive/054-mcp-serve-locks-topology/` — cancelled 2026-09-05 (rule holds by construction); the serve spec, when written, carries the one-line rule
 - **Options considered:** re-derive the policy against the post-068 mount admin surface, or fold it into the MCP serve spec when that work starts
 - **Status:** parked
 

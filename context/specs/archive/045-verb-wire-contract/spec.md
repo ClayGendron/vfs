@@ -1,6 +1,16 @@
 # 045 — The Verb Surface Is a Wire Contract: Pin It Before a Remote Speaks It
 
-- **Status:** draft
+- **Status:** cancelled and archived 2026-09-05 (Clay) — superseded.
+  Half of this spec landed by another route: the per-op parameter
+  table in `src/vfs/params.py` is the drift-test substrate it asked
+  for, and `tests/test_params.py` pins every verb signature against
+  it. The other half — a written JSON schema and the unknown-param
+  skew policy — only binds once an MCP server exists, and belongs to
+  the serve spec when it is written. The two durable decisions here
+  (op-level capabilities only; identity is connection-derived, never
+  a wire field) are already recorded in spec 056 (decision 15) and
+  spec 070. The prose below is the July 2026 draft, kept as the
+  record; its file and line citations are to the pre-refactor tree.
 - **Date:** 2026-07-03
 - **Owner:** Clay Gendron
 - **Kind:** analysis + contract (schema pinning, skew policy) — feeds 034

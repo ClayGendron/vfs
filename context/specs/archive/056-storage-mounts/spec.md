@@ -1,8 +1,21 @@
 # 056 — Storage Mounts: One Router, One Table, One Funnel
 
-- **Status:** spec settled — research review 2026-07-07 (6
-  primary-source studies, 3 adversarial lenses, no fatals); all open
-  questions resolved with owner 2026-07-07; plan/tasks pending
+- **Status:** archived 2026-09-05 — Pass A landed; Passes B and C
+  cancelled here (Clay). The mount model this spec settled is the
+  live router: `Binding(path, storage, meta)`, `bind` / `unbind` /
+  `add_mount` / `remove_mount`, the identity `/` entry, longest-prefix
+  shadowing, the `cross_mount` and `busy` refusals, the hop budget and
+  `budget_exhausted`, keep-and-error dead backends, no storage I/O
+  under the mount lock, `no_overlay` in place of `allow_child_mounts`.
+  Passes B and C — `VFSStorageAdapter`, `VFSStorage`, generic
+  `MCPStorage`, the vfs MCP server (tasks 19–27) — never landed, and
+  the MCP protocol has moved since July 2026 (see the SEP entries in
+  `../../../open-questions.md`); that work is to be written as a
+  fresh spec from current research when it is next, not resumed from
+  this one. Decisions 12–23 below remain the design record it starts
+  from. Earlier status: spec settled — research review 2026-07-07
+  (6 primary-source studies, 3 adversarial lenses, no fatals); all
+  open questions resolved with owner 2026-07-07.
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron
 - **Kind:** refactor (mount model) + feature (adapter, MCP backend/server)

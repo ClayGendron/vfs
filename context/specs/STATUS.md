@@ -5,6 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **True-up 2026-09-05** — the eleven active specs reviewed against
+  the tree; four cancelled and archived (Clay): **045** verb wire
+  contract (the drift half landed as `params.py`; the schema half
+  belongs to the serve spec), **054** serve locks topology (its flag
+  is dead; the rule holds by construction since mount admin is not an
+  op), **056** storage mounts (Pass A is the live router; Passes B/C,
+  the adapter and the MCP trio, are to be respecced fresh), **067**
+  graph traversal-only (all decisions landed via `ops.py`, 136 and
+  143; the backend graph verb is its own future spec). Kept: 051,
+  058, 070, 080, 102, 137, 147.
+- **147 seeded 2026-09-05** — the import-edge extractor: spec 138's
+  Python import slice with its own number (Clay closed 138 on the
+  markdown work). One tree-sitter kernel per language behind the seam
+  138 built, `imports` rows through the same publisher and stamp law;
+  Python first. Two forks marked: the package roots the resolver
+  walks, and one stamp pair for all extractors or one per extractor.
 - **146 landed 2026-09-05** — `locate(path)` and
   `locate_edge(source, target)` on the router: where a path lives
   (owning mount, storage name and type, storage-local path) and, for
@@ -17,9 +33,9 @@ lines first; regenerate this file when the picture shifts (review the
   `exists` flag that asks the owning storage directly (no router
   gate) and fills `exists`/`kind`, or `note` when the storage cannot
   answer; the edge verdict then also names a missing endpoint.
-- **138 markdown slice landed 2026-09-05** — the reference-edge
-  extractor, markdown first (Clay's rescope; Python imports stay open
-  as slice D): a tree-sitter-markdown kernel in `crates/vfs-core`
+- **138 landed and archived 2026-09-05** — the reference-edge
+  extractor, markdown first (Clay's rescope; the Python import slice
+  moved out to **147**, seeded the same day): a tree-sitter-markdown kernel in `crates/vfs-core`
   (protocol 10) yields link, image and reference-definition
   destinations and path-shaped code spans with their referring lines;
   `models/links.py` filters and resolves (document directory then
@@ -728,19 +744,20 @@ pass):
 
 ## Outstanding work that does NOT touch `base.py`
 
-- **056 Pass B and Pass C** — `VFSStorageAdapter` and the MCP trio
-  (`backends/mcp.py`, `mcp_server.py`, `mcp` dep) unlanded (tasks
-  19–27). All new-file work; carries 057 decision 13's inbound half.
-  The project's stated destination (MCP design).
-- **045 — verb wire contract** (draft; doc/contract artifact). No
-  schema artifact yet; post-071 `ParamSpec` tables are the better
-  drift-test substrate.
-- **054 — serve() locks topology** (policy decision; waits on
-  `serve()` existing; `allow_child_mounts` premise verified dead in
-  live `src/` 2026-07-22).
+- ~~**056 Pass B and Pass C** — `VFSStorageAdapter` and the MCP
+  trio~~ — **archived 2026-09-05**: Pass A is the live router; the
+  adapter and the MCP trio are to be respecced fresh from current
+  research.
+- ~~**045 — verb wire contract**~~ — **cancelled and archived
+  2026-09-05**: the drift half landed as `params.py`; the schema half
+  belongs to the serve spec.
+- ~~**054 — serve() locks topology**~~ — **cancelled and archived
+  2026-09-05**: the flag is dead and the rule holds by construction
+  (mount admin is not an op).
 - **058 — row-level grants** (seed; needs 070's `Principal`).
-- **067 — graph traversal-only** (seed; downstream of ADR 018's
-  wiring spec — traversal reads the one edges table).
+- ~~**067 — graph traversal-only**~~ — **cancelled and archived
+  2026-09-05**: every decision landed via `ops.py`, 136 and 143; the
+  backend graph verb is its own future spec.
 
 ## Landed and archived (the 074–090 line)
 

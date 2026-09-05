@@ -1,15 +1,17 @@
 # 054 — `serve()` Defaults to a Locked Mount Topology at the MCP Boundary
 
-- **Status:** draft — decision recorded ahead of the `serve()` story;
-  binds whichever story lands the server.  Re-read against 056
-  (2026-07-07): the locked surface is now the router's control plane
-  (bind/unbind/add_mount/remove_mount/close), which 056 keeps off the
-  wire structurally — the server wrapper exposes no admin tools, so
-  this story's default is enforced by construction.
-  Re-read 2026-07-10: the "Why" section's `allow_child_mounts` claim is
-  stale — that flag no longer exists anywhere in `src/vfs` (it was
-  deleted with 056's mount-table rework), so the client-half symmetry
-  argument needs restating when `serve()` is specced.
+- **Status:** cancelled and archived 2026-09-05 (Clay) — mechanism
+  dead, rule already true by construction. `allow_child_mounts` was
+  deleted with spec 056's mount-table rework (`no_overlay` replaced
+  it, 056 decision 17), so the flag flip this spec describes cannot
+  be implemented as written. The rule it wanted holds today without
+  a mechanism: `add_mount` / `remove_mount` / `bind` / `unbind` /
+  `close` are the router's control plane and are not in the op
+  vocabulary (`src/vfs/ops.py`), so no served verb surface can reach
+  them. What survives for the serve spec is one line: *a served node
+  exposes no topology mutation, and any opt-in is loud and requires
+  both the server and the node to agree.* The July 2026 draft
+  follows as the record.
 - **Date:** 2026-07-07
 - **Owner:** Clay Gendron
 - **Kind:** policy decision (security default for the future MCP server)

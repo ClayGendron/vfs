@@ -1,15 +1,18 @@
 # 138 — the reference-edge extractor: imports and markdown links as `edges` rows minted at reindex
 
-- **Status:** markdown slice landed 2026-09-05 (slices A–C; see
-  *Landing note*); the Python import slice (D) stays open — drafted
+- **Status:** landed and archived 2026-09-05 — commit `788a463`
+  (the markdown slice, slices A–C; landing note below). The Python
+  import slice (D) is not part of this spec any more: on 2026-09-05
+  Clay closed 138 on the markdown work and split the language import
+  extractors into their own spec, **147**
+  (`../../active/147-import-edge-extractor/spec.md`). Drafted
   2026-08-26 from ADR 053 (its consequences name the extractor as
   load-bearing for the centrality signal on code). Ninth of the glean
-  arc; independent of 137 and may land any time after 136 (it produces
-  the rows 136 reads). **Rescoped 2026-09-05 (Clay): markdown links
-  first; language import extractors are a follow-up.** The design was
-  validated by scripts over this repository before coding — see
-  *Learnings* below; the semantics they changed are marked *(revised
-  2026-09-05)*.
+  arc; independent of 137. **Rescoped 2026-09-05 (Clay): markdown
+  links first; language import extractors are a follow-up.** The
+  design was validated by scripts over this repository before coding —
+  see *Learnings* below; the semantics they changed are marked
+  *(revised 2026-09-05)*.
 - **Born from:** ADR 053; Clay's 2026-08-26 pushback that edges need not
   be user-minted — code and markdown can be parsed for imports and
   links; memo `../../../research/2026-08-26-glean-ranking-signals-and-ranker-api.md`
@@ -168,9 +171,9 @@ directories, which is where the difference comes from.
   unresolved counts in the landing note; the vfs-native golden set
   (spec 131) re-scored with the `centrality` arm on extracted edges —
   the measure × γ table.
-- **D — Python imports** (follow-up, not this landing): the
+- **D — Python imports**: moved out to spec 147 on closing (the
   tree-sitter batch function, package-root resolution, the `imports`
-  type.
+  type).
 
 ## Landing criteria
 
@@ -276,8 +279,8 @@ signal, edge and indexing suites (118 passed).
 
 **Follow-ups, named.**
 
-- Slice D, Python imports: tree-sitter-python through the same seam,
-  package-root resolution, the `imports` type.
+- Slice D, Python imports: now spec 147 — tree-sitter-python through
+  the same seam, package-root resolution, the `imports` type.
 - Bare-name resolution for backticked file names (382 rescuable in
   `context/`, 54 ambiguous): needs a `name` index or a scan plus an
   ambiguity policy.
