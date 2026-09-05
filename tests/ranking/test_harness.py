@@ -13,19 +13,25 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
 from tests.ranking.driver import Loaded, bm25_run, glean_run, load_corpus
 from tests.ranking.embedders import HASH_DIMENSION, PIN_SENTENCE, POTION_MODEL, potion_embed
-from tests.ranking.merge import naive_score_sort, round_robin
+from tests.ranking.merge import halves, merged_glean_run, naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
-from tests.ranking.pins import assert_top10_pin
+from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin
+from tests.storage.database.test_signals import ENGINE_LEGS
+from vfs.base import VirtualFileSystem
 from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
+from vfs.models.rows import build_vfs_tables
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.ranking import Convex, InDegree, Log1p, PathShape, Ranker, Signal
@@ -141,6 +147,44 @@ class TestDeterminism:
         finally:
             await storage.close()
 
+    async def test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts(self, tmp_path: pathlib.Path) -> None:
+        stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{i}.sqlite") for i in range(2)]
+        try:
+            await assert_merge_top10_pin(*stores)
+        finally:
+            for store in stores:
+                await store.close()
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_the_merge_ordered_top10_pin_holds_on_a_sqlite_and_server_mix(
+        self, tmp_path: pathlib.Path, env_var: str
+    ) -> None:
+        local = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/local.sqlite")
+        try:
+            async with _server_storage(env_var) as server:
+                await assert_merge_top10_pin(local, server)
+        finally:
+            await local.close()
+
+
+@asynccontextmanager
+async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
+    url = os.environ.get(env_var)
+    if url is None:
+        pytest.skip(f"{env_var} is not set")
+    table_name = f"vfs_{uuid4().hex[:10]}"
+    storage = DatabaseStorage(url=url, table_name=table_name)
+    try:
+        yield storage
+    finally:
+        await storage.close()
+        engine = create_async_engine(url)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
+        finally:
+            await engine.dispose()
+
 
 def _embedders() -> dict[str, EmbeddingProvider]:
     """The harness's embedders: the hash floor always, potion when its model is cached."""
@@ -228,14 +272,10 @@ class TestArms:
     @pytest.fixture
     async def mounts(self, tmp_path: pathlib.Path, golden: Corpus) -> AsyncIterator[tuple[Loaded, Loaded]]:
         """The golden corpus split by top-level directory into two backends."""
-        halves = [
-            Corpus(f"{golden.name}/{prefix}", docs, {d: golden.paths[d] for d in docs}, golden.queries, golden.qrels)
-            for prefix in ("docs", "context")
-            if (docs := {d: t for d, t in golden.docs.items() if d.startswith(prefix + "/")})
-        ]
-        stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{i}.sqlite") for i in range(len(halves))]
+        split = halves(golden)
+        stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{i}.sqlite") for i in range(len(split))]
         try:
-            loaded = [await load_corpus(store, half) for store, half in zip(stores, halves, strict=True)]
+            loaded = [await load_corpus(store, half) for store, half in zip(stores, split, strict=True)]
             yield loaded[0], loaded[1]
         finally:
             for store in stores:
@@ -245,6 +285,20 @@ class TestArms:
         runs = [await bm25_run(mount) for mount in mounts]
         for arm, merge in (("naive_score_sort", naive_score_sort), ("round_robin", round_robin)):
             gate("vfs_native", f"merge/{arm}", evaluate(golden.qrels, merge(runs, 50)))
+
+    async def test_the_router_merge_beats_the_floors(self, mounts: tuple[Loaded, Loaded], golden: Corpus) -> None:
+        """The verb over two mounts: the union reranked under the order law, within
+        reach of the single-index arm and above both floors."""
+        vfs = VirtualFileSystem()
+        for loaded, mount in zip(mounts, MERGE_MOUNTS, strict=True):
+            await vfs.add_mount(loaded.storage, mount, owned=False)
+        numbers = evaluate(golden.qrels, await merged_glean_run(vfs, golden, MERGE_MOUNTS))
+        gate("vfs_native", "merge/rerank", numbers)
+        floors = recorded()["vfs_native"]
+        assert numbers["ndcg@10"] > max(
+            floors["merge/naive_score_sort"]["ndcg@10"], floors["merge/round_robin"]["ndcg@10"]
+        )
+        assert numbers["ndcg@10"] >= floors["glean"]["ndcg@10"] - 0.02
 
     async def test_the_uninformative_prior_control_is_recorded(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
         run = await bm25_run(await load_corpus(sqlite, golden))

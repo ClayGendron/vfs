@@ -618,8 +618,9 @@ class Result(BaseModel):
             return self
         mount = Path(mount)
         errors = [e.with_mount(mount) for e in self.errors]
+        extras = self.model_extra or {}
         if mount == "/":
-            return Result(ops=self.ops, observations=self.observations, errors=errors)
+            return Result(ops=self.ops, observations=self.observations, errors=errors, **extras)
         observations: list[Observation] = []
         for o in self.observations:
             if rebase_overflows(mount, o.path):
@@ -637,7 +638,7 @@ class Result(BaseModel):
                 )
                 continue
             observations.append(o.with_mount(mount))
-        return Result(ops=self.ops, observations=observations, errors=errors)
+        return Result(ops=self.ops, observations=observations, errors=errors, **extras)
 
     def without_mount(self, mount: str) -> Result:
         """New result with the *mount* prefix stripped from every row and error.
@@ -651,6 +652,7 @@ class Result(BaseModel):
             ops=self.ops,
             observations=[o.without_mount(mount) for o in self.observations],
             errors=[e.without_mount(mount) for e in self.errors],
+            **(self.model_extra or {}),
         )
 
     # -------------------------------------------------------------------

@@ -1,5 +1,22 @@
 # 052. glean Ranking: Convex Fusion, Aggregate-then-Fuse, Bounded Priors, and Download-and-Rerank Across Mounts
 
+- **Amended 2026-09-05 at spec 137's landing (Clay):** decision 4 gains
+  the **order law** — the union rerank never changes a mount's own
+  order. Each mount's rerank scores are repaired to be non-increasing
+  along the mount's list (isotonic regression, pool adjacent violators)
+  before the union sorts, so the rerank decides only how many rows each
+  mount contributes and how the mounts interleave, and every mount
+  contributes a prefix of its own answer. Measured before landing
+  (`../research/studies/2026-08-26-glean/fusion-and-merge/results_order_law.md`):
+  on vfs-shaped mounts (one engine, one fusion law) the law costs
+  0.001–0.009 nDCG@10 on random splits and up to 0.022 on topic splits;
+  only against a deliberately bad mount (the study's C) does it cost
+  0.05–0.07, the price of trusting a mount's order. Decision 6's
+  "bounded by the fan-out deadline" clause waits on spec 051; stages
+  run unbounded in-process today, and a stage must return exactly the
+  candidates it received (a different row set is a raised error, not a
+  result). The mounts' cosine stays out of the rerank (fork B2 still
+  open — the dense re-run has not happened).
 - **Status:** accepted 2026-08-26 — the ranking half of the glean
   decision set, resolved by Clay in session (the R1 and R3 review of
   the 2026-08-26 research leg). **Amends ADR 007**: the reference fusion

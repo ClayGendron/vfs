@@ -5,6 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **137 landed 2026-09-05** — the cross-mount merge: `glean` over
+  more than one mount fetches `min(3 × limit, 256)` rows per mount,
+  unions them (dedup on `content_hash`), re-scores every chunk with
+  one BM25 on the corpus-wide statistics the mounts export, and
+  orders the union under Clay's **order law** — a mount's own order is
+  never changed (isotonic repair per mount, then one sort; every
+  mount contributes a prefix of its answer). `vfs/rerank.py` holds
+  the `Reranker` seam, `BM25Rerank` (the only stage; configured on
+  the instance) and `merge_ranked`; one mount in scope stands as it
+  answered; extras now cross the mount seam. Measured before landing
+  on the study's simulation: the law costs 0.00–0.02 nDCG@10 on
+  vfs-shaped mounts, 0.05–0.07 only against a deliberately bad mount.
+  Harness: `merge/rerank` 0.7531 vs the single index 0.7589 and the
+  former sort 0.7353; `top10_merge.json` pins the merged order on
+  sqlite and the server mixes. ADR 052 amended. Fork B2 (cosine in
+  the rerank) stays open; the stage deadline waits on 051.
 - **True-up 2026-09-05** — the eleven active specs reviewed against
   the tree; four cancelled and archived (Clay): **045** verb wire
   contract (the drift half landed as `params.py`; the schema half

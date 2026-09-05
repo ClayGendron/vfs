@@ -99,7 +99,7 @@ from vfs.storage.backends.database.scope import (
 )
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.signals import signal_factors
-from vfs.storage.ranking import TOP_CHUNKS, Ranker, min_max, unit_cosine
+from vfs.storage.ranking import REFINE_GUIDANCE, SCORE_DECIMALS, TOP_CHUNKS, Ranker, min_max, unit_cosine
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -137,12 +137,7 @@ PROBE_DEEPEN: Final = 4
 OVERLAY_BUDGET: Final = 500
 """Unindexed entries the overlay scores per call, in path order."""
 
-SCORE_DECIMALS: Final = 9
-"""Rounding applied before ordering — the last-ulp drift between engines never reorders."""
-
 WALL_TIME_BUDGET: Final = 10.0
-
-_REFINE_GUIDANCE: Final = "narrow the query, add globs or ext filters, or scope with paths"
 
 ChunkId = int
 Ranking = list[tuple[ChunkId, float]]
@@ -365,7 +360,7 @@ async def glean_rows(
             ResultError(
                 kind=VFSErrorKind.truncated,
                 severity=Severity.warning,
-                message=f"glean result truncated at the {reason}; {_REFINE_GUIDANCE}",
+                message=f"glean result truncated at the {reason}; {REFINE_GUIDANCE}",
                 data=data,
             )
             for reason, data in truncations

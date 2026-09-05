@@ -1,18 +1,57 @@
-"""The cross-mount merge floors: naive score sort and round-robin.
+"""The cross-mount merge: the corpus split into mounts, the router's merge
+as a run, and the two floors it must beat.
 
-Two named baselines the regression gate keeps under the real merge
-(download-and-rerank, a later spec): the router's present behaviour —
-one sort over every mount's native scores — and interleaving by rank.
+The floors are the router's former behaviour — one sort over every
+mount's native scores — and interleaving by rank; the real merge is the
+verb through a :class:`VirtualFileSystem` holding one mount per half.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from tests.ranking.corpora import Corpus
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tests.ranking.driver import Run
+    from vfs.base import VirtualFileSystem
+
+
+def halves(corpus: Corpus) -> list[Corpus]:
+    """The corpus split by top-level directory — one mount per half."""
+    return [
+        Corpus(f"{corpus.name}/{prefix}", docs, {d: corpus.paths[d] for d in docs}, corpus.queries, corpus.qrels)
+        for prefix in ("docs", "context")
+        if (docs := {d: t for d, t in corpus.docs.items() if d.startswith(prefix + "/")})
+    ]
+
+
+async def merged_glean_run(vfs: VirtualFileSystem, corpus: Corpus, mounts: Sequence[str], k: int = 50) -> Run:
+    """Every query through the router over *mounts*, rows mapped back to doc ids."""
+    doc_of = corpus.doc_of
+    run: Run = {}
+    for qid, query in corpus.queries.items():
+        run[qid] = {doc_of[path]: score for path, score in await merged_ranking(vfs, query, mounts, k)}
+    return run
+
+
+async def merged_ranking(vfs: VirtualFileSystem, query: str, mounts: Sequence[str], k: int) -> list[tuple[str, float]]:
+    """Top-``k`` entries as ``(mount-local path, score)`` through the router's merge."""
+    result = await vfs.glean(query, limit=k)
+    assert result.success is True, result.errors
+    ranked: list[tuple[str, float]] = []
+    for row in result.observations:
+        assert row.score is not None
+        ranked.append((_unmounted(str(row.path), mounts), row.score))
+    return ranked
+
+
+def _unmounted(path: str, mounts: Sequence[str]) -> str:
+    owners = [m for m in mounts if path.startswith(m + "/")]
+    assert len(owners) == 1, (path, mounts)
+    return path[len(owners[0]) :]
 
 
 def naive_score_sort(runs: Sequence[Run], k: int) -> Run:

@@ -43,6 +43,12 @@ DEFAULT_RRF_K: Final = 10
 TOP_CHUNKS: Final = 3
 """Chunk ``Match`` rows an entry carries by default, best first."""
 
+SCORE_DECIMALS: Final = 9
+"""Rounding applied before ordering — the last-ulp drift between engines never reorders."""
+
+REFINE_GUIDANCE: Final = "narrow the query, add globs or ext filters, or scope with paths"
+"""What a truncated ranked answer tells the caller to do next."""
+
 MAX_SMOOTHING: Final = 0.3
 """The ceiling on a signal's hierarchy share ``gamma`` — past it the tree outranks the references."""
 

@@ -743,3 +743,16 @@ Data and tools used by the simulation:
 - model2vec potion-base-8M / 4M (MIT) —
   https://huggingface.co/minishlab/potion-base-8M
 - bm25s (MIT) — https://github.com/xhluca/bm25s
+
+---
+
+## Addendum (2026-09-05) — the order law
+
+Spec 137 landed the union rerank under one more rule from Clay: the
+rerank never changes the order a mount gave its own rows (each mount's
+rerank scores are repaired to be non-increasing along the mount's list
+by isotonic regression, then the union sorts). `sim_order_law.py`
+re-runs Part C's setup with that law beside the unconstrained rerank,
+on the study's mounts and on vfs-shaped ones; `results_order_law.md`
+holds the tables. On vfs-shaped mounts the law costs 0.00–0.02 nDCG@10;
+against the study's deliberately bad mount C it costs 0.05–0.07.

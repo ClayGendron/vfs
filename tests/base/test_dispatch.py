@@ -973,31 +973,6 @@ async def test_glob_trim_keeps_merge_order_despite_scores() -> None:
     assert result.paths == ("/a/f1",)
 
 
-async def test_glean_limit_trims_the_merge_by_score() -> None:
-    root = VirtualFileSystem()
-    low = CannedStorage(
-        {
-            "glean": Result(
-                ops=("glean",),
-                observations=[Observation(path=Path("/l1"), score=0.2), Observation(path=Path("/l2"), score=0.1)],
-            )
-        }
-    )
-    high = CannedStorage(
-        {
-            "glean": Result(
-                ops=("glean",),
-                observations=[Observation(path=Path("/h1"), score=0.9), Observation(path=Path("/h2"), score=0.8)],
-            )
-        }
-    )
-    await root.add_mount(low, "/low")
-    await root.add_mount(high, "/high")
-    result = await root.glean("query", limit=2)
-    assert result.success is True
-    assert result.paths == ("/high/h1", "/high/h2")
-
-
 async def test_grep_observations_match_in_memory_fetching_absent_content() -> None:
     # Chained grep never dispatches grep: content in hand matches in
     # memory, and only a row lacking content reads through its entry.

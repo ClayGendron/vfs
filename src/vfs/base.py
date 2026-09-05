@@ -67,6 +67,7 @@ from vfs.permissions import (
     check_writable_composed,
     coerce_permissions,
 )
+from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import Result, ResultError, VFSErrorKind, validation_message
 from vfs.results.kinds import Severity, kind_family
 from vfs.storage import (
@@ -231,6 +232,14 @@ class _HopGrant(NamedTuple):
     refusal: Result | None
 
 
+class _Ranked(NamedTuple):
+    """The ranked verb's fan-out policy: the query the merge rescores, the caller's bound, the per-mount depth."""
+
+    query: str
+    limit: int
+    depth: int
+
+
 class _FanoutPlan(NamedTuple):
     """One fan-out's classified inputs — an output-only plan.
 
@@ -288,12 +297,18 @@ class VirtualFileSystem:
         no_overlay: bool = False,
         hop_budget: int = 16,
         close_timeout: float = 10.0,
+        rerankers: Iterable[Reranker] = (BM25Rerank(),),
     ) -> None:
         if storage is None:
             storage = InMemoryStorage()
         if not isinstance(storage, StorageBackend):
             msg = f"storage must implement the read family (see vfs.storage), got {type(storage).__name__}"
             raise TypeError(msg)
+        self._rerankers = tuple(rerankers)
+        for stage in self._rerankers:
+            if not isinstance(stage, Reranker):
+                msg = f"rerankers must implement rerank(query, candidates, *, limit), got {type(stage).__name__}"
+                raise TypeError(msg)
         self.name = name
         self.title = title
         self.description = description
@@ -1362,11 +1377,15 @@ class VirtualFileSystem:
 
         The caller never picks a retrieval strategy — backends index by
         vector, lexical, and graph signals and fuse the rankings however
-        they see fit.  The router passes *query* and *limit* through
-        opaquely.  *limit* bounds each entry's answer **and** the merged
-        result, trimmed by score — with the caveat that cross-entry
-        scores are only loosely comparable (each entry ranks by its own
-        scorer).
+        they see fit.  One answering entry's order and scores stand as
+        the answer, trimmed to *limit*.  When more than one entry can
+        answer, each is asked for ``min(3 * limit, 256)`` rows and the
+        union is merged by :func:`vfs.rerank.merge_ranked`: one BM25 over
+        the returned chunk texts on corpus-wide statistics puts the rows
+        on one scale, and the order law keeps every entry's own order —
+        an entry's rows never swap places, so each contributes a prefix
+        of its own answer.  The merged scores are min-max scaled to the
+        unit interval; a ``legs`` extra explains the merge.
 
         Scope is grep's: *globs*/*globs_not* use glob's segment-aware
         pattern language and *ext*/*ext_not* filter by extension;
@@ -1393,7 +1412,7 @@ class VirtualFileSystem:
             "glean",
             paths=paths,
             observations=observations,
-            row_cap=limit,
+            ranked=_Ranked(query, limit, fanout_depth(limit)),
             filters=_PathFilters(globs, globs_not, ext, ext_not),
             query=query,
             limit=limit,
@@ -1511,6 +1530,7 @@ class VirtualFileSystem:
         op: Op,
         observations: list[Observation],
         *,
+        ranked: _Ranked | None = None,
         user_id: str | None = None,
         **kwargs: object,
     ) -> Result:
@@ -1548,11 +1568,17 @@ class VirtualFileSystem:
             if err is not None:
                 return err
 
+        if ranked is not None and len(groups) > 1:
+            kwargs = {**kwargs, "limit": ranked.depth}
         results = await self._gather_settled(
             self._dispatch_entry(binding, op, observations=group, user_id=user_id, **kwargs)
             for binding, group in groups.values()
         )
-        return Result.merge(results, op=op)
+        merged = Result.merge(results, op=op)
+        if ranked is None:
+            return merged
+        answers = list(zip((binding.path for binding, _group in groups.values()), results, strict=True))
+        return await self._rank_fanout(ranked, answers, merged)
 
     def _observation_rows(self, op: Op, observations: object) -> tuple[list[Observation], Result | None]:
         """Materialize and type-check an observations batch, or refuse it whole."""
@@ -1779,6 +1805,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         row_cap: int | None = None,
+        ranked: _Ranked | None = None,
         filters: _PathFilters | None = None,
         user_id: str | None = None,
         **kwargs: object,
@@ -1787,7 +1814,11 @@ class VirtualFileSystem:
 
         *kwargs* forwards to storage verbatim — this function strips and
         peeks nothing (:meth:`_glob_dispatches` reads ``kind`` and
-        ``columns`` for its root probe, forwarding both untouched).
+        ``columns`` for its root probe, forwarding both untouched), with
+        one declared exception: the ranked verb (*ranked* set) forwards
+        ``limit`` as the fan-out depth when more than one entry may
+        answer, and its rows merge through :meth:`_rank_fanout` instead
+        of the row cap.
         *filters* is the pattern-search verbs' one typed
         argument: the dispatch builders compose and residuate its glob
         channels per scope root and forward its ext channels as-is.
@@ -1814,10 +1845,9 @@ class VirtualFileSystem:
         crosses the seam as pattern text, one batched call per entry,
         with root assertions on a concurrent probe that no dispatch
         shape can drop.  *row_cap*
-        re-applies the caller's result bound after the
-        merge on every input shape — ``glean`` trims by score, everything
-        else keeps merge order — so it cannot multiply by entry count;
-        the bound arrives gated (integer ``>= 1`` or ``None``).
+        re-applies the caller's result bound after the merge on every
+        input shape, keeping merge order, so it cannot multiply by entry
+        count; the bound arrives gated (integer ``>= 1`` or ``None``).
 
         *paths* / *observations* exclusivity and the *row_cap* bound are
         enforced by the verbs' params gate before delegation.
@@ -1825,8 +1855,10 @@ class VirtualFileSystem:
         if not self._bindings:
             return self._closed_error(op)
         if observations is not None:
-            merged = await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
-            return self._cap_rows(merged, op, row_cap)
+            merged = await self._dispatch_grouped_observations(
+                op, observations, ranked=ranked, user_id=user_id, **kwargs
+            )
+            return merged if ranked is not None else self._cap_rows(merged, op, row_cap)
 
         grant = self._enter_hop(op=op)
         if grant.refusal is not None:
@@ -1835,6 +1867,8 @@ class VirtualFileSystem:
             plan = self._classify_fanout_scopes(op, paths)
             if plan.refusal is not None:
                 return plan.refusal
+            if ranked is not None and len({*plan.scoped, *plan.unscoped}) > 1:
+                kwargs = {**kwargs, "limit": ranked.depth}
 
             if filters is not None and op == "glob":
                 named_coros, branches, skips = self._glob_dispatches(plan, paths, filters, user_id=user_id, **kwargs)
@@ -1860,6 +1894,8 @@ class VirtualFileSystem:
             named = results[: len(named_coros)]
             branch_results = list(zip((path for path, _ in branches), results[len(named_coros) :], strict=True))
             merged = self._merge_fanout(named, branch_results, frozenset(plan.scoped), op)
+            if ranked is not None:
+                return self._with_skips(await self._rank_fanout(ranked, branch_results, merged), skips)
             return self._with_skips(self._cap_rows(merged, op, row_cap), skips)
         finally:
             self._exit_hop(grant.token)
@@ -2867,19 +2903,33 @@ class VirtualFileSystem:
             return result
         return result.model_copy(update={"errors": [*result.errors, *skips]})
 
+    async def _rank_fanout(self, ranked: _Ranked, answers: list[tuple[Path, Result]], merged: Result) -> Result:
+        """Order the ranked verb's rows: one answering entry stands; several merge under the order law.
+
+        *answers* pairs each entry's bind path with its rebased result in
+        dispatch order; *merged* is their envelope.  The merge's rows
+        replace the envelope's, its records append, and its explanation
+        rides as the ``legs`` extra.
+        """
+        ranking = await merge_ranked(
+            ranked.query, answers, limit=ranked.limit, depth=ranked.depth, rerankers=self._rerankers
+        )
+        update: dict[str, Any] = {"observations": ranking.observations, "errors": [*merged.errors, *ranking.records]}
+        if ranking.legs:
+            update["legs"] = ranking.legs
+        return merged.model_copy(update=update)
+
     @staticmethod
     def _cap_rows(result: Result, op: Op, row_cap: int | None) -> Result:
         """Re-apply the caller's result bound after a merge.
 
-        ``glean`` trims by score — the only ranked verb; cross-entry
-        scores are only loosely comparable.  Everything else keeps merge
-        order (named scopes first, then mount-table order), untouched by
-        stray scores.  Errors and warnings are never trimmed.
+        Merge order stands (named scopes first, then mount-table order),
+        untouched by stray scores; the ranked verb never arrives here —
+        its merge trims by its own law.  Errors and warnings are never
+        trimmed.
         """
         if row_cap is None or len(result.observations) <= row_cap:
             return result
-        if op == "glean":
-            return result.top(row_cap)
         return result.model_copy(update={"observations": list(result.observations[:row_cap])})
 
     # -------------------------------------------------------------------

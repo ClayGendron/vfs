@@ -64,6 +64,12 @@
    "recall@10": 0.3989,
    "recall@50": 0.7725
   },
+  "merge/rerank": {
+   "mrr@10": 0.9833,
+   "ndcg@10": 0.7531,
+   "recall@10": 0.4076,
+   "recall@50": 0.7875
+  },
   "merge/round_robin": {
    "mrr@10": 0.7542,
    "ndcg@10": 0.56,
