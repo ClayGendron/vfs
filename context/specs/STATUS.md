@@ -5,6 +5,18 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **143 follow-up closed 2026-09-04** — the hub-degree cost of the
+  edge touch: `_existing_triples` probes each chunk's sources, targets,
+  and types together (three membership lists sharing the budget, the
+  portable stand-in for tuple-IN) and returns row ids; the touch and
+  the delete key on the id — executemany by id, or one `VALUES` join
+  per chunk where the profile declares `values_join` (Postgres, SQL
+  Server), assignments cast to their column types. The 10k-edge
+  touch/remove: Postgres 8.4/5.1 s → 0.7/0.3 s, Oracle 8.4/4.9 s →
+  0.7/0.9 s, SQL Server 7.5/7.9 s → 1.2/1.5 s, MariaDB 7.1/7.4 s →
+  7.6/0.3 s (the MariaDB touch is spec 080's per-row driver round
+  trip). Pins: the one-edge-against-a-hub statement shapes, the
+  three-way budget share, the VALUES arm by rendering.
 - **145 landed 2026-09-04** — membership predicates through one helper
   (ADR 061): `storage/backends/database/membership.py` builds every
   chunked `IN` (`membership()`) and every guard read that must hold its

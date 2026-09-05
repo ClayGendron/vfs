@@ -245,6 +245,21 @@ The edges table is real and the last classified stub is gone.
   hub's whole out-edge set. Acknowledged in the docstring; a
   tighter predicate (edge_type, or tuple-IN where the dialect has it)
   is the future direction.
+  **Closed 2026-09-04** (the hub-cost follow-up): the probe binds the
+  chunk's sources, targets, and types as three membership lists — the
+  portable stand-in for tuple-IN, the chunk sharing the bind budget
+  three ways — and returns row ids; the touch and the delete key on
+  the id (`WHERE id = ?` executemany, or one `VALUES` join per chunk
+  where the profile declares `values_join`, each assignment cast to
+  its column's type so all-NULL payloads do not type as text; the
+  delete `id IN` chunks). The cost was never the probe alone: the
+  per-row touch keyed by the full triple was planned on the
+  `(source_id, edge_type)` index under fresh statistics and filtered
+  9,999 rows per row on Postgres (0.68 ms → 0.017 ms by id). 10k-edge
+  batch, touch/remove: Postgres 8.4/5.1 s → 0.7/0.3 s, Oracle
+  8.4/4.9 s → 0.7/0.9 s, SQL Server 7.5/7.9 s → 1.2/1.5 s (zero
+  escalations), MariaDB 7.1/7.4 s → 7.6/0.3 s — the MariaDB touch is
+  the per-row driver round trip spec 080 owns, not this cost.
 - A narrow race: a rival delete committing between mkedge's endpoint
   resolve and its insert can leave an authored edge naming a trashed
   entry (no FK exists to refuse it, and re-convergence only reclaims

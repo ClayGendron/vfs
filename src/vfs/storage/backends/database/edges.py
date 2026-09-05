@@ -39,22 +39,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
-from sqlalchemy import bindparam, delete, insert, select, update
+from sqlalchemy import bindparam, cast, column, delete, insert, select, update, values
 from sqlalchemy.exc import IntegrityError
 
 from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
 from vfs.paths import TRASH_ROOT
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
-from vfs.storage.backends.database.dialects import bulk_insert, chunked
+from vfs.storage.backends.database.dialects import bulk_insert, chunked, statement_budget
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
     from sqlalchemy import Table
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.dml import Update
 
     from vfs.models import Edge
     from vfs.models.rows import VFSTables
@@ -63,6 +64,12 @@ if TYPE_CHECKING:
 
 # One edge's stored identity: resolved endpoint ids plus the type segment.
 _Triple = tuple[str, str, str]
+
+# The identity probe binds three lists per statement; a chunk shares the budget.
+_PROBE_LISTS = 3
+
+# The executemany touch's bind names, in the touch row's column order.
+_TOUCH_BINDS = ("b_id", "b_weight", "b_distance", "b_prov")
 
 # Rows the collect pass streams per fetch — bounds driver buffering, not memory.
 _SCAN_YIELD_ROWS = 1024
@@ -135,6 +142,7 @@ async def mkedge_rows(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
     *,
     edges: list[Edge],
@@ -150,7 +158,8 @@ async def mkedge_rows(
     family's doctrine, and no statement runs. Existing identities are
     probed the same way, so every row's status (``created`` or
     ``updated``, the touch refreshing ``weight``/``distance``/
-    ``provenance``) is known without RETURNING; a duplicate racing in
+    ``provenance`` by row id — one ``VALUES`` join where the engine
+    takes it, executemany elsewhere) is known without RETURNING; a duplicate racing in
     from a row-layer writer (verb batches serialize on the endpoint
     locks) surfaces as a unique violation on the insert, redrives
     row-by-row under savepoints, and lands as the touch it raced.
@@ -164,9 +173,9 @@ async def mkedge_rows(
     ]
     if errors:
         return Result(ops=("mkedge",), errors=errors)
-    existing = await _existing_triples(session, table, profile, membership_budget, edges, ids)
+    existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
     creates: list[dict[str, object]] = []
-    touches: list[dict[str, object]] = []
+    touches: list[tuple[int, dict[str, object]]] = []
     status: dict[_Triple, Literal["created", "updated", "deleted"]] = {}
     for edge in edges:
         triple = (ids[str(edge.source)], ids[str(edge.target)], edge.edge_type)
@@ -178,28 +187,24 @@ async def mkedge_rows(
             "distance": edge.distance,
             "provenance": provenance,
         }
-        if triple in existing:
+        row_id = existing.get(triple)
+        if row_id is not None:
             status[triple] = "updated"
-            touches.append(values)
+            touches.append((row_id, values))
         else:
             status[triple] = "created"
             creates.append(values)
     await seam("mkedge:before-insert")
     conflicted = await _insert_arbitrated(session, table, creates)
-    for values in conflicted:
-        status[(str(values["source_id"]), str(values["target_id"]), str(values["edge_type"]))] = "updated"
-        touches.append(values)
+    if conflicted:
+        # The rival's rows are re-probed for their ids; one it has since
+        # deleted lands nowhere, the same end state the touch would leave.
+        raced = {_triple_of(values): values for values in conflicted}
+        status.update(dict.fromkeys(raced, "updated"))
+        found = await _existing_triples(session, table, profile, membership_budget, set(raced))
+        touches.extend((row_id, raced[triple]) for triple, row_id in found.items())
     if touches:
-        stmt = (
-            update(table)
-            .where(
-                table.c.source_id == bindparam("b_source"),
-                table.c.target_id == bindparam("b_target"),
-                table.c.edge_type == bindparam("b_type"),
-            )
-            .values(weight=bindparam("b_weight"), distance=bindparam("b_distance"), provenance=bindparam("b_prov"))
-        )
-        await session.execute(stmt, [_touch_params(values) for values in touches])
+        await _touch_rows(session, table, profile, parameter_budget, membership_budget, touches)
     rows = [
         _observe_edge(edge, status=status[(ids[str(edge.source)], ids[str(edge.target)], edge.edge_type)])
         for edge in edges
@@ -227,27 +232,23 @@ async def rmedge_rows(
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges)
-    existing = await _existing_triples(session, table, profile, membership_budget, edges, ids)
+    existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
     rows: list[Observation] = []
     warnings: list[ResultError] = []
-    doomed: list[dict[str, str]] = []
+    doomed: set[int] = set()
     for edge in edges:
         source_id, target_id = ids.get(str(edge.source)), ids.get(str(edge.target))
-        if source_id is None or target_id is None or (source_id, target_id, edge.edge_type) not in existing:
+        row_id = existing.get((source_id, target_id, edge.edge_type)) if source_id and target_id else None
+        if row_id is None:
             message = f"No edge: {edge.source} -> {edge.target} ({edge.edge_type})"
             warnings.append(
                 ResultError(kind=VFSErrorKind.not_found, message=message, path=edge.source, severity=Severity.warning)
             )
             continue
-        doomed.append({"b_source": source_id, "b_target": target_id, "b_type": edge.edge_type})
+        doomed.add(row_id)
         rows.append(_observe_edge(edge, status="deleted"))
-    if doomed:
-        stmt = delete(table).where(
-            table.c.source_id == bindparam("b_source"),
-            table.c.target_id == bindparam("b_target"),
-            table.c.edge_type == bindparam("b_type"),
-        )
-        await session.execute(stmt, doomed)
+    for chunk in chunked(sorted(doomed), membership_budget):
+        await session.execute(delete(table).where(membership(table.c.id, chunk, profile)))
     return Result(ops=("rmedge",), observations=rows, errors=warnings)
 
 
@@ -417,40 +418,54 @@ def _missing_endpoints(edges: list[Edge], ids: dict[str, str]) -> list[Path]:
     return missing
 
 
-async def _existing_triples(
-    session: AsyncSession,
-    table: Table,
-    profile: DialectProfile,
-    membership_budget: int,
-    edges: list[Edge],
-    ids: dict[str, str],
-) -> set[_Triple]:
-    """The batch's identities that already have a row.
-
-    Probed by ``source_id IN`` chunks and filtered to the batch's own
-    triples client-side — a tuple-IN predicate varies by dialect. The
-    filter result is bounded by the batch, but the fetch is bounded by
-    the probed sources' out-degree: a high-degree hub makes a small
-    batch read the hub's whole out-edge set. A tighter predicate
-    (``edge_type``, or tuple-IN where the dialect has one) is the
-    future direction, never a cap.
-    """
+def _wanted_triples(edges: list[Edge], ids: dict[str, str]) -> set[_Triple]:
+    """The batch's stored identities, for the endpoints that resolved."""
     wanted: set[_Triple] = set()
     for edge in edges:
         source_id, target_id = ids.get(str(edge.source)), ids.get(str(edge.target))
         if source_id is not None and target_id is not None:
             wanted.add((source_id, target_id, edge.edge_type))
-    found: set[_Triple] = set()
-    for chunk in chunked(sorted({source_id for source_id, _, _ in wanted}), membership_budget):
-        result = await session.execute(
-            select(table.c.source_id, table.c.target_id, table.c.edge_type).where(
-                membership(table.c.source_id, chunk, profile)
-            )
+    return wanted
+
+
+def _triple_of(values: dict[str, object]) -> _Triple:
+    return (str(values["source_id"]), str(values["target_id"]), str(values["edge_type"]))
+
+
+async def _existing_triples(
+    session: AsyncSession,
+    table: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    wanted: set[_Triple],
+) -> dict[_Triple, int]:
+    """``triple → row id`` for the wanted identities that already have a row.
+
+    Each chunk probes its own sources, targets, and types as three
+    membership lists — the portable stand-in for a tuple-IN — so the
+    fetch is bounded by the chunk's cross product against the store,
+    never by a hub's whole out-edge set; the client-side filter keeps
+    exactly the wanted triples. The ids key every touch and delete, so
+    those plan on the primary key whatever the optimizer makes of the
+    triple's indexes.
+    """
+    found: dict[_Triple, int] = {}
+    for chunk in chunked(sorted(wanted), max(1, membership_budget // _PROBE_LISTS)):
+        sources = sorted({source_id for source_id, _, _ in chunk})
+        targets = sorted({target_id for _, target_id, _ in chunk})
+        types = sorted({edge_type for _, _, edge_type in chunk})
+        stmt = select(table.c.id, table.c.source_id, table.c.target_id, table.c.edge_type).where(
+            membership(table.c.source_id, sources, profile),
+            membership(table.c.target_id, targets, profile),
+            membership(table.c.edge_type, types, profile),
         )
+        result = await session.execute(stmt)
         found.update(
-            (row.source_id, row.target_id, row.edge_type)
-            for row in result
-            if (row.source_id, row.target_id, row.edge_type) in wanted
+            {
+                (row.source_id, row.target_id, row.edge_type): row.id
+                for row in result
+                if (row.source_id, row.target_id, row.edge_type) in wanted
+            }
         )
     return found
 
@@ -484,15 +499,65 @@ async def _insert_arbitrated(
     return conflicted
 
 
-def _touch_params(values: dict[str, object]) -> dict[str, object]:
-    return {
-        "b_source": values["source_id"],
-        "b_target": values["target_id"],
-        "b_type": values["edge_type"],
-        "b_weight": values["weight"],
-        "b_distance": values["distance"],
-        "b_prov": values["provenance"],
+async def _touch_rows(
+    session: AsyncSession,
+    table: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    touches: list[tuple[int, dict[str, object]]],
+) -> None:
+    """Refresh the touched rows' payloads by id.
+
+    Where the profile takes a ``VALUES`` table as an UPDATE join source
+    the touch is one statement per chunk; elsewhere it is executemany
+    by id, which the array-binding drivers page and the others run row
+    by row. Learns nothing back: the probe already proved the rows.
+    """
+    rows = [_touch_row(row_id, touched) for row_id, touched in touches]
+    if not profile.values_join:
+        stmt = (
+            update(table)
+            .where(table.c.id == bindparam("b_id"))
+            .values(weight=bindparam("b_weight"), distance=bindparam("b_distance"), provenance=bindparam("b_prov"))
+        )
+        await session.execute(stmt, [dict(zip(_TOUCH_BINDS, row, strict=True)) for row in rows])
+        return
+    per_statement = statement_budget(
+        lambda probe: _touch_values_stmt(table, probe),
+        rows[0],
+        session.get_bind().dialect,
+        parameter_budget=parameter_budget,
+        row_width=len(rows[0]),
+        row_cap=membership_budget,
+    )
+    for chunk in chunked(rows, per_statement):
+        await session.execute(_touch_values_stmt(table, chunk))
+
+
+def _touch_row(row_id: int, touched: dict[str, object]) -> tuple[object, ...]:
+    return (row_id, touched["weight"], touched["distance"], touched["provenance"])
+
+
+def _touch_values_stmt(table: Table, rows: Sequence[tuple[object, ...]]) -> Update:
+    """One payload-refresh VALUES join over *rows* of ``(id, weight, distance, provenance)``.
+
+    Each assignment casts to its column's type: a payload column that is
+    NULL in every row renders as bare NULLs, which the engine would
+    otherwise type as text.
+    """
+    incoming = values(
+        column("v_id", table.c.id.type),
+        column("v_weight", table.c.weight.type),
+        column("v_distance", table.c.distance.type),
+        column("v_prov", table.c.provenance.type),
+        name="incoming",
+    ).data(list(rows))
+    assignments = {
+        name: cast(incoming.c[f"v_{alias}"], table.c[name].type)
+        for name, alias in (("weight", "weight"), ("distance", "distance"), ("provenance", "prov"))
     }
+    return update(table).where(table.c.id == incoming.c.v_id).values(**assignments)
 
 
 def _observe_edge(edge: Edge, *, status: Literal["created", "updated", "deleted"]) -> Observation:

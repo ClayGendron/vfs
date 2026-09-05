@@ -673,6 +673,7 @@ class DatabaseStorage:
                 session,
                 self._host.tables,
                 self._host.profile,
+                self._host.parameter_budget,
                 self._host.membership_budget,
                 edges=edges,
                 provenance=provenance,

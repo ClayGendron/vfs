@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, event, insert, select
+from sqlalchemy.dialects import mssql, postgresql
 from ulid import ULID
 
 from tests.support.database_helpers import _url
@@ -27,6 +30,7 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.edges import (
     EdgeRebuildState,
+    _touch_rows,
     collect_edge_drift,
     mkedge_rows,
     repair_edge_drift,
@@ -101,6 +105,14 @@ async def _plant_stray(storage: DatabaseStorage, source_id: str, target_id: str)
             insert(edges).values(source_id=source_id, target_id=target_id, edge_type="ref", provenance="user")
         )
         await session.commit()
+
+
+async def _weights(storage: DatabaseStorage) -> dict[tuple[str, str, str], float | None]:
+    """Every non-fs edge's stored weight, by triple."""
+    edges = storage._host.tables.edges
+    async with storage._host.session_factory() as session:
+        rows = (await session.execute(select(edges).where(edges.c.edge_type != "fs"))).mappings().all()
+    return {(r["source_id"], r["target_id"], r["edge_type"]): r["weight"] for r in rows}
 
 
 async def _authored(storage: DatabaseStorage) -> set[tuple[str, str, str]]:
@@ -302,6 +314,7 @@ class TestMkedgeArbitration:
                     session,
                     tables,
                     storage._host.profile,
+                    storage._host.parameter_budget,
                     storage._host.membership_budget,
                     edges=[edge],
                     provenance="system",
@@ -311,7 +324,91 @@ class TestMkedgeArbitration:
         assert result.success is True
         assert result.observations[0].status == "updated"
         assert await _authored(storage) == {(ids["/a.md"], ids["/b.md"], "ref")}
+        assert await _weights(storage) == {(ids["/a.md"], ids["/b.md"], "ref"): 1.0}
         await _assert_mirror(storage)
+
+
+# ---------------------------------------------------------------------------
+# Hub-bounded statements — the probe names the batch's own triples; touches
+# and deletes key on the row id
+# ---------------------------------------------------------------------------
+
+
+async def _fan_out(storage: DatabaseStorage, fan: int) -> list[Edge]:
+    """A hub with *fan* out-edges, authored through the verb."""
+    entries = [Entry(path=Path("/hub.py"), content="h")]
+    entries += [Entry(path=Path(f"/s{i:03}.py"), content=str(i)) for i in range(fan)]
+    assert (await storage.write(entries=entries)).success is True
+    edges = [Edge(source=Path("/hub.py"), target=Path(f"/s{i:03}.py"), edge_type="imports") for i in range(fan)]
+    assert (await storage.mkedge(edges=edges)).success is True
+    return edges
+
+
+class TestHubBoundedStatements:
+    """A small batch against a high-degree hub reads and writes only its own rows."""
+
+    async def test_the_probe_touch_and_delete_name_only_the_batch(self, storage: DatabaseStorage) -> None:
+        await _fan_out(storage, 40)
+        ids = await _entry_ids(storage)
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        one = Edge(source=Path("/hub.py"), target=Path("/s007.py"), edge_type="imports", weight=2.0)
+        touched = await storage.mkedge(edges=[one])
+        assert touched.success is True and touched.observations[0].status == "updated"
+        (probe,) = [s for s in statements if s.startswith("SELECT") and "_edges" in s]
+        assert all(term in probe for term in ("source_id IN", "target_id IN", "edge_type IN"))
+        (touch,) = [s for s in statements if s.startswith("UPDATE")]
+        assert touch.endswith("_edges.id = ?") and "source_id" not in touch.split("WHERE")[1]
+        assert (await _weights(storage))[(ids["/hub.py"], ids["/s007.py"], "imports")] == 2.0
+        statements.clear()
+        removed = await storage.rmedge(edges=[one])
+        assert removed.success is True and removed.observations[0].status == "deleted"
+        (deletion,) = [s for s in statements if s.startswith("DELETE")]
+        assert "_edges.id IN" in deletion and "source_id" not in deletion
+        assert len(await _authored(storage)) == 39
+
+    async def test_the_probe_shares_the_bind_budget_among_its_three_lists(self, storage: DatabaseStorage) -> None:
+        edges = await _fan_out(storage, 5)
+        tables = storage._host.tables
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        async with storage._host.session_factory() as session:
+            result = await mkedge_rows(
+                session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", user_id=None
+            )
+            await session.commit()
+        assert result.success is True and {o.status for o in result.observations} == {"updated"}
+        probes = [s for s in statements if s.startswith("SELECT") and "_edges" in s]
+        # A budget of 6 binds is 2 triples a probe: 5 edges take 3 statements.
+        assert len(probes) == 3
+
+    async def test_a_values_join_profile_touches_by_one_statement_per_chunk(self, storage: DatabaseStorage) -> None:
+        table = storage._host.tables.edges
+        statements = []
+
+        async def execute(stmt, params=None):
+            statements.append(stmt)
+
+        spy = SimpleNamespace(get_bind=lambda: storage._host.engine.sync_engine, execute=execute)
+        touches: list[tuple[int, dict[str, object]]] = [
+            (i, {"weight": None, "distance": None, "provenance": "user"}) for i in range(5)
+        ]
+        profile = replace(storage._host.profile, values_join=True)
+        await _touch_rows(cast("Any", spy), table, profile, 64, 2, touches)
+        assert len(statements) == 3
+        sql = str(statements[0].compile(dialect=postgresql.asyncpg.dialect()))
+        assert sql.startswith("UPDATE") and "FROM (VALUES" in sql and sql.endswith("_edges.id = incoming.v_id")
+        # Bare NULL payloads would type as text; every assignment casts.
+        assert "SET weight=CAST(incoming.v_weight AS FLOAT)" in sql
+        assert "(VALUES" in str(statements[0].compile(dialect=mssql.dialect()))
 
 
 class TestEndpointLocks:
