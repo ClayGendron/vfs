@@ -26,6 +26,10 @@ from vfs.paths import Path, is_meta_path, validate_segment
 # the verb gate; row-layer minting is the only writer.
 RESERVED_EDGE_TYPE: Final = "fs"
 
+# The provenance stamped on edges the reindex extractors mint from content.
+# Only the extractor deletes rows carrying it; a verb touch re-stamps them.
+EXTRACTED_PROVENANCE: Final = "extracted"
+
 
 class Edge(BaseModel):
     """One directed, typed edge between two user-space entries."""

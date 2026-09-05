@@ -70,6 +70,12 @@
    "recall@10": 0.3187,
    "recall@50": 0.7503
   },
+  "signals/centrality": {
+   "mrr@10": 0.9833,
+   "ndcg@10": 0.7594,
+   "recall@10": 0.4194,
+   "recall@50": 0.7903
+  },
   "signals/path_shape": {
    "mrr@10": 0.9708,
    "ndcg@10": 0.7579,

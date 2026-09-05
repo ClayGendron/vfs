@@ -187,3 +187,11 @@ one. Not run: the full 3.11–3.14 matrix (before the push).
 and stripped the database drivers (the extras) from `.venv`; the first
 leg run failed on `No module named 'asyncpg'`. CLAUDE.md now spells
 the command with `--all-extras --group dev`.
+
+**Addendum 2026-09-05 (spec 138, markdown slice).** The measure × γ
+table this note deferred ran once the extractor minted 166 `links`
+edges on the golden set — see spec 138's landing note for the table.
+The prior is neutral on that corpus: `log1p` at β = 0.5 holds the
+control (0.7594 vs 0.7589 nDCG@10, recall@10 +0.006), every linear arm
+at that weight costs 0.005–0.010. The harness records
+`signals/centrality` beside `signals/path_shape`.

@@ -961,9 +961,9 @@ class TestReindexLoopResponsiveness:
         real_assess = indexing._assess_and_split
         real_builder = indexing.postings_builder
 
-        def sleepy_assess(rows: Any, generation: str) -> Any:
+        def sleepy_assess(rows: Any, generation: str, links_generation: str) -> Any:
             time.sleep(0.5)
-            return real_assess(rows, generation)
+            return real_assess(rows, generation, links_generation)
 
         monkeypatch.setattr(indexing, "_assess_and_split", sleepy_assess)
         monkeypatch.setattr(indexing, "postings_builder", lambda: _SleepyBuilder(real_builder()))

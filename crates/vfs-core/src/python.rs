@@ -17,6 +17,7 @@ use pyo3::types::PyBytes;
 use crate::chunk::{GRAMMAR_NAMES, split_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
+use crate::links::markdown_refs_batch;
 use crate::postings::{DrainedPostings, PostingsAccumulator, candidate_ids as candidates};
 use crate::signals::{Measure, centrality_prior as prior};
 use crate::vectors::cosine_topk;
@@ -24,7 +25,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 9;
+const PROTOCOL_VERSION: u32 = 10;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -194,6 +195,21 @@ fn chunk_spans(
                         .collect()
                 })
             })
+            .collect()
+    })
+}
+
+/// Markdown references per UTF-8 body, parsed in parallel off the GIL:
+/// `(destination, folded referring line)` rows in document order — link
+/// destinations as written and path-shaped code spans. The host filters
+/// schemes and anchors and resolves what remains.
+#[pyfunction]
+fn markdown_refs(py: Python<'_>, bodies: Vec<PyBackedBytes>) -> Vec<Vec<(String, String)>> {
+    let slices: Vec<&[u8]> = bodies.iter().map(|body| body.as_ref()).collect();
+    py.detach(|| {
+        markdown_refs_batch(&slices)
+            .into_iter()
+            .map(|refs| refs.into_iter().map(|r| (r.dest, r.context)).collect())
             .collect()
     })
 }
@@ -484,6 +500,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(distinct_gram_count, m)?)?;
     m.add_function(wrap_pyfunction!(supported_grammars, m)?)?;
     m.add_function(wrap_pyfunction!(chunk_spans, m)?)?;
+    m.add_function(wrap_pyfunction!(markdown_refs, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_char_classes, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_casefolds, m)?)?;

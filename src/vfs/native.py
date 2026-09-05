@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - pinned by a subprocess test
     )
     raise ImportError(message) from error
 
-EXPECTED_PROTOCOL: Final = 9
+EXPECTED_PROTOCOL: Final = 10
 
 if _ext.PROTOCOL_VERSION != EXPECTED_PROTOCOL:  # pragma: no cover - pinned by a subprocess test
     message = (
@@ -80,3 +80,20 @@ def chunk_spans(
     leaves.
     """
     return _ext.chunk_spans(bodies, chunk_size=chunk_size)
+
+
+# ---------------------------------------------------------------------------
+# Markdown references
+# ---------------------------------------------------------------------------
+
+
+def markdown_refs(bodies: list[bytes]) -> list[list[tuple[str, str]]]:
+    """Markdown references per UTF-8 body, parsed in parallel off the GIL.
+
+    Per body, ``(destination, referring line)`` rows in document order:
+    link, image and reference-definition destinations as written, and
+    code spans shaped like a path; the line is folded to one bounded
+    line. The caller decides what is an in-mount reference and resolves
+    it.
+    """
+    return _ext.markdown_refs(bodies)

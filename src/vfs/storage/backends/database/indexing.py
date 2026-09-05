@@ -62,10 +62,11 @@ from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
 from vfs.models.lexical import options_fingerprint
+from vfs.models.links import link_generation
 from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
 from vfs.paths import Path
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     ByteBatcher,
     StaleSnapshot,
@@ -76,6 +77,7 @@ from vfs.storage.backends.database.dialects import (
     supports_values_update,
 )
 from vfs.storage.backends.database.lexical import build_lexical_epoch
+from vfs.storage.backends.database.links import LinkWork, extract_link_work, publish_links
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import kind_membership
@@ -192,6 +194,13 @@ def lease_lost_result() -> Result:
     return Result(ops=("reindex",), errors=[error])
 
 
+def with_notes(result: Result, notes: list[ResultError]) -> Result:
+    """*result* carrying *notes* — an earlier phase's advisory records — ahead of its own."""
+    if not notes:
+        return result
+    return Result(ops=result.ops, observations=result.observations, errors=[*notes, *result.errors])
+
+
 def lease_lost(result: Result) -> bool:
     """Whether *result* is the lease-lost verdict itself, not another conflict."""
     return any(error.data == LEASE_LOST_DATA for error in result.errors)
@@ -222,6 +231,7 @@ class _ChunkWork(NamedTuple):
     ineligible: list[tuple[str, int]]
     resplit_ids: list[str]
     chunk_rows: list[dict[str, object]]
+    links: list[LinkWork]
 
 
 async def chunk_dirty(
@@ -254,6 +264,14 @@ async def chunk_dirty(
     eligibility is stamped from the body just read, and ``chunked`` flips
     guarded on the version the content was read at — a guard miss leaves
     the entry dirty for the next run, and its just-written state unused.
+    The **extracted links** ride the same pass: the markdown bodies in
+    the dirty set that their own stamp pair (``link_source_hash``,
+    ``link_generation``) does not cover parse in the same offload hop,
+    their extracted out-edges are rewritten
+    (:func:`~vfs.storage.backends.database.links.publish_links`), and
+    the stamps flip in the same guarded statement as ``chunked``. The
+    references that resolved to no live entry are counted on an
+    info-severity record; they are never an error.
 
     The pass's CPU — eligibility assessment, the splits, and chunk-row
     assembly — runs whole on the backend's offload pool
@@ -278,7 +296,13 @@ async def chunk_dirty(
     """
     entry, content, chunks = tables.entry, tables.content, tables.chunks
     generation = chunk_generation()
-    stale = or_(entry.c.chunk_generation.is_(None), entry.c.chunk_generation != generation)
+    links_generation = link_generation()
+    stale = or_(
+        entry.c.chunk_generation.is_(None),
+        entry.c.chunk_generation != generation,
+        entry.c.link_generation.is_(None),
+        entry.c.link_generation != links_generation,
+    )
     probe = select(literal(1)).where(entry.c.chunked, stale).limit(1)
     if (await session.execute(probe)).first() is not None:
         await session.execute(update(entry).where(entry.c.chunked, stale).values(chunked=False))
@@ -291,6 +315,8 @@ async def chunk_dirty(
             entry.c.content_hash,
             entry.c.chunk_source_hash,
             entry.c.chunk_generation,
+            entry.c.link_source_hash,
+            entry.c.link_generation,
             content.c.content,
         )
         .select_from(tables.content_joined())
@@ -301,7 +327,7 @@ async def chunk_dirty(
     if not rows:
         return Result(ops=("reindex",))
     await seam("reindex:before-chunk-split")
-    work = await call_offloaded(executor, partial(_assess_and_split, rows, generation))
+    work = await call_offloaded(executor, partial(_assess_and_split, rows, generation, links_generation))
     carried = await _carried_embeddings(session, chunks, work, profile, membership_budget) if carry_embeddings else {}
     for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(membership(chunks.c.entry_id, ids, profile)))
@@ -309,13 +335,27 @@ async def chunk_dirty(
         await bulk_insert(session, chunks, work.chunk_rows)
     if carried:
         await _carry_embeddings(session, chunks, work, carried)
+    links = await publish_links(session, tables, profile, membership_budget, work.links)
     await seam("reindex:before-chunk-flip")
-    provenance = {"chunk_source_hash": entry.c.content_hash, "chunk_generation": generation}
+    provenance = {
+        "chunk_source_hash": entry.c.content_hash,
+        "chunk_generation": generation,
+        "link_source_hash": entry.c.content_hash,
+        "link_generation": links_generation,
+    }
     stamp = {"chunked": True, "indexable": True, **provenance}
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.eligible, assignments=stamp)
     stamp = {"chunked": True, "indexable": False, **provenance}
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.ineligible, assignments=stamp)
-    return Result(ops=("reindex",))
+    if not links.unresolved:
+        return Result(ops=("reindex",))
+    note = ResultError(
+        kind=VFSErrorKind.not_found,
+        severity=Severity.info,
+        message=f"{links.unresolved} markdown references across {links.sources} documents name no live entry",
+        data={"leg": "links", "sources": links.sources, "edges": links.edges, "unresolved": links.unresolved},
+    )
+    return Result(ops=("reindex",), errors=[note])
 
 
 # ---------------------------------------------------------------------------
@@ -497,12 +537,13 @@ def _now_ms() -> int:
     return int(time() * 1000)
 
 
-def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
+def _assess_and_split(rows: Sequence[Any], generation: str, links_generation: str) -> _ChunkWork:
     """The chunk pass's CPU pipeline, whole — runs on the offload pool.
 
     Assess eligibility and the fingerprint skip per row, split the
-    remainder in byte-bounded batches, and assemble the fresh chunk
-    rows. Pure over its inputs: no session, no shared state.
+    remainder in byte-bounded batches, assemble the fresh chunk rows,
+    and extract the markdown references the link stamps do not cover.
+    Pure over its inputs: no session, no shared state.
     """
     eligible: list[tuple[str, int]] = []
     ineligible: list[tuple[str, int]] = []
@@ -539,7 +580,7 @@ def _assess_and_split(rows: Sequence[Any], generation: str) -> _ChunkWork:
             for row, pieces in zip(batch, batches, strict=True)
             for piece in pieces
         )
-    return _ChunkWork(eligible, ineligible, resplit_ids, chunk_rows)
+    return _ChunkWork(eligible, ineligible, resplit_ids, chunk_rows, extract_link_work(rows, links_generation))
 
 
 async def _carried_embeddings(

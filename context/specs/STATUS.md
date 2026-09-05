@@ -5,6 +5,22 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **138 markdown slice landed 2026-09-05** — the reference-edge
+  extractor, markdown first (Clay's rescope; Python imports stay open
+  as slice D): a tree-sitter-markdown kernel in `crates/vfs-core`
+  (protocol 10) yields link, image and reference-definition
+  destinations and path-shaped code spans with their referring lines;
+  `models/links.py` filters and resolves (document directory then
+  root); extraction rides the chunk pass's offload hop with its own
+  stamp pair (`link_source_hash`, `link_generation`) so a body is read
+  once and only changed documents re-extract; `publish_links` probes
+  candidates by exact path in membership chunks and rewrites only each
+  source's `extracted` out-edges (schema format 12 adds the stamps and
+  `edges.context`). Corpus check on this repo: 983 edges from 322
+  documents, 3.5 s first reindex, 0.1 s the second. The measure × γ
+  table 136 deferred is recorded: neutral on the golden set (log1p
+  holds the control, linear costs nDCG). Gates: `ci.sh 3.13` 100 %,
+  cargo 62, four legs 118 passed.
 - **136 landed 2026-09-04** — ranking signals (ADR 053 implemented,
   annotated at landing): schema format 11 with `signals` (the key
   carries the generation, so a refresh writes beside the old and

@@ -195,7 +195,7 @@ async def mkedge_rows(
             status[triple] = "created"
             creates.append(values)
     await seam("mkedge:before-insert")
-    conflicted = await _insert_arbitrated(session, table, creates)
+    conflicted = await insert_arbitrated(session, table, creates)
     if conflicted:
         # The rival's rows are re-probed for their ids; one it has since
         # deleted lands nowhere, the same end state the touch would leave.
@@ -470,7 +470,7 @@ async def _existing_triples(
     return found
 
 
-async def _insert_arbitrated(
+async def insert_arbitrated(
     session: AsyncSession, table: Table, creates: list[dict[str, object]]
 ) -> list[dict[str, object]]:
     """Insert fresh identities; the unique key arbitrates a racing duplicate.

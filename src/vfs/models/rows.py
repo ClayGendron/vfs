@@ -67,6 +67,7 @@ from sqlalchemy.dialects.oracle import RAW
 from ulid import ULID
 
 from vfs.models.lexical import MAX_TERM_BYTES
+from vfs.models.links import MAX_LINK_CONTEXT_LENGTH
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 
@@ -82,7 +83,8 @@ if TYPE_CHECKING:
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
     {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"}
-    | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"},
+    | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"}
+    | {"link_source_hash", "link_generation"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -94,7 +96,7 @@ ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset({"content"})
 # the persistence layer resolves to entry identities.
 VERSION_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"entry_id"})
 CHUNK_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "entry_id"})
-EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id", "provenance"})
+EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id", "provenance", "context"})
 
 # Who authored an edge row. Minted by the layer, never the caller: the verb
 # gate stamps user/agent/system, the fs mirror stamps system, the reindex
@@ -129,7 +131,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 11
+SCHEMA_FORMAT_VERSION: Final = 12
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -394,6 +396,10 @@ def build_vfs_tables(
         # stored chunk rows derive from — the fingerprint-skip law reads both.
         Column("chunk_source_hash", String(64)),
         Column("chunk_generation", _string(32)),
+        # Link provenance: the body hash and extractor generation the stored
+        # extracted out-edges derive from — the same skip law, its own stamp.
+        Column("link_source_hash", String(64)),
+        Column("link_generation", _string(32)),
         Column("owner_id", _string(255), index=True),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
@@ -484,6 +490,9 @@ def build_vfs_tables(
         Column("weight", Float),
         Column("distance", Float),
         Column("provenance", _string(16), nullable=False),
+        # The referring line an extracted edge was read from, folded; NULL
+        # on every authored row.
+        Column("context", _string(MAX_LINK_CONTEXT_LENGTH)),
         UniqueConstraint("source_id", "target_id", "edge_type", name=f"uq_{table_name}_edges_src_tgt_type"),
         Index(f"ix_{table_name}_edges_fwd", "source_id", "edge_type"),
         Index(f"ix_{table_name}_edges_rev", "target_id", "edge_type"),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import UnionType
-from typing import Union, get_args, get_origin
+from typing import Union, cast, get_args, get_origin
 from uuid import UUID
 
 import pytest
@@ -18,6 +18,7 @@ from ulid import ULID
 
 from vfs.models import Chunk, Edge, Entry, Version
 from vfs.models.lexical import MAX_TERM_BYTES
+from vfs.models.links import MAX_LINK_CONTEXT_LENGTH
 from vfs.models.rows import (
     CHUNK_ROW_ONLY_COLUMNS,
     EDGE_ROW_ONLY_COLUMNS,
@@ -239,9 +240,11 @@ class TestBuildVFSTables:
         assert not any("path" in column.name for column in tables.edges.c)
 
     def test_edges_are_narrow_id_triples_indexed_both_directions(self, tables: VFSTables) -> None:
-        expected = {"id", "source_id", "target_id", "edge_type", "weight", "distance", "provenance"}
+        expected = {"id", "source_id", "target_id", "edge_type", "weight", "distance", "provenance", "context"}
         assert expected == set(tables.edges.c.keys())
         assert tables.edges.c.provenance.nullable is False
+        assert tables.edges.c.context.nullable is True
+        assert cast("String", tables.edges.c.context.type).length == MAX_LINK_CONTEXT_LENGTH
         assert tables.edges.c.provenance.default is None
         by_name = {str(index.name): index for index in tables.edges.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_edges_fwd"].columns] == ["source_id", "edge_type"]

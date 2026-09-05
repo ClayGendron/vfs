@@ -16,6 +16,7 @@ import os
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from sqlalchemy import func, select
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
@@ -27,7 +28,7 @@ from tests.ranking.pins import assert_top10_pin
 from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
-from vfs.storage.ranking import Convex, PathShape, Ranker, Signal
+from vfs.storage.ranking import Convex, InDegree, Log1p, PathShape, Ranker, Signal
 
 if TYPE_CHECKING:
     import pathlib
@@ -180,25 +181,33 @@ class TestHybridArms:
 
 
 class TestSignalArms:
-    """The stored priors on the golden set, which carries no reference edges yet.
+    """The stored priors on the golden set, whose reference edges the reindex extracts from its markdown.
 
-    A link signal declared on an edge-less mount stores no rows and must
-    leave the lexical order exactly as it was; the path-shape prior does
-    have rows here and is recorded as an arm the gate keeps honest.
+    The centrality arm reads the extracted ``links`` rows; the recorded
+    arm is the one shape the measure-by-gamma table found neutral on this
+    corpus (in-degree, log1p, half weight — every linear arm at that
+    weight costs nDCG). The path-shape prior is recorded beside it.
     """
 
-    async def test_a_link_signal_without_edges_leaves_glean_unchanged(
-        self, tmp_path: pathlib.Path, golden: Corpus
-    ) -> None:
-        arms = {"glean": Ranker(), "centrality": Ranker(signals=(Signal("centrality", weight=0.5),))}
-        numbers = {}
-        for arm, ranker in arms.items():
-            storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{arm}.sqlite", ranker=ranker)
-            try:
-                numbers[arm] = evaluate(golden.qrels, await glean_run(await load_corpus(storage, golden)))
-            finally:
-                await storage.close()
-        assert_arms_agree(numbers["glean"], numbers["centrality"])
+    async def test_the_centrality_prior_reads_the_extracted_links(self, tmp_path: pathlib.Path, golden: Corpus) -> None:
+        signal = Signal("centrality", measure=InDegree(), smoothing=0.0, transform=Log1p(), weight=0.5)
+        storage = DatabaseStorage(
+            url=f"sqlite+aiosqlite:///{tmp_path}/centrality.sqlite", ranker=Ranker(signals=(signal,))
+        )
+        try:
+            loaded = await load_corpus(storage, golden)
+            edges = loaded.storage._host.tables.edges
+            async with loaded.storage._host.session_factory() as session:
+                stmt = select(func.count()).select_from(edges).where(edges.c.provenance == "extracted")
+                extracted = (await session.execute(stmt)).scalar_one()
+            numbers = evaluate(golden.qrels, await glean_run(loaded))
+            answered = await loaded.storage.glean(query=next(iter(golden.queries.values())))
+        finally:
+            await storage.close()
+        assert extracted > 100
+        assert answered.model_extra is not None
+        assert answered.model_extra["legs"]["signals"]["centrality"]["applied"] is True
+        gate("vfs_native", "signals/centrality", numbers)
 
     async def test_the_path_shape_prior_is_recorded(self, tmp_path: pathlib.Path, golden: Corpus) -> None:
         ranker = Ranker(signals=(Signal("shape", measure=PathShape(), weight=0.15),))

@@ -82,6 +82,7 @@ from vfs.storage.backends.database.indexing import (
     reclaim_built_epoch,
     reclaim_epochs,
     release_reindex_lease,
+    with_notes,
 )
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.seams import seam
@@ -871,7 +872,11 @@ class DatabaseStorage:
         return list(repaired.errors)
 
     async def _gram_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
-        """The gram-index phases; a lost lease stops at the next boundary."""
+        """The gram-index phases; a lost lease stops at the next boundary.
+
+        The chunk pass's advisory records (the extractor's unresolved
+        count) ride out on whatever Result the phases end with.
+        """
         state = ReindexState()
         result = await self._execute_write(
             "reindex",
@@ -887,13 +892,14 @@ class DatabaseStorage:
         )
         if not result.success:
             return result
+        notes = list(result.errors)
         if lost.is_set():
             return lease_lost_result()
         result = await self._execute_write(
             "reindex", lambda session: build_epoch(session, tables, state, self._host.offload_executor)
         )
         if not result.success or state.epoch is None:
-            return result
+            return with_notes(result, notes)
         await seam("reindex:before-publish")
         if lost.is_set():
             return lease_lost_result()
@@ -910,7 +916,8 @@ class DatabaseStorage:
             await self._execute_write("reindex", lambda session: reclaim_built_epoch(session, tables, epoch))
             return result
         await seam("reindex:before-reclaim")
-        return await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables))
+        reclaimed = await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables))
+        return with_notes(reclaimed, notes)
 
     async def _embed_step(self, tables: VFSTables, lost: asyncio.Event) -> Result:
         """Fill every NULL embedding in short, resumable batches under the held lease.
