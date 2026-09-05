@@ -204,7 +204,13 @@ most relevant to this project:
   (POSIX fs test suite)
 - **VFS / storage layers**: `filesystem_spec` (fsspec), `pyfilesystem2`,
   `opendal`, `juicefs`, `seaweedfs`, `minio`, `libsqlfs`, `agentfs`,
-  `jackrabbit-oak`
+  `jackrabbit-oak`, `mirage` (Strukto's unified virtual filesystem for
+  agents — the direct competitor; Apache-2.0; profiles, hide/show, ask,
+  explain, the hierarchy kit), `afs` (AIGNE's Agentic File System —
+  typed verbs incl. `explain`/`search` over a wire protocol; BSL 1.1),
+  `mcpfs` (mount MCP servers as a filesystem — tool→file/dir/CLI
+  classification; MIT), `branchfs` (FUSE copy-on-write branches with
+  commit/abort for parallel agents; MIT)
 - **Databases**: `sqlite`, `postgres`, `turso`, `sqlalchemy`
 - **Array kernels** (prior art for our own Rust kernels — decode,
   sorted-set intersection, `searchsorted`, `unique`, `bincount`,
