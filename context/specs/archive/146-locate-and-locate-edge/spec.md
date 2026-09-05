@@ -144,3 +144,22 @@ Clay left open were taken as proposed: the names `locate` /
 than reporting it in the row. `docs/api.md` predates the rebuild and
 lists none of the router's table methods, so no row was added there.
 Gates: `scripts/ci.sh 3.13` green, 3,205 passed, 100 % coverage.
+
+**Addendum 2026-09-05 — the `exists` probe (Clay's follow-up ask).**
+Both methods are now coroutines taking `exists: bool = False`. With the
+flag off nothing changes: one table snapshot, no storage I/O, no gate
+(semantics 3 holds; the sync shape was traded for one method with one
+flag — Clay's pick over async twins or a separate `exists()`). With it
+on, the owning storage is asked to stat the storage-local path
+directly, the bind-site probe's route, bypassing the router's
+permission gate: existence is a fact about the store, not the caller.
+`Location` gained three trailing fields — `exists` and `kind` (`None`
+when not asked or unanswerable) and `note` (the storage's message when
+it could not answer, so a dead backend is never mistaken for "not
+there"); a stat that succeeds with no row reads as absent, like a
+`not_found`. `locate_edge`'s `reason` names the first blocker: the
+boundary, else a missing source, else a missing target. Tests cover
+a present file and directory, an absent path, both missing-endpoint
+sentences, the unanswerable storage, and the no-row stat; the two
+methods join the ops registry's management allowlist. Gates: `ci.sh
+3.13` green, 3,207 passed, 100 %.

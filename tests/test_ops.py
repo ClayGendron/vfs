@@ -19,7 +19,9 @@ from vfs.results import projection
 # Public router methods that manage the mount tree rather than route an op.
 # A new public coroutine on VirtualFileSystem must be a registered op or a
 # deliberate addition here.
-MANAGEMENT_METHODS = frozenset({"add_mount", "remove_mount", "bind", "unbind", "remount", "close"})
+MANAGEMENT_METHODS = frozenset(
+    {"add_mount", "remove_mount", "bind", "unbind", "remount", "close", "locate", "locate_edge"}
+)
 
 
 # ---------------------------------------------------------------------------

@@ -171,9 +171,11 @@ class Location(NamedTuple):
     """One :meth:`VirtualFileSystem.locate` row — where a path lives, JSON-native.
 
     A mount-table fact: the binding that owns *path* by longest prefix
-    and the path in that storage's own coordinates. No storage was
-    asked anything — the entry may not exist, and nothing here says
-    whether a verb would accept it.
+    and the path in that storage's own coordinates. The three trailing
+    fields are the optional storage probe: ``exists`` and ``kind`` are
+    ``None`` when the probe was not asked for, or when the storage could
+    not answer — ``note`` then carries its message. Nothing here says
+    whether a verb would accept the path.
     """
 
     path: str
@@ -181,14 +183,19 @@ class Location(NamedTuple):
     storage_name: str
     storage_type: str
     storage_path: str
+    exists: bool | None = None
+    kind: str | None = None
+    note: str | None = None
 
 
 class EdgeLocation(NamedTuple):
-    """One :meth:`VirtualFileSystem.locate_edge` row — two locations and the boundary verdict.
+    """One :meth:`VirtualFileSystem.locate_edge` row — two locations and the verdict.
 
     ``same_storage`` is the test ``mkedge`` applies before it dispatches:
     both endpoints on one binding. ``reason`` is a sentence for a person
-    when they are not, never a classified error — nothing failed.
+    naming the first blocker — the boundary, or with the probe an
+    endpoint that does not exist — never a classified error; ``None``
+    means nothing found stands in the edge's way.
     """
 
     source: Location
@@ -631,43 +638,53 @@ class VirtualFileSystem:
             )
         return tuple(rows)
 
-    def locate(self, path: str) -> Location:
+    async def locate(self, path: str, *, exists: bool = False) -> Location:
         """Where *path* lives: the binding that owns it and its storage-local path.
 
         The router's own resolution — longest prefix, the deepest binding
         under a nested mount, the root entry as the fallback — read from
-        one table snapshot with no lock and no storage I/O. Existence,
-        permissions and capabilities are not consulted, so the answer
-        never depends on a user. A non-canonical path is canonicalised;
-        a structurally invalid one raises ``ValueError`` as :class:`Path`
-        does, and so does a closed filesystem, whose table is empty.
+        one table snapshot with no lock. With *exists* off no storage is
+        asked anything; permissions and capabilities are never consulted,
+        so the answer does not depend on a user. With *exists* on the
+        owning storage is asked to stat the storage-local path directly
+        (the bind-site probe's route, no router gate) and the row carries
+        ``exists`` and ``kind`` — or ``note`` when the storage could not
+        answer. A non-canonical path is canonicalised; a structurally
+        invalid one raises ``ValueError`` as :class:`Path` does, and so
+        does a closed filesystem, whose table is empty.
         """
         terminal = self._locate_terminal(path)
         binding = terminal.binding
-        return Location(
+        row = Location(
             path=str(terminal.full),
             mount=str(binding.path),
             storage_name=binding.storage.name,
             storage_type=type(binding.storage).__name__,
             storage_path=str(terminal.rel),
         )
+        return await self._probe_location(terminal, row) if exists else row
 
-    def locate_edge(self, source: str, target: str) -> EdgeLocation:
+    async def locate_edge(self, source: str, target: str, *, exists: bool = False) -> EdgeLocation:
         """Where an edge's two endpoints live, and whether one storage holds both.
 
         :meth:`locate` twice plus the verdict ``mkedge`` would reach: an
         edge never crosses a mount boundary, so ``same_storage`` is the
-        two bindings being one. When they are not, ``reason`` says which
-        mounts the endpoints landed on; the row is an answer, not a
-        refusal.
+        two bindings being one. ``reason`` names the first blocker — the
+        boundary, or with *exists* an endpoint the storage does not hold;
+        the row is an answer, not a refusal.
         """
-        src, tgt = self.locate(source), self.locate(target)
+        src = await self.locate(source, exists=exists)
+        tgt = await self.locate(target, exists=exists)
         same = src.mount == tgt.mount
-        reason = (
-            None
-            if same
-            else f"an edge cannot cross a mount boundary; the source lives on {src.mount} and the target on {tgt.mount}"
-        )
+        reason = None
+        if not same:
+            reason = (
+                f"an edge cannot cross a mount boundary; the source lives on {src.mount} and the target on {tgt.mount}"
+            )
+        elif src.exists is False:
+            reason = f"the source does not exist: {src.path}"
+        elif tgt.exists is False:
+            reason = f"the target does not exist: {tgt.path}"
         return EdgeLocation(source=src, target=tgt, same_storage=same, reason=reason)
 
     def capabilities(self) -> frozenset[str]:
@@ -2512,6 +2529,19 @@ class VirtualFileSystem:
         binding = self._match_mount(path)
         assert binding is not None, "resolve on a closed filesystem"
         return ResolvedTerminal(binding=binding, rel=path.without_mount(binding.path))
+
+    async def _probe_location(self, terminal: ResolvedTerminal, row: Location) -> Location:
+        """*row* with the storage's answer about the entry — direct stat, no router gate."""
+        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
+        if not stat.success:
+            blocker = next((f for f in stat.failures if kind_family(f.kind) is not VFSErrorKind.not_found), None)
+            if blocker is None:
+                return row._replace(exists=False)
+            return row._replace(note=blocker.message or f"could not stat {row.path}")
+        found = next((o for o in stat.observations if o.path == terminal.rel), None)
+        if found is None:
+            return row._replace(exists=False)
+        return row._replace(exists=True, kind=found.kind)
 
     def _locate_terminal(self, path: str) -> ResolvedTerminal:
         """Gate a caller path and resolve it, raising where no row can answer."""
