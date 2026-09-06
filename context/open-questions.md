@@ -44,7 +44,7 @@
 - **Also lands here:** the *per-principal* half of the execute-policy question below — an `execute` level in this grant ladder, not a reopening of 039.
 - **Stale premise:** 058's depends-on line cites `src/vfs/models.py` / `VFSEntry`, neither of which survived spec 076's model split (now `src/vfs/models/entry.py`, `Entry`), and its "identity threaded as `user_id` through `_call_storage`" language is superseded by spec 070. True these up before the full spec is written.
 - **Options considered:** see the forks inline in 058's spec
-- **Status:** open — waits on spec 070 (`Principal`) landing first
+- **Status:** resolved 2026-09-06 — every fork is decided by ADR 062 to 067 (ratified) and written into spec 058's full text; the prefix-coordinate cost against the parked full-dirent end-state is accepted with ADR 021/067. One marker remains in 058 §8 (group administration).
 
 ## serve() topology-lock policy premise
 

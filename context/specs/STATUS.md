@@ -5,6 +5,21 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **ADR 062 to 067 ratified; the permission spec family, 2026-09-06**
+  — Clay ratified all six ADRs as written (the join re-grade question
+  decided: no re-grade, the audit shows the set). Spec **070** is
+  rewritten around `Authority` (subject set + actor + narrowing; the
+  `unauthenticated` kind; the session facade; actor and subjects on
+  every version row); spec **058** is written in full against ADR 067
+  (grant and membership rows, the resolver and compiler to a bounded
+  literal predicate, reads filter and writes check on every verb,
+  visible-set search statistics, the grant verbs, a pjdfstest-shaped
+  conformance suite, S1 as the performance gate and S2 as the leak
+  regression); **148** (sessions: narrowing, sub-sessions, join,
+  `pending`) and **149** (`serve()` auth: token to authority, the
+  subject-set attestation, outbound rules) are seeded. Stopped for
+  Clay's review before implementation; order after review: 070, 058,
+  148, 149.
 - **Permissions programme, phases 0 to 3, 2026-09-05** — the
   principals and permissions research ran end to end in one day: a
   threat table of 64 rows and seven audiences' requirements; five
