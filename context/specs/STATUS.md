@@ -5,6 +5,20 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **Permissions programme, phases 0 to 3, 2026-09-05** — the
+  principals and permissions research ran end to end in one day: a
+  threat table of 64 rows and seven audiences' requirements; five
+  lens memos (Unix lineage, Plan 9, capabilities and delegation,
+  authorization engines and databases, agent-native 2026); two
+  studies (the grant predicate at scale on all five engines; what
+  ranked search leaks); a synthesis; and six proposed ADRs (062
+  authority = subject set + actor + narrowing; 063 the session never
+  widens itself; 064 every version row names actor and subjects; 065
+  hidden rows are absent and statistics are visible-set; 066 the
+  subject set and the intersection law; 067 the enforcement spine
+  compiles to a bounded literal). **Awaiting Clay's ratification**;
+  specs 070 and 058 are rewritten only after it. See
+  `context/research/2026-09-05-permissions-synthesis.md`.
 - **137 landed 2026-09-05** — the cross-mount merge: `glean` over
   more than one mount fetches `min(3 × limit, 256)` rows per mount,
   unions them (dedup on `content_hash`), re-scores every chunk with

@@ -1,8 +1,15 @@
 # Principals and permissions: the research programme (proposal)
 
 - **Status**: approved by Clay 2026-09-05, with the multiplayer
-  addition (§1.1) folded in the same day; running. This is a plan for
-  research, not research. It commits us to nothing and produces no
+  addition (§1.1) folded in the same day; **Phases 0 to 3 ran the same
+  day.** The outputs: the framing memo
+  (`2026-09-05-permissions-framing-threat-model-and-requirements.md`),
+  five lens memos (`2026-09-05-permissions-lens-*.md`), two studies
+  (`2026-09-05-permissions-predicate-at-scale.md`,
+  `2026-09-05-glean-statistics-leak.md`), the synthesis
+  (`2026-09-05-permissions-synthesis.md`) and six proposed decision
+  records, ADR 062 to 067, awaiting Clay's ratification. This is a
+  plan for research, not research. It commits us to nothing and produces no
   findings; it says what we will study, how, in what order, and what
   each piece must answer. When approved, each phase below produces its
   own dated memo and this file becomes the programme's index.
