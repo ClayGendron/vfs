@@ -1,0 +1,873 @@
+{
+ "engine": "postgres",
+ "rows": 994923,
+ "files": 800000,
+ "reps": 3,
+ "load": {
+  "entry": 7.0365580001380295,
+  "grant": 0.437907624989748,
+  "grantg": 0.25214941683225334,
+  "grantgx": 0.9744950830936432,
+  "member": 0.08397233299911022,
+  "vis": 1.74899408291094,
+  "vis_rows": 394077,
+  "index+stats": 2.056051375111565
+ },
+ "results": {
+  "read/list/none": {
+   "median_ms": 31.3059170730412,
+   "min_ms": 30.428208876401186,
+   "max_ms": 73.24437494389713,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/exists": {
+   "median_ms": 154.96637509204447,
+   "min_ms": 151.94570808671415,
+   "max_ms": 204.64770821854472,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/literal_like": {
+   "median_ms": 33.20516599342227,
+   "min_ms": 32.64762507751584,
+   "max_ms": 79.65254108421504,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/literal_range": {
+   "median_ms": 31.716707861050963,
+   "min_ms": 29.914291808381677,
+   "max_ms": 31.910666031762958,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/materialised": {
+   "median_ms": 129.1831659618765,
+   "min_ms": 123.64858388900757,
+   "max_ms": 138.3693339303136,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/none": {
+   "median_ms": 45.65191618166864,
+   "min_ms": 45.08183407597244,
+   "max_ms": 74.71858407370746,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 96"
+  },
+  "read/glob/exists": {
+   "median_ms": 234.34087494388223,
+   "min_ms": 232.99387493170798,
+   "max_ms": 284.44837499409914,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_like": {
+   "median_ms": 37.832583067938685,
+   "min_ms": 36.620874889194965,
+   "max_ms": 84.69012496061623,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_range": {
+   "median_ms": 74.75933292880654,
+   "min_ms": 34.71008292399347,
+   "max_ms": 81.08770800754428,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/materialised": {
+   "median_ms": 103.34866703487933,
+   "min_ms": 100.5433751270175,
+   "max_ms": 132.51770799979568,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/none": {
+   "median_ms": 93.27929094433784,
+   "min_ms": 60.03720802254975,
+   "max_ms": 107.21887508407235,
+   "rows": 73675,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/exists": {
+   "median_ms": 519.3216248881072,
+   "min_ms": 516.5638749022037,
+   "max_ms": 561.2268748227507,
+   "rows": 16066,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_like": {
+   "median_ms": 35.83383304066956,
+   "min_ms": 33.67066686041653,
+   "max_ms": 36.79541707970202,
+   "rows": 16066,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_range": {
+   "median_ms": 34.72233307547867,
+   "min_ms": 32.881875056773424,
+   "max_ms": 71.31362496875226,
+   "rows": 16066,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/materialised": {
+   "median_ms": 239.43600011989474,
+   "min_ms": 236.67691694572568,
+   "max_ms": 279.1747080627829,
+   "rows": 16066,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/none": {
+   "median_ms": 30.27070895768702,
+   "min_ms": 29.89816595800221,
+   "max_ms": 30.308707850053906,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/exists": {
+   "median_ms": 170.3086660709232,
+   "min_ms": 165.45066586695611,
+   "max_ms": 172.57141694426537,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/materialised": {
+   "median_ms": 125.72566606104374,
+   "min_ms": 125.17354195006192,
+   "max_ms": 170.30395800247788,
+   "rows": 20704,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/none": {
+   "median_ms": 104.84791710041463,
+   "min_ms": 57.61916586197913,
+   "max_ms": 105.96837499178946,
+   "rows": 73675,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/exists": {
+   "median_ms": 578.0815829057246,
+   "min_ms": 566.4010839536786,
+   "max_ms": 626.0748750064522,
+   "rows": 20821,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/materialised": {
+   "median_ms": 247.0929161645472,
+   "min_ms": 245.92191609553993,
+   "max_ms": 249.2937920615077,
+   "rows": 20821,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "back/256/in/none": {
+   "median_ms": 2.352416981011629,
+   "min_ms": 2.340083010494709,
+   "max_ms": 2.362375147640705,
+   "rows": 256,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/256/in/exists": {
+   "median_ms": 3.9645000360906124,
+   "min_ms": 3.5782079212367535,
+   "max_ms": 3.9782498497515917,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/in/literal_like": {
+   "median_ms": 2.2555829491466284,
+   "min_ms": 2.2442908957600594,
+   "max_ms": 2.420458011329174,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/256/in/materialised": {
+   "median_ms": 2.5961671490222216,
+   "min_ms": 2.541707828640938,
+   "max_ms": 2.83708400093019,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/values/none": {
+   "median_ms": 2.38325004465878,
+   "min_ms": 2.254874911159277,
+   "max_ms": 2.5587088894098997,
+   "rows": 256,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/256/values/exists": {
+   "median_ms": 3.4687500447034836,
+   "min_ms": 3.427207935601473,
+   "max_ms": 3.8557909429073334,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/values/literal_like": {
+   "median_ms": 2.567332936450839,
+   "min_ms": 2.432416193187237,
+   "max_ms": 2.628625137731433,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/256/values/materialised": {
+   "median_ms": 2.6799580082297325,
+   "min_ms": 2.5150419678539038,
+   "max_ms": 2.930667018517852,
+   "rows": 65,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/in/none": {
+   "median_ms": 5.328667117282748,
+   "min_ms": 4.882083972916007,
+   "max_ms": 7.653167005628347,
+   "rows": 1000,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/1000/in/exists": {
+   "median_ms": 9.644916979596019,
+   "min_ms": 9.626833023503423,
+   "max_ms": 10.041499976068735,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/in/literal_like": {
+   "median_ms": 5.444249836727977,
+   "min_ms": 5.2115831058472395,
+   "max_ms": 5.495999939739704,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/1000/in/materialised": {
+   "median_ms": 48.34454203955829,
+   "min_ms": 45.06179201416671,
+   "max_ms": 49.04708405956626,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/values/none": {
+   "median_ms": 5.648958031088114,
+   "min_ms": 5.638208007439971,
+   "max_ms": 5.789374932646751,
+   "rows": 1000,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/1000/values/exists": {
+   "median_ms": 11.259334161877632,
+   "min_ms": 10.243707802146673,
+   "max_ms": 11.916124960407615,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/values/literal_like": {
+   "median_ms": 6.760166026651859,
+   "min_ms": 6.340791936963797,
+   "max_ms": 8.272707927972078,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/1000/values/materialised": {
+   "median_ms": 8.446125080808997,
+   "min_ms": 7.417165907099843,
+   "max_ms": 8.70150001719594,
+   "rows": 197,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/in/none": {
+   "median_ms": 14.372375095263124,
+   "min_ms": 13.560124905779958,
+   "max_ms": 15.4920001514256,
+   "rows": 3000,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/3000/in/exists": {
+   "median_ms": 33.09841686859727,
+   "min_ms": 33.06391695514321,
+   "max_ms": 34.56220799125731,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/in/literal_like": {
+   "median_ms": 14.3630001693964,
+   "min_ms": 14.124334091320634,
+   "max_ms": 87.92324992828071,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/3000/in/materialised": {
+   "median_ms": 52.98699997365475,
+   "min_ms": 52.32537514530122,
+   "max_ms": 54.456291953101754,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/values/none": {
+   "median_ms": 48.18641603924334,
+   "min_ms": 46.81849991902709,
+   "max_ms": 51.05408397503197,
+   "rows": 3000,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/3000/values/exists": {
+   "median_ms": 35.04774998873472,
+   "min_ms": 34.311666851863265,
+   "max_ms": 39.44674995727837,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/values/literal_like": {
+   "median_ms": 16.272915992885828,
+   "min_ms": 14.342874987050891,
+   "max_ms": 16.35870896279812,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32653
+  },
+  "back/3000/values/materialised": {
+   "median_ms": 18.378916895017028,
+   "min_ms": 18.318417016416788,
+   "max_ms": 20.305166952311993,
+   "rows": 637,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "write": {
+   "single_median_ms": 0.6110414396971464,
+   "single_mean_ms": 0.6475989473983645,
+   "batch": {
+    "median_ms": 64.7507079411298,
+    "min_ms": 64.11858391948044,
+    "max_ms": 64.83687506988645,
+    "rows": 5,
+    "reps": 3,
+    "statements": 1,
+    "note": "first 265"
+   },
+   "distinct_prefixes": 18596,
+   "grants_once": {
+    "median_ms": 1.001249998807907,
+    "min_ms": 0.9584999643266201,
+    "max_ms": 1.0558748617768288,
+    "rows": 8,
+    "reps": 3,
+    "statements": 1,
+    "note": ""
+   },
+   "app_resolve_ms": 10.967375012114644,
+   "resolved": 2082
+  },
+  "materialised": {
+   "exhaustive_rows": 1959014205,
+   "direct_only_rows": 11696281,
+   "exhaustive_groups_expanded": 1973380552,
+   "maintenance": {
+    "typical direct grant": [
+     1.431541983038187,
+     5,
+     "/t158/models"
+    ],
+    "wide grant /t000, one principal": [
+     290.95179098658264,
+     149339,
+     "/t000"
+    ]
+   },
+   "sample_rows": 394077
+  },
+  "groups/glob/flat expanded (exists over grantgx)": {
+   "median_ms": 191.6261250153184,
+   "min_ms": 191.09199987724423,
+   "max_ms": 319.07508289441466,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/glob/membership subquery": {
+   "median_ms": 196485.1828329265,
+   "min_ms": 196485.1828329265,
+   "max_ms": 196485.1828329265,
+   "rows": 40003,
+   "reps": 1,
+   "statements": 1,
+   "note": "capped after first run 196s"
+  },
+  "groups/glob/groups literal": {
+   "median_ms": 358.33974997512996,
+   "min_ms": 354.6704170294106,
+   "max_ms": 478.3672080375254,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/flat expanded (exists over grantgx)": {
+   "median_ms": 513.3535421919078,
+   "min_ms": 512.8559579607099,
+   "max_ms": 588.6714169755578,
+   "rows": 16223,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/membership subquery": {
+   "median_ms": 373562.96395882964,
+   "min_ms": 373562.96395882964,
+   "max_ms": 373562.96395882964,
+   "rows": 16223,
+   "reps": 1,
+   "statements": 1,
+   "note": "capped after first run 374s"
+  },
+  "groups/grep/groups literal": {
+   "median_ms": 873.0024578981102,
+   "min_ms": 866.0568338818848,
+   "max_ms": 992.8485830314457,
+   "rows": 16223,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/flat expanded (exists over grantgx)": {
+   "median_ms": 9.509416995570064,
+   "min_ms": 9.420708985999227,
+   "max_ms": 9.623375022783875,
+   "rows": 199,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/membership subquery": {
+   "median_ms": 4244.371082866564,
+   "min_ms": 4232.432540971786,
+   "max_ms": 4270.683415932581,
+   "rows": 199,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/groups literal": {
+   "median_ms": 19.431416178122163,
+   "min_ms": 14.648000011220574,
+   "max_ms": 22.118999855592847,
+   "rows": 199,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "set/2/glob/set_and_exists[n=2]": {
+   "median_ms": 238.18495799787343,
+   "min_ms": 225.78066703863442,
+   "max_ms": 349.08950002864003,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/glob/set_having[n=2]": {
+   "median_ms": 181.50149984285235,
+   "min_ms": 178.63412504084408,
+   "max_ms": 305.14141684398055,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/glob/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 157.12620806880295,
+   "min_ms": 38.978915894404054,
+   "max_ms": 159.57179199904203,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 57
+  },
+  "set/2/grep/set_and_exists[n=2]": {
+   "median_ms": 435.2550420444459,
+   "min_ms": 434.99979097396135,
+   "max_ms": 439.05087490566075,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/grep/set_having[n=2]": {
+   "median_ms": 174.26408384926617,
+   "min_ms": 168.28320804052055,
+   "max_ms": 299.2489589378238,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/grep/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 40.293874917551875,
+   "min_ms": 34.00429105386138,
+   "max_ms": 42.25220903754234,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 57
+  },
+  "set/2/back1000/set_and_exists[n=2]": {
+   "median_ms": 9.704625001177192,
+   "min_ms": 8.142540929839015,
+   "max_ms": 133.03379202261567,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 1002,
+   "chunk": 32666
+  },
+  "set/2/back1000/set_having[n=2]": {
+   "median_ms": 10.931750060990453,
+   "min_ms": 10.824624914675951,
+   "max_ms": 11.853709118440747,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 3003,
+   "chunk": 10888
+  },
+  "set/2/back1000/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 5.447333911433816,
+   "min_ms": 5.368374986574054,
+   "max_ms": 5.763165885582566,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 1054,
+   "chunk": 32614
+  },
+  "set/5/glob/set_and_exists[n=5]": {
+   "median_ms": 538.8432920444757,
+   "min_ms": 535.6258749961853,
+   "max_ms": 542.0598750934005,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/glob/set_having[n=5]": {
+   "median_ms": 306.0547919012606,
+   "min_ms": 297.0044168177992,
+   "max_ms": 423.80562517791986,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/glob/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 162.0843750424683,
+   "min_ms": 41.332708206027746,
+   "max_ms": 162.50166716054082,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/grep/set_and_exists[n=5]": {
+   "median_ms": 595.7387080416083,
+   "min_ms": 595.3259160742164,
+   "max_ms": 597.1090418752283,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/grep/set_having[n=5]": {
+   "median_ms": 337.11441699415445,
+   "min_ms": 330.82620799541473,
+   "max_ms": 438.20908409543335,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/grep/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 39.78679212741554,
+   "min_ms": 39.61974987760186,
+   "max_ms": 40.99062504246831,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/back1000/set_and_exists[n=5]": {
+   "median_ms": 10.054040933027864,
+   "min_ms": 9.59729216992855,
+   "max_ms": 10.38083410821855,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 1005,
+   "chunk": 32663
+  },
+  "set/5/back1000/set_having[n=5]": {
+   "median_ms": 12.433832976967096,
+   "min_ms": 12.418957892805338,
+   "max_ms": 12.72320793941617,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 3006,
+   "chunk": 10887
+  },
+  "set/5/back1000/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 5.789665970951319,
+   "min_ms": 5.302875069901347,
+   "max_ms": 5.83258387632668,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 140",
+   "binds": 1065,
+   "chunk": 32603
+  },
+  "set/20/glob/set_and_exists[n=20]": {
+   "median_ms": 2104.6556250657886,
+   "min_ms": 2093.5634169727564,
+   "max_ms": 2107.4735410511494,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/glob/set_having[n=20]": {
+   "median_ms": 1200.5257080309093,
+   "min_ms": 1190.6763748265803,
+   "max_ms": 1214.5894169807434,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/glob/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 46.66600003838539,
+   "min_ms": 41.47533397190273,
+   "max_ms": 168.8849579077214,
+   "rows": 40003,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 233
+  },
+  "set/20/grep/set_and_exists[n=20]": {
+   "median_ms": 1264.0061669517308,
+   "min_ms": 1257.2694160044193,
+   "max_ms": 1268.1033329572529,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/grep/set_having[n=20]": {
+   "median_ms": 1555.3969577886164,
+   "min_ms": 1548.0402500834316,
+   "max_ms": 1679.6049170661718,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/grep/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 48.126709181815386,
+   "min_ms": 47.21374996006489,
+   "max_ms": 50.827750004827976,
+   "rows": 16043,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 233
+  },
+  "set/20/back1000/set_and_exists[n=20]": {
+   "median_ms": 17.07516610622406,
+   "min_ms": 16.588415950536728,
+   "max_ms": 18.263624981045723,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 1020,
+   "chunk": 32648
+  },
+  "set/20/back1000/set_having[n=20]": {
+   "median_ms": 24.67554109171033,
+   "min_ms": 24.670541984960437,
+   "max_ms": 26.439875131472945,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 3021,
+   "chunk": 10882
+  },
+  "set/20/back1000/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 7.176417158916593,
+   "min_ms": 7.051500026136637,
+   "max_ms": 8.93208384513855,
+   "rows": 196,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 1230,
+   "chunk": 32438
+  },
+  "plan/grep \u00b7 exists": "Index Scan[entry](entry_ext_kind) > Index Only Scan[grant](grant_pp)x73657 [361.584 ms]",
+  "planraw/grep \u00b7 exists": "Index Scan using ix_vfs_s1_d9167580_entry_ext_kind on vfs_s1_d9167580_entry e  (cost=0.42..3808723.22 rows=30319 width=8) (actual time=41.928..360.538 rows=16066 loops=1)\n  Index Cond: ((kind)::text = 'file'::text)\n  Filter: ((deleted_at IS NULL) AND (size_bytes >= 3000) AND (size_bytes <= 4000) AND (((owner_id)::text = 'p00031'::text) OR EXISTS(SubPlan 1)))\n  Rows Removed by Filter: 783934\n  SubPlan 1\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..4.67 rows=1 width=0) (actual time=0.003..0.003 rows=0 loops=73657)\n          Index Cond: (principal_id = 'p00031'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Rows Removed by Filter: 6\n          Heap Fetches: 0\nPlanning Time: 0.095 ms\nJIT:\n  Functions: 11\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.542 ms (Deform 0.164 ms), Inlining 8.092 ms, Optimization 19.921 ms, Emission 13.859 ms, Total 42.414 ms\nExecution Time: 361.584 ms",
+  "plan/glob \u00b7 exists": "Bitmap Heap Scan[entry] > BitmapAnd > Bitmap Index Scan[ix_entry_ext_kind] > Bitmap Index Scan[ux_entry_path] > Index Only Scan[grant](grant_pp)x40003 [118.679 ms]",
+  "planraw/glob \u00b7 exists": "Bitmap Heap Scan on vfs_s1_d9167580_entry e  (cost=7100.55..139866.11 rows=13517 width=8) (actual time=13.681..117.011 rows=40003 loops=1)\n  Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n  Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND (((owner_id)::text = 'p00031'::text) OR EXISTS(SubPlan 1)))\n  Rows Removed by Filter: 815\n  Heap Blocks: exact=8442\n  ->  BitmapAnd  (cost=7100.55..7100.55 rows=26107 width=0) (actual time=8.901..8.901 rows=0 loops=1)\n        ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.252..3.253 rows=240330 loops=1)\n              Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n        ->  Bitmap Index Scan on ux_vfs_s1_d9167580_entry_path  (cost=0.00..4479.34 rows=133491 width=0) (actual time=5.487..5.487 rows=149338 loops=1)\n              Index Cond: (((path)::text >= '/t000/'::text) AND ((path)::text < '/t0000'::text))\n  SubPlan 1\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p00031'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\nPlanning Time: 0.136 ms\nJIT:\n  Functions: 11\n  Options: Inlining false, Optimization false, Expressions true, Deforming true\n  Timing: Generation 0.520 ms (Deform 0.165 ms), Inlining 0.000 ms, Optimization 0.318 ms, Emission 3.611 ms, Total 4.449 ms\nExecution Time: 118.679 ms",
+  "plan/glob \u00b7 literal_like": "Bitmap Heap Scan[entry] > BitmapAnd > Bitmap Index Scan[ix_entry_ext_kind] > Bitmap Index Scan[ux_entry_path] [23.779 ms]",
+  "planraw/glob \u00b7 literal_like": "Bitmap Heap Scan on vfs_s1_d9167580_entry e  (cost=7096.17..18921.06 rows=4767 width=8) (actual time=9.200..22.800 rows=40003 loops=1)\n  Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n  Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND (((owner_id)::text = 'p00031'::text) OR ((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t022/core'::text) OR ((path)::text ~~ '/t022/core/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text) OR ((path)::text = '/t158/models'::text) OR ((path)::text ~~ '/t158/models/%'::text)))\n  Rows Removed by Filter: 815\n  Heap Blocks: exact=8442\n  ->  BitmapAnd  (cost=7096.17..7096.17 rows=26107 width=0) (actual time=8.421..8.421 rows=0 loops=1)\n        ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.119..3.119 rows=240330 loops=1)\n              Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n        ->  Bitmap Index Scan on ux_vfs_s1_d9167580_entry_path  (cost=0.00..4479.34 rows=133491 width=0) (actual time=5.149..5.149 rows=149338 loops=1)\n              Index Cond: (((path)::text >= '/t000/'::text) AND ((path)::text < '/t0000'::text))\nPlanning Time: 0.333 ms\nExecution Time: 23.779 ms",
+  "plan/glob \u00b7 literal_range": "Bitmap Heap Scan[entry] > BitmapAnd > Bitmap Index Scan[ix_entry_ext_kind] > Bitmap Index Scan[ux_entry_path] [22.021 ms]",
+  "planraw/glob \u00b7 literal_range": "Bitmap Heap Scan on vfs_s1_d9167580_entry e  (cost=7095.84..19377.60 rows=4103 width=8) (actual time=10.322..21.080 rows=40003 loops=1)\n  Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n  Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text))\n  Rows Removed by Filter: 815\n  Heap Blocks: exact=8442\n  ->  BitmapAnd  (cost=7095.84..7095.84 rows=26107 width=0) (actual time=9.505..9.505 rows=0 loops=1)\n        ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.382..3.383 rows=240330 loops=1)\n              Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n        ->  Bitmap Index Scan on ux_vfs_s1_d9167580_entry_path  (cost=0.00..4479.34 rows=133491 width=0) (actual time=5.964..5.964 rows=149338 loops=1)\n              Index Cond: (((path)::text >= '/t000/'::text) AND ((path)::text < '/t0000'::text))\nPlanning Time: 0.342 ms\nExecution Time: 22.021 ms",
+  "plan/grep \u00b7 materialised": "Index Scan[entry](entry_ext_kind) > Seq Scan[vis] [233.468 ms]",
+  "planraw/grep \u00b7 materialised": "Index Scan using ix_vfs_s1_d9167580_entry_ext_kind on vfs_s1_d9167580_entry e  (cost=0.42..3628286.50 rows=30319 width=8) (actual time=114.420..232.464 rows=16066 loops=1)\n  Index Cond: ((kind)::text = 'file'::text)\n  Filter: ((deleted_at IS NULL) AND (size_bytes >= 3000) AND (size_bytes <= 4000) AND (((owner_id)::text = 'p00031'::text) OR (ANY (id = (hashed SubPlan 2).col1))))\n  Rows Removed by Filter: 783934\n  SubPlan 2\n    ->  Seq Scan on vfs_s1_d9167580_vis v  (cost=0.00..7056.96 rows=195659 width=8) (actual time=5.890..37.343 rows=194630 loops=1)\n          Filter: ((principal_id)::text = 'p00031'::text)\n          Rows Removed by Filter: 199447\nPlanning Time: 0.121 ms\nJIT:\n  Functions: 19\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.641 ms (Deform 0.260 ms), Inlining 9.089 ms, Optimization 24.978 ms, Emission 20.631 ms, Total 55.339 ms\nExecution Time: 233.468 ms",
+  "plan/grep \u00b7 groups subquery": "Index Scan[entry](entry_ext_kind) > Seq Scan[grantg]x73657 > Index Only Scan[member](member_p) [358102.665 ms]",
+  "planraw/grep \u00b7 groups subquery": "Index Scan using ix_vfs_s1_d9167580_entry_ext_kind on vfs_s1_d9167580_entry e  (cost=0.42..13091110.10 rows=30319 width=8) (actual time=109.848..358091.376 rows=16223 loops=1)\n  Index Cond: ((kind)::text = 'file'::text)\n  Filter: ((deleted_at IS NULL) AND (size_bytes >= 3000) AND (size_bytes <= 4000) AND (((owner_id)::text = 'p00031'::text) OR EXISTS(SubPlan 2)))\n  Rows Removed by Filter: 783777\n  SubPlan 2\n    ->  Seq Scan on vfs_s1_d9167580_grantg g  (cost=4.33..1493.69 rows=125 width=0) (actual time=4.857..4.857 rows=0 loops=73657)\n          Filter: ((((principal_id)::text = 'p00031'::text) OR (ANY ((principal_id)::text = ((hashed SubPlan 1).col1)::text))) AND (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text))))\n          Rows Removed by Filter: 49041\n          SubPlan 1\n            ->  Index Only Scan using ix_vfs_s1_d9167580_member_p on vfs_s1_d9167580_member m  (cost=0.29..4.32 rows=2 width=5) (actual time=10.667..10.672 rows=3 loops=1)\n                  Index Cond: (principal_id = 'p00031'::text)\n                  Heap Fetches: 0\nPlanning Time: 0.114 ms\nJIT:\n  Functions: 22\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.429 ms (Deform 0.152 ms), Inlining 39.337 ms, Optimization 33.756 ms, Emission 22.001 ms, Total 95.523 ms\nExecution Time: 358102.665 ms",
+  "plan/glob \u00b7 set n=5 AND": "Bitmap Heap Scan[entry] > BitmapAnd > Bitmap Index Scan[ix_entry_ext_kind] > Bitmap Index Scan[ux_entry_path] > Index Only Scan[grant](grant_pp)x40003 > Index Only Scan[grant](grant_pp)x40003 > Index Only Scan[grant](grant_pp)x40003 > Index Only Scan[grant](grant_pp)x40003 > Index Only Scan[grant](g [532.788 ms]",
+  "planraw/glob \u00b7 set n=5 AND": "Bitmap Heap Scan on vfs_s1_d9167580_entry e  (cost=7094.21..627538.54 rows=846 width=8) (actual time=78.594..530.915 rows=40003 loops=1)\n  Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n  Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND (((owner_id)::text = 'p02333'::text) OR EXISTS(SubPlan 1)) AND (((owner_id)::text = 'p04707'::text) OR EXISTS(SubPlan 2)) AND (((owner_id)::text = 'p07018'::text) OR EXISTS(SubPlan 3)) AND (((owner_id)::text = 'p01199'::text) OR EXISTS(SubPlan 4)) AND (((owner_id)::text = 'p01505'::text) OR EXISTS(SubPlan 5)))\n  Rows Removed by Filter: 815\n  Heap Blocks: exact=8442\n  ->  BitmapAnd  (cost=7094.21..7094.21 rows=26107 width=0) (actual time=8.662..8.663 rows=0 loops=1)\n        ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.202..3.203 rows=240330 loops=1)\n              Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n        ->  Bitmap Index Scan on ux_vfs_s1_d9167580_entry_path  (cost=0.00..4479.34 rows=133491 width=0) (actual time=5.306..5.307 rows=149338 loops=1)\n              Index Cond: (((path)::text >= '/t000/'::text) AND ((path)::text < '/t0000'::text))\n  SubPlan 1\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p02333'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\n  SubPlan 2\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g_1  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p04707'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\n  SubPlan 3\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g_2  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p07018'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\n  SubPlan 4\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g_3  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p01199'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\n  SubPlan 5\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g_4  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=1 loops=40003)\n          Index Cond: (principal_id = 'p01505'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Heap Fetches: 0\nPlanning Time: 0.191 ms\nJIT:\n  Functions: 31\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 0.684 ms (Deform 0.150 ms), Inlining 6.075 ms, Optimization 32.517 ms, Emission 30.491 ms, Total 69.767 ms\nExecution Time: 532.788 ms",
+  "plan/glob \u00b7 set n=5 HAVING": "Nested > GroupAggregate > Unique > Sort > Append > Nested > Bitmap Heap Scan[entry] > Bitmap Index Scan[ix_entry_ext_kind] > Materializex40003 > Index Only Scan[grant](grant_pp) > Bitmap Heap Scan[entry] > Bitmap Index Scan[ix_entry_owner] > Index Scan[entry](vfs_s1_d9167580_entry_pkey)x40003 [419.083 ms]",
+  "planraw/glob \u00b7 set n=5 HAVING": "Nested Loop  (cost=46002.46..46094.44 rows=1 width=8) (actual time=310.163..417.438 rows=40003 loops=1)\n  ->  GroupAggregate  (cost=46002.03..46085.99 rows=1 width=8) (actual time=310.144..371.402 rows=40003 loops=1)\n        Group Key: e2.id\n        Filter: (count(DISTINCT g.principal_id) = '5'::bigint)\n        ->  Unique  (cost=46002.03..46050.91 rows=6517 width=524) (actual time=310.135..345.278 rows=200015 loops=1)\n              ->  Sort  (cost=46002.03..46018.32 rows=6517 width=524) (actual time=310.134..321.567 rows=200017 loops=1)\n                    Sort Key: e2.id, g.principal_id\n                    Sort Method: external merge  Disk: 4912kB\n                    ->  Append  (cost=2621.38..45589.18 rows=6517 width=524) (actual time=3.978..279.737 rows=200017 loops=1)\n                          ->  Nested Loop  (cost=2621.38..42385.02 rows=6488 width=15) (actual time=3.978..270.752 rows=200017 loops=1)\n                                Join Filter: (((e2.path)::text = (g.path_prefix)::text) OR ((e2.path)::text ~~ ((g.path_prefix)::text || '/%'::text)))\n                                Rows Removed by Join Filter: 1760130\n                                ->  Bitmap Heap Scan on vfs_s1_d9167580_entry e2  (cost=2620.96..16415.08 rows=27028 width=34) (actual time=3.962..34.797 rows=40003 loops=1)\n                                      Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n                                      Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text))\n                                      Rows Removed by Filter: 200327\n                                      Heap Blocks: exact=8503\n                                      ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.176..3.176 rows=240330 loops=1)\n                                            Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n                                ->  Materialize  (cost=0.42..23.18 rows=48 width=18) (actual time=0.000..0.001 rows=49 loops=40003)\n                                      ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..22.94 rows=48 width=18) (actual time=0.008..0.027 rows=49 loops=1)\n                                            Index Cond: (principal_id = ANY ('{p02333,p04707,p07018,p01199,p01505}'::text[]))\n                                            Heap Fetches: 0\n                          ->  Bitmap Heap Scan on vfs_s1_d9167580_entry e3  (cost=30.16..3171.57 rows=29 width=15) (actual time=0.043..0.044 rows=0 loops=1)\n                                Recheck Cond: ((owner_id)::text = ANY ('{p02333,p04707,p07018,p01199,p01505}'::text[]))\n                                Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND ((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n                                ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_owner  (cost=0.00..30.15 rows=1070 width=0) (actual time=0.038..0.038 rows=0 loops=1)\n                                      Index Cond: ((owner_id)::text = ANY ('{p02333,p04707,p07018,p01199,p01505}'::text[]))\n  ->  Index Scan using vfs_s1_d9167580_entry_pkey on vfs_s1_d9167580_entry e  (cost=0.42..8.45 rows=1 width=8) (actual time=0.001..0.001 rows=1 loops=40003)\n        Index Cond: (id = e2.id)\n        Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND ((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\nPlanning Time: 0.361 ms\nExecution Time: 419.083 ms",
+  "plan/glob \u00b7 set n=5 app": "Gather > Parallel Bitmap Heap Scan[entry]x3 > BitmapAnd > Bitmap Index Scan[ix_entry_ext_kind] > Bitmap Index Scan[ux_entry_path] [22.697 ms]",
+  "planraw/glob \u00b7 set n=5 app": "Gather  (cost=8096.17..20919.30 rows=4761 width=8) (actual time=10.837..21.655 rows=40003 loops=1)\n  Workers Planned: 2\n  Workers Launched: 2\n  ->  Parallel Bitmap Heap Scan on vfs_s1_d9167580_entry e  (cost=7096.17..19443.20 rows=1984 width=8) (actual time=3.546..9.947 rows=13334 loops=3)\n        Recheck Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n        Filter: ((deleted_at IS NULL) AND ((path)::text ~~ '/t000/%'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text) OR (((owner_id)::text = 'p02333'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text))) OR (((owner_id)::text = 'p04707'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text))) OR (((owner_id)::text = 'p07018'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text))) OR (((owner_id)::text = 'p01199'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text))) OR (((owner_id)::text = 'p01505'::text) AND (((path)::text = '/t000'::text) OR ((path)::text ~~ '/t000/%'::text) OR ((path)::text = '/t004'::text) OR ((path)::text ~~ '/t004/%'::text) OR ((path)::text = '/t019'::text) OR ((path)::text ~~ '/t019/%'::text) OR ((path)::text = '/t059'::text) OR ((path)::text ~~ '/t059/%'::text) OR ((path)::text = '/t149'::text) OR ((path)::text ~~ '/t149/%'::text)))))\n        Rows Removed by Filter: 272\n        Heap Blocks: exact=3063\n        ->  BitmapAnd  (cost=7096.17..7096.17 rows=26107 width=0) (actual time=9.642..9.643 rows=0 loops=1)\n              ->  Bitmap Index Scan on ix_vfs_s1_d9167580_entry_ext_kind  (cost=0.00..2614.21 rows=194578 width=0) (actual time=3.916..3.916 rows=240330 loops=1)\n                    Index Cond: (((ext)::text = 'md'::text) AND ((kind)::text = 'file'::text))\n              ->  Bitmap Index Scan on ux_vfs_s1_d9167580_entry_path  (cost=0.00..4479.34 rows=133491 width=0) (actual time=5.552..5.552 rows=149338 loops=1)\n                    Index Cond: (((path)::text >= '/t000/'::text) AND ((path)::text < '/t0000'::text))\nPlanning Time: 1.082 ms\nExecution Time: 22.697 ms",
+  "plan/join-back K=1000 IN \u00b7 exists": "Index Scan[entry](vfs_s1_d9167580_entry_pkey) > Index Only Scan[grant](grant_pp)x999 [4.700 ms]",
+  "planraw/join-back K=1000 IN \u00b7 exists": "Index Scan using vfs_s1_d9167580_entry_pkey on vfs_s1_d9167580_entry e  (cost=0.42..8212.04 rows=500 width=8) (actual time=0.117..4.681 rows=197 loops=1)\n  Index Cond: (id = ANY ('{195111,196044,196131,196356,196749,196925,197934,198399,198688,198722,198878,199047,200115,202005,204052,205893,207031,207215,207998,209858,209871,211015,211784,212573,213278,213884,213969,214253,214537,214679,215353,215981,217360,217769,217793,218510,219700,220358,220964,223811,224143,224218,224277,225311,225344,225627,226677,227598,228366,228733,230432,230677,231044,231471,233668,234341,236391,236435,237548,238614,238819,239172,240228,240626,240839,242358,243942,245536,246280,246574,246803,247750,248171,249048,249282,251922,251954,252919,253016,254081,254506,255244,257980,258531,258787,259679,259939,259998,260543,260828,261371,262337,262801,263057,263429,264182,264782,265632,268441,268693,269082,270594,270855,270994,271596,271614,272990,273161,273746,275035,275102,275391,276159,276966,277777,278140,279374,279415,279610,279955,282734,282889,283068,283090,283510,283512,283820,283968,284056,284149,284948,285887,286947,287792,288731,289037,289613,290045,290188,290443,291332,291596,292020,293621,296030,297417,299199,299277,301574,302043,302688,304793,304936,305256,306187,306368,307395,309103,309174,309227,309267,309692,312503,313074,313255,313628,319183,320483,320652,320796,321106,321706,322453,322512,323217,324641,326679,326912,328133,328352,328419,329106,330426,330772,331048,332039,332270,332364,333970,334077,334312,334482,334847,338719,338845,340227,340938,340998,341301,341429,342466,343359,343549,343728,344848,345777,346707,348198,348417,349510,351072,351547,351647,352003,353416,353589,354135,354379,356801,356873,357717,358410,360109,361496,361716,362630,363422,364215,364233,364433,365627,366100,368603,370384,372406,373185,373981,375642,376528,378105,381465,382117,384869,385294,386749,386769,386926,387174,387971,389279,389447,391336,393583,393995,394870,395523,395937,396677,397326,397975,398277,398468,399192,399334,400146,400173,400177,401185,401820,402625,402846,403196,403852,403925,404013,404553,405073,405666,406493,406885,407353,408241,409225,410110,410111,410795,412401,412894,413385,414954,415130,415868,416217,417945,418039,418217,420557,421377,423192,423372,425178,425637,426095,427123,428135,429096,429367,429503,429595,432677,432726,432789,433832,434580,435641,436034,436868,436944,437547,438798,439042,440150,440496,441096,441114,441269,442537,444942,445182,445666,447147,447252,448902,449054,450866,451244,451363,452537,453983,454244,454609,454984,455158,455446,455458,455489,456359,457538,458165,458949,458991,459368,460326,460436,461199,462933,463089,464424,464676,465831,466095,466688,466887,467126,467731,468132,468478,469450,469541,469831,470954,471530,471924,472220,472682,472819,473381,473388,473560,475795,476631,476752,476910,477029,478291,478507,478587,479109,480053,480466,483445,483943,485292,485574,485920,487061,487402,487542,487915,488072,488322,489193,490356,490552,492904,494338,494421,495035,496199,498579,498835,498969,499909,501224,502121,502218,504183,504730,506776,507160,509125,509863,510373,511091,511542,512411,512972,513462,513947,514128,514745,517253,517657,518618,519508,521738,521781,521898,522071,522096,524386,525856,526252,526355,526648,526781,528922,529721,529995,533938,534173,535236,536354,536506,536741,536748,536901,537859,538647,539828,540160,542342,542524,542734,542813,543593,543926,546166,546545,549067,549321,549396,549555,549628,550464,550513,550550,553490,554275,555280,555592,555641,555928,558780,559358,561421,562352,563463,565893,567758,568829,568861,568876,571943,572563,573153,573155,574360,574843,575530,576753,576866,577272,577851,578653,578895,581120,583125,585227,585743,586409,586969,588735,589299,589836,590096,591935,593518,594307,595088,596067,596358,597938,598165,600214,600563,601857,602333,603361,604037,605463,605635,606347,606908,607104,607351,607496,608040,608147,608448,609990,610535,612526,612529,613841,614099,614398,615072,615808,618349,619280,619358,620036,620591,620865,622487,625680,625769,626738,627756,628912,629943,630486,631321,631799,632013,632210,632977,634290,635342,635517,635909,635984,636437,636664,637689,639858,640778,640901,642198,643109,643449,643769,644069,645019,645746,646588,647407,647737,648095,648379,649806,649927,652355,653603,656428,656777,658518,658850,659703,662260,662404,662440,662953,663598,663695,663876,664191,665682,666207,666407,666741,667580,667685,668236,669064,669242,669914,670740,674069,674464,675340,675875,676189,676695,677625,677993,678088,678237,680583,681516,682158,682631,682882,683291,683453,683916,685254,685380,685816,687838,690044,690103,690842,691181,691387,691417,691800,692323,692509,692623,692746,693195,693316,696177,696181,697202,697688,700012,700778,700848,701022,701577,703538,704086,704320,704679,705853,707986,708321,708542,710504,711643,711812,712368,712866,713120,713562,713970,714698,714770,715584,716145,716997,717267,717440,717613,719304,719846,720430,720941,722110,722327,722772,723795,724177,724327,725022,725034,725140,725443,726152,726222,727300,727340,727764,728381,730271,730707,731674,731964,732069,732823,734138,734712,735575,736550,736787,737492,737707,738452,742664,743549,743860,744123,744446,744554,744835,745214,746464,746766,747084,747434,748426,748837,749819,749857,751430,751807,752183,752582,754114,756121,757588,758508,759649,762758,765719,765995,767348,768497,768572,769318,769843,770235,770672,770831,771754,772046,772740,773214,774361,774853,775887,775995,777347,777800,778430,779318,780582,781616,782437,783310,783939,790265,791017,791964,792211,793236,797101,804641,806129,806609,807356,808952,809847,810229,810623,812720,814435,818619,819422,819578,819739,820008,820461,822788,823760,825182,827598,829458,829958,830505,831676,832644,833039,834658,834830,836205,837206,839708,841868,841872,843685,844098,845363,846247,846827,848812,849158,849305,849866,850712,850754,851570,851828,852729,853185,854133,855135,855180,856466,857269,857276,858455,859700,860182,860731,861652,861794,862123,862992,868909,869042,869297,869373,869388,869638,870721,870810,871785,872085,873529,873717,876022,876131,876157,876427,876609,878107,879086,879453,879621,882641,882784,882808,883324,884119,884408,885222,886249,887253,887598,889058,889579,891624,891629,892465,892535,894696,895197,896291,896916,898039,898681,899568,899731,901778,902149,903454,903733,908652,909620,910131,910400,910647,910991,911831,914741,915036,916073,916559,917998,920653,920732,921085,921257,921305,921468,921929,924547,927440,928107,929364,929979,930031,932231,932426,933806,934439,935557,935979,938229,938901,938927,939173,939264,940656,940978,941546,942583,944667,944678,945254,945697,945830,946371,948149,949450,950608,951547,951718,951812,952154,953178,954256,954930,955344,955537,956578,957430,959172,959687,961437,962851,963240,963614,964423,967502,968059,969284,969554,969855,969957,970690,970737,970773,970788,971802,974243,974385,976876,976994,977485,977620,977876,978511,978720,979234,979537,980827,980996,981503,981922,982125,983569,984153,984362,984381,987282,987287,987413,988110,990588,991053,991315,991387,991834,992335,993577}'::bigint[]))\n  Filter: (((owner_id)::text = 'p00031'::text) OR EXISTS(SubPlan 1))\n  Rows Removed by Filter: 803\n  SubPlan 1\n    ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..4.67 rows=1 width=0) (actual time=0.002..0.002 rows=0 loops=999)\n          Index Cond: (principal_id = 'p00031'::text)\n          Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n          Rows Removed by Filter: 6\n          Heap Fetches: 0\nPlanning Time: 0.311 ms\nExecution Time: 4.700 ms",
+  "plan/join-back K=1000 VALUES \u00b7 exists": "Nested > Values Scan[\"*VALUES*\"] > Index Scan[entry](vfs_s1_d9167580_entry_pkey)x1000 > Index Only Scan[grant](grant_pp)x999 [4.588 ms]",
+  "planraw/join-back K=1000 VALUES \u00b7 exists": "Nested Loop  (cost=0.42..12329.00 rows=500 width=8) (actual time=0.093..4.560 rows=197 loops=1)\n  ->  Values Scan on \"*VALUES*\"  (cost=0.00..12.50 rows=1000 width=8) (actual time=0.001..0.111 rows=1000 loops=1)\n  ->  Index Scan using vfs_s1_d9167580_entry_pkey on vfs_s1_d9167580_entry e  (cost=0.42..12.32 rows=1 width=8) (actual time=0.004..0.004 rows=0 loops=1000)\n        Index Cond: (id = \"*VALUES*\".column1)\n        Filter: (((owner_id)::text = 'p00031'::text) OR EXISTS(SubPlan 1))\n        Rows Removed by Filter: 1\n        SubPlan 1\n          ->  Index Only Scan using ix_vfs_s1_d9167580_grant_pp on vfs_s1_d9167580_grant g  (cost=0.42..4.67 rows=1 width=0) (actual time=0.003..0.003 rows=0 loops=999)\n                Index Cond: (principal_id = 'p00031'::text)\n                Filter: (((e.path)::text = (path_prefix)::text) OR ((e.path)::text ~~ ((path_prefix)::text || '/%'::text)))\n                Rows Removed by Filter: 6\n                Heap Fetches: 0\nPlanning Time: 0.252 ms\nExecution Time: 4.588 ms"
+ },
+ "seconds": 1033.2840485421475
+}

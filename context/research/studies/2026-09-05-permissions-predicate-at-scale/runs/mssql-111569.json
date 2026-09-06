@@ -1,0 +1,862 @@
+{
+ "engine": "mssql",
+ "rows": 111569,
+ "files": 75000,
+ "reps": 3,
+ "load": {
+  "entry": 56.974674332886934,
+  "grant": 7.545730875106528,
+  "grantg": 8.03869687509723,
+  "grantgx": 32.51562133291736,
+  "member": 2.228546709055081,
+  "vis": 0.43742450000718236,
+  "vis_rows": 40972,
+  "index+stats": 1.758761291159317
+ },
+ "results": {
+  "read/list/none": {
+   "median_ms": 10.556041030213237,
+   "min_ms": 10.50145784392953,
+   "max_ms": 12.378417188301682,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 61"
+  },
+  "read/list/exists": {
+   "median_ms": 17.86691602319479,
+   "min_ms": 17.713499953970313,
+   "max_ms": 18.079916015267372,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 214"
+  },
+  "read/list/literal_like": {
+   "median_ms": 11.610292131081223,
+   "min_ms": 11.426083976402879,
+   "max_ms": 11.700167087838054,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/literal_range": {
+   "median_ms": 11.70670916326344,
+   "min_ms": 11.682166950777173,
+   "max_ms": 12.37141597084701,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/materialised": {
+   "median_ms": 15.41270804591477,
+   "min_ms": 15.097249997779727,
+   "max_ms": 15.485833864659071,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 54"
+  },
+  "read/glob/none": {
+   "median_ms": 31.466000014916062,
+   "min_ms": 30.460583046078682,
+   "max_ms": 32.85512491129339,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 108"
+  },
+  "read/glob/exists": {
+   "median_ms": 45.873708091676235,
+   "min_ms": 45.82599992863834,
+   "max_ms": 45.93466687947512,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_like": {
+   "median_ms": 33.15658401697874,
+   "min_ms": 33.0568749923259,
+   "max_ms": 33.29262509942055,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_range": {
+   "median_ms": 33.54033292271197,
+   "min_ms": 33.28766697086394,
+   "max_ms": 34.342374885454774,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/materialised": {
+   "median_ms": 39.92033307440579,
+   "min_ms": 39.231874980032444,
+   "max_ms": 41.62775003351271,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/none": {
+   "median_ms": 19.892417127266526,
+   "min_ms": 18.88774987310171,
+   "max_ms": 20.366166019812226,
+   "rows": 7072,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 231"
+  },
+  "read/grep/exists": {
+   "median_ms": 53.046958055347204,
+   "min_ms": 51.99395795352757,
+   "max_ms": 55.05270813591778,
+   "rows": 1588,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_like": {
+   "median_ms": 27.810500003397465,
+   "min_ms": 26.91404102370143,
+   "max_ms": 28.424084186553955,
+   "rows": 1588,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_range": {
+   "median_ms": 25.237458059564233,
+   "min_ms": 25.021750014275312,
+   "max_ms": 27.45612501166761,
+   "rows": 1588,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/materialised": {
+   "median_ms": 28.041167184710503,
+   "min_ms": 27.98916702158749,
+   "max_ms": 29.163124971091747,
+   "rows": 1588,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/none": {
+   "median_ms": 10.537249967455864,
+   "min_ms": 10.323124937713146,
+   "max_ms": 10.566042037680745,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/exists": {
+   "median_ms": 18.830624874681234,
+   "min_ms": 18.15708400681615,
+   "max_ms": 19.07508377917111,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/materialised": {
+   "median_ms": 15.635750023648143,
+   "min_ms": 15.550582902505994,
+   "max_ms": 15.700000105425715,
+   "rows": 2037,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/none": {
+   "median_ms": 17.48450007289648,
+   "min_ms": 17.37591694109142,
+   "max_ms": 17.918209079653025,
+   "rows": 7072,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/exists": {
+   "median_ms": 59.18375006876886,
+   "min_ms": 58.60708397813141,
+   "max_ms": 60.49487506970763,
+   "rows": 2114,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/materialised": {
+   "median_ms": 26.92862506955862,
+   "min_ms": 26.91783313639462,
+   "max_ms": 27.234792010858655,
+   "rows": 2114,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "back/256/in/none": {
+   "median_ms": 4.871334182098508,
+   "min_ms": 4.819541005417705,
+   "max_ms": 5.036709131672978,
+   "rows": 256,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 2000
+  },
+  "back/256/in/exists": {
+   "median_ms": 6.402833852916956,
+   "min_ms": 6.176667055115104,
+   "max_ms": 6.533083040267229,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 63",
+   "chunk": 2000
+  },
+  "back/256/in/literal_like": {
+   "median_ms": 5.6621660478413105,
+   "min_ms": 5.103874951601028,
+   "max_ms": 5.707041127607226,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 74",
+   "chunk": 2000
+  },
+  "back/256/in/materialised": {
+   "median_ms": 5.031125154346228,
+   "min_ms": 4.979042103514075,
+   "max_ms": 5.727083887904882,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 71",
+   "chunk": 2000
+  },
+  "back/256/values/none": {
+   "median_ms": 3.986458061262965,
+   "min_ms": 3.7494581192731857,
+   "max_ms": 4.620749969035387,
+   "rows": 256,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 2000
+  },
+  "back/256/values/exists": {
+   "median_ms": 6.059708073735237,
+   "min_ms": 5.516082979738712,
+   "max_ms": 6.280625006183982,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 2000
+  },
+  "back/256/values/literal_like": {
+   "median_ms": 5.036375019699335,
+   "min_ms": 4.467082908377051,
+   "max_ms": 5.062791984528303,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 2000
+  },
+  "back/256/values/materialised": {
+   "median_ms": 4.573708167299628,
+   "min_ms": 4.39766701310873,
+   "max_ms": 5.5335829965770245,
+   "rows": 58,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "chunk": 2000
+  },
+  "back/1000/in/none": {
+   "median_ms": 10.881958995014429,
+   "min_ms": 10.244667064398527,
+   "max_ms": 11.122750118374825,
+   "rows": 1000,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 186",
+   "chunk": 2000
+  },
+  "back/1000/in/exists": {
+   "median_ms": 17.235875129699707,
+   "min_ms": 16.985708149150014,
+   "max_ms": 18.46387516707182,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 350",
+   "chunk": 2000
+  },
+  "back/1000/in/literal_like": {
+   "median_ms": 13.012583134695888,
+   "min_ms": 12.992207892239094,
+   "max_ms": 13.451709179207683,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 593",
+   "chunk": 2000
+  },
+  "back/1000/in/materialised": {
+   "median_ms": 14.770457986742258,
+   "min_ms": 14.021749841049314,
+   "max_ms": 15.055625000968575,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 363",
+   "chunk": 2000
+  },
+  "back/1000/values/none": {
+   "median_ms": 39.102999959141016,
+   "min_ms": 28.988000005483627,
+   "max_ms": 48.21312497369945,
+   "rows": 1000,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 102",
+   "chunk": 2000
+  },
+  "back/1000/values/exists": {
+   "median_ms": 42.106291046366096,
+   "min_ms": 29.31129210628569,
+   "max_ms": 48.34449989721179,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 115",
+   "chunk": 2000
+  },
+  "back/1000/values/literal_like": {
+   "median_ms": 20.338833099231124,
+   "min_ms": 19.19545908458531,
+   "max_ms": 21.21366700157523,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 82",
+   "chunk": 2000
+  },
+  "back/1000/values/materialised": {
+   "median_ms": 23.66529102437198,
+   "min_ms": 23.585124872624874,
+   "max_ms": 24.04483314603567,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 88",
+   "chunk": 2000
+  },
+  "back/3000/in/none": {
+   "median_ms": 29.037291882559657,
+   "min_ms": 28.277792036533356,
+   "max_ms": 30.022749910131097,
+   "rows": 3000,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 580",
+   "chunk": 2000
+  },
+  "back/3000/in/exists": {
+   "median_ms": 49.49933313764632,
+   "min_ms": 49.09750004298985,
+   "max_ms": 91.51374991051853,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 1116",
+   "chunk": 2000
+  },
+  "back/3000/in/literal_like": {
+   "median_ms": 36.37966583482921,
+   "min_ms": 34.952332964167,
+   "max_ms": 36.429124884307384,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 2060",
+   "chunk": 2000
+  },
+  "back/3000/in/materialised": {
+   "median_ms": 42.029709089547396,
+   "min_ms": 38.65008405409753,
+   "max_ms": 44.01595890522003,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 1124",
+   "chunk": 2000
+  },
+  "back/3000/values/none": {
+   "median_ms": 53.11191687360406,
+   "min_ms": 48.159917118027806,
+   "max_ms": 53.28599992208183,
+   "rows": 3000,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 155",
+   "chunk": 2000
+  },
+  "back/3000/values/exists": {
+   "median_ms": 60.671916930004954,
+   "min_ms": 57.480833027511835,
+   "max_ms": 63.35791596211493,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 185",
+   "chunk": 2000
+  },
+  "back/3000/values/literal_like": {
+   "median_ms": 44.229582883417606,
+   "min_ms": 42.204291094094515,
+   "max_ms": 44.509500032290816,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 156",
+   "chunk": 2000
+  },
+  "back/3000/values/materialised": {
+   "median_ms": 56.64658290334046,
+   "min_ms": 55.75800011865795,
+   "max_ms": 62.13012500666082,
+   "rows": 659,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 188",
+   "chunk": 2000
+  },
+  "write": {
+   "single_median_ms": 3.4619165817275643,
+   "single_mean_ms": 4.528650005813688,
+   "batch": {
+    "median_ms": 144.53850011341274,
+    "min_ms": 141.13837503828108,
+    "max_ms": 156.21599997393787,
+    "rows": 5,
+    "reps": 3,
+    "statements": 10,
+    "note": "first 6855"
+   },
+   "distinct_prefixes": 18526,
+   "grants_once": {
+    "median_ms": 1.7939158715307713,
+    "min_ms": 1.7552911303937435,
+    "max_ms": 1.9589171279221773,
+    "rows": 8,
+    "reps": 3,
+    "statements": 1,
+    "note": ""
+   },
+   "app_resolve_ms": 10.564083931967616,
+   "resolved": 2153
+  },
+  "materialised": {
+   "exhaustive_rows": 206669891,
+   "direct_only_rows": 1868697,
+   "exhaustive_groups_expanded": 210875714,
+   "maintenance": {
+    "typical direct grant": [
+     3.4089579712599516,
+     3,
+     "/t022/src/docs/lib"
+    ],
+    "wide grant /t000, one principal": [
+     179.3710831552744,
+     15481,
+     "/t000"
+    ]
+   },
+   "sample_rows": 40972
+  },
+  "groups/glob/flat expanded (exists over grantgx)": {
+   "median_ms": 45.90987507253885,
+   "min_ms": 44.54929195344448,
+   "max_ms": 47.331125009804964,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 290"
+  },
+  "groups/glob/membership subquery": {
+   "median_ms": 82926.5812090598,
+   "min_ms": 82926.5812090598,
+   "max_ms": 82926.5812090598,
+   "rows": 3782,
+   "reps": 1,
+   "statements": 1,
+   "note": "capped after first run 83s"
+  },
+  "groups/glob/groups literal": {
+   "median_ms": 130.18695800565183,
+   "min_ms": 129.5585420448333,
+   "max_ms": 131.0672911349684,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/flat expanded (exists over grantgx)": {
+   "median_ms": 65.32683316618204,
+   "min_ms": 65.23100007325411,
+   "max_ms": 66.00712495855987,
+   "rows": 1590,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/membership subquery": {
+   "median_ms": 157748.76545812003,
+   "min_ms": 157748.76545812003,
+   "max_ms": 157748.76545812003,
+   "rows": 1590,
+   "reps": 1,
+   "statements": 1,
+   "note": "capped after first run 158s"
+  },
+  "groups/grep/groups literal": {
+   "median_ms": 223.00037508830428,
+   "min_ms": 222.1496670972556,
+   "max_ms": 224.04325008392334,
+   "rows": 1590,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/flat expanded (exists over grantgx)": {
+   "median_ms": 23.81487493403256,
+   "min_ms": 23.33837514743209,
+   "max_ms": 24.19983292929828,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 384"
+  },
+  "groups/back1000/membership subquery": {
+   "median_ms": 22371.71083292924,
+   "min_ms": 22342.35812490806,
+   "max_ms": 22371.857749996707,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/groups literal": {
+   "median_ms": 47.83341707661748,
+   "min_ms": 45.89333292096853,
+   "max_ms": 48.89087495394051,
+   "rows": 209,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 379"
+  },
+  "set/2/glob/set_and_exists[n=2]": {
+   "median_ms": 60.26216712780297,
+   "min_ms": 58.914874913170934,
+   "max_ms": 60.40658289566636,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/glob/set_having[n=2]": {
+   "median_ms": 107.1951249614358,
+   "min_ms": 105.03666708245873,
+   "max_ms": 107.85316699184477,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/glob/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 53.62887494266033,
+   "min_ms": 53.60750015825033,
+   "max_ms": 54.40150015056133,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 59
+  },
+  "set/2/grep/set_and_exists[n=2]": {
+   "median_ms": 72.78045802377164,
+   "min_ms": 72.35187501646578,
+   "max_ms": 74.40791698172688,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/grep/set_having[n=2]": {
+   "median_ms": 97.85137488506734,
+   "min_ms": 97.108791815117,
+   "max_ms": 103.5608749371022,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/grep/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 24.831042159348726,
+   "min_ms": 24.00500001385808,
+   "max_ms": 26.449416996911168,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 59
+  },
+  "set/2/back1000/set_and_exists[n=2]": {
+   "median_ms": 25.122249964624643,
+   "min_ms": 24.6523751411587,
+   "max_ms": 25.248167105019093,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 373",
+   "binds": 2002,
+   "chunk": 2000
+  },
+  "set/2/back1000/set_having[n=2]": {
+   "median_ms": 473.34629110991955,
+   "min_ms": 470.02354194410145,
+   "max_ms": 475.77937482856214,
+   "rows": 207,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 1485",
+   "binds": 2067,
+   "chunk": 688
+  },
+  "set/2/back1000/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 17.28000002913177,
+   "min_ms": 15.012667048722506,
+   "max_ms": 18.228125059977174,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 505",
+   "binds": 2056,
+   "chunk": 2000
+  },
+  "set/5/glob/set_and_exists[n=5]": {
+   "median_ms": 94.02008401229978,
+   "min_ms": 92.33529213815928,
+   "max_ms": 94.41179200075567,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/glob/set_having[n=5]": {
+   "median_ms": 251.7996251117438,
+   "min_ms": 246.85425008647144,
+   "max_ms": 257.0806669536978,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/glob/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 54.68966695480049,
+   "min_ms": 54.33954205363989,
+   "max_ms": 55.14324991963804,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/grep/set_and_exists[n=5]": {
+   "median_ms": 70.42579120025039,
+   "min_ms": 70.04654197953641,
+   "max_ms": 72.44045892730355,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/grep/set_having[n=5]": {
+   "median_ms": 199.11074987612665,
+   "min_ms": 199.02074988931417,
+   "max_ms": 202.3599580861628,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/grep/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 25.43079201132059,
+   "min_ms": 25.14924993738532,
+   "max_ms": 25.88291699066758,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/back1000/set_and_exists[n=5]": {
+   "median_ms": 23.593332851305604,
+   "min_ms": 20.79608291387558,
+   "max_ms": 24.661915842443705,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 350",
+   "binds": 2005,
+   "chunk": 2000
+  },
+  "set/5/back1000/set_having[n=5]": {
+   "median_ms": 1182.9481669701636,
+   "min_ms": 1182.0157079491764,
+   "max_ms": 1183.3593749906868,
+   "rows": 207,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 2397",
+   "binds": 2067,
+   "chunk": 687
+  },
+  "set/5/back1000/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 15.6914999242872,
+   "min_ms": 14.799874974414706,
+   "max_ms": 22.260208847001195,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 518",
+   "binds": 2065,
+   "chunk": 2000
+  },
+  "set/20/glob/set_and_exists[n=20]": {
+   "median_ms": 259.87812504172325,
+   "min_ms": 259.84804215840995,
+   "max_ms": 263.00741685554385,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/glob/set_having[n=20]": {
+   "median_ms": 739.4516251515597,
+   "min_ms": 736.0133330803365,
+   "max_ms": 748.0474999174476,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/glob/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 56.9065420422703,
+   "min_ms": 55.52987498231232,
+   "max_ms": 59.461832977831364,
+   "rows": 3782,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 124",
+   "binds": 233
+  },
+  "set/20/grep/set_and_exists[n=20]": {
+   "median_ms": 146.34216600097716,
+   "min_ms": 146.1062920279801,
+   "max_ms": 146.5099579654634,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/grep/set_having[n=20]": {
+   "median_ms": 732.9125418327749,
+   "min_ms": 722.3962089046836,
+   "max_ms": 739.1986658331007,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/grep/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 15.282500069588423,
+   "min_ms": 14.68395791016519,
+   "max_ms": 15.904834028333426,
+   "rows": 1559,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 85",
+   "binds": 233
+  },
+  "set/20/back1000/set_and_exists[n=20]": {
+   "median_ms": 35.3600000962615,
+   "min_ms": 34.189000027254224,
+   "max_ms": 35.94629094004631,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 440",
+   "binds": 2020,
+   "chunk": 2000
+  },
+  "set/20/back1000/set_having[n=20]": {
+   "median_ms": 1658.7832081131637,
+   "min_ms": 1657.6763750053942,
+   "max_ms": 1661.964416038245,
+   "rows": 207,
+   "reps": 3,
+   "statements": 2,
+   "note": "first 4170",
+   "binds": 2067,
+   "chunk": 682
+  },
+  "set/20/back1000/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 20.975790917873383,
+   "min_ms": 15.416375128552318,
+   "max_ms": 21.962499944493175,
+   "rows": 207,
+   "reps": 3,
+   "statements": 1,
+   "note": "first 645",
+   "binds": 2067,
+   "chunk": 1837
+  },
+  "plan/grep \u00b7 exists": "Nested Loops>Clustered Index Scan>Concatenation>Filter>Constant Scan>Index Seek | objs: entry grant | CONVERT_IMPLICIT | est=6019",
+  "plan/glob \u00b7 exists": "Nested Loops>Clustered Index Scan>Concatenation>Filter>Constant Scan>Index Seek | objs: entry grant | CONVERT_IMPLICIT | est=6024",
+  "plan/glob \u00b7 literal_like": "Filter>Clustered Index Scan | objs: entry | CONVERT_IMPLICIT | est=3809",
+  "plan/glob \u00b7 literal_range": "Filter>Clustered Index Scan | objs: entry | CONVERT_IMPLICIT | est=3810",
+  "plan/grep \u00b7 materialised": "Nested Loops>Clustered Index Scan>Concatenation>Filter>Constant Scan>Index Seek | objs: entry vis | CONVERT_IMPLICIT | est=6019",
+  "plan/grep \u00b7 groups subquery": "Nested Loops>Clustered Index Scan>Concatenation>Filter>Constant Scan>Compute Scalar>Table Scan>Index Seek | objs: entry grantg member | CONVERT_IMPLICIT | est=6019",
+  "plan/glob \u00b7 set n=5 AND": "Nested Loops>Clustered Index Scan>Concatenation>Filter>Constant Scan>Index Seek | objs: entry grant | abort=TimeOut | CONVERT_IMPLICIT | est=6024",
+  "plan/glob \u00b7 set n=5 HAVING": "Nested Loops>Filter>Compute Scalar>Stream Aggregate>Sort>Concatenation>Merge Interval>Constant Scan>Index Seek>Clustered Index Seek | objs: entry grant | abort=GoodEnoughPlanFound | CONVERT_IMPLICIT | est=1",
+  "plan/glob \u00b7 set n=5 app": "Filter>Nested Loops>Merge Join>Sort>Compute Scalar>Constant Scan>Index Seek>Index Scan>Clustered Index Seek | objs: entry | CONVERT_IMPLICIT | est=3791",
+  "plan/join-back K=1000 IN \u00b7 exists": "Nested Loops>Merge Interval>Sort>Compute Scalar>Concatenation>Constant Scan>Clustered Index Seek>Filter>Index Seek | objs: entry grant | abort=GoodEnoughPlanFound | CONVERT_IMPLICIT | est=1000",
+  "plan/join-back K=1000 VALUES \u00b7 exists": "Nested Loops>Merge Join>Clustered Index Scan>Sort>Constant Scan>Concatenation>Filter>Index Seek | objs: entry grant | abort=TimeOut | est=1000"
+ },
+ "seconds": 678.8431856669486
+}

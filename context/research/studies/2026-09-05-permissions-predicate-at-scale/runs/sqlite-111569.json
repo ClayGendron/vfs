@@ -1,0 +1,873 @@
+{
+ "engine": "sqlite",
+ "rows": 111569,
+ "files": 75000,
+ "reps": 5,
+ "load": {
+  "entry": 0.34095941693522036,
+  "grant": 0.1747499171178788,
+  "grantg": 0.10838850005529821,
+  "grantgx": 0.4350079589057714,
+  "member": 0.029428124893456697,
+  "vis": 0.08830237505026162,
+  "vis_rows": 40972,
+  "index+stats": 0.2788425839971751
+ },
+ "results": {
+  "read/list/none": {
+   "median_ms": 2.0467499271035194,
+   "min_ms": 1.9937909673899412,
+   "max_ms": 2.1025422029197216,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/exists": {
+   "median_ms": 2.8441669419407845,
+   "min_ms": 2.7492500375956297,
+   "max_ms": 2.855209168046713,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/literal_like": {
+   "median_ms": 2.163624856621027,
+   "min_ms": 2.1037498954683542,
+   "max_ms": 2.238958142697811,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/literal_range": {
+   "median_ms": 2.2133339662104845,
+   "min_ms": 2.153125125914812,
+   "max_ms": 2.2304579615592957,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/list/materialised": {
+   "median_ms": 2.6636249385774136,
+   "min_ms": 2.5754168163985014,
+   "max_ms": 2.906374866142869,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/none": {
+   "median_ms": 5.3498330526053905,
+   "min_ms": 5.2122080232948065,
+   "max_ms": 5.410749930888414,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/exists": {
+   "median_ms": 7.171250181272626,
+   "min_ms": 6.930666044354439,
+   "max_ms": 7.710458943620324,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_like": {
+   "median_ms": 5.918540991842747,
+   "min_ms": 5.698042223230004,
+   "max_ms": 6.023959023877978,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/literal_range": {
+   "median_ms": 5.7981249410659075,
+   "min_ms": 5.620250012725592,
+   "max_ms": 5.943791009485722,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/glob/materialised": {
+   "median_ms": 6.92487508058548,
+   "min_ms": 6.696375086903572,
+   "max_ms": 6.985957967117429,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/none": {
+   "median_ms": 8.558332920074463,
+   "min_ms": 8.270166115835309,
+   "max_ms": 30.213332967832685,
+   "rows": 7072,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/exists": {
+   "median_ms": 16.11995790153742,
+   "min_ms": 16.027958132326603,
+   "max_ms": 16.334875021129847,
+   "rows": 1588,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_like": {
+   "median_ms": 8.632917189970613,
+   "min_ms": 8.310499833896756,
+   "max_ms": 9.068124927580357,
+   "rows": 1588,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/literal_range": {
+   "median_ms": 8.49862489849329,
+   "min_ms": 8.395708864554763,
+   "max_ms": 8.790082996711135,
+   "rows": 1588,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "read/grep/materialised": {
+   "median_ms": 8.616625098511577,
+   "min_ms": 8.5232921410352,
+   "max_ms": 8.630916941910982,
+   "rows": 1588,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/none": {
+   "median_ms": 1.9159589428454638,
+   "min_ms": 1.8871249631047249,
+   "max_ms": 1.9752499647438526,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/exists": {
+   "median_ms": 2.578041050583124,
+   "min_ms": 2.524374984204769,
+   "max_ms": 2.7178339660167694,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/list/materialised": {
+   "median_ms": 2.6627499610185623,
+   "min_ms": 2.4822079576551914,
+   "max_ms": 2.7800409588962793,
+   "rows": 2037,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/none": {
+   "median_ms": 8.301875088363886,
+   "min_ms": 8.227874990552664,
+   "max_ms": 8.646792033687234,
+   "rows": 7072,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/exists": {
+   "median_ms": 21.25345799140632,
+   "min_ms": 21.14141616038978,
+   "max_ms": 21.372125018388033,
+   "rows": 2114,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "heavy/grep/materialised": {
+   "median_ms": 8.701499784365296,
+   "min_ms": 8.693333948031068,
+   "max_ms": 8.750000037252903,
+   "rows": 2114,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "back/256/in/none": {
+   "median_ms": 0.8190001826733351,
+   "min_ms": 0.7522909436374903,
+   "max_ms": 0.8914591744542122,
+   "rows": 256,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/256/in/exists": {
+   "median_ms": 1.2099999003112316,
+   "min_ms": 1.1055420618504286,
+   "max_ms": 1.2914168182760477,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/in/literal_like": {
+   "median_ms": 1.098749926313758,
+   "min_ms": 1.0722908191382885,
+   "max_ms": 1.2507080100476742,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32651
+  },
+  "back/256/in/materialised": {
+   "median_ms": 0.8297502063214779,
+   "min_ms": 0.7805000059306622,
+   "max_ms": 1.0035410523414612,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/values/none": {
+   "median_ms": 0.8787501137703657,
+   "min_ms": 0.7764999754726887,
+   "max_ms": 0.9312909096479416,
+   "rows": 256,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/256/values/exists": {
+   "median_ms": 1.0525831021368504,
+   "min_ms": 1.029792008921504,
+   "max_ms": 1.215917058289051,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/256/values/literal_like": {
+   "median_ms": 1.0986661072820425,
+   "min_ms": 1.0234578512609005,
+   "max_ms": 1.2940829619765282,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32651
+  },
+  "back/256/values/materialised": {
+   "median_ms": 0.79541583545506,
+   "min_ms": 0.7687080651521683,
+   "max_ms": 0.9435000829398632,
+   "rows": 58,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/in/none": {
+   "median_ms": 2.469250001013279,
+   "min_ms": 2.3922910913825035,
+   "max_ms": 4.36795805580914,
+   "rows": 1000,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/1000/in/exists": {
+   "median_ms": 3.68533399887383,
+   "min_ms": 3.6366248968988657,
+   "max_ms": 3.8919171784073114,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/in/literal_like": {
+   "median_ms": 3.070875070989132,
+   "min_ms": 2.9195421375334263,
+   "max_ms": 3.1812500674277544,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32651
+  },
+  "back/1000/in/materialised": {
+   "median_ms": 2.588875126093626,
+   "min_ms": 2.485458040609956,
+   "max_ms": 2.746750134974718,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/values/none": {
+   "median_ms": 2.447041915729642,
+   "min_ms": 2.370750065892935,
+   "max_ms": 2.543375128880143,
+   "rows": 1000,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/1000/values/exists": {
+   "median_ms": 3.7082501221448183,
+   "min_ms": 3.6734999157488346,
+   "max_ms": 3.8346669171005487,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/1000/values/literal_like": {
+   "median_ms": 3.3414580393582582,
+   "min_ms": 3.2911670859903097,
+   "max_ms": 3.5921670496463776,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32651
+  },
+  "back/1000/values/materialised": {
+   "median_ms": 2.793916966766119,
+   "min_ms": 2.5545000098645687,
+   "max_ms": 2.913125092163682,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/in/none": {
+   "median_ms": 8.233583997935057,
+   "min_ms": 7.53475003875792,
+   "max_ms": 46.47137504070997,
+   "rows": 3000,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/3000/in/exists": {
+   "median_ms": 11.424958007410169,
+   "min_ms": 10.990334209054708,
+   "max_ms": 11.841458035632968,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/in/literal_like": {
+   "median_ms": 8.751084096729755,
+   "min_ms": 8.614457910880446,
+   "max_ms": 9.569207904860377,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32651
+  },
+  "back/3000/in/materialised": {
+   "median_ms": 8.061750093474984,
+   "min_ms": 7.656291825696826,
+   "max_ms": 8.505791891366243,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/values/none": {
+   "median_ms": 7.726917043328285,
+   "min_ms": 7.464417023584247,
+   "max_ms": 8.736625080928206,
+   "rows": 3000,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32668
+  },
+  "back/3000/values/exists": {
+   "median_ms": 11.285792104899883,
+   "min_ms": 10.875666979700327,
+   "max_ms": 12.148666894063354,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "back/3000/values/literal_like": {
+   "median_ms": 10.171584086492658,
+   "min_ms": 9.735374944284558,
+   "max_ms": 11.24695804901421,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "first 76",
+   "chunk": 32651
+  },
+  "back/3000/values/materialised": {
+   "median_ms": 8.135291980579495,
+   "min_ms": 7.908290950581431,
+   "max_ms": 9.665499906986952,
+   "rows": 659,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "chunk": 32667
+  },
+  "write": {
+   "single_median_ms": 0.17585442401468754,
+   "single_mean_ms": 0.19009065348654985,
+   "batch": {
+    "median_ms": 48.818625044077635,
+    "min_ms": 47.74970910511911,
+    "max_ms": 141.29979186691344,
+    "rows": 5,
+    "reps": 5,
+    "statements": 1,
+    "note": "first 108"
+   },
+   "distinct_prefixes": 18526,
+   "grants_once": {
+    "median_ms": 0.18179183825850487,
+    "min_ms": 0.1662077847868204,
+    "max_ms": 0.2412500325590372,
+    "rows": 8,
+    "reps": 5,
+    "statements": 1,
+    "note": ""
+   },
+   "app_resolve_ms": 10.977708036080003,
+   "resolved": 2153
+  },
+  "materialised": {
+   "exhaustive_rows": 206669891,
+   "direct_only_rows": 1868697,
+   "exhaustive_groups_expanded": 210875714,
+   "maintenance": {
+    "typical direct grant": [
+     0.319124897941947,
+     3,
+     "/t022/src/docs/lib"
+    ],
+    "wide grant /t000, one principal": [
+     8.864999981597066,
+     15481,
+     "/t000"
+    ]
+   },
+   "sample_rows": 40972
+  },
+  "groups/glob/flat expanded (exists over grantgx)": {
+   "median_ms": 7.484207861125469,
+   "min_ms": 7.0859999395906925,
+   "max_ms": 7.7397499699145555,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/glob/membership subquery": {
+   "median_ms": 16.586458077654243,
+   "min_ms": 16.50650007650256,
+   "max_ms": 16.747625079005957,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/glob/groups literal": {
+   "median_ms": 12.485292041674256,
+   "min_ms": 12.383292196318507,
+   "max_ms": 12.961999978870153,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "first 98"
+  },
+  "groups/grep/flat expanded (exists over grantgx)": {
+   "median_ms": 23.57566705904901,
+   "min_ms": 23.26254197396338,
+   "max_ms": 23.761542048305273,
+   "rows": 1590,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/membership subquery": {
+   "median_ms": 30.632958048954606,
+   "min_ms": 30.563917011022568,
+   "max_ms": 31.07645781710744,
+   "rows": 1590,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/grep/groups literal": {
+   "median_ms": 28.070125030353665,
+   "min_ms": 27.8929159976542,
+   "max_ms": 28.39712519198656,
+   "rows": 1590,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/flat expanded (exists over grantgx)": {
+   "median_ms": 5.031416891142726,
+   "min_ms": 4.833833081647754,
+   "max_ms": 5.466874921694398,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/membership subquery": {
+   "median_ms": 6.010042037814856,
+   "min_ms": 5.8295829221606255,
+   "max_ms": 6.302790949121118,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "groups/back1000/groups literal": {
+   "median_ms": 5.777166923508048,
+   "min_ms": 5.577916977927089,
+   "max_ms": 7.159125059843063,
+   "rows": 209,
+   "reps": 5,
+   "statements": 1,
+   "note": ""
+  },
+  "set/2/glob/set_and_exists[n=2]": {
+   "median_ms": 8.64808401092887,
+   "min_ms": 8.35266592912376,
+   "max_ms": 8.675791090354323,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/glob/set_having[n=2]": {
+   "median_ms": 27.55737490952015,
+   "min_ms": 27.201916091144085,
+   "max_ms": 27.92570902965963,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/glob/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 6.039083003997803,
+   "min_ms": 6.009416887536645,
+   "max_ms": 6.208709208294749,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 59
+  },
+  "set/2/grep/set_and_exists[n=2]": {
+   "median_ms": 24.34825012460351,
+   "min_ms": 24.089416954666376,
+   "max_ms": 24.997042026370764,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 5
+  },
+  "set/2/grep/set_having[n=2]": {
+   "median_ms": 38.553958060219884,
+   "min_ms": 38.45491586253047,
+   "max_ms": 39.304208010435104,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 9
+  },
+  "set/2/grep/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 8.530542021617293,
+   "min_ms": 8.381749968975782,
+   "max_ms": 9.190459037199616,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 59
+  },
+  "set/2/back1000/set_and_exists[n=2]": {
+   "median_ms": 5.050416104495525,
+   "min_ms": 4.9396660178899765,
+   "max_ms": 5.221666069701314,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1002,
+   "chunk": 32666
+  },
+  "set/2/back1000/set_having[n=2]": {
+   "median_ms": 8.895040955394506,
+   "min_ms": 8.663250133395195,
+   "max_ms": 9.430833859369159,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 3003,
+   "chunk": 10888
+  },
+  "set/2/back1000/set_app_prefixes[n=2, 5 shared]": {
+   "median_ms": 3.0372082255780697,
+   "min_ms": 2.9949999880045652,
+   "max_ms": 3.5309589002281427,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1056,
+   "chunk": 32612
+  },
+  "set/5/glob/set_and_exists[n=5]": {
+   "median_ms": 13.302125036716461,
+   "min_ms": 12.968332972377539,
+   "max_ms": 13.363708043470979,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/glob/set_having[n=5]": {
+   "median_ms": 54.44854195229709,
+   "min_ms": 51.413208013400435,
+   "max_ms": 67.48133292421699,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/glob/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 5.943666910752654,
+   "min_ms": 5.678792018443346,
+   "max_ms": 6.25175004824996,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/grep/set_and_exists[n=5]": {
+   "median_ms": 23.248417070135474,
+   "min_ms": 17.457749927416444,
+   "max_ms": 58.27525001950562,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 8
+  },
+  "set/5/grep/set_having[n=5]": {
+   "median_ms": 88.41729210689664,
+   "min_ms": 73.6555838957429,
+   "max_ms": 93.07308308780193,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 12
+  },
+  "set/5/grep/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 8.622332941740751,
+   "min_ms": 8.293249877169728,
+   "max_ms": 8.671666961163282,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 68
+  },
+  "set/5/back1000/set_and_exists[n=5]": {
+   "median_ms": 3.9585421327501535,
+   "min_ms": 3.882915945723653,
+   "max_ms": 4.218457965180278,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1005,
+   "chunk": 32663
+  },
+  "set/5/back1000/set_having[n=5]": {
+   "median_ms": 14.05920903198421,
+   "min_ms": 13.841999927535653,
+   "max_ms": 14.225707855075598,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 3006,
+   "chunk": 10887
+  },
+  "set/5/back1000/set_app_prefixes[n=5, 5 shared]": {
+   "median_ms": 3.177667036652565,
+   "min_ms": 3.0632501002401114,
+   "max_ms": 3.295457921922207,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1065,
+   "chunk": 32603
+  },
+  "set/20/glob/set_and_exists[n=20]": {
+   "median_ms": 39.34508305974305,
+   "min_ms": 39.15533400140703,
+   "max_ms": 40.61479098163545,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/glob/set_having[n=20]": {
+   "median_ms": 191.00124994292855,
+   "min_ms": 190.69179194048047,
+   "max_ms": 191.8262077961117,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/glob/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 6.673624971881509,
+   "min_ms": 6.605874979868531,
+   "max_ms": 6.996375042945147,
+   "rows": 3782,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 233
+  },
+  "set/20/grep/set_and_exists[n=20]": {
+   "median_ms": 31.255458015948534,
+   "min_ms": 30.977666843682528,
+   "max_ms": 31.69629187323153,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 23
+  },
+  "set/20/grep/set_having[n=20]": {
+   "median_ms": 275.5569170694798,
+   "min_ms": 273.7890840508044,
+   "max_ms": 275.94933309592307,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 27
+  },
+  "set/20/grep/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 9.345791069790721,
+   "min_ms": 9.126332821324468,
+   "max_ms": 9.831917006522417,
+   "rows": 1559,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 233
+  },
+  "set/20/back1000/set_and_exists[n=20]": {
+   "median_ms": 5.996207939460874,
+   "min_ms": 5.767500028014183,
+   "max_ms": 6.198458140715957,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1020,
+   "chunk": 32648
+  },
+  "set/20/back1000/set_having[n=20]": {
+   "median_ms": 42.67041711136699,
+   "min_ms": 42.46745794080198,
+   "max_ms": 43.962791096419096,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 3021,
+   "chunk": 10882
+  },
+  "set/20/back1000/set_app_prefixes[n=20, 5 shared]": {
+   "median_ms": 4.03979211114347,
+   "min_ms": 3.9184580091387033,
+   "max_ms": 4.2033749632537365,
+   "rows": 207,
+   "reps": 5,
+   "statements": 1,
+   "note": "",
+   "binds": 1230,
+   "chunk": 32438
+  },
+  "plan/grep \u00b7 exists": "SCAN e | CORRELATED SCALAR SUBQUERY 1 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?)",
+  "planraw/grep \u00b7 exists": "",
+  "plan/glob \u00b7 exists": "SEARCH e USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?)",
+  "planraw/glob \u00b7 exists": "",
+  "plan/glob \u00b7 literal_like": "SEARCH e USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?)",
+  "planraw/glob \u00b7 literal_like": "",
+  "plan/glob \u00b7 literal_range": "SEARCH e USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?)",
+  "planraw/glob \u00b7 literal_range": "",
+  "plan/grep \u00b7 materialised": "SCAN e | CORRELATED SCALAR SUBQUERY 1 | SEARCH v USING COVERING INDEX ux_vfs_s1_0c3fe223_vis (principal_id=? AND entry_id=?)",
+  "planraw/grep \u00b7 materialised": "",
+  "plan/grep \u00b7 groups subquery": "SCAN e | CORRELATED SCALAR SUBQUERY 2 | MULTI-INDEX OR | INDEX 1 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grantg_pp (principal_id=?) | INDEX 2 | LIST SUBQUERY 1 | SEARCH m USING COVERING INDEX ix_vfs_s1_0c3fe223_member_p (principal_id=?) | CREATE BLOOM FILTER | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grantg_pp (principal_id=?)",
+  "planraw/grep \u00b7 groups subquery": "",
+  "plan/glob \u00b7 set n=5 AND": "SEARCH e USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?) | CORRELATED SCALAR SUBQUERY 2 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?) | CORRELATED SCALAR SUBQUERY 3 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?) | COR",
+  "planraw/glob \u00b7 set n=5 AND": "",
+  "plan/glob \u00b7 set n=5 HAVING": "SEARCH e USING INTEGER PRIMARY KEY (rowid=?) | LIST SUBQUERY 3 | CO-ROUTINE x | COMPOUND QUERY | LEFT-MOST SUBQUERY | SEARCH e2 USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?) | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?) | UNION USING TEMP B-TREE | SEARCH e3 USING INDEX ix_vfs_s1_0c3fe223_entry_owner (owner_id=?) | SCAN x | USE TEMP B-TREE FOR GROUP BY",
+  "planraw/glob \u00b7 set n=5 HAVING": "",
+  "plan/glob \u00b7 set n=5 app": "SEARCH e USING INDEX ux_vfs_s1_0c3fe223_entry_path (path>? AND path<?)",
+  "planraw/glob \u00b7 set n=5 app": "",
+  "plan/join-back K=1000 IN \u00b7 exists": "SEARCH e USING INTEGER PRIMARY KEY (rowid=?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?)",
+  "planraw/join-back K=1000 IN \u00b7 exists": "",
+  "plan/join-back K=1000 VALUES \u00b7 exists": "CO-ROUTINE cte | SCAN 1000 CONSTANT ROWS | SCAN cte | SEARCH e USING INTEGER PRIMARY KEY (rowid=?) | CORRELATED SCALAR SUBQUERY 1002 | SEARCH g USING COVERING INDEX ix_vfs_s1_0c3fe223_grant_pp (principal_id=?)",
+  "planraw/join-back K=1000 VALUES \u00b7 exists": ""
+ },
+ "seconds": 12.559697792166844
+}
