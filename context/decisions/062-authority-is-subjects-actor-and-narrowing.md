@@ -1,18 +1,13 @@
 # 062. Authority Is a Subject Set, an Actor, and a Narrowing: the Model Every Statement Runs Under
 
-- **Status:** proposed 2026-09-05 — drafted as Phase 3 of the
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; supersedes the shape of spec 070's decision 1; keeps 070's decisions 4, 6 and 7; refines ADR 006 and ADR 058). Drafted 2026-09-05 as Phase 3 of the
   principals and permissions research programme
   (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
-  **awaiting Clay's ratification.** Companions drafted the same day:
-  063 (the session law), 064 (attribution), 065 (visibility), 066
-  (multiplayer), 067 (the enforcement spine, which ratifies and amends
-  021). Supersedes the *shape* of spec 070's decision 1 (`Principal`
-  as `sub` + `scopes`); keeps 070's decisions 4, 6 and 7. Refines ADR
-  006 (tenant isolation is a permission layer) and ADR 058 (the access
-  layer for agents).
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — drafted by Claude from the five lens memos,
+- **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from the five lens memos,
   the framing memo and the two studies; the position is Clay's
   (2026-09-05: "an agent is an entity that acts on behalf of a
   principal; all actions are scoped to a principal, admin being one").

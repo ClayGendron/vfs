@@ -1,13 +1,13 @@
 # 063. The Session Law: a Session Never Widens Itself, Principals Widen by Grant, and One Actor Is the Marked Exception
 
-- **Status:** proposed 2026-09-05 (Phase 3 of the permissions
-  programme); **awaiting Clay's ratification.** Companion to 062;
-  binds spec 070's session facade, roadmap 023 (per-session
-  namespaces), the future `ask` rung (Mirage memo §4.3, YoloFS memo
-  §5.3) and the `serve()` spec.
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; binds spec 070's session facade, roadmap 023 and the future `ask` rung). Drafted 2026-09-05 as Phase 3 of the
+  principals and permissions research programme
+  (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — drafted by Claude from lenses L1 (Landlock,
+- **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from lenses L1 (Landlock,
   Capsicum, the bounding set, Setuid Demystified), L2 (`RFNOMNT`,
   `none`, factotum's one-shot capability), L3 (every attenuation system)
   and L5 (every harness's "always allow").

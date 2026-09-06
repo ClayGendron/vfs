@@ -1,14 +1,13 @@
 # 066. Multiplayer: the Subject Set, the Intersection Law for Read and Write, and the Join and Leave Rules
 
-- **Status:** proposed 2026-09-05 (Phase 3 of the permissions
-  programme); **awaiting Clay's ratification.** Companion to 062
-  (which defines the set as the subject part of an authority), 064
-  (attribution of a set), 065 (hide-for-any-member) and 067 (the
-  predicate shape). Binds spec 070's session facade and spec 058's
-  predicate.
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; new; the join re-grade question decided the same day (see Consequences)). Drafted 2026-09-05 as Phase 3 of the
+  principals and permissions research programme
+  (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — the rule is Clay's (2026-09-05: "a list of
+- **Decided by:** human (Clay, 2026-09-06). Originally the rule is Clay's (2026-09-05: "a list of
   principals ... act in a least privileged way on behalf of all of them
   (can read or write unless all principals share the permission)");
   the grounding is drafted by Claude from lenses L1 to L5, the framing
@@ -114,6 +113,11 @@ write the most), so the read-and-write rule needs its own statement.
 - Study S2's multiplayer partition (intersection statistics within
   0.017 nDCG@10 of global down to a 17 % corpus) is the quality
   guarantee to pin.
-- Open, deliberately: whether a session may *re-grade* already
-  surfaced content on join is a product decision; the ADR fixes only
-  that future statements narrow.
+- **Join re-grade, decided 2026-09-06 (Clay):** nothing already
+  surfaced is re-graded when a lower-cleared member joins; future
+  statements narrow at once and the audit shows the subject set at each
+  version (ADR 064), so it is visible that earlier versions were
+  produced under a smaller set. A leak notice on join (the set of
+  previously surfaced paths the joiner cannot see, returned to the
+  host) is a follow-up for the sessions spec once the `pending` kind
+  exists. Refusing a narrowing join was rejected as brittle for hosts.

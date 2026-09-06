@@ -1,6 +1,10 @@
 # 021. The Row-Level Grant Model's Spine
 
-- **Status:** proposed (2026-07-22) — drafted from an evidence review
+- **Status:** accepted 2026-09-06 through ADR 067, which ratifies
+  decisions 1, 2 and 4, **amends decision 3** (the predicate is a
+  pre-resolved bounded literal, not a correlated `EXISTS`) and closes
+  the groups fork (a memberships table resolved per statement); the
+  NULL-owner fork is resolved by ADR 064. Originally proposed (2026-07-22) — drafted from an evidence review
   commissioned in session; **awaiting Clay's ratification.** Nothing in
   spec 058 should be written against this until it is accepted.
 - **Date:** 2026-07-22

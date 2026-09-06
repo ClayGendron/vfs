@@ -1,12 +1,13 @@
 # 064. Attribution: Every Version Row Names the Actor and the Subjects, and Ownership Comes From the Container
 
-- **Status:** proposed 2026-09-05 (Phase 3 of the permissions
-  programme); **awaiting Clay's ratification.** Amends ADR 013/017
-  (per-entry revisions: `created_by` is no longer sufficient) and
-  resolves ADR 021's open NULL-owner fork. Companion to 062 and 066.
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; amends ADR 013/017 and resolves ADR 021's NULL-owner fork). Drafted 2026-09-05 as Phase 3 of the
+  principals and permissions research programme
+  (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — drafted by Claude from lenses L2 (the auth
+- **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from lenses L2 (the auth
   server collapsing `cuid = suid`), L3 (RFC 8693 `act`, AWS
   `SourceIdentity`, macaroon discharges), L4 (`SESSION_USER` vs
   `CURRENT_USER`; no engine records the pair), L5 (only Entra records

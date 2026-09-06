@@ -1,13 +1,13 @@
 # 065. Visibility: Hidden Rows Are Absent Everywhere, Refusals Never Confirm Existence, and Search Statistics Are Computed Over the Visible Set
 
-- **Status:** proposed 2026-09-05 (Phase 3 of the permissions
-  programme); **awaiting Clay's ratification.** Binds spec 058's
-  `invisible` rung, `glean` and the cross-mount merge
-  (`src/vfs/rerank.py`), `grep`, `glob`, listing, and the error
-  vocabulary. Companion to 062 and 066.
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; binds spec 058's `invisible` rung, `glean`, the merge and `grep`). Drafted 2026-09-05 as Phase 3 of the
+  principals and permissions research programme
+  (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — drafted by Claude from study S2
+- **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from study S2
   (`../research/2026-09-05-glean-statistics-leak.md`), lens L4 (the six
   leak classes; Postgres `LEAKPROOF` and `pg_statistic`; SQL Server's
   full-text join "to avoid leaking the primary keys of rows that should

@@ -1,16 +1,13 @@
 # 067. The Enforcement Spine: Rights Compile to a Bounded Literal Predicate in App Code, at One Chokepoint, on Every Engine
 
-- **Status:** proposed 2026-09-05 (Phase 3 of the permissions
-  programme); **awaiting Clay's ratification.** Ratifies ADR 021's
-  decisions 1 (additive-only grant rows), 2 (path prefixes as the
-  coordinate) and 4 (`Principal.system()` bypasses row grants only);
-  **amends** decision 3 (the predicate is compiled from a pre-resolved
-  prefix set, not a correlated `EXISTS`); **closes** 021's open groups
-  fork (a memberships table, resolved per statement into a bounded
-  literal). Companion to 062 to 066.
+- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+  ratified as written; ratifies ADR 021 D1, D2, D4; amends D3; closes the groups fork). Drafted 2026-09-05 as Phase 3 of the
+  principals and permissions research programme
+  (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
+  companions 062 to 067 were ratified together.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
-- **Decided by:** pending — drafted by Claude from study S1
+- **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from study S1
   (`../research/2026-09-05-permissions-predicate-at-scale.md`) and lens
   L4 (every engine that filters a list compiles the policy into the
   query at one place; the Zanzibar family cannot list cheaply under

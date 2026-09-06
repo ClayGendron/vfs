@@ -163,9 +163,9 @@ exception    = Principal.system(): skips grants, stamped         # ADR 062 rule 
 
 ## 6. Still open, deliberately
 
-- **Re-grading on join.** Whether a session may re-grade content it
-  already surfaced when a lower-cleared member joins is a product
-  decision (ADR 066 leaves it; the field widens the joiner instead).
+- ~~**Re-grading on join.**~~ Decided 2026-09-06 (Clay): no
+  re-grade; the audit shows the set at each version; a leak notice on
+  join is a sessions-spec follow-up.
 - **The `ask` rung's wire shape.** ADR 063 fixes the semantics (a
   Result bound to a request digest); the MRTR `requestState` shape
   waits on the `serve()` spec.
@@ -180,7 +180,8 @@ exception    = Principal.system(): skips grants, stamped         # ADR 062 rule 
 
 ## 7. What happens next
 
-1. Clay ratifies, amends or rejects ADR 062 to 067.
+1. ~~Clay ratifies, amends or rejects ADR 062 to 067.~~ Ratified as
+   written, 2026-09-06.
 2. Spec 070 is rewritten around `Authority`; spec 058 is written in
    full against ADR 067 with S1's scripts as its benchmark; a sessions
    spec (narrowing, sub-sessions, `pending`) and the `serve()` auth
