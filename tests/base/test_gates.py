@@ -19,6 +19,7 @@ from tests.support.base_doubles import (
 from vfs.base import VirtualFileSystem
 from vfs.exceptions import (
     NotFoundError,
+    UnauthenticatedError,
     ValidationError,
     VFSError,
     WriteConflictError,
@@ -39,6 +40,7 @@ def test_exception_for_kind_maps_known_kinds() -> None:
     assert exception_for_kind(VFSErrorKind.not_found) is NotFoundError
     assert exception_for_kind(VFSErrorKind.read_only) is WriteConflictError
     assert exception_for_kind(VFSErrorKind.invalid) is ValidationError
+    assert exception_for_kind(VFSErrorKind.unauthenticated) is UnauthenticatedError
 
 
 def test_exception_for_kind_unmapped_and_unknown_fall_back_to_base() -> None:

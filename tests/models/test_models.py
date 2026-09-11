@@ -10,6 +10,7 @@ from typing import Union, get_args, get_origin
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from vfs.authority import Authority, Principal
 from vfs.models import (
     ENTRY_OWNED_MIRRORS,
     OBSERVATION_MIRROR_FIELDS,
@@ -455,7 +456,7 @@ def _version(number: int, content: str, prev: str | None, **kwargs: object) -> V
         number=number,
         version_content=content,
         prev_content=prev,
-        created_by="auto",
+        authority=Authority.of(Principal("auto")),
         **kwargs,  # ty: ignore[invalid-argument-type]
     )
 
@@ -737,3 +738,29 @@ class TestObservation:
             Match(start=10, end=42, preview="text", preview_start=9, preview_end=13)
         with pytest.raises(ValidationError, match="fall outside"):
             Match(start=10, end=42, preview="text", preview_start=13, preview_end=12)
+
+
+class TestVersionAttribution:
+    """Every version row names the actor and the subjects it was written for."""
+
+    def _row(self, authority: Authority | None) -> Version:
+        return Version.create(file=Path("/a.md"), number=1, version_content="x", prev_content=None, authority=authority)
+
+    def test_a_subject_acting_as_itself(self) -> None:
+        row = self._row(Authority.of(Principal("alice"), source_identity="idp|alice"))
+        assert (row.actor, row.subjects, row.provenance) == ("alice", ("alice",), "constructed")
+        assert row.source_identity == "idp|alice"
+
+    def test_an_actor_working_for_a_set_keeps_the_pair_apart(self) -> None:
+        bot = Principal("bot", kind="service")
+        row = self._row(Authority.on_behalf_of({Principal("bob"), Principal("alice")}, actor=bot))
+        assert row.actor == "bot"
+        assert row.subjects == ("alice", "bob")
+
+    def test_the_system_actor_has_no_subjects(self) -> None:
+        row = self._row(Authority.system())
+        assert (row.actor, row.subjects, row.provenance, row.source_identity) == ("system", (), "system", None)
+
+    def test_no_authority_records_nothing(self) -> None:
+        row = self._row(None)
+        assert (row.actor, row.subjects, row.provenance, row.source_identity) == (None, (), None, None)

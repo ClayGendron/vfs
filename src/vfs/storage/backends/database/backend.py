@@ -107,6 +107,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.authority import Authority
     from vfs.embedding import EmbeddingProvider
     from vfs.models import Edge, Entry, Observation
     from vfs.models.rows import VFSTables
@@ -234,7 +235,7 @@ class DatabaseStorage:
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
         return await self._execute(
@@ -250,7 +251,7 @@ class DatabaseStorage:
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
         return await self._execute(
@@ -266,7 +267,7 @@ class DatabaseStorage:
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations, default=ROOT)
         return await self._execute(
@@ -287,7 +288,7 @@ class DatabaseStorage:
         path: Path,
         max_depth: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         if max_depth is not None and max_depth < 1:
             return Result(
@@ -321,7 +322,7 @@ class DatabaseStorage:
         kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute(
             "glob",
@@ -359,7 +360,7 @@ class DatabaseStorage:
         max_count: int | None = None,
         allow_scan: bool = False,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute(
             "grep",
@@ -404,7 +405,7 @@ class DatabaseStorage:
         globs_not: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         refusal = await self._host.ensure_ready()
         if refusal is not None:
@@ -524,7 +525,7 @@ class DatabaseStorage:
         entries: list[Entry],
         overwrite: bool = True,
         parents: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute_write(
             "write",
@@ -537,7 +538,7 @@ class DatabaseStorage:
                 entries=entries,
                 overwrite=overwrite,
                 parents=parents,
-                user_id=user_id,
+                authority=authority,
             ),
         )
 
@@ -547,7 +548,7 @@ class DatabaseStorage:
         edits: list[EditOperation],
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
         return await self._execute_write(
@@ -560,7 +561,7 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 edits=edits,
                 targets=targets,
-                user_id=user_id,
+                authority=authority,
             ),
         )
 
@@ -570,7 +571,7 @@ class DatabaseStorage:
         path: Path | None = None,
         observations: list[Observation] | None = None,
         cascade: bool = True,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
         return await self._execute_topology(
@@ -582,7 +583,7 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 targets=targets,
                 cascade=cascade,
-                user_id=user_id,
+                authority=authority,
                 lock_key=self._host.topology_key,
             ),
         )
@@ -592,7 +593,7 @@ class DatabaseStorage:
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
         return await self._execute_topology(
@@ -603,7 +604,7 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.membership_budget,
                 targets=targets,
-                user_id=user_id,
+                authority=authority,
                 lock_key=self._host.topology_key,
             ),
         )
@@ -612,7 +613,7 @@ class DatabaseStorage:
         self,
         *,
         path: Path,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute_topology(
             "sweep",
@@ -623,7 +624,7 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 path=path,
                 trash_days=self._trash_days,
-                user_id=user_id,
+                authority=authority,
                 lock_key=self._host.topology_key,
             ),
         )
@@ -634,7 +635,7 @@ class DatabaseStorage:
         path: Path,
         parents: bool = False,
         exist_ok: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute_write(
             "mkdir",
@@ -647,7 +648,7 @@ class DatabaseStorage:
                 path=path,
                 parents=parents,
                 exist_ok=exist_ok,
-                user_id=user_id,
+                authority=authority,
             ),
         )
 
@@ -655,24 +656,24 @@ class DatabaseStorage:
         self,
         *,
         operations: list[ResolvedPair],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_transfer("move", operations, user_id=user_id)
+        return await self._execute_transfer("move", operations, authority=authority)
 
     async def copy(
         self,
         *,
         operations: list[ResolvedPair],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_transfer("copy", operations, user_id=user_id)
+        return await self._execute_transfer("copy", operations, authority=authority)
 
     async def mkedge(
         self,
         *,
         edges: list[Edge],
         provenance: str = "system",
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute_write(
             "mkedge",
@@ -684,7 +685,7 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 edges=edges,
                 provenance=provenance,
-                user_id=user_id,
+                authority=authority,
             ),
         )
 
@@ -692,7 +693,7 @@ class DatabaseStorage:
         self,
         *,
         edges: list[Edge],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         return await self._execute_write(
             "rmedge",
@@ -702,7 +703,7 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.membership_budget,
                 edges=edges,
-                user_id=user_id,
+                authority=authority,
             ),
         )
 
@@ -1040,7 +1041,7 @@ class DatabaseStorage:
         return await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
 
     async def _execute_transfer(
-        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, user_id: str | None
+        self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, authority: Authority | None
     ) -> Result:
         return await self._execute_topology(
             op,
@@ -1052,7 +1053,7 @@ class DatabaseStorage:
                 self._host.membership_budget,
                 op=op,
                 operations=operations,
-                user_id=user_id,
+                authority=authority,
                 lock_key=self._host.topology_key,
             ),
         )

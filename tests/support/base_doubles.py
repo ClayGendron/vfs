@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from vfs.authority import Authority
 from vfs.base import VirtualFileSystem
 from vfs.models import Entry, Observation
 from vfs.paths import ObjectKind, Path
@@ -48,70 +49,72 @@ class RecorderStorage:
         self.description = description
         self._caps = caps
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.authorities: list[Authority | None] = []  # one per recorded call, in order
 
     def capabilities(self) -> frozenset[Op]:
         return self._caps if self._caps is not None else storage_ops(self)
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         return Result(ops=(op,), observations=[])
 
-    async def read(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("read", kwargs)
+    async def read(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("read", kwargs, authority)
 
-    async def stat(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("stat", kwargs)
+    async def stat(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("stat", kwargs, authority)
 
-    async def ls(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("ls", kwargs)
+    async def ls(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("ls", kwargs, authority)
 
-    async def tree(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("tree", kwargs)
+    async def tree(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("tree", kwargs, authority)
 
-    async def glob(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("glob", kwargs)
+    async def glob(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("glob", kwargs, authority)
 
-    async def grep(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("grep", kwargs)
+    async def grep(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("grep", kwargs, authority)
 
-    async def glean(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("glean", kwargs)
+    async def glean(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("glean", kwargs, authority)
 
-    async def write(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("write", kwargs)
+    async def write(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("write", kwargs, authority)
 
-    async def edit(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("edit", kwargs)
+    async def edit(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("edit", kwargs, authority)
 
-    async def delete(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("delete", kwargs)
+    async def delete(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("delete", kwargs, authority)
 
-    async def restore(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("restore", kwargs)
+    async def restore(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("restore", kwargs, authority)
 
-    async def sweep(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("sweep", kwargs)
+    async def sweep(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("sweep", kwargs, authority)
 
-    async def mkdir(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("mkdir", kwargs)
+    async def mkdir(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("mkdir", kwargs, authority)
 
-    async def move(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("move", kwargs)
+    async def move(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("move", kwargs, authority)
 
-    async def copy(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("copy", kwargs)
+    async def copy(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("copy", kwargs, authority)
 
-    async def graph(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("graph", kwargs)
+    async def graph(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("graph", kwargs, authority)
 
-    async def mkedge(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("mkedge", kwargs)
+    async def mkedge(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("mkedge", kwargs, authority)
 
-    async def rmedge(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("rmedge", kwargs)
+    async def rmedge(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("rmedge", kwargs, authority)
 
-    async def run(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
-        return self._answer("run", kwargs)
+    async def run(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("run", kwargs, authority)
 
 
 class ReadFamilyStorage:
@@ -144,12 +147,12 @@ class BindableStorage(RecorderStorage):
     without arranging stored rows first.
     """
 
-    async def stat(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def stat(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
         self.calls.append(("stat", {"path": path, **kwargs}))
         target = path if path is not None else Path("/")
         return Result(ops=("stat",), observations=[Observation(path=target, kind="directory")])
 
-    async def ls(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def ls(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
         self.calls.append(("ls", {"path": path, **kwargs}))
         return Result(ops=("ls",), observations=[])
 
@@ -201,7 +204,7 @@ class DictStorage(RecorderStorage):
         super().__init__(name="dict", description="Dict storage double")
         self._entries = entries
 
-    async def mkdir(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def mkdir(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
         assert path is not None
         self.calls.append(("mkdir", {"path": path, **kwargs}))
         if self._entries.get(str(path)) == "directory" and kwargs.get("exist_ok"):
@@ -220,7 +223,7 @@ class DictStorage(RecorderStorage):
         self,
         *,
         path: Path | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
         self.calls.append(("ls", {"path": path, **kwargs}))
@@ -238,7 +241,7 @@ class DictStorage(RecorderStorage):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **_: Any,
     ) -> Result:
         wanted = [path] if path is not None else [o.path for o in observations or []]
@@ -289,8 +292,9 @@ class GatedCloseStorage(SpyCloseStorage):
 class TransportFailStorage(RecorderStorage):
     """Wire-backend double whose every op raises ``TransportError`` — a dead peer."""
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         msg = "peer is gone"
         raise TransportError(msg)
 
@@ -307,12 +311,12 @@ class SuspendingStorage(RecorderStorage):
         super().__init__(name="suspending", description="Suspending storage double")
         self._gate = gate
 
-    async def mkdir(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def mkdir(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         if self._gate is not None:
             await self._gate.wait()
         else:
             await asyncio.sleep(0)
-        return self._answer("mkdir", kwargs)
+        return self._answer("mkdir", kwargs, authority)
 
 
 class SuspendingStorageFS(VirtualFileSystem):
@@ -333,7 +337,7 @@ class RunnerStorage(RecorderStorage):
         wanted: frozenset[Op] = caps if caps is not None else frozenset({"read", "stat", "ls", "tree", "run"})
         super().__init__(name=kwargs.pop("name", "runner"), caps=wanted, **kwargs)
 
-    async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def read(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
         self.calls.append(("read", {"path": path, **kwargs}))
         target = path if path is not None else Path("/")
         return Result(ops=("read",), observations=[Observation(path=target, kind="directory")])
@@ -343,7 +347,7 @@ class RunnerStorage(RecorderStorage):
         *,
         path: Path | None = None,
         arguments: dict[str, Any] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
         assert path is not None
@@ -358,8 +362,9 @@ class EchoStorage(RecorderStorage):
         super().__init__(**kwargs)
         self._echo_path = echo_path
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         return Result(ops=(op,), observations=[Observation(path=Path(self._echo_path))])
 
 
@@ -374,7 +379,7 @@ class ScopeSpyStorage(EchoStorage):
         super().__init__(**kwargs)
         self.scopes: list[tuple[str, ...]] = []
 
-    async def grep(self, *, globs: tuple[str, ...] = (), user_id: str | None = None, **kwargs: Any) -> Result:
+    async def grep(self, *, globs: tuple[str, ...] = (), authority: Authority | None = None, **kwargs: Any) -> Result:
         self.scopes.append(tuple(globs))
         return self._answer("grep", {"globs": globs, **kwargs})
 
@@ -447,8 +452,9 @@ class DeepRowStorage(RecorderStorage):
 
     DEEP = "/" + "/".join(["a" * 250] * 4)  # 1004 chars — valid locally
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         rows = [Observation(path=Path(self.DEEP)), Observation(path=Path("/ok.py"))]
         return Result(ops=(op,), observations=rows)
 
@@ -460,7 +466,9 @@ class SlowWriteStorage(RecorderStorage):
         super().__init__(name="slow-write")
         self.write_log: list[str] = []
 
-    async def write(self, *, entries: list[Entry] | None = None, user_id: str | None = None, **_: Any) -> Result:
+    async def write(
+        self, *, entries: list[Entry] | None = None, authority: Authority | None = None, **_: Any
+    ) -> Result:
         await asyncio.sleep(0.02)
         rows = []
         for entry in entries or []:
@@ -514,8 +522,9 @@ class CannedStorage(RecorderStorage):
         super().__init__(**kwargs)
         self.answers = answers or {}
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         return self.answers.get(op, Result(ops=(op,), observations=[]))
 
 

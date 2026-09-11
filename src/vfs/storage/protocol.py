@@ -14,7 +14,7 @@ method surface.
         description = "Read-only rows from a frozen snapshot"
 
         def capabilities(self): return frozenset({"read", "stat", "ls", "tree"})
-        async def read(self, *, path=None, observations=None, columns=None, user_id=None): ...
+        async def read(self, *, path=None, observations=None, columns=None, authority=None): ...
         async def stat(self, ...): ...
         async def ls(self, ...): ...
         async def tree(self, ...): ...
@@ -58,6 +58,7 @@ from vfs.ops import MUTATING_OPS
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from vfs.authority import Authority
     from vfs.models import Edge, Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind, Path
@@ -122,7 +123,7 @@ class SupportsRead(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def stat(
@@ -131,7 +132,7 @@ class SupportsRead(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def ls(
@@ -140,7 +141,7 @@ class SupportsRead(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def tree(
@@ -149,7 +150,7 @@ class SupportsRead(Protocol):
         path: Path,
         max_depth: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 
@@ -168,7 +169,7 @@ class SupportsMutation(Protocol):
         entries: list[Entry],
         overwrite: bool = True,
         parents: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def edit(
@@ -177,7 +178,7 @@ class SupportsMutation(Protocol):
         edits: list[EditOperation],
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def delete(
@@ -186,7 +187,7 @@ class SupportsMutation(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         cascade: bool = True,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def restore(
@@ -194,14 +195,14 @@ class SupportsMutation(Protocol):
         *,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def sweep(
         self,
         *,
         path: Path,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def mkdir(
@@ -210,21 +211,21 @@ class SupportsMutation(Protocol):
         path: Path,
         parents: bool = False,
         exist_ok: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def move(
         self,
         *,
         operations: list[ResolvedPair],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def copy(
         self,
         *,
         operations: list[ResolvedPair],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def mkedge(
@@ -232,14 +233,14 @@ class SupportsMutation(Protocol):
         *,
         edges: list[Edge],
         provenance: str = "system",
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def rmedge(
         self,
         *,
         edges: list[Edge],
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 
@@ -268,7 +269,7 @@ class SupportsPatternSearch(Protocol):
         kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
     async def grep(
@@ -289,7 +290,7 @@ class SupportsPatternSearch(Protocol):
         max_count: int | None = None,
         allow_scan: bool = False,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 
@@ -316,7 +317,7 @@ class SupportsGlean(Protocol):
         globs_not: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 
@@ -331,7 +332,7 @@ class SupportsGraph(Protocol):
         path: Path | None = None,
         observations: list[Observation] | None = None,
         depth: int | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 
@@ -344,7 +345,7 @@ class SupportsRun(Protocol):
         *,
         path: Path,
         arguments: dict[str, Any] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result: ...
 
 

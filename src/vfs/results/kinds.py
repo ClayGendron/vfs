@@ -60,7 +60,8 @@ class VFSErrorKind(StrEnum):
     not_empty = "vfs.not_empty"  # ENOTEMPTY
 
     # — authorization —
-    permission_denied = "vfs.permission_denied"  # EACCES / EPERM
+    unauthenticated = "vfs.unauthenticated"  # 401 — no authority reached the router; "who are you"
+    permission_denied = "vfs.permission_denied"  # EACCES / EPERM — 403; "you may not"
     read_only = "vfs.read_only"  # EROFS — read-only target, distinct from authorization
 
     # — capability / method discovery —
@@ -158,6 +159,11 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
         RetryClass.never,
         "Empty the directory before removing it.",
         "the non-empty directory",
+    ),
+    VFSErrorKind.unauthenticated: KindContract(
+        RetryClass.never,
+        "This mount's posture needs a name: open a session with an authority, or configure a default.",
+        "None — source carries the locus",
     ),
     VFSErrorKind.permission_denied: KindContract(
         RetryClass.never,

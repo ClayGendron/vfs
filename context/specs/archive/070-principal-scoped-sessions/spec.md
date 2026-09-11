@@ -1,15 +1,15 @@
 # 070 — Authority: the verified subject set, the actor, and the session that carries them
 
-- **Status:** shaped — **rewritten 2026-09-06 around ADR 062 to 067**
-  (ratified by Clay the same day) after the principals and permissions
-  research programme
+- **Status:** **landed 2026-09-06** (slices A to E in one landing; see
+  *Landing notes* at the end). Rewritten 2026-09-06 around ADR 062 to
+  067 (ratified by Clay the same day) after the principals and
+  permissions research programme
   (`../../../research/2026-09-05-principals-and-permissions-research-plan.md`,
   synthesis `../../../research/2026-09-05-permissions-synthesis.md`).
   The 2026-07-10 draft (research review of eight repo lenses, decisions
   1 to 7) is superseded by this text; its decisions 4, 6 and 7 survive
   as written and are restated below; its decision 1 shape is replaced.
-  History is in git. Awaiting Clay's read before implementation
-  (Clay, 2026-09-06: "rewrite the specs only, then stop for review").
+  History is in git.
 - **Date:** 2026-09-06 (original draft 2026-07-10)
 - **Owner:** Clay Gendron
 - **Kind:** feature (the identity layer: `Principal`, `Authority`, the
@@ -242,3 +242,79 @@ that is 058's job, and 058 reads the authority this spec delivers.
   (D2), knob deleted (D3), session as sugar (D5), no claims payload
   (scopes suffice until 149 names a reader), groups not on the
   principal (ADR 067 rule 3), `system()` bypass scope (ADR 062 rule 4).
+
+## Landing notes (2026-09-06)
+
+- **What landed.** `vfs/authority.py` (`Principal`, `Authority` with
+  the three doors, `Narrowing.NONE`, `Provenance`, `MAX_SUBJECTS = 64`,
+  `SYSTEM_NAME`, and `owner_for`); the `vfs.unauthenticated` kind with
+  its contract row and an `UnauthenticatedError` class; `params.py`'s
+  `_AUTHORITY` spec with an `authority` param kind that refuses any
+  non-`Authority` value as `invalid`; the rename through every public
+  verb, every `_route_*` helper, `_dispatch_entry`, `_call_storage`,
+  the storage protocols, `DatabaseStorage`, `WritePlan`, the trash
+  chain and the copy minting; `default_authority` on the constructor
+  with the fail-closed gate inside `_gate_params` (garbage still
+  outranks anonymity) and the narrowing at `_call_storage`
+  (`_admitted`); `vfs/session.py` with the `Session` facade and
+  `VirtualFileSystem.session(authority)`; the versions schema and
+  model attribution. `permissions.py` lost its `user_scoped`
+  docstring section.
+- **The control plane runs as the system actor.** The bind-site
+  probes, the mount-point `mkdir` and `delete` behind `add_mount` and
+  `remove_mount`, and `locate(exists=True)`'s stat pass
+  `Authority.system()` explicitly, whatever default or caller is
+  configured. Mount administration is the router's own work, not a
+  caller's, and the grants of 058 will not govern it.
+- **Ownership derives from the authority now.** `owner_for` decides
+  the entry row's `owner_id` at every minting site (write, edit,
+  mkdir, the copy tree, the trash bucket chain): one subject owns what
+  it makes, a set owns nothing (the container governs), the system
+  actor stamps the payload's declared `owner_id`, and no authority
+  stamps nothing. The declared owner rides on the staged row so the
+  system path can honour it; the edit snapshot now reads `owner_id`.
+- **The storage seam keeps `Authority | None`.** The router always
+  passes one (the gate refuses otherwise), so `None` at a backend
+  method means unrouted direct use — the conformance suite and dev
+  scripts. Whether a backend refuses `None` is 058's call, made when
+  enforcement moves into storage.
+- **Slice E is schema and model only; no write path mints a version
+  row.** The `versions` table gains `actor` (replacing `created_by`),
+  `provenance` and `source_identity`; `version_subjects(entry_id,
+  version_number, principal_id)` is a new side table; the schema
+  format is 13; sweep clears the side table with the rest.
+  `Version.create` takes the authority whole and fills the four
+  fields. But the live tree mints no version row anywhere (STATUS.md,
+  *Version content history*: no spec exists), so "the single point
+  where version rows are minted" and the versions read that returns
+  actor and subjects both wait on that story; the attribution is ready
+  for it, and this spec's acceptance line for minted rows is vacuous
+  until then.
+- **A closed session refuses as `invalid`** ("the session is closed
+  and cannot reopen; open a new one") and re-entering one raises
+  `ValueError`. Spec 148 may want a narrower kind once `pending` and
+  the widen refusal exist; nothing pins the choice beyond the tests.
+- **Tests.** `tests/test_authority.py` (the type), `tests/base/
+  test_authority.py` (the gate per verb, the default and explicit
+  authorities reaching storage, the control plane as system, the
+  session equality and signature pins per verb, closed-is-final, the
+  grep-shaped construction-site pin), attribution tests on `Version`
+  and on the write path's owner. Every router constructed in the
+  existing suites passes `default_authority=Authority.system()` — the
+  ETL shape — because the gate now fails closed; `RecorderStorage`
+  records the authority behind each call beside its kwargs.
+
+## Amended 2026-09-06 (ADR 068): absence is anonymous, not refused
+
+Decision 3's ingress refusal is superseded the same day it landed.
+Clay: the default posture is open, and an open mount must not require
+a principal. Landed as: `Principal` gains the `anonymous` kind with the
+reserved name `anon`, `Authority.anonymous()` is the fourth door (its
+only shape: the anonymous principal as sole subject and actor), the
+router substitutes it when a call names no authority and no default is
+configured, the ingress gate no longer refuses, and `owner_for` gives
+anonymous rows a NULL owner. The `vfs.unauthenticated` kind stays and
+moves to the mount: spec 058's spine produces it when an anonymous
+call reaches a `shared` or `private` posture. `default_authority`
+stays for the ETL shape. The suites drop the
+`default_authority=Authority.system()` lines this landing had added.

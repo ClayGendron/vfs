@@ -46,6 +46,10 @@ class MountError(VFSError, ValueError):
         return list(self.result.errors) if self.result is not None else []
 
 
+class UnauthenticatedError(VFSError):
+    """No authority reached the router — the caller has not said who it is."""
+
+
 class WriteConflictError(VFSError):
     """Write rejected — file exists with overwrite=False, or target is invalid."""
 
@@ -72,6 +76,7 @@ _KIND_TO_EXC: dict[VFSErrorKind, type[VFSError]] = {
     VFSErrorKind.not_empty: WriteConflictError,
     VFSErrorKind.conflict: WriteConflictError,
     VFSErrorKind.cross_mount: WriteConflictError,
+    VFSErrorKind.unauthenticated: UnauthenticatedError,
     VFSErrorKind.permission_denied: WriteConflictError,
     VFSErrorKind.read_only: WriteConflictError,
     VFSErrorKind.invalid: ValidationError,

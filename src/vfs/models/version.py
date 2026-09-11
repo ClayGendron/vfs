@@ -9,6 +9,12 @@ no separate counter. Rows are minted for material content writes
 only, so a file's labels may gap where non-content changes (a move, a
 metadata write) ticked the entry's version; gaps are expected, never an error.
 
+Every version names who made it: the ``actor`` that did the work, the
+``subjects`` it was done for (one principal name each; empty under the
+system actor), the ``provenance`` of that authority, and the edge identity
+it entered under. The pair of actor and subjects is kept apart on purpose,
+so the record never loses who acted for whom.
+
 A version records a *content state*, never an entry state: entry identity and
 authored metadata (path, name, ext, mime_type) are current-entry facts with no
 history — a rename or metadata write mints nothing, and the label gap is the
@@ -31,6 +37,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
+from vfs.authority import Authority, Provenance  # noqa: TC001 — Pydantic needs Provenance at runtime
 from vfs.models.versioning import create_version as create_version_record
 from vfs.models.versioning import reconstruct_version
 from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
@@ -55,7 +62,10 @@ class Version(BaseModel):
     content_hash: str
     lines: int = 0
     size_bytes: int = 0
-    created_by: str | None = None
+    actor: str | None = None
+    subjects: tuple[str, ...] = ()
+    provenance: Provenance | None = None
+    source_identity: str | None = None
     created_at: datetime | None = None
 
     @field_validator("content", "version_diff")
@@ -88,13 +98,15 @@ class Version(BaseModel):
         number: int,
         version_content: str,
         prev_content: str | None,
-        created_by: str | None,
+        authority: Authority | None,
         force_snapshot: bool = False,
     ) -> Version:
         """Construct the stored row for *version_content* — the one construction door.
 
         Snapshot-vs-diff is decided by the versioning provider; the metrics are
-        measured here from the full content and stored explicitly.
+        measured here from the full content and stored explicitly. Attribution
+        comes from *authority* whole: its actor, its subjects, its provenance
+        and its source identity; ``None`` records nothing.
         """
         record = create_version_record(
             prev_content=prev_content,
@@ -112,7 +124,10 @@ class Version(BaseModel):
             content_hash=hashlib.sha256(encoded).hexdigest(),
             size_bytes=len(encoded),
             lines=version_content.count("\n") + 1 if version_content else 0,
-            created_by=created_by,
+            actor=None if authority is None else authority.actor.sub,
+            subjects=() if authority is None else authority.subject_names,
+            provenance=None if authority is None else authority.provenance,
+            source_identity=None if authority is None else authority.source_identity,
             created_at=datetime.now(UTC),
         )
 

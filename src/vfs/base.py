@@ -37,10 +37,11 @@ import asyncio
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, assert_never, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
 
+from vfs.authority import Authority
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
@@ -70,6 +71,7 @@ from vfs.permissions import (
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import Result, ResultError, VFSErrorKind, validation_message
 from vfs.results.kinds import Severity, kind_family
+from vfs.session import Session
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -99,6 +101,14 @@ _hop_budget: ContextVar[int | None] = ContextVar("vfs_hop_budget", default=None)
 # Single-path mutations whose addressed site the EBUSY guard protects:
 # delete removes it, restore lands on it, sweep destroys beneath it.
 _BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
+
+# The router's own control-plane storage calls (bind-site probes, the
+# mount-point mkdir and rmdir) run as the system actor, not as any caller.
+_ADMIN_AUTHORITY: Final = Authority.system()
+
+# A call that names nobody runs as the named nobody: it holds only what a
+# mount's posture gives everyone, and the audit still has an actor.
+_ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
 
 
 @dataclass(slots=True)
@@ -298,6 +308,7 @@ class VirtualFileSystem:
         hop_budget: int = 16,
         close_timeout: float = 10.0,
         rerankers: Iterable[Reranker] = (BM25Rerank(),),
+        default_authority: Authority | None = None,
     ) -> None:
         if storage is None:
             storage = InMemoryStorage()
@@ -314,6 +325,7 @@ class VirtualFileSystem:
         self.description = description
         self._hop_budget_default = hop_budget
         self._close_timeout = close_timeout
+        self._default_authority = default_authority
         self._mount_lock = asyncio.Lock()
         self._stranded_disposals: dict[int, StorageBackend] = {}
         root_meta = MountMeta(
@@ -466,7 +478,7 @@ class VirtualFileSystem:
         # Validated before the mkdir — a rejected mask must not mint the site.
         mask = self._validate_deny_ops(deny_ops)
 
-        made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True)
+        made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=_ADMIN_AUTHORITY)
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
             msg = f"Cannot mount at {mount_path}: {detail}"
@@ -494,7 +506,7 @@ class VirtualFileSystem:
         """
         mount_path = self._normalize_mount_path(path)
         await self.unbind(str(mount_path))
-        removed = await self.delete(path=str(mount_path), cascade=False)
+        removed = await self.delete(path=str(mount_path), cascade=False, authority=_ADMIN_AUTHORITY)
         if not removed.success:
             detail = removed.error_message or "storage refused the delete"
             msg = f"Unmounted {mount_path}, but removing its directory failed: {detail}"
@@ -702,6 +714,16 @@ class VirtualFileSystem:
             reason = f"the target does not exist: {tgt.path}"
         return EdgeLocation(source=src, target=tgt, same_storage=same, reason=reason)
 
+    def session(self, authority: Authority) -> Session:
+        """An authority-scoped facade: the verbs without the identity argument.
+
+        Sugar over the funnel — every session verb is the same call with
+        ``authority=`` filled in, so the gate stays authority-*presence*
+        at ingress and a session-mediated result equals the direct one.
+        Open it with ``async with``; closed is final.
+        """
+        return Session(self, authority)
+
     def capabilities(self) -> frozenset[str]:
         """Operations this namespace answers — the union of entry snapshots.
 
@@ -731,7 +753,7 @@ class VirtualFileSystem:
             return "filesystem is closed"
         terminal = self._resolve_terminal(mount_path)
         advice = f"no directory stored at the mount point (mkdir it, or add_mount(..., parents=True)): {mount_path}"
-        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
+        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel, authority=_ADMIN_AUTHORITY)
         if not stat.success:
             blocker = next((f for f in stat.failures if kind_family(f.kind) is not VFSErrorKind.not_found), None)
             if blocker is None:
@@ -742,7 +764,7 @@ class VirtualFileSystem:
             return advice
         if row.kind != "directory":
             return f"the mount point is stored as {row.kind!r}, not a directory: {mount_path}"
-        listed = await self._call_storage(terminal.binding, "ls", path=terminal.rel)
+        listed = await self._call_storage(terminal.binding, "ls", path=terminal.rel, authority=_ADMIN_AUTHORITY)
         if not listed.success:
             return listed.error_message or f"could not list the mount point: {mount_path}"
         if any(o.path != terminal.rel for o in listed.observations):
@@ -813,12 +835,12 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("read", path=path, observations=observations, columns=columns, user_id=user_id)
+        refusal = self._gate_params("read", path=path, observations=observations, columns=columns, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("read", path, observations, columns=columns, user_id=user_id)
+        return await self._route_single("read", path, observations, columns=columns, authority=authority)
 
     async def stat(
         self,
@@ -826,12 +848,12 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("stat", path=path, observations=observations, columns=columns, user_id=user_id)
+        refusal = self._gate_params("stat", path=path, observations=observations, columns=columns, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("stat", path, observations, columns=columns, user_id=user_id)
+        return await self._route_single("stat", path, observations, columns=columns, authority=authority)
 
     async def ls(
         self,
@@ -839,12 +861,12 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("ls", path=path, observations=observations, columns=columns, user_id=user_id)
+        refusal = self._gate_params("ls", path=path, observations=observations, columns=columns, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("ls", path, observations, columns=columns, user_id=user_id)
+        return await self._route_single("ls", path, observations, columns=columns, authority=authority)
 
     async def tree(
         self,
@@ -852,12 +874,12 @@ class VirtualFileSystem:
         max_depth: int | None = None,
         *,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("tree", path=path, max_depth=max_depth, columns=columns, user_id=user_id)
+        refusal = self._gate_params("tree", path=path, max_depth=max_depth, columns=columns, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, user_id=user_id)
+        return await self._route_single("tree", path, None, max_depth=max_depth, columns=columns, authority=authority)
 
     # -------------------------------------------------------------------
     # public methods — mutations
@@ -871,7 +893,7 @@ class VirtualFileSystem:
         content: str | None = None,
         overwrite: bool = True,
         parents: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Write one file (*path* + *content*) or a batch of *entries*.
 
@@ -887,12 +909,18 @@ class VirtualFileSystem:
         and applies per call — every entry in a batch shares it.
         """
         refusal = self._gate_params(
-            "write", entries=entries, path=path, content=content, overwrite=overwrite, parents=parents, user_id=user_id
+            "write",
+            entries=entries,
+            path=path,
+            content=content,
+            overwrite=overwrite,
+            parents=parents,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
         if entries is not None:
-            return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, user_id=user_id)
+            return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, authority=authority)
         if path is None or content is None:
             return self._error(
                 "write requires path and content, or entries",
@@ -906,7 +934,7 @@ class VirtualFileSystem:
             entry = Entry(path=str(resolved.path), content=content)
         except ValidationError as exc:
             return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="write")
-        return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, user_id=user_id)
+        return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)
 
     async def edit(
         self,
@@ -917,7 +945,7 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         replace_all: bool = False,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Apply find-and-replace edits — a multi-edit verb by contract.
 
@@ -935,7 +963,7 @@ class VirtualFileSystem:
             edits=edits,
             observations=observations,
             replace_all=replace_all,
-            user_id=user_id,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
@@ -951,7 +979,7 @@ class VirtualFileSystem:
         else:
             assert old is not None and new is not None
             edits = [EditOperation(old=old, new=new, replace_all=replace_all)]
-        return await self._route_single("edit", path, observations, edits=edits, user_id=user_id)
+        return await self._route_single("edit", path, observations, edits=edits, authority=authority)
 
     async def delete(
         self,
@@ -959,7 +987,7 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         cascade: bool = True,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Delete *path* (or each observation row) — always recoverable.
 
@@ -974,7 +1002,9 @@ class VirtualFileSystem:
         paths, must be unmounted before it can be deleted — the EBUSY
         rule.
         """
-        refusal = self._gate_params("delete", path=path, observations=observations, cascade=cascade, user_id=user_id)
+        refusal = self._gate_params(
+            "delete", path=path, observations=observations, cascade=cascade, authority=authority
+        )
         if refusal is not None:
             return refusal
         return await self._route_single(
@@ -982,7 +1012,7 @@ class VirtualFileSystem:
             path,
             observations,
             cascade=cascade,
-            user_id=user_id,
+            authority=authority,
         )
 
     async def restore(
@@ -990,7 +1020,7 @@ class VirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Restore a trashed entry to its original site.
 
@@ -1002,16 +1032,16 @@ class VirtualFileSystem:
         classifies ``unsupported``. Like delete, a live bind site at the
         address is ``busy``.
         """
-        refusal = self._gate_params("restore", path=path, observations=observations, user_id=user_id)
+        refusal = self._gate_params("restore", path=path, observations=observations, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("restore", path, observations, user_id=user_id)
+        return await self._route_single("restore", path, observations, authority=authority)
 
     async def sweep(
         self,
         path: str = "/.vfs/trash",
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Destroy at *path* — retention cleanup at a trash root, purge elsewhere.
 
@@ -1026,10 +1056,10 @@ class VirtualFileSystem:
         ``/m``. Explicit and idempotent — storage owns no background
         work.
         """
-        refusal = self._gate_params("sweep", path=path, user_id=user_id)
+        refusal = self._gate_params("sweep", path=path, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("sweep", path, None, user_id=user_id)
+        return await self._route_single("sweep", path, None, authority=authority)
 
     async def mkdir(
         self,
@@ -1037,7 +1067,7 @@ class VirtualFileSystem:
         *,
         parents: bool = False,
         exist_ok: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Create a directory at *path* — pathlib-shaped flags, POSIX defaults.
 
@@ -1046,10 +1076,10 @@ class VirtualFileSystem:
         ``parents=True`` mints the missing chain; ``exist_ok=True`` forgives
         an existing *directory* only — a file at the site stays ``exists``.
         """
-        refusal = self._gate_params("mkdir", path=path, parents=parents, exist_ok=exist_ok, user_id=user_id)
+        refusal = self._gate_params("mkdir", path=path, parents=parents, exist_ok=exist_ok, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("mkdir", path, None, parents=parents, exist_ok=exist_ok, user_id=user_id)
+        return await self._route_single("mkdir", path, None, parents=parents, exist_ok=exist_ok, authority=authority)
 
     async def mkedge(
         self,
@@ -1059,7 +1089,7 @@ class VirtualFileSystem:
         target: str | None = None,
         edge_type: str | None = None,
         provenance: Literal["user", "agent", "system"] = "system",
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Create or touch typed edges — batch-native, touch/upsert.
 
@@ -1082,7 +1112,7 @@ class VirtualFileSystem:
             target=target,
             edge_type=edge_type,
             provenance=provenance,
-            user_id=user_id,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
@@ -1092,7 +1122,7 @@ class VirtualFileSystem:
             source=source,
             target=target,
             edge_type=edge_type,
-            user_id=user_id,
+            authority=authority,
             provenance=provenance,
         )
 
@@ -1103,7 +1133,7 @@ class VirtualFileSystem:
         source: str | None = None,
         target: str | None = None,
         edge_type: str | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Remove typed edges by their exact creating coordinates.
 
@@ -1115,12 +1145,12 @@ class VirtualFileSystem:
         here, so the hierarchy mirror cannot be removed.
         """
         refusal = self._gate_params(
-            "rmedge", edges=edges, source=source, target=target, edge_type=edge_type, user_id=user_id
+            "rmedge", edges=edges, source=source, target=target, edge_type=edge_type, authority=authority
         )
         if refusal is not None:
             return refusal
         return await self._route_edge_batch(
-            "rmedge", edges, source=source, target=target, edge_type=edge_type, user_id=user_id
+            "rmedge", edges, source=source, target=target, edge_type=edge_type, authority=authority
         )
 
     async def move(
@@ -1129,12 +1159,12 @@ class VirtualFileSystem:
         dest: str | None = None,
         moves: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, user_id=user_id)
+        refusal = self._gate_params("move", src=src, dest=dest, moves=moves, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_pairs("move", src, dest, moves, user_id=user_id)
+        return await self._route_pairs("move", src, dest, moves, authority=authority)
 
     async def copy(
         self,
@@ -1142,12 +1172,12 @@ class VirtualFileSystem:
         dest: str | None = None,
         copies: Sequence[TwoPathOperation | tuple[str, str]] | None = None,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
-        refusal = self._gate_params("copy", src=src, dest=dest, copies=copies, user_id=user_id)
+        refusal = self._gate_params("copy", src=src, dest=dest, copies=copies, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_pairs("copy", src, dest, copies, user_id=user_id)
+        return await self._route_pairs("copy", src, dest, copies, authority=authority)
 
     # -------------------------------------------------------------------
     # public methods — search
@@ -1165,7 +1195,7 @@ class VirtualFileSystem:
         kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Match *pattern* against the namespace — unscoped calls reach every entry.
 
@@ -1212,7 +1242,7 @@ class VirtualFileSystem:
             kind=kind,
             max_count=max_count,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
@@ -1232,7 +1262,7 @@ class VirtualFileSystem:
                 globs_not=globs_not,
                 kind=kind,
                 max_count=max_count,
-                user_id=user_id,
+                authority=authority,
             )
         return await self._route_fanout(
             "glob",
@@ -1242,7 +1272,7 @@ class VirtualFileSystem:
             kind=kind,
             max_count=max_count,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
 
     async def grep(
@@ -1265,7 +1295,7 @@ class VirtualFileSystem:
         max_count: int | None = None,
         allow_scan: bool = False,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Search content for *pattern* — unscoped calls reach every entry.
 
@@ -1311,7 +1341,7 @@ class VirtualFileSystem:
             max_count=max_count,
             allow_scan=allow_scan,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
@@ -1339,7 +1369,7 @@ class VirtualFileSystem:
                 output_mode=output_mode,
                 max_count=max_count,
                 columns=columns,
-                user_id=user_id,
+                authority=authority,
             )
         return await self._route_fanout(
             "grep",
@@ -1356,7 +1386,7 @@ class VirtualFileSystem:
             max_count=max_count,
             allow_scan=allow_scan,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
 
     async def glean(
@@ -1371,7 +1401,7 @@ class VirtualFileSystem:
         globs: tuple[str, ...] = (),
         globs_not: tuple[str, ...] = (),
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Ranked search: text in, one fused ranked list out.
 
@@ -1404,7 +1434,7 @@ class VirtualFileSystem:
             globs=globs,
             globs_not=globs_not,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
         if refusal is not None:
             return refusal
@@ -1417,7 +1447,7 @@ class VirtualFileSystem:
             query=query,
             limit=limit,
             columns=columns,
-            user_id=user_id,
+            authority=authority,
         )
 
     async def graph(
@@ -1427,7 +1457,7 @@ class VirtualFileSystem:
         observations: list[Observation] | None = None,
         *,
         depth: int | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Run the graph traversal *method* — each entry answers over its own subgraph.
 
@@ -1439,11 +1469,11 @@ class VirtualFileSystem:
         are index-time data, not queries.
         """
         refusal = self._gate_params(
-            "graph", method=method, path=path, observations=observations, depth=depth, user_id=user_id
+            "graph", method=method, path=path, observations=observations, depth=depth, authority=authority
         )
         if refusal is not None:
             return refusal
-        return await self._route_single("graph", path, observations, method=method, depth=depth, user_id=user_id)
+        return await self._route_single("graph", path, observations, method=method, depth=depth, authority=authority)
 
     # -------------------------------------------------------------------
     # public methods — execution
@@ -1454,7 +1484,7 @@ class VirtualFileSystem:
         path: str,
         *,
         arguments: dict[str, Any] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Execute the tool at *path* with *arguments* — the execution verb.
 
@@ -1462,10 +1492,10 @@ class VirtualFileSystem:
         verb that executes it. Not a namespace mutation, so it takes no
         write-authorization gate.
         """
-        refusal = self._gate_params("run", path=path, arguments=arguments, user_id=user_id)
+        refusal = self._gate_params("run", path=path, arguments=arguments, authority=authority)
         if refusal is not None:
             return refusal
-        return await self._route_single("run", path, None, arguments=arguments, user_id=user_id)
+        return await self._route_single("run", path, None, arguments=arguments, authority=authority)
 
     # -------------------------------------------------------------------
     # dispatch shapes — single, fan-out, paired, batch
@@ -1490,7 +1520,7 @@ class VirtualFileSystem:
         path: str | None,
         observations: list[Observation] | None,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
         """Route a single-path or observation-based operation.
@@ -1503,7 +1533,7 @@ class VirtualFileSystem:
         if not self._bindings:
             return self._closed_error(op)
         if observations is not None:
-            return await self._dispatch_grouped_observations(op, observations, user_id=user_id, **kwargs)
+            return await self._dispatch_grouped_observations(op, observations, authority=authority, **kwargs)
 
         assert path is not None
         resolved = resolve_path(path, mutation=op in MUTATING_OPS)
@@ -1522,8 +1552,8 @@ class VirtualFileSystem:
             return err
 
         if op == "tree":
-            return await self._tree_region(terminal, user_id=user_id, **kwargs)
-        return await self._dispatch_entry(terminal.binding, op, path=terminal.rel, user_id=user_id, **kwargs)
+            return await self._tree_region(terminal, authority=authority, **kwargs)
+        return await self._dispatch_entry(terminal.binding, op, path=terminal.rel, authority=authority, **kwargs)
 
     async def _dispatch_grouped_observations(
         self,
@@ -1531,7 +1561,7 @@ class VirtualFileSystem:
         observations: list[Observation],
         *,
         ranked: _Ranked | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
         """Route pre-grouped observation operations to their entries.
@@ -1571,7 +1601,7 @@ class VirtualFileSystem:
         if ranked is not None and len(groups) > 1:
             kwargs = {**kwargs, "limit": ranked.depth}
         results = await self._gather_settled(
-            self._dispatch_entry(binding, op, observations=group, user_id=user_id, **kwargs)
+            self._dispatch_entry(binding, op, observations=group, authority=authority, **kwargs)
             for binding, group in groups.values()
         )
         merged = Result.merge(results, op=op)
@@ -1608,7 +1638,7 @@ class VirtualFileSystem:
         globs_not: tuple[str, ...],
         kind: ObjectKind | None,
         max_count: int | None,
-        user_id: str | None,
+        authority: Authority | None,
     ) -> Result:
         """Chained glob: filter rows in hand, fetching only a missing kind fact.
 
@@ -1633,7 +1663,7 @@ class VirtualFileSystem:
             lacking = [row for row in kept if row.kind is None]
             fetched: dict[str, str | None] = {}
             if lacking:
-                stat = await self.stat(observations=lacking, columns=frozenset(), user_id=user_id)
+                stat = await self.stat(observations=lacking, columns=frozenset(), authority=authority)
                 errors = list(stat.errors)
                 fetched = {str(row.path): row.kind for row in stat.observations}
             kept = [row for row in kept if (row.kind if row.kind is not None else fetched.get(str(row.path))) == kind]
@@ -1657,7 +1687,7 @@ class VirtualFileSystem:
         output_mode: GrepOutputMode,
         max_count: int | None,
         columns: frozenset[str] | None,
-        user_id: str | None,
+        authority: Authority | None,
     ) -> Result:
         """Chained grep: filter the rows in hand, fetching only absent content.
 
@@ -1686,7 +1716,7 @@ class VirtualFileSystem:
         errors: list[ResultError] = []
         contents: dict[str, str] = {}
         if absent:
-            read = await self.read(observations=absent, columns=frozenset({"content"}), user_id=user_id)
+            read = await self.read(observations=absent, columns=frozenset({"content"}), authority=authority)
             errors = list(read.errors)
             contents = {str(row.path): row.content for row in read.observations if row.content is not None}
         texted: list[tuple[Observation, str]] = []
@@ -1747,7 +1777,7 @@ class VirtualFileSystem:
         *,
         max_depth: int | None = None,
         columns: frozenset[str] | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Tree over a region: the owning entry's subtree plus bound descents.
 
@@ -1769,7 +1799,7 @@ class VirtualFileSystem:
         try:
             full = terminal.full
             own = await self._dispatch_entry(
-                terminal.binding, "tree", path=terminal.rel, max_depth=max_depth, columns=columns, user_id=user_id
+                terminal.binding, "tree", path=terminal.rel, max_depth=max_depth, columns=columns, authority=authority
             )
             if not own.success:
                 return own
@@ -1790,7 +1820,9 @@ class VirtualFileSystem:
             results: list[Result] = [own]
             results.extend(
                 await self._gather_settled(
-                    self._dispatch_entry(binding, "tree", path=ROOT, max_depth=budget, columns=columns, user_id=user_id)
+                    self._dispatch_entry(
+                        binding, "tree", path=ROOT, max_depth=budget, columns=columns, authority=authority
+                    )
                     for binding, budget in descents
                 )
             )
@@ -1807,7 +1839,7 @@ class VirtualFileSystem:
         row_cap: int | None = None,
         ranked: _Ranked | None = None,
         filters: _PathFilters | None = None,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
         """Route a namespace-wide query: everywhere, a scope subset, or rows.
@@ -1856,7 +1888,7 @@ class VirtualFileSystem:
             return self._closed_error(op)
         if observations is not None:
             merged = await self._dispatch_grouped_observations(
-                op, observations, ranked=ranked, user_id=user_id, **kwargs
+                op, observations, ranked=ranked, authority=authority, **kwargs
             )
             return merged if ranked is not None else self._cap_rows(merged, op, row_cap)
 
@@ -1871,20 +1903,22 @@ class VirtualFileSystem:
                 kwargs = {**kwargs, "limit": ranked.depth}
 
             if filters is not None and op == "glob":
-                named_coros, branches, skips = self._glob_dispatches(plan, paths, filters, user_id=user_id, **kwargs)
+                named_coros, branches, skips = self._glob_dispatches(
+                    plan, paths, filters, authority=authority, **kwargs
+                )
             elif filters is not None:
                 named_coros, branches, skips = self._grep_dispatches(
-                    plan, paths, filters, op=op, user_id=user_id, **kwargs
+                    plan, paths, filters, op=op, authority=authority, **kwargs
                 )
             else:
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
-                    self._dispatch_entry(binding, op, paths=tuple(dict.fromkeys(rels)), user_id=user_id, **kwargs)
+                    self._dispatch_entry(binding, op, paths=tuple(dict.fromkeys(rels)), authority=authority, **kwargs)
                     for key, (binding, rels) in plan.scoped.items()
                     if key not in plan.unscoped
                 ]
                 branches = [
-                    (binding.path, self._dispatch_entry(binding, op, paths=(), user_id=user_id, **kwargs))
+                    (binding.path, self._dispatch_entry(binding, op, paths=(), authority=authority, **kwargs))
                     for binding in plan.unscoped.values()
                 ]
                 skips = plan.skips
@@ -1958,7 +1992,7 @@ class VirtualFileSystem:
         paths: tuple[str, ...],
         filters: _PathFilters,
         *,
-        user_id: str | None,
+        authority: Authority | None,
         **kwargs: object,
     ) -> tuple[
         list[Coroutine[Any, Any, Result]],
@@ -2007,7 +2041,7 @@ class VirtualFileSystem:
                 return False
             return kind is None or row.kind == kind
 
-        probes, unverifiable = self._root_probes(roots, keep, columns, user_id=user_id)
+        probes, unverifiable = self._root_probes(roots, keep, columns, authority=authority)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (
                 key,
@@ -2018,7 +2052,7 @@ class VirtualFileSystem:
                     globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
                     ext=ext,
                     ext_not=ext_not,
-                    user_id=user_id,
+                    authority=authority,
                     **kwargs,
                 ),
             )
@@ -2040,7 +2074,7 @@ class VirtualFileSystem:
         filters: _PathFilters,
         *,
         op: Op = "grep",
-        user_id: str | None,
+        authority: Authority | None,
         **kwargs: object,
     ) -> tuple[
         list[Coroutine[Any, Any, Result]],
@@ -2079,12 +2113,12 @@ class VirtualFileSystem:
                         globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
                         ext=ext,
                         ext_not=ext_not,
-                        user_id=user_id,
+                        authority=authority,
                         **kwargs,
                     ),
                 )
             )
-        probes, unverifiable = self._root_probes(roots, lambda _row: False, None, user_id=user_id)
+        probes, unverifiable = self._root_probes(roots, lambda _row: False, None, authority=authority)
         reach = roots or (ROOT,)
         skips = [
             skip
@@ -2142,7 +2176,7 @@ class VirtualFileSystem:
         keep: Callable[[Observation], bool],
         columns: frozenset[str] | None,
         *,
-        user_id: str | None,
+        authority: Authority | None,
     ) -> tuple[list[Coroutine[Any, Any, Result]], list[ResultError]]:
         """One point-read probe per owning entry, asserting its named roots.
 
@@ -2171,7 +2205,7 @@ class VirtualFileSystem:
             _b, rels = grouped.setdefault(terminal.binding.path, (terminal.binding, []))
             rels.append(terminal.rel)
         coros: list[Coroutine[Any, Any, Result]] = [
-            self._root_probe(binding, rels, keep, columns, user_id=user_id) for binding, rels in grouped.values()
+            self._root_probe(binding, rels, keep, columns, authority=authority) for binding, rels in grouped.values()
         ]
         return coros, unverifiable
 
@@ -2182,7 +2216,7 @@ class VirtualFileSystem:
         keep: Callable[[Observation], bool],
         columns: frozenset[str] | None,
         *,
-        user_id: str | None,
+        authority: Authority | None,
     ) -> Result:
         """Assert scope roots with one batched point-read against their entry.
 
@@ -2193,7 +2227,7 @@ class VirtualFileSystem:
         content test can only happen at storage).
         """
         probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
-        result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, user_id=user_id)
+        result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, authority=authority)
         kept = [row for row in result.observations if keep(row)]
         # The probe answers for the caller's verb, not as a verb of its own:
         # an op-less envelope merges without leaking ``stat`` into the result.
@@ -2239,7 +2273,7 @@ class VirtualFileSystem:
         op: Op,
         operations: list[TwoPathOperation],
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: object,
     ) -> Result:
         """Route src/dest pair mutations, gating every pair before any dispatch.
@@ -2297,7 +2331,7 @@ class VirtualFileSystem:
             pairs.append(ResolvedPair(src=src_terminal.rel, dest=dest_terminal.rel))
 
         results = await self._gather_settled(
-            self._dispatch_entry(binding, op, operations=group, user_id=user_id, **kwargs)
+            self._dispatch_entry(binding, op, operations=group, authority=authority, **kwargs)
             for binding, group in groups.values()
         )
         return Result.merge(results, op=op)
@@ -2326,7 +2360,7 @@ class VirtualFileSystem:
         dest: str | None,
         batch: Sequence[TwoPathOperation | tuple[str, str]] | None,
         *,
-        user_id: str | None,
+        authority: Authority | None,
     ) -> Result:
         """Shared move/copy front: normalize the src/dest-or-batch input, then route.
 
@@ -2356,7 +2390,7 @@ class VirtualFileSystem:
                     op=op,
                 )
             operations.append(pair)
-        return await self._route_two_path(op, operations, user_id=user_id)
+        return await self._route_two_path(op, operations, authority=authority)
 
     async def _route_entry_batch(
         self,
@@ -2364,7 +2398,7 @@ class VirtualFileSystem:
         *,
         overwrite: bool = True,
         parents: bool = False,
-        user_id: str | None = None,
+        authority: Authority | None = None,
     ) -> Result:
         """Route a batch write, grouping entries by owning entry via each path.
 
@@ -2417,7 +2451,7 @@ class VirtualFileSystem:
                 entries=sorted(group, key=lambda e: e.path.depth),
                 overwrite=overwrite,
                 parents=parents,
-                user_id=user_id,
+                authority=authority,
             )
             for binding, group in groups.values()
         )
@@ -2431,7 +2465,7 @@ class VirtualFileSystem:
         source: str | None,
         target: str | None,
         edge_type: str | None,
-        user_id: str | None,
+        authority: Authority | None,
         provenance: str | None = None,
     ) -> Result:
         """Route an edge batch, grouped by the mount owning both endpoints.
@@ -2506,7 +2540,7 @@ class VirtualFileSystem:
 
         extra = {"provenance": provenance} if provenance is not None else {}
         results = await self._gather_settled(
-            self._dispatch_entry(binding, op, edges=group, user_id=user_id, **extra)
+            self._dispatch_entry(binding, op, edges=group, authority=authority, **extra)
             for binding, group in groups.values()
         )
         return Result.merge(results, op=op)
@@ -2568,7 +2602,7 @@ class VirtualFileSystem:
 
     async def _probe_location(self, terminal: ResolvedTerminal, row: Location) -> Location:
         """*row* with the storage's answer about the entry — direct stat, no router gate."""
-        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel)
+        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel, authority=_ADMIN_AUTHORITY)
         if not stat.success:
             blocker = next((f for f in stat.failures if kind_family(f.kind) is not VFSErrorKind.not_found), None)
             if blocker is None:
@@ -2611,7 +2645,10 @@ class VirtualFileSystem:
         classifies ``invalid`` naming the parameter.  Caller-input facts
         outrank every router-state fact, so this gate runs first at every
         public verb — a bad parameter reports ``invalid`` even on a closed
-        table or a busy path.
+        table or a busy path.  Identity is not gated here: a call that
+        names no authority runs as the default or as anonymous (see
+        :meth:`_admitted`), and a mount whose posture wants a name is the
+        one that refuses.
         """
         problem = param_violation(op, params)
         if problem is None:
@@ -2699,7 +2736,9 @@ class VirtualFileSystem:
     # the funnel — one seam from op to storage, one seam back out
     # -------------------------------------------------------------------
 
-    async def _dispatch_entry(self, binding: Binding, op: Op, *, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def _dispatch_entry(
+        self, binding: Binding, op: Op, *, authority: Authority | None = None, **kwargs: Any
+    ) -> Result:
         """Dispatch *op* to an entry and bring the result back to router coordinates.
 
         The single outbound/inbound seam: call the entry's storage, rebase
@@ -2707,7 +2746,7 @@ class VirtualFileSystem:
         Every routed dispatch — single, grouped, paired, fan-out, tree —
         funnels through here.
         """
-        result = await self._call_storage(binding, op, user_id=user_id, **kwargs)
+        result = await self._call_storage(binding, op, authority=authority, **kwargs)
         result = result.with_mount(binding.path)
         return self._shadow_filter(result, binding)
 
@@ -2716,7 +2755,7 @@ class VirtualFileSystem:
         binding: Binding,
         op: Op,
         *,
-        user_id: str | None = None,
+        authority: Authority | None = None,
         **kwargs: Any,
     ) -> Result:
         """The exhaustive op → typed-method match beneath the funnel.
@@ -2738,78 +2777,82 @@ class VirtualFileSystem:
 
         Transactions live behind these methods: a backend opens and commits
         its own session inside each op — the router never sees one.
+
+        Storage always receives an authority: the call's own, else the
+        configured default, else anonymous (see :meth:`_admitted`).
         """
         storage = binding.storage
+        authority = self._admitted(authority)
         try:
             match op:
                 case "read":
-                    return await storage.read(user_id=user_id, **kwargs)
+                    return await storage.read(authority=authority, **kwargs)
                 case "stat":
-                    return await storage.stat(user_id=user_id, **kwargs)
+                    return await storage.stat(authority=authority, **kwargs)
                 case "ls":
-                    return await storage.ls(user_id=user_id, **kwargs)
+                    return await storage.ls(authority=authority, **kwargs)
                 case "tree":
-                    return await storage.tree(user_id=user_id, **kwargs)
+                    return await storage.tree(authority=authority, **kwargs)
                 case "glob":
                     if not isinstance(storage, SupportsPatternSearch):
                         return self._backend_unsupported(op)
-                    return await storage.glob(user_id=user_id, **kwargs)
+                    return await storage.glob(authority=authority, **kwargs)
                 case "grep":
                     if not isinstance(storage, SupportsPatternSearch):
                         return self._backend_unsupported(op)
-                    return await storage.grep(user_id=user_id, **kwargs)
+                    return await storage.grep(authority=authority, **kwargs)
                 case "glean":
                     if not isinstance(storage, SupportsGlean):
                         return self._backend_unsupported(op)
-                    return await storage.glean(user_id=user_id, **kwargs)
+                    return await storage.glean(authority=authority, **kwargs)
                 case "write":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.write(user_id=user_id, **kwargs)
+                    return await storage.write(authority=authority, **kwargs)
                 case "edit":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.edit(user_id=user_id, **kwargs)
+                    return await storage.edit(authority=authority, **kwargs)
                 case "delete":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.delete(user_id=user_id, **kwargs)
+                    return await storage.delete(authority=authority, **kwargs)
                 case "restore":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.restore(user_id=user_id, **kwargs)
+                    return await storage.restore(authority=authority, **kwargs)
                 case "sweep":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.sweep(user_id=user_id, **kwargs)
+                    return await storage.sweep(authority=authority, **kwargs)
                 case "mkdir":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.mkdir(user_id=user_id, **kwargs)
+                    return await storage.mkdir(authority=authority, **kwargs)
                 case "move":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.move(user_id=user_id, **kwargs)
+                    return await storage.move(authority=authority, **kwargs)
                 case "copy":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.copy(user_id=user_id, **kwargs)
+                    return await storage.copy(authority=authority, **kwargs)
                 case "graph":
                     if not isinstance(storage, SupportsGraph):
                         return self._backend_unsupported(op)
-                    return await storage.graph(user_id=user_id, **kwargs)
+                    return await storage.graph(authority=authority, **kwargs)
                 case "mkedge":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.mkedge(user_id=user_id, **kwargs)
+                    return await storage.mkedge(authority=authority, **kwargs)
                 case "rmedge":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
-                    return await storage.rmedge(user_id=user_id, **kwargs)
+                    return await storage.rmedge(authority=authority, **kwargs)
                 case "run":
                     if not isinstance(storage, SupportsRun):
                         return self._backend_unsupported(op)
-                    return await storage.run(user_id=user_id, **kwargs)
+                    return await storage.run(authority=authority, **kwargs)
                 case _:
                     assert_never(op)
         except TransportError as exc:
@@ -2819,6 +2862,21 @@ class VirtualFileSystem:
                 op=op,
                 path=ROOT,
             )
+
+    def _admitted(self, authority: Authority | None) -> Authority:
+        """The authority the funnel hands storage.
+
+        The call's own; else the configured ``default_authority`` (the
+        ETL shape, ``Authority.system()``); else the anonymous principal,
+        which holds only what each mount's posture gives everyone.
+        Absence is a name, never a blank: storage and the audit always
+        see an actor.
+        """
+        if authority is not None:
+            return authority
+        if self._default_authority is not None:
+            return self._default_authority
+        return _ANONYMOUS_AUTHORITY
 
     def _backend_unsupported(self, op: Op) -> Result:
         """The funnel's narrowing miss: the backend lacks *op*'s family.

@@ -100,7 +100,7 @@ class TestWriteVsTopologyCoherence:
                     entries=[Entry(path=Path("/d/f.txt"), content="x")],
                     overwrite=True,
                     parents=False,
-                    user_id=None,
+                    authority=None,
                 )
             await session.rollback()
         # Nothing committed: no torn child, and the parent stands untouched.
@@ -129,7 +129,7 @@ class TestWriteVsTopologyCoherence:
                     entries=[Entry(path=Path("/d/f.txt"), content="x")],
                     overwrite=True,
                     parents=False,
-                    user_id=None,
+                    authority=None,
                 )
             await session.rollback()
         assert (await storage.stat(path=Path("/d/f.txt"))).success is False
@@ -185,7 +185,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     edits=[EditOperation(old="old", new="new")],
                     targets=[Path("/d/f.txt")],
-                    user_id=None,
+                    authority=None,
                 )
             await session.rollback()
         assert result.success is False
@@ -261,7 +261,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             assert result.success is True
@@ -297,7 +297,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -326,7 +326,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -368,7 +368,7 @@ class TestWriteVsTopologyCoherence:
                     host.profile,
                     host.membership_budget,
                     targets=[Path("/d/f.txt")],
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -400,7 +400,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     path=Path("/d"),
                     trash_days=90,
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             assert result.success is True
@@ -523,7 +523,7 @@ class TestWriteVsTopologyCoherence:
                     host.parameter_budget,
                     host.membership_budget,
                     [stale],
-                    user_id=None,
+                    authority=None,
                     now=datetime.now(UTC),
                 )
             await session.rollback()
@@ -564,7 +564,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -605,7 +605,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -636,7 +636,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     path=Path("/d"),
                     trash_days=90,
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -718,7 +718,7 @@ class TestWriteVsTopologyCoherence:
                     entries=[Entry(path=Path("/d/late.txt"), content="mine")],
                     overwrite=True,
                     parents=False,
-                    user_id=None,
+                    authority=None,
                 )
             await session.rollback()
         await storage.close()
@@ -790,7 +790,7 @@ class TestWriteVsTopologyCoherence:
         parent_id = "D" * 26
 
         def plan() -> WritePlan:
-            built = WritePlan({"/d": {"entry_id": parent_id, "path": "/d"}}, user_id=None, budget=4_096)  # ty: ignore[invalid-argument-type]
+            built = WritePlan({"/d": {"entry_id": parent_id, "path": "/d"}}, authority=None, budget=4_096)  # ty: ignore[invalid-argument-type]
             built.stage_create(Path("/d/f.txt"), kind="file", content="x")
             return built
 
@@ -938,7 +938,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             assert result.success is True, result.errors
@@ -986,7 +986,7 @@ class TestWriteVsTopologyCoherence:
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
-                    user_id=None,
+                    authority=None,
                     lock_key=host.topology_key,
                 )
             await session.rollback()
@@ -1034,7 +1034,7 @@ class TestWriteVsTopologyCoherence:
                     ],
                     overwrite=False,
                     parents=True,
-                    user_id=None,
+                    authority=None,
                 )
             stored = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()
             await session.rollback()
@@ -1088,7 +1088,7 @@ class TestWriteVsTopologyCoherence:
                     entries=[Entry(path=Path("/x"), kind="directory")],
                     overwrite=False,
                     parents=False,
-                    user_id=None,
+                    authority=None,
                 )
             root_after = (await session.execute(select(entry.c.version).where(entry.c.path == "/"))).scalar_one()
             adopted = (await session.execute(select(entry.c.version).where(entry.c.path == "/x"))).scalar_one()

@@ -75,6 +75,13 @@ as data.
    065). Unknown principal and wrong proof are indistinguishable at
    the edge (Plan 9's enumeration defence).
 
+- **The edge is loud about open mounts (ADR 068 rule 7).** `serve()`
+  refuses to start while any bound mount's posture is `open` unless
+  the caller passes `allow_open=True`; the refusal names the mounts.
+  A `shared` mount serves anonymous reads to callers with no token
+  under `Authority.anonymous()`; a `private` one answers them
+  `unauthenticated` from the spine (058 §0).
+
 ## Non-goals
 
 - Token issuance, login, an IdP.
@@ -86,3 +93,14 @@ as data.
 
 - The two markers above; whether `authority_from_token` lives in
   `vfs/authority.py` (070) or a `vfs/serve/` package.
+- **The door token** (Clay, 2026-09-11; deferred from the 070 review).
+  Once this spec mints `provenance = edge`, that value is a claim only
+  the edge factory can vouch for, and no shape check on the fields
+  can confirm it. Close the bare constructor when the claim first
+  exists: a module-private sentinel passed as an `InitVar` (`door`)
+  that `Authority.__post_init__` demands, so a bare `Authority(...)`
+  anywhere — vfs or app — raises `TypeError` naming the doors. This
+  also retires `dataclasses.replace` from outside the module (148's
+  `narrow` becomes a door); `copy`/`pickle` keep working. Judged
+  overkill before the edge exists; the shape rules and the grep pin
+  cover construction until then.

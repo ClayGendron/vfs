@@ -32,6 +32,7 @@ from typing import Protocol
 import pytest
 
 from vfs import _native
+from vfs.authority import Authority, Principal
 from vfs.embedding import EmbeddingProvider
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
@@ -1761,12 +1762,12 @@ class StorageContract:
         assert [str(o.path) for o in found.observations] == [str(trash_path)]
 
     @needs("write", "glean")
-    async def test_glean_accepts_a_user_id_and_applies_no_grant(self, storage: ConformanceBackend) -> None:
+    async def test_glean_accepts_an_authority_and_applies_no_grant(self, storage: ConformanceBackend) -> None:
         # Row-level grants are a later concern of their own; today every
-        # read on a backend accepts ``user_id`` and scopes nothing by it.
+        # read on a backend accepts an ``authority`` and scopes nothing by it.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         anonymous = await storage.glean(query="needle")
-        named = await storage.glean(query="needle", user_id="someone-else")
+        named = await storage.glean(query="needle", authority=Authority.of(Principal("someone-else")))
         assert named.success is True
         assert [str(o.path) for o in named.observations] == [str(o.path) for o in anonymous.observations] == ["/a.txt"]
 

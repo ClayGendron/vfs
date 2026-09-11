@@ -24,6 +24,7 @@ from tests.support.base_doubles import (
     TransportFailStorage,
     _fan,
 )
+from vfs.authority import Authority
 from vfs.base import VirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
 from vfs.models import Edge, Entry, Observation
@@ -394,7 +395,8 @@ async def test_mkedge_invalid_endpoints_rejected() -> None:
 
 
 async def test_mkedge_rejects_non_string_edge_type() -> None:
-    result = await RecorderFS().mkedge(source="/a.py", target="/b.py", edge_type=123)  # ty: ignore[invalid-argument-type]
+    fs = RecorderFS()
+    result = await fs.mkedge(source="/a.py", target="/b.py", edge_type=123)  # ty: ignore[invalid-argument-type]
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
 
@@ -577,7 +579,8 @@ async def test_fanout_includes_self_storage_before_mounts() -> None:
 async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
     # A root backend that declares no glean, and no mounts: empty
     # success, with the skipped entry on record as info.
-    result = await VirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"}))).glean("anything")
+    fs = VirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"})))
+    result = await fs.glean("anything")
     assert result.success is True
     assert len(result) == 0
     assert result.op == "glean"
@@ -1244,7 +1247,7 @@ async def test_backend_unavailable_keeps_the_binding_bound() -> None:
 
 async def test_dispatch_reaches_the_backend_method() -> None:
     class PathEchoStorage(RecorderStorage):
-        async def read(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+        async def read(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
             return Result(ops=("read",), observations=[Observation(path=Path(str(path)))])
 
     result = await VirtualFileSystem(storage=PathEchoStorage()).read("/f.txt")
@@ -1449,13 +1452,15 @@ async def test_write_entries_rejects_non_entry_element() -> None:
 
 
 async def test_write_rejects_entries_and_path_together() -> None:
-    result = await RecorderFS().write(entries=[Entry(path=Path("/a.txt"))], path="/b.txt", content="x")
+    fs = RecorderFS()
+    result = await fs.write(entries=[Entry(path=Path("/a.txt"))], path="/b.txt", content="x")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
 
 
 async def test_edit_rejects_old_new_and_edits_together() -> None:
-    result = await RecorderFS().edit(path="/f.txt", old="a", new="b", edits=[EditOperation(old="c", new="d")])
+    fs = RecorderFS()
+    result = await fs.edit(path="/f.txt", old="a", new="b", edits=[EditOperation(old="c", new="d")])
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
 

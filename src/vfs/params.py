@@ -4,7 +4,8 @@ One :class:`ParamSpec` row per public-verb parameter and one
 :class:`ShapeRule` set per op. Three consumers read the table: the router's
 ingress gate (``VirtualFileSystem._gate_params``), the signature drift test,
 and the wire dialect's schema projection. The module is a leaf — stdlib plus
-``vfs.ops`` only — so schema consumers never import the router.
+the ``vfs.ops`` and ``vfs.authority`` value modules — so schema consumers
+never import the router.
 
     param_violation("tree", {"max_depth": "2"})
     # → "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
+from vfs.authority import Authority
 from vfs.ops import GRAPH_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind
 
@@ -39,6 +41,7 @@ ParamKind = Literal[
     "edits",
     "pairs",
     "edges",
+    "authority",  # the verified Authority value; never on the wire
 ]
 
 _MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edits", "pairs", "edges"})
@@ -85,7 +88,7 @@ class ShapeRule(NamedTuple):
     msg_missing: str = ""
 
 
-_USER: Final = ParamSpec("user_id", "str", doc="local caller identity; never on the wire")
+_AUTHORITY: Final = ParamSpec("authority", "authority", doc="the verified authority behind the call; never on the wire")
 _EDGES: Final = ParamSpec("edges", "edges", doc="batch form: validated Edge models")
 _EDGE_SOURCE: Final = ParamSpec("source", "path", doc="sugar form: edge tail endpoint")
 _EDGE_TARGET: Final = ParamSpec("target", "path", doc="sugar form: edge head endpoint")
@@ -101,25 +104,25 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("path", "path", doc="the entry to read"),
         _OBSERVATIONS,
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "stat": (
         ParamSpec("path", "path", doc="the entry to stat"),
         _OBSERVATIONS,
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "ls": (
         ParamSpec("path", "path", doc="the directory to list"),
         _OBSERVATIONS,
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "tree": (
         ParamSpec("path", "path", required=True, doc="the region root"),
         ParamSpec("max_depth", "int", minimum=1, maximum=INT_CEILING, doc="depth budget; None is unbounded"),
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "write": (
         ParamSpec("entries", "entries", doc="batch form: entries route by their own paths"),
@@ -127,7 +130,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("content", "str", doc="single form: the file's content"),
         ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an existing file"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
-        _USER,
+        _AUTHORITY,
     ),
     "edit": (
         ParamSpec("path", "path", doc="the file to edit"),
@@ -136,18 +139,18 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("edits", "edits", doc="native form: sequential, atomic EditOperation list"),
         _OBSERVATIONS,
         ParamSpec("replace_all", "bool", nullable=False, default=False, doc="replace every match of old"),
-        _USER,
+        _AUTHORITY,
     ),
     "delete": (
         ParamSpec("path", "path", doc="the entry to delete"),
         _OBSERVATIONS,
         ParamSpec("cascade", "bool", nullable=False, default=True, doc="delete the subtree beneath a directory"),
-        _USER,
+        _AUTHORITY,
     ),
     "restore": (
         ParamSpec("path", "path", doc="the original path — or the exact trash-side path — of the row to restore"),
         _OBSERVATIONS,
-        _USER,
+        _AUTHORITY,
     ),
     "sweep": (
         ParamSpec(
@@ -157,13 +160,13 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             default="/.vfs/trash",
             doc="a trash-root address runs retention over expired buckets; any other address purges wholesale",
         ),
-        _USER,
+        _AUTHORITY,
     ),
     "mkdir": (
         ParamSpec("path", "path", required=True, doc="the directory to create"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors"),
         ParamSpec("exist_ok", "bool", nullable=False, default=False, doc="forgive an existing directory"),
-        _USER,
+        _AUTHORITY,
     ),
     "mkedge": (
         _EDGES,
@@ -178,26 +181,26 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             choices=frozenset({"user", "agent", "system"}),
             doc="author class stamped on every edge in the call; 'extracted' is reserved to reindex",
         ),
-        _USER,
+        _AUTHORITY,
     ),
     "rmedge": (
         _EDGES,
         _EDGE_SOURCE,
         _EDGE_TARGET,
         _EDGE_TYPE,
-        _USER,
+        _AUTHORITY,
     ),
     "move": (
         ParamSpec("src", "path", doc="single form: source path"),
         ParamSpec("dest", "path", doc="single form: destination path"),
         ParamSpec("moves", "pairs", doc="batch form: (src, dest) pairs"),
-        _USER,
+        _AUTHORITY,
     ),
     "copy": (
         ParamSpec("src", "path", doc="single form: source path"),
         ParamSpec("dest", "path", doc="single form: destination path"),
         ParamSpec("copies", "pairs", doc="batch form: (src, dest) pairs"),
-        _USER,
+        _AUTHORITY,
     ),
     "glob": (
         ParamSpec(
@@ -211,7 +214,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("kind", "str", choices=OBJECT_KINDS, doc="keep only rows of this kind; None keeps both"),
         ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="bound per entry and on the merged result"),
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "grep": (
         ParamSpec("pattern", "str", required=True, doc="regex (or literal with fixed_strings)"),
@@ -247,7 +250,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("max_count", "int", minimum=1, maximum=INT_CEILING, doc="matches per file, ripgrep's -m"),
         ParamSpec("allow_scan", "bool", nullable=False, default=False, doc="opt into an unindexed scan tier"),
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "glean": (
         ParamSpec("query", "str", required=True, doc="ranked-search text"),
@@ -267,19 +270,19 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         ParamSpec("globs", "str_seq", nullable=False, default=(), doc="keep only paths matching these globs"),
         ParamSpec("globs_not", "str_seq", nullable=False, default=(), doc="drop paths matching these globs"),
         _COLUMNS,
-        _USER,
+        _AUTHORITY,
     ),
     "graph": (
         ParamSpec("method", "str", required=True, choices=GRAPH_METHODS, doc="traversal to run"),
         ParamSpec("path", "path", doc="the node to start from"),
         _OBSERVATIONS,
         ParamSpec("depth", "int", minimum=1, maximum=INT_CEILING, doc="traversal depth budget"),
-        _USER,
+        _AUTHORITY,
     ),
     "run": (
         ParamSpec("path", "path", required=True, doc="the tool to execute"),
         ParamSpec("arguments", "dict", doc="tool arguments; the tool's own schema governs values"),
-        _USER,
+        _AUTHORITY,
     ),
 }
 
@@ -416,6 +419,10 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
             return None
     kind = spec.kind
     if kind == "path" or kind in _MODEL_KINDS:
+        return None
+    if kind == "authority":
+        if not isinstance(value, Authority):
+            return f"{op} {spec.name} must be an Authority, got {type(value).__name__}"
         return None
     if kind == "str":
         if not isinstance(value, str):

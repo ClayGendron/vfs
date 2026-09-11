@@ -112,10 +112,10 @@ MODEL_OWNER_FIELDS: Final[dict[str, frozenset[str]]] = {
     "Edge": frozenset({"source", "target"}),
 }
 
-# Model fields with no backing column yet, and the spec that resolves each:
-# none today — every model field has its column.
+# Model fields with no column on the model's own table: a version's
+# subjects live one row each in the ``version_subjects`` side table.
 MODEL_FIELD_ONLY: Final[dict[str, frozenset[str]]] = {
-    "Version": frozenset(),
+    "Version": frozenset({"subjects"}),
     "Chunk": frozenset(),
     "Edge": frozenset(),
 }
@@ -131,7 +131,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 12
+SCHEMA_FORMAT_VERSION: Final = 13
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -304,6 +304,7 @@ class VFSTables(NamedTuple):
     entry: Table
     content: Table
     versions: Table
+    version_subjects: Table
     chunks: Table
     edges: Table
     meta: Table
@@ -435,7 +436,10 @@ def build_vfs_tables(
     # Version history. The write path stores full snapshots
     # (``is_snapshot=True``, body in ``content``); the batch pack verb
     # rewrites cold ranges into snapshot-every-N + forward diffs
-    # (``version_diff``). Bodies last, metadata first.
+    # (``version_diff``). Every row names who acted (``actor``), how the
+    # authority was proven (``provenance``), and the edge identity it came
+    # in under; the subjects it acted for sit one per row in the side
+    # table below. Bodies last, metadata first.
     versions = Table(
         f"{table_name}_versions",
         metadata,
@@ -445,10 +449,24 @@ def build_vfs_tables(
         Column("content_hash", String(64), nullable=False),
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        Column("created_by", _string(255)),
+        Column("actor", _string(255)),
+        Column("provenance", String(16)),
+        Column("source_identity", _string(255)),
         Column("created_at", DateTime(timezone=True)),
         Column("content", _body_text()),
         Column("version_diff", _body_text()),
+        schema=schema,
+    )
+
+    # The subjects a version was written for: one row per member of the
+    # authority's set, keyed by the version it attributes. A system-actor
+    # version has no rows here.
+    version_subjects = Table(
+        f"{table_name}_version_subjects",
+        metadata,
+        Column("entry_id", ULIDKey(), primary_key=True),
+        Column("version_number", Integer, primary_key=True, autoincrement=False),
+        Column("principal_id", _string(255), primary_key=True),
         schema=schema,
     )
 
@@ -672,6 +690,7 @@ def build_vfs_tables(
         entry=entry,
         content=content,
         versions=versions,
+        version_subjects=version_subjects,
         chunks=chunks,
         edges=edges,
         meta=meta,

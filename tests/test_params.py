@@ -67,7 +67,7 @@ def test_violation_messages_name_the_parameter() -> None:
 GARBAGE = [
     ("read-columns", lambda fs: fs.read("/f.txt", columns=123)),
     ("read-non-str-column-item", lambda fs: fs.read("/f.txt", columns=frozenset({"path", 7}))),
-    ("read-user-id", lambda fs: fs.read("/f.txt", user_id=123)),
+    ("read-authority", lambda fs: fs.read("/f.txt", authority=123)),
     ("read-both-targets", lambda fs: fs.read("/f.txt", observations=[])),
     ("stat-both-targets", lambda fs: fs.stat("/f.txt", observations=[])),
     ("ls-both-targets", lambda fs: fs.ls("/f.txt", observations=[])),
@@ -86,7 +86,7 @@ GARBAGE = [
     ("delete-truthy-cascade", lambda fs: fs.delete("/f.txt", cascade=1)),
     ("restore-both-forms", lambda fs: fs.restore("/f.txt", observations=[])),
     ("sweep-non-str-path", lambda fs: fs.sweep(123)),
-    ("sweep-non-str-user", lambda fs: fs.sweep("/.vfs/trash", user_id=123)),
+    ("sweep-non-authority", lambda fs: fs.sweep("/.vfs/trash", authority=123)),
     ("mkdir-truthy-parents", lambda fs: fs.mkdir("/d", parents="yes")),
     ("mkdir-truthy-exist-ok", lambda fs: fs.mkdir("/d", exist_ok=1)),
     ("mkedge-non-str-type", lambda fs: fs.mkedge(source="/a.py", target="/b.py", edge_type=123)),

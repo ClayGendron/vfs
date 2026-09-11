@@ -87,6 +87,7 @@ from sqlalchemy import Update, bindparam, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
+from vfs.authority import owner_for
 from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified
@@ -112,6 +113,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult, Row, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.authority import Authority
     from vfs.models.rows import VFSTables
     from vfs.paths import ObjectKind
     from vfs.storage.backends.database.dialects import DialectProfile
@@ -166,7 +168,7 @@ async def delete_rows(
     *,
     targets: list[Path],
     cascade: bool,
-    user_id: str | None,
+    authority: Authority | None,
     lock_key: int,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
@@ -185,7 +187,7 @@ async def delete_rows(
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
     now = datetime.now(UTC)
-    trash = _TrashChain(tables, root_id=snapshot["/"]["entry_id"], user_id=user_id, now=now)
+    trash = _TrashChain(tables, root_id=snapshot["/"]["entry_id"], authority=authority, now=now)
     unique = set(targets)
     seen: set[Path] = set()
     rows: list[Observation] = []
@@ -284,7 +286,7 @@ async def restore_rows(
     membership_budget: int,
     *,
     targets: list[Path],
-    user_id: str | None,
+    authority: Authority | None,
     lock_key: int,
 ) -> Result:
     """Adjudicate and apply a batch of restores, target by target.
@@ -297,10 +299,10 @@ async def restore_rows(
     commits), an occupied site refuses ``exists`` (no verb displaces an
     occupant — the caller deletes it, restorably, and restores again),
     then byte-budget overflow — no statement runs for a target until
-    every check passes. *user_id* is accepted for signature parity; a restore
+    every check passes. *authority* is accepted for signature parity; a restore
     changes no ownership.
     """
-    del user_id
+    del authority
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
     now = datetime.now(UTC)
@@ -351,7 +353,7 @@ async def sweep_rows(
     *,
     path: Path,
     trash_days: int,
-    user_id: str | None,
+    authority: Authority | None,
     lock_key: int,
 ) -> Result:
     """Destroy at *path* — retention at the trash root, wholesale purge elsewhere.
@@ -367,10 +369,10 @@ async def sweep_rows(
     surfacing as a warning. Any other address is the purge arm: the
     subtree purges wholesale regardless of retention age — the root
     refuses ``invalid``, a miss classifies through the shared descent
-    ladder, and the observation carries no trash path. *user_id* is
+    ladder, and the observation carries no trash path. *authority* is
     accepted for signature parity; reclamation changes no ownership.
     """
-    del user_id
+    del authority
     entry = tables.entry
     if path == ROOT:
         message = "Cannot sweep the root directory"
@@ -423,7 +425,7 @@ async def transfer_rows(
     *,
     op: Literal["move", "copy"],
     operations: list[ResolvedPair],
-    user_id: str | None,
+    authority: Authority | None,
     lock_key: int,
 ) -> Result:
     """Adjudicate and apply a batch of moves or copies, pair by pair.
@@ -510,7 +512,7 @@ async def transfer_rows(
                 dest=dest,
                 dest_parent_id=dest_parent_id,
                 new_paths=new_paths,
-                user_id=user_id,
+                authority=authority,
                 now=now,
             )
             version = 1
@@ -594,6 +596,8 @@ async def _purge_subtree(
                 raise StaleSnapshot(f"purge lost {len(chunk) - result.rowcount} collected row(s) mid-transaction")
             await session.execute(delete(tables.content).where(membership(tables.content.c.entry_id, chunk, profile)))
             await session.execute(delete(tables.versions).where(membership(tables.versions.c.entry_id, chunk, profile)))
+            subjects = tables.version_subjects
+            await session.execute(delete(subjects).where(membership(subjects.c.entry_id, chunk, profile)))
             await session.execute(delete(tables.chunks).where(membership(tables.chunks.c.entry_id, chunk, profile)))
             await session.execute(delete(tables.segments).where(membership(tables.segments.c.entry_id, chunk, profile)))
             # Two single-list deletes: one OR'd statement would carry the
@@ -647,12 +651,12 @@ class _TrashChain:
     is an ordinary writable subtree; a user file may squat there).
     """
 
-    def __init__(self, tables: VFSTables, *, root_id: str, user_id: str | None, now: datetime) -> None:
+    def __init__(self, tables: VFSTables, *, root_id: str, authority: Authority | None, now: datetime) -> None:
         self._entry = tables.entry
         self._segments = tables.segments
         self._edges = tables.edges
         self._root_id = root_id
-        self._user_id = user_id
+        self._authority = authority
         self._now = now
         self.bucket_path = f"{TRASH_ROOT}/{now.strftime(_BUCKET_FORMAT)}"
         self._bucket_id: str | None = None
@@ -695,7 +699,7 @@ class _TrashChain:
                         name=link.rsplit("/", 1)[-1],
                         kind="directory",
                         version=1,
-                        owner_id=self._user_id,
+                        owner_id=owner_for(self._authority),
                         created_at=self._now,
                         updated_at=self._now,
                     )
@@ -1124,7 +1128,7 @@ async def _execute_copy(
     dest: Path,
     dest_parent_id: str,
     new_paths: dict[str, str],
-    user_id: str | None,
+    authority: Authority | None,
     now: datetime,
 ) -> None:
     """Mint the copied tree under a probed-empty destination.
@@ -1157,7 +1161,7 @@ async def _execute_copy(
             "ext": dest.ext if row["entry_id"] == root_id else row["ext"],
             "lines": row["lines"],
             "size_bytes": row["size_bytes"],
-            "owner_id": user_id,
+            "owner_id": owner_for(authority),
             "created_at": now,
             "updated_at": now,
         }

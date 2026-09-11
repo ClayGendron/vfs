@@ -22,6 +22,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ulid import ULID
 
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
+from vfs.authority import Authority, Principal
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import ObjectKind, Path
@@ -53,6 +54,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+SYSTEM = Authority.system()
+
+
 class TestWriteMechanics:
     """One transaction per batch, bounded statements, per-entry versions."""
 
@@ -62,7 +66,7 @@ class TestWriteMechanics:
         staged = StagedEntry(
             path=Path("/f.txt"), parent=Path("/"), kind="file", persistence="insert", entry_id=str(ULID()), content="x"
         )
-        material = _material_values(staged, "someone", datetime.now(UTC))
+        material = _material_values(staged, Authority.of(Principal("someone")), datetime.now(UTC))
         assert set(material) == set(_CLOBBER_COLUMNS)
 
     async def test_failed_batch_commits_nothing(self, tmp_path) -> None:
@@ -155,12 +159,39 @@ class TestWriteMechanics:
 
     async def test_overwrite_restamps_the_owner(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")], user_id="alice")
-        await storage.write(entries=[Entry(path=Path("/f.txt"), content="b")], user_id="bob")
+        alice, bob = Authority.of(Principal("alice")), Authority.of(Principal("bob"))
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")], authority=alice)
+        await storage.write(entries=[Entry(path=Path("/f.txt"), content="b")], authority=bob)
         entry = storage._host.tables.entry
         async with storage._host.engine.connect() as conn:
             owner = (await conn.execute(select(entry.c.owner_id).where(entry.c.path == "/f.txt"))).scalar_one()
         assert owner == "bob"
+        await storage.close()
+
+    async def test_ownership_derives_from_the_authority_not_the_payload(self, tmp_path) -> None:
+        # One subject owns what it makes and the payload's owner_id is
+        # ignored; a set owns nothing (the container governs); the system
+        # actor stamps whatever the payload declared; edit re-derives.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        alice = Authority.of(Principal("alice"))
+        room = Authority.on_behalf_of({Principal("alice"), Principal("bob")}, actor=Principal("bot", kind="service"))
+        await storage.write(entries=[Entry(path=Path("/mine.txt"), content="a", owner_id="mallory")], authority=alice)
+        await storage.write(entries=[Entry(path=Path("/ours.txt"), content="a", owner_id="alice")], authority=room)
+        await storage.write(entries=[Entry(path=Path("/etl.txt"), content="a", owner_id="carol")], authority=SYSTEM)
+        await storage.write(entries=[Entry(path=Path("/bare.txt"), content="a")], authority=SYSTEM)
+        await storage.write(entries=[Entry(path=Path("/anon.txt"), content="a")], authority=Authority.anonymous())
+        await storage.mkdir(path=Path("/shared"), authority=room)
+        await storage.edit(path=Path("/etl.txt"), edits=[EditOperation(old="a", new="b")], authority=alice)
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            rows = (await conn.execute(select(entry.c.path, entry.c.owner_id))).all()
+        owners = {row.path: row.owner_id for row in rows}
+        assert owners["/mine.txt"] == "alice"
+        assert owners["/ours.txt"] is None
+        assert owners["/etl.txt"] == "alice"  # the edit under alice re-derived it from carol
+        assert owners["/bare.txt"] is None
+        assert owners["/anon.txt"] is None
+        assert owners["/shared"] is None
         await storage.close()
 
     async def test_overwrite_preserves_entry_identity(self, tmp_path) -> None:
@@ -254,7 +285,7 @@ class TestWriteMechanics:
         await storage.close()
 
     def test_stage_create_folds_a_repeat_target_into_one_row(self) -> None:
-        plan = WritePlan({}, user_id=None, budget=SQLITE.key_byte_budget)
+        plan = WritePlan({}, authority=None, budget=SQLITE.key_byte_budget)
         target = Path("/f.txt")
         plan.stage_create(target, kind="file", content="one", content_hash="h1", size_bytes=3, lines=1)
         minted = plan.staged[target].entry_id
@@ -534,7 +565,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -592,7 +623,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -736,7 +767,7 @@ class TestArbitration:
                 host.parameter_budget,
                 host.membership_budget,
                 [stale],
-                user_id=None,
+                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
@@ -772,7 +803,7 @@ class TestArbitration:
                     host.parameter_budget,
                     host.membership_budget,
                     [relocated],
-                    user_id=None,
+                    authority=None,
                     now=datetime.now(UTC),
                 )
             await session.rollback()
@@ -803,7 +834,7 @@ class TestArbitration:
                     host.parameter_budget,
                     host.membership_budget,
                     [vanished],
-                    user_id=None,
+                    authority=None,
                     now=datetime.now(UTC),
                 )
         await storage.close()
@@ -819,7 +850,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, user_id=None, budget=profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=profile.key_byte_budget)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -865,7 +896,7 @@ class TestArbitration:
         async with host.session_factory() as reader:
             committed = await _fetch_committed(reader, host.tables, host.profile, host.membership_budget, {target})
         mine = Entry(path=target, content="mine")
-        plan = WritePlan(committed, user_id=None, budget=host.profile.key_byte_budget)
+        plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget)
         status = plan.put_file(
             target,
             kind=mine.kind,
@@ -934,7 +965,7 @@ class TestGuardedAttribution:
             32_000,
             900,
             [won, lost],
-            user_id=None,
+            authority=None,
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
@@ -953,7 +984,7 @@ class TestGuardedAttribution:
             32_000,
             900,
             [gone],
-            user_id=None,
+            authority=None,
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [VFSErrorKind.not_found]
@@ -970,7 +1001,7 @@ class TestGuardedAttribution:
             32_000,
             900,
             [staged],
-            user_id=None,
+            authority=None,
             now=datetime.now(UTC),
         )
         sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
@@ -991,7 +1022,7 @@ class TestGuardedAttribution:
                 32_000,
                 900,
                 [absorbed, vanished],
-                user_id=None,
+                authority=None,
                 now=datetime.now(UTC),
             )
         assert absorbed.version == 7  # the statement reported the version it assigned
@@ -1015,7 +1046,7 @@ class TestGuardedAttribution:
             2 * width - 1,
             900,
             staged,
-            user_id=None,
+            authority=None,
             now=datetime.now(UTC),
         )
         assert errors == []
@@ -1060,7 +1091,7 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [fresh, stale],
-                user_id=None,
+                authority=None,
                 now=datetime.now(UTC),
             )
             after = await session.execute(select(entry.c.path, entry.c.version))
@@ -1110,7 +1141,7 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [fresh, stale],
-                user_id=None,
+                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
@@ -1134,7 +1165,7 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [staged],
-                user_id=None,
+                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [VFSErrorKind.unsupported]

@@ -318,7 +318,7 @@ class TestMkedgeArbitration:
                     storage._host.membership_budget,
                     edges=[edge],
                     provenance="system",
-                    user_id=None,
+                    authority=None,
                 )
             await session.commit()
         assert result.success is True
@@ -382,7 +382,7 @@ class TestHubBoundedStatements:
 
         async with storage._host.session_factory() as session:
             result = await mkedge_rows(
-                session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", user_id=None
+                session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", authority=None
             )
             await session.commit()
         assert result.success is True and {o.status for o in result.observations} == {"updated"}

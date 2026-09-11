@@ -17,6 +17,7 @@ from tests.support.base_doubles import (
     RunnerStorage,
     SuspendingProbeStorage,
 )
+from vfs.authority import Authority
 from vfs.base import Location, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.permissions import PermissionMap, read_only, read_write, validate_permission
@@ -580,8 +581,9 @@ async def test_locate_with_exists_asks_the_owning_storage_directly() -> None:
 class _DeadStorage(RecorderStorage):
     """A storage whose every answer is a transport failure."""
 
-    def _answer(self, op: str, kwargs: dict[str, Any]) -> Result:
+    def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
+        self.authorities.append(authority)
         return Result(
             ops=(op,), errors=[ResultError(kind=VFSErrorKind.backend_unavailable, message="connection refused")]
         )

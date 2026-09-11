@@ -37,6 +37,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
+from vfs.authority import owner_for
 from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.authority import Authority
     from vfs.models.rows import VFSTables
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
@@ -101,7 +103,7 @@ async def write_rows(
     entries: list[Entry],
     overwrite: bool,
     parents: bool,
-    user_id: str | None,
+    authority: Authority | None,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
 
@@ -115,7 +117,7 @@ async def write_rows(
     Any error fails the whole batch before a statement runs.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
-    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     for entry in entries:
         if entry.kind == "directory":
             status = plan.put_dir(entry.path, parents=parents)
@@ -130,6 +132,7 @@ async def write_rows(
                 mime_type=entry.mime_type,
                 overwrite=overwrite,
                 parents=parents,
+                owner_id=entry.owner_id,
             )
         if status is not None:
             plan.pending.append((entry.path, status))
@@ -148,7 +151,7 @@ async def mkdir_rows(
     path: Path,
     parents: bool,
     exist_ok: bool,
-    user_id: str | None,
+    authority: Authority | None,
 ) -> Result:
     """Create one directory with POSIX mkdir semantics.
 
@@ -160,7 +163,7 @@ async def mkdir_rows(
     the target, shallowest first.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {path})
-    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     occupant = plan.kind_of(path)
     if occupant is not None:
         if exist_ok and occupant == "directory":
@@ -188,7 +191,7 @@ async def edit_rows(
     *,
     edits: list[EditOperation],
     targets: Sequence[Path],
-    user_id: str | None,
+    authority: Authority | None,
 ) -> Result:
     """Apply the same edit sequence to every target's content.
 
@@ -203,7 +206,7 @@ async def edit_rows(
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
     missing = await miss_errors(session, tables.entry, targets, committed, profile, membership_budget)
-    plan = WritePlan(committed, user_id=user_id, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     for target in targets:
         row = committed.get(str(target))
         if row is None:
@@ -222,6 +225,7 @@ async def edit_rows(
             size_bytes=edited.size_bytes,
             lines=edited.lines,
             mime_type=row["mime_type"],
+            owner_id=row["owner_id"],
         )
         plan.pending.append((target, "updated"))
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
@@ -250,6 +254,7 @@ async def _fetch_committed(
         entry.c.version,
         entry.c.ext,
         entry.c.mime_type,
+        entry.c.owner_id,
     ]
     source: FromClause | None = None
     if with_content:
@@ -334,7 +339,7 @@ async def _apply(
     # rows stood down entirely — nothing left to write.
     updates = [s for s in plan.staged.values() if s.persistence in ("update", "absorb")]
     if errors := await _update_materials(
-        session, tables.entry, profile, parameter_budget, membership_budget, updates, user_id=plan.user_id, now=now
+        session, tables.entry, profile, parameter_budget, membership_budget, updates, authority=plan.authority, now=now
     ):
         return errors
     await _replace_content(session, tables.content, profile, membership_budget, list(plan.staged.values()), now)
@@ -365,7 +370,7 @@ async def _insert_creates(
         by_depth.setdefault(staged.path.depth, []).append(staged)
     for depth in sorted(by_depth):
         layer = by_depth[depth]
-        rows = [_entry_values(s, plan.parent_id_of(s), plan.user_id, now) for s in layer]
+        rows = [_entry_values(s, plan.parent_id_of(s), plan.authority, now) for s in layer]
         per_statement = rows_per_statement(parameter_budget, rows)
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
@@ -573,7 +578,7 @@ async def _update_materials(
     membership_budget: int,
     updates: list[StagedEntry],
     *,
-    user_id: str | None,
+    authority: Authority | None,
     now: datetime,
 ) -> list[ResultError]:
     """Material updates with the version-and-path guard, attributed from the statement.
@@ -614,20 +619,20 @@ async def _update_materials(
     if guarded:
         if set_based:
             matched = await _values_update(
-                session, entry, parameter_budget, membership_budget, guarded, user_id=user_id, now=now, guard=True
+                session, entry, parameter_budget, membership_budget, guarded, authority=authority, now=now, guard=True
             )
             missed = [s for s in guarded if s.entry_id not in matched]
             errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed))
         elif dialect.supports_sane_multi_rowcount:
             errors.extend(
                 await _guarded_by_aggregate(
-                    session, entry, profile, membership_budget, guarded, user_id=user_id, now=now
+                    session, entry, profile, membership_budget, guarded, authority=authority, now=now
                 )
             )
         elif dialect.supports_sane_rowcount:
             errors.extend(
                 await _guarded_by_rowcount(
-                    session, entry, profile, membership_budget, guarded, user_id=user_id, now=now
+                    session, entry, profile, membership_budget, guarded, authority=authority, now=now
                 )
             )
         else:
@@ -636,7 +641,14 @@ async def _update_materials(
     if unguarded:
         if set_based:
             learned = await _values_update(
-                session, entry, parameter_budget, membership_budget, unguarded, user_id=user_id, now=now, guard=False
+                session,
+                entry,
+                parameter_budget,
+                membership_budget,
+                unguarded,
+                authority=authority,
+                now=now,
+                guard=False,
             )
             for staged in unguarded:
                 version = learned.get(staged.entry_id)
@@ -650,7 +662,7 @@ async def _update_materials(
                 .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"))
                 .values(**material, version=entry.c.version + 1)
             )
-            params = [_update_params(s, user_id, now) | {"b_path": str(s.path)} for s in unguarded]
+            params = [_update_params(s, authority, now) | {"b_path": str(s.path)} for s in unguarded]
             await session.execute(stmt, params)
             # The read-back proves application: the updated row holds its
             # X-lock, so a stored path disagreeing means the guard missed.
@@ -677,7 +689,7 @@ async def _values_update(
     membership_budget: int,
     staged: list[StagedEntry],
     *,
-    user_id: str | None,
+    authority: Authority | None,
     now: datetime,
     guard: bool,
 ) -> dict[str, int]:
@@ -692,7 +704,7 @@ async def _values_update(
     """
     rows = []
     for entry_row in staged:
-        material = _material_values(entry_row, user_id, now)
+        material = _material_values(entry_row, authority, now)
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
         rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
     per_statement = statement_budget(
@@ -742,7 +754,7 @@ async def _guarded_by_aggregate(
     membership_budget: int,
     guarded: list[StagedEntry],
     *,
-    user_id: str | None,
+    authority: Authority | None,
     now: datetime,
 ) -> list[ResultError]:
     """Executemany fast path: an aggregate rowcount of N proves N guards matched.
@@ -753,7 +765,7 @@ async def _guarded_by_aggregate(
     blame would be built on an unreliable probe); everywhere else the
     per-row floor re-drives for exact blame.
     """
-    params = [_guarded_params(s, user_id, now) for s in guarded]
+    params = [_guarded_params(s, authority, now) for s in guarded]
     nested = await session.begin_nested()
     result = cast("CursorResult[Any]", await session.execute(_guarded_stmt(entry), params))
     if result.rowcount == len(params):
@@ -762,7 +774,7 @@ async def _guarded_by_aggregate(
     await nested.rollback()
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(params) - result.rowcount} guarded update(s) missed their snapshot")
-    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, user_id=user_id, now=now)
+    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, authority=authority, now=now)
 
 
 async def _guarded_by_rowcount(
@@ -772,7 +784,7 @@ async def _guarded_by_rowcount(
     membership_budget: int,
     guarded: list[StagedEntry],
     *,
-    user_id: str | None,
+    authority: Authority | None,
     now: datetime,
 ) -> list[ResultError]:
     """The per-row floor: each statement's own rowcount is the evidence.
@@ -783,7 +795,7 @@ async def _guarded_by_rowcount(
     stmt = _guarded_stmt(entry)
     missed: list[StagedEntry] = []
     for staged in guarded:
-        result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, user_id, now)))
+        result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, authority, now)))
         if result.rowcount == 0:
             missed.append(staged)
     return await _classify_guard_misses(session, entry, profile, membership_budget, missed)
@@ -835,9 +847,9 @@ def _guarded_stmt(entry: Table) -> Update:
     )
 
 
-def _guarded_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
+def _guarded_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
     guard = {"b_base": staged.base_version, "b_ver": staged.version, "b_path": str(staged.path)}
-    return _update_params(staged, user_id, now) | guard
+    return _update_params(staged, authority, now) | guard
 
 
 def _conflict(staged: StagedEntry) -> ResultError:
@@ -1002,8 +1014,8 @@ def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInse
     return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
-def _material_values(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
-    """The clobber-column values for *staged*; ownership follows the writer."""
+def _material_values(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
+    """The clobber-column values for *staged*; ownership derives from the authority."""
     return {
         "kind": staged.kind,
         "content_hash": staged.content_hash,
@@ -1014,12 +1026,12 @@ def _material_values(staged: StagedEntry, user_id: str | None, now: datetime) ->
         "chunked": False,
         "encoded": False,
         "indexable": False,
-        "owner_id": user_id,
+        "owner_id": owner_for(authority, staged.owner_id),
         "updated_at": now,
     }
 
 
-def _entry_values(staged: StagedEntry, parent_id: str, user_id: str | None, now: datetime) -> dict[str, object]:
+def _entry_values(staged: StagedEntry, parent_id: str, authority: Authority | None, now: datetime) -> dict[str, object]:
     return {
         "entry_id": staged.entry_id,
         "parent_id": parent_id,
@@ -1027,9 +1039,9 @@ def _entry_values(staged: StagedEntry, parent_id: str, user_id: str | None, now:
         "name": staged.path.name,
         "version": staged.version,
         "created_at": now,
-    } | _material_values(staged, user_id, now)
+    } | _material_values(staged, authority, now)
 
 
-def _update_params(staged: StagedEntry, user_id: str | None, now: datetime) -> dict[str, object]:
-    material = _material_values(staged, user_id, now)
+def _update_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
+    material = _material_values(staged, authority, now)
     return {"b_id": staged.entry_id} | {f"b_{column}": material[column] for column in _CLOBBER_COLUMNS}

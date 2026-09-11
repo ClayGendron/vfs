@@ -21,6 +21,7 @@ from tests.support.base_doubles import (
     SpyCloseStorage,
     TransportFailStorage,
 )
+from vfs.authority import Authority
 from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
@@ -43,14 +44,14 @@ class GhostStorage(BindableStorage):
         self._mount = Path(mount_path)
         self._ghost = Observation(path=Path(ghost_path), kind="file")
 
-    async def ls(self, *, path: Path | None = None, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def ls(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
         self.calls.append(("ls", {"path": path, **kwargs}))
         if path == self._mount:
             return Result(ops=("ls",), observations=[])
         rows = [Observation(path=self._mount, kind="directory"), self._ghost]
         return Result(ops=("ls",), observations=rows)
 
-    async def tree(self, *, user_id: str | None = None, **kwargs: Any) -> Result:
+    async def tree(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         self.calls.append(("tree", kwargs))
         rows = [Observation(path=self._mount, kind="directory"), self._ghost]
         return Result(ops=("tree",), observations=rows)

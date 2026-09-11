@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.dml import Update
 
+    from vfs.authority import Authority
     from vfs.models import Edge
     from vfs.models.rows import VFSTables
     from vfs.paths import Path
@@ -147,7 +148,7 @@ async def mkedge_rows(
     *,
     edges: list[Edge],
     provenance: str,
-    user_id: str | None,
+    authority: Authority | None,
 ) -> Result:
     """Adjudicate and apply a batch of edge touches as a set.
 
@@ -163,7 +164,7 @@ async def mkedge_rows(
     from a row-layer writer (verb batches serialize on the endpoint
     locks) surfaces as a unique violation on the insert, redrives
     row-by-row under savepoints, and lands as the touch it raced.
-    *user_id* is not yet used; edges carry no ownership today.
+    *authority* is not yet used; edges carry no ownership today.
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
@@ -219,7 +220,7 @@ async def rmedge_rows(
     membership_budget: int,
     *,
     edges: list[Edge],
-    user_id: str | None,
+    authority: Authority | None,
 ) -> Result:
     """Remove edges by exact triple; what is absent is a per-row warning.
 
@@ -228,7 +229,7 @@ async def rmedge_rows(
     the same end state, so the batch commits what it found. Statuses
     come from the probe that bounds the delete; a rival removing the
     same triple inside the window yields the identical end state.
-    *user_id* is not yet used.
+    *authority* is not yet used.
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges)

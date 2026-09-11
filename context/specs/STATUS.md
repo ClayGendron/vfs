@@ -5,6 +5,25 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **ADR 068, 2026-09-06** — open by default in process, anonymous is
+  a name, loud at the edge. 070's ingress refusal is superseded the
+  day it landed: a call with no authority runs as
+  `Authority.anonymous()` (owns nothing); the mount posture
+  (`open | shared | private`, default open, per directory by deepest
+  prefix) is spec 058's, and the `unauthenticated` refusal moves
+  there; `serve()` refuses an open mount unless told (149).
+- **070 landed 2026-09-06** — the identity layer: `Principal` and
+  `Authority` (subject set + actor + narrowing + provenance; three
+  construction doors), the `unauthenticated` kind, `authority` in
+  place of `user_id` through every verb, helper, funnel and storage
+  method, `default_authority` with the fail-closed ingress gate, the
+  `Session` facade (sugar over the funnel; closed is final), ownership
+  derived from the authority at every minting site, and the versions
+  attribution schema (`actor`, `provenance`, `source_identity`, the
+  `version_subjects` side table; format 13). The control plane runs
+  as the system actor. **Caveat:** no write path mints a version row
+  yet (no spec for version content history), so the attribution
+  columns wait for that story. Next: 058, then 148, then 149.
 - **ADR 062 to 067 ratified; the permission spec family, 2026-09-06**
   — Clay ratified all six ADRs as written (the join re-grade question
   decided: no re-grade, the audit shows the set). Spec **070** is
@@ -59,7 +78,7 @@ lines first; regenerate this file when the picture shifts (review the
   the adapter and the MCP trio, are to be respecced fresh), **067**
   graph traversal-only (all decisions landed via `ops.py`, 136 and
   143; the backend graph verb is its own future spec). Kept: 051,
-  058, 070, 080, 102, 137, 147.
+  058, 080, 102, 137, 147 (070 landed 2026-09-06).
 - **147 seeded 2026-09-05** — the import-edge extractor: spec 138's
   Python import slice with its own number (Clay closed 138 on the
   markdown work). One tree-sitter kernel per language behind the seam
@@ -760,6 +779,20 @@ lines first; regenerate this file when the picture shifts (review the
   never built. ADR 017 rules the numbering (revision values);
   `models/versioning.py` holds the diff/snapshot provider. **No spec
   exists yet.**
+- **Foreign-mount credentials** (surfaced 2026-09-11, Clay, in
+  conversation about a future Slack mount). An `Authority` carries
+  verified names, never secrets (ADR 062; 149 D4). A backend whose
+  far side owns its own permission model (Slack, Drive, GitHub) needs
+  a per-subject credential resolved *at the mount*: a credential-store
+  protocol keyed by mount + `source_identity`, encrypted at rest with
+  an app-supplied key, never an entry and never in a result; two
+  connect calls on the backend (`connect_url`, `complete_connect`)
+  that the app wires to its OAuth routes, refresh inside the backend;
+  a missing credential answers `unauthenticated` at the mount (the
+  same 401 ADR 068 puts there). Open: subject sets over a foreign
+  mount (per-member credentials and intersect, or refuse sets).
+  Needs a research pass (rclone, Nango, MCP authorization) before an
+  ADR. **No spec exists yet**; not blocking 058/148/149.
 - ~~Open decision worth making soon: move/copy `overwrite=True`~~ —
   **resolved 2026-08-14** (Clay): the flag is removed entirely; spec
   101 owns the landing (see the active line above).
@@ -778,10 +811,9 @@ pass):
 - **051 — fanout deadline** (draft; premise intact). No time budget
   anywhere in fan-out; the `timeout` error kind exists in
   `results/kinds.py` but is unused.
-- **070 — principal-scoped sessions** (draft; decisions 1–4 recorded
-  2026-07-10). The largest pending `base.py` change: `user_id` →
-  verified `Principal` everywhere. Supersedes 058's `user_id`
-  phrasing.
+- ~~**070 — principal-scoped sessions**~~ — **landed and archived
+  2026-09-06**: `user_id` → `Authority` everywhere, the fail-closed
+  gate, the session facade, attribution (see the top bullet).
 - ~~**053 — router review cleanups**~~ — closed and archived
   2026-08-25: the bare-assert item ruled (asserts in `src/` narrow
   types after an ingress gate, never validate — now a `CLAUDE.md`
@@ -799,7 +831,7 @@ pass):
 - ~~**054 — serve() locks topology**~~ — **cancelled and archived
   2026-09-05**: the flag is dead and the rule holds by construction
   (mount admin is not an op).
-- **058 — row-level grants** (seed; needs 070's `Principal`).
+- **058 — row-level grants** (written in full 2026-09-06; 070 landed, so it is next).
 - ~~**067 — graph traversal-only**~~ — **cancelled and archived
   2026-09-05**: every decision landed via `ops.py`, 136 and 143; the
   backend graph verb is its own future spec.

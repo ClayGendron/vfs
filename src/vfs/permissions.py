@@ -72,35 +72,6 @@ own its own engine, or at minimum its own table, unless you are
 intentionally exposing the same storage under two different namespaces
 with compatible permissions.
 
-User scoping
-------------
-
-When ``DatabaseFileSystem`` is constructed with ``user_scoped=True``,
-each call's path is rewritten to live under ``/{user_id}/...`` *inside
-the impl*, after the permission check has already run.  Permission
-rules therefore live in **unscoped logical coordinates**.
-
-The right way to write a rule for a user-scoped filesystem is to name
-the *logical* path that exists in every user's namespace:
-
->>> permissions.read_only(write=["/synthesis"])  # doctest: +SKIP
-
-This applies to ``alice``'s ``/synthesis``, ``bob``'s ``/synthesis``,
-and so on.  The rule is checked against the unscoped path
-``/synthesis/page.md``, which the impl then rewrites to
-``/alice/synthesis/page.md`` (or whoever the caller is) before storage.
-
-The wrong way is to embed a user id in the rule path:
-
->>> permissions.read_only(write=["/alice/synthesis"])  # doctest: +SKIP
-
-This rule is checked in unscoped coordinates, so ``bob`` can trigger it
-by writing to ``/wiki/alice/synthesis/page.md``.  ``bob``'s data still
-lands in ``/bob/alice/synthesis/page.md`` — there is no cross-user data
-leak — but the rule is meaningless because it does not actually scope
-to alice.  If you need per-user policy, use the share / ReBAC layer
-(``SupportsReBAC``), not :class:`PermissionMap`.
-
 This trade-off mirrors Unix: file permissions are enforced by the
 filesystem layer, but a process that has direct access to the
 underlying block device can still write bytes.  VFS treats the SQL

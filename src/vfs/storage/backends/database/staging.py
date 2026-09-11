@@ -30,6 +30,7 @@ from vfs.storage.backends.database.descent import ancestor_chain
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
 
+    from vfs.authority import Authority
     from vfs.paths import ObjectKind, Path
 
 Status = Literal["created", "updated", "unchanged"]
@@ -57,6 +58,7 @@ class StagedEntry:
     lines: int = 0
     ext: str | None = field(init=False, default=None)
     mime_type: str | None = None
+    owner_id: str | None = None  # the payload's declared owner; only the system actor honours it
     base_version: int | None = None  # the version the guarded arm compares against
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
 
@@ -72,6 +74,7 @@ class StagedEntry:
         size_bytes: int,
         lines: int,
         mime_type: str | None,
+        owner_id: str | None = None,
     ) -> None:
         """Replace material state, preserving identity and persistence bookkeeping."""
         self.kind = kind
@@ -80,6 +83,7 @@ class StagedEntry:
         self.size_bytes = size_bytes
         self.lines = lines
         self.mime_type = mime_type
+        self.owner_id = owner_id
 
     def absorb(self, entry_id: str) -> None:
         """Lose insert arbitration to the rival row *entry_id* and clobber it.
@@ -123,9 +127,9 @@ class WritePlan:
     plan is never executed.
     """
 
-    def __init__(self, committed: dict[str, RowMapping], *, user_id: str | None, budget: int) -> None:
+    def __init__(self, committed: dict[str, RowMapping], *, authority: Authority | None, budget: int) -> None:
         self.committed = committed
-        self.user_id = user_id
+        self.authority = authority
         self.budget = budget
         self.staged: dict[Path, StagedEntry] = {}
         self.bump_versions: dict[str, int] = {}
@@ -207,6 +211,7 @@ class WritePlan:
         mime_type: str | None,
         overwrite: bool,
         parents: bool,
+        owner_id: str | None = None,
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended."""
         if not self.within_budget(target):
@@ -231,6 +236,7 @@ class WritePlan:
             size_bytes=size_bytes,
             lines=lines,
             mime_type=mime_type,
+            owner_id=owner_id,
         )
         return "created" if occupant is None else "updated"
 
@@ -266,6 +272,7 @@ class WritePlan:
         size_bytes: int = 0,
         lines: int = 0,
         mime_type: str | None = None,
+        owner_id: str | None = None,
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:  # a repeat target folds into the one staged row
@@ -276,6 +283,7 @@ class WritePlan:
                 size_bytes=size_bytes,
                 lines=lines,
                 mime_type=mime_type,
+                owner_id=owner_id,
             )
             return
         self.staged[path] = StagedEntry(
@@ -289,6 +297,7 @@ class WritePlan:
             size_bytes=size_bytes,
             lines=lines,
             mime_type=mime_type,
+            owner_id=owner_id,
         )
 
     def stage_update(
@@ -301,6 +310,7 @@ class WritePlan:
         size_bytes: int,
         lines: int,
         mime_type: str | None,
+        owner_id: str | None = None,
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:
@@ -311,6 +321,7 @@ class WritePlan:
                 size_bytes=size_bytes,
                 lines=lines,
                 mime_type=mime_type,
+                owner_id=owner_id,
             )
             return
         row = self.committed[str(path)]
@@ -325,6 +336,7 @@ class WritePlan:
             size_bytes=size_bytes,
             lines=lines,
             mime_type=mime_type,
+            owner_id=owner_id,
             base_version=row["version"],
             version=row["version"] + 1,
         )

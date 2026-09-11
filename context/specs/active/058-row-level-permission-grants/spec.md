@@ -15,7 +15,8 @@
 - **Depends on:** 070 (the `Authority` the spine consumes; attribution
   columns), ADR 061 (membership helpers), the dialect budgets
   (`storage/backends/database/dialects.py`)
-- **Decisions it implements:** ADR 067 (the spine), ADR 065 (hidden
+- **Decisions it implements:** ADR 068 (posture; the anonymous
+  principal; the mount-side `unauthenticated`), ADR 067 (the spine), ADR 065 (hidden
   rows are absent; statistics over the visible set), ADR 066 rules 2,
   3, 6, 8, 9 (the intersection law and its predicate), ADR 064 rules
   2, 4, 5, 6 (grant revision; ownership from the container; revert is
@@ -44,6 +45,41 @@ visibility.
 
 ## Decided semantics
 
+### 0. Posture: the everyone level (ADR 068)
+
+- **A mount has a posture**, `open | shared | private`, stored as a
+  row in the grants table under the reserved principal id `*` at
+  `path_prefix = "/"`: `open` = `("*", "/", "read_write")`, `shared` =
+  `("*", "/", "read")`, `private` = no `*` row at `/`. **The default is
+  `open`**: first touch plants the row unless the storage was
+  constructed with `posture="shared"` or `posture="private"`.
+  `mounts()` and `grants("/")` show it.
+- **Posture applies per directory, deepest prefix wins.** `posture(path,
+  level, *, authority)` writes or replaces the `*` row at *path*
+  (`private` writes a `*` row at level `none`). The everyone level on a
+  path is the level of the deepest covering `*` row. Principal and
+  group grants stay additive and max-resolved on top (§2); the `*`
+  rows are the one longest-prefix ladder on the grant side, because
+  they are the only rows that can *narrow*. The verb needs
+  `read_write` on *path* for every subject, like `grant`.
+- **The anonymous principal** (`Authority.anonymous()`, 070 as
+  amended) holds only the everyone level: the resolver reads `*` rows
+  for it and nothing else, and it owns nothing (`owner_id` NULL).
+  Every other authority holds the everyone level too — the resolver
+  includes the `*` rows in every subject's read.
+- **A non-open posture refuses anonymous as `unauthenticated`**: when
+  the authority is anonymous and the mount's root `*` row is below
+  `read_write` (for a write) or absent (for a read), the verb answers
+  `vfs.unauthenticated` with the hint "open a session, or configure
+  default_authority" — the 401 lives at the mount, not the router.
+  Below the root, a nested `private` prefix simply hides its rows from
+  anonymous like any other invisible row.
+- **Compilation.** The `*` rows compile beside the grant arms: each
+  covering `open`/`shared` prefix at the required level is a `LIKE`
+  arm, and each deeper `*` row that lowers the level is a `NOT LIKE`
+  arm attached to it (`path LIKE :p || '/%' AND NOT path LIKE :q ||
+  '/%'`). Both arm kinds count against `MAX_PREFIX_ARMS`.
+
 ### 1. The rows
 
 - **`grants(principal_id, path_prefix, level, granted_by, granted_at,
@@ -62,6 +98,8 @@ visibility.
   every grants or memberships write; stamped onto each version row
   (`versions.grant_revision`, ADR 064 rule 2) and used as the memo key
   for resolved rights.
+- **The reserved principal id `*`** is the posture row (§0); it is
+  never a `sub` (070 reserves it beside `system` and `anon`).
 - **Coverage** is by prefix: `path = prefix OR path LIKE prefix || '/%'`
   with `%` and `_` in prefixes escaped per dialect. The prefix
   coordinate entrenches against the parked full-dirent end-state
@@ -219,7 +257,8 @@ for an oversize subject set or a group walk deeper than
 ## Acceptance criteria
 
 - The resolver and compiler are pure functions under `storage/` with
-  unit tests for: owner floor; maximum-level resolution; the covering
+  unit tests for: the posture ladder (open root with a private child;
+  shared root with an open child; anonymous holds only `*` rows); owner floor; maximum-level resolution; the covering
   set; the meet for sets of 1, 2, 5, 20 (S1's shapes); the fallback
   past `MAX_PREFIX_ARMS`; LIKE escaping of `%` and `_`; bind counts
   under every dialect profile at a 10k batch.
@@ -253,11 +292,11 @@ for an oversize subject set or a group walk deeper than
 
 | Slice | Content | Lands green? |
 |---|---|---|
-| A | tables (`grants`, `memberships`, revision, `versions.grant_revision`), schema version bump, migrations note; the resolver and compiler, pure, unit-tested against S1's shapes | yes |
+| A | tables (`grants`, `memberships`, revision, `versions.grant_revision`), the posture row on first touch (default `open`), schema version bump, migrations note; the resolver and compiler, pure, unit-tested against S1's shapes and the posture ladder | yes |
 | B | reads: every read builder takes the predicate; hidden = not-found; the per-verb hidden-row tests | yes |
 | C | writes: the point check, batch gate, refusal mapping, `move`/`copy`/`restore`/`sweep`/edges | yes |
 | D | `glean` statistics and the `lexical_stats` export over the visible set; S2 regression | yes |
-| E | grant verbs and memberships admin; attenuation; the widening-seen-next-call test | yes |
+| E | grant verbs, `posture`, and memberships admin; attenuation; the widening-seen-next-call test; the mount-side `unauthenticated` for anonymous | yes |
 | F | the conformance suite and the S1 performance gate | yes |
 
 ## Open questions
