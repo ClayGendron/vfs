@@ -245,6 +245,21 @@ most relevant to this project:
   `cognee`, `LightRAG`, `graphify`, `letta`, `mem0`, `memori`
   (bring-your-own-SQL agent memory), `MemOS`, `HippoRAG`, `KAG`,
   `youtu-graphrag`, `ontogpt`, `rdflib`, `oxigraph`, `jena`
+- **Agent frameworks as consumers** (how a host loop would consume
+  vfs): `eve` (Vercel's agent-is-a-directory framework; Apache-2.0;
+  the MCP-connection and memory-provider seams, `byPrincipal` scope,
+  the sandbox `/workspace` that vfs is *not*), `deepagents`,
+  `langgraph`, `letta`, `openai-agents-python`,
+  `claude-agent-sdk-python`, `adk-python`, `opencode`, `gemini-cli`
+- **Filesystems over databases** (the direct category peers; memo
+  `2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md`):
+  `computer` (Cloudflare's `dofs` inode tree in Durable Object SQLite,
+  content-addressed chunks, FUSE and sync; MIT), `langchain-mongodb`
+  (`libs/langchain-mongodb-deepagents-vfs`: S3 bytes, Atlas chunks and
+  hybrid `grep`; MIT), `deepagents` (the `BackendProtocol` and the
+  tool-tier permission rules), `letta` (MemFS git-per-agent memory;
+  Python server archived off `main` 2026-08-15, read via `git show`),
+  `agentfs`, `mirage`
 - **MCP**: `modelcontextprotocol`, `python-sdk`, `fastmcp`
 - **Sandboxed execution & wasm** (hermetic-runtime direction): `monty`
   (pydantic's sandboxed Python interpreter), `wasmtime-py` (wasm

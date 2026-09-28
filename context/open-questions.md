@@ -133,6 +133,7 @@
   the space registry is the recommended first landing — model identity
   on the `meta` row, packed float32 vectors, the registry reserved for
   media spaces.
+- **Researched 2026-09-15:** `research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §6, §10 — MongoDB's VFS keeps bytes in S3 and only chunks in Atlas ("object storage is the data plane"), Archil and Mastra mount buckets, and Cloudflare Computer plans R2 tiering above 4 MiB; every peer keeps large bytes outside the relational store. Sharpened question: is there a size above which vfs content should live in an object store with the row holding a reference, and does that change the read-your-writes guarantee?
 
 ## Scattered 10k-target delete holds the topology lock for minutes — set-based batches or cross-transaction chunking?
 
@@ -235,3 +236,44 @@
 - **Blocking:** the roadmap order of specs 070 and 058 (and ADR 021's ratification) relative to specs 135–137; whether C7 introspection lands as its own spec before either.
 - **Options considered:** (a) finish the glean arc, then principals → grants → introspection; (b) principals and grants now, glean's vector leg and signals after — the memo's lean; (c) C7 introspection first regardless, since it is small and unblocks the Catalog's v1 and the "who can reach what" panel that grants will feed.
 - **Status:** open
+- **Researched 2026-09-15:** `research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` — the four category peers (deep agents/LangSmith, Cloudflare Computer, MongoDB VFS, Letta MemFS) and fourteen adjacent systems all ship the verb set and a store underneath; hybrid search is now shipped by MongoDB, Mastra, Cloudflare Agent Memory and two hobby projects, while per-path, per-principal enforcement in the data path is shipped by nobody and is deferred "to the application" in writing by three of the four. The memo recommends (b): principals and grants now, glean's remaining legs after.
+
+## `serve()` re-spec against a named consumer: one tool with a verb argument, or one tool per verb?
+
+- **Asked:** 2026-09-15 by Claude (eve memo `research/2026-09-15-eve-vercel-agent-framework.md` §7.2, §9)
+- **Context:** Vercel's eve consumes MCP servers as *connections*: the model finds tools by the connection's description through `connection_search`, each remote tool becomes `<connection>__<tool>`, and eve layers a per-tool allow-list and approval policy on top. That favours few, well-described tools. The July company memo's line was "one MCP tool, sixteen verbs." The two shapes give a consumer different least-privilege and approval handles (eve can gate `vfs__delete` with `always()` only if delete is its own tool). eve also supplies a replay-stable `callId` per remote call and serves MCP `2026-07-28` with stateless `2025-11-25` compatibility, which pins the version and the idempotency contract the re-spec should target.
+- **Blocking:** the `serve()` re-spec (the existing "MCP 2026-07-28: long-batch execution model and serving-stack choice" entry); ADR 022's topology-off-the-wire rule rides on it.
+- **Options considered:** (a) one tool per agent-facing verb, `sweep` and topology admin withheld, capabilities advertised so a consumer's allow-list can be derived; (b) one `vfs` tool with a `verb` argument and the `Result` envelope as structured content; (c) both, with (b) as the compact surface for code-mode and tool-search clients.
+- **Status:** open
+
+## Reference adapters for host frameworks: publish them, or document the wire and let hosts write them?
+
+- **Asked:** 2026-09-15 by Claude (eve memo §7.1 seam 2, §9)
+- **Context:** eve's cleanest conceptual seam for vfs is its memory provider (`recall`/`capture`/`tools` driven at fixed lifecycle points with an opaque per-tenant scope key). Filling it needs a thin TypeScript package that calls a served vfs. That is not vfs-js, but it is TypeScript vfs would own or bless. The pre-refactor deepagents adapter design (`docs/deepagents-integration.md`) is the Python twin of the same question and references retired names.
+- **Blocking:** nothing yet; becomes concrete the moment `serve()` lands.
+- **Options considered:** (a) publish small reference adapters (an eve memory provider, a deepagents backend) in a separate repo, versioned against the wire; (b) document the wire contract only and point hosts at it; (c) publish only the eve one, since it is the consumer with a real principal on every call.
+- **Status:** parked — unblocked by `serve()`
+
+## Where does an agent's bundle live in the namespace: a user directory, or a reserved `/.agents/<agent>/` family?
+
+- **Asked:** 2026-09-15 by Claude (eve memo §9; vfs-side brief §F)
+- **Context:** eve's agent is a directory (instructions, skills, tools, memory, subagents per agent). vfs's reserved `/.agents` tree has exactly two families, `tools` and `skills` (`paths.py::AGENT_FAMILIES`), which match the halves of that shape the industry is converging on. Hosting a whole agent-shaped subtree is either an ordinary user directory (`/agents/<name>/…`, no grammar) or a third reserved family with its own path rules and a materializer like `Skill.to_entries()`.
+- **Blocking:** nothing today; the skills/memory how-to and any per-agent posture rule in spec 058 would take a position.
+- **Options considered:** (a) plain user directories, no reserved family; (b) a reserved `/.agents/<agent>/` family with grammar for instructions, skills and memory; (c) defer until a real consumer asks for per-agent isolation.
+- **Status:** parked
+
+## Write preconditions on the wire: expected version, content hash, or both?
+
+- **Asked:** 2026-09-15 by Claude (`research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §4.3, §8.4, §10)
+- **Context:** The emerging write-safety idiom across peers is a precondition on `write`/`edit`: Anthropic Managed Agents memory takes a `content_sha256`, memgres a `base_hash` (409 on mismatch), MongoDB's VFS an S3 `IfMatch` on `edit` only, eve a read-before-write hash stamp. It is also what a replayed durable-execution step needs from a store. vfs already carries a per-entry `version` stamp on every observation but no verb accepts one as a condition. An expected version is vfs's own coordinate and cheap to check; a content hash is what a client can compute without a prior read and what peers speak.
+- **Blocking:** the `serve()` re-spec (the served `write`/`edit` contract); the version-row design (a refused write should not mint a row).
+- **Options considered:** (a) expected `version` only; (b) `content_sha256` only; (c) both, either sufficient, mismatch classified as a child of `invalid` (or a new `conflict` kind); (d) neither, keep last-write-wins and rely on reversibility.
+- **Status:** open
+
+## A "when not to use vfs" statement
+
+- **Asked:** 2026-09-15 by Claude (`research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §7, §8.7)
+- **Context:** Arize's June 2026 benchmark (a Postgres-backed VFS vs a "query once, materialize, use real bash" skill: 93 vs 99 of 100) and its line "every time you fake a filesystem, you sign up to maintain one" is the live counter-argument to the category. vfs's answer is that it is not a filesystem emulation but a namespace with semantics a POSIX filesystem cannot give (principal on every call, per-caller visibility on one tree, attributed versions, typed edges, predicate-scoped search). Saying plainly where a checkout plus ripgrep wins (one agent, one machine, no sharing, no policy) sharpens the pitch and pre-empts the critique.
+- **Blocking:** nothing; the README and ADR 058 refresh would carry it.
+- **Options considered:** (a) a short section in the README; (b) a line in `standards/mission.md` under non-goals; (c) a paragraph in the positioning ADR only.
+- **Status:** parked

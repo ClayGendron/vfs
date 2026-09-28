@@ -36,7 +36,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras --group dev
+        run: uv sync --all-extras --group dev --group docs
 
       - name: Lint
         run: uv run ruff check src/ tests/
@@ -52,6 +52,10 @@ jobs:
         run: >-
           uv run pytest --tb=short
           ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100' || '' }}
+
+      - name: Doc examples
+        if: matrix.python-version == '3.13'
+        run: uv run ruff check docs/conftest.py && uv run pytest docs --tb=short -p no:cov
 
       - name: Upload coverage
         if: matrix.python-version == '3.13'

@@ -60,7 +60,7 @@ class VFSErrorKind(StrEnum):
     not_empty = "vfs.not_empty"  # ENOTEMPTY
 
     # — authorization —
-    unauthenticated = "vfs.unauthenticated"  # 401 — no authority reached the router; "who are you"
+    unauthenticated = "vfs.unauthenticated"  # 401 — the target needs a named authority; "who are you"
     permission_denied = "vfs.permission_denied"  # EACCES / EPERM — 403; "you may not"
     read_only = "vfs.read_only"  # EROFS — read-only target, distinct from authorization
 

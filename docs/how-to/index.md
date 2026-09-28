@@ -11,3 +11,5 @@ Task-focused recipes for users who already know what VFS is.
 - How to provision Postgres search artifacts
 - How to add a backend
 - How to expose VFS over MCP
+- How to run calls as a principal
+- How to bulk load as the system actor

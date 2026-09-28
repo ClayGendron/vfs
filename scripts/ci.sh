@@ -52,13 +52,15 @@ check_wheel_size() {
 run_leg() {
     local v=$1
     export UV_PROJECT_ENVIRONMENT=".venv-ci/${v}"
-    step "install (py${v})" uv sync --all-extras --group dev --python "$v" || return 1
+    step "install (py${v})" uv sync --all-extras --group dev --group docs --python "$v" || return 1
     step "lint (py${v})" uv run --no-sync --python "$v" ruff check src/ tests/ || return 1
     step "format (py${v})" uv run --no-sync --python "$v" ruff format --check src/ tests/ || return 1
     if [ "$v" = "$COVERAGE_LEG" ]; then
         step "types (py${v})" uv run --no-sync --python "$v" ty check src/ tests/ || return 1
         step "tests+cov (py${v})" uv run --no-sync --python "$v" pytest --tb=short \
             --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100 || return 1
+        step "docs examples (py${v})" uv run --no-sync --python "$v" ruff check docs/conftest.py \
+            && uv run --no-sync --python "$v" pytest docs --tb=short -p no:cov || return 1
         step "wheel size" check_wheel_size || return 1
     else
         step "tests (py${v})" uv run --no-sync --python "$v" pytest --tb=short || return 1

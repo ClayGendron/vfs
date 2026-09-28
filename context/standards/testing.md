@@ -89,6 +89,25 @@ uv run pytest --mssql               # adds MSSQL integration tests
 
 No piping, no `2>&1`. See `standards/tooling.md`.
 
+## The docs' examples are tests
+
+Every ` ```python ` fence under `docs/tutorials`, `docs/how-to`,
+`docs/reference` and `docs/explanation` runs against the live package
+through Sybil (`docs/conftest.py`): one namespace per page, fences in
+document order, a fresh SQLite-backed `storage` and `fs` per page,
+top-level `await` allowed. A fence that is not runnable (a signature,
+a sketch) is preceded by `<!-- skip: next -->`. State a doc's claims
+as `assert` lines inside the fence so drift fails the gate rather than
+reading as stale prose.
+
+```bash
+uv run pytest docs                  # the doc examples; not in the default testpaths
+```
+
+`scripts/ci.sh` and the CI Tests job run this on the coverage leg,
+outside the coverage measurement. Adding a page to one of the four
+directories adds its fences to the gate with no registration.
+
 ## Code review and tests
 
 Every phase of work gets a sub-agent code review with real integration tests. Self-review and call-it-done is not the standard.

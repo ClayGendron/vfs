@@ -78,6 +78,7 @@ dev = [
 ]
 docs = [
     "mkdocs-material>=9.0",
+    "sybil>=9",
 ]
 
 [tool.ruff]

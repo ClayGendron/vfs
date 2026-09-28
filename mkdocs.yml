@@ -43,8 +43,13 @@ nav:
     - Provision Postgres search: how-to/provision-postgres-search.md
     - Add a backend: how-to/add-a-backend.md
     - Expose over MCP: how-to/expose-over-mcp.md
+    - Run calls as a principal: how-to/run-calls-as-a-principal.md
+    - Bulk load as the system actor: how-to/bulk-load-as-the-system-actor.md
   - Reference:
     - API: reference/api.md
+    - Authority and Principal: reference/authority.md
+    - Session: reference/session.md
+    - Glossary: reference/glossary.md
     - Glob patterns: reference/glob-patterns.md
     - Metadata path format: reference/metadata-paths.md
     - Query engine: reference/query-engine.md
@@ -53,6 +58,10 @@ nav:
     - The glob language: explanation/glob-language.md
     - Why database-backed: explanation/why-database-backed.md
     - Filesystem internals: explanation/filesystem-internals.md
+    - Identity is a value, not a session: explanation/identity-is-a-value.md
+    - Ownership is a floor, attribution is a record: explanation/ownership-and-attribution.md
+    - Open in process, loud at the edge: explanation/open-in-process-loud-at-the-edge.md
+    - VFS does not authenticate: explanation/vfs-does-not-authenticate.md
   - Contributing: contributing.md
 
 markdown_extensions:
@@ -83,3 +92,7 @@ markdown_extensions:
 
 plugins:
   - search
+
+exclude_docs: |
+  conftest.py
+  __pycache__/
