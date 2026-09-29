@@ -107,6 +107,7 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
+    from vfs.storage.backends.database.rights import Visibility
 
 # Runtime budgets: candidates fetched and verified, posting bytes
 # decoded, and a wall-time deadline checked between ladder stages and
@@ -170,13 +171,18 @@ async def grep_rows(
     allow_scan: bool,
     columns: frozenset[str] | None,
     wall_seconds: float = WALL_TIME_BUDGET,
+    view: Visibility | None = None,
 ) -> Result:
     """One row per matching entry, index side unioned with the scan side.
 
     Scoping arrives purely as pattern text on the ``globs`` channels —
     the router composes and residuates scope upstream; no path channel
     crosses this seam. *wall_seconds* is the caller-configured wall-clock
-    budget; the declared default keeps direct callers honest.
+    budget; the declared default keeps direct callers honest. Under a
+    partial *view* every candidate passes the view beside the structural
+    gates, before any body is fetched, so the matcher never reads a row
+    the caller cannot see. The candidate budget still counts hidden
+    candidates, so a partial caller can reach it sooner than a whole one.
     """
     try:
         admissions = expand_channel("globs", globs)
@@ -250,7 +256,9 @@ async def grep_rows(
             tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
         )
         for mapping in await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown):
-            if not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted):
+            if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted)) and (
+                view is None or view.admits(mapping)
+            ):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")
@@ -289,7 +297,9 @@ async def grep_rows(
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
                 for mapping in nominated:
-                    if not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted):
+                    if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted)) and (
+                        view is None or view.admits(mapping)
+                    ):
                         candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:
         truncations.append("wall-time budget")

@@ -66,6 +66,7 @@ from vfs.storage.backends.database.dialects import (
     topology_execution_options,
 )
 from vfs.storage.backends.database.offload import OFFLOAD_WORKERS
+from vfs.storage.backends.database.rights import posture_row
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -75,6 +76,7 @@ if TYPE_CHECKING:
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models.rows import VFSTables
+    from vfs.storage.grants import Posture
 
 T = TypeVar("T")
 
@@ -129,6 +131,7 @@ class EngineHost:
         schema: str | None = None,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
+        posture: Posture = "open",
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
     ) -> None:
@@ -151,6 +154,9 @@ class EngineHost:
         )
         self.embedder = embedder
         self.native_embedding = native_embedding
+        # What everyone holds at the root of a freshly provisioned mount;
+        # an existing mount keeps its stored posture.
+        self.posture: Posture = posture
         # The space the stored vectors live in, adopted at first touch and
         # moved by the embed step; ``None`` until the first embedding lands.
         self.embedding_identity: tuple[str, int] | None = None
@@ -460,9 +466,11 @@ class EngineHost:
                 id=1,
                 schema_format_version=SCHEMA_FORMAT_VERSION,
                 mount_identity=str(ULID()),
+                grant_revision=0,
                 created_at=now,
             )
         )
+        await conn.execute(insert(self.tables.grants).values(**posture_row(self.posture, now)))
         await conn.execute(
             insert(self.tables.entry).values(
                 entry_id=str(ULID()),

@@ -23,7 +23,7 @@ and subtrees by ``path`` — byte-identical across engines.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
@@ -41,12 +41,13 @@ from vfs.pattern_matching import (
 from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
-    classify_misses,
+    classify_miss,
     descendant_filter,
     escape_like,
     liveness_filters,
     miss_errors,
     rows_by_path,
+    targets_with_ancestors,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
@@ -54,7 +55,7 @@ from vfs.storage.backends.database.membership import membership
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy import Column, ColumnElement, FromClause, Table
+    from sqlalchemy import Column, ColumnElement, FromClause, Select, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     from vfs.pattern_matching import Body
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
+    from vfs.storage.backends.database.rights import Visibility
 
 # Observation fields served directly by entries-table columns (the two
 # vocabularies share these names by construction). A file's current version
@@ -73,6 +75,10 @@ ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
 
 # Identity fields every observation carries regardless of projection.
 ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
+
+# What a directory shows when it is only on the road to a visible row:
+# its name and kind, never a fact that moves when hidden children do.
+ROAD_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind"})
 
 # Glob character classes have no LIKE equivalent; those patterns fall
 # back to a literal-prefix prefilter with the compiled glob as the filter.
@@ -115,9 +121,12 @@ async def read_rows(
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
+    view: Visibility | None = None,
 ) -> Result:
     fetched = effective_columns(columns, content=True)
-    rows, errors = await _point_rows(session, tables, profile, membership_budget, targets, fetched, content_only=True)
+    rows, errors = await _point_rows(
+        session, tables, profile, membership_budget, targets, fetched, content_only=True, view=view
+    )
     return Result(ops=("read",), observations=rows, errors=errors)
 
 
@@ -128,9 +137,12 @@ async def stat_rows(
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
+    view: Visibility | None = None,
 ) -> Result:
     fetched = effective_columns(columns, content=False)
-    rows, errors = await _point_rows(session, tables, profile, membership_budget, targets, fetched, content_only=False)
+    rows, errors = await _point_rows(
+        session, tables, profile, membership_budget, targets, fetched, content_only=False, view=view
+    )
     return Result(ops=("stat",), observations=rows, errors=errors)
 
 
@@ -146,22 +158,33 @@ async def ls_rows(
     membership_budget: int,
     targets: Sequence[Path],
     columns: frozenset[str] | None,
+    view: Visibility | None = None,
 ) -> Result:
+    """Each directory target's children, each file target itself.
+
+    Under a partial view a road directory lists like any directory, and
+    a hidden child directory shows as a bare name only when it is itself
+    on the road; a hidden file never shows.
+    """
     fetched = effective_columns(columns, content=False)
-    found = await _mappings_by_path(session, tables, profile, membership_budget, targets, fetched, with_entry_id=True)
-    missing = await miss_errors(session, tables.entry, targets, found, profile, membership_budget)
-    directories = [t for t in targets if (f := found.get(t)) is not None and f["kind"] == "directory"]
-    children = await _children_by_parent(session, tables.entry, profile, membership_budget, directories, found, fetched)
+    found = await _mappings_by_path(
+        session, tables, profile, membership_budget, targets, fetched, with_entry_id=True, with_owner=view is not None
+    )
+    shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
+    directories = [t for t in targets if t in road or ((f := shown.get(t)) is not None and f["kind"] == "directory")]
+    children = await _children_by_parent(
+        session, tables.entry, profile, membership_budget, directories, found, fetched, view=view
+    )
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
-        mapping = found.get(target)
-        if mapping is None:
+        mapping = shown.get(target)
+        if mapping is None and target not in road:
             errors.append(missing[target])
-        elif mapping["kind"] != "directory":
+        elif mapping is not None and mapping["kind"] != "directory":
             rows.append(_observe(mapping, fetched))
         else:
-            rows.extend(children.get(mapping["entry_id"], ()))
+            rows.extend(children.get(found[target]["entry_id"], ()))
     return Result(ops=("ls",), observations=rows, errors=errors)
 
 
@@ -173,17 +196,29 @@ async def tree_rows(
     path: Path,
     max_depth: int | None,
     columns: frozenset[str] | None,
+    view: Visibility | None = None,
 ) -> Result:
+    """Every row beneath *path*, in path order, to *max_depth* levels.
+
+    Under a partial view the subtree read carries the visibility clauses
+    (once per clause, merged), every row still passes the view, and each
+    visible row's hidden ancestors inside the tree show as bare names —
+    the road down to it.
+    """
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
-    found = await _mappings_by_path(session, tables, profile, membership_budget, [path], fetched, with_entry_id=False)
-    target = found.get(path)
-    if target is None:
-        return Result(ops=("tree",), errors=await classify_misses(session, entry, [path], profile, membership_budget))
-    if target["kind"] != "directory":
+    found = await _mappings_by_path(
+        session, tables, profile, membership_budget, [path], fetched, with_entry_id=False, with_owner=view is not None
+    )
+    shown, road, missing = await _screen(session, tables, profile, membership_budget, [path], found, view)
+    target = shown.get(path)
+    if target is None and path not in road:
+        return Result(ops=("tree",), errors=[missing[path]])
+    if target is not None and target["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(target, fetched)])
+    wanted = fetched | ({"owner_id"} if view is not None else frozenset())
     stmt = (
-        select(*_entry_columns(entry, fetched))
+        select(*_entry_columns(entry, wanted))
         .where(
             descendant_filter(entry, str(path), profile),
             *liveness_filters(entry, profile, include_meta=path.is_meta),
@@ -192,8 +227,18 @@ async def tree_rows(
     )
     if max_depth is not None:
         stmt = stmt.where(_slash_count(entry) <= path.depth + max_depth)
-    rows = [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
-    return Result(ops=("tree",), observations=rows)
+    if view is None:
+        rows = [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
+        return Result(ops=("tree",), observations=rows)
+    visible = await _visible_rows(session, stmt, view)
+    bare = {
+        ancestor
+        for mapping_path in visible
+        for ancestor in _ancestors_below(mapping_path, str(path))
+        if ancestor not in visible
+    }
+    observed = {p: _observe(m, fetched) for p, m in visible.items()} | {p: road_observation(p) for p in bare}
+    return Result(ops=("tree",), observations=[observed[p] for p in sorted(observed)])
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +265,7 @@ async def glob_rows(
     kind: str | None,
     max_count: int | None,
     columns: frozenset[str] | None,
+    view: Visibility | None = None,
 ) -> Result:
     """Rows matching **any** pattern, one snapshot, statements chunked by budget.
 
@@ -231,7 +277,10 @@ async def glob_rows(
     before any row is touched. Exclusions never prefilter in SQL — an over-approximating ``NOT
     LIKE`` would wrongly exclude, the forbidden false negative — so
     ``globs_not`` and ``ext_not`` gate candidates beside the compiled
-    authority; ``kind`` is an exact fact and rides inside every arm.
+    authority; ``kind`` is an exact fact and rides inside every arm. Under
+    a partial *view* each candidate passes the view in app code — a clause
+    beside the fan would demote its plan — and a hidden directory matches
+    as a bare name only when it is on the road.
     """
     try:
         live = expand_channel("pattern", patterns)
@@ -251,13 +300,21 @@ async def glob_rows(
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
-    queried = fetched | ROW_GATE_FIELDS
+    queried = fetched | ROW_GATE_FIELDS | ({"owner_id"} if view is not None else frozenset())
+    hidden: list[str] = []
     for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
         # Wanted-ext admission rides inside the gates (compiled with *ext*).
         path, name, row_ext = mapping["path"], mapping["name"], mapping["ext"]
-        if passes_row_filters(path, name, row_ext, gates, not_gates, frozenset(), unwanted):
+        if not passes_row_filters(path, name, row_ext, gates, not_gates, frozenset(), unwanted):
+            continue
+        if view is None or view.admits(mapping):
             matched.setdefault(mapping["path"], mapping)
-    rows = [_observe(matched[path], fetched) for path in sorted(matched)]
+        elif mapping["kind"] == "directory":
+            hidden.append(path)
+    observed = {path: _observe(mapping, fetched) for path, mapping in matched.items()}
+    if hidden and view is not None:
+        observed |= {path: road_observation(path) for path in await view.road(session, hidden)}
+    rows = [observed[path] for path in sorted(observed)]
     if max_count is not None:
         rows = rows[:max_count]
     return Result(ops=("glob",), observations=rows)
@@ -422,15 +479,28 @@ async def _point_rows(
     fetched: frozenset[str],
     *,
     content_only: bool,
+    view: Visibility | None = None,
 ) -> tuple[list[Observation], list[ResultError]]:
-    """Fetch, classify, and observe *targets* one row at a time, in order."""
-    found = await _mappings_by_path(session, tables, profile, membership_budget, targets, fetched, with_entry_id=False)
-    missing = await miss_errors(session, tables.entry, targets, found, profile, membership_budget)
+    """Fetch, classify, and observe *targets* one row at a time, in order.
+
+    A road directory answers as a bare name to ``stat`` and as a
+    directory to ``read`` (``wrong_kind``, as any directory would).
+    """
+    found = await _mappings_by_path(
+        session, tables, profile, membership_budget, targets, fetched, with_entry_id=False, with_owner=view is not None
+    )
+    shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
     rows: list[Observation] = []
     errors: list[ResultError] = []
     for target in targets:
-        mapping = found.get(target)
+        mapping = shown.get(target)
         if mapping is None:
+            if target in road:
+                if content_only:
+                    errors.append(wrong_kind("directory", target))
+                else:
+                    rows.append(road_observation(target))
+                continue
             errors.append(missing[target])
             continue
         kind = mapping["kind"]
@@ -439,6 +509,64 @@ async def _point_rows(
             continue
         rows.append(_observe(mapping, fetched))
     return rows, errors
+
+
+def road_observation(path: str) -> Observation:
+    """A directory shown only because a visible row lies beneath it: path and kind."""
+    return Observation.model_validate({"path": Path._brand(path), "kind": "directory", "populated": ROAD_FIELDS})
+
+
+async def _screen(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    targets: Sequence[Path],
+    found: dict[str, RowMapping],
+    view: Visibility | None,
+) -> tuple[dict[str, RowMapping], set[str], dict[Path, ResultError]]:
+    """Split fetched targets into shown rows and road directories, and classify the rest.
+
+    With no view every found row shows and misses classify as they
+    always have. Under a view a hidden row is a miss, and the descent
+    ladder runs against what the view shows, so a hidden ancestor reads
+    exactly as a missing one.
+    """
+    if view is None:
+        return found, set(), await miss_errors(session, tables.entry, targets, found, profile, membership_budget)
+    shown = {path: mapping for path, mapping in found.items() if view.admits(mapping)}
+    hidden = [path for path, mapping in found.items() if path not in shown and mapping["kind"] == "directory"]
+    road = await view.road(session, hidden)
+    misses = [target for target in dict.fromkeys(targets) if str(target) not in shown and str(target) not in road]
+    if not misses:
+        return shown, road, {}
+    entry = tables.entry
+    columns = [entry.c.path, entry.c.kind, entry.c.owner_id]
+    chain = await rows_by_path(session, entry, targets_with_ancestors(misses), columns, profile, membership_budget)
+    seen = await view.seen_kinds(session, chain)
+    return shown, road, {target: classify_miss(target, seen) for target in misses}
+
+
+async def _visible_rows(session: AsyncSession, stmt: Select[Any], view: Visibility) -> dict[str, RowMapping]:
+    """*stmt* run once per visibility clause, merged by path, every row passing the view."""
+    clauses = view.clauses()
+    statements = [stmt] if clauses is None else [stmt.where(clause.predicate) for clause in clauses]
+    merged: dict[str, RowMapping] = {}
+    for statement in statements:
+        for mapping in (await session.execute(statement)).mappings():
+            if view.admits(mapping):
+                merged[mapping["path"]] = mapping
+    return merged
+
+
+def _ancestors_below(path: str, root: str) -> list[str]:
+    """*path*'s proper ancestors strictly beneath *root*."""
+    out: list[str] = []
+    node = path.rsplit("/", 1)[0] or "/"
+    while node != root and node != "/" and (root == "/" or node.startswith(root + "/")):
+        out.append(node)
+        node = node.rsplit("/", 1)[0] or "/"
+    return out
 
 
 async def _mappings_by_path(
@@ -450,9 +578,12 @@ async def _mappings_by_path(
     fetched: frozenset[str],
     *,
     with_entry_id: bool,
+    with_owner: bool = False,
 ) -> dict[str, RowMapping]:
     """One bounded fetch for the batch, keyed by the stored path string."""
     columns, source = _entry_projection(tables, fetched, with_entry_id=with_entry_id)
+    if with_owner:
+        columns = [*columns, tables.entry.c.owner_id]
     paths = (str(target) for target in targets)
     return await rows_by_path(session, tables.entry, paths, columns, profile, membership_budget, source=source)
 
@@ -487,19 +618,24 @@ async def _children_by_parent(
     directories: Sequence[Path],
     found: dict[str, RowMapping],
     fetched: frozenset[str],
+    *,
+    view: Visibility | None = None,
 ) -> dict[str, list[Observation]]:
     """Chunked ``parent_id IN`` children selects, regrouped per parent.
 
     One scope per liveness class (meta-addressed targets see meta rows).
     Chunks partition parents, so each parent's children arrive whole and
-    name-ordered; the dict preserves that order per parent.
+    name-ordered; the dict preserves that order per parent. Under a view
+    a hidden child directory stays in its place as a bare name when it
+    is on the road, and every other hidden child drops.
     """
-    children: dict[str, list[Observation]] = {}
+    listed: dict[str, list[RowMapping]] = {}
+    wanted = fetched | ({"owner_id"} if view is not None else frozenset())
     for include_meta in (False, True):
         scope = sorted({found[target]["entry_id"] for target in directories if target.is_meta == include_meta})
         for chunk in chunked(scope, membership_budget):
             stmt = (
-                select(entry.c.parent_id, *_entry_columns(entry, fetched))
+                select(entry.c.parent_id, *_entry_columns(entry, wanted))
                 .where(
                     membership(entry.c.parent_id, chunk, profile),
                     *liveness_filters(entry, profile, include_meta=include_meta),
@@ -507,7 +643,18 @@ async def _children_by_parent(
                 .order_by(entry.c.parent_id, entry.c.name)
             )
             for mapping in (await session.execute(stmt)).mappings():
-                children.setdefault(mapping["parent_id"], []).append(_observe(mapping, fetched))
+                listed.setdefault(mapping["parent_id"], []).append(mapping)
+    if view is None:
+        return {parent: [_observe(m, fetched) for m in rows] for parent, rows in listed.items()}
+    hidden = [m["path"] for rows in listed.values() for m in rows if not view.admits(m) and m["kind"] == "directory"]
+    road = await view.road(session, hidden)
+    children: dict[str, list[Observation]] = {}
+    for parent, rows in listed.items():
+        for mapping in rows:
+            if view.admits(mapping):
+                children.setdefault(parent, []).append(_observe(mapping, fetched))
+            elif mapping["path"] in road:
+                children.setdefault(parent, []).append(road_observation(mapping["path"]))
     return children
 
 

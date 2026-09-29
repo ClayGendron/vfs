@@ -44,9 +44,9 @@ if TYPE_CHECKING:
 # Ceiling of one channel arm's bind slots: the ext pair and the name fact.
 CHANNEL_ARM_BINDS: Final = 3
 
-# Columns every candidate fetch rides beside the caller's mask: the
-# row-gate facts plus size_bytes, which prices the content read.
-FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes"}
+# Columns every candidate fetch rides beside the caller's mask: the row-gate
+# facts, size_bytes (prices the content read), owner_id (the owner floor).
+FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "owner_id"}
 
 
 class ScanNominees(NamedTuple):

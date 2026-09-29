@@ -79,6 +79,7 @@ class VFSErrorKind(StrEnum):
     cross_mount = "vfs.cross_mount"  # EXDEV
     budget_exhausted = "vfs.budget_exhausted"  # ELOOP — hop/TTL budget spent; not retryable
     truncated = "vfs.budget_exhausted.truncated"  # a runtime budget cut the result; refine, don't retry
+    authority_budget = "vfs.budget_exhausted.authority"  # an oversize subject set or group nesting
 
     # — runtime liveness —
     unavailable = "vfs.unavailable"  # EIO / ECONNREFUSED / ENOSPC
@@ -223,6 +224,11 @@ KIND_CONTRACTS: dict[VFSErrorKind, KindContract] = {
     VFSErrorKind.truncated: KindContract(
         RetryClass.never,
         "Narrow the pattern, add filters, or scope the call; the result was cut at a runtime budget.",
+        "None — source carries the locus",
+    ),
+    VFSErrorKind.authority_budget: KindContract(
+        RetryClass.never,
+        "Act for fewer subjects at once, or flatten the group nesting; a retry will exceed the bound again.",
         "None — source carries the locus",
     ),
     VFSErrorKind.unavailable: KindContract(

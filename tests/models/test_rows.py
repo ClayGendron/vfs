@@ -164,6 +164,8 @@ class TestBuildVFSTables:
             "vfs_entries_lex_stats",
             "vfs_entries_signals",
             "vfs_entries_signal_epochs",
+            "vfs_entries_grants",
+            "vfs_entries_memberships",
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata

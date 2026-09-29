@@ -36,7 +36,9 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 from sqlalchemy.exc import SQLAlchemyError
 from ulid import ULID
 
+from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
+from vfs.paths import Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
@@ -85,6 +87,19 @@ from vfs.storage.backends.database.indexing import (
     with_notes,
 )
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.rights import (
+    RightsCache,
+    Visibility,
+    WriteGate,
+    add_member_rows,
+    grant_rows,
+    list_grants,
+    posture_refusal,
+    remove_member_rows,
+    resolve_authority,
+    revoke_rows,
+    set_posture,
+)
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import (
     SegmentRebuildState,
@@ -105,19 +120,23 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
+    from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from vfs.authority import Authority
     from vfs.embedding import EmbeddingProvider
     from vfs.models import Edge, Entry, Observation
     from vfs.models.rows import VFSTables
     from vfs.models.vector import NativeEmbeddingConfig
     from vfs.ops import CaseMode, GrepOutputMode, Op
-    from vfs.paths import ObjectKind, Path
+    from vfs.paths import ObjectKind
     from vfs.storage import ResolvedPair
+    from vfs.storage.backends.database.rights import Resolution
+    from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
 
 T = TypeVar("T")
+
+_SYSTEM = Authority.system()
 
 QUERY_VECTOR_CACHE = 256
 """Embedded queries remembered per mount — a re-asked question costs no provider call."""
@@ -146,6 +165,7 @@ class DatabaseStorage:
         embed_concurrency: int = EMBED_CONCURRENCY,
         embed_timeout_seconds: float = EMBED_TIMEOUT_SECONDS,
         ranker: Ranker | None = None,
+        posture: Posture = "open",
     ) -> None:
         if trash_days < 0:
             msg = f"trash_days must be non-negative, got {trash_days}"
@@ -166,7 +186,10 @@ class DatabaseStorage:
             schema=schema,
             embedder=embedder,
             native_embedding=native_embedding,
+            posture=posture,
         )
+        # Resolved authorities, keyed by subjects and grant revision.
+        self._rights = RightsCache()
         self._trash_days = trash_days
         self._embed_concurrency = embed_concurrency
         self._embed_timeout = embed_timeout_seconds
@@ -238,10 +261,15 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
+        host = self._host
         return await self._execute(
             "read",
-            lambda session: read_rows(
-                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+            self._viewed(
+                "read",
+                authority,
+                lambda session, view: read_rows(
+                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                ),
             ),
         )
 
@@ -254,10 +282,15 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
+        host = self._host
         return await self._execute(
             "stat",
-            lambda session: stat_rows(
-                session, self._host.tables, self._host.profile, self._host.membership_budget, targets, columns
+            self._viewed(
+                "stat",
+                authority,
+                lambda session, view: stat_rows(
+                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                ),
             ),
         )
 
@@ -270,15 +303,15 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations, default=ROOT)
+        host = self._host
         return await self._execute(
             "ls",
-            lambda session: ls_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.membership_budget,
-                targets,
-                columns,
+            self._viewed(
+                "ls",
+                authority,
+                lambda session, view: ls_rows(
+                    session, host.tables, host.profile, host.membership_budget, targets, columns, view
+                ),
             ),
         )
 
@@ -295,16 +328,15 @@ class DatabaseStorage:
                 ops=("tree",),
                 errors=[ResultError(kind=VFSErrorKind.invalid, message=f"max_depth must be >= 1, got {max_depth}")],
             )
+        host = self._host
         return await self._execute(
             "tree",
-            lambda session: tree_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.membership_budget,
-                path,
-                max_depth,
-                columns,
+            self._viewed(
+                "tree",
+                authority,
+                lambda session, view: tree_rows(
+                    session, host.tables, host.profile, host.membership_budget, path, max_depth, columns, view
+                ),
             ),
         )
 
@@ -324,21 +356,27 @@ class DatabaseStorage:
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        host = self._host
         return await self._execute(
             "glob",
-            lambda session: glob_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
-                patterns=patterns,
-                globs_not=globs_not,
-                ext=ext,
-                ext_not=ext_not,
-                kind=kind,
-                max_count=max_count,
-                columns=columns,
+            self._viewed(
+                "glob",
+                authority,
+                lambda session, view: glob_rows(
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    patterns=patterns,
+                    globs_not=globs_not,
+                    ext=ext,
+                    ext_not=ext_not,
+                    kind=kind,
+                    max_count=max_count,
+                    columns=columns,
+                    view=view,
+                ),
             ),
         )
 
@@ -362,31 +400,37 @@ class DatabaseStorage:
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        host = self._host
         return await self._execute(
             "grep",
-            lambda session: grep_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
-                self._host.offload_executor,
-                pattern=pattern,
-                ext=ext,
-                ext_not=ext_not,
-                globs=globs,
-                globs_not=globs_not,
-                case_mode=case_mode,
-                fixed_strings=fixed_strings,
-                word_regexp=word_regexp,
-                invert_match=invert_match,
-                before_context=before_context,
-                after_context=after_context,
-                output_mode=output_mode,
-                max_count=max_count,
-                allow_scan=allow_scan,
-                columns=columns,
-                wall_seconds=self._grep_wall_seconds,
+            self._viewed(
+                "grep",
+                authority,
+                lambda session, view: grep_rows(
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    host.offload_executor,
+                    view=view,
+                    pattern=pattern,
+                    ext=ext,
+                    ext_not=ext_not,
+                    globs=globs,
+                    globs_not=globs_not,
+                    case_mode=case_mode,
+                    fixed_strings=fixed_strings,
+                    word_regexp=word_regexp,
+                    invert_match=invert_match,
+                    before_context=before_context,
+                    after_context=after_context,
+                    output_mode=output_mode,
+                    max_count=max_count,
+                    allow_scan=allow_scan,
+                    columns=columns,
+                    wall_seconds=self._grep_wall_seconds,
+                ),
             ),
         )
 
@@ -412,28 +456,34 @@ class DatabaseStorage:
             return Result(ops=("glean",), errors=[refusal])
         scoped = bool(ext or ext_not or globs or globs_not or observations)
         vector, records = await self._vector_leg_for(query, scoped=scoped)
+        host = self._host
         return await self._execute(
             "glean",
-            lambda session: glean_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
-                self._host.offload_executor,
-                query=query,
-                limit=limit,
-                ext=ext,
-                ext_not=ext_not,
-                globs=globs,
-                globs_not=globs_not,
-                observations=observations,
-                columns=columns,
-                wall_seconds=self._glean_wall_seconds,
-                dialect_name=self._host.profile.name,
-                vector=vector,
-                ranker=self._ranker,
-                records=records,
+            self._viewed(
+                "glean",
+                authority,
+                lambda session, view: glean_rows(
+                    session,
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    host.offload_executor,
+                    view=view,
+                    query=query,
+                    limit=limit,
+                    ext=ext,
+                    ext_not=ext_not,
+                    globs=globs,
+                    globs_not=globs_not,
+                    observations=observations,
+                    columns=columns,
+                    wall_seconds=self._glean_wall_seconds,
+                    dialect_name=self._host.profile.name,
+                    vector=vector,
+                    ranker=self._ranker,
+                    records=records,
+                ),
             ),
         )
 
@@ -527,20 +577,27 @@ class DatabaseStorage:
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_write(
-            "write",
-            lambda session: write_rows(
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, authority)
+            if isinstance(gate, ResultError):
+                return Result(ops=("write",), errors=[gate])
+            if refused := await gate.targets(session, [e.path for e in entries], "upsert", parents=parents):
+                return Result(ops=("write",), errors=refused)
+            return await write_rows(
                 session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
                 entries=entries,
                 overwrite=overwrite,
                 parents=parents,
                 authority=authority,
-            ),
-        )
+            )
+
+        return await self._execute_write("write", run)
 
     async def edit(
         self,
@@ -551,19 +608,26 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
-        return await self._execute_write(
-            "edit",
-            lambda session: edit_rows(
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, authority)
+            if isinstance(gate, ResultError):
+                return Result(ops=("edit",), errors=[gate])
+            if refused := await gate.targets(session, targets, "modify"):
+                return Result(ops=("edit",), errors=refused)
+            return await edit_rows(
                 session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
                 edits=edits,
                 targets=targets,
                 authority=authority,
-            ),
-        )
+            )
+
+        return await self._execute_write("edit", run)
 
     async def delete(
         self,
@@ -574,6 +638,15 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
+
+        async def gate(session: AsyncSession) -> list[ResultError]:
+            checks = await self._gate(session, authority)
+            if isinstance(checks, ResultError):
+                return [checks]
+            if refused := await checks.targets(session, targets, "modify"):
+                return refused
+            return await checks.subtrees(session, targets, "read_write") if cascade else []
+
         return await self._execute_topology(
             "delete",
             lambda session: delete_rows(
@@ -585,6 +658,7 @@ class DatabaseStorage:
                 cascade=cascade,
                 authority=authority,
                 lock_key=self._host.topology_key,
+                gate=gate,
             ),
         )
 
@@ -596,6 +670,17 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
+
+        async def permit(session: AsyncSession, row: RowMapping, dest: Path) -> ResultError | None:
+            checks = await self._gate(session, authority)
+            if isinstance(checks, ResultError):
+                return checks
+            source = Path._brand(row["path"])
+            refused = checks.row(source, row["owner_id"], "read_write")
+            if refused is None and row["kind"] == "directory":
+                refused = next(iter(await checks.subtrees(session, [source], "read_write")), None)
+            return refused if refused is not None else checks.creatable(dest)
+
         return await self._execute_topology(
             "restore",
             lambda session: restore_rows(
@@ -606,6 +691,7 @@ class DatabaseStorage:
                 targets=targets,
                 authority=authority,
                 lock_key=self._host.topology_key,
+                permit=permit,
             ),
         )
 
@@ -615,6 +701,16 @@ class DatabaseStorage:
         path: Path,
         authority: Authority | None = None,
     ) -> Result:
+        async def gate(session: AsyncSession) -> list[ResultError]:
+            checks = await self._gate(session, authority)
+            if isinstance(checks, ResultError):
+                return [checks]
+            if checks.whole:
+                return []
+            if refused := await checks.targets(session, [path], "modify"):
+                return refused
+            return await checks.subtrees(session, [path], "read_write")
+
         return await self._execute_topology(
             "sweep",
             lambda session: sweep_rows(
@@ -626,6 +722,7 @@ class DatabaseStorage:
                 trash_days=self._trash_days,
                 authority=authority,
                 lock_key=self._host.topology_key,
+                gate=gate,
             ),
         )
 
@@ -637,20 +734,27 @@ class DatabaseStorage:
         exist_ok: bool = False,
         authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_write(
-            "mkdir",
-            lambda session: mkdir_rows(
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, authority)
+            if isinstance(gate, ResultError):
+                return Result(ops=("mkdir",), errors=[gate])
+            if refused := await gate.targets(session, [path], "create", parents=parents):
+                return Result(ops=("mkdir",), errors=refused)
+            return await mkdir_rows(
                 session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
                 path=path,
                 parents=parents,
                 exist_ok=exist_ok,
                 authority=authority,
-            ),
-        )
+            )
+
+        return await self._execute_write("mkdir", run)
 
     async def move(
         self,
@@ -675,19 +779,28 @@ class DatabaseStorage:
         provenance: str = "system",
         authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_write(
-            "mkedge",
-            lambda session: mkedge_rows(
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, authority)
+            if isinstance(gate, ResultError):
+                return Result(ops=("mkedge",), errors=[gate])
+            refused = await gate.targets(session, [edge.source for edge in edges], "modify")
+            refused += await gate.targets(session, [edge.target for edge in edges], "read")
+            if refused:
+                return Result(ops=("mkedge",), errors=refused)
+            return await mkedge_rows(
                 session,
-                self._host.tables,
-                self._host.profile,
-                self._host.parameter_budget,
-                self._host.membership_budget,
+                host.tables,
+                host.profile,
+                host.parameter_budget,
+                host.membership_budget,
                 edges=edges,
                 provenance=provenance,
                 authority=authority,
-            ),
-        )
+            )
+
+        return await self._execute_write("mkedge", run)
 
     async def rmedge(
         self,
@@ -695,16 +808,88 @@ class DatabaseStorage:
         edges: list[Edge],
         authority: Authority | None = None,
     ) -> Result:
-        return await self._execute_write(
-            "rmedge",
-            lambda session: rmedge_rows(
-                session,
-                self._host.tables,
-                self._host.profile,
-                self._host.membership_budget,
-                edges=edges,
-                authority=authority,
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, authority)
+            if isinstance(gate, ResultError):
+                return Result(ops=("rmedge",), errors=[gate])
+            if refused := await gate.targets(session, [edge.source for edge in edges], "modify"):
+                return Result(ops=("rmedge",), errors=refused)
+            return await rmedge_rows(
+                session, host.tables, host.profile, host.membership_budget, edges=edges, authority=authority
+            )
+
+        return await self._execute_write("rmedge", run)
+
+    # -------------------------------------------------------------------
+    # Grants — the rows that decide who sees and writes what
+    # -------------------------------------------------------------------
+
+    async def grant(
+        self, *, path: Path, principal: str, level: GrantLevel, authority: Authority | None = None
+    ) -> Result:
+        """Give *principal* (a ``sub`` or a ``group:`` id) *level* on *path* and below."""
+        return await self._grant_write(
+            "grant",
+            authority,
+            lambda session, gate, who: grant_rows(
+                session, self._host.tables, gate, path=path, principal=principal, level=level, authority=who
             ),
+        )
+
+    async def revoke(self, *, path: Path, principal: str, authority: Authority | None = None) -> Result:
+        """Remove *principal*'s row on *path*; a missing row is a warning."""
+        return await self._grant_write(
+            "revoke",
+            authority,
+            lambda session, gate, who: revoke_rows(
+                session, self._host.tables, gate, path=path, principal=principal, authority=who
+            ),
+        )
+
+    async def posture(self, *, path: Path, posture: Posture, authority: Authority | None = None) -> Result:
+        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``."""
+        return await self._grant_write(
+            "posture",
+            authority,
+            lambda session, gate, who: set_posture(
+                session, self._host.tables, gate, path=path, posture=posture, authority=who
+            ),
+        )
+
+    async def grants(self, *, path: Path, authority: Authority | None = None) -> Result:
+        """The grant rows on *path* and its ancestors this authority may see."""
+        host = self._host
+        who = self._named(authority)
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, who, level="read")
+            if isinstance(gate, ResultError):
+                return Result(ops=("grants",), errors=[gate])
+            return await list_grants(
+                session, host.tables, host.profile, host.membership_budget, gate, path=path, authority=who
+            )
+
+        return await self._execute("grants", run)
+
+    async def add_member(self, *, group: str, member: str, authority: Authority | None = None) -> Result:
+        """Make *member* a direct member of *group* — the system actor only."""
+        host = self._host
+        who = self._named(authority)
+        return await self._execute_write(
+            "add_member",
+            lambda session: add_member_rows(
+                session, host.tables, host.profile, host.membership_budget, group=group, member=member, authority=who
+            ),
+        )
+
+    async def remove_member(self, *, group: str, member: str, authority: Authority | None = None) -> Result:
+        """Remove *member*'s direct membership of *group* — the system actor only."""
+        who = self._named(authority)
+        return await self._execute_write(
+            "remove_member",
+            lambda session: remove_member_rows(session, self._host.tables, group=group, member=member, authority=who),
         )
 
     # -------------------------------------------------------------------
@@ -996,6 +1181,72 @@ class DatabaseStorage:
     # Internal helpers
     # -------------------------------------------------------------------
 
+    @staticmethod
+    def _named(authority: Authority | None) -> Authority:
+        """The authority a call acts under: a direct storage call naming none is trusted code, the system actor."""
+        return _SYSTEM if authority is None else authority
+
+    async def _resolution(
+        self, session: AsyncSession, authority: Authority | None, level: GrantLevel
+    ) -> Resolution | ResultError:
+        """The call's rights, resolved in its own transaction; ``unauthenticated`` when posture wants a name."""
+        who = self._named(authority)
+        host = self._host
+        resolution = await resolve_authority(
+            session, host.tables, host.profile, host.membership_budget, who, self._rights
+        )
+        if isinstance(resolution, ResultError):
+            return resolution
+        refusal = posture_refusal(who, resolution, level)
+        return resolution if refusal is None else refusal
+
+    def _viewed(
+        self,
+        op: str,
+        authority: Authority | None,
+        build: Callable[[AsyncSession, Visibility | None], Awaitable[Result]],
+    ) -> Callable[[AsyncSession], Awaitable[Result]]:
+        """A read body run under the call's view — ``None`` when the view is the whole mount."""
+        host = self._host
+
+        async def run(session: AsyncSession) -> Result:
+            resolution = await self._resolution(session, authority, "read")
+            if isinstance(resolution, ResultError):
+                return Result(ops=(op,), errors=[resolution])
+            if resolution.read.whole:
+                return await build(session, None)
+            view = Visibility(resolution.read, host.tables, host.profile, host.membership_budget, host.parameter_budget)
+            return await build(session, view)
+
+        return run
+
+    async def _gate(
+        self, session: AsyncSession, authority: Authority | None, *, level: GrantLevel = "read_write"
+    ) -> WriteGate | ResultError:
+        """The call's write gate; ``unauthenticated`` when posture wants a name for *level*."""
+        resolution = await self._resolution(session, authority, level)
+        if isinstance(resolution, ResultError):
+            return resolution
+        host = self._host
+        return WriteGate(resolution, host.tables, host.profile, host.membership_budget, host.parameter_budget)
+
+    async def _grant_write(
+        self,
+        op: str,
+        authority: Authority | None,
+        body: Callable[[AsyncSession, WriteGate, Authority], Awaitable[Result]],
+    ) -> Result:
+        """A grant-table write: gate resolved, then the body, in one writer transaction."""
+        who = self._named(authority)
+
+        async def run(session: AsyncSession) -> Result:
+            gate = await self._gate(session, who)
+            if isinstance(gate, ResultError):
+                return Result(ops=(op,), errors=[gate])
+            return await body(session, gate, who)
+
+        return await self._execute_write(op, run)
+
     async def _execute(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """One op = one session under retry; failures come back classified.
 
@@ -1043,6 +1294,21 @@ class DatabaseStorage:
     async def _execute_transfer(
         self, op: Literal["move", "copy"], operations: list[ResolvedPair], *, authority: Authority | None
     ) -> Result:
+        """Move or copy under the gate: a moved source is modified and a copied one read, whole
+        subtrees included; every destination is a creation."""
+        need: GrantLevel = "read_write" if op == "move" else "read"
+
+        async def gate(session: AsyncSession) -> list[ResultError]:
+            checks = await self._gate(session, authority)
+            if isinstance(checks, ResultError):
+                return [checks]
+            sources = [pair.src for pair in operations]
+            refused = await checks.targets(session, sources, "modify" if op == "move" else "read")
+            refused += await checks.targets(
+                session, [pair.dest for pair in operations if pair.dest != pair.src], "create"
+            )
+            return refused or await checks.subtrees(session, sources, need)
+
         return await self._execute_topology(
             op,
             lambda session: transfer_rows(
@@ -1055,6 +1321,7 @@ class DatabaseStorage:
                 operations=operations,
                 authority=authority,
                 lock_key=self._host.topology_key,
+                gate=gate,
             ),
         )
 

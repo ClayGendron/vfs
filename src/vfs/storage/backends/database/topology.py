@@ -107,6 +107,7 @@ from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from typing import Any
 
     from sqlalchemy import Column, Delete, Table
@@ -125,8 +126,14 @@ _SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = ("entry_id", "parent_id", "path", "n
 # A transfer subtree adds the material columns a copy reproduces.
 _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "content_hash", "mime_type", "ext", "lines")
 
-# A restore source adds the columns the restore contract consumes.
-_RESTORE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "original_parent_id", "original_name", "deleted_at")
+# A restore source adds the columns the restore contract consumes, and its owner.
+_RESTORE_COLUMNS: Final[tuple[str, ...]] = (
+    *_SNAPSHOT_COLUMNS,
+    "original_parent_id",
+    "original_name",
+    "deleted_at",
+    "owner_id",
+)
 
 # The hour-bucket name format delete mints and sweep parses back.
 _BUCKET_FORMAT: Final = "%Y-%m-%d-%H"
@@ -170,6 +177,7 @@ async def delete_rows(
     cascade: bool,
     authority: Authority | None,
     lock_key: int,
+    gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
 
@@ -180,9 +188,13 @@ async def delete_rows(
     emptied earlier in the batch deletes cleanly. Each deleted row
     observes its pre-delete snapshot state — there is no post-commit row
     to stat at the requested path — plus the trash path it now lives at.
+    *gate* runs right after the serialization point, so its checks judge
+    the state the batch will act on; any refusal fails the batch whole.
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
+    if gate is not None and (refused := await gate(session)):
+        return Result(ops=("delete",), errors=refused)
     snapshot = await _fetch_snapshot(session, entry, profile, membership_budget, targets)
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
@@ -288,6 +300,7 @@ async def restore_rows(
     targets: list[Path],
     authority: Authority | None,
     lock_key: int,
+    permit: Callable[[AsyncSession, RowMapping, Path], Awaitable[ResultError | None]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of restores, target by target.
 
@@ -300,7 +313,8 @@ async def restore_rows(
     occupant — the caller deletes it, restorably, and restores again),
     then byte-budget overflow — no statement runs for a target until
     every check passes. *authority* is accepted for signature parity; a restore
-    changes no ownership.
+    changes no ownership. *permit* judges each resolved trash row and its
+    destination before anything else is read about it.
     """
     del authority
     entry = tables.entry
@@ -314,6 +328,9 @@ async def restore_rows(
             errors.append(resolved)
             continue
         row, dest_parent_id, dest = resolved
+        if permit is not None and (refused := await permit(session, row, dest)) is not None:
+            errors.append(refused)
+            continue
         if await _point_row(session, entry, str(dest)) is not None:
             errors.append(already_exists(dest, target=target))
             continue
@@ -355,6 +372,7 @@ async def sweep_rows(
     trash_days: int,
     authority: Authority | None,
     lock_key: int,
+    gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Destroy at *path* — retention at the trash root, wholesale purge elsewhere.
 
@@ -378,6 +396,8 @@ async def sweep_rows(
         message = "Cannot sweep the root directory"
         return Result(ops=("sweep",), errors=[classified(VFSErrorKind.invalid, message, path)])
     await _serialize(session, profile, tables.meta, lock_key)
+    if gate is not None and (refused := await gate(session)):
+        return Result(ops=("sweep",), errors=refused)
     if path != TRASH_ROOT:
         row = await _point_row(session, entry, str(path))
         if row is None:
@@ -427,6 +447,7 @@ async def transfer_rows(
     operations: list[ResolvedPair],
     authority: Authority | None,
     lock_key: int,
+    gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of moves or copies, pair by pair.
 
@@ -446,6 +467,8 @@ async def transfer_rows(
     """
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
+    if gate is not None and (refused := await gate(session)):
+        return Result(ops=(op,), errors=refused)
     move_srcs = Counter(pair.src for pair in operations) if op == "move" else Counter[Path]()
     committed: dict[str, RowMapping] = {}
     if op == "move":

@@ -5,6 +5,15 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **058 in progress, paused 2026-09-28** — the storage half of the
+  enforcement spine is built (`storage/grants.py`,
+  `storage/backends/database/rights.py`, schema format 14, every
+  database verb filtered or gated, glean's visible-set statistics);
+  the router surface, the tests for partial views, the engine legs
+  and the context records are outstanding. Decisions and the full
+  remaining list: the spec's *Implementation progress* section.
+  Three research memos landed the same day (traverse visibility,
+  group permissions, search statistics under permissions).
 - **ADR 068, 2026-09-06** — open by default in process, anonymous is
   a name, loud at the edge. 070's ingress refusal is superseded the
   day it landed: a call with no authority runs as

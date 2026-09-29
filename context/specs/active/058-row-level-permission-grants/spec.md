@@ -1,6 +1,10 @@
 # 058 — Row-level grants: the enforcement spine
 
-- **Status:** shaped — **written in full 2026-09-06 against ADR 067**
+- **Status:** **in progress 2026-09-28** — the storage half is built
+  and the existing suite passes on it; the router surface, the tests,
+  and the context records are outstanding. See *Implementation
+  progress* at the end of this spec for what is done and what is left.
+- **Earlier status:** shaped — **written in full 2026-09-06 against ADR 067**
   (and 062, 064, 065, 066; all ratified by Clay 2026-09-06) after the
   principals and permissions research programme; the 2026-07-08 seed's
   forks are all resolved below. Awaiting Clay's read before
@@ -305,3 +309,195 @@ for an oversize subject set or a group walk deeper than
   open is decided: NULL owner (ADR 064), additive-only (ADR 021/067),
   groups (ADR 067), edges (§5, §6), derived rows (§9), ranked join-back
   (§5, §7), RLS (rejected), move (§6), 009 (subsumed).
+
+## Implementation progress (2026-09-28)
+
+Work paused mid-landing at Clay's request. Nothing below is on
+`main` yet except what the commit carrying this section contains.
+
+### Decisions taken before building (Clay, 2026-09-28)
+
+Three questions were researched and ruled before any code:
+
+- **Q1 — can a caller see the folders above its grant?** Option
+  **(b′)**: a directory is *on the road* when a row the caller can see
+  lies beneath it. A road directory shows as a bare name (path and
+  kind only — no version, time, size, owner or child count), lists
+  only its visible or road children, answers `wrong_kind` to `read`,
+  and refuses every write beneath it as `permission_denied`, decided
+  on the directory before the target name is looked up. The road is
+  computed from rows that exist, never from grant prefixes. Memo:
+  `../../../research/2026-09-28-traverse-visibility-unix-plan9.md`.
+- **Q2 — groups.** Clay's case (max within each person, min across
+  the people acting together) is in scope and already this spec's
+  §2–§3. Accepted with the memo's fixes: owner arms per member (not
+  "set of one" only); `MAX_PREFIX_ARMS` bounded by expression depth as
+  well as binds; the root prefix compiles to "true", not `LIKE '//%'`;
+  posture holes cut every covering everyone arm, not the nearest;
+  group ids are `group:<name>`; membership comes from the
+  `memberships` table only (the token's `groups` claim is ignored);
+  `add_member`/`remove_member` are system-actor only in this landing
+  (the `/_groups/<id>` lean is dropped — under the default open
+  posture it made everyone a group admin); nesting capped at 8,
+  cycles and over-depth refused at write under the revision row's
+  lock. Memo: `../../../research/2026-09-28-group-permissions-max-within-min-across.md`.
+- **Q3 — search statistics.** ADR 065 rule 5 stands as ratified. A
+  caller whose rights cover the whole mount uses the stored
+  statistics (the fast path; the default open posture); every other
+  caller gets exact visible-set statistics; stored block bounds are
+  rescaled (`max_weight × idf_v/idf_g × max(1, avg_dl_v/avg_dl_g)`).
+  Path-ordered lexical ids (the memo's option e) are deferred to their
+  own ADR. Memo: `../../../research/2026-09-28-search-statistics-under-permissions-precedent.md`;
+  the executed planted-ladder attack is
+  `../../../research/studies/2026-09-28-search-statistics-precedent/planted_ladder_demo.py`.
+- **The wide-predicate fallback (changes §3 step 4 and ADR 067 rule
+  6).** Not the correlated `EXISTS`, and not the staged
+  resolved-prefixes table the Q2 memo proposed: a predicate too wide
+  for one statement splits into clauses the way glob's pattern fan
+  does (each inside the dialect's bind and depth budgets), the
+  statement runs once per clause, and results merge — exact for a
+  `LIMIT` too, since every row of the global top k is admitted by some
+  clause and ranks at least as high within it. `Rights.admits` in
+  Python is the authority every row passes; SQL clauses are pushdowns.
+  No new table, and reads never write.
+
+### Built (uncommitted before this commit)
+
+- `src/vfs/storage/grants.py` — the pure half: `GrantLevel`,
+  `Posture`, `GrantRow`, `Arm`, `OwnerArm`, `Rights` (`admits`,
+  `covers`, `covers_subtree`, `roots`), `minimise`, `meet`,
+  `meet_all`, and `resolve` (per-member union, the meet, everyone arms
+  with every lower row as a hole, per-member owner arms).
+- `src/vfs/storage/backends/database/rights.py` — the storage half:
+  `read_revision`, `RightsCache` (LRU keyed by subjects and grant
+  revision), `resolve_authority` (closure walk one statement per
+  nesting level, refused past `MAX_GROUP_DEPTH`; the system actor
+  skips it), `posture_refusal` (anonymous → `unauthenticated`),
+  `visibility_clauses` (the chunked fan), `Visibility` (`admits`,
+  `road`, `seen_kinds`), `WriteGate` (`targets` in modes
+  modify/upsert/create/read, `subtrees`, `row`, `creatable`), and the
+  grant verbs' bodies (`grant_rows`, `revoke_rows`, `list_grants`,
+  `set_posture`, `add_member_rows`, `remove_member_rows`,
+  `bump_revision`, `posture_row`).
+- Schema format **14** (`models/rows.py`): `grants` (surrogate key,
+  unique `(principal_id, path_prefix)`), `memberships` (key
+  `(principal_id, group_id)`, reverse index on `group_id`,
+  `granted_by`/`granted_at`), `meta.grant_revision`,
+  `versions.grant_revision`; `Version.grant_revision` on the model and
+  `Version.create`. First touch plants the posture row
+  (`EngineHost(posture=...)`, default `open`).
+- `VFSErrorKind.authority_budget` (`vfs.budget_exhausted.authority`)
+  with its contract row.
+- `DatabaseStorage(posture=...)`; every read verb resolves a view in
+  its own transaction (`_viewed`; `None` on the whole-mount fast
+  path); `read`/`stat`/`ls`/`tree`/`glob` filter and show road
+  directories (`reads.py`: `_screen`, `road_observation`,
+  `_visible_rows`); `grep` passes the view beside its structural gates
+  before any body is fetched; `glean` computes the visible lexicon
+  (`_visible_lexicon`, `_visible_corpus`, `_all_blocks`,
+  `_visible_chunks`), scores only visible chunks with rebounded blocks,
+  runs the vector leg once per clause (`_nearest` merge), filters the
+  overlay, and exports visible statistics only.
+- Mutations: `write` (upsert), `edit` (modify), `mkdir` (create),
+  `mkedge` (source modify, target read), `rmedge` (source modify) gate
+  before the first write; `delete`, `sweep`, `move`, `copy` gate right
+  after the serialization point (`topology.py` gained `gate=`); subtree
+  mutations check every row beneath (`WriteGate.subtrees` — closes the
+  owner-floor-on-a-directory hole the spec's prefix-only rule left);
+  `restore` judges each resolved trash row and its destination
+  (`permit=`, `owner_id` added to the restore columns).
+- `DatabaseStorage.grant/revoke/posture/grants/add_member/remove_member`.
+- `owner_id` rides every candidate fetch (`scope.FETCH_RIDE`).
+- A direct storage call naming no authority runs as the system actor
+  for rights (trusted in-process code); ownership stamping is
+  unchanged.
+
+State at the pause: `ruff check`, `ruff format` and `ty check src`
+clean; the full suite passed (3,353 passed, 967 skipped) after the
+storage wiring, with `tests/models/test_rows.py` updated for the two
+new tables. Everything default-open takes the fast path, so the suite
+exercises no partial view yet. `scripts/ci.sh` was **not** run.
+
+### Outstanding
+
+**1. Router surface.**
+- `ops.py`: add `grant`, `revoke`, `grants`, `posture`, `add_member`,
+  `remove_member` to `Op`; a new class `GRANT_OPS`, its writing subset
+  `GRANT_WRITE_OPS`, and `WRITE_GATED_OPS = MUTATING_OPS |
+  GRANT_WRITE_OPS`; `ALL_OPS` gains `GRANT_OPS`; `posture`,
+  `add_member`, `remove_member` join `DEVELOPER_OPS` (never on an agent
+  surface).
+- `permissions.check_writable_composed` keys on `WRITE_GATED_OPS`, so
+  a read-only mount refuses grant writes.
+- `storage/protocol.py`: a `SupportsGrants` family and its
+  `_FAMILY_OPS` row.
+- `base.py`: the six public verbs (path-routed; the membership verbs
+  take the mount's path), their arms in `_call_storage`, and gating.
+- `session.py`: the agent-facing ones (`grant`, `revoke`, `grants`).
+- `params.py` table rows; `results/projection.py` defaults for the
+  new ops (their answers ride as `grants=` / `members=` extras).
+- `authority.py`: `Principal` refuses a `sub` starting `group:` and the
+  reserved `*`.
+- `locate(exists=True)` / `locate_edge` probe storage as the system
+  actor today, which leaks existence: probe under the caller's
+  authority instead.
+- Pins to update: `tests/test_ops.py` (vocabulary, the permission
+  set's identity, developer plane, router surface), `tests/test_params.py`,
+  `tests/storage/test_protocol.py`, `tests/base/test_dispatch.py`,
+  `tests/base/test_gates.py`.
+
+**2. Tests** (none written yet for partial views).
+- The resolver oracle: port `studies/2026-09-28-group-permissions/model.py`'s
+  pointwise oracle into `tests/support/oracles/` and pin
+  `grants.resolve` and `Rights.admits` against it on random worlds, and
+  the compiled clauses on SQLite.
+- Per read verb: a hidden row whose content would match never
+  appears, never changes a count, never moves a visible score; road
+  directories show as path and kind only; a hidden ancestor misses
+  exactly as a missing one.
+- Write gate: hidden → `not_found`, visible-unwritable →
+  `permission_denied`, a write under a road-only directory refused
+  before lookup, `parents=True` over a hidden ancestor, a mixed 10k
+  batch fails whole with no write statement, subtree mutations,
+  restore.
+- Posture: the everyone ladder, nested private/shared, anonymous →
+  `unauthenticated` on shared (write) and private (read and write).
+- Grant verbs: gate, attenuation, revision bump, `granted_by`, a
+  widened grant seen on the next call; memberships: system-only,
+  cycle and depth refusals, per-member (never pooled) groups.
+- `glean`: the S2 regression — the planted-ladder demo as a test (a
+  visible score identical with and without a hidden partition), the
+  export carries no hidden-only term, the vector leg per clause.
+- A conformance mixin across every engine leg (pjdfstest-shaped
+  `(authority shape, row state, verb) → kind` triples).
+- 100% coverage on the new modules.
+
+**3. Real engines.** Run the four legs (`db_test`): the owner-road
+query uses a correlated byte range with `concat` on an aliased
+column, not yet executed off SQLite; the new tables' DDL on every
+engine; S1's `probe.py` against the shipped resolver on Postgres as
+the performance gate.
+
+**4. Context records.**
+- An ADR for road visibility (Q1).
+- An ADR amending 067 rule 6 (the chunked fan replaces the `EXISTS`
+  fallback) and recording the group rules (Q2).
+- This spec's body brought in line with the decisions above (the seven
+  Q2 tightenings, §3 step 4, §8's marker closed, §5's road rules, §7's
+  fast path and bound rescale).
+- `open-questions.md` entries: path-ordered lexical ids (the flat-cost
+  visible `df`); stored ranking signals leak hidden in-links
+  (unstudied, off by default); trash rows under a non-open posture
+  are visible only to their owner or a whole-mount caller, so a
+  granted non-owner cannot restore what it deleted; grep's candidate
+  budget counts hidden candidates; rows deleted since an index build
+  still count in the stored statistics until reindex.
+- A STATUS entry on landing; reference docs for the grant verbs.
+
+**5. Known limitations to state in docstrings or records.**
+- A partial caller's `glean` reads every block of every query term —
+  cost grows with the terms' corpus-wide document frequency (said in
+  `_visible_lexicon`'s docstring).
+- `list_grants` gates on prefix coverage, not on visible rows.
+- A `posture=` passed to an already-provisioned mount is ignored; the
+  stored posture wins.

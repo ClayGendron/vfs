@@ -131,7 +131,10 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 13
+SCHEMA_FORMAT_VERSION: Final = 14
+
+# The widest principal id a grant, membership, or owner column stores.
+MAX_PRINCIPAL_ID_LENGTH: Final = 255
 
 # ULIDs render as 26 Crockford-base32 characters.
 ULID_LENGTH: Final = 26
@@ -317,6 +320,8 @@ class VFSTables(NamedTuple):
     lex_stats: Table
     signals: Table
     signal_epochs: Table
+    grants: Table
+    memberships: Table
 
     def content_joined(self) -> FromClause:
         """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
@@ -452,6 +457,9 @@ def build_vfs_tables(
         Column("actor", _string(255)),
         Column("provenance", String(16)),
         Column("source_identity", _string(255)),
+        # The grant revision in force when the version was written: which
+        # grants allowed it, answerable without replaying history.
+        Column("grant_revision", BigInteger),
         Column("created_at", DateTime(timezone=True)),
         Column("content", _body_text()),
         Column("version_diff", _body_text()),
@@ -550,6 +558,9 @@ def build_vfs_tables(
         # qualified model id and its width, stamped by the first embed.
         Column("embedding_model", _string(MAX_MODEL_ID_LENGTH)),
         Column("embedding_dimension", Integer),
+        # The grant spine's revision: every grant, posture, or membership
+        # write bumps it first, so the bump is also the admin writes' lock.
+        Column("grant_revision", BigInteger, nullable=False, default=0),
         Column("created_at", DateTime(timezone=True)),
         CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),
         schema=schema,
@@ -685,6 +696,40 @@ def build_vfs_tables(
         schema=schema,
     )
 
+    # Row grants: one row per (principal, prefix), additive-only — a row
+    # widens, nothing narrows except the everyone rows (principal ``*``)
+    # that carry a mount's posture. Prefixes are mount-relative canonical
+    # paths in the entries table's collation. A surrogate key keeps the
+    # wide pair in a secondary index, inside SQL Server's clustered cap.
+    grants = Table(
+        f"{table_name}_grants",
+        metadata,
+        Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
+        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("path_prefix", BytewiseString(MAX_PATH_LENGTH), nullable=False),
+        Column("level", String(16), nullable=False),
+        Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("granted_at", DateTime(timezone=True), nullable=False),
+        Column("revision", BigInteger, nullable=False),
+        UniqueConstraint("principal_id", "path_prefix", name=f"uq_{table_name}_grants_key"),
+        schema=schema,
+        sqlite_autoincrement=True,
+    )
+
+    # Group memberships: *principal_id* is a direct member of *group_id*,
+    # itself possibly a member of another group. The reverse index serves
+    # the write-time depth and cycle checks, which walk downward.
+    memberships = Table(
+        f"{table_name}_memberships",
+        metadata,
+        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("group_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
+        Column("granted_at", DateTime(timezone=True), nullable=False),
+        Index(f"ix_{table_name}_memberships_group", "group_id"),
+        schema=schema,
+    )
+
     return VFSTables(
         metadata=metadata,
         entry=entry,
@@ -703,6 +748,8 @@ def build_vfs_tables(
         lex_stats=lex_stats,
         signals=signals,
         signal_epochs=signal_epochs,
+        grants=grants,
+        memberships=memberships,
     )
 
 
