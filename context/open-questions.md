@@ -44,7 +44,7 @@
 - **Also lands here:** the *per-principal* half of the execute-policy question below — an `execute` level in this grant ladder, not a reopening of 039.
 - **Stale premise:** 058's depends-on line cites `src/vfs/models.py` / `VFSEntry`, neither of which survived spec 076's model split (now `src/vfs/models/entry.py`, `Entry`), and its "identity threaded as `user_id` through `_call_storage`" language is superseded by spec 070. True these up before the full spec is written.
 - **Options considered:** see the forks inline in 058's spec
-- **Status:** resolved 2026-09-06 — every fork is decided by ADR 062 to 067 (ratified) and written into spec 058's full text; the prefix-coordinate cost against the parked full-dirent end-state is accepted with ADR 021/067. One marker remains in 058 §8 (group administration).
+- **Status:** resolved 2026-09-06 — every fork is decided by ADR 062 to 067 (ratified) and written into spec 058's full text; the prefix-coordinate cost against the parked full-dirent end-state is accepted with ADR 021/067. The last marker, 058 §8 (group administration), closed 2026-09-28 by ADR 071 rule 8: the system actor only in this landing; a per-group admin flag is a follow-up.
 
 ## serve() topology-lock policy premise
 
@@ -277,3 +277,43 @@
 - **Blocking:** nothing; the README and ADR 058 refresh would carry it.
 - **Options considered:** (a) a short section in the README; (b) a line in `standards/mission.md` under non-goals; (c) a paragraph in the positioning ADR only.
 - **Status:** parked
+
+## Path-ordered lexical ids: a flat-cost visible `df` for partial callers?
+
+- **Asked:** 2026-09-28 (spec 058 landing; the Q3 statistics memo's option e)
+- **Context:** A caller whose rights do not cover the whole mount gets exact visible-set statistics (ADR 065 rule 5). Today `glean` computes the visible `df` of each query term by reading every block of that term's postings, so the cost grows with the term's corpus-wide document frequency, not with what the caller can see. If lexical ids were assigned in path order, a caller's visible prefixes would map to id ranges, and the visible `df` would be a range count per prefix.
+- **Blocking:** nothing; partial-caller `glean` is correct today, only its cost on common terms is high.
+- **Options considered:** path-ordered id assignment at index build (renumbering on move); per-prefix `df` summaries kept beside the blocks; leave as-is.
+- **Status:** open — needs its own ADR. Memo: `research/2026-09-28-search-statistics-under-permissions-precedent.md` §option e.
+
+## Stored ranking signals may count hidden in-links
+
+- **Asked:** 2026-09-28 (spec 058 landing)
+- **Context:** `glean`'s link signals (in-degree, and anything derived from the reference graph) are computed at index time over the whole mount. A partial caller's score could then move with edges from rows it cannot see, the same class of leak ADR 065 rule 5 closed for BM25 statistics. The signals are off by default and the leak is unstudied.
+- **Blocking:** turning any stored graph signal on by default for a mount with a non-open posture.
+- **Options considered:** withhold stored signals from partial callers; recompute over the visible subgraph; accept and document.
+- **Status:** open
+
+## Trash under a non-open posture: a granted non-owner cannot restore what it deleted
+
+- **Asked:** 2026-09-28 (spec 058 landing)
+- **Context:** A deleted row moves under `/.vfs/trash/...`. Grants name the row's live path prefix, not its trash path, so under a `shared` or `private` posture a trash row is visible only to its owner (the owner floor) or to a whole-mount caller. A caller that deleted a row through a group grant cannot see it in the trash, and so cannot restore it.
+- **Blocking:** nothing lands broken; restore works for owners, the system actor, and every caller under the default open posture.
+- **Options considered:** judge a trash row by its original path's grants; add a trash-side grant rule; leave it to the owner and the operator.
+- **Status:** open
+
+## grep's candidate budget counts hidden candidates
+
+- **Asked:** 2026-09-28 (spec 058 landing)
+- **Context:** grep bounds the candidates it fetches before the per-row gates run. The visibility check runs beside the structural gates, after the candidate list is cut, so a partial caller whose scope holds many hidden matches can hit the budget (and see a truncation warning) with few visible hits.
+- **Blocking:** nothing; the answer is correct and the truncation is loud.
+- **Options considered:** push the visibility clauses into the candidate query itself (the fan grep already runs); raise the budget for partial callers; leave as-is and document.
+- **Status:** open
+
+## Rows deleted since an index build still count in the stored statistics
+
+- **Asked:** 2026-09-28 (spec 058 landing)
+- **Context:** The stored corpus statistics (`N`, `avg_dl`, per-term `df`) that whole-mount callers use are rebuilt by `reindex`. Between builds, deleted rows still count, so a whole-mount caller's scores can reflect rows that no longer exist. Partial callers compute visible statistics live, so they are not affected.
+- **Blocking:** nothing; bounded by reindex cadence.
+- **Options considered:** decrement the stored statistics on delete; compute live statistics for every caller; leave as-is.
+- **Status:** open

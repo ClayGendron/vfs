@@ -7,7 +7,7 @@ THE RULE: Assume competence. Steps to a goal. No "why" — link to Explanation.
 
 Goal: make VFS calls carry a named identity instead of running as the anonymous principal.
 
-What this changes today: storage receives the authority on every call, and rows you create get an `owner_id` of your subject name. Grant enforcement and posture are not yet built, so a named call is not refused anywhere yet. For the design, read [Open in process, loud at the edge](../explanation/open-in-process-loud-at-the-edge.md).
+What this changes: storage receives the authority on every call, rows you create get an `owner_id` of your subject name, and on a mount whose posture is not `open` the authority decides what the call may see and write. To set that up, see [How to share a folder with grants](share-a-folder-with-grants.md). For the design, read [Open in process, loud at the edge](../explanation/open-in-process-loud-at-the-edge.md).
 
 ## Build the authority
 

@@ -6,7 +6,7 @@ No steps, no reference tables — link to Reference and How-to instead.
 
 # Open in process, loud at the edge
 
-**Status.** The anonymous principal, the default authority, and the rule that storage always receives an authority are landed. Posture, grants, and the mount-side refusal are the declared design and are not yet built. This page describes both and says which is which.
+**Status.** Landed: the anonymous principal, the default authority, the rule that storage always receives an authority, posture, grants, and the mount-side refusal on the database backend. Not yet built: `serve()`'s refusal to start on an open mount. To set a posture and grant access, see [How to share a folder with grants](../how-to/share-a-folder-with-grants.md).
 
 A library that runs inside your process and a service that listens on a socket need opposite defaults. VFS is both, so it has to pick a line and say where the line is. This page explains the choice: open by default in process, a named principal for nobody in particular, and a loud refusal at the network edge.
 

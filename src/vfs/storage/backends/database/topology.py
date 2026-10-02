@@ -300,6 +300,7 @@ async def restore_rows(
     targets: list[Path],
     authority: Authority | None,
     lock_key: int,
+    gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
     permit: Callable[[AsyncSession, RowMapping, Path], Awaitable[ResultError | None]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of restores, target by target.
@@ -313,12 +314,16 @@ async def restore_rows(
     occupant — the caller deletes it, restorably, and restores again),
     then byte-budget overflow — no statement runs for a target until
     every check passes. *authority* is accepted for signature parity; a restore
-    changes no ownership. *permit* judges each resolved trash row and its
-    destination before anything else is read about it.
+    changes no ownership. *gate* runs once, right after the serialization
+    point and before any trash row is looked up, so its refusal never
+    depends on what the trash holds; *permit* then judges each resolved
+    trash row and its destination before anything else is read about it.
     """
     del authority
     entry = tables.entry
     await _serialize(session, profile, tables.meta, lock_key)
+    if gate is not None and (refused := await gate(session)):
+        return Result(ops=("restore",), errors=refused)
     now = datetime.now(UTC)
     pending: list[_PendingTransfer] = []
     errors: list[ResultError] = []

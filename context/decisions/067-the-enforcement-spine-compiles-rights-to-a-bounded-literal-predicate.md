@@ -1,6 +1,6 @@
 # 067. The Enforcement Spine: Rights Compile to a Bounded Literal Predicate in App Code, at One Chokepoint, on Every Engine
 
-- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+- **Status:** accepted 2026-09-06; rule 6 amended by 071, rule 2's predicate form by 072 (Clay, each option put as a question and
   ratified as written; ratifies ADR 021 D1, D2, D4; amends D3; closes the groups fork). Drafted 2026-09-05 as Phase 3 of the
   principals and permissions research programme
   (`../research/2026-09-05-principals-and-permissions-research-plan.md`);

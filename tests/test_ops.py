@@ -13,7 +13,17 @@ import inspect
 from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
 from vfs import ops, permissions
 from vfs.base import VirtualFileSystem
-from vfs.ops import ALL_OPS, DEVELOPER_OPS, EXEC_OPS, MUTATING_OPS, READ_OPS, TWO_PATH_OPS
+from vfs.ops import (
+    ALL_OPS,
+    DEVELOPER_OPS,
+    EXEC_OPS,
+    GRANT_OPS,
+    GRANT_WRITE_OPS,
+    MUTATING_OPS,
+    READ_OPS,
+    TWO_PATH_OPS,
+    WRITE_GATED_OPS,
+)
 from vfs.results import projection
 
 # Public router methods that manage the mount tree rather than route an op.
@@ -30,13 +40,20 @@ MANAGEMENT_METHODS = frozenset(
 
 
 def test_all_ops_is_the_union_of_dispatch_classes() -> None:
-    assert ALL_OPS == MUTATING_OPS | READ_OPS | EXEC_OPS
+    assert ALL_OPS == MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 
 
 def test_dispatch_classes_are_pairwise_disjoint() -> None:
-    assert not MUTATING_OPS & READ_OPS
-    assert not MUTATING_OPS & EXEC_OPS
-    assert not READ_OPS & EXEC_OPS
+    classes = (MUTATING_OPS, READ_OPS, EXEC_OPS, GRANT_OPS)
+    for i, left in enumerate(classes):
+        for right in classes[i + 1 :]:
+            assert not left & right
+
+
+def test_the_write_gate_covers_the_mutations_and_the_grant_writes() -> None:
+    # Listing grants is the one grant op a read-only mount still answers.
+    assert GRANT_OPS - {"grants"} == GRANT_WRITE_OPS
+    assert WRITE_GATED_OPS == MUTATING_OPS | GRANT_WRITE_OPS
 
 
 def test_two_path_ops_are_mutations() -> None:
@@ -73,6 +90,12 @@ def test_expected_vocabulary() -> None:
                 "glean",
                 "graph",
                 "run",
+                "grant",
+                "revoke",
+                "grants",
+                "posture",
+                "add_member",
+                "remove_member",
             },
         )
         == ALL_OPS
@@ -84,12 +107,17 @@ def test_expected_vocabulary() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_permission_gate_uses_the_shared_mutation_set() -> None:
-    assert permissions.MUTATING_OPS is ops.MUTATING_OPS
+def test_permission_gate_uses_the_shared_write_gated_set() -> None:
+    assert permissions.WRITE_GATED_OPS is ops.WRITE_GATED_OPS
 
 
 def test_projection_derives_action_functions_from_the_shared_set() -> None:
     assert projection.ACTION_FUNCTIONS is ops.MUTATING_OPS
+
+
+def test_projection_derives_grant_functions_from_the_shared_set() -> None:
+    assert projection.GRANT_FUNCTIONS is ops.GRANT_OPS
+    assert all(projection.default_projection(op) == ("path",) for op in GRANT_OPS)
 
 
 def test_glean_and_run_have_default_projections() -> None:
@@ -109,13 +137,13 @@ def test_pruned_vocabularies_are_gone() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Developer plane — sweep never reaches an agent surface
+# Developer plane — sweep and the mount-policy verbs never reach an agent surface
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_is_a_developer_plane_op() -> None:
-    assert "sweep" in DEVELOPER_OPS
-    assert DEVELOPER_OPS <= MUTATING_OPS
+def test_sweep_and_mount_policy_are_developer_plane_ops() -> None:
+    assert {"sweep", "posture", "add_member", "remove_member"} == DEVELOPER_OPS
+    assert DEVELOPER_OPS <= WRITE_GATED_OPS
     assert not DEVELOPER_OPS & READ_OPS
 
 
@@ -142,6 +170,9 @@ async def test_no_agent_surface_op_ever_dispatches_sweep() -> None:
         "move": lambda: fs.move(src="/a.txt", dest="/b.txt"),
         "copy": lambda: fs.copy(src="/a.txt", dest="/b.txt"),
         "run": lambda: fs.run("/tool"),
+        "grant": lambda: fs.grant("/d", "bob", "read"),
+        "revoke": lambda: fs.revoke("/d", "bob"),
+        "grants": lambda: fs.grants("/d"),
     }
     assert frozenset(calls) == ALL_OPS - DEVELOPER_OPS
     for call in calls.values():
@@ -149,7 +180,7 @@ async def test_no_agent_surface_op_ever_dispatches_sweep() -> None:
         assert result.success is True
     await fs.add_mount(RecorderStorage(name="m"), "/m")
     await fs.remove_mount("/m")
-    assert all(op != "sweep" for op, _ in fs.calls)
+    assert all(op not in DEVELOPER_OPS for op, _ in fs.calls)
     # The unmount path removed its directory with the trash delete.
     assert any(op == "delete" for op, _ in fs.calls)
 

@@ -548,11 +548,9 @@ async def _screen(
 
 
 async def _visible_rows(session: AsyncSession, stmt: Select[Any], view: Visibility) -> dict[str, RowMapping]:
-    """*stmt* run once per visibility clause, merged by path, every row passing the view."""
-    clauses = view.clauses()
-    statements = [stmt] if clauses is None else [stmt.where(clause.predicate) for clause in clauses]
+    """*stmt* narrowed by the view (one statement, or one per clause), merged by path, every row passing it."""
     merged: dict[str, RowMapping] = {}
-    for statement in statements:
+    for statement in view.narrow(stmt):
         for mapping in (await session.execute(statement)).mappings():
             if view.admits(mapping):
                 merged[mapping["path"]] = mapping

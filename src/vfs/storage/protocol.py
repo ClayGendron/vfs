@@ -53,7 +53,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, get_args, runtime_checkable
 
-from vfs.ops import MUTATING_OPS
+from vfs.ops import GRANT_OPS, MUTATING_OPS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind, Path
     from vfs.results import Result
+    from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
 
 
@@ -350,6 +351,67 @@ class SupportsRun(Protocol):
 
 
 @runtime_checkable
+class SupportsGrants(Protocol):
+    """The grant family: the rows that decide who sees and writes what.
+
+    A grant names a principal (a ``sub`` or a ``group:`` id), a path
+    prefix, and a level; ``posture`` writes the everyone row that sets
+    what a caller with no grant holds. Membership is mount-wide, so the
+    membership verbs take no path. Answers ride as ``grants=`` and
+    ``members=`` extras, never as observations: a grant is not a row of
+    the namespace.
+    """
+
+    async def grant(
+        self,
+        *,
+        path: Path,
+        principal: str,
+        level: GrantLevel,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+    async def revoke(
+        self,
+        *,
+        path: Path,
+        principal: str,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+    async def grants(
+        self,
+        *,
+        path: Path,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+    async def posture(
+        self,
+        *,
+        path: Path,
+        posture: Posture,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+    async def add_member(
+        self,
+        *,
+        group: str,
+        member: str,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+    async def remove_member(
+        self,
+        *,
+        group: str,
+        member: str,
+        authority: Authority | None = None,
+    ) -> Result: ...
+
+
+@runtime_checkable
 class StorageBackend(SupportsRead, Protocol):
     """What a mount-table entry binds: identity, declared capability, read verbs.
 
@@ -443,6 +505,7 @@ _FAMILY_OPS: Final[tuple[tuple[type, frozenset[Op]], ...]] = (
     (SupportsMutation, MUTATING_OPS),
     (SupportsGraph, frozenset({"graph"})),
     (SupportsRun, frozenset({"run"})),
+    (SupportsGrants, GRANT_OPS),
 )
 
 

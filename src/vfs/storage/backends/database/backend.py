@@ -146,7 +146,13 @@ PGVECTOR_ITERATIVE_SCAN = "SET LOCAL hnsw.iterative_scan = relaxed_order"
 
 
 class DatabaseStorage:
-    """One mount's portable database backend over SQLAlchemy Core."""
+    """One mount's portable database backend over SQLAlchemy Core.
+
+    *posture* is what everyone holds at the root of a freshly provisioned
+    mount — ``open``, ``shared`` or ``private``. It is planted once, at
+    first touch: a mount that already exists keeps its stored posture,
+    and only the ``posture`` verb changes it.
+    """
 
     def __init__(
         self,
@@ -670,16 +676,25 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         targets = targets_of(path, observations)
+        checks: WriteGate | None = None
+
+        async def gate(session: AsyncSession) -> list[ResultError]:
+            nonlocal checks
+            resolved = await self._gate(session, authority)
+            if isinstance(resolved, ResultError):
+                return [resolved]
+            checks = resolved
+            return []
 
         async def permit(session: AsyncSession, row: RowMapping, dest: Path) -> ResultError | None:
-            checks = await self._gate(session, authority)
-            if isinstance(checks, ResultError):
-                return checks
+            # The row lands with the owner it already has, so its owner may put
+            # back what it deleted; a restore never mints an owner.
+            assert checks is not None
             source = Path._brand(row["path"])
             refused = checks.row(source, row["owner_id"], "read_write")
             if refused is None and row["kind"] == "directory":
                 refused = next(iter(await checks.subtrees(session, [source], "read_write")), None)
-            return refused if refused is not None else checks.creatable(dest)
+            return refused if refused is not None else checks.row(dest, row["owner_id"], "read_write")
 
         return await self._execute_topology(
             "restore",
@@ -691,6 +706,7 @@ class DatabaseStorage:
                 targets=targets,
                 authority=authority,
                 lock_key=self._host.topology_key,
+                gate=gate,
                 permit=permit,
             ),
         )

@@ -12,10 +12,14 @@ Reads filter through a :class:`Visibility`; mutations are checked by a
 :class:`WriteGate`. Both treat :meth:`Rights.admits` — Python, exact for
 any number of arms — as the authority every row passes; SQL predicates
 are pushdowns that narrow toward it where a statement's shape needs one
-(a ``LIMIT``, an aggregate, a subtree scan). A predicate too wide for
-one statement splits into clauses the way glob's pattern fan does, each
-inside the dialect's bind and depth budgets; a caller runs its statement
-once per clause and merges.
+(a ``LIMIT``, an aggregate, a subtree scan). Where the dialect declares
+a range source, the pushdown is a join to the visible entries — the
+rights as sorted path ranges in one bound value, one statement for any
+number of grants (:mod:`~vfs.storage.backends.database.ranges`).
+Elsewhere, and on the vector leg, it is a literal OR of prefix arms;
+one too wide for a statement splits into clauses the way glob's pattern
+fan does, each inside the dialect's bind and depth budgets, and a
+caller runs its statement once per clause and merges.
 
 A directory is *on the road* when a row the caller can see lies beneath
 it: it shows as a bare name — path and kind, nothing else — so an agent
@@ -33,6 +37,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast
 
 from sqlalchemy import and_, delete, insert, not_, or_, select, true, update
 
+from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, GROUP_NAME_PREFIX, SYSTEM_NAME
+from vfs.models.rows import MAX_PRINCIPAL_ID_LENGTH
 from vfs.paths import ROOT, Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.backends.database.descent import (
@@ -46,9 +52,8 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked, membership_budget
 from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.ranges import visible_entries
 from vfs.storage.grants import (
-    EVERYONE,
-    GROUP_PREFIX,
     LEVEL_RANK,
     MAX_GROUP_DEPTH,
     POSTURE_LEVELS,
@@ -61,7 +66,7 @@ from vfs.storage.grants import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from sqlalchemy import Column, ColumnElement, Table
+    from sqlalchemy import Column, ColumnElement, Select, Subquery, Table
     from sqlalchemy.engine import CursorResult, RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,7 +78,7 @@ if TYPE_CHECKING:
 RIGHTS_CACHE: Final = 256
 """Resolved authorities remembered per mount, keyed by subjects and grant revision."""
 
-RESERVED_PRINCIPALS: Final[frozenset[str]] = frozenset({EVERYONE, "system", "anon"})
+RESERVED_PRINCIPALS: Final[frozenset[str]] = frozenset({EVERYONE_NAME, SYSTEM_NAME, ANONYMOUS_NAME})
 """Ids no grant or membership may name: posture belongs to ``posture``,
 the system actor needs no grant, and anonymous holds only the posture."""
 
@@ -165,13 +170,13 @@ async def resolve_authority(
         if isinstance(walked, ResultError):
             return walked
         closures = walked
-    ids = {*subjects, EVERYONE, *(group for groups in closures.values() for group in groups)}
+    ids = {*subjects, EVERYONE_NAME, *(group for groups in closures.values() for group in groups)}
     rows = await _grant_rows(session, tables, profile, membership_budget, sorted(ids))
     floor = not authority.is_anonymous
     resolution = Resolution(
         resolve(closures, rows, "read", owner_floor=floor),
         resolve(closures, rows, "read_write", owner_floor=floor),
-        next((row.level for row in rows if row.principal_id == EVERYONE and row.path_prefix == ROOT), "none"),
+        next((row.level for row in rows if row.principal_id == EVERYONE_NAME and row.path_prefix == ROOT), "none"),
         revision,
     )
     cache.put(key, resolution)
@@ -253,10 +258,6 @@ class Visibility:
         self._parameter_budget = parameter_budget
         self._roots: set[str] | None = None
 
-    @property
-    def whole(self) -> bool:
-        return self.rights.whole
-
     def admits(self, mapping: RowMapping) -> bool:
         return self.rights.admits(mapping["path"], mapping["owner_id"])
 
@@ -264,6 +265,30 @@ class Visibility:
         """This view's predicate on *entry* (the entries table by default)."""
         target = self._tables.entry if entry is None else entry
         return visibility_clauses(target, self.rights, self._profile, self._parameter_budget)
+
+    def entries(self) -> Subquery | None:
+        """The admitted entries as a derived table of ``entry_id``, one statement for any rights.
+
+        ``None`` where every row passes, or where the dialect declares no
+        range source — the caller then takes :meth:`clauses`.
+        """
+        source = self._profile.range_source
+        if self.rights.whole or source is None:
+            return None
+        return visible_entries(self._tables.entry, self.rights.ranges(), source)
+
+    def narrow(self, stmt: Select[Any]) -> list[Select[Any]]:
+        """*stmt*, which reads the entries table, as the statements that fetch only admitted rows.
+
+        One statement joined to :meth:`entries` where the dialect can;
+        otherwise one per clause, to be merged; ``[stmt]`` when every row
+        passes. Fetched rows still pass :meth:`admits`.
+        """
+        visible = self.entries()
+        if visible is not None:
+            return [stmt.join(visible, visible.c.entry_id == self._tables.entry.c.entry_id)]
+        clauses = self.clauses()
+        return [stmt] if clauses is None else [stmt.where(clause.predicate) for clause in clauses]
 
     async def road(self, session: AsyncSession, candidates: Iterable[str]) -> set[str]:
         """The *candidates* (directory paths) a visible row lies beneath; the root always.
@@ -409,12 +434,6 @@ class WriteGate:
             return _denied(path)
         return None
 
-    def creatable(self, path: Path) -> ResultError | None:
-        """Whether a new row may appear at *path*: coverage alone decides."""
-        if self.resolution.write.covers(str(path)):
-            return None
-        return _denied(path)
-
     def _decide(
         self,
         target: Path,
@@ -438,7 +457,8 @@ class WriteGate:
         key = str(target)
         parent = str(target.parent_dir)
         if key in road:
-            return None if mode == "create" else _denied(target)
+            # A road directory shows only its name, so no verb may act on it.
+            return _denied(target)
         if key in seen:
             if mode in ("create", "read"):
                 return None
@@ -520,7 +540,9 @@ async def list_grants(
 
     Every row when it holds ``read_write`` on *path*; otherwise its own,
     its groups', and the everyone rows. A path it cannot see answers
-    ``not_found``, as any hidden path does.
+    ``not_found``, as any hidden path does. "See" here is prefix
+    coverage by an arm, not rows: a path reached only through the owner
+    floor or as a road directory answers ``not_found`` too.
     """
     if not gate.resolution.read.covers(str(path)) and not gate.resolution.read.whole:
         return Result(ops=("grants",), errors=[classified(VFSErrorKind.not_found, f"Not found: {path}", path)])
@@ -549,7 +571,7 @@ async def set_posture(
     if refusal is not None:
         return Result(ops=("posture",), errors=[refusal])
     revision = await bump_revision(session, tables)
-    written = await _upsert_grant(session, tables, path, EVERYONE, POSTURE_LEVELS[posture], authority, revision)
+    written = await _upsert_grant(session, tables, path, EVERYONE_NAME, POSTURE_LEVELS[posture], authority, revision)
     return Result(ops=("posture",), grants=[written])
 
 
@@ -631,7 +653,7 @@ async def bump_revision(session: AsyncSession, tables: VFSTables) -> int:
 def posture_row(posture: Posture, now: datetime) -> dict[str, object]:
     """The everyone row first touch plants at the mount root."""
     return {
-        "principal_id": EVERYONE,
+        "principal_id": EVERYONE_NAME,
         "path_prefix": ROOT,
         "level": POSTURE_LEVELS[posture],
         "granted_by": "system",
@@ -763,8 +785,8 @@ def _grant_refusal(
     op: str, gate: WriteGate, path: Path, principal: str | None, level: GrantLevel
 ) -> ResultError | None:
     """The shared gate of the grant verbs: a lawful principal and level, and ``read_write`` on *path*."""
-    if principal is not None and (principal in RESERVED_PRINCIPALS or not principal.strip()):
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {principal!r} is a reserved principal id")
+    if principal is not None and not _lawful_principal(principal):
+        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {principal!r} is not a grantable principal id")
     if level not in ("read", "read_write") and principal is not None:
         return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: level must be 'read' or 'read_write'")
     if gate.resolution.write.covers(str(path)):
@@ -777,11 +799,18 @@ def _grant_refusal(
 def _membership_refusal(op: str, group: str, member: str, authority: Authority) -> ResultError | None:
     if not authority.is_system:
         return ResultError(kind=VFSErrorKind.permission_denied, message=f"{op} is reserved to the system actor")
-    if not group.startswith(GROUP_PREFIX) or len(group) == len(GROUP_PREFIX):
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: a group id starts with {GROUP_PREFIX!r}")
-    if member in RESERVED_PRINCIPALS or not member.strip():
+    if not group.startswith(GROUP_NAME_PREFIX) or len(group) == len(GROUP_NAME_PREFIX) or not _lawful_principal(group):
+        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: a group id starts with {GROUP_NAME_PREFIX!r}")
+    if not _lawful_principal(member):
         return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {member!r} cannot be a member")
     return None
+
+
+def _lawful_principal(principal: str) -> bool:
+    """Whether *principal* may be named on a row: not reserved, not blank, within the column."""
+    return (
+        principal not in RESERVED_PRINCIPALS and bool(principal.strip()) and len(principal) <= MAX_PRINCIPAL_ID_LENGTH
+    )
 
 
 async def _upsert_grant(
@@ -817,7 +846,7 @@ async def _own_ids(
     subjects = authority.subject_names
     walked = await _closures(session, tables, profile, membership_budget, subjects)
     groups = set() if isinstance(walked, ResultError) else {g for gs in walked.values() for g in gs}
-    return {*subjects, *groups, EVERYONE}
+    return {*subjects, *groups, EVERYONE_NAME}
 
 
 class _Walk(NamedTuple):

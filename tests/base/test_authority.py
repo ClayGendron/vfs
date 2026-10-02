@@ -45,6 +45,12 @@ CALLS: dict[Op, dict[str, Any]] = {
     "glean": {"query": "x"},
     "graph": {"method": "successors", "path": "/f.txt"},
     "run": {"path": "/t"},
+    "grant": {"path": "/d", "principal": "bob", "level": "read"},
+    "revoke": {"path": "/d", "principal": "bob"},
+    "grants": {"path": "/d"},
+    "posture": {"path": "/d", "posture": "shared"},
+    "add_member": {"group": "group:eng", "member": "bob"},
+    "remove_member": {"group": "group:eng", "member": "bob"},
 }
 
 
@@ -144,15 +150,27 @@ async def test_the_authority_is_threaded_not_cached() -> None:
 
 async def test_the_control_plane_runs_as_the_system_actor() -> None:
     # Mount administration is the router's own work: the bind-site
-    # probes, the mount-point mkdir and rmdir, and locate's stat all run
-    # as the system actor, whatever default or caller is configured.
+    # probes and the mount-point mkdir and rmdir run as the system
+    # actor, whatever default or caller is configured.
     storage = RecordingMemory()
     fs = VirtualFileSystem(storage=storage, default_authority=ALICE)
     await fs.add_mount(RecorderStorage(name="child"), "/m", parents=True)
-    await fs.locate("/m", exists=True)
     await fs.remove_mount("/m")
     assert storage.seen and all(authority == SYSTEM for _op, authority in storage.seen)
     assert {op for op, _ in storage.seen} == {"mkdir", "stat", "ls", "delete"}
+    await fs.close()
+
+
+async def test_locate_probes_existence_as_the_caller_not_the_system() -> None:
+    # A caller must not learn through locate that a row it cannot see
+    # exists: the probe runs as the caller, else the default, else anonymous.
+    storage = RecordingMemory()
+    fs = VirtualFileSystem(storage=storage, default_authority=ALICE)
+    bob = Authority.of(Principal("bob"))
+    await fs.locate("/x", exists=True, authority=bob)
+    await fs.locate_edge("/x", "/y", exists=True)
+    await fs.locate("/x")
+    assert storage.seen == [("stat", bob), ("stat", ALICE), ("stat", ALICE)]
     await fs.close()
 
 

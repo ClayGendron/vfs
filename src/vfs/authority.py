@@ -51,6 +51,12 @@ same way: nobody in particular still has a name in the audit."""
 
 _RESERVED_NAMES: Final[dict[str, PrincipalKind]] = {SYSTEM_NAME: "system", ANONYMOUS_NAME: "anonymous"}
 
+EVERYONE_NAME: Final = "*"
+"""The principal id of a mount's posture rows — everyone, never one caller."""
+
+GROUP_NAME_PREFIX: Final = "group:"
+"""Group ids carry this prefix; no caller's ``sub`` does, so the two never collide."""
+
 MAX_SUBJECTS: Final = 64
 """The declared bound on a subject set. An oversize set is refused at the
 edge with a classified error; the type's own check is narrowing only."""
@@ -82,6 +88,9 @@ class Principal:
     def __post_init__(self) -> None:
         if not self.sub or not self.sub.strip():
             msg = "a principal needs a non-empty sub"
+            raise ValueError(msg)
+        if self.sub == EVERYONE_NAME or self.sub.startswith(GROUP_NAME_PREFIX):
+            msg = f"a sub may not be {EVERYONE_NAME!r} or start with {GROUP_NAME_PREFIX!r}: those name grant rows"
             raise ValueError(msg)
         if _RESERVED_NAMES.get(self.sub) != self.kind and (
             self.sub in _RESERVED_NAMES or self.kind in _RESERVED_NAMES.values()

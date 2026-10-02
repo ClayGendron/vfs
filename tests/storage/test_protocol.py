@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from vfs.ops import ALL_OPS, MUTATING_OPS
+from vfs.ops import ALL_OPS, GRANT_OPS, MUTATING_OPS
 from vfs.paths import Path
 from vfs.results import Result
 from vfs.storage import (
@@ -100,6 +100,24 @@ class Everything(PatternSearcher):
     async def run(self, **kwargs: Any) -> Result:
         return _ok("run")
 
+    async def grant(self, **kwargs: Any) -> Result:
+        return _ok("grant")
+
+    async def revoke(self, **kwargs: Any) -> Result:
+        return _ok("revoke")
+
+    async def grants(self, **kwargs: Any) -> Result:
+        return _ok("grants")
+
+    async def posture(self, **kwargs: Any) -> Result:
+        return _ok("posture")
+
+    async def add_member(self, **kwargs: Any) -> Result:
+        return _ok("add_member")
+
+    async def remove_member(self, **kwargs: Any) -> Result:
+        return _ok("remove_member")
+
 
 # ----------------------------------------------------------------------
 # storage_ops — capability self-derivation
@@ -168,6 +186,13 @@ def test_mutation_family_is_exactly_the_write_gated_ops() -> None:
             return _ok("rmedge")
 
     assert storage_ops(Mutating()) == storage_ops(ReadOnly()) | MUTATING_OPS
+
+
+def test_grant_family_is_the_grant_ops() -> None:
+    # A backend without row grants answers every data verb and none of
+    # these; the router then refuses them as unsupported, never silently.
+    assert storage_ops(Everything()) >= GRANT_OPS
+    assert not GRANT_OPS & storage_ops(PatternSearcher())
 
 
 def test_graph_family_is_traversal_only() -> None:

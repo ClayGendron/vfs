@@ -20,7 +20,13 @@ from vfs.models import Match
 from vfs.pattern_matching.grep import split_lines
 from vfs.results.kinds import KIND_CONTRACTS, Severity, kind_family
 from vfs.results.preview import select_preview
-from vfs.results.projection import ACTION_FUNCTIONS, OBSERVATION_FIELDS, resolve_projection, validate_projection
+from vfs.results.projection import (
+    ACTION_FUNCTIONS,
+    GRANT_FUNCTIONS,
+    OBSERVATION_FIELDS,
+    resolve_projection,
+    validate_projection,
+)
 
 if TYPE_CHECKING:
     from vfs.models import Observation
@@ -111,7 +117,7 @@ def _error_line(error: ResultError) -> str:
 
 # Functions whose body ignores per-field projection columns — a
 # "not populated" note about columns is meaningless under them.
-_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree"}) | ACTION_FUNCTIONS
+_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree"}) | ACTION_FUNCTIONS | GRANT_FUNCTIONS
 
 
 def _render_unpopulated_projection_note(result: Result, projection: tuple[str, ...] | None) -> str:
@@ -181,6 +187,8 @@ def _render_body(result: Result, projection: tuple[str, ...]) -> str:
         return _render_block(result, projection)
     if fn in ACTION_FUNCTIONS:
         return _render_action(result)
+    if fn in GRANT_FUNCTIONS:
+        return _render_grant_rows(result)
     return _render_path_list(result, projection)
 
 
@@ -496,6 +504,33 @@ def _render_action(result: Result) -> str:
         suffix = f" → {one.trash_path}" if one.trash_path is not None else ""
         return f"{verb} {one.path}{suffix}"
     return f"{verb} {count} paths"
+
+
+# The extras a grant verb answers with, and the columns each renders.
+_GRANT_ROW_COLUMNS: dict[str, tuple[str, ...]] = {
+    "grants": ("path_prefix", "principal_id", "level", "granted_by", "granted_at"),
+    "members": ("group_id", "principal_id"),
+}
+
+
+def _render_grant_rows(result: Result) -> str:
+    """The ``grants=`` or ``members=`` rows as a Markdown table; a revoke shows level ``none``.
+
+    A column no row carries is dropped, so a written grant renders its
+    three facts and a listing adds who granted it and when.
+    """
+    extras = result.model_extra or {}
+    for key, columns in _GRANT_ROW_COLUMNS.items():
+        listed = extras.get(key)
+        if not isinstance(listed, list):
+            continue
+        rows = [row for row in listed if isinstance(row, dict)]
+        if not rows:
+            return f"No {key}"
+        shown = [column for column in columns if any(column in row for row in rows)]
+        cells = [[_format_field(c, row.get(c) or ("none" if c == "level" else None)) for c in shown] for row in rows]
+        return _markdown_table(shown, cells)
+    return "No changes"
 
 
 # Kinds counted in the write-success summary.

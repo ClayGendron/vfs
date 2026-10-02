@@ -69,9 +69,6 @@ class Pushdown(NamedTuple):
     binds: int
 
 
-# Ceiling of one channel arm's bind slots: the ext pair and the name fact.
-
-
 # ---------------------------------------------------------------------------
 # The gate — the authority every row passes
 # ---------------------------------------------------------------------------

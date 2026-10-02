@@ -116,6 +116,24 @@ class RecorderStorage:
     async def run(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("run", kwargs, authority)
 
+    async def grant(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("grant", kwargs, authority)
+
+    async def revoke(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("revoke", kwargs, authority)
+
+    async def grants(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("grants", kwargs, authority)
+
+    async def posture(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("posture", kwargs, authority)
+
+    async def add_member(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("add_member", kwargs, authority)
+
+    async def remove_member(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("remove_member", kwargs, authority)
+
 
 class ReadFamilyStorage:
     """The minimum viable backend — the read family plus the identity members."""

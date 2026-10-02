@@ -1,6 +1,6 @@
 # 065. Visibility: Hidden Rows Are Absent Everywhere, Refusals Never Confirm Existence, and Search Statistics Are Computed Over the Visible Set
 
-- **Status:** accepted 2026-09-06 (Clay, each option put as a question and
+- **Status:** accepted 2026-09-06; rule 1 refined by 070 for directories on the road to a visible row (Clay, each option put as a question and
   ratified as written; binds spec 058's `invisible` rung, `glean`, the merge and `grep`). Drafted 2026-09-05 as Phase 3 of the
   principals and permissions research programme
   (`../research/2026-09-05-principals-and-permissions-research-plan.md`);

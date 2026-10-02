@@ -13,3 +13,4 @@ Task-focused recipes for users who already know what VFS is.
 - How to expose VFS over MCP
 - How to run calls as a principal
 - How to bulk load as the system actor
+- How to share a folder with grants

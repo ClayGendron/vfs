@@ -743,19 +743,24 @@ async def _visible_lexicon(
 async def _visible_corpus(session: AsyncSession, tables: VFSTables, epoch: Epoch, view: Visibility) -> tuple[int, int]:
     """``(chunk count, total length)`` over the epoch's chunks whose entry the view admits.
 
-    One aggregate when the predicate fits one statement; otherwise each
-    clause's rows are read and deduplicated here, since clauses overlap
-    and a per-clause count would double one.
+    One aggregate over the chunks joined to the visible entries where the
+    dialect joins a range list; otherwise one aggregate when the
+    predicate fits one statement, or each clause's rows read and
+    deduplicated here, since clauses overlap and a per-clause count
+    would double one.
     """
     docs, entry = tables.lex_docs, tables.entry
+    aggregate = (func.count(), func.coalesce(func.sum(docs.c.dl), 0))
+    visible = view.entries()
+    if visible is not None:
+        on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
+        stmt = select(*aggregate).select_from(on_visible).where(docs.c.epoch == epoch)
+        count, total = (await session.execute(stmt)).one()
+        return int(count), int(total)
     joined = docs.join(entry, entry.c.entry_id == docs.c.entry_id)
     clauses = view.clauses() or []
     if len(clauses) == 1:
-        stmt = (
-            select(func.count(), func.coalesce(func.sum(docs.c.dl), 0))
-            .select_from(joined)
-            .where(docs.c.epoch == epoch, clauses[0].predicate)
-        )
+        stmt = select(*aggregate).select_from(joined).where(docs.c.epoch == epoch, clauses[0].predicate)
         count, total = (await session.execute(stmt)).one()
         return int(count), int(total)
     lengths: dict[ChunkId, int] = {}

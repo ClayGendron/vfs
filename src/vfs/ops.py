@@ -9,6 +9,8 @@ its own copy. A verb's class decides how it is routed and gated:
     TWO_PATH_OPS    → source/target routing (may cross mounts → cross_mount)
     READ_OPS        → routed, no write gate
     EXEC_OPS        → routed, no write gate; executes rather than reads
+    GRANT_OPS       → routed to the mount holding the path; the writing
+                      ones are write-gated, and none touches a row
 
 ``cli`` is deliberately absent: it is a meta-verb that parses a command
 string into these ops and re-enters through their public methods, so every
@@ -48,6 +50,12 @@ Op = Literal[
     "glean",
     "graph",
     "run",
+    "grant",
+    "revoke",
+    "grants",
+    "posture",
+    "add_member",
+    "remove_member",
 ]
 
 MUTATING_OPS: Final[frozenset[Op]] = frozenset(
@@ -74,11 +82,22 @@ READ_OPS: Final[frozenset[Op]] = frozenset(
 EXEC_OPS: Final[frozenset[Op]] = frozenset({"run"})
 """Ops that execute a capability — not a namespace mutation, not a read."""
 
-DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep"})
-"""Developer-plane ops: never registered on any agent-facing tool surface
-(MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete."""
+GRANT_OPS: Final[frozenset[Op]] = frozenset({"grant", "revoke", "grants", "posture", "add_member", "remove_member"})
+"""Ops over the grant and membership rows — who may see and write what."""
 
-ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS
+GRANT_WRITE_OPS: Final[frozenset[Op]] = GRANT_OPS - {"grants"}
+"""The grant ops that change a row; ``grants`` only lists."""
+
+WRITE_GATED_OPS: Final[frozenset[Op]] = MUTATING_OPS | GRANT_WRITE_OPS
+"""Every op a read-only mount refuses: the mutations and the grant writes."""
+
+DEVELOPER_OPS: Final[frozenset[Op]] = frozenset({"sweep", "posture", "add_member", "remove_member"})
+"""Developer-plane ops: never registered on any agent-facing tool surface
+(MCP serve, CLI) — Python-API only. Sweep destroys; agents only delete.
+Posture and group membership shape a whole mount's policy, so they stay
+with the operator too."""
+
+ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
 
 # Grep option vocabularies — shared by the router, the storage protocols,

@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from functools import reduce
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
+from vfs.authority import EVERYONE_NAME
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
@@ -47,12 +49,6 @@ Posture = Literal["open", "shared", "private"]
 """What a mount gives everyone at a path: read and write, read, or nothing."""
 
 POSTURE_LEVELS: Final[dict[str, GrantLevel]] = {"open": "read_write", "shared": "read", "private": "none"}
-
-EVERYONE: Final = "*"
-"""The reserved principal id of the posture rows; never a ``sub``."""
-
-GROUP_PREFIX: Final = "group:"
-"""Group ids carry this prefix, so a user and a group never share an id."""
 
 ROOT: Final = "/"
 
@@ -144,6 +140,7 @@ class Rights:
     whole: bool = False
     _by_prefix: dict[str, Arm] = field(init=False, repr=False, compare=False, hash=False)
     _owned: dict[str, frozenset[str]] = field(init=False, repr=False, compare=False, hash=False)
+    _ranges: Ranges | None = field(init=False, default=None, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_by_prefix", {arm.prefix: arm for arm in self.arms})
@@ -196,6 +193,59 @@ class Rights:
         """The arm prefixes: every visible row lies under one, or under an owner arm."""
         return tuple(self._by_prefix)
 
+    def ranges(self) -> Ranges:
+        """These rights as path pieces, computed once: the arms, and each owner arm by owner."""
+        if self._ranges is None:
+            owners = tuple((arm.owner, pieces(Arm(prefix) for prefix in arm.prefixes)) for arm in self.owner_arms)
+            object.__setattr__(self, "_ranges", Ranges(pieces(self.arms), owners))
+        assert self._ranges is not None
+        return self._ranges
+
+
+# ---------------------------------------------------------------------------
+# Rights as path pieces
+# ---------------------------------------------------------------------------
+
+
+class Pieces(NamedTuple):
+    """Rows matched exactly (``path = p``) or strictly between two bounds (``lo < path < hi``).
+
+    Sorted and disjoint, in bytewise order — which is code point order,
+    the order UTF-8 preserves. No bound is a path plus a low byte: SQL
+    Server pads the shorter string with spaces before it compares.
+    """
+
+    points: tuple[str, ...]
+    opens: tuple[tuple[str, str], ...]
+
+
+class Ranges(NamedTuple):
+    """One authority's rights as pieces: the arms', and each member's owner arm's."""
+
+    arms: Pieces
+    owners: tuple[tuple[str, Pieces], ...]
+
+
+# Appended to a path, the least string above it: no lawful path holds NUL,
+# so ``[p, p + _NEXT)`` is exactly ``p``. Internal only — never a bound.
+_NEXT: Final = "\x00"
+
+
+def pieces(arms: Iterable[Arm]) -> Pieces:
+    """The rows *arms* admit, as sorted, disjoint exact paths and open ranges.
+
+    A prefix is itself plus everything strictly between ``p/`` and
+    ``p0`` — two pieces, because ``/a-b`` sorts between ``/a`` and
+    ``/a/``. Holes are cut from their arm; arms then merge.
+
+        pieces([Arm("/a", ("/a/b",))])
+        # Pieces(points=('/a', '/a/b0'), opens=(('/a/', '/a/b'), ('/a/b', '/a/b/'), ('/a/b0', '/a0')))
+    """
+    spans: list[tuple[str, str]] = []
+    for arm in arms:
+        spans += _subtract(_spans(arm.prefix), [span for hole in arm.holes for span in _spans(hole)])
+    return _split(_merged(spans))
+
 
 # ---------------------------------------------------------------------------
 # The resolver
@@ -221,18 +271,15 @@ def resolve(
     is off for an authority that owns nothing (anonymous).
     """
     need = LEVEL_RANK[level]
-    star = {row.path_prefix: row.level for row in rows if row.principal_id == EVERYONE}
+    star = {row.path_prefix: row.level for row in rows if row.principal_id == EVERYONE_NAME}
     everyone = _everyone_arms(star, need)
+    named = [row for row in rows if row.principal_id != EVERYONE_NAME and LEVEL_RANK[row.level] >= need]
     covering = {
-        sub: minimise(
-            row.path_prefix
-            for row in rows
-            if row.principal_id != EVERYONE and row.principal_id in (groups | {sub}) and LEVEL_RANK[row.level] >= need
-        )
+        sub: minimise(row.path_prefix for row in named if row.principal_id in (groups | {sub}))
         for sub, groups in closures.items()
     }
     shared = meet_all(list(covering.values()))
-    arms = [*everyone, *(Arm(prefix) for prefix in shared if not _already(everyone, prefix))]
+    arms = [*everyone, *(Arm(prefix) for prefix in shared if not _already(everyone, Arm(prefix)))]
     if any(arm.prefix == ROOT and not arm.holes for arm in arms):
         return Rights.everything(level)
     owner_arms: list[OwnerArm] = []
@@ -265,21 +312,82 @@ def _everyone_arms(star: Mapping[str, str], need: int) -> list[Arm]:
     Every lower row cuts, not only the nearest: under an open root, a
     shared ``/a`` holding a private ``/a/b`` must still cut ``/a/b`` from
     the root's arm. An arm already inside a qualifying ancestor arm with
-    no hole between them adds nothing and is dropped.
+    admitting all it admits adds nothing and is dropped.
     """
     qualifying = sorted((p for p, lvl in star.items() if LEVEL_RANK[lvl] >= need), key=_depth)
     arms: list[Arm] = []
     for prefix in qualifying:
         below = [q for q in star if q != prefix and covers(prefix, q) and LEVEL_RANK[star[q]] < need]
         arm = Arm(prefix, minimise(below))
-        if not _already(arms, prefix):
+        if not _already(arms, arm):
             arms.append(arm)
     return arms
 
 
-def _already(arms: Sequence[Arm], prefix: str) -> bool:
-    """Whether an arm in *arms* already covers every row under *prefix*."""
+def _already(arms: Sequence[Arm], candidate: Arm) -> bool:
+    """Whether an arm in *arms* already admits every row *candidate* admits.
+
+    It must cover the candidate's prefix through no hole, and each of its
+    holes beneath that prefix must sit inside one of the candidate's own.
+    """
     for arm in arms:
-        if covers(arm.prefix, prefix) and not any(covers(hole, prefix) or covers(prefix, hole) for hole in arm.holes):
+        if not covers(arm.prefix, candidate.prefix) or any(covers(hole, candidate.prefix) for hole in arm.holes):
+            continue
+        inner = [hole for hole in arm.holes if covers(candidate.prefix, hole)]
+        if all(any(covers(own, hole) for own in candidate.holes) for hole in inner):
             return True
     return False
+
+
+def _spans(prefix: str) -> list[tuple[str, str]]:
+    """*prefix* and everything beneath it as half-open ``[lo, hi)`` spans."""
+    if prefix == ROOT:
+        return [(ROOT, "0")]
+    return [(prefix, prefix + _NEXT), (prefix + "/", prefix + "0")]
+
+
+def _merged(spans: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """*spans* sorted, with overlapping and touching spans joined."""
+    out: list[tuple[str, str]] = []
+    for lo, hi in sorted(spans):
+        if out and lo <= out[-1][1]:
+            out[-1] = (out[-1][0], max(hi, out[-1][1]))
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def _subtract(keep: Iterable[tuple[str, str]], cut: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The parts of *keep* that no span of *cut* reaches, in order."""
+    out = _merged(keep)
+    for cut_lo, cut_hi in _merged(cut):
+        kept: list[tuple[str, str]] = []
+        for lo, hi in out:
+            if cut_hi <= lo or cut_lo >= hi:
+                kept.append((lo, hi))
+            else:
+                kept += [(a, b) for a, b in ((lo, cut_lo), (cut_hi, hi)) if a < b]
+        out = kept
+    return out
+
+
+def _split(spans: Sequence[tuple[str, str]]) -> Pieces:
+    """Half-open spans as exact paths and open ranges, no bound ending in ``_NEXT``.
+
+    A span that ends in ``_NEXT`` is one exact path: the gap just above a
+    path is never cut, so a wider span always runs past it. An inclusive
+    lower bound that is a lawful path becomes an exact path beside the
+    open range; one ending in ``/`` never names a row, so it bounds the
+    open range as it is.
+    """
+    points: list[str] = []
+    opens: list[tuple[str, str]] = []
+    for lo, hi in spans:
+        if hi == lo + _NEXT:
+            points.append(lo)
+            continue
+        low = lo.removesuffix(_NEXT)
+        if low == lo and (lo == ROOT or not lo.endswith("/")):
+            points.append(lo)
+        opens.append((low, hi))
+    return Pieces(tuple(points), tuple(opens))

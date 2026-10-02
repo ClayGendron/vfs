@@ -748,6 +748,12 @@ class TestUnlandedVerbStubs:
             "sweep",
             "move",
             "copy",
+            "grant",
+            "revoke",
+            "grants",
+            "posture",
+            "add_member",
+            "remove_member",
         }
         await storage.close()
 

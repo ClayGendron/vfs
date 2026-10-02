@@ -19,7 +19,7 @@ a newer server's result still renders on an older client.
 from __future__ import annotations
 
 from vfs.models import Observation
-from vfs.ops import MUTATING_OPS
+from vfs.ops import GRANT_OPS, MUTATING_OPS
 
 # ---------------------------------------------------------------------------
 # Field and function vocabularies
@@ -34,6 +34,10 @@ PROJECTION_SENTINELS: frozenset[str] = frozenset({"default", "all"})
 # mutation verbs share one — drawn from the dispatch gate so the rendering
 # and permission vocabularies cannot drift apart.
 ACTION_FUNCTIONS: frozenset[str] = MUTATING_OPS
+
+# The grant verbs answer with ``grants=`` / ``members=`` rows, not
+# observations; they render as a table of those rows.
+GRANT_FUNCTIONS: frozenset[str] = GRANT_OPS
 
 FALLBACK_PROJECTION: tuple[str, ...] = ("path",)
 """Default projection for an op this client does not recognize."""
@@ -53,7 +57,7 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "run": ("path",),
     "graph": ("path", "kind"),
 }
-for _fn in ACTION_FUNCTIONS:
+for _fn in ACTION_FUNCTIONS | GRANT_FUNCTIONS:
     _DEFAULT_PROJECTION[_fn] = ("path",)
 
 KNOWN_FUNCTIONS: frozenset[str] = frozenset(_DEFAULT_PROJECTION)

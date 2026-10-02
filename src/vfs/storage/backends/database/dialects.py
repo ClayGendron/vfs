@@ -69,6 +69,7 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 BulkInsertMode = Literal["driver", "copy", "core"]
 MembershipForm = Literal["in_list", "values"]
 VectorDistance = Literal["none", "exact", "ann"]
+RangeSource = Literal["json_each", "unnest", "openjson", "json_table"]
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,15 @@ class DialectProfile:
     ANN index (pgvector filters inside the index scan; MariaDB and
     Oracle drop to an exact scan the moment a predicate appears).
 
+    ``range_source`` declares the table function that unpacks one bound
+    list of path ranges into rows, so a partial caller's rights join the
+    ``path`` index with statement text that never changes with its
+    grants: ``json_each`` (SQLite), ``unnest`` of arrays (Postgres),
+    ``OPENJSON`` (SQL Server), ``JSON_TABLE`` (MariaDB). SQLAlchemy takes
+    no position on it. ``None`` keeps the literal OR of prefix arms —
+    Oracle, whose ``JSON_TABLE`` join measured no faster, and the
+    generic floor.
+
     ``row_lock_hint`` declares how a guard read locks the rows it
     addresses. SQLAlchemy models ``FOR UPDATE`` yet its T-SQL compiler
     renders ``with_for_update()`` as a bare SELECT (the clause exists
@@ -221,6 +231,7 @@ class DialectProfile:
     vector_dimension_cap: int | None = None
     ann_dimension_cap: int | None = None
     ann_honours_scope: bool = False
+    range_source: RangeSource | None = None
 
 
 SQLITE: Final = DialectProfile(
@@ -252,6 +263,7 @@ SQLITE: Final = DialectProfile(
     bulk_insert="driver",
     # vec_distance_cosine from sqlite-vec, loaded on every connection; brute force, exact.
     vector_distance="exact",
+    range_source="json_each",
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -267,6 +279,7 @@ POSTGRESQL: Final = DialectProfile(
     # asyncpg pipelines one execute per row; binary COPY halves Core's pages (4.3 vs 9.1 µs).
     bulk_insert="copy",
     vector_distance="ann",
+    range_source="unnest",
     vector_dimension_cap=16_000,
     ann_dimension_cap=2_000,
     ann_honours_scope=True,
@@ -292,6 +305,7 @@ MSSQL: Final = DialectProfile(
     # one RPC per row — slower than Core's multirow pages on entry-wide rows.
     bulk_insert="core",
     vector_distance="exact",
+    range_source="openjson",
     vector_dimension_cap=1_998,
 )
 
@@ -322,6 +336,7 @@ MARIADB: Final = DialectProfile(
     # VEC_DISTANCE_COSINE and an MHNSW index the planner uses only on an
     # unscoped ORDER BY … LIMIT; the InnoDB row cap binds before 16,383.
     vector_distance="ann",
+    range_source="json_table",
     vector_dimension_cap=16_383,
 )
 

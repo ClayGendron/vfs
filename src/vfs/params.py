@@ -4,8 +4,8 @@ One :class:`ParamSpec` row per public-verb parameter and one
 :class:`ShapeRule` set per op. Three consumers read the table: the router's
 ingress gate (``VirtualFileSystem._gate_params``), the signature drift test,
 and the wire dialect's schema projection. The module is a leaf — stdlib plus
-the ``vfs.ops`` and ``vfs.authority`` value modules — so schema consumers
-never import the router.
+the ``vfs.ops``, ``vfs.authority``, and ``vfs.storage.grants`` value
+modules — so schema consumers never import the router.
 
     param_violation("tree", {"max_depth": "2"})
     # → "tree max_depth must be an integer >= 1 and <= 2147483647, got '2'"
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 from vfs.authority import Authority
 from vfs.ops import GRAPH_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind
+from vfs.storage.grants import Posture
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -49,6 +50,8 @@ _MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edi
 CASE_MODES: Final[frozenset[str]] = frozenset(get_args(CaseMode))
 OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
 OBJECT_KINDS: Final[frozenset[str]] = frozenset(get_args(ObjectKind))
+GRANTABLE_LEVELS: Final[frozenset[str]] = frozenset({"read", "read_write"})
+POSTURES: Final[frozenset[str]] = frozenset(get_args(Posture))
 
 # The shared ceiling on every int channel: the tightest integer all of
 # vfs's seams carry alike — 32-bit FFI paths, SQL INT columns, JSON.
@@ -97,6 +100,12 @@ _COLUMNS: Final = ParamSpec("columns", "str_set", doc="observation fields to fet
 _OBSERVATIONS: Final = ParamSpec("observations", "observations", doc="row-addressed targets")
 _SCOPE_PATHS: Final = ParamSpec(
     "paths", "str_seq", nullable=False, default=(), doc="scope paths; empty means every entry"
+)
+_PRINCIPAL: Final = ParamSpec("principal", "str", required=True, doc="a user's sub or a group:<name> id")
+_GROUP: Final = ParamSpec("group", "str", required=True, doc="the group id, group:<name>")
+_MEMBER: Final = ParamSpec("member", "str", required=True, doc="a user's sub or a nested group:<name> id")
+_MOUNT_PATH: Final = ParamSpec(
+    "path", "path", nullable=False, default="/", doc="any path on the mount whose memberships change"
 )
 
 PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
@@ -282,6 +291,38 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "run": (
         ParamSpec("path", "path", required=True, doc="the tool to execute"),
         ParamSpec("arguments", "dict", doc="tool arguments; the tool's own schema governs values"),
+        _AUTHORITY,
+    ),
+    "grant": (
+        ParamSpec("path", "path", required=True, doc="the prefix the grant covers, itself and below"),
+        _PRINCIPAL,
+        ParamSpec("level", "str", required=True, choices=GRANTABLE_LEVELS, doc="what the principal may do there"),
+        _AUTHORITY,
+    ),
+    "revoke": (
+        ParamSpec("path", "path", required=True, doc="the prefix whose grant is removed"),
+        _PRINCIPAL,
+        _AUTHORITY,
+    ),
+    "grants": (
+        ParamSpec("path", "path", required=True, doc="list the grants on this path and its ancestors"),
+        _AUTHORITY,
+    ),
+    "posture": (
+        ParamSpec("path", "path", required=True, doc="the prefix whose everyone row is set"),
+        ParamSpec("posture", "str", required=True, choices=POSTURES, doc="what everyone holds there and below"),
+        _AUTHORITY,
+    ),
+    "add_member": (
+        _GROUP,
+        _MEMBER,
+        _MOUNT_PATH,
+        _AUTHORITY,
+    ),
+    "remove_member": (
+        _GROUP,
+        _MEMBER,
+        _MOUNT_PATH,
         _AUTHORITY,
     ),
 }

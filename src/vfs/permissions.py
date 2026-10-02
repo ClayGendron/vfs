@@ -25,7 +25,7 @@ To resolve a path:
    ``path.startswith(prefix + "/")``).
 2. If one matches, use that override's permission.
 3. Otherwise, use the default.
-4. Then apply the :data:`MUTATING_OPS` check.
+4. Then apply the :data:`~vfs.ops.WRITE_GATED_OPS` check.
 
 Sort order is established once at construction time, so resolution is
 a single linear pass.  This is the same algorithm that ``_match_mount``
@@ -86,7 +86,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
-from vfs.ops import MUTATING_OPS
+from vfs.ops import WRITE_GATED_OPS
 from vfs.paths import ROOT, Path, normalize_path
 from vfs.results import Result, ResultError, VFSErrorKind
 
@@ -283,7 +283,7 @@ def check_writable(
     rule resolution stays in mount-relative coordinates.
 
     Returns ``None`` when the operation is allowed (either because it
-    is not a mutation or because the resolved permission is
+    is not write-gated or because the resolved permission is
     ``"read_write"``); a failure :class:`Result` when the operation
     would mutate a read-only path.
 
@@ -292,7 +292,7 @@ def check_writable(
     maps the kind to :class:`~vfs.exceptions.WriteConflictError` when a
     boundary caller applies ``raise_if_failed``.
     """
-    if op not in MUTATING_OPS:
+    if op not in WRITE_GATED_OPS:
         return None
     first, *rest = _permission_candidates(rel)
     resolved = permission_map._resolve(first)

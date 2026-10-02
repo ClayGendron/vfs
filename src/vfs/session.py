@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from vfs.models import Edge, Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
+    from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
 
 
@@ -357,6 +358,40 @@ class Session:
         if (refusal := self._refuse_closed("run")) is not None:
             return refusal
         return await self._fs.run(path, arguments=arguments, authority=self._authority)
+
+    # -------------------------------------------------------------------
+    # grants
+    # -------------------------------------------------------------------
+
+    async def grant(self, path: str, principal: str, level: GrantLevel) -> Result:
+        if (refusal := self._refuse_closed("grant")) is not None:
+            return refusal
+        return await self._fs.grant(path, principal, level, authority=self._authority)
+
+    async def revoke(self, path: str, principal: str) -> Result:
+        if (refusal := self._refuse_closed("revoke")) is not None:
+            return refusal
+        return await self._fs.revoke(path, principal, authority=self._authority)
+
+    async def grants(self, path: str) -> Result:
+        if (refusal := self._refuse_closed("grants")) is not None:
+            return refusal
+        return await self._fs.grants(path, authority=self._authority)
+
+    async def posture(self, path: str, posture: Posture) -> Result:
+        if (refusal := self._refuse_closed("posture")) is not None:
+            return refusal
+        return await self._fs.posture(path, posture, authority=self._authority)
+
+    async def add_member(self, group: str, member: str, *, path: str = "/") -> Result:
+        if (refusal := self._refuse_closed("add_member")) is not None:
+            return refusal
+        return await self._fs.add_member(group, member, path=path, authority=self._authority)
+
+    async def remove_member(self, group: str, member: str, *, path: str = "/") -> Result:
+        if (refusal := self._refuse_closed("remove_member")) is not None:
+            return refusal
+        return await self._fs.remove_member(group, member, path=path, authority=self._authority)
 
     # -------------------------------------------------------------------
     # Internal helpers

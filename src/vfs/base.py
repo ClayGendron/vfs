@@ -77,6 +77,7 @@ from vfs.storage import (
     StorageBackend,
     SupportsClose,
     SupportsGlean,
+    SupportsGrants,
     SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
@@ -93,6 +94,7 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind, ResolvedPath
     from vfs.pattern_matching import GrepHit
     from vfs.permissions import PermissionsPayload
+    from vfs.storage.grants import GrantLevel, Posture
 
 # Router-traversal depth budget for the current request: decremented once
 # per router entered (adapters and wire hops re-enter), never per mount.
@@ -105,6 +107,9 @@ _BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
 # The router's own control-plane storage calls (bind-site probes, the
 # mount-point mkdir and rmdir) run as the system actor, not as any caller.
 _ADMIN_AUTHORITY: Final = Authority.system()
+
+# The grant verbs that change membership rows: mount-wide, so they carry no path.
+_MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 
 # A call that names nobody runs as the named nobody: it holds only what a
 # mount's posture gives everyone, and the audit still has an actor.
@@ -290,6 +295,23 @@ def _path_covers(ancestor: Path, descendant: Path) -> bool:
     if ancestor in (descendant, ROOT):
         return True
     return str(descendant).startswith(str(ancestor) + "/")
+
+
+def _rebase_grant_rows(result: Result, mount: Path) -> Result:
+    """*result* with each ``grants=`` row's prefix re-rooted from storage to router coordinates.
+
+    Grant rows ride as an extra, which the funnel's rebase does not
+    reach. A prefix that is not a lawful path is left as the peer sent it.
+    """
+    rows = (result.model_extra or {}).get("grants")
+    if mount == ROOT or not isinstance(rows, list):
+        return result
+    rebased: list[object] = []
+    for row in rows:
+        prefix = row.get("path_prefix") if isinstance(row, dict) else None
+        local = resolve_path(prefix).path if isinstance(prefix, str) else None
+        rebased.append(row if local is None else {**row, "path_prefix": str(local.with_mount(mount))})
+    return result.model_copy(update={"grants": rebased})
 
 
 class VirtualFileSystem:
@@ -665,7 +687,7 @@ class VirtualFileSystem:
             )
         return tuple(rows)
 
-    async def locate(self, path: str, *, exists: bool = False) -> Location:
+    async def locate(self, path: str, *, exists: bool = False, authority: Authority | None = None) -> Location:
         """Where *path* lives: the binding that owns it and its storage-local path.
 
         The router's own resolution — longest prefix, the deepest binding
@@ -674,11 +696,13 @@ class VirtualFileSystem:
         asked anything; permissions and capabilities are never consulted,
         so the answer does not depend on a user. With *exists* on the
         owning storage is asked to stat the storage-local path directly
-        (the bind-site probe's route, no router gate) and the row carries
-        ``exists`` and ``kind`` — or ``note`` when the storage could not
-        answer. A non-canonical path is canonicalised; a structurally
-        invalid one raises ``ValueError`` as :class:`Path` does, and so
-        does a closed filesystem, whose table is empty.
+        (no router gate) under *authority* — the same one a ``stat``
+        would run as — so a row the caller cannot see reads as absent,
+        never as a leaked fact. The row carries ``exists`` and ``kind``,
+        or ``note`` when the storage could not answer. A non-canonical
+        path is canonicalised; a structurally invalid one raises
+        ``ValueError`` as :class:`Path` does, and so does a closed
+        filesystem, whose table is empty.
         """
         terminal = self._locate_terminal(path)
         binding = terminal.binding
@@ -689,9 +713,11 @@ class VirtualFileSystem:
             storage_type=type(binding.storage).__name__,
             storage_path=str(terminal.rel),
         )
-        return await self._probe_location(terminal, row) if exists else row
+        return await self._probe_location(terminal, row, self._admitted(authority)) if exists else row
 
-    async def locate_edge(self, source: str, target: str, *, exists: bool = False) -> EdgeLocation:
+    async def locate_edge(
+        self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
+    ) -> EdgeLocation:
         """Where an edge's two endpoints live, and whether one storage holds both.
 
         :meth:`locate` twice plus the verdict ``mkedge`` would reach: an
@@ -700,8 +726,8 @@ class VirtualFileSystem:
         boundary, or with *exists* an endpoint the storage does not hold;
         the row is an answer, not a refusal.
         """
-        src = await self.locate(source, exists=exists)
-        tgt = await self.locate(target, exists=exists)
+        src = await self.locate(source, exists=exists, authority=authority)
+        tgt = await self.locate(target, exists=exists, authority=authority)
         same = src.mount == tgt.mount
         reason = None
         if not same:
@@ -1498,6 +1524,103 @@ class VirtualFileSystem:
         return await self._route_single("run", path, None, arguments=arguments, authority=authority)
 
     # -------------------------------------------------------------------
+    # public methods — grants
+    # -------------------------------------------------------------------
+
+    async def grant(
+        self,
+        path: str,
+        principal: str,
+        level: GrantLevel,
+        *,
+        authority: Authority | None = None,
+    ) -> Result:
+        """Give *principal* — a user's ``sub`` or a ``group:<name>`` id — *level* at *path* and below.
+
+        Grants only widen: there is no deny row. The caller must hold
+        ``read_write`` at *path* for every subject it acts for, so nobody
+        grants more than it holds. A grant replaces the principal's
+        earlier row at the same path; the answer rides as ``grants=``.
+        """
+        refusal = self._gate_params("grant", path=path, principal=principal, level=level, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("grant", path, principal=principal, level=level, authority=authority)
+
+    async def revoke(self, path: str, principal: str, *, authority: Authority | None = None) -> Result:
+        """Remove *principal*'s grant at exactly *path*, under the same gate as :meth:`grant`.
+
+        A grant on an ancestor is untouched; revoke the row where it was
+        granted. A missing row answers with a warning, not a failure.
+        """
+        refusal = self._gate_params("revoke", path=path, principal=principal, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("revoke", path, principal=principal, authority=authority)
+
+    async def grants(self, path: str, *, authority: Authority | None = None) -> Result:
+        """The grants that decide access at *path*: the rows on it and on its ancestors.
+
+        A caller holding ``read_write`` at *path* sees every row; any
+        other caller sees only its own, its groups', and the everyone
+        rows. A path the caller cannot see answers ``not_found``.
+        """
+        refusal = self._gate_params("grants", path=path, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("grants", path, authority=authority)
+
+    async def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
+        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``.
+
+        ``open`` lets everyone read and write, ``shared`` lets everyone
+        read, ``private`` gives everyone nothing; grants still widen on
+        top. The deepest posture covering a path decides it. A
+        developer-plane verb: it reshapes a mount's policy.
+        """
+        refusal = self._gate_params("posture", path=path, posture=posture, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("posture", path, posture=posture, authority=authority)
+
+    async def add_member(
+        self,
+        group: str,
+        member: str,
+        *,
+        path: str = "/",
+        authority: Authority | None = None,
+    ) -> Result:
+        """Make *member* a direct member of *group* on the mount holding *path*.
+
+        Groups nest: a *member* may itself be a ``group:`` id, up to a
+        fixed depth, and a cycle is refused. Membership is mount-wide,
+        so *path* only picks the mount. The system actor only.
+        """
+        refusal = self._gate_params("add_member", group=group, member=member, path=path, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("add_member", path, group=group, member=member, authority=authority)
+
+    async def remove_member(
+        self,
+        group: str,
+        member: str,
+        *,
+        path: str = "/",
+        authority: Authority | None = None,
+    ) -> Result:
+        """Remove *member*'s direct membership of *group* on the mount holding *path*.
+
+        The system actor only; a missing membership answers with a
+        warning, not a failure.
+        """
+        refusal = self._gate_params("remove_member", group=group, member=member, path=path, authority=authority)
+        if refusal is not None:
+            return refusal
+        return await self._route_grant("remove_member", path, group=group, member=member, authority=authority)
+
+    # -------------------------------------------------------------------
     # dispatch shapes — single, fan-out, paired, batch
     # -------------------------------------------------------------------
 
@@ -1829,6 +1952,28 @@ class VirtualFileSystem:
             return self._with_skips(Result.merge_branches(results, op="tree"), skips)
         finally:
             self._exit_hop(grant.token)
+
+    async def _route_grant(self, op: Op, path: str, *, authority: Authority | None, **kwargs: Any) -> Result:
+        """Route a grant verb to the mount holding *path*, and rebase the rows it answers with.
+
+        The grant verbs address a prefix, not a row, so no mutation path
+        rule applies (the root takes a posture like any path); the
+        writing ones pass the mount's permission layers. The membership
+        verbs use *path* only to pick the mount.
+        """
+        if not self._bindings:
+            return self._closed_error(op)
+        resolved = resolve_path(path)
+        if resolved.path is None:
+            return self._invalid_path(resolved, path, op)
+        terminal = self._resolve_terminal(resolved.path)
+        err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
+        if err is not None:
+            return err
+        if op not in _MEMBERSHIP_OPS:
+            kwargs["path"] = terminal.rel
+        result = await self._dispatch_entry(terminal.binding, op, authority=authority, **kwargs)
+        return _rebase_grant_rows(result, terminal.binding.path)
 
     async def _route_fanout(
         self,
@@ -2600,9 +2745,9 @@ class VirtualFileSystem:
         assert binding is not None, "resolve on a closed filesystem"
         return ResolvedTerminal(binding=binding, rel=path.without_mount(binding.path))
 
-    async def _probe_location(self, terminal: ResolvedTerminal, row: Location) -> Location:
-        """*row* with the storage's answer about the entry — direct stat, no router gate."""
-        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel, authority=_ADMIN_AUTHORITY)
+    async def _probe_location(self, terminal: ResolvedTerminal, row: Location, authority: Authority) -> Location:
+        """*row* with the storage's answer about the entry — direct stat under *authority*, no router gate."""
+        stat = await self._call_storage(terminal.binding, "stat", path=terminal.rel, authority=authority)
         if not stat.success:
             blocker = next((f for f in stat.failures if kind_family(f.kind) is not VFSErrorKind.not_found), None)
             if blocker is None:
@@ -2761,7 +2906,7 @@ class VirtualFileSystem:
         """The exhaustive op → typed-method match beneath the funnel.
 
         The chokepoints upstream carry *op* as a variable, so this match is
-        where the op meets a typed method: sixteen boring arms ending in
+        where the op meets a typed method: one boring arm per op, ending in
         ``assert_never``, so adding a verb to ``ops.py`` fails ``ty`` until
         the funnel routes it.  A family the backend does not satisfy
         classifies ``unsupported`` — reachable only when a declared
@@ -2853,6 +2998,30 @@ class VirtualFileSystem:
                     if not isinstance(storage, SupportsRun):
                         return self._backend_unsupported(op)
                     return await storage.run(authority=authority, **kwargs)
+                case "grant":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.grant(authority=authority, **kwargs)
+                case "revoke":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.revoke(authority=authority, **kwargs)
+                case "grants":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.grants(authority=authority, **kwargs)
+                case "posture":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.posture(authority=authority, **kwargs)
+                case "add_member":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.add_member(authority=authority, **kwargs)
+                case "remove_member":
+                    if not isinstance(storage, SupportsGrants):
+                        return self._backend_unsupported(op)
+                    return await storage.remove_member(authority=authority, **kwargs)
                 case _:
                     assert_never(op)
         except TransportError as exc:

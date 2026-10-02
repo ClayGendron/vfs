@@ -6,7 +6,7 @@ No steps, no reference tables — link to Reference and How-to instead.
 
 # Identity is a value, not a session
 
-**Status.** Everything on this page is landed. The enforcement that will act on it, grants and posture, is designed and not yet built; see [Open in process, loud at the edge](open-in-process-loud-at-the-edge.md).
+**Status.** Everything on this page is landed, and so is the enforcement that acts on it: grants and posture on the database backend. See [How to share a folder with grants](../how-to/share-a-folder-with-grants.md).
 
 Every call into VFS carries one value that says who the call is for and who is making it. That value is an `Authority`. This page explains what it holds, why it holds those things and not others, and why it is a frozen value rather than a session object that remembers a decision.
 
