@@ -1,0 +1,488 @@
+{
+ "engine": "sqlite",
+ "n": 1000,
+ "ns": "bl_142c1ff4",
+ "world": {
+  "users": 1000,
+  "groups": 5,
+  "shared": 10,
+  "grant_rows": 2141,
+  "memberships": 5000,
+  "entries": 23213,
+  "files_per_home": 20,
+  "files_per_shared": 200
+ },
+ "load": {
+  "entries_s": 0.4832715829834342,
+  "grants_s": 0.030558125115931034,
+  "analyze_s": 0.011033667251467705
+ },
+ "resolve": {
+  "ordinary": {
+   "cold_ms": 10.18,
+   "warm_hit_ms": 0.37,
+   "read_arms": 2,
+   "read_holes": 1000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 0.9,
+   "pure_resolve_read_ms": 2.81,
+   "rows_read": 1043,
+   "groups": 5
+  },
+  "heavy (u000986)": {
+   "cold_ms": 10.15,
+   "warm_hit_ms": 0.37,
+   "read_arms": 2,
+   "read_holes": 1000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 0.98,
+   "pure_resolve_read_ms": 2.72,
+   "rows_read": 1045,
+   "groups": 5
+  },
+  "pair": {
+   "cold_ms": 9.86,
+   "warm_hit_ms": 0.33,
+   "read_arms": 1,
+   "read_holes": 1000,
+   "owner_arms": 2,
+   "whole": false,
+   "everyone_arms_ms": 0.9,
+   "pure_resolve_read_ms": 2.73,
+   "rows_read": 1044,
+   "groups": 10
+  },
+  "anonymous": {
+   "cold_ms": 6.09,
+   "warm_hit_ms": 0.26,
+   "read_arms": 1,
+   "read_holes": 1000,
+   "owner_arms": 0,
+   "whole": false,
+   "everyone_arms_ms": 0.92,
+   "pure_resolve_read_ms": 1.04,
+   "rows_read": 1001,
+   "groups": 0
+  },
+  "system": {
+   "cold_ms": 0.01,
+   "warm_hit_ms": 0.0,
+   "read_arms": 1,
+   "read_holes": 0,
+   "owner_arms": 0,
+   "whole": true
+  }
+ },
+ "pieces": {
+  "ordinary": {
+   "shipped_ms": 113.46,
+   "fast_ms": 1.26,
+   "fast_equals_shipped": true,
+   "points": 1000,
+   "opens": 1999,
+   "owner_pieces": 2,
+   "bind_bytes": 91925
+  },
+  "heavy (u000986)": {
+   "shipped_ms": 113.2,
+   "fast_ms": 1.25,
+   "fast_equals_shipped": true,
+   "points": 1000,
+   "opens": 1999,
+   "owner_pieces": 2,
+   "bind_bytes": 91925
+  },
+  "pair": {
+   "shipped_ms": 113.92,
+   "fast_ms": 1.31,
+   "fast_equals_shipped": true,
+   "points": 1001,
+   "opens": 2001,
+   "owner_pieces": 4,
+   "bind_bytes": 92017
+  },
+  "anonymous": {
+   "shipped_ms": 111.54,
+   "fast_ms": 1.29,
+   "fast_equals_shipped": true,
+   "points": 1001,
+   "opens": 2001,
+   "owner_pieces": 0,
+   "bind_bytes": 92017
+  }
+ },
+ "join": {
+  "ordinary": {
+   "count": {
+    "cold_ms": 6.49,
+    "warm_ms": 4.47,
+    "answer": 2234
+   },
+   "fetch": {
+    "cold_ms": 10.94,
+    "warm_ms": 9.13,
+    "rows": 2234
+   },
+   "plan": "CO-ROUTINE visible\nCOMPOUND QUERY\nLEFT-MOST SUBQUERY\nSCAN anon_1 VIRTUAL TABLE INDEX 1:\nSEARCH bl_142c1ff4 USING INDEX ix_bl_142c1ff4_path (path=?)\nUNION USING TEMP B-TREE\nSCAN anon_2 VIRTUAL TABLE INDEX 1:\nSEARCH bl_142c1ff4 USING INDEX ix_bl_142c1ff4_path (path>? AND path<?)\nUNION USING TEMP B-TREE\nSEARCH bl_142c1ff4 USING INDEX ix_bl_142c1ff4_owner_id (owner_id=?)\nSCAN anon_3 VIRTUAL TABLE INDEX 1:\nUNION USING TEMP B-TREE\nSEARCH bl_142c1ff4 USING INDEX ix_bl_142c1ff4_owner_id (owner_id=?)\nSCAN anon_4 VIRTUAL TABLE INDEX 1:\nSCAN visible\nSEARCH bl_142c1ff4 USING COVERING INDEX ix_bl_142c1ff4_entry_id (entry_id=?)"
+  },
+  "heavy (u000986)": {
+   "count": {
+    "cold_ms": 4.32,
+    "warm_ms": 3.93,
+    "answer": 2234
+   },
+   "fetch": {
+    "cold_ms": 8.8,
+    "warm_ms": 9.34,
+    "rows": 2234
+   }
+  },
+  "pair": {
+   "count": {
+    "cold_ms": 5.22,
+    "warm_ms": 3.82,
+    "answer": 2213
+   },
+   "fetch": {
+    "cold_ms": 9.81,
+    "warm_ms": 9.06,
+    "rows": 2213
+   }
+  },
+  "anonymous": {
+   "count": {
+    "cold_ms": 5.54,
+    "warm_ms": 4.24,
+    "answer": 2213
+   },
+   "fetch": {
+    "cold_ms": 9.21,
+    "warm_ms": 8.79,
+    "rows": 2213
+   }
+  }
+ },
+ "recall": {
+  "sample_rows": 1221,
+  "oracle_agrees_with_admits": true,
+  "admits_sample_s": 0.02,
+  "exact_visible": 2234,
+  "stored": 23213,
+  "join_rows": 2234,
+  "recall": 1.0,
+  "extra": 0
+ },
+ "fan": {
+  "ordinary": {
+   "clauses": 1,
+   "build_ms": 19.51,
+   "per_clause": [
+    {
+     "binds": 2003,
+     "terms": 4007,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    }
+   ],
+   "count_sum": 0
+  },
+  "pair": {
+   "clauses": 1,
+   "build_ms": 57.52,
+   "per_clause": [
+    {
+     "binds": 2006,
+     "terms": 4012,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    }
+   ],
+   "count_sum": 0
+  },
+  "anonymous": {
+   "clauses": 1,
+   "build_ms": 20.9,
+   "per_clause": [
+    {
+     "binds": 2000,
+     "terms": 4000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    }
+   ],
+   "count_sum": 0
+  }
+ },
+ "ladder": [
+  {
+   "holes": 500,
+   "binds": 1001,
+   "clauses": 1,
+   "cold_ms": 439.05,
+   "warm_ms": 421.57,
+   "answer": 12713
+  },
+  {
+   "holes": 900,
+   "binds": 1801,
+   "clauses": 1,
+   "cold_ms": 614.52,
+   "warm_ms": 583.37,
+   "answer": 4313
+  },
+  {
+   "holes": 990,
+   "binds": 1981,
+   "clauses": 1,
+   "cold_ms": 644.87,
+   "warm_ms": 641.35,
+   "answer": 2423
+  },
+  {
+   "holes": 1000,
+   "binds": 2001,
+   "clauses": 1,
+   "cold_ms": null,
+   "warm_ms": null,
+   "answer": null,
+   "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+  },
+  {
+   "holes": 1010,
+   "binds": 2021,
+   "clauses": 1,
+   "cold_ms": null,
+   "warm_ms": null,
+   "answer": null,
+   "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+  },
+  {
+   "holes": 1100,
+   "binds": 2201,
+   "clauses": 1,
+   "cold_ms": null,
+   "warm_ms": null,
+   "answer": null,
+   "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+  },
+  {
+   "holes": 2000,
+   "binds": 4001,
+   "clauses": 1,
+   "cold_ms": null,
+   "warm_ms": null,
+   "answer": null,
+   "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+  }
+ ],
+ "e2e": {
+  "ordinary": {
+   "tree /": {
+    "cold": {
+     "ms": 233.65,
+     "rows": 2233,
+     "errors": []
+    },
+    "warm": {
+     "ms": 69.01,
+     "rows": 2233,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 93.83,
+     "rows": 2000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 90.11,
+     "rows": 2000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 56.5,
+     "rows": 101,
+     "errors": []
+    },
+    "warm": {
+     "ms": 45.66,
+     "rows": 101,
+     "errors": []
+    }
+   }
+  },
+  "pair": {
+   "tree /": {
+    "cold": {
+     "ms": 241.35,
+     "rows": 2212,
+     "errors": []
+    },
+    "warm": {
+     "ms": 79.89,
+     "rows": 2212,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 77.45,
+     "rows": 2000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 61.22,
+     "rows": 2000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 47.46,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 34.74,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "anonymous": {
+   "tree /": {
+    "cold": {
+     "ms": 191.78,
+     "rows": 2212,
+     "errors": []
+    },
+    "warm": {
+     "ms": 67.39,
+     "rows": 2212,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 68.48,
+     "rows": 2000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 61.9,
+     "rows": 2000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 30.85,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 21.27,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "system": {
+   "tree /": {
+    "cold": {
+     "ms": 135.38,
+     "rows": 23212,
+     "errors": []
+    },
+    "warm": {
+     "ms": 227.41,
+     "rows": 23212,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 19.06,
+     "rows": 2000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 18.21,
+     "rows": 2000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 15.24,
+     "rows": 1100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 11.31,
+     "rows": 1100,
+     "errors": []
+    }
+   }
+  }
+ },
+ "churn": {
+  "cached_before": 20,
+  "callers": 20,
+  "misses_after_one_grant": 20,
+  "recompute_s_for_callers": 0.215,
+  "cache_capacity": 256
+ },
+ "memory": {
+  "resolution_bytes": 72491,
+  "with_read_ranges_bytes": 426845,
+  "x256_cache_mb": 109.3
+ },
+ "admits": {
+  "own home file": {
+   "us": 1.0,
+   "admitted": true
+  },
+  "shared file (root arm)": {
+   "us": 21.0,
+   "admitted": true
+  },
+  "another user's home file (hidden)": {
+   "us": 12.4,
+   "admitted": false
+  },
+  "trap file": {
+   "us": 18.9,
+   "admitted": true
+  }
+ },
+ "meet_ladder": [
+  {
+   "grants": 1000,
+   "single_ms": 1.95,
+   "pair_ms": 248.67
+  },
+  {
+   "grants": 3000,
+   "single_ms": 6.72,
+   "pair_ms": 2256.59
+  },
+  {
+   "grants": 10000,
+   "single_ms": 18.82,
+   "pair_ms": 25680.39
+  }
+ ],
+ "wall_s": 44.4
+}

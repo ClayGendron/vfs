@@ -5,6 +5,24 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **150 drafted 2026-10-02, awaiting Clay's read** — rights at
+  scale. The 2026-10-01 review of the permissioning commits (49
+  verified findings: one critical, the trash leak; thirteen major)
+  and three executed studies the next day showed 058's compile model
+  is world-sized: every caller carries every other user's private
+  home as a hole, and `tree /` goes from 0.2 s at 1,000 users to past
+  60 s at 100,000. ADR 073 (proposed): the everyone level lives on the
+  row (`entries.everyone_level`, relabelled per subtree on a posture
+  change), a caller's rights hold only its own prefixes as ADR 072
+  pieces, every range operation is a sorted merge, revisions are per
+  principal, admin verbs lock before they decide. Measured on SQLite
+  and Postgres at 100,000 users: compile 22 µs and 2 KB at every N,
+  scoped read 2.5 ms, exact recall. Four forks for Clay, each with a
+  recommendation (wait for the relabel; a Postgres fence; the trash
+  judged by its origin; the owner floor stays mount-wide). Slices A
+  (algebra), C (lock order) and F (trash) are the review's bug fixes.
+  The other three engines are untested on the design (slice D, before
+  B). Memos: `research/2026-10-02-*`.
 - **058 built 2026-09-29, awaiting Clay's review** — row-level
   grants end to end: the resolver and compiler (`storage/grants.py`,
   `storage/backends/database/rights.py`), every database verb filtered

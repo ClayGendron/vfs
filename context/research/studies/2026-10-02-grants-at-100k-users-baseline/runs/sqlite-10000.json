@@ -1,0 +1,423 @@
+{
+ "engine": "sqlite",
+ "n": 10000,
+ "ns": "bl_9b130e59",
+ "world": {
+  "users": 10000,
+  "groups": 50,
+  "shared": 100,
+  "grant_rows": 21401,
+  "memberships": 50000,
+  "entries": 230303,
+  "files_per_home": 20,
+  "files_per_shared": 200
+ },
+ "load": {
+  "entries_s": 4.76831958303228,
+  "grants_s": 0.3056695410050452,
+  "analyze_s": 0.08357545826584101
+ },
+ "resolve": {
+  "ordinary": {
+   "cold_ms": 118.03,
+   "warm_hit_ms": 0.59,
+   "read_arms": 2,
+   "read_holes": 10000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 11.89,
+   "pure_resolve_read_ms": 66.55,
+   "rows_read": 10037,
+   "groups": 5
+  },
+  "heavy (u005437)": {
+   "cold_ms": 151.37,
+   "warm_hit_ms": 1.09,
+   "read_arms": 2,
+   "read_holes": 10000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 12.28,
+   "pure_resolve_read_ms": 88.36,
+   "rows_read": 10063,
+   "groups": 5
+  },
+  "pair": {
+   "cold_ms": 77.97,
+   "warm_hit_ms": 0.51,
+   "read_arms": 1,
+   "read_holes": 10000,
+   "owner_arms": 2,
+   "whole": false,
+   "everyone_arms_ms": 13.36,
+   "pure_resolve_read_ms": 36.22,
+   "rows_read": 10085,
+   "groups": 10
+  },
+  "anonymous": {
+   "cold_ms": 68.57,
+   "warm_hit_ms": 1.73,
+   "read_arms": 1,
+   "read_holes": 10000,
+   "owner_arms": 0,
+   "whole": false,
+   "everyone_arms_ms": 12.39,
+   "pure_resolve_read_ms": 14.51,
+   "rows_read": 10001,
+   "groups": 0
+  },
+  "system": {
+   "cold_ms": 0.02,
+   "warm_hit_ms": 0.01,
+   "read_arms": 1,
+   "read_holes": 0,
+   "owner_arms": 0,
+   "whole": true
+  }
+ },
+ "pieces": {
+  "ordinary": {
+   "shipped_ms": 18355.13,
+   "fast_ms": 17.48,
+   "fast_equals_shipped": true,
+   "points": 10000,
+   "opens": 19999,
+   "owner_pieces": 2,
+   "bind_bytes": 919925
+  },
+  "heavy (u005437)": {
+   "shipped_ms": 20323.31,
+   "fast_ms": 16.76,
+   "fast_equals_shipped": true,
+   "points": 10000,
+   "opens": 19999,
+   "owner_pieces": 2,
+   "bind_bytes": 919925
+  },
+  "pair": {
+   "shipped_ms": 20839.66,
+   "fast_ms": 18.69,
+   "fast_equals_shipped": true,
+   "points": 10001,
+   "opens": 20001,
+   "owner_pieces": 98,
+   "bind_bytes": 920017
+  },
+  "anonymous": {
+   "shipped_ms": 22061.08,
+   "fast_ms": 21.83,
+   "fast_equals_shipped": true,
+   "points": 10001,
+   "opens": 20001,
+   "owner_pieces": 0,
+   "bind_bytes": 920017
+  }
+ },
+ "join": {
+  "ordinary": {
+   "count": {
+    "cold_ms": 33.62,
+    "warm_ms": 30.81,
+    "answer": 20324
+   },
+   "fetch": {
+    "cold_ms": 84.54,
+    "warm_ms": 83.3,
+    "rows": 20324
+   },
+   "plan": "CO-ROUTINE visible\nCOMPOUND QUERY\nLEFT-MOST SUBQUERY\nSCAN anon_1 VIRTUAL TABLE INDEX 1:\nSEARCH bl_9b130e59 USING INDEX ix_bl_9b130e59_path (path=?)\nUNION USING TEMP B-TREE\nSCAN anon_2 VIRTUAL TABLE INDEX 1:\nSEARCH bl_9b130e59 USING INDEX ix_bl_9b130e59_path (path>? AND path<?)\nUNION USING TEMP B-TREE\nSEARCH bl_9b130e59 USING INDEX ix_bl_9b130e59_owner_id (owner_id=?)\nSCAN anon_3 VIRTUAL TABLE INDEX 1:\nUNION USING TEMP B-TREE\nSEARCH bl_9b130e59 USING INDEX ix_bl_9b130e59_owner_id (owner_id=?)\nSCAN anon_4 VIRTUAL TABLE INDEX 1:\nSCAN visible\nSEARCH bl_9b130e59 USING COVERING INDEX ix_bl_9b130e59_entry_id (entry_id=?)"
+  },
+  "heavy (u005437)": {
+   "count": {
+    "cold_ms": 56.23,
+    "warm_ms": 31.18,
+    "answer": 20324
+   },
+   "fetch": {
+    "cold_ms": 89.36,
+    "warm_ms": 78.71,
+    "rows": 20324
+   }
+  },
+  "pair": {
+   "count": {
+    "cold_ms": 31.7,
+    "warm_ms": 31.43,
+    "answer": 20303
+   },
+   "fetch": {
+    "cold_ms": 85.03,
+    "warm_ms": 77.15,
+    "rows": 20303
+   }
+  },
+  "anonymous": {
+   "count": {
+    "cold_ms": 31.36,
+    "warm_ms": 29.36,
+    "answer": 20303
+   },
+   "fetch": {
+    "cold_ms": 79.87,
+    "warm_ms": 76.72,
+    "rows": 20303
+   }
+  }
+ },
+ "recall": {
+  "sample_rows": 1221,
+  "oracle_agrees_with_admits": true,
+  "admits_sample_s": 0.12,
+  "exact_visible": 20324,
+  "stored": 230303,
+  "join_rows": 20324,
+  "recall": 1.0,
+  "extra": 0
+ },
+ "fan": {
+  "ordinary": {
+   "clauses": 2,
+   "build_ms": 212.72,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    },
+    {
+     "binds": 3,
+     "terms": 7,
+     "cold_ms": 1.92,
+     "warm_ms": 1.1,
+     "answer": 21
+    }
+   ],
+   "count_sum": 21
+  },
+  "pair": {
+   "clauses": 2,
+   "build_ms": 394.07,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    },
+    {
+     "binds": 100,
+     "terms": 200,
+     "cold_ms": 7.49,
+     "warm_ms": 1.66,
+     "answer": 0
+    }
+   ],
+   "count_sum": 0
+  },
+  "anonymous": {
+   "clauses": 1,
+   "build_ms": 415.36,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    }
+   ],
+   "count_sum": 0
+  }
+ },
+ "e2e": {
+  "ordinary": {
+   "tree /": {
+    "cold": {
+     "ms": 21183.66,
+     "rows": 20323,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4170.42,
+     "rows": 20323,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4237.95,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4094.49,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 938.05,
+     "rows": 101,
+     "errors": []
+    },
+    "warm": {
+     "ms": 824.96,
+     "rows": 101,
+     "errors": []
+    }
+   }
+  },
+  "pair": {
+   "tree /": {
+    "cold": {
+     "ms": 21980.58,
+     "rows": 20302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4217.18,
+     "rows": 20302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4182.23,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4064.68,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 940.12,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 861.39,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "anonymous": {
+   "tree /": {
+    "cold": {
+     "ms": 21913.28,
+     "rows": 20302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4238.42,
+     "rows": 20302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4164.14,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4204.75,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 883.27,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 818.65,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "system": {
+   "tree /": {
+    "cold": {
+     "ms": 2001.27,
+     "rows": 230302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3094.18,
+     "rows": 230302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 177.4,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 147.79,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 86.44,
+     "rows": 10100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 132.57,
+     "rows": 10100,
+     "errors": []
+    }
+   }
+  }
+ },
+ "churn": {
+  "cached_before": 20,
+  "callers": 20,
+  "misses_after_one_grant": 20,
+  "recompute_s_for_callers": 2.718,
+  "cache_capacity": 256
+ },
+ "memory": {
+  "resolution_bytes": 702491,
+  "with_read_ranges_bytes": 4242845,
+  "x256_cache_mb": 1086.2
+ },
+ "admits": {
+  "own home file": {
+   "us": 1.0,
+   "admitted": true
+  },
+  "shared file (root arm)": {
+   "us": 199.8,
+   "admitted": true
+  },
+  "another user's home file (hidden)": {
+   "us": 113.7,
+   "admitted": false
+  },
+  "trap file": {
+   "us": 181.0,
+   "admitted": true
+  }
+ },
+ "wall_s": 220.2
+}

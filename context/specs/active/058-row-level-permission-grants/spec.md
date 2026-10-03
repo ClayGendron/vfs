@@ -498,6 +498,20 @@ Three questions were researched and ruled before any code:
 
 ### Outstanding
 
+- **Scale (2026-10-02): superseded in part by spec 150.** The
+  2026-10-01 review and the 2026-10-02 measurements
+  (`../../../research/2026-10-02-grants-at-100k-users-measured.md`)
+  showed the compile model is world-sized: every caller carries every
+  other user's private home as a hole, so `tree /` for an ordinary
+  caller goes from 0.2 s at 1,000 users to past 60 s at 100,000, and
+  the clause fan fails at exactly 1,000 holes. ADR 073 (proposed)
+  moves the everyone level onto the row and makes the caller's rights
+  caller-sized; spec 150 carries it. **§0 "Compilation", §3 step 4
+  and §4 of this spec are superseded by 150** once it lands; the
+  rows, ladder, floor, verbs, reads, writes, statistics and gates
+  stand. The review's bug fixes (the NUL bound, lock-before-decide in
+  the admin verbs, the trash leak) are slices A, C and F of 150.
+
 - **Partial-access latency (2026-09-30).** `glean` for a caller with
   many grants measured about 440 ms at 100 grants and 2 s at 500 on
   50,000 files (`../../../research/studies/2026-09-29-partial-glean-latency/`):

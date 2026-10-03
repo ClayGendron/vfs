@@ -1,0 +1,425 @@
+{
+ "engine": "postgres",
+ "n": 10000,
+ "ns": "bl_2d8153d2",
+ "world": {
+  "users": 10000,
+  "groups": 50,
+  "shared": 100,
+  "grant_rows": 21401,
+  "memberships": 50000,
+  "entries": 230303,
+  "files_per_home": 20,
+  "files_per_shared": 200
+ },
+ "load": {
+  "entries_s": 5.767232541926205,
+  "grants_s": 0.43577633425593376,
+  "analyze_s": 0.14364133309572935
+ },
+ "resolve": {
+  "ordinary": {
+   "cold_ms": 121.76,
+   "warm_hit_ms": 1.4,
+   "read_arms": 2,
+   "read_holes": 10000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 11.51,
+   "pure_resolve_read_ms": 66.71,
+   "rows_read": 10037,
+   "groups": 5
+  },
+  "heavy (u005437)": {
+   "cold_ms": 144.68,
+   "warm_hit_ms": 1.28,
+   "read_arms": 2,
+   "read_holes": 10000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 11.92,
+   "pure_resolve_read_ms": 87.21,
+   "rows_read": 10063,
+   "groups": 5
+  },
+  "pair": {
+   "cold_ms": 70.96,
+   "warm_hit_ms": 1.27,
+   "read_arms": 1,
+   "read_holes": 10000,
+   "owner_arms": 2,
+   "whole": false,
+   "everyone_arms_ms": 11.53,
+   "pure_resolve_read_ms": 34.2,
+   "rows_read": 10085,
+   "groups": 10
+  },
+  "anonymous": {
+   "cold_ms": 46.74,
+   "warm_hit_ms": 1.26,
+   "read_arms": 1,
+   "read_holes": 10000,
+   "owner_arms": 0,
+   "whole": false,
+   "everyone_arms_ms": 11.49,
+   "pure_resolve_read_ms": 12.38,
+   "rows_read": 10001,
+   "groups": 0
+  },
+  "system": {
+   "cold_ms": 0.01,
+   "warm_hit_ms": 0.0,
+   "read_arms": 1,
+   "read_holes": 0,
+   "owner_arms": 0,
+   "whole": true
+  }
+ },
+ "pieces": {
+  "ordinary": {
+   "shipped_ms": 17892.2,
+   "fast_ms": 17.47,
+   "fast_equals_shipped": true,
+   "points": 10000,
+   "opens": 19999,
+   "owner_pieces": 2,
+   "bind_bytes": 919925
+  },
+  "heavy (u005437)": {
+   "shipped_ms": 17347.46,
+   "fast_ms": 14.17,
+   "fast_equals_shipped": true,
+   "points": 10000,
+   "opens": 19999,
+   "owner_pieces": 2,
+   "bind_bytes": 919925
+  },
+  "pair": {
+   "shipped_ms": 17670.19,
+   "fast_ms": 14.81,
+   "fast_equals_shipped": true,
+   "points": 10001,
+   "opens": 20001,
+   "owner_pieces": 98,
+   "bind_bytes": 920017
+  },
+  "anonymous": {
+   "shipped_ms": 17519.92,
+   "fast_ms": 17.6,
+   "fast_equals_shipped": true,
+   "points": 10001,
+   "opens": 20001,
+   "owner_pieces": 0,
+   "bind_bytes": 920017
+  }
+ },
+ "join": {
+  "ordinary": {
+   "count": {
+    "cold_ms": 387.14,
+    "warm_ms": 313.48,
+    "answer": 20324
+   },
+   "fetch": {
+    "cold_ms": 407.64,
+    "warm_ms": 384.34,
+    "rows": 20324
+   },
+   "plan": "Aggregate  (cost=102436871.43..102436871.44 rows=1 width=8) (actual time=340.752..340.761 rows=1 loops=1)\n  Buffers: shared hit=62100 read=4242, temp read=1859 written=1859\n  ->  Hash Join  (cost=79701988.23..101157449.29 rows=511768858 width=0) (actual time=327.291..339.906 rows=20324 loops=1)\n        Hash Cond: (bl_2d8153d2_1.entry_id = bl_2d8153d2.entry_id)\n        Buffers: shared hit=62100 read=4242, temp read=1859 written=1859\n        ->  HashAggregate  (cost=79690973.48..94804147.56 rows=511768858 width=16) (actual time=103.455..105.494 rows=20324 loops=1)\n              Group Key: bl_2d8153d2_1.entry_id\n              Planned Partitions: 256  Batches: 1  Memory Usage: 2577kB\n              Buffers: shared hit=61214 read=4242, temp read=1308 written=1308\n              ->  Append  (cost=11840.82..17958854.98 rows=511768858 width=16) (actual time=63.577..100.369 rows=20344 loops=1)\n                    Buffers: shared hit=61214 read=4242, temp read=1308 written=1308\n                    ->  Hash Join  (cost=11840.82..13905.07 rows=10000 width=16) (actual time=63.575..71.733 rows=1 loops=1)\n                          Hash Cond: ((anon_1.value)::text = (bl_2d8153d2_1.path)::text)\n                          Buffers: shared hit=617 read=4242, temp read=1308 written=1308\n                          ->  Function Scan on unnest anon_1  (cost=0.00..100.00 rows=10000 width=32) (actual time=0.392..0.928 rows=10000 loops=1)\n                          ->  Hash  (cost=7162.03..7162.03 rows=230303 width=40) (actual time=57.920..57.921 rows=230303 loops=1)\n                                Buckets: 131072  Batches: 4  Memory Usage: 5106kB\n                                Buffers: shared hit=617 read=4242, temp written=1272\n                                ->  Seq Scan on bl_2d8153d2 bl_2d8153d2_1  (cost=0.00..7162.03 rows=230303 width=40) (actual time=0.015..24.010 rows=230303 loops=1)\n                                      Buffers: shared hit=617 read=4242\n                    ->  Nested Loop  (cost=0.42..15386087.91 rows=511758855 width=16) (actual time=1.718..26.967 rows=20323 loops=1)\n                          Buffers: shared hit=60591\n                          ->  Function Scan on anon_2  (cost=0.01..200.00 rows=19999 width=64) (actual time=1.675..3.201 rows=19999 loops=1)\n                          ->  Index Scan using ix_bl_2d8153d2_path on bl_2d8153d2 bl_2d8153d2_2  (cost=0.42..513.44 rows=25589 width=40) (actual time=0.001..0.001 rows=1 loops=19999)\n                                Index Cond: (((path)::text > (anon_2.lo)::text) AND ((path)::text < (anon_2.hi)::text))\n                                Buffers: shared hit=60591\n                    ->  Hash Join  (cost=0.32..8.76 rows=1 width=16) (actual time=0.065..0.066 rows=0 loops=1)\n                          Hash Cond: ((bl_2d8153d2_3.path)::text = (anon_3.value)::text)\n                          Buffers: shared hit=3\n                          ->  Index Scan using ix_bl_2d8153d2_owner_id on bl_2d8153d2 bl_2d8153d2_3  (cost=0.29..8.64 rows=20 width=40) (actual time=0.016..0.018 rows=20 loops=1)\n                                Index Cond: ((owner_id)::text = 'u000007'::text)\n                                Buffers: shared hit=3\n                          ->  Hash  (cost=0.01..0.01 rows=1 width=32) (actual time=0.034..0.035 rows=1 loops=1)\n                                Buckets: 1024  Batches: 1  Memory Usage: 9kB\n                                ->  Function Scan on unnest anon_3  (cost=0.00..0.01 rows=1 width=32) (actual time=0.027..0.028 rows=1 loops=1)\n                    ->  Nested Loop  (cost=0.30..8.96 rows=2 width=16) (actual time=0.017..0.031 rows=20 loops=1)\n                          Join Filter: (((bl_2d8153d2_4.path)::text > (anon_4.lo)::text) AND ((bl_2d8153d2_4.path)::text < (anon_4.hi)::text))\n                          Buffers: shared hit=3\n                          ->  Function Scan on anon_4  (cost=0.01..0.01 rows=1 width=64) (actual time=0.005..0.005 rows=1 loops=1)\n                          ->  Index Scan using ix_bl_2d8153d2_owner_id on bl_2d8153d2 bl_2d8153d2_4  (cost=0.29..8.64 rows=20 width=40) (actual time=0.003..0.013 rows=20 loops=1)\n                                Index Cond: ((owner_id)::text = 'u000007'::text)\n                                Buffers: shared hit=3\n        ->  Hash  (cost=7010.97..7010.97 rows=230303 width=16) (actual time=223.756..223.757 rows=230303 loops=1)\n              Buckets: 262144  Batches: 2  Memory Usage: 7453kB\n              Buffers: shared hit=886, temp written=505\n              ->  Index Only Scan using ix_bl_2d8153d2_entry_id on bl_2d8153d2  (cost=0.42..7010.97 rows=230303 width=16) (actual time=0.016..15.988 rows=230303 loops=1)\n                    Heap Fetches: 0\n                    Buffers: shared hit=886\nPlanning Time: 0.643 ms\nJIT:\n  Functions: 51\n  Options: Inlining true, Optimization true, Expressions true, Deforming true\n  Timing: Generation 1.219 ms (Deform 0.679 ms), Inlining 8.362 ms, Optimization 98.853 ms, Emission 72.499 ms, Total 180.934 ms\nExecution Time: 342.909 ms"
+  },
+  "heavy (u005437)": {
+   "count": {
+    "cold_ms": 341.44,
+    "warm_ms": 113.8,
+    "answer": 20324
+   },
+   "fetch": {
+    "cold_ms": 406.33,
+    "warm_ms": 154.1,
+    "rows": 20324
+   }
+  },
+  "pair": {
+   "count": {
+    "cold_ms": 484.2,
+    "warm_ms": 505.89,
+    "answer": 20303
+   },
+   "fetch": {
+    "cold_ms": 556.09,
+    "warm_ms": 544.29,
+    "rows": 20303
+   }
+  },
+  "anonymous": {
+   "count": {
+    "cold_ms": 253.06,
+    "warm_ms": 256.96,
+    "answer": 20303
+   },
+   "fetch": {
+    "cold_ms": 358.17,
+    "warm_ms": 302.2,
+    "rows": 20303
+   }
+  }
+ },
+ "recall": {
+  "sample_rows": 1221,
+  "oracle_agrees_with_admits": true,
+  "admits_sample_s": 0.11,
+  "exact_visible": 20324,
+  "stored": 230303,
+  "join_rows": 20324,
+  "recall": 1.0,
+  "extra": 0
+ },
+ "fan": {
+  "ordinary": {
+   "clauses": 2,
+   "build_ms": 239.17,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "not sent: 2,000 < holes and binds under the 32,767 driver cap (the backend wedges; see the hole ladder)"
+    },
+    {
+     "binds": 3,
+     "terms": 7,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "not sent: 2,000 < holes and binds under the 32,767 driver cap (the backend wedges; see the hole ladder)"
+    }
+   ],
+   "count_sum": 0
+  },
+  "pair": {
+   "clauses": 2,
+   "build_ms": 282.04,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "not sent: 2,000 < holes and binds under the 32,767 driver cap (the backend wedges; see the hole ladder)"
+    },
+    {
+     "binds": 100,
+     "terms": 200,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "not sent: 2,000 < holes and binds under the 32,767 driver cap (the backend wedges; see the hole ladder)"
+    }
+   ],
+   "count_sum": 0
+  },
+  "anonymous": {
+   "clauses": 1,
+   "build_ms": 191.73,
+   "per_clause": [
+    {
+     "binds": 20000,
+     "terms": 40000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "not sent: 2,000 < holes and binds under the 32,767 driver cap (the backend wedges; see the hole ladder)"
+    }
+   ],
+   "count_sum": 0
+  }
+ },
+ "e2e": {
+  "ordinary": {
+   "tree /": {
+    "cold": {
+     "ms": 21115.43,
+     "rows": 20323,
+     "errors": []
+    },
+    "warm": {
+     "ms": 5021.24,
+     "rows": 20323,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4086.5,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3967.35,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 1053.94,
+     "rows": 101,
+     "errors": []
+    },
+    "warm": {
+     "ms": 914.56,
+     "rows": 101,
+     "errors": []
+    }
+   }
+  },
+  "pair": {
+   "tree /": {
+    "cold": {
+     "ms": 21320.16,
+     "rows": 20302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4837.21,
+     "rows": 20302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4019.52,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3956.38,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 932.8,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 857.23,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "anonymous": {
+   "tree /": {
+    "cold": {
+     "ms": 20690.37,
+     "rows": 20302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 4622.96,
+     "rows": 20302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 4006.92,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3924.32,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 800.88,
+     "rows": 100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 776.45,
+     "rows": 100,
+     "errors": []
+    }
+   }
+  },
+  "system": {
+   "tree /": {
+    "cold": {
+     "ms": 1870.37,
+     "rows": 230302,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3214.29,
+     "rows": 230302,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 171.02,
+     "rows": 20000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 151.22,
+     "rows": 20000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 89.14,
+     "rows": 10100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 126.53,
+     "rows": 10100,
+     "errors": []
+    }
+   }
+  }
+ },
+ "churn": {
+  "cached_before": 20,
+  "callers": 20,
+  "misses_after_one_grant": 20,
+  "recompute_s_for_callers": 2.611,
+  "cache_capacity": 256
+ },
+ "memory": {
+  "resolution_bytes": 702491,
+  "with_read_ranges_bytes": 4242845,
+  "x256_cache_mb": 1086.2
+ },
+ "admits": {
+  "own home file": {
+   "us": 0.8,
+   "admitted": true
+  },
+  "shared file (root arm)": {
+   "us": 187.7,
+   "admitted": true
+  },
+  "another user's home file (hidden)": {
+   "us": 109.8,
+   "admitted": false
+  },
+  "trap file": {
+   "us": 169.0,
+   "admitted": true
+  }
+ },
+ "wall_s": 217.5
+}

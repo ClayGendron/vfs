@@ -1,0 +1,320 @@
+{
+ "engine": "sqlite",
+ "n": 100000,
+ "ns": "bl_e63c646c",
+ "world": {
+  "users": 100000,
+  "groups": 500,
+  "shared": 1000,
+  "grant_rows": 214001,
+  "memberships": 500000,
+  "entries": 501203,
+  "files_per_home": 2,
+  "files_per_shared": 200
+ },
+ "load": {
+  "entries_s": 10.869979707989842,
+  "grants_s": 3.7128940830007195,
+  "analyze_s": 0.2451338330283761
+ },
+ "resolve": {
+  "ordinary": {
+   "cold_ms": 1832.09,
+   "warm_hit_ms": 3.59,
+   "read_arms": 2,
+   "read_holes": 100000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 230.6,
+   "pure_resolve_read_ms": 994.18,
+   "rows_read": 100042,
+   "groups": 5
+  },
+  "heavy (u056940)": {
+   "cold_ms": 2533.49,
+   "warm_hit_ms": 0.58,
+   "read_arms": 2,
+   "read_holes": 100000,
+   "owner_arms": 1,
+   "whole": false,
+   "everyone_arms_ms": 237.08,
+   "pure_resolve_read_ms": 1735.34,
+   "rows_read": 100072,
+   "groups": 5
+  },
+  "pair": {
+   "cold_ms": 827.79,
+   "warm_hit_ms": 0.74,
+   "read_arms": 1,
+   "read_holes": 100000,
+   "owner_arms": 2,
+   "whole": false,
+   "everyone_arms_ms": 232.02,
+   "pure_resolve_read_ms": 271.02,
+   "rows_read": 100082,
+   "groups": 10
+  },
+  "anonymous": {
+   "cold_ms": 799.28,
+   "warm_hit_ms": 0.68,
+   "read_arms": 1,
+   "read_holes": 100000,
+   "owner_arms": 0,
+   "whole": false,
+   "everyone_arms_ms": 231.89,
+   "pure_resolve_read_ms": 247.37,
+   "rows_read": 100001,
+   "groups": 0
+  },
+  "system": {
+   "cold_ms": 0.01,
+   "warm_hit_ms": 0.0,
+   "read_arms": 1,
+   "read_holes": 0,
+   "owner_arms": 0,
+   "whole": true
+  }
+ },
+ "pieces": {
+  "ordinary": {
+   "shipped_ms": "timed out at 60s",
+   "fast_ms": 264.41,
+   "fast_equals_shipped": "not checked (shipped timed out)",
+   "points": 100000,
+   "opens": 199999,
+   "owner_pieces": 2,
+   "bind_bytes": 9199925
+  },
+  "heavy (u056940)": {
+   "shipped_ms": "skipped: same holes as a caller that timed out",
+   "fast_ms": 287.78,
+   "fast_equals_shipped": "not checked (shipped timed out)",
+   "points": 100000,
+   "opens": 199999,
+   "owner_pieces": 2,
+   "bind_bytes": 9199925
+  },
+  "pair": {
+   "shipped_ms": "skipped: same holes as a caller that timed out",
+   "fast_ms": 240.88,
+   "fast_equals_shipped": "not checked (shipped timed out)",
+   "points": 100001,
+   "opens": 200001,
+   "owner_pieces": 154,
+   "bind_bytes": 9200017
+  },
+  "anonymous": {
+   "shipped_ms": "skipped: same holes as a caller that timed out",
+   "fast_ms": 298.67,
+   "fast_equals_shipped": "not checked (shipped timed out)",
+   "points": 100001,
+   "opens": 200001,
+   "owner_pieces": 0,
+   "bind_bytes": 9200017
+  }
+ },
+ "join": {
+  "ordinary": {
+   "count": {
+    "cold_ms": 291.05,
+    "warm_ms": 284.25,
+    "answer": 201206
+   },
+   "fetch": {
+    "cold_ms": 749.71,
+    "warm_ms": 746.47,
+    "rows": 201206
+   },
+   "plan": "CO-ROUTINE visible\nCOMPOUND QUERY\nLEFT-MOST SUBQUERY\nSCAN anon_1 VIRTUAL TABLE INDEX 1:\nSEARCH bl_e63c646c USING INDEX ix_bl_e63c646c_path (path=?)\nUNION USING TEMP B-TREE\nSCAN anon_2 VIRTUAL TABLE INDEX 1:\nSEARCH bl_e63c646c USING INDEX ix_bl_e63c646c_path (path>? AND path<?)\nUNION USING TEMP B-TREE\nSEARCH bl_e63c646c USING INDEX ix_bl_e63c646c_owner_id (owner_id=?)\nSCAN anon_3 VIRTUAL TABLE INDEX 1:\nUNION USING TEMP B-TREE\nSEARCH bl_e63c646c USING INDEX ix_bl_e63c646c_owner_id (owner_id=?)\nSCAN anon_4 VIRTUAL TABLE INDEX 1:\nSCAN visible\nSEARCH bl_e63c646c USING COVERING INDEX ix_bl_e63c646c_entry_id (entry_id=?)"
+  },
+  "heavy (u056940)": {
+   "count": {
+    "cold_ms": 291.28,
+    "warm_ms": 292.45,
+    "answer": 201206
+   },
+   "fetch": {
+    "cold_ms": 772.96,
+    "warm_ms": 754.4,
+    "rows": 201206
+   }
+  },
+  "pair": {
+   "count": {
+    "cold_ms": 286.17,
+    "warm_ms": 282.71,
+    "answer": 201203
+   },
+   "fetch": {
+    "cold_ms": 744.86,
+    "warm_ms": 741.15,
+    "rows": 201203
+   }
+  },
+  "anonymous": {
+   "count": {
+    "cold_ms": 283.51,
+    "warm_ms": 286.01,
+    "answer": 201203
+   },
+   "fetch": {
+    "cold_ms": 746.97,
+    "warm_ms": 743.51,
+    "rows": 201203
+   }
+  }
+ },
+ "recall": {
+  "sample_rows": 1203,
+  "oracle_agrees_with_admits": true,
+  "admits_sample_s": 2.8,
+  "exact_visible": 201206,
+  "stored": 501203,
+  "join_rows": 201206,
+  "recall": 1.0,
+  "extra": 0
+ },
+ "fan": {
+  "ordinary": {
+   "clauses": 2,
+   "build_ms": 2946.8,
+   "per_clause": [
+    {
+     "binds": 200000,
+     "terms": 400000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    },
+    {
+     "binds": 3,
+     "terms": 7,
+     "cold_ms": 2.32,
+     "warm_ms": 1.09,
+     "answer": 3
+    }
+   ],
+   "count_sum": 3
+  },
+  "pair": {
+   "clauses": 2,
+   "build_ms": 3668.78,
+   "per_clause": [
+    {
+     "binds": 200000,
+     "terms": 400000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    },
+    {
+     "binds": 156,
+     "terms": 312,
+     "cold_ms": 49.2,
+     "warm_ms": 1.73,
+     "answer": 0
+    }
+   ],
+   "count_sum": 0
+  },
+  "anonymous": {
+   "clauses": 1,
+   "build_ms": 4592.71,
+   "per_clause": [
+    {
+     "binds": 200000,
+     "terms": 400000,
+     "cold_ms": null,
+     "warm_ms": null,
+     "answer": null,
+     "error": "OperationalError: (sqlite3.OperationalError) Expression tree is too large (maximum depth 1000)"
+    }
+   ],
+   "count_sum": 0
+  }
+ },
+ "e2e": {
+  "ordinary": {
+   "tree /": {
+    "timed_out_s": 60.0
+   },
+   "glob /shared/*/*.md": {
+    "timed_out_s": 60.0
+   },
+   "ls /home": {
+    "timed_out_s": 60.0
+   }
+  },
+  "system": {
+   "tree /": {
+    "cold": {
+     "ms": 5835.38,
+     "rows": 501202,
+     "errors": []
+    },
+    "warm": {
+     "ms": 8346.12,
+     "rows": 501202,
+     "errors": []
+    }
+   },
+   "glob /shared/*/*.md": {
+    "cold": {
+     "ms": 2786.43,
+     "rows": 200000,
+     "errors": []
+    },
+    "warm": {
+     "ms": 3081.97,
+     "rows": 200000,
+     "errors": []
+    }
+   },
+   "ls /home": {
+    "cold": {
+     "ms": 1400.27,
+     "rows": 100100,
+     "errors": []
+    },
+    "warm": {
+     "ms": 2586.29,
+     "rows": 100100,
+     "errors": []
+    }
+   }
+  }
+ },
+ "churn": {
+  "cached_before": 20,
+  "callers": 20,
+  "misses_after_one_grant": 20,
+  "recompute_s_for_callers": 42.57,
+  "cache_capacity": 256
+ },
+ "memory": {
+  "resolution_bytes": 7002491,
+  "with_read_ranges_bytes": 42402845,
+  "x256_cache_mb": 10855.1
+ },
+ "admits": {
+  "own home file": {
+   "us": 0.8,
+   "admitted": true
+  },
+  "shared file (root arm)": {
+   "us": 4346.5,
+   "admitted": true
+  },
+  "another user's home file (hidden)": {
+   "us": 2260.0,
+   "admitted": false
+  },
+  "trap file": {
+   "us": 4030.1,
+   "admitted": true
+  }
+ },
+ "wall_s": 460.6
+}

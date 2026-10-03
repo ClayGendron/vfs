@@ -1,0 +1,10 @@
+{
+ "engine": "postgres",
+ "n": 1000,
+ "note": "hole ladder on the N=1,000 table, one cold execution each, server-side statement_timeout 45 s; stopped after the 5,000 step timed out. Bind cap probed separately: asyncpg refuses 32,768 arguments ('the number of query arguments cannot exceed 32767'), so a one-unit clause of 16,384 holes (32,768 binds) can never be sent.",
+ "ladder": [
+  {"holes": 1000, "binds": 2001, "clauses": 1, "cold_ms": 2124.89, "warm_ms": null, "answer": 2213},
+  {"holes": 2000, "binds": 4001, "clauses": 1, "cold_ms": 2861.38, "warm_ms": null, "answer": 2213},
+  {"holes": 5000, "binds": 10001, "clauses": 1, "cold_ms": "timed out at 45s", "warm_ms": null, "answer": null}
+ ]
+}
