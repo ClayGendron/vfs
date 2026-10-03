@@ -67,6 +67,7 @@ from vfs.storage.backends.database.dialects import (
 )
 from vfs.storage.backends.database.offload import OFFLOAD_WORKERS
 from vfs.storage.backends.database.rights import posture_row
+from vfs.storage.grants import LEVEL_RANK, POSTURE_LEVELS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -481,6 +482,7 @@ class EngineHost:
                 name="/",
                 kind="directory",
                 version=1,
+                everyone_level=LEVEL_RANK[POSTURE_LEVELS[self.posture]],
                 created_at=now,
                 updated_at=now,
             )

@@ -86,12 +86,14 @@ from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
+from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.reads import (
     content_for_entries,
     effective_columns,
     kind_membership,
     pointer_with_overlay,
 )
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 from vfs.storage.backends.database.scope import (
     CHANNEL_ARM_BINDS,
     FETCH_RIDE,
@@ -708,7 +710,7 @@ async def _visible_lexicon(
     with what the caller sees. Numbering chunks in path order, so a
     folder is one id range, is the known way to make it flat.
     """
-    n_docs, total_dl = await _visible_corpus(session, tables, epoch, view)
+    n_docs, total_dl = await _visible_corpus(session, tables, profile, epoch, view)
     avg_dl = total_dl / n_docs if n_docs else 0.0
     probed = [term for term in terms if term in stats.terms]
     by_term = await _all_blocks(session, tables, epoch, probed, membership_budget)
@@ -740,11 +742,14 @@ async def _visible_lexicon(
     return _Lexicon(TermStatistics(kept, n_docs, avg_dl, stats.k1, stats.b), blocks, idfs, visible)
 
 
-async def _visible_corpus(session: AsyncSession, tables: VFSTables, epoch: Epoch, view: Visibility) -> tuple[int, int]:
+async def _visible_corpus(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, epoch: Epoch, view: Visibility
+) -> tuple[int, int]:
     """``(chunk count, total length)`` over the epoch's chunks whose entry the view admits.
 
     One aggregate over the chunks joined to the visible entries where the
-    dialect joins a range list; otherwise one aggregate when the
+    dialect joins a range list, hinted where its planner would otherwise
+    drive the join from the chunks; otherwise one aggregate when the
     predicate fits one statement, or each clause's rows read and
     deduplicated here, since clauses overlap and a per-clause count
     would double one.
@@ -755,6 +760,9 @@ async def _visible_corpus(session: AsyncSession, tables: VFSTables, epoch: Epoch
     if visible is not None:
         on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
         stmt = select(*aggregate).select_from(on_visible).where(docs.c.epoch == epoch)
+        hint = derived_hint(profile, docs, f"ix_{tables.entry.name}_lex_docs_entry")
+        if hint is not None:
+            stmt = stmt.prefix_with(hint, dialect=profile.name)
         count, total = (await session.execute(stmt)).one()
         return int(count), int(total)
     joined = docs.join(entry, entry.c.entry_id == docs.c.entry_id)
@@ -766,7 +774,7 @@ async def _visible_corpus(session: AsyncSession, tables: VFSTables, epoch: Epoch
     lengths: dict[ChunkId, int] = {}
     for clause in clauses:
         stmt = (
-            select(docs.c.chunk_id, docs.c.dl, entry.c.path, entry.c.owner_id)
+            select(docs.c.chunk_id, docs.c.dl, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
             .select_from(joined)
             .where(docs.c.epoch == epoch, clause.predicate)
         )
@@ -807,7 +815,7 @@ async def _visible_chunks(
     visible: set[ChunkId] = set()
     for chunk in chunked(list(chunk_ids), membership_budget):
         stmt = (
-            select(docs.c.chunk_id, entry.c.path, entry.c.owner_id)
+            select(docs.c.chunk_id, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
             .where(docs.c.epoch == epoch, membership(docs.c.chunk_id, chunk, profile))
         )

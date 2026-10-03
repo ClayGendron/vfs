@@ -419,3 +419,12 @@ resolve to this file.
   only; (C) no edge versions — `Edge.version` and the planned column
   dropped (amends ADR 013/018, to be recorded at the mining pass);
   (D) the guarded re-convergence phase ships as the repair arm.
+
+## Trash under a non-open posture: a granted non-owner cannot restore what it deleted
+
+- **Asked:** 2026-09-28 (spec 058 landing)
+- **Context:** A deleted row moves under `/.vfs/trash/...`. Grants name the row's live path prefix, not its trash path, so under a `shared` or `private` posture a trash row is visible only to its owner (the owner floor) or to a whole-mount caller. A caller that deleted a row through a group grant cannot see it in the trash, and so cannot restore it.
+- **Blocking:** nothing lands broken; restore works for owners, the system actor, and every caller under the default open posture.
+- **Options considered:** judge a trash row by its original path's grants; add a trash-side grant rule; leave it to the owner and the operator.
+- **Corrected 2026-10-01 (the 058 code review, finding 1):** the statement above was false as written. A trashed row was judged by its *trash* path, which the root posture covers — so under the default open root a row deleted from a private folder became readable, greppable and sweepable by everyone, anonymous included; under a shared root it became readable by everyone. The "owner-only" picture held only under a private root, and by accident.
+- **Status:** resolved 2026-10-02 (Clay; spec 150 §8, decided with ADR 073) → **a trashed row is judged by its origin.** Delete records the path the row was deleted from (`entries.origin_path`, slice F of spec 150); the row keeps the everyone level it had, a later posture change reaches it at its origin, and the caller's own grants and owner floor are matched against the origin instead of the trash address. So a granted non-owner sees and restores what it deleted, a row nobody but its owner could see stays that way in the trash on every verb (`tree /.vfs/trash`, `grep`, `glean`, `sweep`, `restore`), a grant on the trash subtree reaches no trashed row, and restore's refusals name only the path the caller sent (review finding 14). `context/specs/active/150-rights-at-scale/spec.md` §8 and its "Implementation progress — slice F" hold the rule and the record.

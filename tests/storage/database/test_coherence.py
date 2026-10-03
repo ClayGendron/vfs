@@ -214,6 +214,7 @@ class TestWriteVsTopologyCoherence:
                     name="late.txt",
                     kind="file",
                     version=5,
+                    everyone_level=2,
                     size_bytes=4,
                     lines=1,
                     created_at=now,
@@ -354,6 +355,7 @@ class TestWriteVsTopologyCoherence:
                         name="f.txt",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -548,6 +550,7 @@ class TestWriteVsTopologyCoherence:
                         name="e",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -589,6 +592,7 @@ class TestWriteVsTopologyCoherence:
                         name="copy.txt",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -663,6 +667,7 @@ class TestWriteVsTopologyCoherence:
                     name="f.txt",
                     kind="file",
                     version=1,
+                    everyone_level=2,
                     size_bytes=0,
                     lines=0,
                     created_at=now,
@@ -701,6 +706,7 @@ class TestWriteVsTopologyCoherence:
                         name="squatter",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -742,6 +748,7 @@ class TestWriteVsTopologyCoherence:
                     name="late.txt",
                     kind="file",
                     version=1,
+                    everyone_level=2,
                     size_bytes=0,
                     lines=0,
                     created_at=now,
@@ -756,7 +763,7 @@ class TestWriteVsTopologyCoherence:
                 entry_id=str(ULID()),
                 content="mine",
             )
-            rows = [_entry_values(staged, d_id, None, now)]
+            rows = [_entry_values(staged, d_id, None, now, 2)]
             errors = await _resolve_rows(session, entry, [staged], rows, overwrite=True)
             await session.rollback()
         [error] = errors
@@ -923,6 +930,7 @@ class TestWriteVsTopologyCoherence:
                         name="new.txt",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -971,6 +979,7 @@ class TestWriteVsTopologyCoherence:
                         name=long_tail.rsplit("/", 1)[-1],
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -1014,6 +1023,7 @@ class TestWriteVsTopologyCoherence:
                         name="x",
                         kind="directory",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -1071,6 +1081,7 @@ class TestWriteVsTopologyCoherence:
                         name="x",
                         kind="directory",
                         version=1,
+                        everyone_level=2,
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -1248,7 +1259,7 @@ class TestWriteVsTopologyCoherence:
             entry_id=str(ULID()),
             content="mine",
         )
-        rows = [_entry_values(staged, "P" * 26, None, datetime.now(UTC))]
+        rows = [_entry_values(staged, "P" * 26, None, datetime.now(UTC), 2)]
         ghost = SimpleNamespace(entry_id="G" * 26, kind="file", path="/elsewhere/late.txt", version=1)
 
         class _Nested:

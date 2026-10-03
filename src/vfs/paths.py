@@ -760,6 +760,25 @@ def is_meta_path(path: Path) -> bool:
     return _under_meta_root(path)
 
 
+def is_trash_path(value: str) -> bool:
+    """Whether a canonical path string is the trash root or lies beneath it.
+
+    The trash-side address space: every row delete reparents into it,
+    and every row that carries an origin lives in it.
+    """
+    return value == TRASH_ROOT or value.startswith(TRASH_ROOT + "/")
+
+
+def on_trash_chain(value: str) -> bool:
+    """Whether a trashed row can lie beneath a canonical path string.
+
+    True for the trash root, every ancestor of it (the root, ``/.vfs``)
+    and every path under it; false everywhere else, where no row carries
+    an origin.
+    """
+    return value == "/" or is_trash_path(value) or TRASH_ROOT.startswith(value + "/")
+
+
 def check_mutable_path(path: Path) -> tuple[bool, str]:
     """Check that *path* is a mutable target, returning ``(ok, reason)``.
 

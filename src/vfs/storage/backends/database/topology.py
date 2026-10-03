@@ -31,7 +31,11 @@ rewritten, original site recorded, name rewritten to
 ``<ULID>-<original name>`` — unique and time-sorted by its fixed
 prefix, self-describing by its tail-truncated suffix — and the row's
 observation reports the trash path, covered targets deriving theirs
-from the covering root's. What delete cannot trash it refuses: a
+from the covering root's. Every row of the trashed subtree records the
+path it held as ``origin_path``, in the statement that rewrites its
+path: that is the path its rights are judged by while it sits in the
+trash (a row deleted from inside the trash keeps the origin it already
+had), and every transfer out clears it. What delete cannot trash it refuses: a
 target whose subtree holds the active bucket chain — which trashing
 would reparent into its own cascade — classifies ``invalid`` and
 names sweep as the reclamation verb. The trash rewrite honors the
@@ -42,12 +46,15 @@ over-budget path is never stored.
 Restore is the move machinery with a computed destination. A
 trash-side address names its exact row; any other address is an
 original site, matched on the indexed restore columns with the newest
-``deleted_at`` winning. The refusal ladder runs live per target:
-metadata gate (``invalid`` on a row without restore columns), original
-parent resolved by identity (``not_found`` fail-and-keep when it died,
-``invalid`` when it sits in trash itself), then the move occupant
-ladder and byte budget. Execution is the shared move executor, so a
-restore and a move out of trash cannot drift apart.
+``deleted_at`` winning. The lookup (:class:`RestoreLookup`) is separate
+from the judgement: the caller's permit sees the trash row and the
+original parent before any refusal is worded, so a caller who may not
+see them is answered as if the target were absent. The refusal ladder
+runs live per target: metadata gate (``invalid`` on a row without
+restore columns), original parent resolved by identity (``not_found``
+fail-and-keep when it died, ``invalid`` when it sits in trash itself),
+then the move occupant ladder and byte budget. Execution is the shared
+move executor, so a restore and a move out of trash cannot drift apart.
 
 Sweep is the only destroyer, and the address picks its arm. At the
 trash root it reclaims expired hour-buckets: a child of the trash
@@ -89,7 +96,16 @@ from ulid import ULID
 
 from vfs.authority import owner_for
 from vfs.models import Observation
-from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH, METADATA_ROOT, ROOT, TRASH_ROOT, Path, byte_length
+from vfs.paths import (
+    MAX_PATH_LENGTH,
+    MAX_SEGMENT_LENGTH,
+    METADATA_ROOT,
+    ROOT,
+    TRASH_ROOT,
+    Path,
+    byte_length,
+    is_trash_path,
+)
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
@@ -102,12 +118,13 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, bulk_insert, chunked, rows_per_statement
 from vfs.storage.backends.database.edges import delete_authored_edges, fs_row, insert_fs_rows, repoint_fs_row
+from vfs.storage.backends.database.labels import label_of, labels_for, posture_beneath
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
     from typing import Any
 
     from sqlalchemy import Column, Delete, Table
@@ -118,10 +135,20 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.paths import ObjectKind
     from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.grants import GrantLevel
     from vfs.storage.protocol import ResolvedPair
 
 # The pre-batch committed snapshot: classification and observation state.
-_SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = ("entry_id", "parent_id", "path", "name", "kind", "version", "size_bytes")
+_SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = (
+    "entry_id",
+    "parent_id",
+    "path",
+    "name",
+    "kind",
+    "version",
+    "size_bytes",
+    "origin_path",
+)
 
 # A transfer subtree adds the material columns a copy reproduces.
 _SUBTREE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "content_hash", "mime_type", "ext", "lines")
@@ -133,10 +160,35 @@ _RESTORE_COLUMNS: Final[tuple[str, ...]] = (
     "original_name",
     "deleted_at",
     "owner_id",
+    "everyone_level",
+    "origin_path",
 )
 
 # The hour-bucket name format delete mints and sweep parses back.
 _BUCKET_FORMAT: Final = "%Y-%m-%d-%H"
+
+
+class RestoreLookup(NamedTuple):
+    """What a restore target names, before any judgement: its trash row and the destination's parent.
+
+    Either may be ``None`` — no trash row at the address, or the
+    original parent gone — and *miss* is the descent ladder's refusal
+    when the address itself resolves to nothing. The judgement
+    (:func:`_restore_site`) classifies these; a caller's permit sees
+    them first, so what it refuses never depends on the ladder's wording.
+    """
+
+    row: RowMapping | None
+    parent: RowMapping | None
+    miss: ResultError | None
+
+
+class RestoreSource(NamedTuple):
+    """A resolved restore target: the trash row and its destination site."""
+
+    row: RowMapping
+    dest_parent_id: str
+    dest: Path
 
 
 class _PendingTransfer(NamedTuple):
@@ -199,7 +251,9 @@ async def delete_rows(
     await seam("delete:post-snapshot")
     kinds = {path: row["kind"] for path, row in snapshot.items()}
     now = datetime.now(UTC)
-    trash = _TrashChain(tables, root_id=snapshot["/"]["entry_id"], authority=authority, now=now)
+    trash = _TrashChain(
+        tables, profile, membership_budget, root_id=snapshot["/"]["entry_id"], authority=authority, now=now
+    )
     unique = set(targets)
     seen: set[Path] = set()
     rows: list[Observation] = []
@@ -301,7 +355,8 @@ async def restore_rows(
     authority: Authority | None,
     lock_key: int,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
-    permit: Callable[[AsyncSession, RowMapping, Path], Awaitable[ResultError | None]] | None = None,
+    permit: Callable[[AsyncSession, Path, RestoreLookup, RestoreSource | ResultError], Awaitable[ResultError | None]]
+    | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of restores, target by target.
 
@@ -316,8 +371,10 @@ async def restore_rows(
     every check passes. *authority* is accepted for signature parity; a restore
     changes no ownership. *gate* runs once, right after the serialization
     point and before any trash row is looked up, so its refusal never
-    depends on what the trash holds; *permit* then judges each resolved
-    trash row and its destination before anything else is read about it.
+    depends on what the trash holds; *permit* then sees each target's
+    lookup and the ladder's verdict, and its refusal wins — so a caller
+    who may not see the trash row is answered before the ladder's
+    wording could tell it anything.
     """
     del authority
     entry = tables.entry
@@ -328,14 +385,15 @@ async def restore_rows(
     pending: list[_PendingTransfer] = []
     errors: list[ResultError] = []
     for target in targets:
-        resolved = await _resolve_restore(session, entry, target, profile, membership_budget)
+        lookup = await _lookup_restore(session, entry, target, profile, membership_budget)
+        resolved = _restore_site(target, lookup)
+        if permit is not None and (refused := await permit(session, target, lookup, resolved)) is not None:
+            errors.append(refused)
+            continue
         if isinstance(resolved, ResultError):
             errors.append(resolved)
             continue
         row, dest_parent_id, dest = resolved
-        if permit is not None and (refused := await permit(session, row, dest)) is not None:
-            errors.append(refused)
-            continue
         if await _point_row(session, entry, str(dest)) is not None:
             errors.append(already_exists(dest, target=target))
             continue
@@ -348,8 +406,9 @@ async def restore_rows(
         # The claim window: ladder passed, address not yet taken — a
         # rival write landing here loses honestly at the claim.
         await seam("restore:post-resolve")
+        star = await posture_beneath(session, tables, profile, membership_budget, str(dest))
         error = await _execute_move(
-            session, tables, profile, membership_budget, row, dest, dest_parent_id, now, op="restore"
+            session, tables, profile, membership_budget, row, dest, dest_parent_id, star, now, op="restore"
         )
         if error is not None:
             errors.append(error)
@@ -522,9 +581,10 @@ async def transfer_rows(
         # The reverse-ordering window: subtree collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
         await seam("transfer:post-collect")
+        star = await posture_beneath(session, tables, profile, membership_budget, str(dest))
         if op == "move":
             error = await _execute_move(
-                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, now, op=op
+                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, star, now, op=op
             )
             if error is not None:
                 errors.append(error)
@@ -540,6 +600,7 @@ async def transfer_rows(
                 dest=dest,
                 dest_parent_id=dest_parent_id,
                 new_paths=new_paths,
+                star=star,
                 authority=authority,
                 now=now,
             )
@@ -679,7 +740,19 @@ class _TrashChain:
     is an ordinary writable subtree; a user file may squat there).
     """
 
-    def __init__(self, tables: VFSTables, *, root_id: str, authority: Authority | None, now: datetime) -> None:
+    def __init__(
+        self,
+        tables: VFSTables,
+        profile: DialectProfile,
+        membership_budget: int,
+        *,
+        root_id: str,
+        authority: Authority | None,
+        now: datetime,
+    ) -> None:
+        self._tables = tables
+        self._profile = profile
+        self._membership_budget = membership_budget
         self._entry = tables.entry
         self._segments = tables.segments
         self._edges = tables.edges
@@ -717,6 +790,7 @@ class _TrashChain:
     async def _mint(self, session: AsyncSession, link: str, parent_id: str) -> Row[Any]:
         probe = select(self._entry.c.entry_id, self._entry.c.kind).where(self._entry.c.path == link)
         entry_id = str(ULID())
+        labels = await labels_for(session, self._tables, self._profile, self._membership_budget, [link])
         try:
             async with session.begin_nested():
                 await session.execute(
@@ -728,6 +802,7 @@ class _TrashChain:
                         kind="directory",
                         version=1,
                         owner_id=owner_for(self._authority),
+                        everyone_level=labels[link],
                         created_at=self._now,
                         updated_at=self._now,
                     )
@@ -806,58 +881,64 @@ def _skipped(path: Path) -> ResultError:
     return ResultError(kind=VFSErrorKind.wrong_kind, message=message, path=path, severity=Severity.warning)
 
 
-class _RestoreSource(NamedTuple):
-    """A resolved restore target: the trash row and its destination site."""
-
-    row: RowMapping
-    dest_parent_id: str
-    dest: Path
-
-
-async def _resolve_restore(
+async def _lookup_restore(
     session: AsyncSession, entry: Table, target: Path, profile: DialectProfile, membership_budget: int
-) -> _RestoreSource | ResultError:
-    """Resolve *target* to its trash row and destination, or a refusal.
+) -> RestoreLookup:
+    """Find what *target* names: its trash row and the parent of its destination.
 
-    A trash-side address names its exact row and derives the destination
-    from the restore columns — following the original parent's identity
-    to wherever it lives now. Any other address is an original site: its
-    parent resolves live by path through the shared descent gate, and
-    candidate rows match on the restore columns, newest ``deleted_at``
-    first, ties broken by entry id (ULIDs are time-ordered).
+    A trash-side address names its exact row, and the original parent
+    is followed by identity to wherever it lives now. Any other address
+    is an original site: its parent resolves live by path through the
+    shared descent gate, and candidate rows match on the restore
+    columns, newest ``deleted_at`` first, ties broken by entry id (ULIDs
+    are time-ordered).
     """
-    if target == TRASH_ROOT or target.startswith(TRASH_ROOT + "/"):
+    if is_trash_path(target):
         row = await _point_restore_row(session, entry, str(target))
         if row is None:
-            return (await classify_misses(session, entry, [target], profile, membership_budget))[0]
-        if row["original_parent_id"] is None or row["original_name"] is None:
-            return classified(VFSErrorKind.invalid, f"No restore metadata: {target}", target)
-        parent = await _row_by_id(session, entry, row["original_parent_id"])
-        if parent is None:
-            message = f"Cannot restore {target}: original parent no longer exists"
-            return classified(VFSErrorKind.not_found, message, target)
-        if parent["kind"] != "directory":
-            return classified(
-                VFSErrorKind.wrong_kind, f"Not a directory: {parent['path']}", Path(parent["path"]), target=target
-            )
-        # Trash status, not address: a live parent under the trash root
-        # (the hour bucket, a squatter) is an ordinary restore site.
-        if parent["deleted_at"] is not None:
-            message = f"Cannot restore {target}: original parent is in the trash — restore {parent['path']} first"
-            return classified(VFSErrorKind.invalid, message, target)
-        prefix = "" if parent["path"] == "/" else parent["path"]
-        dest = f"{prefix}/{row['original_name']}"
-        if byte_length(dest) > MAX_PATH_LENGTH:
-            message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
-            return classified(VFSErrorKind.unaddressable, message, target)
-        return _RestoreSource(row, parent["entry_id"], Path(dest))
+            misses = await classify_misses(session, entry, [target], profile, membership_budget)
+            return RestoreLookup(None, None, misses[0])
+        if row["original_parent_id"] is None:
+            return RestoreLookup(row, None, None)
+        return RestoreLookup(row, await _row_by_id(session, entry, row["original_parent_id"]), None)
     parent_id = await _dest_parent_id(session, entry, target, profile, membership_budget)
     if isinstance(parent_id, ResultError):
-        return parent_id
+        return RestoreLookup(None, None, parent_id)
     row = await _newest_candidate(session, entry, parent_id, target.name)
     if row is None:
-        return classified(VFSErrorKind.not_found, f"No trashed entry for: {target}", target)
-    return _RestoreSource(row, parent_id, target)
+        return RestoreLookup(None, None, classified(VFSErrorKind.not_found, f"No trashed entry for: {target}", target))
+    return RestoreLookup(row, await _row_by_id(session, entry, parent_id), None)
+
+
+def _restore_site(target: Path, lookup: RestoreLookup) -> RestoreSource | ResultError:
+    """Judge a lookup: the trash row and its destination, or the ladder's refusal."""
+    if lookup.miss is not None:
+        return lookup.miss
+    row, parent = lookup.row, lookup.parent
+    assert row is not None
+    if not is_trash_path(target):
+        assert parent is not None
+        return RestoreSource(row, parent["entry_id"], target)
+    if row["original_parent_id"] is None or row["original_name"] is None:
+        return classified(VFSErrorKind.invalid, f"No restore metadata: {target}", target)
+    if parent is None:
+        message = f"Cannot restore {target}: original parent no longer exists"
+        return classified(VFSErrorKind.not_found, message, target)
+    if parent["kind"] != "directory":
+        return classified(
+            VFSErrorKind.wrong_kind, f"Not a directory: {parent['path']}", Path(parent["path"]), target=target
+        )
+    # Trash status, not address: a live parent under the trash root
+    # (the hour bucket, a squatter) is an ordinary restore site.
+    if parent["deleted_at"] is not None:
+        message = f"Cannot restore {target}: original parent is in the trash — restore {parent['path']} first"
+        return classified(VFSErrorKind.invalid, message, target)
+    prefix = "" if parent["path"] == "/" else parent["path"]
+    dest = f"{prefix}/{row['original_name']}"
+    if byte_length(dest) > MAX_PATH_LENGTH:
+        message = f"Cannot restore {target}: Path too long (max {MAX_PATH_LENGTH} bytes)"
+        return classified(VFSErrorKind.unaddressable, message, target)
+    return RestoreSource(row, parent["entry_id"], Path(dest))
 
 
 async def _point_restore_row(session: AsyncSession, entry: Table, path: str) -> RowMapping | None:
@@ -934,6 +1015,11 @@ async def _reparent_to_trash(
     :class:`StaleSnapshot`; the verb redrives whole and re-collects,
     which is correctness by construction.
 
+    The origin is the path the row held, kept from an earlier delete when
+    the row was already in the trash — the path its rights are judged by.
+    It is bound from the snapshot, never computed from ``path`` in the
+    statement: the mysql family applies ``SET`` left to right and would
+    read the rewritten path.
     Stamping ``deleted_at`` also demotes ``encoded``: the next index
     build excludes this row, so leaving the flag up would make the row
     invisible to both grep tiers wherever it resurfaces. Demoted, it is
@@ -949,6 +1035,7 @@ async def _reparent_to_trash(
             path=trash_path,
             original_parent_id=row["parent_id"],
             original_name=row["name"],
+            origin_path=row["origin_path"] or row["path"],
             deleted_at=now,
             encoded=False,
             version=entry.c.version + 1,
@@ -961,26 +1048,50 @@ async def _reparent_to_trash(
 async def _descendant_rewrites(
     session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
 ) -> list[dict[str, str]]:
-    """Each descendant's id, old path, and recomputed path cache under the new prefix.
+    """Each descendant's id, old path, origin, and recomputed path cache under the new prefix.
 
     Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
-    the whole set on the byte budget before anything is applied.
+    the whole set on the byte budget before anything is applied. The
+    origin a trash move will record is the origin the row already holds,
+    else its old path.
     """
     like = descendant_filter(entry, old_prefix, profile)
-    found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
-    return [{"b_id": r.entry_id, "b_old": r.path, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
+    found = await session.execute(select(entry.c.entry_id, entry.c.path, entry.c.origin_path).where(like))
+    return [
+        {
+            "b_id": r.entry_id,
+            "b_old": r.path,
+            "b_origin": r.origin_path or r.path,
+            "b_path": new_prefix + r.path[len(old_prefix) :],
+        }
+        for r in found
+    ]
 
 
-async def _apply_rewrites(session: AsyncSession, entry: Table, rows: list[dict[str, str]]) -> None:
+async def _apply_rewrites(
+    session: AsyncSession, entry: Table, rows: list[dict[str, str]], star: Mapping[str, GrantLevel] | None
+) -> None:
     """Executemany path-cache rewrite; bumps no versions and takes no guard.
 
     Nothing observable on a descendant changed, and one directory move
-    must not flood the dirty overlay.
+    must not flood the dirty overlay. With *star* — the destination's
+    posture — each row's everyone level is rewritten in the same
+    statement as its path and its origin cleared; a trash move passes
+    none, keeps the label, and records each row's origin instead.
     """
     if not rows:
         return
     stmt = update(entry).where(entry.c.entry_id == bindparam("b_id")).values(path=bindparam("b_path"))
-    await session.execute(stmt, [{"b_id": row["b_id"], "b_path": row["b_path"]} for row in rows])
+    params: list[dict[str, object]] = [{"b_id": row["b_id"], "b_path": row["b_path"]} for row in rows]
+    if star is None:
+        stmt = stmt.values(origin_path=bindparam("b_origin"))
+        for row, values in zip(rows, params, strict=True):
+            values["b_origin"] = row["b_origin"]
+    else:
+        stmt = stmt.values(everyone_level=bindparam("b_level"), origin_path=None)
+        for row, values in zip(rows, params, strict=True):
+            values["b_level"] = label_of(star, row["b_path"])
+    await session.execute(stmt, params)
 
 
 async def _rewrite_descendants(
@@ -990,6 +1101,7 @@ async def _rewrite_descendants(
     membership_budget: int,
     old_prefix: str,
     new_prefix: str,
+    star: Mapping[str, GrantLevel] | None = None,
 ) -> list[str]:
     """Recompute descendant path caches under the moved prefix, collected live.
 
@@ -998,14 +1110,15 @@ async def _rewrite_descendants(
     byte budget raises :class:`StaleSnapshot` instead of storing it —
     the redriven ladder then refuses the whole target honestly. The
     segment postings ride the same rewrite list, so they mirror the
-    rewritten path caches inside this same transaction. Returns the
+    rewritten path caches inside this same transaction; the labels ride
+    it too when *star* names the destination's posture. Returns the
     rewritten descendants' entry ids — delete's edge cascade reuses the
     same live collection.
     """
     rewrites = await _descendant_rewrites(session, tables.entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
         raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
-    await _apply_rewrites(session, tables.entry, rewrites)
+    await _apply_rewrites(session, tables.entry, rewrites, star)
     moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
     await move_postings(session, tables.segments, profile, membership_budget, moves)
     return [row["b_id"] for row in rewrites]
@@ -1092,6 +1205,7 @@ async def _execute_move(
     src_row: RowMapping,
     dest: Path,
     dest_parent_id: str,
+    star: Mapping[str, GrantLevel],
     now: datetime,
     *,
     op: str,
@@ -1101,11 +1215,13 @@ async def _execute_move(
     The destination was probed empty by the ladder; nothing is ever
     unlinked here — no transfer destroys. The root claim is guarded on
     the version read this pair (a rival write bumping the source
-    mid-window flips it), and clears the restore columns
+    mid-window flips it), and clears the restore columns and the origin
     unconditionally: a move out of trash is the restore gesture, and a
-    live row must not carry trash metadata. A unique violation on the
-    claim — a rival write took the destination address after this
-    pair's occupant probe — redrives: the fresh ladder returns the
+    live row must not carry trash metadata. Every moved row takes the
+    everyone level its new path has under *star*, the destination's
+    posture, in the statement that rewrites its path. A unique violation
+    on the claim — a rival write took the destination address after
+    this pair's occupant probe — redrives: the fresh ladder returns the
     honest per-pair refusal, never a classification off mid-race state.
     """
     entry = tables.entry
@@ -1117,10 +1233,12 @@ async def _execute_move(
             name=dest.name,
             path=str(dest),
             ext=dest.ext,
+            everyone_level=label_of(star, str(dest)),
             version=entry.c.version + 1,
             updated_at=now,
             original_parent_id=None,
             original_name=None,
+            origin_path=None,
             deleted_at=None,
         )
     )
@@ -1138,7 +1256,7 @@ async def _execute_move(
     await repoint_fs_row(session, tables.edges, src_row["entry_id"], dest_parent_id)
     root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
     await move_postings(session, tables.segments, profile, membership_budget, root_move)
-    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest))
+    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest), star)
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.
@@ -1156,13 +1274,15 @@ async def _execute_copy(
     dest: Path,
     dest_parent_id: str,
     new_paths: dict[str, str],
+    star: Mapping[str, GrantLevel],
     authority: Authority | None,
     now: datetime,
 ) -> None:
     """Mint the copied tree under a probed-empty destination.
 
     Every row is fresh: new ULIDs at version 1, ownership follows the
-    writer, and neither ``external_id`` nor any edge row is copied. A
+    writer, the everyone level is the destination's (*star*), and
+    neither ``external_id`` nor any edge row is copied. A
     rival child committed under the destination mid-window merges
     rather than refusing: the outcome equals the legal serial history
     copy-then-write, and a copy destroys nothing. Metadata and bodies
@@ -1190,6 +1310,7 @@ async def _execute_copy(
             "lines": row["lines"],
             "size_bytes": row["size_bytes"],
             "owner_id": owner_for(authority),
+            "everyone_level": label_of(star, new_paths[row["entry_id"]]),
             "created_at": now,
             "updated_at": now,
         }

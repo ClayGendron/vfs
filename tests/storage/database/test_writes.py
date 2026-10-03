@@ -121,9 +121,10 @@ class TestWriteMechanics:
 
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
-        # The round-trip budget is a contract: fetch, insert, fs mirror
-        # insert, content delete + insert, parent bump.
-        assert len(mutations()) == 6, mutations()
+        # The round-trip budget is a contract: fetch, the posture rows
+        # read for the label, insert, fs mirror insert, content delete +
+        # insert, parent bump.
+        assert len(mutations()) == 7, mutations()
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
@@ -380,11 +381,12 @@ class TestArbitration:
         assert written.success is True, written.errors[:3]
         created = [o for o in written.observations if str(o.path).endswith(".txt")]
         assert len(created) == 50
-        # "Nothing read back" is a pin: one plan-fetch SELECT, three
-        # depth-layer inserts, the segment-posting and fs-mirror inserts
-        # riding the creates, content delete + insert, parent bump.
+        # "Nothing read back" is a pin: one plan-fetch SELECT, the posture
+        # rows SELECT that labels the creates, three depth-layer inserts, the
+        # segment-posting and fs-mirror inserts riding the creates, content
+        # delete + insert, parent bump.
         shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
-        expected = ["SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"]
+        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"]
         assert shapes == expected, statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
@@ -417,7 +419,7 @@ class TestArbitration:
                 )
                 for i in range(12)
             ]
-            rows = [_entry_values(s, root_key, None, now) for s in layer]
+            rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
             statements.clear()
             errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=True)
         assert errors == []
@@ -452,7 +454,7 @@ class TestArbitration:
                 )
                 for i in range(12)
             ]
-            rows = [_entry_values(s, root_key, None, now) for s in layer]
+            rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
             errors = await _catch_retry_layer(session, entry, layer, rows, 4, overwrite=False)
         # Rivals sit in chunks 1 and 3: both classify — errors accumulate
         # across conflicted chunks, the last chunk never wins alone.
@@ -487,7 +489,7 @@ class TestArbitration:
             # update that adopts the rival row's identity.
             clobber = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [clobber], [_entry_values(clobber, root_key, None, now)], overwrite=True
+                session, entry, [clobber], [_entry_values(clobber, root_key, None, now, 2)], overwrite=True
             )
             assert errors == []
             assert clobber.persistence == "absorb" and clobber.entry_id == rival_key
@@ -495,14 +497,14 @@ class TestArbitration:
             # overwrite=False over a rival file: a definite exists outcome.
             refused = staged_for("/f.txt", "file")
             errors = await _resolve_rows(
-                session, entry, [refused], [_entry_values(refused, root_key, None, now)], overwrite=False
+                session, entry, [refused], [_entry_values(refused, root_key, None, now, 2)], overwrite=False
             )
             assert [e.kind for e in errors] == [VFSErrorKind.exists]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
             errors = await _resolve_rows(
-                session, entry, [blocked], [_entry_values(blocked, root_key, None, now)], overwrite=True
+                session, entry, [blocked], [_entry_values(blocked, root_key, None, now, 2)], overwrite=True
             )
             assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
 
@@ -511,7 +513,7 @@ class TestArbitration:
             dir_key = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/dir"))).scalar_one()
             dir_adopt = staged_for("/dir", "directory")
             errors = await _resolve_rows(
-                session, entry, [dir_adopt], [_entry_values(dir_adopt, root_key, None, now)], overwrite=True
+                session, entry, [dir_adopt], [_entry_values(dir_adopt, root_key, None, now, 2)], overwrite=True
             )
             assert errors == []
             assert dir_adopt.persistence == "adopt" and dir_adopt.entry_id == dir_key
@@ -519,7 +521,7 @@ class TestArbitration:
             # a directory create losing to a file occupant: exists.
             dir_loss = staged_for("/f.txt", "directory")
             errors = await _resolve_rows(
-                session, entry, [dir_loss], [_entry_values(dir_loss, root_key, None, now)], overwrite=False
+                session, entry, [dir_loss], [_entry_values(dir_loss, root_key, None, now, 2)], overwrite=False
             )
             assert [e.kind for e in errors] == [VFSErrorKind.exists]
         await storage.close()
@@ -548,7 +550,7 @@ class TestArbitration:
                     session,
                     entry,
                     [phantom],
-                    [_entry_values(phantom, dir_key, None, datetime.now(UTC))],
+                    [_entry_values(phantom, dir_key, None, datetime.now(UTC), 2)],
                     overwrite=True,
                 )
         assert phantom.persistence == "insert" and phantom.entry_id == minted  # no conversion happened
@@ -697,7 +699,7 @@ class TestArbitration:
                 )
 
             async def run(layer: list[StagedEntry], *, overwrite: bool) -> list[ResultError]:
-                rows = [_entry_values(s, root_key, None, now) for s in layer]
+                rows = [_entry_values(s, root_key, None, now, 2) for s in layer]
                 return await _upsert_layer(session, entry, profile, layer, rows, 50, overwrite=overwrite)
 
             # overwrite=True over a rival file: the clobber lands on the

@@ -205,6 +205,7 @@ class TestFirstTouch:
                     name="/",
                     kind="directory",
                     version=0,
+                    everyone_level=2,
                     created_at=now,
                     updated_at=now,
                 )

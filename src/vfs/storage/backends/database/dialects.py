@@ -69,7 +69,32 @@ class StaleSnapshot(Exception):  # noqa: N818 — a control-flow signal, not an 
 BulkInsertMode = Literal["driver", "copy", "core"]
 MembershipForm = Literal["in_list", "values"]
 VectorDistance = Literal["none", "exact", "ann"]
-RangeSource = Literal["json_each", "unnest", "openjson", "json_table"]
+RangeSource = Literal["json_each", "unnest", "openjson", "json_table", "json_table_clob"]
+
+
+class RangeHints(NamedTuple):
+    """Optimizer hints the range join's statements carry, as ``str.format`` templates; empty where none is needed.
+
+    ``everyone`` prefixes the everyone branch (``{entry}`` the table,
+    ``{index}`` the ``(everyone_level, path)`` index); ``ranges`` prefixes
+    each range branch (``{source}`` the unpacked ranges' alias,
+    ``{count}`` its row count); ``derived`` prefixes a statement that
+    joins the visible set as a derived table (``{visible}`` its alias,
+    ``{table}`` the chunk-side table, ``{index}`` its entry index);
+    ``relabel`` prefixes the literal-``OR`` relabel ``UPDATE``.
+    """
+
+    everyone: str = ""
+    ranges: str = ""
+    derived: str = ""
+    relabel: str = ""
+
+
+NO_RANGE_HINTS: Final = RangeHints()
+
+RELABEL_ROWS: Final = 50_000
+"""Entry rows per relabel chunk, the default every profile declares: the
+measured safe statement size on every engine (see ``relabel_rows``)."""
 
 
 @dataclass(frozen=True)
@@ -155,10 +180,44 @@ class DialectProfile:
     list of path ranges into rows, so a partial caller's rights join the
     ``path`` index with statement text that never changes with its
     grants: ``json_each`` (SQLite), ``unnest`` of arrays (Postgres),
-    ``OPENJSON`` (SQL Server), ``JSON_TABLE`` (MariaDB). SQLAlchemy takes
-    no position on it. ``None`` keeps the literal OR of prefix arms —
-    Oracle, whose ``JSON_TABLE`` join measured no faster, and the
+    ``OPENJSON`` (SQL Server), ``JSON_TABLE`` (MariaDB, the bound list
+    cast to bytes), ``json_table_clob`` (Oracle: ``JSON_TABLE`` over a
+    CLOB bind, so any number of ranges travels). SQLAlchemy takes no
+    position on it. ``None`` keeps the literal OR of pieces — the
     generic floor.
+
+    ``range_join`` declares the join keyword between the unpacked
+    ranges and the entry table in a range branch — SQLAlchemy models
+    only ``JOIN`` and its outer forms. Measured on five engines with
+    the everyone level on the row: SQLite's planner otherwise seeks
+    ``everyone_level < :r`` on the composite index and scans the ranges
+    per row (90 ms against 1 ms at 1,000 users), so it takes ``CROSS
+    JOIN`` with the ranges driving; MariaDB otherwise scans the
+    composite with a block nested loop over the ranges (745 ms against
+    50 at 10,000), so it takes ``STRAIGHT_JOIN`` with the ranges first
+    and ``FORCE INDEX`` on the path index (``range_entry_hint``); SQL
+    Server rewrites the plain join into a semi-join driven by a scan
+    of the entry table (3.2 s against 64 ms), so it takes ``INNER LOOP
+    JOIN`` with the ranges outer; Postgres and Oracle plan the plain
+    ``JOIN`` correctly. ``range_hints`` carries Oracle's optimizer
+    hints, the only dialect whose spelling takes a number from the
+    caller: without ``CARDINALITY`` on the unpacked ranges it estimates
+    them at 8,168 rows and hash-joins a full scan; without the index
+    hint on the everyone branch it full-scans; without the derived
+    hints the chunk index drives and the visible set is re-evaluated
+    per chunk row. ``range_settings`` are statements issued in the
+    transaction before a partial caller's read: Postgres turns JIT off
+    for it, because the range branch is misestimated by orders of
+    magnitude and JIT compilation then costs a hundred milliseconds a
+    statement. ``range_fence`` names the common-table-expression prefix
+    that keeps the visible set from being pushed down into the statement
+    that joins it: SQLite otherwise pushes the outer table into every
+    branch of the union and drives each from it, scanning the unpacked
+    ranges once per outer row (3.9 s against 35 ms for a 52,000-row
+    tree at 10,000 users); ``MATERIALIZED`` computes the union once,
+    every piece a seek, and the outer statement probes it. ``None``
+    joins the visible set as a plain derived table, the measured shape
+    on the other engines.
 
     ``row_lock_hint`` declares how a guard read locks the rows it
     addresses. SQLAlchemy models ``FOR UPDATE`` yet its T-SQL compiler
@@ -201,6 +260,18 @@ class DialectProfile:
     :class:`StaleSnapshot`, retrying the whole method from fresh state.
     The generic floor declares ``redrive``: never classify off a probe
     an unknown engine may contradict.
+
+    ``relabel_rows`` caps the entry rows one relabel chunk rewrites — a
+    posture change's ``UPDATE`` over its subtree, one chunk per
+    transaction. SQLAlchemy models no such thing: the bind budgets bound
+    a statement's text, not the rows it touches, and what this bounds is
+    the time one chunk holds its row locks and the admin lock, so a
+    posture change over millions of rows never parks every reader and
+    rival admin write behind one transaction. Measured on all five
+    engines: 50,000 rows per statement, one transaction per statement,
+    was safe everywhere (the slowest, SQL Server at 38 µs a row, holds a
+    chunk under two seconds); the value is the same on every profile
+    because no engine measured a reason to differ.
     """
 
     name: str
@@ -232,6 +303,12 @@ class DialectProfile:
     ann_dimension_cap: int | None = None
     ann_honours_scope: bool = False
     range_source: RangeSource | None = None
+    range_join: str = "JOIN"
+    range_entry_hint: str | None = None
+    range_hints: RangeHints = NO_RANGE_HINTS
+    range_settings: tuple[str, ...] = ()
+    range_fence: str | None = None
+    relabel_rows: int = RELABEL_ROWS
 
 
 SQLITE: Final = DialectProfile(
@@ -264,6 +341,8 @@ SQLITE: Final = DialectProfile(
     # vec_distance_cosine from sqlite-vec, loaded on every connection; brute force, exact.
     vector_distance="exact",
     range_source="json_each",
+    range_join="CROSS JOIN",
+    range_fence="MATERIALIZED",
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -280,6 +359,7 @@ POSTGRESQL: Final = DialectProfile(
     bulk_insert="copy",
     vector_distance="ann",
     range_source="unnest",
+    range_settings=("SET LOCAL jit = off",),
     vector_dimension_cap=16_000,
     ann_dimension_cap=2_000,
     ann_honours_scope=True,
@@ -306,6 +386,7 @@ MSSQL: Final = DialectProfile(
     bulk_insert="core",
     vector_distance="exact",
     range_source="openjson",
+    range_join="INNER LOOP JOIN",
     vector_dimension_cap=1_998,
 )
 
@@ -337,6 +418,8 @@ MARIADB: Final = DialectProfile(
     # unscoped ORDER BY … LIMIT; the InnoDB row cap binds before 16,383.
     vector_distance="ann",
     range_source="json_table",
+    range_join="STRAIGHT_JOIN",
+    range_entry_hint="FORCE INDEX ({index})",
     vector_dimension_cap=16_383,
 )
 
@@ -358,6 +441,13 @@ ORACLE: Final = DialectProfile(
     bulk_insert="core",
     vector_distance="ann",
     vector_dimension_cap=65_535,
+    range_source="json_table_clob",
+    range_hints=RangeHints(
+        everyone="/*+ INDEX({entry} {index}) */",
+        ranges="/*+ CARDINALITY({source} {count}) */",
+        derived="/*+ NO_MERGE({visible}) LEADING({visible}) USE_NL({table}) INDEX({table} {index}) */",
+        relabel="/*+ USE_CONCAT */",
+    ),
 )
 
 # The floor for engines this project has not measured: the tightest known

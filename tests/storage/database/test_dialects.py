@@ -154,6 +154,26 @@ class TestDialectPolicy:
         assert mysql.name == "mysql" and mysql.key_byte_budget == GENERIC.key_byte_budget
         assert mysql.vector_distance == "none" and mysql.retryable_driver_codes == frozenset()
 
+    def test_the_range_join_keyword_and_hints_are_the_measured_ones(self) -> None:
+        # Each planner misreads the everyone-level term its own way; the
+        # profile carries the keyword, the index pin and the hints it needs.
+        assert SQLITE.range_join == "CROSS JOIN" and MSSQL.range_join == "INNER LOOP JOIN"
+        assert MARIADB.range_join == "STRAIGHT_JOIN" and MARIADB.range_entry_hint == "FORCE INDEX ({index})"
+        assert POSTGRESQL.range_join == "JOIN" and POSTGRESQL.range_settings == ("SET LOCAL jit = off",)
+        assert ORACLE.range_join == "JOIN" and ORACLE.range_source == "json_table_clob"
+        assert ORACLE.range_hints.ranges == "/*+ CARDINALITY({source} {count}) */"
+        assert ORACLE.range_hints.relabel == "/*+ USE_CONCAT */"
+        assert GENERIC.range_source is None and GENERIC.range_join == "JOIN" and not any(GENERIC.range_hints)
+        assert all(p.range_settings == () for p in (SQLITE, MSSQL, MARIADB, ORACLE, GENERIC))
+        assert SQLITE.range_fence == "MATERIALIZED"
+        assert all(p.range_fence is None for p in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC))
+
+    def test_the_relabel_row_cap_is_the_measured_fifty_thousand_on_every_profile(self) -> None:
+        # The chunk size one relabel transaction writes: SQLAlchemy models
+        # no such cap, and 50,000 was safe on every engine measured.
+        for profile in (SQLITE, POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC):
+            assert profile.relabel_rows == 50_000, profile.name
+
     def test_every_tuned_profile_declares_a_distance_function(self) -> None:
         for profile in PROFILES.values():
             assert profile.vector_distance in ("exact", "ann"), profile.name
@@ -584,6 +604,7 @@ def _entry_row(entry_id: str, path: str) -> dict[str, object]:
         "content_hash": "h",
         "mime_type": "text/plain",
         "chunked": True,
+        "everyone_level": 2,
         "created_at": stamp,
         "updated_at": stamp,
         "deleted_at": None,

@@ -50,6 +50,7 @@ from vfs.storage.backends.database.dialects import (
     supports_values_update,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
+from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
@@ -57,7 +58,7 @@ from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.editing import edited_entry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from sqlalchemy import Column, ColumnElement, FromClause, Table, Update
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
@@ -325,8 +326,9 @@ async def _apply(
     now = datetime.now(UTC)
     creates = [s for s in plan.staged.values() if s.persistence == "insert"]
     minted = frozenset(staged.entry_id for staged in creates)
+    labels = await labels_for(session, tables, profile, membership_budget, [str(s.path) for s in creates])
     if errors := await _insert_creates(
-        session, tables.entry, profile, parameter_budget, creates, plan, overwrite=overwrite, now=now
+        session, tables.entry, profile, parameter_budget, creates, plan, labels, overwrite=overwrite, now=now
     ):
         return errors
     # Segment postings and fs mirror rows ride beside fresh inserts only: a
@@ -353,6 +355,7 @@ async def _insert_creates(
     parameter_budget: int,
     creates: list[StagedEntry],
     plan: WritePlan,
+    labels: Mapping[str, int],
     *,
     overwrite: bool,
     now: datetime,
@@ -361,7 +364,8 @@ async def _insert_creates(
 
     Identity is minted at staging, so rows are fully wired client-side;
     the layers exist to learn each depth's arbitration outcome before its
-    children commit to a parent that may have lost.
+    children commit to a parent that may have lost. *labels* holds each
+    created path's everyone level, stamped with the row.
     """
     if not creates:
         return []
@@ -370,7 +374,7 @@ async def _insert_creates(
         by_depth.setdefault(staged.path.depth, []).append(staged)
     for depth in sorted(by_depth):
         layer = by_depth[depth]
-        rows = [_entry_values(s, plan.parent_id_of(s), plan.authority, now) for s in layer]
+        rows = [_entry_values(s, plan.parent_id_of(s), plan.authority, now, labels[str(s.path)]) for s in layer]
         per_statement = rows_per_statement(parameter_budget, rows)
         if profile.arbitration == "upsert":
             errors = await _upsert_layer(session, entry, profile, layer, rows, per_statement, overwrite=overwrite)
@@ -1031,13 +1035,16 @@ def _material_values(staged: StagedEntry, authority: Authority | None, now: date
     }
 
 
-def _entry_values(staged: StagedEntry, parent_id: str, authority: Authority | None, now: datetime) -> dict[str, object]:
+def _entry_values(
+    staged: StagedEntry, parent_id: str, authority: Authority | None, now: datetime, everyone_level: int
+) -> dict[str, object]:
     return {
         "entry_id": staged.entry_id,
         "parent_id": parent_id,
         "path": str(staged.path),
         "name": staged.path.name,
         "version": staged.version,
+        "everyone_level": everyone_level,
         "created_at": now,
     } | _material_values(staged, authority, now)
 

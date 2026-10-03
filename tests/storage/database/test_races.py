@@ -471,6 +471,7 @@ class TestGhostRefusal:
                         name="late.txt",
                         kind="file",
                         version=5,
+                        everyone_level=2,
                         size_bytes=4,
                         lines=1,
                         created_at=now,

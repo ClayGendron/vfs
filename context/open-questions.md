@@ -294,14 +294,6 @@
 - **Options considered:** withhold stored signals from partial callers; recompute over the visible subgraph; accept and document.
 - **Status:** open
 
-## Trash under a non-open posture: a granted non-owner cannot restore what it deleted
-
-- **Asked:** 2026-09-28 (spec 058 landing)
-- **Context:** A deleted row moves under `/.vfs/trash/...`. Grants name the row's live path prefix, not its trash path, so under a `shared` or `private` posture a trash row is visible only to its owner (the owner floor) or to a whole-mount caller. A caller that deleted a row through a group grant cannot see it in the trash, and so cannot restore it.
-- **Blocking:** nothing lands broken; restore works for owners, the system actor, and every caller under the default open posture.
-- **Options considered:** judge a trash row by its original path's grants; add a trash-side grant rule; leave it to the owner and the operator.
-- **Status:** open
-
 ## grep's candidate budget counts hidden candidates
 
 - **Asked:** 2026-09-28 (spec 058 landing)

@@ -51,6 +51,7 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS, judged_columns
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -168,7 +169,7 @@ async def ls_rows(
     """
     fetched = effective_columns(columns, content=False)
     found = await _mappings_by_path(
-        session, tables, profile, membership_budget, targets, fetched, with_entry_id=True, with_owner=view is not None
+        session, tables, profile, membership_budget, targets, fetched, with_entry_id=True, judged=view is not None
     )
     shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
     directories = [t for t in targets if t in road or ((f := shown.get(t)) is not None and f["kind"] == "directory")]
@@ -208,7 +209,7 @@ async def tree_rows(
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     found = await _mappings_by_path(
-        session, tables, profile, membership_budget, [path], fetched, with_entry_id=False, with_owner=view is not None
+        session, tables, profile, membership_budget, [path], fetched, with_entry_id=False, judged=view is not None
     )
     shown, road, missing = await _screen(session, tables, profile, membership_budget, [path], found, view)
     target = shown.get(path)
@@ -216,7 +217,7 @@ async def tree_rows(
         return Result(ops=("tree",), errors=[missing[path]])
     if target is not None and target["kind"] != "directory":
         return Result(ops=("tree",), observations=[_observe(target, fetched)])
-    wanted = fetched | ({"owner_id"} if view is not None else frozenset())
+    wanted = fetched | (RIGHTS_FIELDS if view is not None else frozenset())
     stmt = (
         select(*_entry_columns(entry, wanted))
         .where(
@@ -230,7 +231,7 @@ async def tree_rows(
     if view is None:
         rows = [_observe(mapping, fetched) for mapping in (await session.execute(stmt)).mappings()]
         return Result(ops=("tree",), observations=rows)
-    visible = await _visible_rows(session, stmt, view)
+    visible = await _visible_rows(session, stmt, view, str(path))
     bare = {
         ancestor
         for mapping_path in visible
@@ -300,7 +301,7 @@ async def glob_rows(
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
-    queried = fetched | ROW_GATE_FIELDS | ({"owner_id"} if view is not None else frozenset())
+    queried = fetched | ROW_GATE_FIELDS | (RIGHTS_FIELDS if view is not None else frozenset())
     hidden: list[str] = []
     for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
         # Wanted-ext admission rides inside the gates (compiled with *ext*).
@@ -487,7 +488,7 @@ async def _point_rows(
     directory to ``read`` (``wrong_kind``, as any directory would).
     """
     found = await _mappings_by_path(
-        session, tables, profile, membership_budget, targets, fetched, with_entry_id=False, with_owner=view is not None
+        session, tables, profile, membership_budget, targets, fetched, with_entry_id=False, judged=view is not None
     )
     shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
     rows: list[Observation] = []
@@ -541,16 +542,18 @@ async def _screen(
     if not misses:
         return shown, road, {}
     entry = tables.entry
-    columns = [entry.c.path, entry.c.kind, entry.c.owner_id]
+    columns = judged_columns(entry)
     chain = await rows_by_path(session, entry, targets_with_ancestors(misses), columns, profile, membership_budget)
     seen = await view.seen_kinds(session, chain)
     return shown, road, {target: classify_miss(target, seen) for target in misses}
 
 
-async def _visible_rows(session: AsyncSession, stmt: Select[Any], view: Visibility) -> dict[str, RowMapping]:
+async def _visible_rows(
+    session: AsyncSession, stmt: Select[Any], view: Visibility, scope: str
+) -> dict[str, RowMapping]:
     """*stmt* narrowed by the view (one statement, or one per clause), merged by path, every row passing it."""
     merged: dict[str, RowMapping] = {}
-    for statement in view.narrow(stmt):
+    for statement in view.narrow(stmt, scope):
         for mapping in (await session.execute(statement)).mappings():
             if view.admits(mapping):
                 merged[mapping["path"]] = mapping
@@ -576,12 +579,12 @@ async def _mappings_by_path(
     fetched: frozenset[str],
     *,
     with_entry_id: bool,
-    with_owner: bool = False,
+    judged: bool = False,
 ) -> dict[str, RowMapping]:
-    """One bounded fetch for the batch, keyed by the stored path string."""
+    """One bounded fetch for the batch, keyed by the stored path string; *judged* rows carry the rights fields."""
     columns, source = _entry_projection(tables, fetched, with_entry_id=with_entry_id)
-    if with_owner:
-        columns = [*columns, tables.entry.c.owner_id]
+    if judged:
+        columns = [*columns, *(tables.entry.c[field] for field in sorted(RIGHTS_FIELDS))]
     paths = (str(target) for target in targets)
     return await rows_by_path(session, tables.entry, paths, columns, profile, membership_budget, source=source)
 
@@ -628,7 +631,7 @@ async def _children_by_parent(
     is on the road, and every other hidden child drops.
     """
     listed: dict[str, list[RowMapping]] = {}
-    wanted = fetched | ({"owner_id"} if view is not None else frozenset())
+    wanted = fetched | (RIGHTS_FIELDS if view is not None else frozenset())
     for include_meta in (False, True):
         scope = sorted({found[target]["entry_id"] for target in directories if target.is_meta == include_meta})
         for chunk in chunked(scope, membership_budget):

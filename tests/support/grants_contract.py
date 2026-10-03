@@ -19,12 +19,14 @@ and bob at once, so it holds only what both hold.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from itertools import pairwise
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pytest
+from sqlalchemy import and_, insert, select, update
 
-from vfs.authority import Authority, Principal
+from vfs.authority import EVERYONE_NAME, Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.paths import Path
 from vfs.results import Result, Severity, VFSErrorKind
@@ -38,11 +40,14 @@ from vfs.storage import (
     SupportsPatternSearch,
     SupportsReindex,
 )
-from vfs.storage.grants import MAX_GROUP_DEPTH
+from vfs.storage.backends.database import rights
+from vfs.storage.backends.database.labels import Relabeller, mark_relabel
+from vfs.storage.backends.database.revision import bump_revision
+from vfs.storage.grants import MAX_GROUP_DEPTH, GrantLevel, GrantRow, Rights
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 needs = pytest.mark.needs
 
@@ -52,6 +57,7 @@ ANN = Authority.of(Principal("ann"))
 BOB = Authority.of(Principal("bob"))
 CAROL = Authority.of(Principal("carol"))
 DAVE = Authority.of(Principal("dave"))
+ZED = Authority.of(Principal("zed"))
 PAIR = Authority.on_behalf_of({Principal("ann"), Principal("bob")}, actor=Principal("bot", kind="service"))
 
 FILES = {
@@ -120,6 +126,14 @@ def _paths(result: Result) -> set[str]:
 def _kind(result: Result) -> VFSErrorKind | str | None:
     assert result.success is False, result
     return result.errors[0].kind
+
+
+def _trash_path(result: Result) -> Path:
+    """The trash address a delete reported for its one target."""
+    assert result.success is True, result.errors
+    trashed = result.one().trash_path
+    assert trashed is not None
+    return trashed
 
 
 class GrantsContract:
@@ -216,6 +230,21 @@ class GrantsContract:
         assert not dave & {"/eng", "/eng/spec.md", "/eng/secret/plan.md"}
 
     @needs("grant", "tree")
+    async def test_sibling_grants_whose_subtrees_touch_both_show(self, storage: GrantsBackend) -> None:
+        # /v1's subtree ends exactly where /v10 begins in bytewise order, so
+        # the two grants merge into one range: both show, nothing beside them.
+        await _world(storage)
+        rows = ["/v1/a.md", "/v10/b.md", "/v100/c.md", "/v1-x/d.md", "/v10-x/e.md"]
+        written = await storage.write(entries=[Entry(path=Path(p), content="t") for p in rows], parents=True)
+        assert written.success is True
+        for prefix in ("/v1", "/v10"):
+            granted = await storage.grant(path=Path(prefix), principal="dave", level="read", authority=SYSTEM)
+            assert granted.success is True
+        dave = _paths(await storage.tree(path=Path("/"), authority=DAVE))
+        assert {"/v1", "/v1/a.md", "/v10", "/v10/b.md"} <= dave
+        assert not dave & {"/v100", "/v100/c.md", "/v1-x", "/v1-x/d.md", "/v10-x", "/v10-x/e.md"}
+
+    @needs("grant", "tree")
     async def test_tree_shows_an_owned_row_only_where_every_member_sees(self, storage: GrantsBackend) -> None:
         await _world(storage)
         assert "/hr/case.md" in _paths(await storage.tree(path=Path("/"), authority=ANN))
@@ -235,6 +264,16 @@ class GrantsContract:
         result = await storage.grep(pattern="lantern", allow_scan=True, output_mode="files", authority=BOB)
         assert result.success is True
         assert _paths(result) == {"/pub/readme.md"}
+
+    @needs("grant", "grep")
+    async def test_grep_never_matches_inside_a_hidden_row_through_the_index(self, storage: GrantsBackend) -> None:
+        # The same answer once the index serves the candidates, with and without the scan tier.
+        await _world(storage)
+        assert (await _reindexer(storage).reindex()).success is True
+        for allow_scan in (True, False):
+            result = await storage.grep(pattern="lantern", allow_scan=allow_scan, output_mode="files", authority=BOB)
+            assert result.success is True, result.errors
+            assert _paths(result) == {"/pub/readme.md"}, allow_scan
 
     # ------------------------------------------------------------------
     # The owner floor and the subject set
@@ -292,6 +331,22 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
         assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == VFSErrorKind.not_found
+
+    @needs("grant", "read")
+    async def test_a_posture_change_is_seen_by_a_caller_already_resolved(self, storage: GrantsBackend) -> None:
+        # dave's and anonymous's rights are cached by their first read; each
+        # posture write must retire those caches — the root posture a cached
+        # resolution carries is what names anonymous's refusal.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=ANON)).success is True
+        assert (await storage.posture(path=Path("/"), posture="private", authority=SYSTEM)).success is True
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == VFSErrorKind.unauthenticated
+        assert (await storage.posture(path=Path("/eng"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == VFSErrorKind.unauthenticated
 
     # ------------------------------------------------------------------
     # The write gate
@@ -412,17 +467,23 @@ class GrantsContract:
         assert (await storage.delete(path=Path("/open"), authority=DAVE)).success is True
         assert _kind(await storage.stat(path=Path("/open/k.md"), authority=SYSTEM)) == VFSErrorKind.not_found
 
-    @needs("grant", "delete", "stat")
+    @needs("grant", "delete", "stat", "write")
     async def test_a_subtree_check_reads_past_its_first_page(self, storage: GrantsBackend) -> None:
-        # The unwritable row sorts after a full page of writable ones.
+        # Rows everyone holds pass without a read; the rows below the level
+        # are paged, and the unwritable one sorts after a full page that
+        # dave owns under a private /open/a.
         await _world(storage)
-        bulk = [Entry(path=Path(f"/open/a/{n:04}.md"), content="x") for n in range(1_001)]
-        bulk.append(Entry(path=Path("/open/z/k.md"), content="x"))
-        assert (await storage.write(entries=bulk, parents=True, authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/open/k.md"), content="x")], parents=True)).success
         assert (await storage.posture(path=Path("/open"), posture="open", authority=SYSTEM)).success is True
+        bulk = [Entry(path=Path(f"/open/a/{n:04}.md"), content="x") for n in range(1_001)]
+        assert (await storage.write(entries=bulk, parents=True, authority=DAVE)).success is True
+        assert (await storage.posture(path=Path("/open/a"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/open/z/k.md"), content="x")], parents=True)).success
         assert (await storage.posture(path=Path("/open/z"), posture="private", authority=SYSTEM)).success is True
         assert _kind(await storage.delete(path=Path("/open"), authority=DAVE)) == VFSErrorKind.permission_denied
         assert (await storage.stat(path=Path("/open/a/0000.md"), authority=SYSTEM)).success is True
+        assert (await storage.delete(path=Path("/open/a"), authority=DAVE)).success is True
 
     @needs("grant", "move", "stat")
     async def test_a_move_needs_write_at_both_ends(self, storage: GrantsBackend) -> None:
@@ -430,8 +491,36 @@ class GrantsContract:
         result = await storage.move(
             operations=[ResolvedPair(Path("/eng/spec.md"), Path("/pub/spec.md"))], authority=ANN
         )
-        assert result.success is False
+        assert _kind(result) == VFSErrorKind.permission_denied
         assert (await storage.stat(path=Path("/eng/spec.md"), authority=SYSTEM)).success is True
+
+    @needs("grant", "move", "stat", "mkdir")
+    async def test_a_move_of_a_visible_read_only_source_is_denied(self, storage: GrantsBackend) -> None:
+        # bob may write the destination; the source he only reads stays put.
+        await _world(storage)
+        assert (await storage.mkdir(path=Path("/out"), authority=SYSTEM)).success is True
+        assert (await storage.grant(path=Path("/out"), principal="bob", level="read_write", authority=SYSTEM)).success
+        moved = await storage.move(
+            operations=[ResolvedPair(Path("/pub/readme.md"), Path("/out/readme.md"))], authority=BOB
+        )
+        assert _kind(moved) == VFSErrorKind.permission_denied
+        assert (await storage.stat(path=Path("/pub/readme.md"), authority=SYSTEM)).success is True
+        assert _kind(await storage.stat(path=Path("/out/readme.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+
+    @needs("grant", "copy", "stat")
+    async def test_a_copy_needs_read_at_its_source_and_write_at_its_destination(self, storage: GrantsBackend) -> None:
+        # bob reads /pub and may not write there; carol writes /pub/deep and cannot see /eng.
+        await _world(storage)
+        denied = await storage.copy(
+            operations=[ResolvedPair(Path("/pub/readme.md"), Path("/pub/copy.md"))], authority=BOB
+        )
+        assert _kind(denied) == VFSErrorKind.permission_denied
+        assert _kind(await storage.stat(path=Path("/pub/copy.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        hidden = await storage.copy(
+            operations=[ResolvedPair(Path("/eng/spec.md"), Path("/pub/deep/x2.md"))], authority=CAROL
+        )
+        assert _kind(hidden) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/pub/deep/x2.md"), authority=SYSTEM)) == VFSErrorKind.not_found
 
     @needs("grant", "delete", "restore", "read")
     async def test_an_owner_restores_its_own_trashed_row(self, storage: GrantsBackend) -> None:
@@ -460,6 +549,239 @@ class GrantsContract:
         await _world(storage)
         assert (await storage.sweep(path=Path("/pub"), authority=BOB)).success is False
         assert (await storage.stat(path=Path("/pub/readme.md"), authority=SYSTEM)).success is True
+
+    # ------------------------------------------------------------------
+    # The trash — a trashed row is judged by its origin
+    # ------------------------------------------------------------------
+
+    @needs("grant", "delete", "read", "tree", "glob", "grep", "sweep", "restore", "ls")
+    async def test_a_deleted_row_stays_hidden_from_everyone_who_could_not_see_it(self, storage: GrantsBackend) -> None:
+        # The open mount with one private home: ann deletes her diary, and
+        # nobody who could not read it live can read, list, grep, sweep or
+        # restore it from the trash — not even with a grant on the trash.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.mkdir(path=Path("/ann"), authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=SYSTEM)).success
+        diary = Entry(path=Path("/ann/diary.md"), content="dear diary, the lantern")
+        assert (await storage.write(entries=[diary], authority=ANN)).success is True
+        trashed = _trash_path(await storage.delete(path=Path("/ann/diary.md"), authority=ANN))
+        for who in (DAVE, ANON):
+            assert _kind(await storage.read(path=trashed, authority=who)) == VFSErrorKind.not_found
+            assert _kind(await storage.stat(path=trashed, authority=who)) == VFSErrorKind.not_found
+            assert str(trashed) not in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=who))
+            assert str(trashed) not in _paths(await storage.glob(patterns=("/.vfs/trash/**",), authority=who))
+            found = await storage.grep(pattern="lantern", globs=("/.vfs/**",), allow_scan=True, authority=who)
+            assert found.success is True and _paths(found) == set()
+            assert _kind(await storage.sweep(path=trashed, authority=who)) == VFSErrorKind.not_found
+            assert _kind(await storage.restore(path=trashed, authority=who)) == VFSErrorKind.not_found
+            assert _kind(await storage.restore(path=Path("/ann/diary.md"), authority=who)) == VFSErrorKind.not_found
+        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == VFSErrorKind.permission_denied
+        assert (await storage.grant(path=Path("/.vfs"), principal="dave", level="read_write", authority=SYSTEM)).success
+        assert _kind(await storage.read(path=trashed, authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == VFSErrorKind.permission_denied
+        assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
+        # Its owner sees it through the floor, and the bucket is on her road to it.
+        assert str(trashed) in _paths(await storage.ls(path=trashed.parent_dir, authority=ANN))
+        assert (await storage.read(path=trashed, authority=ANN)).one().content == diary.content
+        # A posture change after the delete reaches the row where it came from.
+        assert (await storage.posture(path=Path("/ann"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.read(path=trashed, authority=DAVE)).success is True
+        assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
+        assert _kind(await storage.read(path=trashed, authority=DAVE)) == VFSErrorKind.not_found
+        assert (await storage.restore(path=Path("/ann/diary.md"), authority=ANN)).success is True
+        assert (await storage.read(path=Path("/ann/diary.md"), authority=ANN)).one().content == diary.content
+
+    @needs("grant", "delete", "restore", "read", "tree", "stat")
+    async def test_a_grant_on_the_origin_reaches_a_trashed_row_its_holder_does_not_own(
+        self, storage: GrantsBackend
+    ) -> None:
+        # ann holds /eng through her group, not as an owner: what she deletes
+        # there she still sees in the trash and may restore, by either address.
+        await _world(storage)
+        trashed = _trash_path(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
+        assert _kind(await storage.read(path=trashed, authority=BOB)) == VFSErrorKind.not_found
+        assert str(trashed) not in _paths(await storage.tree(path=Path("/"), authority=BOB))
+        assert (await storage.stat(path=trashed, authority=ANN)).success is True
+        assert {str(trashed), str(trashed.parent_dir)} <= _paths(await storage.tree(path=Path("/.vfs"), authority=ANN))
+        assert (await storage.restore(path=Path("/eng/spec.md"), authority=ANN)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=ANN)).one().content == FILES["/eng/spec.md"]
+        again = _trash_path(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
+        assert (await storage.restore(path=again, authority=ANN)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=ANN)).success is True
+
+    @needs("grant", "delete", "restore", "read")
+    async def test_restore_refusals_name_only_the_path_the_caller_sent(self, storage: GrantsBackend) -> None:
+        # zed holds nothing. A trashed row, a hidden folder with nothing
+        # trashed, a folder that never existed and the trash address itself
+        # all answer as `read` answers the same path: one not_found naming
+        # the first component he cannot see, never a trash path or a
+        # "no trashed entry" that would confirm the folder exists.
+        await _world(storage)
+        trashed = _trash_path(await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM))
+        cases = {"/hr/other.md": "/hr", "/hr/nope.md": "/hr", "/nodir/x.md": "/nodir", str(trashed): "/.vfs"}
+        for target, named in cases.items():
+            refused = await storage.restore(path=Path(target), authority=ZED)
+            assert _kind(refused) == VFSErrorKind.not_found, target
+            assert refused.errors[0].message == f"Not found: {named}" and str(refused.errors[0].path) == named
+            read = await storage.read(path=Path(target), authority=ZED)
+            assert read.errors[0].message == refused.errors[0].message, target
+        # Under an open root the bucket is visible: the hidden row is named
+        # exactly as an absent sibling, and a visible folder's miss names the
+        # path sent, not what was never trashed.
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        hidden = await storage.restore(path=trashed, authority=ZED)
+        absent = await storage.restore(path=Path(f"{trashed}-nope"), authority=ZED)
+        assert (
+            hidden.errors[0].message == f"Not found: {trashed}"
+            and absent.errors[0].message == f"Not found: {trashed}-nope"
+        )
+        assert (await storage.restore(path=Path("/hr/other.md"), authority=ZED)).errors[0].message == "Not found: /hr"
+        missed = await storage.restore(path=Path("/pub/nope.md"), authority=ZED)
+        assert _kind(missed) == VFSErrorKind.not_found and missed.errors[0].message == "Not found: /pub/nope.md"
+        whole = await storage.restore(path=Path("/pub/nope.md"), authority=SYSTEM)
+        assert _kind(whole) == VFSErrorKind.not_found and "No trashed entry" in whole.errors[0].message
+
+    @needs("grant", "delete", "restore", "move", "stat")
+    async def test_a_trash_side_restore_never_names_an_original_parent_the_caller_cannot_see(
+        self, storage: GrantsBackend
+    ) -> None:
+        # ann owns /hr/case.md and sees it through the floor, but /hr is
+        # private to her. Once /hr is trashed too, the ladder's "restore the
+        # parent first" would name its trash address; she is told not found.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        trashed = _trash_path(await storage.delete(path=Path("/hr/case.md"), authority=SYSTEM))
+        assert (await storage.stat(path=trashed, authority=ANN)).success is True
+        parent = _trash_path(await storage.delete(path=Path("/hr"), authority=SYSTEM))
+        refused = await storage.restore(path=trashed, authority=ANN)
+        assert _kind(refused) == VFSErrorKind.not_found and refused.errors[0].message == f"Not found: {trashed}"
+        whole = await storage.restore(path=trashed, authority=SYSTEM)
+        assert _kind(whole) == VFSErrorKind.invalid and str(parent) in whole.errors[0].message
+        # Once she may see /hr — and so its trashed row, judged at that origin — the ladder's own answer stands.
+        assert (await storage.grant(path=Path("/hr"), principal="ann", level="read", authority=SYSTEM)).success is True
+        seen = await storage.restore(path=trashed, authority=ANN)
+        assert _kind(seen) == VFSErrorKind.invalid and seen.errors[0].message == whole.errors[0].message
+        assert (await storage.revoke(path=Path("/hr"), principal="ann", authority=SYSTEM)).success is True
+        # With the parent back and moved, her row follows it: she owns it, so she may put it there.
+        assert (await storage.restore(path=parent, authority=SYSTEM)).success is True
+        assert (await storage.move(operations=[ResolvedPair(Path("/hr"), Path("/people"))], authority=SYSTEM)).success
+        restored = await storage.restore(path=trashed, authority=ANN)
+        assert restored.success is True and str(restored.one().path) == "/people/case.md"
+        assert (await storage.read(path=Path("/people/case.md"), authority=ANN)).success is True
+
+    @needs("grant", "delete", "restore", "mkdir", "write", "move", "stat")
+    async def test_a_restore_onto_a_destination_the_caller_cannot_see_is_absent(self, storage: GrantsBackend) -> None:
+        # ann owns the folder (so she sees it wherever it moves) but not the
+        # row; once the folder sits under the private /hr the row would land
+        # where she may not read, and the destination answers not found.
+        await _world(storage)
+        assert (await storage.mkdir(path=Path("/eng/box"), authority=ANN)).success is True
+        assert (
+            await storage.write(entries=[Entry(path=Path("/eng/box/doc.md"), content="d")], authority=SYSTEM)
+        ).success
+        trashed = _trash_path(await storage.delete(path=Path("/eng/box/doc.md"), authority=SYSTEM))
+        assert (await storage.stat(path=trashed, authority=ANN)).success is True
+        assert (
+            await storage.move(operations=[ResolvedPair(Path("/eng/box"), Path("/hr/box"))], authority=SYSTEM)
+        ).success
+        refused = await storage.restore(path=trashed, authority=ANN)
+        assert _kind(refused) == VFSErrorKind.not_found and refused.errors[0].message == "Not found: /hr/box/doc.md"
+        assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
+        assert (await storage.restore(path=trashed, authority=SYSTEM)).success is True
+
+    # ------------------------------------------------------------------
+    # The everyone level on the row
+    # ------------------------------------------------------------------
+
+    @needs("grant", "ls", "tree", "stat")
+    async def test_the_road_reaches_a_row_everyone_may_see_under_a_hidden_directory(
+        self, storage: GrantsBackend
+    ) -> None:
+        # /pub is private to dave, but /pub/deep is open to everyone: /pub
+        # shows him its name only, on the road to the rows beneath it.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/pub/deep"), posture="open", authority=SYSTEM)).success is True
+        assert _paths(await storage.ls(path=Path("/"), authority=DAVE)) == {"/pub"}
+        road = (await storage.stat(path=Path("/pub"), authority=DAVE)).one()
+        assert road.populated == frozenset({"path", "kind"})
+        walked = _paths(await storage.tree(path=Path("/"), authority=DAVE))
+        assert walked == {"/pub", "/pub/deep", "/pub/deep/x.md"}
+        assert _kind(await storage.stat(path=Path("/pub/readme.md"), authority=DAVE)) == VFSErrorKind.not_found
+
+    @needs("grant", "read")
+    async def test_a_posture_held_mid_relabel_is_in_force_before_its_labels_catch_up(
+        self, storage: GrantsBackend
+    ) -> None:
+        # A posture change to private on /eng is written and marked in
+        # flight, its labels not yet rewritten. Dave, who read /eng only
+        # through the open mount, must lose it at once — the in-flight
+        # compile hides the subtree while its rows still carry the old
+        # label — then a resume rewrites the labels and clears the mark.
+        host = getattr(storage, "_host", None)
+        if host is None:
+            pytest.skip("backend keeps no in-flight marker")
+        await _world(storage)
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
+        await _hold_posture(host, "/eng", "none")
+        # The label under /eng is still read_write; only the in-flight compile hides it.
+        assert (await _labels(storage))["/eng/spec.md"] == 2
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert (await storage.read(path=Path("/pub/readme.md"), authority=DAVE)).success is True
+        await _drain_relabels(host)
+        labels = await _labels(storage)
+        assert labels["/eng/spec.md"] == 0 and labels["/pub/readme.md"] == 2
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
+        async with host.session_factory() as session:
+            pending = (await session.execute(select(host.tables.relabels.c.path_prefix))).all()
+        assert pending == []
+
+    @needs("grant", "write", "read", "tree")
+    async def test_an_open_mount_serves_a_caller_with_no_grants_through_the_label(self, storage: GrantsBackend) -> None:
+        # No row names dave; what he holds is what every row's everyone level says.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert await storage.write(entries=[Entry(path=Path("/d/n.md"), content="x")], parents=True, authority=DAVE)
+        assert (await storage.read(path=Path("/d/n.md"), authority=DAVE)).success is True
+        walked = _paths(await storage.tree(path=Path("/"), authority=DAVE))
+        assert {"/eng/spec.md", "/hr/case.md", "/d/n.md"} <= walked
+        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert "/hr" not in _paths(await storage.tree(path=Path("/"), authority=DAVE))
+        assert (await storage.read(path=Path("/hr/case.md"), authority=ANN)).success is True
+
+    @needs("grant", "write", "mkdir", "copy", "move", "delete", "restore")
+    async def test_every_row_carries_the_everyone_level_at_its_path(self, storage: GrantsBackend) -> None:
+        # Every mint, transfer and posture change stamps the row with the
+        # deepest covering posture's level; a trashed row keeps the one it had.
+        await _world(storage)
+        steps = [
+            await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM),
+            await storage.posture(path=Path("/eng"), posture="private", authority=SYSTEM),
+            await storage.posture(path=Path("/pub"), posture="open", authority=SYSTEM),
+            await storage.write(entries=[Entry(path=Path("/pub/n.md"), content="x")], authority=SYSTEM),
+            await storage.mkdir(path=Path("/eng/x/y"), parents=True, authority=SYSTEM),
+            await storage.copy(operations=[ResolvedPair(Path("/pub/deep"), Path("/eng/deep2"))], authority=SYSTEM),
+            await storage.move(operations=[ResolvedPair(Path("/pub/readme.md"), Path("/hr/readme.md"))]),
+            await storage.delete(path=Path("/pub/deep"), authority=SYSTEM),
+        ]
+        for step in steps:
+            assert step.success is True, step.errors
+        assert (steps[2].model_extra or {})["relabel"]["rows"] >= 3
+        labels = await _labels(storage)
+        assert labels["/"] == 1 and labels["/hr/readme.md"] == 1 and labels["/hr/other.md"] == 1
+        assert labels["/pub"] == 2 and labels["/pub/n.md"] == 2
+        assert labels["/eng"] == 0 and labels["/eng/x/y"] == 0 and labels["/eng/deep2/x.md"] == 0
+        trashed = [path for path in labels if path.endswith("-deep/x.md")]
+        assert len(trashed) == 1 and labels[trashed[0]] == 2
+        assert (await storage.restore(path=Path("/pub/deep"), authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/pub"), posture="private", authority=SYSTEM)).success is True
+        labels = await _labels(storage)
+        assert labels["/pub/deep/x.md"] == 0 and labels["/pub/n.md"] == 0 and labels["/hr/readme.md"] == 1
 
     # ------------------------------------------------------------------
     # The grant verbs
@@ -530,6 +852,49 @@ class GrantsContract:
         result = await storage.add_member(group="group:eng", member="bob", authority=ANN)
         assert _kind(result) == VFSErrorKind.permission_denied
 
+    @needs("add_member", "remove_member", "read")
+    async def test_a_membership_change_is_seen_by_a_caller_already_resolved(self, storage: GrantsBackend) -> None:
+        # bob's rights are cached by the first read; each membership write must retire that cache.
+        await _world(storage)
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert (await storage.add_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=BOB)).success is True
+        assert (await storage.remove_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+
+    @needs("grant", "add_member", "remove_member", "read")
+    async def test_an_admin_write_retires_only_the_compiles_it_reaches(
+        self, storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ann, bob and carol cached by one read each; then, per admin write,
+        # who recompiles on the next read: a user grant its grantee, a group
+        # grant its members, a membership write its member alone (ann, a
+        # fellow member, keeps serving), a settled posture change nobody.
+        await _world(storage)
+        compiled = _recompiles(monkeypatch)
+        callers = (ANN, BOB, CAROL)
+
+        async def recompiled() -> list[tuple[str, ...]]:
+            seen = len(compiled)
+            for who in callers:
+                await storage.read(path=Path("/pub/readme.md"), authority=who)
+            return compiled[seen:]
+
+        assert await recompiled() == [("ann",), ("bob",), ("carol",)]
+        assert await recompiled() == []
+        assert (await storage.grant(path=Path("/pub"), principal="carol", level="read", authority=SYSTEM)).success
+        assert await recompiled() == [("carol",)]
+        assert (await storage.grant(path=Path("/pub"), principal="group:eng", level="read", authority=SYSTEM)).success
+        assert await recompiled() == [("ann",)]
+        assert (await storage.add_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
+        assert await recompiled() == [("bob",)]
+        assert (await storage.posture(path=Path("/pub"), posture="shared", authority=SYSTEM)).success is True
+        assert await recompiled() == []
+        assert (await storage.revoke(path=Path("/pub"), principal="carol", authority=SYSTEM)).success is True
+        assert await recompiled() == [("carol",)]
+        assert (await storage.remove_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
+        assert await recompiled() == [("bob",)]
+
     @needs("add_member", "read")
     async def test_nested_groups_reach_their_grants(self, storage: GrantsBackend) -> None:
         await _world(storage)
@@ -596,6 +961,24 @@ class GrantsContract:
         whole = await storage.glean(query="quarantine lantern", authority=SYSTEM)
         assert "quarantine" in (whole.model_extra or {})["lexical_stats"]["terms"]
 
+    @needs("grant", "glean", "write")
+    async def test_a_hidden_row_written_after_the_index_never_reaches_the_overlay(self, storage: GrantsBackend) -> None:
+        # Write-then-search is the agent's path: a fresh hidden row is served
+        # from the overlay, and must neither rank nor count for bob.
+        await _world(storage)
+        assert (await _reindexer(storage).reindex()).success is True
+        before = await storage.glean(query="quarantine lantern", authority=BOB)
+        fresh = Entry(path=Path("/hr/fresh.md"), content="quarantine lantern")
+        assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
+        after = await storage.glean(query="quarantine lantern", authority=BOB)
+        assert after.success is True and "/hr/fresh.md" not in _paths(after)
+        assert _paths(after) == _paths(before)
+        stats_before, stats_after = [(r.model_extra or {})["lexical_stats"] for r in (before, after)]
+        assert stats_after["n_docs"] == stats_before["n_docs"]
+        assert "quarantine" not in stats_after["terms"]
+        assert stats_after["terms"]["lantern"]["df"] == stats_before["terms"]["lantern"]["df"]
+        assert "/hr/fresh.md" in _paths(await storage.glean(query="quarantine", authority=SYSTEM))
+
     @needs("grant", "glean")
     async def test_a_sibling_that_sorts_inside_a_grant_never_counts_in_the_statistics(
         self, storage: GrantsBackend
@@ -643,11 +1026,72 @@ class GrantsContract:
 # ---------------------------------------------------------------------------
 
 
+async def _labels(storage: GrantsBackend) -> dict[str, int]:
+    """Every stored row's label, read off the database backend's own table."""
+    host = getattr(storage, "_host", None)
+    if host is None:
+        pytest.skip("backend stores no everyone level")
+    entry = host.tables.entry
+    async with host.session_factory() as session:
+        rows = (await session.execute(select(entry.c.path, entry.c.everyone_level))).all()
+    return {row.path: row.everyone_level for row in rows}
+
+
 def _granted(result: Result) -> list[dict[str, object]]:
     """The ``grants=`` rows a grant verb answered with."""
     rows = (result.model_extra or {}).get("grants")
     assert isinstance(rows, list), result
     return rows
+
+
+async def _hold_posture(host: Any, path: str, level: GrantLevel) -> None:
+    """Write the ``*`` row at *path* and mark its relabel pending, without rewriting a label.
+
+    The revision bumps, so the in-flight compile replaces any cached one;
+    the subtree's labels stay stale until :func:`_drain_relabels` runs.
+    """
+    grants = host.tables.grants
+    async with host.session_factory() as session, session.begin():
+        revision = await bump_revision(session, host.tables)
+        key = and_(grants.c.principal_id == EVERYONE_NAME, grants.c.path_prefix == path)
+        updated = await session.execute(update(grants).where(key).values(level=level, revision=revision))
+        if updated.rowcount == 0:
+            await session.execute(
+                insert(grants).values(
+                    principal_id=EVERYONE_NAME,
+                    path_prefix=path,
+                    level=level,
+                    granted_by="system",
+                    granted_at=datetime.now(UTC),
+                    revision=revision,
+                )
+            )
+        await mark_relabel(session, host.tables, path, revision)
+
+
+async def _drain_relabels(host: Any) -> None:
+    """Run every pending relabel to its end, one chunk per transaction."""
+    relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
+    while True:
+        async with host.session_factory() as session, session.begin():
+            if await relabeller.step(session) is None:
+                return
+
+
+def _recompiles(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """The subject sets the resolver compiles from here on, in order — one entry per rights-cache miss."""
+    compiled: list[tuple[str, ...]] = []
+    real = rights.resolve
+
+    def counting(
+        closures: Mapping[str, frozenset[str]], rows: Sequence[GrantRow], level: GrantLevel, **kw: Any
+    ) -> Rights:
+        if level == "read":
+            compiled.append(tuple(sorted(closures)))
+        return real(closures, rows, level, **kw)
+
+    monkeypatch.setattr(rights, "resolve", counting)
+    return compiled
 
 
 def _ladder() -> list[Entry]:

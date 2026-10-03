@@ -28,6 +28,7 @@ from vfs.storage.backends.database.reads import (
     meta_scoped,
     pattern_arm,
 )
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,8 +46,8 @@ if TYPE_CHECKING:
 CHANNEL_ARM_BINDS: Final = 3
 
 # Columns every candidate fetch rides beside the caller's mask: the row-gate
-# facts, size_bytes (prices the content read), owner_id (the owner floor).
-FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "owner_id"}
+# facts, size_bytes (prices the content read), and what a view judges by.
+FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes"} | RIGHTS_FIELDS
 
 
 class ScanNominees(NamedTuple):

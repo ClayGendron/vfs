@@ -1,14 +1,19 @@
 """Pointwise grant oracle — one path at a time, no prefix algebra.
 
 The resolver in ``vfs.storage.grants`` works on prefix sets: it unions
-each subject's covering prefixes, meets them across the subject set,
-and carves the everyone rows into arms with holes. This oracle asks the
-same question the slow, obvious way, for one path at a time:
+each subject's covering prefixes and meets them across the subject set,
+and reads what everyone holds off each row's stored label. This oracle
+asks the same question the slow, obvious way, for one path at a time,
+and computes the everyone level itself from the ``*`` rows — it is also
+what every stored label is checked against:
 
-- everyone holds the level of the deepest ``*`` row covering the path;
+- everyone holds the level of the deepest ``*`` row covering the path
+  (:func:`everyone_rank`);
 - a subject holds the maximum of that, of every row naming it or one
   of the groups it reaches, and of ``read_write`` on a row it owns;
-- a subject set holds the minimum over its subjects.
+- a subject set holds the minimum over its subjects;
+- a trashed row is judged at its origin, the path it was deleted from
+  (``origins`` maps each trash path to it), with the owner it had there.
 
 A parity test runs both on random worlds; they must agree on every path.
 """
@@ -34,6 +39,11 @@ class GrantWorld:
     grants: list[GrantRow]
     member_of: dict[str, set[str]] = field(default_factory=dict)
     owners: dict[str, str | None] = field(default_factory=dict)
+    origins: dict[str, str] = field(default_factory=dict)
+
+    def judged(self, path: str) -> str:
+        """The path *path*'s rights are judged by: its origin when it is a trash path, else itself."""
+        return self.origins.get(path, path)
 
     def closure(self, principal: str) -> frozenset[str]:
         """Every group *principal* reaches, directly or through nesting."""
@@ -50,7 +60,8 @@ class GrantWorld:
 
 
 def everyone_rank(world: GrantWorld, path: str) -> int:
-    """The rank the deepest covering ``*`` row gives everyone; nothing when none covers."""
+    """The rank the deepest covering ``*`` row gives everyone at the judged path; nothing when none covers."""
+    path = world.judged(path)
     rows = [row for row in world.grants if row.principal_id == EVERYONE_NAME and covers(row.path_prefix, path)]
     if not rows:
         return LEVEL_RANK["none"]
@@ -60,6 +71,7 @@ def everyone_rank(world: GrantWorld, path: str) -> int:
 
 def subject_rank(world: GrantWorld, sub: str, path: str, *, owner_floor: bool = True) -> int:
     """The highest rank *sub* holds on *path*: everyone's, its own and its groups', its ownership."""
+    path = world.judged(path)
     ids = {sub} | world.closure(sub)
     granted = max(
         (LEVEL_RANK[row.level] for row in world.grants if row.principal_id in ids and covers(row.path_prefix, path)),

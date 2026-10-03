@@ -38,7 +38,7 @@ from ulid import ULID
 
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.paths import Path
+from vfs.paths import Path, is_trash_path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
@@ -86,13 +86,17 @@ from vfs.storage.backends.database.indexing import (
     release_reindex_lease,
     with_notes,
 )
+from vfs.storage.backends.database.labels import Relabel, Relabeller, labels_for
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
     RightsCache,
     Visibility,
     WriteGate,
     add_member_rows,
+    denied,
     grant_rows,
+    judged_path,
     list_grants,
     posture_refusal,
     remove_member_rows,
@@ -120,7 +124,6 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
-    from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -131,6 +134,7 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind
     from vfs.storage import ResolvedPair
     from vfs.storage.backends.database.rights import Resolution
+    from vfs.storage.backends.database.topology import RestoreLookup, RestoreSource
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
 
@@ -194,7 +198,7 @@ class DatabaseStorage:
             native_embedding=native_embedding,
             posture=posture,
         )
-        # Resolved authorities, keyed by subjects and grant revision.
+        # Resolved authorities, one per subject set, revalidated by their stamps and the relabels in flight.
         self._rights = RightsCache()
         self._trash_days = trash_days
         self._embed_concurrency = embed_concurrency
@@ -686,15 +690,44 @@ class DatabaseStorage:
             checks = resolved
             return []
 
-        async def permit(session: AsyncSession, row: RowMapping, dest: Path) -> ResultError | None:
-            # The row lands with the owner it already has, so its owner may put
-            # back what it deleted; a restore never mints an owner.
+        async def permit(
+            session: AsyncSession, target: Path, lookup: RestoreLookup, resolved: RestoreSource | ResultError
+        ) -> ResultError | None:
+            """The caller's verdict on one target, worded from the path it sent.
+
+            The trash row is judged by its origin with the label it kept,
+            and a restore never mints an owner, so its owner may put back
+            what it deleted. A row the caller cannot see is answered as
+            the gate answers any target it cannot act on — absent, or
+            denied when it is a directory on the road; a trash-side
+            address whose original parent it cannot see is absent too.
+            The ladder's own refusals stand only once the caller may see
+            everything they name. The destination is judged under the
+            posture rows, as a creation there would be.
+            """
             assert checks is not None
-            source = Path._brand(row["path"])
-            refused = checks.row(source, row["owner_id"], "read_write")
+            if checks.whole:
+                return None
+            row = lookup.row
+            if row is None or not checks.view.admits(row):
+                road = row is not None and row["kind"] == "directory" and await checks.view.road(session, [row["path"]])
+                return denied(target) if road else await checks.missing(session, target)
+            refused = checks.row(target, judged_path(row), row["owner_id"], row["everyone_level"], "read_write")
             if refused is None and row["kind"] == "directory":
-                refused = next(iter(await checks.subtrees(session, [source], "read_write")), None)
-            return refused if refused is not None else checks.row(dest, row["owner_id"], "read_write")
+                beneath = await checks.subtrees(session, [Path._brand(row["path"])], "read_write")
+                refused = denied(target) if beneath else None
+            if refused is not None:
+                return refused
+            parent = lookup.parent
+            unseen = parent is None or not checks.view.admits(parent)
+            if is_trash_path(target) and row["original_parent_id"] is not None and unseen:
+                return await checks.missing(session, target)
+            if isinstance(resolved, ResultError):
+                return None
+            host = self._host
+            dest = str(resolved.dest)
+            labels = await labels_for(session, host.tables, host.profile, host.membership_budget, [dest])
+            return checks.row(resolved.dest, dest, row["owner_id"], labels[dest], "read_write")
 
         return await self._execute_topology(
             "restore",
@@ -849,8 +882,17 @@ class DatabaseStorage:
         return await self._grant_write(
             "grant",
             authority,
-            lambda session, gate, who: grant_rows(
-                session, self._host.tables, gate, path=path, principal=principal, level=level, authority=who
+            lambda session, gate, who, revision: grant_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                gate,
+                path=path,
+                principal=principal,
+                level=level,
+                authority=who,
+                revision=revision,
             ),
         )
 
@@ -859,20 +901,46 @@ class DatabaseStorage:
         return await self._grant_write(
             "revoke",
             authority,
-            lambda session, gate, who: revoke_rows(
-                session, self._host.tables, gate, path=path, principal=principal, authority=who
+            lambda session, gate, who, revision: revoke_rows(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                gate,
+                path=path,
+                principal=principal,
+                authority=who,
+                revision=revision,
             ),
         )
 
     async def posture(self, *, path: Path, posture: Posture, authority: Authority | None = None) -> Result:
-        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``."""
-        return await self._grant_write(
+        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``.
+
+        The posture row commits first and is in force from then on; the
+        verb then waits while the labels beneath it are rewritten, one
+        bounded chunk per transaction, finishing any relabel an earlier
+        call left pending on the way. The result reports the rows
+        rewritten, the statements and the transactions it took.
+        """
+        written = await self._grant_write(
             "posture",
             authority,
-            lambda session, gate, who: set_posture(
-                session, self._host.tables, gate, path=path, posture=posture, authority=who
+            lambda session, gate, who, revision: set_posture(
+                session,
+                self._host.tables,
+                self._host.profile,
+                self._host.membership_budget,
+                gate,
+                path=path,
+                posture=posture,
+                authority=who,
+                revision=revision,
             ),
         )
+        if not written.success:
+            return written
+        return await self._settled(written)
 
     async def grants(self, *, path: Path, authority: Authority | None = None) -> Result:
         """The grant rows on *path* and its ancestors this authority may see."""
@@ -1203,13 +1271,13 @@ class DatabaseStorage:
         return _SYSTEM if authority is None else authority
 
     async def _resolution(
-        self, session: AsyncSession, authority: Authority | None, level: GrantLevel
+        self, session: AsyncSession, authority: Authority | None, level: GrantLevel, *, cached: bool = True
     ) -> Resolution | ResultError:
         """The call's rights, resolved in its own transaction; ``unauthenticated`` when posture wants a name."""
         who = self._named(authority)
         host = self._host
         resolution = await resolve_authority(
-            session, host.tables, host.profile, host.membership_budget, who, self._rights
+            session, host.tables, host.profile, host.membership_budget, who, self._rights if cached else None
         )
         if isinstance(resolution, ResultError):
             return resolution
@@ -1232,15 +1300,21 @@ class DatabaseStorage:
             if resolution.read.whole:
                 return await build(session, None)
             view = Visibility(resolution.read, host.tables, host.profile, host.membership_budget, host.parameter_budget)
+            await view.prepare(session)
             return await build(session, view)
 
         return run
 
     async def _gate(
-        self, session: AsyncSession, authority: Authority | None, *, level: GrantLevel = "read_write"
+        self,
+        session: AsyncSession,
+        authority: Authority | None,
+        *,
+        level: GrantLevel = "read_write",
+        cached: bool = True,
     ) -> WriteGate | ResultError:
         """The call's write gate; ``unauthenticated`` when posture wants a name for *level*."""
-        resolution = await self._resolution(session, authority, level)
+        resolution = await self._resolution(session, authority, level, cached=cached)
         if isinstance(resolution, ResultError):
             return resolution
         host = self._host
@@ -1250,18 +1324,55 @@ class DatabaseStorage:
         self,
         op: str,
         authority: Authority | None,
-        body: Callable[[AsyncSession, WriteGate, Authority], Awaitable[Result]],
+        body: Callable[[AsyncSession, WriteGate, Authority, int], Awaitable[Result]],
     ) -> Result:
-        """A grant-table write: gate resolved, then the body, in one writer transaction."""
+        """A grant-table write in one writer transaction: the lock, then the gate, then the body.
+
+        The revision bump is the transaction's first statement, so rival
+        admin writes serialize behind it; the gate is resolved under it,
+        uncached, and judges what those rivals committed.
+        """
         who = self._named(authority)
+        tables = self._host.tables
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, who)
+            await seam("grants:before-lock")
+            revision = await bump_revision(session, tables)
+            gate = await self._gate(session, who, cached=False)
             if isinstance(gate, ResultError):
                 return Result(ops=(op,), errors=[gate])
-            return await body(session, gate, who)
+            await seam("grants:before-write")
+            return await body(session, gate, who, revision)
 
         return await self._execute_write(op, run)
+
+    async def _settled(self, written: Result) -> Result:
+        """*written*, a posture verb's result, once every pending relabel has run to its end.
+
+        One chunk per writer transaction, each bounded by the dialect's
+        piece and row caps, so no transaction holds a subtree's worth of
+        locks; a chunk that fails leaves its mark for the next call.
+        """
+        host = self._host
+        relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
+        grants = (written.model_extra or {}).get("grants")
+        done = Relabel(0, 0, 0)
+        step: Relabel | None = None
+
+        async def chunk(session: AsyncSession) -> Result:
+            nonlocal step
+            step = await relabeller.step(session)
+            return Result(ops=("posture",))
+
+        while True:
+            outcome = await self._execute_write("posture", chunk)
+            if not outcome.success:
+                return Result(ops=("posture",), grants=grants, errors=outcome.errors)
+            if step is None:
+                break
+            done = done.plus(step)
+            await seam("relabel:after-chunk")
+        return Result(ops=("posture",), grants=grants, relabel=done._asdict())
 
     async def _execute(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """One op = one session under retry; failures come back classified.

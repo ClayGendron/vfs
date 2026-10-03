@@ -24,10 +24,58 @@ from vfs.results import Severity, VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
-from vfs.storage.backends.database.dialects import membership_budget, op_execution_options
+from vfs.storage.backends.database.dialects import SQLITE, membership_budget, op_execution_options
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import clear, installed
 from vfs.storage.backends.database.topology import _purge_subtree, _TrashChain
+
+# ---------------------------------------------------------------------------
+# The origin — what a trashed row's rights are judged by
+# ---------------------------------------------------------------------------
+
+
+class TestTrashOrigin:
+    """Every row of a trashed subtree records the path it held; every transfer out clears it."""
+
+    async def test_a_trashed_subtree_records_each_rows_origin_and_a_transfer_clears_it(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/proj/sub"), parents=True)
+        files = [Entry(path=Path("/proj/a.txt"), content="a"), Entry(path=Path("/proj/sub/b.txt"), content="b")]
+        assert (await storage.write(entries=files)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/keep.txt"), content="k")])).success is True
+        deleted = await storage.delete(path=Path("/proj"))
+        trashed = str(deleted.observations[0].trash_path)
+        origins = await _origins(storage)
+        assert origins == {
+            trashed: "/proj",
+            f"{trashed}/a.txt": "/proj/a.txt",
+            f"{trashed}/sub": "/proj/sub",
+            f"{trashed}/sub/b.txt": "/proj/sub/b.txt",
+        }
+        # A row deleted from inside the trash keeps the origin it already had.
+        again = await storage.delete(path=Path(f"{trashed}/sub"))
+        nested = str(again.observations[0].trash_path)
+        origins = await _origins(storage)
+        assert origins[nested] == "/proj/sub" and origins[f"{nested}/b.txt"] == "/proj/sub/b.txt"
+        # A move out of the trash and a restore both clear it, descendants included.
+        assert (await storage.move(operations=[ResolvedPair(Path(nested), Path("/sub2"))])).success is True
+        assert (await storage.restore(path=Path(trashed))).success is True
+        assert await _origins(storage) == {}
+        assert {str(o.path) for o in (await storage.glob(patterns=("/**/*.txt",))).observations} == {
+            "/keep.txt",
+            "/proj/a.txt",
+            "/sub2/b.txt",
+        }
+        await storage.close()
+
+
+async def _origins(storage: DatabaseStorage) -> dict[str, str]:
+    """Every stored row carrying an origin, ``path → origin_path``."""
+    entry = storage._host.tables.entry
+    async with storage._host.session_factory() as session:
+        stmt = select(entry.c.path, entry.c.origin_path).where(entry.c.origin_path.is_not(None))
+        return {row.path: row.origin_path for row in await session.execute(stmt)}
+
 
 # ---------------------------------------------------------------------------
 # Delete — the trash arm beyond the conformance rows
@@ -253,11 +301,25 @@ class TestDeleteTrash:
         async with host.session_factory() as session:
             await session.connection(execution_options=op_execution_options(host.profile, writer=True))
             root_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
-            chain = _TrashChain(host.tables, root_id=root_id, authority=None, now=datetime.now(UTC))
+            chain = _TrashChain(
+                host.tables,
+                host.profile,
+                host.membership_budget,
+                root_id=root_id,
+                authority=None,
+                now=datetime.now(UTC),
+            )
             first = await chain.ensure(session, Path("/x.txt"))
             assert isinstance(first, str)
             # A fresh chain re-selects the minted links instead of re-minting.
-            rival = _TrashChain(host.tables, root_id=root_id, authority=None, now=datetime.now(UTC))
+            rival = _TrashChain(
+                host.tables,
+                host.profile,
+                host.membership_budget,
+                root_id=root_id,
+                authority=None,
+                now=datetime.now(UTC),
+            )
             second = await rival.ensure(session, Path("/x.txt"))
             assert second == first
             # A direct mint against an occupied link takes the
@@ -694,7 +756,7 @@ class TestTrashChainRefusal:
 
     def test_chain_inside_matches_ancestors_and_the_bucket_only(self) -> None:
         tables = build_vfs_tables(table_name="vfs")
-        chain = _TrashChain(tables, root_id="r", authority=None, now=datetime.now(UTC))
+        chain = _TrashChain(tables, SQLITE, 100, root_id="r", authority=None, now=datetime.now(UTC))
         assert chain.chain_inside(Path("/.vfs")) is True
         assert chain.chain_inside(Path("/.vfs/trash")) is True
         assert chain.chain_inside(Path(chain.bucket_path)) is True
@@ -756,6 +818,7 @@ class TestPurgeHardening:
                         name="straggler.txt",
                         kind="file",
                         version=1,
+                        everyone_level=2,
                         created_at=now,
                         updated_at=now,
                     )

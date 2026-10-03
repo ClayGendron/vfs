@@ -82,9 +82,9 @@ if TYPE_CHECKING:
 # per-entry version — minted and guarded storage-side, reported on
 # observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "version"}
+    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "origin_path", "version"}
     | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"}
-    | {"link_source_hash", "link_generation"},
+    | {"link_source_hash", "link_generation", "everyone_level"},
 )
 
 # The Entry field homed in the content table rather than the entries row —
@@ -131,7 +131,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 14
+SCHEMA_FORMAT_VERSION: Final = 18
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -322,6 +322,8 @@ class VFSTables(NamedTuple):
     signal_epochs: Table
     grants: Table
     memberships: Table
+    relabels: Table
+    principal_revisions: Table
 
     def content_joined(self) -> FromClause:
         """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
@@ -407,8 +409,15 @@ def build_vfs_tables(
         Column("link_source_hash", String(64)),
         Column("link_generation", _string(32)),
         Column("owner_id", _string(255), index=True),
+        # The everyone level at this path (0 none, 1 read, 2 read_write):
+        # the deepest covering posture row's level, stamped with the row.
+        # No default on purpose — a mint site that forgets it fails loudly.
+        Column("everyone_level", SmallInteger, nullable=False),
         Column("original_parent_id", ULIDKey()),
         Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
+        # A trashed row's path at the moment it was deleted: what its
+        # rights are judged by. NULL on every live row; cleared by restore.
+        Column("origin_path", BytewiseString(MAX_PATH_LENGTH)),
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),
         Column("deleted_at", DateTime(timezone=True)),
@@ -420,6 +429,12 @@ def build_vfs_tables(
         # Restore lookup by original site. Plain composite: a filtered
         # index over the mostly-NULL restore columns is not portable.
         Index(f"ix_{table_name}_restore", "original_parent_id", "original_name"),
+        # The everyone leg of a partial read: "rows under /p everyone may
+        # see" is one seek here; the leading column alone serves the rest.
+        Index(f"ix_{table_name}_everyone_path", "everyone_level", "path"),
+        # The range join for trashed rows seeks their origin as it seeks
+        # ``path`` for live ones; the index holds only the trashed rows.
+        Index(f"ix_{table_name}_origin_path", "origin_path"),
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -730,6 +745,27 @@ def build_vfs_tables(
         schema=schema,
     )
 
+    # Posture rows whose relabel has not settled: the path, the revision the mark was
+    # planted under (it keys every compile made meanwhile), and the last path rewritten.
+    relabels = Table(
+        f"{table_name}_relabels",
+        metadata,
+        Column("path_prefix", BytewiseString(MAX_PATH_LENGTH), primary_key=True),
+        Column("revision", BigInteger, nullable=False),
+        Column("cursor", BytewiseString(MAX_PATH_LENGTH), nullable=True),
+        schema=schema,
+    )
+
+    # One row per principal or group ever named by a grants or memberships write, stamped
+    # with that write's grant revision; a caller's compile is keyed on its subjects' and groups' stamps.
+    principal_revisions = Table(
+        f"{table_name}_principal_revisions",
+        metadata,
+        Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
+        Column("revision", BigInteger, nullable=False),
+        schema=schema,
+    )
+
     return VFSTables(
         metadata=metadata,
         entry=entry,
@@ -750,6 +786,8 @@ def build_vfs_tables(
         signal_epochs=signal_epochs,
         grants=grants,
         memberships=memberships,
+        relabels=relabels,
+        principal_revisions=principal_revisions,
     )
 
 

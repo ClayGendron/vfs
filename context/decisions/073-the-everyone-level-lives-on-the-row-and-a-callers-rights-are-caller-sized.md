@@ -1,13 +1,15 @@
 # 073. The Everyone Level Lives on the Row, and a Caller's Rights Are Caller-Sized
 
-- **Status:** proposed 2026-10-02. Amends ADR 067 rules 1 and 2 (the
+- **Status:** accepted 2026-10-02 (Clay: "I'll take your recommendation
+  based on the research for the four forks. please get going on this
+  work"; the forks are spec 150 §4, §5, §8 and §9). Amends ADR 067 rules 1 and 2 (the
   compile model), ADR 071 rule 6 (every deeper `*` row as a hole) and
   ADR 072's input (the pieces a caller sends). Does not change what
   any caller may see: every rule below is a representation change,
   held to the same pointwise answers.
 - **Date:** 2026-10-02
 - **Deciders:** Clay Gendron
-- **Decided by:** human (pending). Drafted by Claude from
+- **Decided by:** human (Clay, 2026-10-02). Drafted by Claude from
   `../research/2026-10-02-grants-at-100k-users-measured.md` and
   `../research/2026-10-02-row-labelled-acls-and-the-list-problem-prior-art.md`,
   on Clay's direction ("we need to scale to 100,000+ users each with

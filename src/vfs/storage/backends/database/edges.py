@@ -44,7 +44,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
-from vfs.paths import TRASH_ROOT
+from vfs.paths import is_trash_path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked, statement_budget
 from vfs.storage.backends.database.membership import locked_lookup, membership
@@ -74,9 +74,6 @@ _TOUCH_BINDS = ("b_id", "b_weight", "b_distance", "b_prov")
 
 # Rows the collect pass streams per fetch — bounds driver buffering, not memory.
 _SCAN_YIELD_ROWS = 1024
-
-# A stored path inside the trash scope — the liveness fact the reclaim reads.
-_TRASH_PREFIX = f"{TRASH_ROOT}/"
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +299,7 @@ async def collect_edge_drift(session: AsyncSession, tables: VFSTables, state: Ed
     entry_scan = select(entry.c.entry_id, entry.c.parent_id, entry.c.path).execution_options(yield_per=_SCAN_YIELD_ROWS)
     async for row in await session.stream(entry_scan):
         parents[row.entry_id] = row.parent_id
-        if _in_trash(row.path):
+        if is_trash_path(row.path):
             trashed.add(row.entry_id)
     held: dict[str, list[tuple[int, str]]] = {}
     edge_scan = select(edges.c.id, edges.c.source_id, edges.c.target_id, edges.c.edge_type).execution_options(
@@ -353,7 +350,7 @@ async def repair_edge_drift(
     strays = [
         row_id
         for row_id, endpoints in state.strays.items()
-        if any(eid not in current or _in_trash(current[eid][1]) for eid in endpoints)
+        if any(eid not in current or is_trash_path(current[eid][1]) for eid in endpoints)
     ]
     doomed = [row_id for delta in confirmed for row_id in delta.wrong_row_ids] + state.dangling + strays
     for chunk in chunked(doomed, membership_budget):
@@ -603,7 +600,3 @@ def _stray_warning(count: int) -> ResultError:
         severity=Severity.warning,
         data={"strays": count},
     )
-
-
-def _in_trash(path: str) -> bool:
-    return path == TRASH_ROOT or path.startswith(_TRASH_PREFIX)

@@ -22,7 +22,16 @@ lines first; regenerate this file when the picture shifts (review the
   judged by its origin; the owner floor stays mount-wide). Slices A
   (algebra), C (lock order) and F (trash) are the review's bug fixes.
   The other three engines are untested on the design (slice D, before
-  B). Memos: `research/2026-10-02-*`.
+  B). Memos: `research/2026-10-02-*`. **Built 2026-10-03, all six
+  slices, awaiting Clay's review** (`scripts/ci.sh` not run): at
+  N=100,000 on SQLite the ordinary caller compiles in 0.41 ms on a
+  cache hit (2.98 ms on a miss, against the 1 ms line) with 2.1 KB of
+  binds and 55.6 KB cached, `tree /` is 1.16–1.49× the system actor
+  and `glob` 0.8–1.0× (`ls /home` 2.5×, the road probe — the one open
+  miss), `admits` is under 0.5 µs per row, a 1,000,000-row posture
+  change relabels in 2.3 s with no statement over 49,998 rows, and one
+  user grant retires 1 cached caller of 200, a group grant exactly its
+  members, a posture change none; green on all five engines.
 - **058 built 2026-09-29, awaiting Clay's review** — row-level
   grants end to end: the resolver and compiler (`storage/grants.py`,
   `storage/backends/database/rights.py`), every database verb filtered

@@ -8,7 +8,7 @@ from typing import Union, cast, get_args, get_origin
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Double, Engine, LargeBinary, String, create_mock_engine, insert, inspect, select
+from sqlalchemy import BigInteger, Double, Engine, LargeBinary, String, create_mock_engine, insert, inspect, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mssql import pymssql
 from sqlalchemy.dialects.mysql import LONGBLOB, mariadb
@@ -25,6 +25,7 @@ from vfs.models.rows import (
     ENCODING_DELTA_VARINT,
     ENTRY_CONTENT_FIELDS,
     ENTRY_ROW_ONLY_COLUMNS,
+    MAX_PRINCIPAL_ID_LENGTH,
     MAX_TABLE_NAME_LENGTH,
     MODEL_COLUMN_RENAMES,
     MODEL_FIELD_ONLY,
@@ -166,6 +167,8 @@ class TestBuildVFSTables:
             "vfs_entries_signal_epochs",
             "vfs_entries_grants",
             "vfs_entries_memberships",
+            "vfs_entries_relabels",
+            "vfs_entries_principal_revisions",
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
@@ -345,6 +348,37 @@ class TestBuildVFSTables:
         by_name = {str(index.name): index for index in tables.entry.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_ext_kind"].columns] == ["ext", "kind"]
 
+    def test_everyone_level_is_indexed_with_path_only(self, tables: VFSTables) -> None:
+        # The everyone leg seeks (everyone_level, path); its leading column
+        # serves the unscoped read, so no single-column index is built.
+        by_name = {str(index.name): index for index in tables.entry.indexes}
+        assert [c.name for c in by_name["ix_vfs_entries_everyone_path"].columns] == ["everyone_level", "path"]
+        assert not any([c.name for c in index.columns] == ["everyone_level"] for index in tables.entry.indexes)
+        assert tables.entry.c.everyone_level.nullable is False and tables.entry.c.everyone_level.default is None
+
+    def test_origin_path_is_nullable_bytewise_and_indexed_alone(self, tables: VFSTables) -> None:
+        # A trashed row's origin is judged as its path is: same type, its
+        # own index (NULL on every live row, so it holds the trash alone).
+        origin = tables.entry.c.origin_path
+        assert isinstance(origin.type, BytewiseString) and origin.type.length == MAX_PATH_LENGTH
+        assert origin.nullable is True and origin.default is None
+        by_name = {str(index.name): index for index in tables.entry.indexes}
+        assert [c.name for c in by_name["ix_vfs_entries_origin_path"].columns] == ["origin_path"]
+
+    def test_the_stamps_and_the_marks_carry_a_revision(self, tables: VFSTables) -> None:
+        # One stamp per principal ever named by an admin write, keyed by
+        # the id alone; a relabel mark carries the revision it was planted under.
+        stamps = tables.principal_revisions
+        assert [c.name for c in stamps.primary_key.columns] == ["principal_id"]
+        assert (
+            isinstance(stamps.c.principal_id.type, String)
+            and stamps.c.principal_id.type.length == MAX_PRINCIPAL_ID_LENGTH
+        )
+        assert stamps.c.revision.nullable is False and isinstance(stamps.c.revision.type, BigInteger)
+        marks = tables.relabels
+        assert marks.c.revision.nullable is False and isinstance(marks.c.revision.type, BigInteger)
+        assert marks.c.cursor.nullable is True
+
     def test_encoded_kind_composite_index(self, tables: VFSTables) -> None:
         by_name = {str(index.name): index for index in tables.entry.indexes}
         assert [c.name for c in by_name["ix_vfs_entries_encoded_kind"].columns] == ["encoded", "kind"]
@@ -382,7 +416,7 @@ def _entries_row(entry: Entry, *, entry_id: str, parent_id: str | None) -> dict[
     helper stamps a fresh row's 1 the way the write path would.
     """
     resident = entry.model_dump(exclude=set(ENTRY_CONTENT_FIELDS) | set(Entry.model_computed_fields))
-    stamped = {"entry_id": entry_id, "parent_id": parent_id, "version": 1}
+    stamped = {"entry_id": entry_id, "parent_id": parent_id, "version": 1, "everyone_level": 2}
     return {**resident, **stamped, "original_parent_id": None, "original_name": None}
 
 
