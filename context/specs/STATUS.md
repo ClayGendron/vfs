@@ -5,6 +5,23 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **152 drafted 2026-10-05, awaiting Clay's review** — binary bodies
+  and text renderings. A binary file (PDF, docx, xlsx, pptx, image) is
+  an entry whose bytes live in a new `vfs_blobs` row; a per-format
+  renderer writes a line-oriented Markdown rendering into `vfs_content`
+  under the same entry id, stamped on the entry row with the bytes hash
+  and a renderer generation like chunks and links, so the skip law
+  decides re-rendering and the permissions join covers it for free.
+  Failure is a stamped state with a reason, never a body; the rendering
+  is read-only; the bytes are versioned (a `data` column on
+  `vfs_versions`) and changed only through `write`; `edit` refuses.
+  Images render a metadata header; a caption provider is a named fork
+  Clay set aside; no image-vector table.
+  Engine facts: `LONGBLOB` pinned on MariaDB, Postgres `EXTERNAL`, bulk
+  inserts paged by bytes inside the bind-count page. Four slices (bytes
+  in and out; the renderer seam and four renderers; images; docs). From
+  the 2026-10-05 memo and its seven studies; no ADR cut yet. Clay's two
+  answers: versioned, and edit the bytes through `write` only.
 - **151 built 2026-10-03, awaiting Clay's review** — typed shapes in
   the grants algebra. Two brands the checker enforces, `RangeSet`
   (normal form) and `Covering` (minimised, tree order), minted only by
