@@ -142,6 +142,11 @@ Consequences that bind design work:
 - Do **not** auto-create a branch before committing. Commit to the current
   branch as-is — including `main` — unless I explicitly ask for a new branch.
 - Commit or push only when I ask.
+- **NEVER use git worktrees** (Clay, 2026-10-03). No `EnterWorktree`, no
+  `git worktree add`, no `isolation: "worktree"` on a subagent. Work in
+  place in this checkout. Four agent worktrees from 2026-08-17 were
+  found seven weeks later, each holding uncommitted edits nobody
+  reviewed — work that silently fell out of the repo.
 - **Never run `git checkout -- <file>`, `git restore`, or `git stash` on a
   file that carries uncommitted work without backing that file up first.**
   These commands silently replace the working copy with the committed

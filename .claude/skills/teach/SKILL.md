@@ -150,3 +150,17 @@ the user reports what landed or flopped; date each entry.
   design archaeology can surface real design tension — this exchange
   directly led to a contract change (delete never permanent, sweep
   developer-only).
+
+- **2026-10-03** (permissions journey, the resolver step): the step
+  packed the whole resolver into one response — an eight-link chain,
+  two tables, a `file:line` anchor on nearly every sentence — and Clay
+  stopped it: "this is way too much information". The chain was
+  correct and grounded; the failure was granularity. One response
+  held four ideas (which rows are read; union within a member and
+  meet across; the owner arm; the fields of the result), each of which
+  was its own step. Rule that would have caught it: if the chain has
+  more than four links or the response needs more than one table,
+  split the step. Anchors go on the one or two lines the learner
+  should open, not on every claim. The first step of the same journey
+  (the row model) landed fine at six short links and one worked
+  example.
