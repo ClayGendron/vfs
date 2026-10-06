@@ -245,7 +245,7 @@ class TestReadFamily:
     def test_entry_observation_fields_track_the_column_vocabulary(self) -> None:
         # Drift pin: the servable set is exactly the Observation fields
         # the entries table backs — a new mirrored column must land here.
-        cols = {c.name for c in build_vfs_tables(table_name="vfs").entry.columns}
+        cols = {c.name for c in build_vfs_tables().entry.columns}
         assert OBSERVATION_FIELDS & cols == ENTRY_OBSERVATION_FIELDS
 
     async def test_glob_matches_names_and_full_paths(self, storage: DatabaseStorage) -> None:
@@ -458,7 +458,7 @@ class TestExtPushdown:
     def test_the_rideability_pair_travels_together(self) -> None:
         # One owner for the ride condition: predicate and bind count come
         # from the same call, so budget arithmetic cannot drift from SQL.
-        entry = build_vfs_tables(table_name="ext_pair_pin").entry
+        entry = build_vfs_tables().entry
         ride = ext_membership(entry, frozenset({"py", "txt"}), 16)
         assert ride.binds == 2 and ride.predicate is not None
         for stand_down in (frozenset(), frozenset({""}), frozenset({"py", ""})):
@@ -659,7 +659,7 @@ class TestReadFailureHandling:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         async with storage._host.engine.begin() as conn:
-            await conn.exec_driver_sql("DROP TABLE vfs")
+            await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.stat(path=Path("/"))
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.unavailable
@@ -705,7 +705,7 @@ class TestReadFailureHandling:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         async with storage._host.engine.begin() as conn:
-            await conn.exec_driver_sql("DROP TABLE vfs")
+            await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.unavailable

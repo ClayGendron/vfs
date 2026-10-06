@@ -232,7 +232,7 @@ def test_the_fan_spends_one_bind_per_exact_path_and_two_per_open_range() -> None
         ("/v1/", "/v10"),
         ("/v10/", "/v100"),
     )
-    entry = build_vfs_tables(table_name="vfs").entry
+    entry = build_vfs_tables().entry
     clauses = visibility_clauses(entry, rights, SQLITE, 2_099)
     assert clauses is not None and len(clauses) == 1
     # The everyone level, then four points and five ranges each in its live
@@ -241,11 +241,15 @@ def test_the_fan_spends_one_bind_per_exact_path_and_two_per_open_range() -> None
     assert clauses[0].binds == 1 + 2 * (4 + 2 * 5) + (1 + 2 * (1 + 2))
     sql = str(clauses[0].predicate.compile(compile_kwargs={"literal_binds": True}))
     assert "LIKE" not in sql and "\x00" not in sql
-    assert sql.startswith("vfs.everyone_level >= 1 OR ")
-    assert sql.count("vfs.path = ") == 5 and sql.count("vfs.path > ") == 6 and sql.count("vfs.path < ") == 6
-    assert sql.count("vfs.origin_path = ") == 5 and sql.count("vfs.origin_path > ") == 6
-    assert sql.count("vfs.origin_path IS NULL") == 11
-    assert "vfs.owner_id = 'ann'" in sql
+    assert sql.startswith("vfs_entries.everyone_level >= 1 OR ")
+    assert (
+        sql.count("vfs_entries.path = ") == 5
+        and sql.count("vfs_entries.path > ") == 6
+        and sql.count("vfs_entries.path < ") == 6
+    )
+    assert sql.count("vfs_entries.origin_path = ") == 5 and sql.count("vfs_entries.origin_path > ") == 6
+    assert sql.count("vfs_entries.origin_path IS NULL") == 11
+    assert "vfs_entries.owner_id = 'ann'" in sql
     # Starved to one bind per clause, every term is its own statement.
     starved = visibility_clauses(entry, rights, SQLITE, 4)
     expected = [1, *[1] * 4, *[2] * 5, *[1] * 4, *[2] * 5, 2, 3, 2, 3]
@@ -423,7 +427,7 @@ def test_the_clause_fan_fences_a_hole_out_of_the_everyone_leg() -> None:
     # Without a range source the fan carries the holes as literal negations:
     # the everyone unit becomes the level on each piece of the mount outside
     # the hole, so a stale label inside it never admits through this leg.
-    entry = build_vfs_tables(table_name="vfs").entry
+    entry = build_vfs_tables().entry
     rows = [GrantRow("*", "/", "none"), GrantRow("*", "/h", "none"), GrantRow("ann", "/g", "read")]
     rights = resolve({"ann": frozenset()}, rows, "read", pending={"/h"})
     assert rights.holes == cover("/h")
@@ -468,7 +472,7 @@ async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: str)
     # write bumps the revision, then resolves ann's rights, so it reads
     # the revoke and refuses — before the fix it decided first and lost it.
     url = f"sqlite+aiosqlite:///{tmp_path}/race.sqlite"
-    storage = DatabaseStorage(url=url, table_name="vfs", posture="private")
+    storage = DatabaseStorage(url=url, posture="private")
     try:
         assert (await storage.mkdir(path=Path("/x"), authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/x"), principal="ann", level="read_write", authority=SYSTEM)).success

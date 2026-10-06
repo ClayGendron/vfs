@@ -75,7 +75,7 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
 
     # Row-wise copy: drop every integer id and insert entries children-first,
     # so the destination's re-minted ids cannot reproduce the source mapping.
-    fresh = build_vfs_tables(table_name="vfs")
+    fresh = build_vfs_tables()
     dest_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/dest.sqlite")
     async with dest_engine.begin() as conn:
         await conn.run_sync(fresh.metadata.create_all)

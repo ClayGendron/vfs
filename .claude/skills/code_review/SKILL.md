@@ -134,7 +134,7 @@ the §1 checker and the §2 post-launch check both enforce this.
   engines' connection URLs (Postgres, MariaDB, MSSQL, Oracle — up,
   ephemeral data) in every prompt. Agents use them for empirical
   evidence — scratch scripts or targeted `-m <engine>` test
-  selections, each under its own table namespace so concurrent agents
+  selections, each under its own schema so concurrent agents
   do not collide — and never start, stop, or manage Docker themselves.
 
 ## 1. Bring up the engines, author the script, check it, launch it

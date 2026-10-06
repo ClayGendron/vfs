@@ -70,12 +70,13 @@ retire); recorded killers are diagnosis, never the assertion.
 
 ## Engine legs are reentrant
 
-The real-engine fixtures mint a per-run table namespace
-(`vfs_<hex>`) and drop exactly what they minted at teardown, so two
+vfs's table names are fixed (`vfs_*`), so the real-engine
+fixtures give each test a schema of its own (`vfs_t_<hex>`, via
+`tests/support/server_schemas.py`) and drop it at teardown, so two
 runs against one live engine never tear each other down (review
 agents sharing a Docker stack were the first to collide). A new
-engine-leg fixture or raw-SQL audit must take the minted name, never
-a fixed `vfs`.
+engine-leg fixture or raw-SQL audit must take the test's schema,
+never the server's default one.
 
 ## Running
 

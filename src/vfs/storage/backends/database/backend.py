@@ -163,7 +163,6 @@ class DatabaseStorage:
         *,
         url: str | None = None,
         session_factory: Callable[[], AsyncSession] | None = None,
-        table_name: str = "vfs",
         schema: str | None = None,
         name: str = "database",
         description: str | None = None,
@@ -192,7 +191,6 @@ class DatabaseStorage:
         self._host = EngineHost(
             url=url,
             session_factory=session_factory,
-            table_name=table_name,
             schema=schema,
             embedder=embedder,
             native_embedding=native_embedding,
@@ -213,8 +211,8 @@ class DatabaseStorage:
         self._glean_wall_seconds = glean_wall_seconds
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
-        # dialect only at first use, so the default names the tables.
-        self.description = description or f"Database storage ({table_name})"
+        # dialect only at first use, so the default names the schema.
+        self.description = description or (f"Database storage ({schema})" if schema else "Database storage")
 
     @property
     def mount_identity(self) -> str | None:

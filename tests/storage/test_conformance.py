@@ -9,23 +9,21 @@ skips only what a backend leaves undeclared.
 Every leg carries the hashing embedder — no key, no download — so the
 reindex embed step runs on every engine. Real-server legs activate when
 their ``VFS_TEST_<ENGINE>_URL`` variable is set and skip otherwise, so a
-plain run never needs Docker. Servers
-come from ``docker/compose.test.yml`` (same file CI uses); each test
-gets a clean slate in its own minted table namespace — created by the
-backend's own first touch, dropped at teardown — because the server
-outlives the test where sqlite's tmp file does not. Namespacing makes
-the legs reentrant: concurrent runs against one engine never tear each
-other down, and a crashed run's leftover ``vfs_*`` tables are residue
-on an ephemeral-data stack, cleared by ``compose down``.
+plain run never needs Docker. Servers come from
+``docker/compose.test.yml`` (same file CI uses); each test gets a clean
+slate in a schema of its own (``tests.support.server_schemas``) —
+created before the backend's first touch, dropped at teardown — because
+the server outlives the test where sqlite's tmp file does not. Schemas
+make the legs reentrant: concurrent runs against one engine never tear
+each other down, and a crashed run's leftover ``vfs_t_*`` schemas are
+residue on an ephemeral-data stack, cleared by ``compose down``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, func, inspect, select, text
@@ -35,10 +33,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.ranking.pins import assert_top10_pin
 from tests.support.grants_contract import GrantsContract
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
+from tests.support.server_schemas import server_storage
 from tests.support.storage_contract import StorageContract
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Observation
-from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
@@ -51,6 +49,7 @@ from vfs.storage.backends.memory import InMemoryStorage
 if TYPE_CHECKING:
     import pathlib
     from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
 
     from vfs.results import Result
 
@@ -71,30 +70,9 @@ class TestSqliteConformance(StorageContract, GrantsContract):
         await storage.close()
 
 
-@asynccontextmanager
-async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    """A fresh backend on the server named by ``env_var``, in a minted namespace.
-
-    Each run mints its own table namespace, so concurrent runs against
-    one engine never tear each other down; teardown drops exactly what
-    this run minted. Advisory locks isolate too — the lock key derives
-    from the table name.
-    """
-    url = os.environ.get(env_var)
-    if url is None:
-        pytest.skip(f"{env_var} is not set")
-    table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name, embedder=HashEmbeddingProvider())
-    try:
-        yield storage
-    finally:
-        await storage.close()
-        engine = create_async_engine(url)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
-        finally:
-            await engine.dispose()
+def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage]:
+    """A backend on *env_var*'s server, in a schema of its own, configured for this file."""
+    return server_storage(env_var, embedder=HashEmbeddingProvider())
 
 
 @pytest.mark.postgres
@@ -551,19 +529,18 @@ async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
         assert (await storage.reindex()).success is True
         encoded = await storage.grep(pattern="haystack")
         assert sum(len(o.matches or ()) for o in encoded.observations) == 3
-        # Reflection runs inside the namespace's lifetime, before teardown
-        # drops the minted tables.
-        table = storage._host.tables.entry.name
+        # Reflection runs inside the schema's lifetime, before teardown drops it.
+        table = storage._host.tables.entry
         engine = create_async_engine(os.environ[env_var])
         try:
             async with engine.connect() as conn:
-                indexes = await conn.run_sync(lambda sync: inspect(sync).get_indexes(table))
+                indexes = await conn.run_sync(lambda sync: inspect(sync).get_indexes(table.name, schema=table.schema))
         finally:
             await engine.dispose()
         by_name = {str(index["name"]).lower(): index for index in indexes}
-        columns = by_name[f"ix_{table}_encoded_kind"]["column_names"]
+        columns = by_name["ix_vfs_entries_encoded_kind"]["column_names"]
         assert [c.lower() for c in columns if c is not None] == ["encoded", "kind"]
-        assert f"ix_{table}_encoded" not in by_name
+        assert "ix_vfs_entries_encoded" not in by_name
 
 
 @pytest.mark.postgres
@@ -705,8 +682,8 @@ async def _content_bytes_audit(env_var: str, cast_sql: str | None) -> None:
         assert [str(o.path) for o in result.observations] == ["/u.txt"]
         assert result.observations[0].content == body
         if cast_sql is not None:
-            # The audit SQL names the minted namespace's content table.
-            statement = cast_sql.format(content=storage._host.tables.content.name)
+            # The audit SQL names the content table inside the test's schema.
+            statement = cast_sql.format(content=storage._host.tables.content.fullname)
             async with storage._host.session_factory() as session:
                 fetched = (await session.execute(text(statement))).scalar_one()
             assert bytes(fetched) == body.encode()

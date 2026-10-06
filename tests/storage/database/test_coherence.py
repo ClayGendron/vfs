@@ -476,7 +476,7 @@ class TestWriteVsTopologyCoherence:
         # The set-based arm SQLite cannot execute (postgres/mssql): the
         # statement joins (entry_id, path) and the RETURNING count is the
         # proof — one short row raises for the whole batch.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         pairs = [("A" * 26, "/a"), ("B" * 26, "/b")]
         double = _ReturningSession([{"entry_id": pairs[0][0]}])
         with pytest.raises(StaleSnapshot):
@@ -786,14 +786,14 @@ class TestWriteVsTopologyCoherence:
         await storage.close()
 
     async def test_classifier_redrive_mode_raises_for_any_miss(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         staged = _staged_material("/x.txt", str(ULID()))
         double = _ReturningSession([])
         with pytest.raises(StaleSnapshot):
             await _classify_guard_misses(cast("AsyncSession", double), tables.entry, MARIADB, 900, [staged])
 
     async def test_bump_parents_dispatches_by_declared_capability(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         parent_id = "D" * 26
 
         def plan() -> WritePlan:
@@ -854,7 +854,7 @@ class TestWriteVsTopologyCoherence:
         await storage.close()
 
     async def test_claim_verifies_by_returning_when_rowcount_is_insane(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         entry = tables.entry
         stmt = update(entry).where(entry.c.entry_id == "X" * 26, entry.c.version == 1).values(version=2)
 
@@ -1172,7 +1172,7 @@ class TestWriteVsTopologyCoherence:
         # The bump statement carries one fixed bind (the SQL-side
         # increment); the helper measures it off the compiled statement
         # and keeps the reserve clear of the engine cap.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         entry = tables.entry
         pair = ("A" * 26, "/a")
         dialect = mssql.dialect()
@@ -1219,7 +1219,7 @@ class TestWriteVsTopologyCoherence:
         # NULL cells compile inline, so a sparse probe row measures a
         # smaller delta; the chunk is charged at the declared ceiling
         # regardless, or a mixed batch overflows the engine cap mid-run.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         entry = tables.entry
         dialect = mssql.dialect()
         width = len(_CLOBBER_COLUMNS) + 4
@@ -1250,7 +1250,7 @@ class TestWriteVsTopologyCoherence:
         # An IntegrityError escaping ON CONFLICT re-drives row-wise; when
         # the probe classifies (a ghost refusal, not a vanished occupant)
         # the layer keeps its errors and moves to the next chunk.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         staged = StagedEntry(
             path=Path("/d/late.txt"),
             parent=Path("/d"),

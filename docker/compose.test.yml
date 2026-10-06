@@ -58,6 +58,9 @@ services:
       - "33062:3306"
     tmpfs:
       - /var/lib/mysql
+    # Lets the app user create and drop the per-test databases.
+    volumes:
+      - ./initdb/mariadb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 3s
@@ -108,6 +111,9 @@ services:
       APP_USER_PASSWORD: vfs
     ports:
       - "15210:1521"
+    # Lets the app user create and drop the per-test schema users.
+    volumes:
+      - ./initdb/oracle:/container-entrypoint-initdb.d:ro
     # healthcheck.sh ships in the image and probes the pluggable DB's OPEN state.
     healthcheck:
       test: ["CMD", "healthcheck.sh"]

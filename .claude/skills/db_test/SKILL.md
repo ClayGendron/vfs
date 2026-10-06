@@ -37,6 +37,14 @@ stop and report — do not retry the suite against a dead daemon.
 
 ## 2. Build up
 
+**Every run starts from fresh containers** (Clay, 2026-10-03): take
+down whatever is left, volumes included, so the `docker/initdb/` init
+scripts always apply and no container carries hand-applied state:
+
+```sh
+docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -v -t 60
+```
+
 Postgres has no compose profile and starts by default; the heavier
 engines start when named (naming a service activates its profile):
 
@@ -81,11 +89,15 @@ VFS_TEST_ORACLE_URL="oracle+oracledb_async://vfs:vfs@localhost:15210/?service_na
 A healthy leg matches the sqlite leg's pass count, with the same
 capability skips (mkedge is the last classified stub).
 Keep `?charset=utf8mb4` on the MariaDB URL — text bodies depend on it.
-Engine legs are reentrant: each harness run mints its own table
-namespace (`vfs_<hex>`), so concurrent runs against one engine —
-two terminals, parallel review agents on a shared stack — never tear
-each other down. A crashed run's leftover `vfs_*` tables are residue
-on an ephemeral-data stack; `compose down` clears them.
+Engine legs are reentrant: vfs's table names are fixed, so each test
+gets a schema of its own (`vfs_t_<hex>`; a database on MariaDB, a
+user on Oracle — `tests/support/server_schemas.py`), and concurrent
+runs against one engine — two terminals, parallel review agents on a
+shared stack — never tear each other down. The app users can create
+and drop schemas because the compose init scripts
+(`docker/initdb/`) grant it at first start. A crashed run's leftover
+`vfs_t_*` schemas are residue on an ephemeral-data stack;
+`compose down` clears them.
 Report failures as findings against the code, not the harness: a leg
 that fails on a real engine while sqlite passes is exactly the signal
 this setup exists to produce (that is how the InnoDB index-cap defect
@@ -93,7 +105,7 @@ was caught).
 
 ### Run the legs concurrently, and the sqlite CI leg beside them
 
-Each run mints its own table namespace, so the four legs never
+Each test runs in its own schema, so the four legs never
 collide, and each container is its own server — run them **at the
 same time**, not one after another (Clay, 2026-08-26): wall time is
 the slowest leg (~2.5 min, Oracle) instead of the sum (~7 min). The
@@ -126,8 +138,11 @@ outlives compose's default 10 s grace, so a bare `down` SIGKILLs it
 in the past (see the phantom-record note below):
 
 ```sh
-docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -t 60
+docker compose -f docker/compose.test.yml --profile mariadb --profile mssql --profile oracle down -v -t 60
 ```
+
+Always pass `-v`: volumes go with the containers, so the next run
+starts clean.
 
 **If this session used a fresh `-p vfs-test-<letter>` project** (the
 phantom-record workaround below), tear that project down too, with
@@ -135,7 +150,7 @@ the same profile flags and grace — it is a separate compose project
 and the default `down` never touches it:
 
 ```sh
-docker compose -p vfs-test-<letter> -f docker/compose.test.yml --profile mssql down -t 60
+docker compose -p vfs-test-<letter> -f docker/compose.test.yml --profile mssql down -v -t 60
 ```
 
 Data is tmpfs/ephemeral; nothing persists. Verify with

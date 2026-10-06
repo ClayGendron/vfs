@@ -194,12 +194,12 @@ def range_counts(entry: Table, opens: Sequence[tuple[str, str]], profile: Dialec
     return stmt.group_by(lo, hi)
 
 
-def derived_hint(profile: DialectProfile, table: Table, index: str) -> str | None:
-    """The hint a statement joining the visible set to *table* on its *index* carries, if the dialect needs one."""
+def derived_hint(profile: DialectProfile, table: Table, *columns: str) -> str | None:
+    """The hint a statement joining the visible set to *table* on its index over *columns* carries, if needed."""
     template = profile.range_hints.derived
     if not template:
         return None
-    return template.format(visible=VISIBLE_ALIAS, table=table.name, index=index)
+    return template.format(visible=VISIBLE_ALIAS, table=table.name, index=_index_name(table, *columns))
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +401,9 @@ def _scoped(entry: Table, scope: str | None) -> list[ColumnElement[bool]]:
     return [entry.c.path > lo, entry.c.path < hi]
 
 
-def _index_name(entry: Table, *columns: str) -> str:
-    """The name of the index on exactly *columns* — the schema declares one for every pair asked for."""
-    found = next((i.name for i in entry.indexes if tuple(c.name for c in i.columns) == columns), None)
+def _index_name(table: Table, *columns: str) -> str:
+    """The name of *table*'s index on exactly *columns* — the schema declares one for every key asked for."""
+    found = next((i.name for i in table.indexes if tuple(c.name for c in i.columns) == columns), None)
     assert isinstance(found, str)
     return found
 

@@ -755,7 +755,7 @@ class TestTrashChainRefusal:
         await storage.close()
 
     def test_chain_inside_matches_ancestors_and_the_bucket_only(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         chain = _TrashChain(tables, SQLITE, 100, root_id="r", authority=None, now=datetime.now(UTC))
         assert chain.chain_inside(Path("/.vfs")) is True
         assert chain.chain_inside(Path("/.vfs/trash")) is True

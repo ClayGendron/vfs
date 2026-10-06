@@ -26,7 +26,6 @@ from vfs.models.rows import (
     ENTRY_CONTENT_FIELDS,
     ENTRY_ROW_ONLY_COLUMNS,
     MAX_PRINCIPAL_ID_LENGTH,
-    MAX_TABLE_NAME_LENGTH,
     MODEL_COLUMN_RENAMES,
     MODEL_FIELD_ONLY,
     MODEL_OWNER_FIELDS,
@@ -58,6 +57,9 @@ TABLE_ATTRS = (
     "lex_stats",
 )
 
+# Postgres truncates identifiers past 63 bytes; the tightest cap among the engines.
+POSTGRES_IDENTIFIER_CAP = 63
+
 # The metadata family: each model, its table attribute, and the table's
 # columns with no model field (the id backbone and owner references).
 METADATA_MODELS = (
@@ -69,7 +71,7 @@ METADATA_MODELS = (
 
 @pytest.fixture
 def tables() -> VFSTables:
-    return build_vfs_tables(table_name="vfs_entries")
+    return build_vfs_tables()
 
 
 # ---------------------------------------------------------------------------
@@ -150,36 +152,36 @@ class TestBuildVFSTables:
     def test_one_metadata_owns_the_whole_family(self, tables: VFSTables) -> None:
         assert set(tables.metadata.tables) == {
             "vfs_entries",
-            "vfs_entries_content",
-            "vfs_entries_versions",
-            "vfs_entries_version_subjects",
-            "vfs_entries_chunks",
-            "vfs_entries_edges",
-            "vfs_entries_meta",
-            "vfs_entries_gram_epochs",
-            "vfs_entries_grams_posting_list",
-            "vfs_entries_segments",
-            "vfs_entries_lex_docs",
-            "vfs_entries_lex_postings",
-            "vfs_entries_lex_df",
-            "vfs_entries_lex_stats",
-            "vfs_entries_signals",
-            "vfs_entries_signal_epochs",
-            "vfs_entries_grants",
-            "vfs_entries_memberships",
-            "vfs_entries_relabels",
-            "vfs_entries_principal_revisions",
+            "vfs_content",
+            "vfs_versions",
+            "vfs_version_subjects",
+            "vfs_chunks",
+            "vfs_edges",
+            "vfs_meta",
+            "vfs_gram_epochs",
+            "vfs_grams_posting_list",
+            "vfs_segments",
+            "vfs_lex_docs",
+            "vfs_lex_postings",
+            "vfs_lex_df",
+            "vfs_lex_stats",
+            "vfs_signals",
+            "vfs_signal_epochs",
+            "vfs_grants",
+            "vfs_memberships",
+            "vfs_relabels",
+            "vfs_principal_revisions",
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
 
     def test_mounts_never_share_schema_objects(self, tables: VFSTables) -> None:
-        other = build_vfs_tables(table_name="vfs_entries")
+        other = build_vfs_tables()
         assert other.metadata is not tables.metadata
         assert other.entry is not tables.entry
 
     def test_schema_applies_to_every_table(self) -> None:
-        scoped = build_vfs_tables(table_name="t", schema="tenant")
+        scoped = build_vfs_tables(schema="tenant")
         assert {getattr(scoped, attr).schema for attr in TABLE_ATTRS} == {"tenant"}
 
     def test_identity_backbone(self, tables: VFSTables) -> None:
@@ -254,14 +256,14 @@ class TestBuildVFSTables:
         assert cast("String", tables.edges.c.context.type).length == MAX_LINK_CONTEXT_LENGTH
         assert tables.edges.c.provenance.default is None
         by_name = {str(index.name): index for index in tables.edges.indexes}
-        assert [c.name for c in by_name["ix_vfs_entries_edges_fwd"].columns] == ["source_id", "edge_type"]
-        assert [c.name for c in by_name["ix_vfs_entries_edges_rev"].columns] == ["target_id", "edge_type"]
+        assert [c.name for c in by_name["ix_vfs_edges_fwd"].columns] == ["source_id", "edge_type"]
+        assert [c.name for c in by_name["ix_vfs_edges_rev"].columns] == ["target_id", "edge_type"]
 
     def test_single_parent_index_is_filtered_and_gated_by_dialect(self, tables: VFSTables) -> None:
         # Emitted only where the engine has partial/filtered indexes; a plain
         # unique index on target_id alone would be wrong everywhere else.
         by_name = {str(index.name): index for index in tables.edges.indexes}
-        fs_parent = by_name["uq_vfs_entries_edges_fs_parent"]
+        fs_parent = by_name["uq_vfs_edges_fs_parent"]
         assert fs_parent.unique
         assert [c.name for c in fs_parent.columns] == ["target_id"]
         for dialect_name in ("sqlite", "postgresql", "mssql"):
@@ -272,7 +274,7 @@ class TestBuildVFSTables:
         [("sqlite://", True), ("postgresql://", True), ("mssql://", True), ("mariadb://", False), ("oracle://", False)],
     )
     def test_single_parent_index_emission_per_dialect(self, url: str, emitted: bool) -> None:
-        tables = build_vfs_tables(table_name="vfs_entries")
+        tables = build_vfs_tables()
         statements: list[str] = []
 
         def record(sql: object, *args: object, **kwargs: object) -> None:
@@ -280,7 +282,7 @@ class TestBuildVFSTables:
 
         engine = create_mock_engine(url, record)
         tables.metadata.create_all(engine, checkfirst=False)
-        index_ddl = [s for s in statements if "CREATE UNIQUE INDEX uq_vfs_entries_edges_fs_parent" in s]
+        index_ddl = [s for s in statements if "CREATE UNIQUE INDEX uq_vfs_edges_fs_parent" in s]
         assert bool(index_ddl) is emitted
 
     def test_posting_rows_are_epoch_scoped_with_varint_default(self, tables: VFSTables) -> None:
@@ -303,7 +305,7 @@ class TestBuildVFSTables:
             assert table.c.term.type.length == MAX_TERM_BYTES
         assert isinstance(tables.lex_docs.c.entry_id.type, ULIDKey)
         by_name = {str(index.name): index for index in tables.lex_docs.indexes}
-        assert [c.name for c in by_name["ix_vfs_entries_lex_docs_entry"].columns] == ["epoch", "entry_id"]
+        assert [c.name for c in by_name["ix_vfs_lex_docs_entry"].columns] == ["epoch", "entry_id"]
         for column in (
             tables.lex_df.c.idf,
             tables.lex_df.c.max_weight,
@@ -342,7 +344,7 @@ class TestBuildVFSTables:
         assert tables.segments.c.segment.type.length == MAX_SEGMENT_LENGTH
         assert isinstance(tables.segments.c.entry_id.type, ULIDKey)
         by_name = {str(index.name): index for index in tables.segments.indexes}
-        assert [c.name for c in by_name["ix_vfs_entries_segments_entry"].columns] == ["entry_id"]
+        assert [c.name for c in by_name["ix_vfs_segments_entry"].columns] == ["entry_id"]
 
     def test_ext_kind_composite_index(self, tables: VFSTables) -> None:
         by_name = {str(index.name): index for index in tables.entry.indexes}
@@ -392,7 +394,6 @@ class TestBuildVFSTables:
 
     def test_native_embedding_shapes_the_chunk_column(self) -> None:
         native = build_vfs_tables(
-            table_name="t",
             native_embedding=NativeEmbeddingConfig(dimension=8, model_name="m"),
         )
         vector_type = native.chunks.c.embedding.type
@@ -476,28 +477,34 @@ class TestULIDKey:
         assert key.process_result_value(None, dialect) is None
 
 
-class TestTableNameBudget:
-    def test_at_limit_name_keeps_every_identifier_within_postgres_cap(self) -> None:
-        tables = build_vfs_tables(table_name="x" * MAX_TABLE_NAME_LENGTH)
+class TestFixedNames:
+    @staticmethod
+    def _identifiers(tables: VFSTables) -> list[str]:
         names = [table.name for table in tables.metadata.tables.values()]
         for table in tables.metadata.tables.values():
             names += [c.name for c in table.constraints if isinstance(c.name, str)]
             names += [i.name for i in table.indexes if isinstance(i.name, str)]
-        # Tight bound: the longest derived name lands exactly on 63, so a
-        # future longer suffix must lower MAX_TABLE_NAME_LENGTH to pass.
-        assert max(len(name) for name in names) == 63
+        return names
 
-    def test_at_limit_ddl_compiles_on_postgres(self) -> None:
-        tables = build_vfs_tables(table_name="x" * MAX_TABLE_NAME_LENGTH)
+    def test_every_identifier_carries_the_fixed_prefix(self, tables: VFSTables) -> None:
+        names = self._identifiers(tables)
+        assert tables.entry.name == "vfs_entries"
+        assert all(name.startswith(("vfs_", "ix_vfs_", "uq_vfs_", "ck_vfs_")) for name in names)
+
+    def test_every_identifier_fits_the_postgres_cap(self, tables: VFSTables) -> None:
+        assert max(len(name) for name in self._identifiers(tables)) <= POSTGRES_IDENTIFIER_CAP
+
+    def test_a_schema_moves_the_family_and_keeps_its_names(self, tables: VFSTables) -> None:
+        scoped = build_vfs_tables(schema="tenant")
+        assert sorted(self._identifiers(scoped)) == sorted(self._identifiers(tables))
+        assert scoped.entry.fullname == "tenant.vfs_entries"
+
+    def test_the_family_ddl_compiles_on_postgres(self, tables: VFSTables) -> None:
         dialect = postgresql.dialect()
         for table in tables.metadata.tables.values():
             CreateTable(table).compile(dialect=dialect)
             for index in table.indexes:
                 CreateIndex(index).compile(dialect=dialect)
-
-    def test_over_limit_name_is_refused_loudly(self) -> None:
-        with pytest.raises(ValueError, match="63-char"):
-            build_vfs_tables(table_name="x" * (MAX_TABLE_NAME_LENGTH + 1))
 
 
 class TestDDL:
@@ -544,7 +551,7 @@ class TestDDL:
                     CreateIndex(index).compile(dialect=dialect)
 
     def test_native_embedding_ddl_compiles_off_postgres(self, engine: Engine) -> None:
-        native = build_vfs_tables(table_name="t", native_embedding=NativeEmbeddingConfig(dimension=8))
+        native = build_vfs_tables(native_embedding=NativeEmbeddingConfig(dimension=8))
         native.metadata.create_all(engine)  # VectorType falls back to the packed binary column
 
     def test_entry_splits_into_entries_plus_content_and_reads_back(self, tables: VFSTables, engine: Engine) -> None:

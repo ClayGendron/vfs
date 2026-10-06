@@ -59,16 +59,16 @@ Limitations
 
 **Permissions are per-filesystem-instance, not per-storage.**  The
 permission map lives on a ``DatabaseFileSystem`` instance, not on the
-SQL engine or table it points at.  Two ``DatabaseFileSystem``
-instances that share the same underlying engine (or the same table in
+SQL engine or schema it points at.  Two ``DatabaseFileSystem``
+instances that share the same underlying engine (or the same schema in
 the same engine) are independent from the permission system's point of
 view.  If one is constructed with ``permissions="read"`` and another
 with ``permissions="read_write"`` on the same engine, writes through
 the writable instance will land in the bytes that the read-only
 instance also reads from.
 
-**Do not share engines or tables between mounts.**  Each mount should
-own its own engine, or at minimum its own table, unless you are
+**Do not share engines or schemas between mounts.**  Each mount should
+own its own engine, or at minimum its own schema, unless you are
 intentionally exposing the same storage under two different namespaces
 with compatible permissions.
 
@@ -77,7 +77,7 @@ filesystem layer, but a process that has direct access to the
 underlying block device can still write bytes.  VFS treats the SQL
 engine as that block device.  If you need hard isolation between a
 read-only view and a writable view of the same data, use separate
-engines (or separate tables within one engine) — not two
+engines (or separate schemas within one engine) — not two
 ``DatabaseFileSystem`` instances sharing one.
 """
 

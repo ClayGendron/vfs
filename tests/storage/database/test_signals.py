@@ -9,18 +9,14 @@ engine legs run the same loop against the four servers.
 from __future__ import annotations
 
 import asyncio
-import os
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.support.database_helpers import _url
+from tests.support.server_schemas import server_storage
 from vfs.models import Edge, Entry
-from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage
@@ -30,7 +26,7 @@ from vfs.storage.backends.database.signals import collect_graph, signal_factors,
 from vfs.storage.ranking import Log1p, PageRank, PathShape, Ranker, Signal
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
 
 ENGINE_LEGS = [
     pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
@@ -305,23 +301,9 @@ class TestProbe:
 # ---------------------------------------------------------------------------
 
 
-@asynccontextmanager
-async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    url = os.environ.get(env_var)
-    if url is None:
-        pytest.skip(f"{env_var} is not set")
-    table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name, ranker=Ranker(signals=(CENTRALITY,)))
-    try:
-        yield storage
-    finally:
-        await storage.close()
-        engine = create_async_engine(url)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
-        finally:
-            await engine.dispose()
+def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage]:
+    """A backend on *env_var*'s server, in a schema of its own, configured for this file."""
+    return server_storage(env_var, ranker=Ranker(signals=(CENTRALITY,)))
 
 
 class TestEngineLegs:

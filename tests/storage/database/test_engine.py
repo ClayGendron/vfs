@@ -22,7 +22,7 @@ from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _url
-from vfs.models.rows import MAX_TABLE_NAME_LENGTH, SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
+from vfs.models.rows import SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
@@ -57,9 +57,9 @@ class TestConstruction:
         with pytest.raises(ValueError, match="exactly one"):
             DatabaseStorage()
 
-    def test_over_budget_table_name_is_refused_at_construction(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="63-char"):
-            DatabaseStorage(url=_url(tmp_path), table_name="x" * (MAX_TABLE_NAME_LENGTH + 1))
+    def test_the_default_description_names_the_schema_when_one_is_set(self, tmp_path) -> None:
+        assert DatabaseStorage(url=_url(tmp_path)).description == "Database storage"
+        assert DatabaseStorage(url=_url(tmp_path), schema="tenant").description == "Database storage (tenant)"
 
     def test_satisfies_the_storage_protocols(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -192,7 +192,7 @@ class TestFirstTouch:
     async def test_half_provisioned_database_refuses_with_a_classified_error(self, tmp_path) -> None:
         # Root entry present but no meta row: the provision IntegrityError
         # is NOT the designed meta race and must classify, never leak raw.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         seed = create_async_engine(_url(tmp_path))
         now = datetime.now(UTC)
         async with seed.begin() as conn:

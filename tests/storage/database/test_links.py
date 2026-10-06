@@ -10,20 +10,16 @@ The signals phase then reads the rows like any other reference edge.
 
 from __future__ import annotations
 
-import os
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.storage.database.test_signals import ENGINE_LEGS
 from tests.support.database_helpers import _url
+from tests.support.server_schemas import server_storage
 from vfs.models import Edge, Entry
 from vfs.models import links as links_model
-from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import Severity, VFSErrorKind
 from vfs.storage.backends.database import DatabaseStorage
@@ -32,7 +28,7 @@ from vfs.storage.protocol import ResolvedPair
 from vfs.storage.ranking import Ranker, Signal
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
 
     from vfs.results import Result
 
@@ -305,23 +301,9 @@ class TestSignals:
 # ---------------------------------------------------------------------------
 
 
-@asynccontextmanager
-async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    url = os.environ.get(env_var)
-    if url is None:
-        pytest.skip(f"{env_var} is not set")
-    table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name, ranker=Ranker(signals=(Signal("centrality"),)))
-    try:
-        yield storage
-    finally:
-        await storage.close()
-        engine = create_async_engine(url)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
-        finally:
-            await engine.dispose()
+def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage]:
+    """A backend on *env_var*'s server, in a schema of its own, configured for this file."""
+    return server_storage(env_var, ranker=Ranker(signals=(Signal("centrality"),)))
 
 
 class TestEngineLegs:

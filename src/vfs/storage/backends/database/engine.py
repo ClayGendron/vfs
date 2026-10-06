@@ -105,7 +105,7 @@ def advisory_key(text: str) -> int:
     """Stable signed-64 advisory-lock key derived from *text*.
 
     Every rival instance hashing the same handle — the durable mount
-    identity once adopted, the per-mount table prefix before it exists —
+    identity once adopted, the schema-qualified table name before it exists —
     lands on the same key, and the signed range is what Postgres's
     ``pg_advisory_xact_lock(bigint)`` accepts.
     """
@@ -128,7 +128,6 @@ class EngineHost:
         *,
         url: str | None = None,
         session_factory: Callable[[], AsyncSession] | None = None,
-        table_name: str = "vfs",
         schema: str | None = None,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
@@ -150,9 +149,7 @@ class EngineHost:
         # engines' own vector columns need: the native column follows.
         if embedder is not None and native_embedding is None:
             native_embedding = NativeEmbeddingConfig(dimension=embedder.dimension)
-        self.tables: VFSTables = build_vfs_tables(
-            table_name=table_name, schema=schema, native_embedding=native_embedding
-        )
+        self.tables: VFSTables = build_vfs_tables(schema=schema, native_embedding=native_embedding)
         self.embedder = embedder
         self.native_embedding = native_embedding
         # What everyone holds at the root of a freshly provisioned mount;
@@ -183,7 +180,9 @@ class EngineHost:
         # know its dialect before its first session exists.
         self._profile: DialectProfile | None = None
         self._dialect: Dialect | None = None
-        self._table_key = advisory_key(table_name)
+        # Before first touch the schema-qualified table name is the handle,
+        # so mounts in two schemas never share the provisioning lock.
+        self._table_key = advisory_key(self.tables.entry.fullname)
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
         self.mount_identity: str | None = None

@@ -148,9 +148,9 @@ MAX_MODEL_ID_LENGTH: Final = 255
 # pgvector's HNSW and IVFFlat indexes accept at most this many components.
 PGVECTOR_INDEX_MAX_DIMENSION: Final = 2_000
 
-# Postgres caps identifiers at 63 chars; the longest derived name adds 22
-# ("uq_" + "_chunks_entry_index"), so 63 - 22. A tightness test pins the math.
-MAX_TABLE_NAME_LENGTH: Final = 41
+# Auto-named indexes take the bare table name: SQLAlchemy's default folds
+# the schema in, so a long schema would push them past identifier caps.
+_NAMING_CONVENTION: Final = {"ix": "ix_%(table_name)s_%(column_0_name)s"}
 
 # Posting-list encoding tag. v1 writes ``delta+varint`` only; the per-row tag
 # lets the format evolve per gram without a migration (``roaring`` is the
@@ -336,7 +336,6 @@ class VFSTables(NamedTuple):
 
 def build_vfs_tables(
     *,
-    table_name: str,
     schema: str | None = None,
     native_embedding: NativeEmbeddingConfig | None = None,
 ) -> VFSTables:
@@ -347,17 +346,10 @@ def build_vfs_tables(
     Integer PKs that feed posting-list ``doc_id`` values are SQLite
     ``AUTOINCREMENT`` so a deleted top rowid is never reused.
 
-    Refuses a ``table_name`` over :data:`MAX_TABLE_NAME_LENGTH`: derived
-    constraint names must fit Postgres's 63-char identifier cap on every
-    engine, not fail on the first engine that enforces it.
+    The names are fixed — every table is ``vfs_*`` — so one schema holds one
+    mount; *schema* is what places a mount, on engines that have schemas.
     """
-    if len(table_name) > MAX_TABLE_NAME_LENGTH:
-        raise ValueError(
-            f"table_name exceeds {MAX_TABLE_NAME_LENGTH} characters "
-            f"({len(table_name)}): derived identifiers would overflow "
-            f"Postgres's 63-char cap: {table_name!r}"
-        )
-    metadata = MetaData()
+    metadata = MetaData(naming_convention=_NAMING_CONVENTION)
 
     embedding_type = (
         VectorType(
@@ -376,7 +368,7 @@ def build_vfs_tables(
     # UNIQUE(parent_id, name) index arbitrates concurrent creates and serves
     # keyset pagination; ``path`` is the regenerable cache nothing references.
     entry = Table(
-        table_name,
+        "vfs_entries",
         metadata,
         # Identity() is explicit for Oracle, whose dialect generates
         # nothing for a bare autoincrement primary key.
@@ -421,20 +413,20 @@ def build_vfs_tables(
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),
         Column("deleted_at", DateTime(timezone=True)),
-        UniqueConstraint("parent_id", "name", name=f"uq_{table_name}_parent_name"),
-        Index(f"ix_{table_name}_ext_kind", "ext", "kind"),
+        UniqueConstraint("parent_id", "name", name="uq_vfs_entries_parent_name"),
+        Index("ix_vfs_entries_ext_kind", "ext", "kind"),
         # Serves grep's overlay probe: the encoded=0 seek set is mostly
         # directories, so kind in the key rejects them without row lookups.
-        Index(f"ix_{table_name}_encoded_kind", "encoded", "kind"),
+        Index("ix_vfs_entries_encoded_kind", "encoded", "kind"),
         # Restore lookup by original site. Plain composite: a filtered
         # index over the mostly-NULL restore columns is not portable.
-        Index(f"ix_{table_name}_restore", "original_parent_id", "original_name"),
+        Index("ix_vfs_entries_restore", "original_parent_id", "original_name"),
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.
-        Index(f"ix_{table_name}_everyone_path", "everyone_level", "path"),
+        Index("ix_vfs_entries_everyone_path", "everyone_level", "path"),
         # The range join for trashed rows seeks their origin as it seeks
         # ``path`` for live ones; the index holds only the trashed rows.
-        Index(f"ix_{table_name}_origin_path", "origin_path"),
+        Index("ix_vfs_entries_origin_path", "origin_path"),
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -443,7 +435,7 @@ def build_vfs_tables(
     # column is physically last: width changes to earlier columns never
     # rewrite the blob's pages.
     content = Table(
-        f"{table_name}_content",
+        "vfs_content",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
         # Write time of this body row (every overwrite re-mints it) — the
@@ -461,7 +453,7 @@ def build_vfs_tables(
     # in under; the subjects it acted for sit one per row in the side
     # table below. Bodies last, metadata first.
     versions = Table(
-        f"{table_name}_versions",
+        "vfs_versions",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
         Column("version_number", Integer, primary_key=True, autoincrement=False),
@@ -485,7 +477,7 @@ def build_vfs_tables(
     # authority's set, keyed by the version it attributes. A system-actor
     # version has no rows here.
     version_subjects = Table(
-        f"{table_name}_version_subjects",
+        "vfs_version_subjects",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
         Column("version_number", Integer, primary_key=True, autoincrement=False),
@@ -498,7 +490,7 @@ def build_vfs_tables(
     # doc_ids, hence AUTOINCREMENT. ``encoded`` is the per-chunk gram-index
     # dirty flag; embedding staleness needs none (``embedding IS NULL``).
     chunks = Table(
-        f"{table_name}_chunks",
+        "vfs_chunks",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("entry_id", ULIDKey(), nullable=False, index=True),
@@ -509,12 +501,12 @@ def build_vfs_tables(
         Column("encoded", Boolean, nullable=False, default=False),
         Column("embedding", embedding_type),
         Column("content", _body_text(), nullable=False),
-        UniqueConstraint("entry_id", "chunk_index", name=f"uq_{table_name}_chunks_entry_index"),
+        UniqueConstraint("entry_id", "chunk_index", name="uq_vfs_chunks_entry_index"),
         schema=schema,
         sqlite_autoincrement=True,
     )
     if native_embedding is not None:
-        _attach_pgvector_ddl(metadata, chunks, table_name, native_embedding)
+        _attach_pgvector_ddl(metadata, chunks, native_embedding)
 
     # Edges: narrow ID triples with both traversal directions indexed. No
     # path columns — liveness and addressing come from joining entries.
@@ -522,7 +514,7 @@ def build_vfs_tables(
     # stamp the author class must fail loudly, never mislabel a row.
     fs_where = text("edge_type = 'fs'")
     edges = Table(
-        f"{table_name}_edges",
+        "vfs_edges",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("source_id", ULIDKey(), nullable=False),
@@ -534,14 +526,14 @@ def build_vfs_tables(
         # The referring line an extracted edge was read from, folded; NULL
         # on every authored row.
         Column("context", _string(MAX_LINK_CONTEXT_LENGTH)),
-        UniqueConstraint("source_id", "target_id", "edge_type", name=f"uq_{table_name}_edges_src_tgt_type"),
-        Index(f"ix_{table_name}_edges_fwd", "source_id", "edge_type"),
-        Index(f"ix_{table_name}_edges_rev", "target_id", "edge_type"),
+        UniqueConstraint("source_id", "target_id", "edge_type", name="uq_vfs_edges_src_tgt_type"),
+        Index("ix_vfs_edges_fwd", "source_id", "edge_type"),
+        Index("ix_vfs_edges_rev", "target_id", "edge_type"),
         # Single-parent hardening: at most one fs in-edge per entry, emitted
         # only where the engine has partial/filtered indexes; elsewhere the
         # conformance invariant is the declared floor.
         Index(
-            f"uq_{table_name}_edges_fs_parent",
+            "uq_vfs_edges_fs_parent",
             "target_id",
             unique=True,
             sqlite_where=fs_where,
@@ -559,7 +551,7 @@ def build_vfs_tables(
     # rebuilt gram index atomically. Versions are per-entry monotone
     # values on their own rows — the mount keeps no version sequence.
     meta = Table(
-        f"{table_name}_meta",
+        "vfs_meta",
         metadata,
         Column("id", Integer, primary_key=True, autoincrement=False),
         Column("schema_format_version", Integer, nullable=False),
@@ -577,7 +569,7 @@ def build_vfs_tables(
         # write bumps it first, so the bump is also the admin writes' lock.
         Column("grant_revision", BigInteger, nullable=False, default=0),
         Column("created_at", DateTime(timezone=True)),
-        CheckConstraint("id = 1", name=f"ck_{table_name}_meta_single_row"),
+        CheckConstraint("id = 1", name="ck_vfs_meta_single_row"),
         schema=schema,
     )
 
@@ -586,7 +578,7 @@ def build_vfs_tables(
     # version threshold. Rows outside the current epoch are reclaimable
     # garbage, swept by the reindex verb.
     gram_epochs = Table(
-        f"{table_name}_gram_epochs",
+        "vfs_gram_epochs",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("format_version", Integer, nullable=False),
@@ -601,7 +593,7 @@ def build_vfs_tables(
     # ``doc_count == len(decode(postings))``, and ``byte_size ==
     # len(postings)``. A gram with zero docs has no row.
     posting_list = Table(
-        f"{table_name}_grams_posting_list",
+        "vfs_grams_posting_list",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("gram_key", Integer, primary_key=True, autoincrement=False),
@@ -619,11 +611,11 @@ def build_vfs_tables(
     # Maintained inside the same transactions that write ``path``, never
     # epoch-cycled; the entry_id index serves delete-by-entry and cascades.
     segments = Table(
-        f"{table_name}_segments",
+        "vfs_segments",
         metadata,
         Column("segment", BytewiseString(MAX_SEGMENT_LENGTH), primary_key=True),
         Column("entry_id", ULIDKey(), primary_key=True),
-        Index(f"ix_{table_name}_segments_entry", "entry_id"),
+        Index("ix_vfs_segments_entry", "entry_id"),
         schema=schema,
     )
 
@@ -639,18 +631,18 @@ def build_vfs_tables(
     # stores them WITHOUT ROWID, in the key B-tree itself, as the
     # clustered engines do — no second copy per row.
     lex_docs = Table(
-        f"{table_name}_lex_docs",
+        "vfs_lex_docs",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("chunk_id", BigInteger, primary_key=True, autoincrement=False),
         Column("entry_id", ULIDKey(), nullable=False),
         Column("dl", Integer, nullable=False),
-        Index(f"ix_{table_name}_lex_docs_entry", "epoch", "entry_id"),
+        Index("ix_vfs_lex_docs_entry", "epoch", "entry_id"),
         schema=schema,
         sqlite_with_rowid=False,
     )
     lex_postings = Table(
-        f"{table_name}_lex_postings",
+        "vfs_lex_postings",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("term", BytewiseString(MAX_TERM_BYTES), primary_key=True),
@@ -663,7 +655,7 @@ def build_vfs_tables(
         sqlite_with_rowid=False,
     )
     lex_df = Table(
-        f"{table_name}_lex_df",
+        "vfs_lex_df",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("term", BytewiseString(MAX_TERM_BYTES), primary_key=True),
@@ -675,7 +667,7 @@ def build_vfs_tables(
         sqlite_with_rowid=False,
     )
     lex_stats = Table(
-        f"{table_name}_lex_stats",
+        "vfs_lex_stats",
         metadata,
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("n_docs", Integer, nullable=False),
@@ -692,7 +684,7 @@ def build_vfs_tables(
     # options it was computed with, so a refresh writes the new
     # generation beside the old, flips the pointer, then sweeps.
     signals = Table(
-        f"{table_name}_signals",
+        "vfs_signals",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
         Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
@@ -701,7 +693,7 @@ def build_vfs_tables(
         schema=schema,
     )
     signal_epochs = Table(
-        f"{table_name}_signal_epochs",
+        "vfs_signal_epochs",
         metadata,
         Column("signal", _string(MAX_SIGNAL_NAME_LENGTH), primary_key=True),
         Column("generation", String(ULID_LENGTH), nullable=False),
@@ -717,7 +709,7 @@ def build_vfs_tables(
     # paths in the entries table's collation. A surrogate key keeps the
     # wide pair in a secondary index, inside SQL Server's clustered cap.
     grants = Table(
-        f"{table_name}_grants",
+        "vfs_grants",
         metadata,
         Column("id", BigInteger().with_variant(Integer, "sqlite"), Identity(), primary_key=True),
         Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
@@ -726,7 +718,7 @@ def build_vfs_tables(
         Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
         Column("granted_at", DateTime(timezone=True), nullable=False),
         Column("revision", BigInteger, nullable=False),
-        UniqueConstraint("principal_id", "path_prefix", name=f"uq_{table_name}_grants_key"),
+        UniqueConstraint("principal_id", "path_prefix", name="uq_vfs_grants_key"),
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -735,20 +727,20 @@ def build_vfs_tables(
     # itself possibly a member of another group. The reverse index serves
     # the write-time depth and cycle checks, which walk downward.
     memberships = Table(
-        f"{table_name}_memberships",
+        "vfs_memberships",
         metadata,
         Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("group_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
         Column("granted_at", DateTime(timezone=True), nullable=False),
-        Index(f"ix_{table_name}_memberships_group", "group_id"),
+        Index("ix_vfs_memberships_group", "group_id"),
         schema=schema,
     )
 
     # Posture rows whose relabel has not settled: the path, the revision the mark was
     # planted under (it keys every compile made meanwhile), and the last path rewritten.
     relabels = Table(
-        f"{table_name}_relabels",
+        "vfs_relabels",
         metadata,
         Column("path_prefix", BytewiseString(MAX_PATH_LENGTH), primary_key=True),
         Column("revision", BigInteger, nullable=False),
@@ -759,7 +751,7 @@ def build_vfs_tables(
     # One row per principal or group ever named by a grants or memberships write, stamped
     # with that write's grant revision; a caller's compile is keyed on its subjects' and groups' stamps.
     principal_revisions = Table(
-        f"{table_name}_principal_revisions",
+        "vfs_principal_revisions",
         metadata,
         Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("revision", BigInteger, nullable=False),
@@ -796,7 +788,7 @@ def build_vfs_tables(
 # ---------------------------------------------------------------------------
 
 
-def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, table_name: str, config: NativeEmbeddingConfig) -> None:
+def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, config: NativeEmbeddingConfig) -> None:
     """The extension and the ANN index behind a native pgvector column — PostgreSQL only.
 
     Both statements are dialect-conditional DDL events: every other
@@ -809,7 +801,7 @@ def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, table_name: str, con
     if config.dimension > PGVECTOR_INDEX_MAX_DIMENSION:
         return
     index = DDL(
-        f"CREATE INDEX IF NOT EXISTS ix_{table_name}_chunks_embedding ON {chunks.fullname} "
+        f"CREATE INDEX IF NOT EXISTS ix_vfs_chunks_embedding ON {chunks.fullname} "
         f"USING {config.index_method} (embedding {config.operator_class})"
     ).execute_if(dialect="postgresql")
     event.listen(chunks, "after_create", index)

@@ -1018,7 +1018,7 @@ class TestChannelFacts:
     """Direct rows on the pushdown disjunction's shape, per arm kind."""
 
     def _facts(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> Any:
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         return scope_module.channel_facts(entry, profile, compile_channel(patterns))
 
     def _sql(self, patterns: tuple[str, ...], profile: Any = SQLITE) -> str:
@@ -1140,7 +1140,7 @@ class TestPushdownBindAccounting:
     def test_charged_binds_equal_executed_parameters(self) -> None:
         # The one law: what the arithmetic charges is what the engine
         # is asked to bind, expanding memberships at element width.
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
         channel = compile_channel(("*.py", "**/Makefile"))
         pushdown = scope_module.pushdown_terms(entry, SQLITE, 64, 2000, channel, wanted, hide_meta=True)
@@ -1151,7 +1151,7 @@ class TestPushdownBindAccounting:
     def test_the_base_facts_charge_equals_their_executed_width(self) -> None:
         # The encoded flag renders inline (zero binds) on every dialect;
         # the kind membership binds one per member — the base charge exactly.
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         base = [entry.c.encoded, entry.c.kind.in_(sorted(CONTENT_KINDS))]
         for compiler in [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]:
             executed = sum(
@@ -1162,7 +1162,7 @@ class TestPushdownBindAccounting:
     def test_static_bind_counts_are_dialect_invariant(self) -> None:
         # The chunk arithmetic counts static predicates on the default
         # compiler; every bundled dialect must execute the same count.
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         compilers = [mssql.dialect(), mysql.dialect(), oracle.dialect(), postgresql.dialect(), sqlite.dialect()]
         for profile in (*PROFILES.values(), GENERIC):
             liveness = scope_module.liveness_filters(entry, profile, include_meta=False)
@@ -1177,7 +1177,7 @@ class TestPushdownBindAccounting:
     def test_a_ride_too_wide_for_the_budget_stands_down(self) -> None:
         # Half the membership budget is the ride's ceiling: the id chunk
         # always keeps room, so per-chunk can never collapse toward 1.
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         wanted = frozenset(f"e{i:02d}" for i in range(32))
         pushdown = scope_module.pushdown_terms(entry, SQLITE, 64, 40, compile_channel(()), wanted, hide_meta=True)
         assert all("IN" not in str(term) for term in pushdown.terms)

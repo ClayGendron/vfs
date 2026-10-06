@@ -955,7 +955,7 @@ class TestGuardedAttribution:
     """
 
     async def test_returning_arm_attributes_guarded_success_by_membership(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         won = _staged_material("/won.txt", str(ULID()))
         lost = _staged_material("/lost.txt", str(ULID()))
         # The re-probe finds the lost row present: an honest conflict.
@@ -976,7 +976,7 @@ class TestGuardedAttribution:
         assert len(updates) == 1  # both rows rode one chunk
 
     async def test_returning_arm_guard_miss_reprobes_a_vanished_row_to_not_found(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         gone = _staged_material("/gone.txt", str(ULID()))
         double = _ReturningSession([], probed=[])
         errors = await _update_materials(
@@ -993,7 +993,7 @@ class TestGuardedAttribution:
         assert str(gone.path) in errors[0].message
 
     async def test_returning_arm_statement_is_a_guarded_values_join(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         staged = _staged_material("/f.txt", str(ULID()))
         double = _ReturningSession([{"entry_id": staged.entry_id, "version": 2}])
         await _update_materials(
@@ -1012,7 +1012,7 @@ class TestGuardedAttribution:
         assert "incoming.v_base" in sql  # the version guard joins the VALUES row
 
     async def test_returning_arm_absorb_learns_returned_version_or_redrives(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         absorbed = _staged_material("/won.txt", str(ULID()), persistence="absorb")
         vanished = _staged_material("/gone.txt", str(ULID()), persistence="absorb")
         double = _ReturningSession([{"entry_id": absorbed.entry_id, "version": 7}])
@@ -1037,7 +1037,7 @@ class TestGuardedAttribution:
         # three staged rows must ride three statements, and attribution
         # must merge across the chunks — statement size never grows with
         # batch size.
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         staged = [_staged_material(f"/f{i}.txt", str(ULID())) for i in range(3)]
         width = len(_CLOBBER_COLUMNS) + 4
         double = _ReturningSession([{"entry_id": s.entry_id, "version": 2} for s in staged])

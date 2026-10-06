@@ -72,11 +72,17 @@ class TestTopologyKey:
         assert key != advisory_key("other")
 
     def test_topology_key_falls_back_to_the_table_key_before_adoption(self) -> None:
-        host = EngineHost(url="sqlite+aiosqlite:///:memory:", table_name="vfs")
-        assert host.topology_key == advisory_key("vfs")
+        host = EngineHost(url="sqlite+aiosqlite:///:memory:")
+        assert host.topology_key == advisory_key("vfs_entries")
+
+    def test_the_table_key_differs_per_schema(self) -> None:
+        tenant = EngineHost(url="sqlite+aiosqlite:///:memory:", schema="tenant")
+        other = EngineHost(url="sqlite+aiosqlite:///:memory:", schema="other")
+        assert tenant.topology_key == advisory_key("tenant.vfs_entries")
+        assert tenant.topology_key != other.topology_key
 
     def test_topology_key_prefers_the_adopted_mount_identity(self) -> None:
-        host = EngineHost(url="sqlite+aiosqlite:///:memory:", table_name="vfs")
+        host = EngineHost(url="sqlite+aiosqlite:///:memory:")
         host.mount_identity = str(ULID())
         assert host.topology_key == advisory_key(host.mount_identity)
 
@@ -96,7 +102,7 @@ class TestSerializationPoint:
     """The point is the verb's first statement; each engine has its declared arm."""
 
     def _meta(self):
-        return build_vfs_tables(table_name="vfs").meta
+        return build_vfs_tables().meta
 
     async def test_sqlite_needs_no_statement(self) -> None:
         recorder = _StatementRecorder()

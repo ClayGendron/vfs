@@ -459,7 +459,7 @@ class TestFlipArms:
     async def test_the_values_join_arm_is_one_set_based_statement(self) -> None:
         dialect = _values_join_dialect()
         session = _RecordingSession(dialect)
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         pairs = [("01A", 1), ("01B", 2)]
         await indexing._flip_flags(
             cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, pairs, assignments={"encoded": True}
@@ -471,7 +471,7 @@ class TestFlipArms:
 
     async def test_the_generic_floor_falls_back_to_executemany(self) -> None:
         session = _RecordingSession(postgresql.dialect())
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         await indexing._flip_flags(
             cast("AsyncSession", session), entry, GENERIC, 2_000, 1_000, [("01A", 1)], assignments={"chunked": True}
         )
@@ -480,7 +480,7 @@ class TestFlipArms:
 
     async def test_no_pairs_is_a_no_op(self) -> None:
         session = _RecordingSession(postgresql.dialect())
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         await indexing._flip_flags(
             cast("AsyncSession", session), entry, POSTGRESQL, 2_000, 1_000, [], assignments={"encoded": True}
         )

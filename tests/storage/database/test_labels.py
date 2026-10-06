@@ -48,17 +48,21 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
 
 SYSTEM = Authority.system()
-ENTRY = build_vfs_tables(table_name="vfs").entry
+ENTRY = build_vfs_tables().entry
 OPENS = (("/a/", "/a0"), ("/b/", "/b0"))
 
 # Each profile, the dialect that renders it, and what its relabel must spell.
 SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
-    (SQLITE, sqlite.dialect(), ("UPDATE vfs SET everyone_level", "FROM json_each(", "json_extract(")),
-    (POSTGRESQL, postgresql.dialect(), ("UPDATE vfs SET everyone_level", "FROM unnest(", 'COLLATE "C"')),
-    (MSSQL, mssql.dialect(), ("UPDATE e SET everyone_level", "OPENJSON(", "INNER LOOP JOIN vfs AS e")),
-    (MARIADB, mariadb.MariaDBDialect(), ("UPDATE vfs AS e JOIN JSON_TABLE(", "AS BINARY", "SET e.everyone_level")),
-    (ORACLE, oracle.dialect(), ("UPDATE /*+ USE_CONCAT */ vfs", "vfs.path > ", " OR ")),
-    (GENERIC, sqlite.dialect(), ("UPDATE vfs SET everyone_level", " OR ", "vfs.path < ")),
+    (SQLITE, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM json_each(", "json_extract(")),
+    (POSTGRESQL, postgresql.dialect(), ("UPDATE vfs_entries SET everyone_level", "FROM unnest(", 'COLLATE "C"')),
+    (MSSQL, mssql.dialect(), ("UPDATE e SET everyone_level", "OPENJSON(", "INNER LOOP JOIN vfs_entries AS e")),
+    (
+        MARIADB,
+        mariadb.MariaDBDialect(),
+        ("UPDATE vfs_entries AS e JOIN JSON_TABLE(", "AS BINARY", "SET e.everyone_level"),
+    ),
+    (ORACLE, oracle.dialect(), ("UPDATE /*+ USE_CONCAT */ vfs_entries", "vfs_entries.path > ", " OR ")),
+    (GENERIC, sqlite.dialect(), ("UPDATE vfs_entries SET everyone_level", " OR ", "vfs_entries.path < ")),
 ]
 
 

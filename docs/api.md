@@ -22,7 +22,7 @@ from vfs.backends import DatabaseFileSystem, MSSQLFileSystem, PostgresFileSystem
 
 | Backend | Purpose |
 |---------|---------|
-| `DatabaseFileSystem` | Portable SQL-backed filesystem using a single `vfs_entries` table. |
+| `DatabaseFileSystem` | Portable SQL-backed filesystem over the fixed `vfs` table family. |
 | `PostgresFileSystem` | PostgreSQL-native overrides for grep, glob, lexical search, and pgvector-backed vector search. |
 | `MSSQLFileSystem` | SQL Server / Azure SQL backend with native full-text and regex pushdown. |
 
@@ -33,7 +33,6 @@ DatabaseFileSystem(
     *,
     engine=None,
     session_factory=None,
-    table_name="vfs_entries",
     native_embedding=None,
     embedding_provider=None,
     vector_store=None,
@@ -43,7 +42,7 @@ DatabaseFileSystem(
 )
 ```
 
-`engine` and `session_factory` are mutually interchangeable entry points for SQLAlchemy async sessions. `user_scoped=True` enables per-user path namespacing when `user_id` is supplied on operations. `table_name` and `schema` compose orthogonally for multi-tenant deployments; deployments preserving a pre-story-010 table name pass its literal name via `table_name=` (see the story-010 migration note). `native_embedding` accepts a `NativeEmbeddingConfig` (from `vfs.vector`) to mint a native pgvector column on Postgres engines; it is a no-op on other dialects.
+`engine` and `session_factory` are mutually interchangeable entry points for SQLAlchemy async sessions. `user_scoped=True` enables per-user path namespacing when `user_id` is supplied on operations. Table names are fixed — every table is `vfs_*` (`vfs_entries`, `vfs_content`, …) — so they are not configurable. `schema=` selects the schema the tables live in, on engines that have schemas (on MariaDB a schema is a database; on Oracle it is a user). One schema holds one mount, so two mounts on one server use two schemas. SQLite has no schemas: one database file is one mount. `native_embedding` accepts a `NativeEmbeddingConfig` (from `vfs.vector`) to mint a native pgvector column on Postgres engines; it is a no-op on other dialects.
 
 ## Mounting
 

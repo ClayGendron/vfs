@@ -13,13 +13,10 @@ from __future__ import annotations
 
 import json
 import os
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Final
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
@@ -29,9 +26,9 @@ from tests.ranking.merge import halves, merged_glean_run, naive_score_sort, roun
 from tests.ranking.metrics import METRICS, compare, evaluate
 from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin
 from tests.storage.database.test_signals import ENGINE_LEGS
+from tests.support.server_schemas import server_storage
 from vfs.base import VirtualFileSystem
 from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
-from vfs.models.rows import build_vfs_tables
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.ranking import Convex, InDegree, Log1p, PathShape, Ranker, Signal
@@ -161,29 +158,10 @@ class TestDeterminism:
     ) -> None:
         local = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/local.sqlite")
         try:
-            async with _server_storage(env_var) as server:
+            async with server_storage(env_var) as server:
                 await assert_merge_top10_pin(local, server)
         finally:
             await local.close()
-
-
-@asynccontextmanager
-async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    url = os.environ.get(env_var)
-    if url is None:
-        pytest.skip(f"{env_var} is not set")
-    table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name)
-    try:
-        yield storage
-    finally:
-        await storage.close()
-        engine = create_async_engine(url)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
-        finally:
-            await engine.dispose()
 
 
 def _embedders() -> dict[str, EmbeddingProvider]:

@@ -760,7 +760,7 @@ async def _visible_corpus(
     if visible is not None:
         on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
         stmt = select(*aggregate).select_from(on_visible).where(docs.c.epoch == epoch)
-        hint = derived_hint(profile, docs, f"ix_{tables.entry.name}_lex_docs_entry")
+        hint = derived_hint(profile, docs, "epoch", "entry_id")
         if hint is not None:
             stmt = stmt.prefix_with(hint, dialect=profile.name)
         count, total = (await session.execute(stmt)).one()

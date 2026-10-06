@@ -23,26 +23,22 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
+from tests.support.server_schemas import server_storage, sibling
 from vfs.models import Edge, Entry
-from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import VFSErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from vfs.results import Result
 
 ENGINE_LEGS = [
@@ -55,36 +51,6 @@ ENGINE_LEGS = [
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
 _RACE_KINDS = frozenset({VFSErrorKind.not_found, VFSErrorKind.conflict, VFSErrorKind.exists, VFSErrorKind.invalid})
-
-
-@asynccontextmanager
-async def _server_storage(env_var: str) -> AsyncIterator[DatabaseStorage]:
-    """A fresh backend on the server named by *env_var*, in a minted namespace.
-
-    Each run mints its own table namespace, so concurrent runs against
-    one engine never tear each other down; teardown drops exactly what
-    this run minted. Rival handles join the namespace via ``_sibling``.
-    """
-    url = os.environ.get(env_var)
-    if url is None:
-        pytest.skip(f"{env_var} is not set")
-    table_name = f"vfs_{uuid4().hex[:10]}"
-    storage = DatabaseStorage(url=url, table_name=table_name)
-    try:
-        yield storage
-    finally:
-        await storage.close()
-        engine = create_async_engine(url)
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(build_vfs_tables(table_name=table_name).metadata.drop_all)
-        finally:
-            await engine.dispose()
-
-
-def _sibling(env_var: str, storage: DatabaseStorage) -> DatabaseStorage:
-    """A rival handle on the fixture's own minted namespace."""
-    return DatabaseStorage(url=os.environ[env_var], table_name=storage._host.tables.entry.name)
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -131,7 +97,7 @@ class TestForwardOrdering:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     @pytest.mark.parametrize("carrier", ["delete", "move", "sweep"])
     async def test_write_under_a_relocating_parent_never_tears(self, env_var: str, carrier: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.mkdir(path=Path("/d"), parents=True)).success
 
             async def rival() -> Result:
@@ -156,7 +122,7 @@ class TestForwardOrdering:
     async def test_write_under_a_restoring_trash_parent_never_tears(self, env_var: str) -> None:
         # The restore carrier: the victim writes under the trash-side
         # address while the rival restores it back to its original site.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.mkdir(path=Path("/d"), parents=True)).success
             deleted = await storage.delete(path=Path("/d"))
             assert deleted.success is True
@@ -178,7 +144,7 @@ class TestMkedgeEndpointLocks:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_rival_delete_serializes_behind_the_locked_resolve(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             entries = [Entry(path=Path("/src.py"), content="x"), Entry(path=Path("/dst.py"), content="x")]
             assert (await storage.write(entries=entries)).success is True
             pending: dict[str, asyncio.Task[Result]] = {}
@@ -211,8 +177,8 @@ class TestMkedgeEndpointLocks:
         rounds = int(os.environ.get("VFS_RACE_STORM_ROUNDS", "10"))
         batch = int(os.environ.get("VFS_RACE_STORM_N", "300"))
         rng = random.Random(int(os.environ.get("VFS_RACE_STORM_SEED", "4242")))
-        async with _server_storage(env_var) as writer:
-            rival = _sibling(env_var, writer)
+        async with server_storage(env_var) as writer:
+            rival = sibling(env_var, writer)
             try:
                 assert (await rival.first_touch()).success is True
                 for round_no in range(rounds):
@@ -264,7 +230,7 @@ class TestReverseOrdering:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_delete_recollects_a_child_committed_post_collect(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
             # Pre-mint the trash chain: a first-ever delete creates /.vfs
             # and bumps the root row, and on MSSQL's locking READ
@@ -292,7 +258,7 @@ class TestReverseOrdering:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_move_recollects_a_child_committed_post_collect(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
 
             handler, rival_results = _self_clearing(
@@ -313,7 +279,7 @@ class TestReverseOrdering:
         # direct parent (/d/sub), never the delete target (/d), so neither
         # side's guard flips — only the post-claim re-collection can carry
         # the late child. The depth-1 twin above cannot see this window.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (
                 await storage.write(entries=[Entry(path=Path("/d/sub/keep.txt"), content="x")], parents=True)
             ).success
@@ -351,7 +317,7 @@ class TestTransferCollision:
         # is about to mint: the unique violation redrives, and the fresh
         # ladder refuses the now-occupied root honestly — a classified
         # `exists`, never a driver error leaking across the seam.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/src/a.txt"), content="x")], parents=True)).success
 
             handler, rival_results = _self_clearing(
@@ -382,8 +348,8 @@ class TestAncestorMintConvergence:
         # directory: the loser adopts the winner's mint and both succeed —
         # sequential execution succeeds, so a hard-failed loser is a defect.
         rounds = int(os.environ.get("VFS_MINT_ROUNDS", "20"))
-        async with _server_storage(env_var) as writer:
-            rival = _sibling(env_var, writer)
+        async with server_storage(env_var) as writer:
+            rival = sibling(env_var, writer)
             try:
                 assert (await rival.first_touch()).success is True
                 for i in range(rounds):
@@ -426,7 +392,7 @@ class TestObservationHonesty:
     async def test_edit_never_reports_success_at_a_moved_address(self, env_var: str) -> None:
         from vfs.storage.replace import EditOperation
 
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="old")], parents=True)).success
 
             handler, rival_results = _self_clearing(
@@ -454,7 +420,7 @@ class TestObservationHonesty:
 class TestGhostRefusal:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_write_never_adopts_an_incoherent_row(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.mkdir(path=Path("/d"))).success
             host = storage._host
             entry = host.tables.entry
@@ -497,7 +463,7 @@ class TestGhostRefusal:
 class TestAddressRaceClassification:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_restore_losing_the_address_classifies_exists(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
             assert (await storage.delete(path=Path("/d/f.txt"))).success
 
@@ -528,7 +494,7 @@ class TestPurgeWindows:
     async def test_a_rival_body_replace_mid_purge_leaves_no_orphan(self, env_var: str) -> None:
         from vfs.storage.replace import EditOperation
 
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
 
             handler, rival_results = _self_clearing(
@@ -544,7 +510,7 @@ class TestPurgeWindows:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_rival_create_mid_purge_is_swept_or_refused(self, env_var: str) -> None:
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
 
             handler, rival_results = _self_clearing(
@@ -574,8 +540,8 @@ class TestNaturalTimingStorm:
         batch = int(os.environ.get("VFS_RACE_STORM_N", "300"))
         seed = int(os.environ.get("VFS_RACE_STORM_SEED", "4242"))
         rng = random.Random(seed)
-        async with _server_storage(env_var) as writer:
-            rival = _sibling(env_var, writer)
+        async with server_storage(env_var) as writer:
+            rival = sibling(env_var, writer)
             try:
                 # Warm both instances before the storm: a cold MSSQL first
                 # touch blocks unboundedly behind an in-flight rival
@@ -624,8 +590,8 @@ class TestAdoptAffirmation:
         # forces the write and the delete's claim to arbitrate — a child
         # standing under a trashed parent is the torn state the audit fails.
         rounds = int(os.environ.get("VFS_ADOPT_ROUNDS", "15"))
-        async with _server_storage(env_var) as writer:
-            rival = _sibling(env_var, writer)
+        async with server_storage(env_var) as writer:
+            rival = sibling(env_var, writer)
             try:
                 assert (await rival.first_touch()).success is True
                 # Pre-mint the trash chain: a fresh-DB delete would take the
@@ -666,9 +632,9 @@ class TestExhaustionClassification:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_hot_row_storm_reports_only_clean_conflicts(self, env_var: str) -> None:
         writers, per_writer = 8, 6
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/hot.txt"), content="0")])).success
-            instances = [_sibling(env_var, storage) for _ in range(writers)]
+            instances = [sibling(env_var, storage) for _ in range(writers)]
             try:
                 for instance in instances:
                     assert (await instance.first_touch()).success is True
@@ -709,7 +675,7 @@ class TestGrepEpochConsistency:
         # The pre-fix defect: grep reads pointer N, the rival publishes
         # N+1 and reclaims N, and both tiers come back empty with
         # success=True. The re-read must redrive instead.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/old.txt"), content="needle old")])).success
             assert (await storage.reindex()).success is True
             assert (await storage.write(entries=[Entry(path=Path("/new.txt"), content="needle new")])).success
@@ -728,7 +694,7 @@ class TestGrepEpochConsistency:
         # row between grep's advisory verdict and its candidate fetch.
         # The authoritative post-fetch read must route the row to the
         # scan tier — never a silent false empty.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             for path, content in (("/a.txt", "needle alpha"), ("/b.txt", "needle beta"), ("/c.txt", "needle gamma")):
                 assert (await storage.write(entries=[Entry(path=Path(path), content=content)])).success
             assert (await storage.reindex()).success is True
@@ -749,7 +715,7 @@ class TestGrepEpochConsistency:
     async def test_a_second_reindex_refuses_while_one_runs(self, env_var: str) -> None:
         # The single-runner lease: the rival's claim misses while the
         # first run holds it, and the refusal names the live run.
-        async with _server_storage(env_var) as storage:
+        async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])).success
 
             handler, rival_results = _self_clearing("reindex:before-publish", storage.reindex)
@@ -777,7 +743,7 @@ class TestGenerationRedirtyLockScope:
     """
 
     async def test_a_rival_row_update_passes_during_the_chunk_pass(self) -> None:
-        async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
+        async with server_storage("VFS_TEST_MARIADB_URL") as storage:
             settled = [Entry(path=Path(f"/f{i:03}.txt"), content=f"settled body {i:03}") for i in range(50)]
             assert (await storage.write(entries=settled)).success is True
             assert (await storage.reindex()).success is True

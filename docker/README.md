@@ -7,11 +7,14 @@ suite runs against. The tests themselves are wired in
 so a plain `uv run pytest` never needs Docker. CI
 (`.github/workflows/test-dialects.yml`) uses this same compose file.
 
-Engine legs are reentrant: each harness run mints its own table
-namespace (`vfs_<hex>`) and drops it at teardown, so concurrent runs
-against one engine never collide. A crashed run's leftover `vfs_*`
-tables are harmless residue — data is tmpfs-ephemeral, and
-`compose down` clears everything.
+Engine legs are reentrant: vfs's table names are fixed, so each test
+creates a schema of its own (`vfs_t_<hex>`) and drops it at teardown,
+and concurrent runs against one engine never collide. On MariaDB a
+schema is a database and on Oracle it is a user, so the app user
+needs rights to create both: the init scripts under `initdb/` grant
+them when a container first starts. A crashed run's leftover `vfs_t_*`
+schemas are harmless residue — data is ephemeral, and `compose down`
+clears everything.
 
 ## Quick start (macOS, Apple Silicon)
 

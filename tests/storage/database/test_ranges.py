@@ -32,24 +32,39 @@ if TYPE_CHECKING:
 
     from vfs.storage.backends.database.dialects import DialectProfile
 
-TABLES = build_vfs_tables(table_name="vfs")
+TABLES = build_vfs_tables()
 ENTRY = TABLES.entry
 BOTH = Pieces(("/a",), (("/a/", "/a0"),))
 NONE = Pieces((), ())
 
 # Each profile, the dialect that renders it, and fragments its rendering must hold.
 SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
-    (SQLITE, sqlite.dialect(), ("json_each(", "json_extract(", "AS pts CROSS JOIN vfs ON", "AS rng CROSS JOIN vfs ON")),
-    (POSTGRESQL, postgresql.dialect(), ("unnest(", "::TEXT[]", 'COLLATE "C"', "(lo, hi) JOIN vfs ON")),
+    (
+        SQLITE,
+        sqlite.dialect(),
+        ("json_each(", "json_extract(", "AS pts CROSS JOIN vfs_entries ON", "AS rng CROSS JOIN vfs_entries ON"),
+    ),
+    (POSTGRESQL, postgresql.dialect(), ("unnest(", "::TEXT[]", 'COLLATE "C"', "(lo, hi) JOIN vfs_entries ON")),
     (
         MSSQL,
         mssql.dialect(),
-        ("openjson(", "OPENJSON(", "WITH (lo nvarchar(max)", MSSQL_UTF8_COLLATION, "AS rng INNER LOOP JOIN vfs ON"),
+        (
+            "openjson(",
+            "OPENJSON(",
+            "WITH (lo nvarchar(max)",
+            MSSQL_UTF8_COLLATION,
+            "AS rng INNER LOOP JOIN vfs_entries ON",
+        ),
     ),
     (
         MARIADB,
         mariadb.MariaDBDialect(),
-        ("JSON_TABLE(", "COLUMNS (value VARCHAR", "AS BINARY", "AS rng STRAIGHT_JOIN vfs FORCE INDEX (ix_vfs_path) ON"),
+        (
+            "JSON_TABLE(",
+            "COLUMNS (value VARCHAR",
+            "AS BINARY",
+            "AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON",
+        ),
     ),
     (
         ORACLE,
@@ -57,10 +72,10 @@ SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
         (
             "JSON_TABLE(",
             "VARCHAR2(1024)",
-            "/*+ INDEX(vfs ix_vfs_everyone_path) */",
+            "/*+ INDEX(vfs_entries ix_vfs_entries_everyone_path) */",
             "/*+ CARDINALITY(pts 1) */",
             "/*+ CARDINALITY(rng 1) */",
-            ") rng JOIN vfs ON",
+            ") rng JOIN vfs_entries ON",
         ),
     ),
 ]
@@ -81,10 +96,14 @@ def test_each_dialect_renders_its_measured_spelling(
     # ann's owner arm, each in its live form on path and its trashed form
     # on origin_path: nine disjoint branches.
     assert sql.count("UNION ALL") == 8 and " UNION SELECT" not in sql
-    assert sql.count("vfs.everyone_level >= ") == 1 and sql.count("vfs.everyone_level < ") == 8
-    assert "vfs.path = " in sql and "vfs.path > " in sql and "vfs.path < " in sql
-    assert "vfs.origin_path = " in sql and "vfs.origin_path > " in sql and "vfs.origin_path < " in sql
-    assert sql.count("vfs.origin_path IS NULL") == 4 and sql.count("vfs.owner_id = ") == 4
+    assert sql.count("vfs_entries.everyone_level >= ") == 1 and sql.count("vfs_entries.everyone_level < ") == 8
+    assert "vfs_entries.path = " in sql and "vfs_entries.path > " in sql and "vfs_entries.path < " in sql
+    assert (
+        "vfs_entries.origin_path = " in sql
+        and "vfs_entries.origin_path > " in sql
+        and "vfs_entries.origin_path < " in sql
+    )
+    assert sql.count("vfs_entries.origin_path IS NULL") == 4 and sql.count("vfs_entries.owner_id = ") == 4
     assert "LIKE" not in sql and "NOT EXISTS" not in sql
 
 
@@ -101,29 +120,32 @@ def test_sqlite_fences_the_visible_set_as_a_materialized_cte() -> None:
 def test_a_caller_without_pieces_is_the_everyone_branch_alone() -> None:
     sql = _render(Ranges(NONE, ()), POSTGRESQL, postgresql.dialect())
     assert "UNION" not in sql and "unnest" not in sql
-    assert f"AS {VISIBLE_ALIAS}" in sql and "vfs.everyone_level >= " in sql
+    assert f"AS {VISIBLE_ALIAS}" in sql and "vfs_entries.everyone_level >= " in sql
 
 
 def test_a_scope_narrows_every_branch_to_the_subtree() -> None:
     # Scoped away from the trash chain no trashed row can lie in the scope,
     # so only the live forms are sent: three branches, each in the range.
     sql = _render(Ranges(BOTH, (("ann", NONE),)), SQLITE, sqlite.dialect(), scope="/a")
-    assert sql.count("vfs.path > ? AND vfs.path < ?") == 3 and "origin_path = " not in sql
+    assert sql.count("vfs_entries.path > ? AND vfs_entries.path < ?") == 3 and "origin_path = " not in sql
     root = _render(Ranges(NONE, ()), SQLITE, sqlite.dialect(), scope="/")
-    assert "vfs.path > ? AND vfs.path < ?" in root
+    assert "vfs_entries.path > ? AND vfs_entries.path < ?" in root
     # The trash chain — the root, /.vfs, the trash root, anything beneath — carries both forms.
     for scope in ("/", "/.vfs", "/.vfs/trash", "/.vfs/trash/2026-10-03-12"):
         chained = _render(Ranges(BOTH, ()), SQLITE, sqlite.dialect(), scope=scope)
-        assert chained.count("UNION ALL") == 4 and "vfs.origin_path = " in chained, scope
+        assert chained.count("UNION ALL") == 4 and "vfs_entries.origin_path = " in chained, scope
 
 
 def test_the_derived_hint_is_oracles_alone() -> None:
-    hint = derived_hint(ORACLE, TABLES.lex_docs, "ix_vfs_lex_docs_entry")
+    hint = derived_hint(ORACLE, TABLES.lex_docs, "epoch", "entry_id")
     expected = (
         "/*+ NO_MERGE(visible) LEADING(visible) USE_NL(vfs_lex_docs) INDEX(vfs_lex_docs ix_vfs_lex_docs_entry) */"
     )
     assert hint == expected
-    assert all(derived_hint(p, TABLES.lex_docs, "ix") is None for p in (SQLITE, POSTGRESQL, MSSQL, MARIADB, GENERIC))
+    assert all(
+        derived_hint(p, TABLES.lex_docs, "epoch", "entry_id") is None
+        for p in (SQLITE, POSTGRESQL, MSSQL, MARIADB, GENERIC)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +170,7 @@ def test_a_hole_excludes_the_everyone_leg_and_rides_the_spans_and_owner(
     # kinds, one holed-arm point, two owner kinds and one holed-owner range
     # in each of the two forms: thirteen branches joined disjoint.
     assert sql.count("UNION ALL") == 12 and " UNION SELECT" not in sql
-    assert "vfs.origin_path IS NOT NULL" in sql and sql.count("vfs.origin_path IS NULL") == 7
+    assert "vfs_entries.origin_path IS NOT NULL" in sql and sql.count("vfs_entries.origin_path IS NULL") == 7
 
 
 def test_no_hole_keeps_the_predicate_simple_and_true() -> None:
@@ -160,7 +182,7 @@ def test_no_hole_keeps_the_predicate_simple_and_true() -> None:
 def test_the_generic_floor_spells_the_hole_as_a_literal_negation() -> None:
     clause = hole_free(ENTRY.c.path, HOLE, GENERIC)
     sql = str(clause.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}))
-    assert "NOT (" in sql and "vfs.path = '/h'" in sql and "'/h/'" in sql and "EXISTS" not in sql
+    assert "NOT (" in sql and "vfs_entries.path = '/h'" in sql and "'/h/'" in sql and "EXISTS" not in sql
 
 
 def test_range_counts_groups_each_range_by_its_bounds() -> None:

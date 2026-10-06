@@ -878,7 +878,7 @@ class TestBulkInsert:
         await storage.close()
 
     def test_no_bulk_table_declares_a_callable_default(self) -> None:
-        tables = build_vfs_tables(table_name="vfs")
+        tables = build_vfs_tables()
         callables = [
             f"{table.name}.{column.key}"
             for table in tables.metadata.tables.values()
@@ -930,7 +930,7 @@ class TestBulkInsert:
         # implicit OUTPUT/RETURNING; under a parameter array that is one
         # pending result per row, and pyodbc's fast path cancels the batch
         # at cursor close (rows past the first ~80 never ran, no error).
-        entry = build_vfs_tables(table_name="vfs").entry
+        entry = build_vfs_tables().entry
         keys = tuple(column.key for column in entry.columns if column.key != "id")
         statement = dialects._bulk_statement(make(), entry, keys)
         assert "OUTPUT" not in statement.sql
