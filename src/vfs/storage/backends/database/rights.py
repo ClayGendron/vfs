@@ -107,6 +107,7 @@ from vfs.storage.grants import (
     Rights,
     ancestors_and_self,
     pieces,
+    postures_of,
     resolve,
     subtract,
 )
@@ -122,7 +123,7 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.labels import Mark
-    from vfs.storage.grants import GrantLevel, Pieces, Posture
+    from vfs.storage.grants import GrantLevel, Pieces, Posture, PostureRows
 
 RIGHTS_CACHE: Final = 1_024
 """Resolved authorities remembered per mount at most, one per subject set."""
@@ -308,8 +309,8 @@ async def resolve_authority(
     stamp = await principal_revision(session, tables, profile, membership_budget, stamped)
     marks = await inflight_marks(session, tables)
     rows = await _grant_rows(session, tables, profile, membership_budget, ids)
-    star = await inflight_postures(session, tables, profile, membership_budget, marks)
-    rows += [GrantRow(EVERYONE_NAME, prefix, level) for prefix, level in star.items()]
+    postures = await inflight_postures(session, tables, profile, membership_budget, marks)
+    rows += [GrantRow(EVERYONE_NAME, prefix, level) for prefix, level in postures.items()]
     pending = [mark.path for mark in marks]
     floor = not authority.is_anonymous
     resolution = Resolution(
@@ -551,11 +552,11 @@ class WriteGate:
         seen = await self.view.seen_kinds(session, rows)
         road = {path for path in seen if path in rows and not self.view.admits(rows[path])}
         # A creation has no row to read the level from: the posture rows on its chain decide.
-        star = await posture_rows(session, tables, profile, budget, prefixes) if mode != "read" else {}
+        postures = await posture_rows(session, tables, profile, budget, prefixes) if mode != "read" else {}
         batch = {str(target) for target in targets}
         errors: list[ResultError] = []
         for target in dict.fromkeys(targets):
-            refusal = self._decide(target, rows, seen, road, star, batch, mode, parents=parents)
+            refusal = self._decide(target, rows, seen, road, postures, batch, mode, parents=parents)
             if refusal is not None:
                 errors.append(refusal)
         return errors
@@ -647,7 +648,7 @@ class WriteGate:
         rows: Mapping[str, RowMapping],
         seen: Mapping[str, str],
         road: set[str],
-        star: Mapping[str, GrantLevel],
+        postures: PostureRows,
         batch: set[str],
         mode: GateMode,
         *,
@@ -660,7 +661,7 @@ class WriteGate:
             if str(ancestor) in seen:
                 continue
             minted = creating and (parents or str(ancestor) in batch)
-            if minted and write.reaches(str(ancestor), label_of(star, str(ancestor))):
+            if minted and write.reaches(str(ancestor), label_of(postures, str(ancestor))):
                 continue
             if minted:
                 return denied(ancestor, target=target)
@@ -677,7 +678,7 @@ class WriteGate:
             return None if write.admits(judged_path(row), row["owner_id"], row["everyone_level"]) else denied(target)
         if mode in ("modify", "read"):
             return classify_miss(target, seen)
-        if parent in road or not write.reaches(key, label_of(star, key)):
+        if parent in road or not write.reaches(key, label_of(postures, key)):
             return denied(target)
         return None
 
@@ -780,8 +781,8 @@ async def list_grants(
         grants.c.principal_id, grants.c.path_prefix, grants.c.level, grants.c.granted_by, grants.c.granted_at
     ).where(membership(grants.c.path_prefix, prefixes, profile))
     rows = (await session.execute(stmt)).mappings().all()
-    star: dict[str, GrantLevel] = {r["path_prefix"]: r["level"] for r in rows if r["principal_id"] == EVERYONE_NAME}
-    label = label_of(star, str(path))
+    postures = postures_of(GrantRow(r["principal_id"], r["path_prefix"], r["level"]) for r in rows)
+    label = label_of(postures, str(path))
     if not gate.resolution.read.reaches(str(path), label):
         return Result(ops=("grants",), errors=[classified(VFSErrorKind.not_found, f"Not found: {path}", path)])
     if not gate.resolution.write.reaches(str(path), label):
@@ -1141,8 +1142,8 @@ async def _grant_refusal(
         return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {principal!r} is not a grantable principal id")
     if level not in ("read", "read_write") and principal is not None:
         return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: level must be 'read' or 'read_write'")
-    star = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
-    label = label_of(star, str(path))
+    postures = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
+    label = label_of(postures, str(path))
     if gate.resolution.write.reaches(str(path), label):
         return None
     if gate.resolution.read.reaches(str(path), label):

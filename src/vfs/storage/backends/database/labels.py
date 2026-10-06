@@ -63,6 +63,8 @@ from vfs.storage.backends.database.revision import bump_revision, hold_revision
 from vfs.storage.grants import (
     FULL,
     LEVEL_RANK,
+    NO_SPANS,
+    RangeSet,
     above,
     ancestors_and_self,
     cover,
@@ -86,7 +88,7 @@ if TYPE_CHECKING:
 
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.grants import GrantLevel, RangeSet, Span
+    from vfs.storage.grants import GrantLevel, Open, PostureRows, Span
 
 # Bound range rows are typed this wide in the text spellings: no lawful path is longer.
 _BOUND: Final = f"({MAX_PATH_LENGTH})"
@@ -115,13 +117,13 @@ async def posture_rows(
 ) -> dict[str, GrantLevel]:
     """The posture rows among *prefixes*: ``prefix → level``, one chunked read."""
     grants = tables.grants
-    star: dict[str, GrantLevel] = {}
+    postures: dict[str, GrantLevel] = {}
     for chunk in chunked(sorted(set(prefixes)), membership_budget):
         stmt = select(grants.c.path_prefix, grants.c.level).where(
             grants.c.principal_id == EVERYONE_NAME, membership(grants.c.path_prefix, chunk, profile)
         )
-        star.update({row.path_prefix: row.level for row in await session.execute(stmt)})
-    return star
+        postures.update({row.path_prefix: row.level for row in await session.execute(stmt)})
+    return postures
 
 
 async def labels_for(
@@ -135,8 +137,8 @@ async def labels_for(
     """
     wanted = list(dict.fromkeys(paths))
     prefixes = {ancestor for path in wanted for ancestor in ancestors_and_self(path)}
-    star = await posture_rows(session, tables, profile, membership_budget, prefixes)
-    return {path: label_of(star, path) for path in wanted}
+    postures = await posture_rows(session, tables, profile, membership_budget, prefixes)
+    return {path: label_of(postures, path) for path in wanted}
 
 
 async def posture_beneath(
@@ -150,14 +152,14 @@ async def posture_beneath(
     any path under *root* as the whole table would.
     """
     above_root = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(root))
-    star: dict[str, GrantLevel] = {root: level_at(above_root, root)}
-    star.update(await _deeper_postures(session, tables, profile, root))
-    return star
+    postures: dict[str, GrantLevel] = {root: level_at(above_root, root)}
+    postures.update(await _deeper_postures(session, tables, profile, root))
+    return postures
 
 
-def label_of(star: Mapping[str, GrantLevel], path: str) -> int:
-    """The stored label for *path* under the posture map *star*."""
-    return LEVEL_RANK[level_at(star, path)]
+def label_of(postures: PostureRows, path: str) -> int:
+    """The stored label for *path* under *postures*."""
+    return LEVEL_RANK[level_at(postures, path)]
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +207,10 @@ async def inflight_postures(
     if not marks:
         return {}
     pending = [mark.path for mark in marks]
-    star = await posture_rows(session, tables, profile, membership_budget, pending)
+    postures = await posture_rows(session, tables, profile, membership_budget, pending)
     for root in minimise(pending):
-        star.update(await _deeper_postures(session, tables, profile, root))
-    return star
+        postures.update(await _deeper_postures(session, tables, profile, root))
+    return postures
 
 
 # ---------------------------------------------------------------------------
@@ -284,11 +286,11 @@ class Relabeller:
             path, revision, cursor, rank, _batched(spans, counts, profile.in_list_budget, profile.relabel_rows)
         )
 
-    async def _counted(self, session: AsyncSession, spans: RangeSet) -> dict[tuple[str, str], int]:
+    async def _counted(self, session: AsyncSession, spans: RangeSet) -> dict[Open, int]:
         """Rows inside each open range of *spans*: the ranges drive one count statement per budget of them."""
         entry, profile = self._tables.entry, self._profile
         opens = pieces(spans).opens
-        counts: dict[tuple[str, str], int] = {}
+        counts: dict[Open, int] = {}
         if profile.range_source is None:
             for lo, hi in opens:
                 stmt = select(func.count()).where(entry.c.path > lo, entry.c.path < hi)
@@ -378,9 +380,9 @@ async def rebuild_labels(
     """
     grants = tables.grants
     stmt = select(grants.c.path_prefix, grants.c.level).where(grants.c.principal_id == EVERYONE_NAME)
-    star: dict[str, GrantLevel] = {row.path_prefix: row.level for row in await session.execute(stmt)}
-    regions = posture_regions(star)
-    covered: RangeSet = ()
+    postures: dict[str, GrantLevel] = {row.path_prefix: row.level for row in await session.execute(stmt)}
+    regions = posture_regions(postures)
+    covered = NO_SPANS
     done = Relabel(0, 0)
     for level, spans in regions.items():
         done = done.plus(await relabel_spans(session, tables, profile, membership_budget, LEVEL_RANK[level], spans))
@@ -414,7 +416,7 @@ class _Plan(NamedTuple):
     batches: list[_Batch]
 
 
-def _batched(spans: RangeSet, counts: Mapping[tuple[str, str], int], piece_cap: int, row_cap: int) -> list[_Batch]:
+def _batched(spans: RangeSet, counts: Mapping[Open, int], piece_cap: int, row_cap: int) -> list[_Batch]:
     """*spans* grouped in path order so no chunk carries more pieces or rows than its cap.
 
     A span's rows are its open ranges' counts plus one per edge point.
@@ -430,18 +432,18 @@ def _batched(spans: RangeSet, counts: Mapping[tuple[str, str], int], piece_cap: 
         n_rows = len(found.points) + sum(counts.get(open_range, 0) for open_range in found.opens)
         if n_rows > row_cap:
             if current:
-                batches.append(_Batch(tuple(current), walked=False))
+                batches.append(_Batch(RangeSet(tuple(current)), walked=False))
                 current, rows, size = [], 0, 0
-            batches.append(_Batch((span,), walked=True))
+            batches.append(_Batch(RangeSet((span,)), walked=True))
             continue
         if current and (rows + n_rows > row_cap or size + n_pieces > piece_cap):
-            batches.append(_Batch(tuple(current), walked=False))
+            batches.append(_Batch(RangeSet(tuple(current)), walked=False))
             current, rows, size = [], 0, 0
         current.append(span)
         rows += n_rows
         size += n_pieces
     if current:
-        batches.append(_Batch(tuple(current), walked=False))
+        batches.append(_Batch(RangeSet(tuple(current)), walked=False))
     return batches
 
 
@@ -470,7 +472,7 @@ async def _run(session: AsyncSession, stmt: Executable, params: dict[str, Any]) 
 
 
 def _relabel_opens(
-    entry: Table, profile: DialectProfile, rank: int, opens: Sequence[tuple[str, str]], *, trashed: bool = False
+    entry: Table, profile: DialectProfile, rank: int, opens: Sequence[Open], *, trashed: bool = False
 ) -> tuple[Update | TextClause, dict[str, Any]]:
     """One ``UPDATE`` setting *rank* inside every open range of *opens*, in the dialect's measured form.
 

@@ -25,7 +25,7 @@ from vfs.storage.backends.database.ranges import (
     range_counts,
     visible_entries,
 )
-from vfs.storage.grants import Pieces, Ranges
+from vfs.storage.grants import LEVEL_RANK, Pieces, Ranges
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
@@ -82,7 +82,7 @@ SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
 
 
 def _render(ranges: Ranges, profile: DialectProfile, dialect: Dialect, scope: str | None = None) -> str:
-    return str(select(visible_entries(ENTRY, ranges, 1, profile, scope)).compile(dialect=dialect))
+    return str(select(visible_entries(ENTRY, ranges, LEVEL_RANK["read"], profile, scope)).compile(dialect=dialect))
 
 
 @pytest.mark.parametrize(("profile", "dialect", "fragments"), SPELLINGS, ids=[s[0].name for s in SPELLINGS])

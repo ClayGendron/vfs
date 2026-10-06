@@ -5,6 +5,18 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **151 built 2026-10-03, awaiting Clay's review** — typed shapes in
+  the grants algebra. Two brands the checker enforces, `RangeSet`
+  (normal form) and `Covering` (minimised, tree order), minted only by
+  the functions that establish them; `Rank` for the ladder's integer;
+  aliases `PostureRows`, `GroupClosures`, `Bound`, `Open`; `Inflight`
+  for the pair `inflight_regions` returns (whose destructuring had
+  shadowed `covers` inside `resolve`); `postures_of` for the four
+  hand-written posture maps; `star` renamed `postures`. No behaviour,
+  no statement, no per-row cost; the bisecting readers stay on the
+  base tuple because `ty` cannot pass a brand to `bisect_left`. From a
+  three-perspective review (typing, maintainer, domain) the same day.
+  `scripts/ci.sh` not run.
 - **150 drafted 2026-10-02, awaiting Clay's read** — rights at
   scale. The 2026-10-01 review of the permissioning commits (49
   verified findings: one critical, the trash leak; thirteen major)

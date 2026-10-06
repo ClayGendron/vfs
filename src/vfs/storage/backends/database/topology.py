@@ -124,7 +124,7 @@ from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings, segment_rows
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Awaitable, Callable
     from typing import Any
 
     from sqlalchemy import Column, Delete, Table
@@ -135,7 +135,7 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.paths import ObjectKind
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.grants import GrantLevel
+    from vfs.storage.grants import PostureRows
     from vfs.storage.protocol import ResolvedPair
 
 # The pre-batch committed snapshot: classification and observation state.
@@ -406,9 +406,9 @@ async def restore_rows(
         # The claim window: ladder passed, address not yet taken — a
         # rival write landing here loses honestly at the claim.
         await seam("restore:post-resolve")
-        star = await posture_beneath(session, tables, profile, membership_budget, str(dest))
+        postures = await posture_beneath(session, tables, profile, membership_budget, str(dest))
         error = await _execute_move(
-            session, tables, profile, membership_budget, row, dest, dest_parent_id, star, now, op="restore"
+            session, tables, profile, membership_budget, row, dest, dest_parent_id, postures, now, op="restore"
         )
         if error is not None:
             errors.append(error)
@@ -581,10 +581,10 @@ async def transfer_rows(
         # The reverse-ordering window: subtree collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
         await seam("transfer:post-collect")
-        star = await posture_beneath(session, tables, profile, membership_budget, str(dest))
+        postures = await posture_beneath(session, tables, profile, membership_budget, str(dest))
         if op == "move":
             error = await _execute_move(
-                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, star, now, op=op
+                session, tables, profile, membership_budget, src_row, dest, dest_parent_id, postures, now, op=op
             )
             if error is not None:
                 errors.append(error)
@@ -600,7 +600,7 @@ async def transfer_rows(
                 dest=dest,
                 dest_parent_id=dest_parent_id,
                 new_paths=new_paths,
-                star=star,
+                postures=postures,
                 authority=authority,
                 now=now,
             )
@@ -1069,12 +1069,12 @@ async def _descendant_rewrites(
 
 
 async def _apply_rewrites(
-    session: AsyncSession, entry: Table, rows: list[dict[str, str]], star: Mapping[str, GrantLevel] | None
+    session: AsyncSession, entry: Table, rows: list[dict[str, str]], postures: PostureRows | None
 ) -> None:
     """Executemany path-cache rewrite; bumps no versions and takes no guard.
 
     Nothing observable on a descendant changed, and one directory move
-    must not flood the dirty overlay. With *star* — the destination's
+    must not flood the dirty overlay. With *postures* — the destination's
     posture — each row's everyone level is rewritten in the same
     statement as its path and its origin cleared; a trash move passes
     none, keeps the label, and records each row's origin instead.
@@ -1083,14 +1083,14 @@ async def _apply_rewrites(
         return
     stmt = update(entry).where(entry.c.entry_id == bindparam("b_id")).values(path=bindparam("b_path"))
     params: list[dict[str, object]] = [{"b_id": row["b_id"], "b_path": row["b_path"]} for row in rows]
-    if star is None:
+    if postures is None:
         stmt = stmt.values(origin_path=bindparam("b_origin"))
         for row, values in zip(rows, params, strict=True):
             values["b_origin"] = row["b_origin"]
     else:
         stmt = stmt.values(everyone_level=bindparam("b_level"), origin_path=None)
         for row, values in zip(rows, params, strict=True):
-            values["b_level"] = label_of(star, row["b_path"])
+            values["b_level"] = label_of(postures, row["b_path"])
     await session.execute(stmt, params)
 
 
@@ -1101,7 +1101,7 @@ async def _rewrite_descendants(
     membership_budget: int,
     old_prefix: str,
     new_prefix: str,
-    star: Mapping[str, GrantLevel] | None = None,
+    postures: PostureRows | None = None,
 ) -> list[str]:
     """Recompute descendant path caches under the moved prefix, collected live.
 
@@ -1111,14 +1111,14 @@ async def _rewrite_descendants(
     the redriven ladder then refuses the whole target honestly. The
     segment postings ride the same rewrite list, so they mirror the
     rewritten path caches inside this same transaction; the labels ride
-    it too when *star* names the destination's posture. Returns the
+    it too when *postures* names the destination's posture. Returns the
     rewritten descendants' entry ids — delete's edge cascade reuses the
     same live collection.
     """
     rewrites = await _descendant_rewrites(session, tables.entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
         raise StaleSnapshot(f"a late arrival under {old_prefix} overflows the path budget")
-    await _apply_rewrites(session, tables.entry, rewrites, star)
+    await _apply_rewrites(session, tables.entry, rewrites, postures)
     moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
     await move_postings(session, tables.segments, profile, membership_budget, moves)
     return [row["b_id"] for row in rewrites]
@@ -1205,7 +1205,7 @@ async def _execute_move(
     src_row: RowMapping,
     dest: Path,
     dest_parent_id: str,
-    star: Mapping[str, GrantLevel],
+    postures: PostureRows,
     now: datetime,
     *,
     op: str,
@@ -1218,7 +1218,7 @@ async def _execute_move(
     mid-window flips it), and clears the restore columns and the origin
     unconditionally: a move out of trash is the restore gesture, and a
     live row must not carry trash metadata. Every moved row takes the
-    everyone level its new path has under *star*, the destination's
+    everyone level its new path has under *postures*, the destination's
     posture, in the statement that rewrites its path. A unique violation
     on the claim — a rival write took the destination address after
     this pair's occupant probe — redrives: the fresh ladder returns the
@@ -1233,7 +1233,7 @@ async def _execute_move(
             name=dest.name,
             path=str(dest),
             ext=dest.ext,
-            everyone_level=label_of(star, str(dest)),
+            everyone_level=label_of(postures, str(dest)),
             version=entry.c.version + 1,
             updated_at=now,
             original_parent_id=None,
@@ -1256,7 +1256,7 @@ async def _execute_move(
     await repoint_fs_row(session, tables.edges, src_row["entry_id"], dest_parent_id)
     root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
     await move_postings(session, tables.segments, profile, membership_budget, root_move)
-    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest), star)
+    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest), postures)
     await _bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.
@@ -1274,14 +1274,14 @@ async def _execute_copy(
     dest: Path,
     dest_parent_id: str,
     new_paths: dict[str, str],
-    star: Mapping[str, GrantLevel],
+    postures: PostureRows,
     authority: Authority | None,
     now: datetime,
 ) -> None:
     """Mint the copied tree under a probed-empty destination.
 
     Every row is fresh: new ULIDs at version 1, ownership follows the
-    writer, the everyone level is the destination's (*star*), and
+    writer, the everyone level is the destination's (*postures*), and
     neither ``external_id`` nor any edge row is copied. A
     rival child committed under the destination mid-window merges
     rather than refusing: the outcome equals the legal serial history
@@ -1310,7 +1310,7 @@ async def _execute_copy(
             "lines": row["lines"],
             "size_bytes": row["size_bytes"],
             "owner_id": owner_for(authority),
-            "everyone_level": label_of(star, new_paths[row["entry_id"]]),
+            "everyone_level": label_of(postures, new_paths[row["entry_id"]]),
             "created_at": now,
             "updated_at": now,
         }

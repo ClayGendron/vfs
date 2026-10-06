@@ -79,7 +79,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.compiler import SQLCompiler
 
     from vfs.storage.backends.database.dialects import DialectProfile, RangeSource
-    from vfs.storage.grants import Pieces, Ranges
+    from vfs.storage.grants import Open, Pieces, Ranges, Rank
 
 VISIBLE_ALIAS = "visible"
 """The derived table's name in rendered SQL; its one column is ``entry_id``."""
@@ -98,7 +98,7 @@ _OPENS_ALIAS = "rng"
 
 
 def visible_entries(
-    entry: Table, ranges: Ranges, need: int, profile: DialectProfile, scope: str | None = None
+    entry: Table, ranges: Ranges, need: Rank, profile: DialectProfile, scope: str | None = None
 ) -> Subquery | CTE:
     """The ``entry_id`` of every row the caller may see at level *need*, as a derived table.
 
@@ -179,7 +179,7 @@ def hole_free(path: ColumnElement[Any], holes: Pieces, profile: DialectProfile) 
     return and_(*terms)
 
 
-def range_counts(entry: Table, opens: Sequence[tuple[str, str]], profile: DialectProfile) -> Select[Any]:
+def range_counts(entry: Table, opens: Sequence[Open], profile: DialectProfile) -> Select[Any]:
     """``(lo, hi, rows)`` for every open range of *opens* — the ranges drive, one seek each.
 
     A relabel sizes its chunks from this before it writes. The bounds
@@ -316,9 +316,7 @@ def point_rows(points: Sequence[str], source: RangeSource) -> tuple[FromClause, 
     return rows, cast(rows.c.value, LargeBinary)
 
 
-def open_rows(
-    opens: Sequence[tuple[str, str]], source: RangeSource
-) -> tuple[FromClause, ColumnElement[Any], ColumnElement[Any]]:
+def open_rows(opens: Sequence[Open], source: RangeSource) -> tuple[FromClause, ColumnElement[Any], ColumnElement[Any]]:
     """*opens* as rows from one bind (two on Postgres), and the columns holding each bound."""
     if source == "unnest":
         lows = bindparam(None, [lo for lo, _ in opens], type_=ARRAY(Text))

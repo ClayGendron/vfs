@@ -22,8 +22,11 @@ from tests.support.oracles.grants import everyone_rank, set_rank
 from vfs.storage.grants import (
     FULL,
     LEVEL_RANK,
+    NO_SPANS,
     ROOT,
+    ROOT_COVERING,
     GrantRow,
+    Inflight,
     OwnerArm,
     Pieces,
     Rights,
@@ -43,6 +46,7 @@ from vfs.storage.grants import (
     normalise,
     pieces,
     posture_regions,
+    postures_of,
     resolve,
     subtract,
     through,
@@ -99,11 +103,11 @@ def test_a_posture_row_in_flight_is_judged_by_the_rows_not_the_labels(layout: La
         stale = {path: everyone_rank(before, path) for path in probes}
         world = random_world(rng, layout)
         world.grants = list(before.grants)
-        star = [row for row in world.grants if row.principal_id == "*"]
-        changed = rng.choice(star)
+        everyone_rows = [row for row in world.grants if row.principal_id == "*"]
+        changed = rng.choice(everyone_rows)
         world.grants.remove(changed)
         world.grants.append(GrantRow("*", changed.path_prefix, rng.choice(("none", "read", "read_write"))))
-        region = subtract(cover(changed.path_prefix), cover_all(_deeper(star, changed.path_prefix)))
+        region = subtract(cover(changed.path_prefix), cover_all(_deeper(everyone_rows, changed.path_prefix)))
         for subjects in SUBJECT_SETS:
             rights = resolve(world.closures(subjects), world.grants, level, pending={changed.path_prefix})
             for path in probes:
@@ -188,9 +192,9 @@ def test_level_at_is_the_deepest_covering_posture_row(layout: Layout) -> None:
     rng = random.Random(76)
     for _ in range(WORLDS):
         world = random_world(rng, layout)
-        star = {row.path_prefix: row.level for row in world.grants if row.principal_id == "*"}
+        postures = postures_of(world.grants)
         for path in (*layout.paths, *layout.traps, ROOT):
-            assert LEVEL_RANK[level_at(star, path)] == everyone_rank(world, path)
+            assert LEVEL_RANK[level_at(postures, path)] == everyone_rank(world, path)
 
 
 @pytest.mark.parametrize("layout", LAYOUTS, ids=["base", "siblings"])
@@ -200,11 +204,11 @@ def test_posture_regions_partition_the_mount_by_level(layout: Layout) -> None:
     rng = random.Random(77)
     for _ in range(WORLDS):
         world = random_world(rng, layout)
-        star = {row.path_prefix: row.level for row in world.grants if row.principal_id == "*"}
-        regions = posture_regions(star)
+        postures = postures_of(world.grants)
+        regions = posture_regions(postures)
         for path in (*layout.paths, *layout.traps, ROOT):
             holding = [level for level, spans in regions.items() if contains(spans, path)]
-            assert holding == [level_at(star, path)]
+            assert holding == [level_at(postures, path)]
 
 
 def test_posture_regions_are_empty_without_posture_rows() -> None:
@@ -229,17 +233,17 @@ def test_minimise_drops_every_prefix_under_another() -> None:
 
 
 def test_meet_is_the_intersection_of_coverage() -> None:
-    assert meet(["/a"], ["/a/b", "/c"]) == ("/a/b",)
-    assert meet(["/a/b"], ["/a"]) == ("/a/b",)
-    assert meet(["/a"], ["/b"]) == ()
-    assert meet([ROOT], ["/x"]) == ("/x",)
+    assert meet(minimise(["/a"]), minimise(["/a/b", "/c"])) == ("/a/b",)
+    assert meet(minimise(["/a/b"]), minimise(["/a"])) == ("/a/b",)
+    assert meet(minimise(["/a"]), minimise(["/b"])) == ()
+    assert meet(ROOT_COVERING, minimise(["/x"])) == ("/x",)
     # Both directions in one merge: the deeper side alternates.
-    assert meet(["/a", "/b/c", "/d"], ["/a/x", "/b", "/d"]) == ("/a/x", "/b/c", "/d")
+    assert meet(minimise(["/a", "/b/c", "/d"]), minimise(["/a/x", "/b", "/d"])) == ("/a/x", "/b/c", "/d")
 
 
 def test_the_meet_of_nothing_is_the_whole_mount() -> None:
     assert meet_all([]) == (ROOT,)
-    assert meet_all([["/a"], ["/a/b"], ["/a/b/c", "/z"]]) == ("/a/b/c",)
+    assert meet_all([minimise(["/a"]), minimise(["/a/b"]), minimise(["/a/b/c", "/z"])]) == ("/a/b/c",)
 
 
 def test_ancestors_run_deepest_first_to_the_root() -> None:
@@ -268,7 +272,7 @@ def test_normalise_sorts_and_joins_overlapping_and_touching_spans() -> None:
 def test_union_merges_nested_prefixes_into_one() -> None:
     assert union(cover("/a"), cover("/a/b")) == cover("/a")
     assert union(cover("/a"), cover("/c")) == (*cover("/a"), *cover("/c"))
-    assert union((), ()) == ()
+    assert union(NO_SPANS, NO_SPANS) == ()
 
 
 def test_subtract_cuts_each_span_exactly_at_the_cut_bounds() -> None:
@@ -281,11 +285,14 @@ def test_subtract_cuts_each_span_exactly_at_the_cut_bounds() -> None:
         ("/a/b0", "/a0"),
     )
     assert subtract(FULL, FULL) == ()
-    assert subtract(cover("/a"), ()) == cover("/a")
-    assert subtract((("/a", "/z"),), (("/", "/b"), ("/c", "/d"), ("/y", "0"))) == (("/b", "/c"), ("/d", "/y"))
-    assert subtract((("/a", "/c"), ("/d", "/f")), (("/b", "/e"),)) == (("/a", "/b"), ("/e", "/f"))
+    assert subtract(cover("/a"), NO_SPANS) == cover("/a")
+    assert subtract(normalise([("/a", "/z")]), normalise([("/", "/b"), ("/c", "/d"), ("/y", "0")])) == (
+        ("/b", "/c"),
+        ("/d", "/y"),
+    )
+    assert subtract(normalise([("/a", "/c"), ("/d", "/f")]), normalise([("/b", "/e")])) == (("/a", "/b"), ("/e", "/f"))
     # Cuts that end before a kept span begins are skipped, never applied to a later span.
-    assert subtract((("/m", "/n"), ("/x", "/y")), (("/a", "/b"), ("/c", "/m"), ("/w", "/x"))) == (
+    assert subtract(normalise([("/m", "/n"), ("/x", "/y")]), normalise([("/a", "/b"), ("/c", "/m"), ("/w", "/x")])) == (
         ("/m", "/n"),
         ("/x", "/y"),
     )
@@ -302,8 +309,8 @@ def test_contains_bisects_to_the_one_candidate_span() -> None:
 def test_intersect_keeps_exactly_the_overlap() -> None:
     assert intersect(cover("/a"), cover("/a/b")) == cover("/a/b")
     assert intersect(cover("/a"), cover("/b")) == ()
-    assert intersect((("/a", "/c"), ("/d", "/f")), (("/b", "/e"),)) == (("/b", "/c"), ("/d", "/e"))
-    assert intersect(FULL, cover("/x")) == cover("/x") and intersect((), FULL) == ()
+    assert intersect(normalise([("/a", "/c"), ("/d", "/f")]), normalise([("/b", "/e")])) == (("/b", "/c"), ("/d", "/e"))
+    assert intersect(FULL, cover("/x")) == cover("/x") and intersect(NO_SPANS, FULL) == ()
     # The same answer as a double subtraction, on every shape the holes take.
     left, right = subtract(cover("/a"), cover("/a/b")), union(cover("/a/b"), cover("/a/c"))
     assert intersect(left, right) == subtract(left, subtract(left, right))
@@ -319,24 +326,26 @@ def test_above_and_through_split_a_range_set_at_a_cursor() -> None:
     assert above(spans, end(spans)) == () and end(spans) == "/a0"
     assert above(spans, "/a/b") == (("/a/b\x00", "/a/b/"), ("/a/b0", "/a0"))
     assert end(union(cover("/v1"), cover("/v10"))) == "/v100" and end(cover("/a/b")) == "/a/b0"
-    assert end((("/p", "/p\x00"),)) == "/p" and above((("/p", "/p\x00"),), "/p") == ()
-    assert above((), "/x") == () and through((), "/x") == ()
+    point = normalise([("/p", "/p\x00")])
+    assert end(point) == "/p" and above(point, "/p") == ()
+    assert above(NO_SPANS, "/x") == () and through(NO_SPANS, "/x") == ()
 
 
 def test_inflight_regions_are_each_pending_rows_region_split_by_its_new_level() -> None:
-    star: dict[str, GrantLevel] = {"/": "read", "/a": "none", "/a/b": "read_write", "/c": "read_write"}
+    postures: dict[str, GrantLevel] = {"/": "read", "/a": "none", "/a/b": "read_write", "/c": "read_write"}
+    read, write = LEVEL_RANK["read"], LEVEL_RANK["read_write"]
     region = subtract(cover("/a"), cover("/a/b"))
     # /a narrows below read: a hole at read; /c widens to read_write: a cover at both.
-    assert inflight_regions(star, ["/a"], 1) == ((), region)
-    assert inflight_regions(star, ["/c"], 1) == (cover("/c"), ())
-    assert inflight_regions(star, ["/a", "/c"], 2) == (cover("/c"), region)
+    assert inflight_regions(postures, ["/a"], read) == Inflight(NO_SPANS, region)
+    assert inflight_regions(postures, ["/c"], read) == Inflight(cover("/c"), NO_SPANS)
+    assert inflight_regions(postures, ["/a", "/c"], write) == Inflight(cover("/c"), region)
     # The root in flight: everything but the deeper rows' subtrees.
     whole = subtract(FULL, cover_all(("/a", "/c")))
-    assert inflight_regions(star, ["/"], 1) == (whole, ())
-    assert inflight_regions(star, ["/"], 2) == ((), whole)
+    assert inflight_regions(postures, ["/"], read) == Inflight(whole, NO_SPANS)
+    assert inflight_regions(postures, ["/"], write) == Inflight(NO_SPANS, whole)
     # Nested pending rows each own their region; a row with no children owns its cover.
-    assert inflight_regions(star, ["/a", "/a/b"], 2) == (cover("/a/b"), region)
-    assert inflight_regions(star, [], 1) == ((), ())
+    assert inflight_regions(postures, ["/a", "/a/b"], write) == Inflight(cover("/a/b"), region)
+    assert inflight_regions(postures, [], read) == Inflight(NO_SPANS, NO_SPANS)
 
 
 # ---------------------------------------------------------------------------
@@ -506,8 +515,8 @@ def _holds(found: Pieces, path: str) -> bool:
     return path in found.points or any(lo < path < hi for lo, hi in found.opens)
 
 
-def _deeper(star: list[GrantRow], prefix: str) -> list[str]:
-    return [row.path_prefix for row in star if row.path_prefix != prefix and covers(prefix, row.path_prefix)]
+def _deeper(everyone_rows: list[GrantRow], prefix: str) -> list[str]:
+    return [row.path_prefix for row in everyone_rows if row.path_prefix != prefix and covers(prefix, row.path_prefix)]
 
 
 def _assert_well_formed(found: Pieces, prefixes: set[str]) -> None:

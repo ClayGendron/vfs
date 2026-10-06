@@ -30,6 +30,13 @@ product. The sentinel never leaves this module: :func:`pieces` turns
 spans into exact paths and open ranges whose bounds are ``/``, ``0``,
 ``p``, ``p/`` or ``p0`` for a stored prefix ``p``.
 
+Two kinds carry an ordering the operations rely on, and each is a brand
+the type checker enforces: a :data:`RangeSet` is minted only by the
+functions that leave it in normal form, and a :data:`Covering` only by
+the ones that leave it minimised and in tree order. A brand records who
+minted the value and validates nothing; the parity tests remain the
+referee of the algebra.
+
 This module is the pure half of the enforcement spine: no I/O, no SQL.
 The database backend reads the rows and the membership closures, hands
 them to :func:`resolve`, and compiles the :class:`Rights` it gets back
@@ -40,20 +47,22 @@ exact for any number of grants, and the authority every row passes.
     rights = resolve({"ann": frozenset({"group:eng"})}, rows, "read")
     rights.admits("/eng/spec.md", owner_id=None, everyone_level=0)   # True — a grant
     rights.admits("/pub/faq.md", owner_id=None, everyone_level=1)    # True — everyone reads there
-    rights.admits("/hr/case.md", owner_id=None, everyone_level=0)    # False
+    rights.admits("/hr/case.md", owner_id=None, everyone_level=0)   # False
     rights.admits("/hr/case.md", owner_id="ann", everyone_level=0)   # True — the owner floor
 """
 
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, NewType, get_args
 
 from vfs.authority import EVERYONE_NAME
+from vfs.paths import ROOT
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Sequence
 
 # ---------------------------------------------------------------------------
 # Module constants and shared types
@@ -65,7 +74,10 @@ narrows a posture; a principal's row states a positive level."""
 
 GRANT_LEVELS: Final[frozenset[str]] = frozenset(get_args(GrantLevel))
 
-LEVEL_RANK: Final[dict[str, int]] = {"none": 0, "read": 1, "read_write": 2}
+Rank = NewType("Rank", int)
+"""A level's position on the ladder — what an entry row stores as its everyone level."""
+
+LEVEL_RANK: Final[dict[GrantLevel, Rank]] = {"none": Rank(0), "read": Rank(1), "read_write": Rank(2)}
 """The ladder's order: ``none < read < read_write``."""
 
 Posture = Literal["open", "shared", "private"]
@@ -73,24 +85,50 @@ Posture = Literal["open", "shared", "private"]
 
 POSTURE_LEVELS: Final[dict[str, GrantLevel]] = {"open": "read_write", "shared": "read", "private": "none"}
 
-ROOT: Final = "/"
-
 MAX_GROUP_DEPTH: Final = 8
 """The deepest group nesting a membership write may create; the read-side
 walk refuses past it rather than truncating."""
 
-Span = tuple[str, str]
+PostureRows = Mapping[str, GrantLevel]
+"""The posture rows as ``prefix → level``: what everyone holds, by deepest covering prefix."""
+
+GroupClosures = Mapping[str, frozenset[str]]
+"""Each subject's groups, nesting flattened — the closure the resolver walks per member."""
+
+Bound = str
+"""A span edge: a path, a path plus the sentinel, or one ending in ``/`` or ``0`` — never a ``Path``."""
+
+Span = tuple[Bound, Bound]
 """A half-open span ``[lo, hi)`` of path strings, in bytewise order."""
 
-RangeSet = tuple[Span, ...]
-"""Spans sorted, disjoint and not touching — the normal form every operation keeps."""
+RangeSet = NewType("RangeSet", tuple[Span, ...])
+"""Spans sorted, disjoint and not touching — the normal form every operation keeps.
+
+Minted only by the functions that establish it; a raw tuple is not one."""
+
+Open = tuple[Bound, Bound]
+"""An open range as :class:`Pieces` carries it: exclusive at both ends, never a sentinel inside."""
+
+Covering = NewType("Covering", tuple[str, ...])
+"""The subtree roots one holder is granted: minimised (no root beneath another) and in tree order.
+
+Minted only by :func:`minimise` and the meets; a raw tuple is not one."""
 
 # Appended to a path, the least string above it: no lawful path holds NUL,
 # so ``[p, p + _NEXT)`` is exactly ``p``. Internal only — never a bound.
 _NEXT: Final = "\x00"
 
-FULL: Final[RangeSet] = ((ROOT, "0"),)
+NO_SPANS: Final = RangeSet(())
+"""The empty range set."""
+
+FULL: Final = RangeSet(((ROOT, "0"),))
 """The whole mount: every lawful path starts with ``/``, and ``0`` is the byte above it."""
+
+NO_PREFIXES: Final = Covering(())
+"""The empty covering."""
+
+ROOT_COVERING: Final = Covering((ROOT,))
+"""The covering of the whole mount — the meet of no sets."""
 
 
 class GrantRow(NamedTuple):
@@ -120,15 +158,19 @@ def ancestors_and_self(path: str) -> list[str]:
     return out
 
 
-def level_at(star: Mapping[str, GrantLevel], path: str) -> GrantLevel:
+def postures_of(rows: Iterable[GrantRow]) -> dict[str, GrantLevel]:
+    """The posture rows among *rows*, as ``prefix → level``; every other row is passed over."""
+    return {row.path_prefix: row.level for row in rows if row.principal_id == EVERYONE_NAME}
+
+
+def level_at(postures: PostureRows, path: str) -> GrantLevel:
     """The everyone level at *path*: the deepest posture row covering it, ``none`` when none does.
 
-    *star* maps each posture prefix to its level; only the ancestors of
-    *path* (and *path* itself) are consulted, so a map holding exactly
-    those rows answers as the whole table would.
+    Only the ancestors of *path* (and *path* itself) are consulted, so a
+    map holding exactly those rows answers as the whole table would.
     """
     for ancestor in ancestors_and_self(path):
-        level = star.get(ancestor)
+        level = postures.get(ancestor)
         if level is not None:
             return level
     return "none"
@@ -144,17 +186,17 @@ def tree_key(prefix: str) -> tuple[str, ...]:
     return () if prefix == ROOT else tuple(prefix.split("/")[1:])
 
 
-def minimise(prefixes: Iterable[str]) -> tuple[str, ...]:
+def minimise(prefixes: Iterable[str]) -> Covering:
     """The smallest prefix set with the same coverage, in tree order: a prefix under another is dropped."""
     kept: list[str] = []
     for prefix in sorted(set(prefixes), key=tree_key):
         if not kept or not covers(kept[-1], prefix):
             kept.append(prefix)
-    return tuple(kept)
+    return Covering(tuple(kept))
 
 
-def meet(left: Sequence[str], right: Sequence[str]) -> tuple[str, ...]:
-    """The prefix set covering exactly what both *left* and *right* cover.
+def meet(left: Covering, right: Covering) -> Covering:
+    """The covering of exactly what both *left* and *right* cover.
 
     Both are minimised and in tree order, so one merge decides: where one
     prefix covers the other the deeper is the meet there, and the shallower
@@ -175,12 +217,12 @@ def meet(left: Sequence[str], right: Sequence[str]) -> tuple[str, ...]:
             i += 1
         else:
             j += 1
-    return tuple(out)
+    return Covering(tuple(out))
 
 
-def meet_all(sets: Sequence[Sequence[str]]) -> tuple[str, ...]:
-    """The meet of every set; the meet of none is the whole mount."""
-    acc: tuple[str, ...] = (ROOT,)
+def meet_all(sets: Sequence[Covering]) -> Covering:
+    """The meet of every covering; the meet of none is the whole mount."""
+    acc = ROOT_COVERING
     for prefixes in sets:
         acc = meet(acc, prefixes)
     return acc
@@ -199,7 +241,7 @@ def cover(prefix: str) -> RangeSet:
     """
     if prefix == ROOT:
         return FULL
-    return ((prefix, prefix + _NEXT), (prefix + "/", prefix + "0"))
+    return RangeSet(((prefix, prefix + _NEXT), (prefix + "/", prefix + "0")))
 
 
 def cover_all(prefixes: Iterable[str]) -> RangeSet:
@@ -216,7 +258,7 @@ def normalise(spans: Iterable[Span]) -> RangeSet:
                 out[-1] = (out[-1][0], hi)
         else:
             out.append((lo, hi))
-    return tuple(out)
+    return RangeSet(tuple(out))
 
 
 def union(left: RangeSet, right: RangeSet) -> RangeSet:
@@ -242,7 +284,7 @@ def subtract(keep: RangeSet, cut: RangeSet) -> RangeSet:
             k += 1
         if lo < hi:
             out.append((lo, hi))
-    return tuple(out)
+    return RangeSet(tuple(out))
 
 
 def intersect(left: RangeSet, right: RangeSet) -> RangeSet:
@@ -258,7 +300,7 @@ def intersect(left: RangeSet, right: RangeSet) -> RangeSet:
             i += 1
         else:
             j += 1
-    return tuple(out)
+    return RangeSet(tuple(out))
 
 
 def above(spans: RangeSet, path: str) -> RangeSet:
@@ -267,15 +309,15 @@ def above(spans: RangeSet, path: str) -> RangeSet:
     A relabel's cursor: ``path`` is the last path a chunk rewrote, and
     the next chunk starts from what this leaves.
     """
-    return subtract(spans, ((ROOT, path + _NEXT),))
+    return subtract(spans, _up_to(path))
 
 
 def through(spans: RangeSet, path: str) -> RangeSet:
     """The part of *spans* at or before *path* — what :func:`above` leaves out."""
-    return intersect(spans, ((ROOT, path + _NEXT),))
+    return intersect(spans, _up_to(path))
 
 
-def end(spans: RangeSet) -> str:
+def end(spans: tuple[Span, ...]) -> str:
     """A path every path in the non-empty *spans* lies at or before, with no sentinel.
 
     The last upper bound: the path itself when the span runs through it,
@@ -286,18 +328,19 @@ def end(spans: RangeSet) -> str:
     return spans[-1][1].removesuffix(_NEXT)
 
 
-def contains(spans: RangeSet, path: str) -> bool:
+def contains(spans: tuple[Span, ...], path: str) -> bool:
     """Whether *path* lies in some span — one bisect.
 
     The last span whose ``lo <= path`` is the only candidate, and no
     string sits strictly between ``path`` and ``path + "\\x00"``, so a
-    one-element tuple keys the search.
+    one-element tuple keys the search. Declared on the base tuple: the
+    bisect protocol does not see through the brand.
     """
     i = bisect_left(spans, (path + _NEXT,)) - 1
     return i >= 0 and spans[i][0] <= path < spans[i][1]
 
 
-def posture_regions(star: Mapping[str, GrantLevel]) -> dict[GrantLevel, RangeSet]:
+def posture_regions(postures: PostureRows) -> dict[GrantLevel, RangeSet]:
     """The paths each level holds everyone at: every posture row's cover minus its posture children's.
 
     Posture rows in tree order, the nearest posture parent found by a
@@ -306,32 +349,39 @@ def posture_regions(star: Mapping[str, GrantLevel]) -> dict[GrantLevel, RangeSet
     empty set; paths no row covers are in no region (the level there is
     ``none``, as :func:`level_at` answers).
     """
-    children = _posture_children(star)
+    children = _posture_children(postures)
     parts: dict[GrantLevel, list[Span]] = {level: [] for level in get_args(GrantLevel)}
     for prefix, below in children.items():
-        parts[star[prefix]].extend(subtract(cover(prefix), cover_all(below)))
+        parts[postures[prefix]].extend(subtract(cover(prefix), cover_all(below)))
     return {level: normalise(spans) for level, spans in parts.items()}
 
 
-def inflight_regions(star: Mapping[str, GrantLevel], pending: Iterable[str], need: int) -> tuple[RangeSet, RangeSet]:
-    """What the posture rows still being relabelled add at rank *need*: ``(covers, holes)``.
+class Inflight(NamedTuple):
+    """What the posture rows still being relabelled add at a rank, and what they withhold."""
+
+    widened: RangeSet
+    narrowed: RangeSet
+
+
+def inflight_regions(postures: PostureRows, pending: Iterable[str], need: Rank) -> Inflight:
+    """The regions the posture rows still being relabelled widen to rank *need*, and the ones they narrow below it.
 
     A pending row's region is its cover minus its posture children's —
     exactly the rows its relabel rewrites, whose stored labels cannot be
     trusted until it settles. A reader admits a region outright when the
-    row's new level reaches *need* (a cover) and ignores the label inside
-    it when the level does not (a hole); the deeper posture rows keep
-    their own effect through their own labels. *star* holds every
-    pending row and every posture row beneath one; the sets are sized by
-    those rows, never by the mount.
+    row's new level reaches *need* and ignores the label inside it when
+    the level does not (a hole); the deeper posture rows keep their own
+    effect through their own labels. *postures* holds every pending row
+    and every posture row beneath one; the sets are sized by those rows,
+    never by the mount.
     """
-    children = _posture_children(star)
-    covers: list[Span] = []
-    holes: list[Span] = []
+    children = _posture_children(postures)
+    widened: list[Span] = []
+    narrowed: list[Span] = []
     for prefix in pending:
         region = subtract(cover(prefix), cover_all(children[prefix]))
-        (covers if LEVEL_RANK[star[prefix]] >= need else holes).extend(region)
-    return normalise(covers), normalise(holes)
+        (widened if LEVEL_RANK[postures[prefix]] >= need else narrowed).extend(region)
+    return Inflight(normalise(widened), normalise(narrowed))
 
 
 # ---------------------------------------------------------------------------
@@ -368,10 +418,10 @@ class Rights:
     """
 
     level: GrantLevel
-    spans: RangeSet = ()
+    spans: RangeSet = NO_SPANS
     owner_arms: tuple[OwnerArm, ...] = ()
     roots: tuple[str, ...] = ()
-    holes: RangeSet = ()
+    holes: RangeSet = NO_SPANS
     _owned: dict[str, RangeSet] = field(init=False, repr=False, compare=False, hash=False)
     _ranges: Ranges | None = field(init=False, default=None, repr=False, compare=False, hash=False)
 
@@ -391,7 +441,7 @@ class Rights:
         return cls(level)
 
     @property
-    def need(self) -> int:
+    def need(self) -> Rank:
         """The rank a row's everyone level must reach to pass on its own."""
         return LEVEL_RANK[self.level]
 
@@ -470,7 +520,7 @@ class Pieces(NamedTuple):
     """
 
     points: tuple[str, ...]
-    opens: tuple[tuple[str, str], ...]
+    opens: tuple[Open, ...]
 
 
 class Ranges(NamedTuple):
@@ -488,7 +538,7 @@ class Ranges(NamedTuple):
     holed_owners: tuple[tuple[str, Pieces], ...] = ()
 
 
-def pieces(spans: RangeSet) -> Pieces:
+def pieces(spans: tuple[Span, ...]) -> Pieces:
     """*spans* as exact paths and open ranges, with no sentinel in any bound.
 
     Per span ``[lo, hi)``: ``hi == lo + "\\x00"`` is the exact path ``lo``.
@@ -505,7 +555,7 @@ def pieces(spans: RangeSet) -> Pieces:
         # Pieces(points=('/a', '/a/b0'), opens=(('/a/', '/a/b'), ('/a/b', '/a/b/'), ('/a/b0', '/a0')))
     """
     points: list[str] = []
-    opens: list[tuple[str, str]] = []
+    opens: list[Open] = []
     for lo, hi in spans:
         if hi == lo + _NEXT:
             points.append(lo)
@@ -526,7 +576,7 @@ def pieces(spans: RangeSet) -> Pieces:
 
 
 def resolve(
-    closures: Mapping[str, frozenset[str]],
+    closures: GroupClosures,
     rows: Sequence[GrantRow],
     level: GrantLevel,
     *,
@@ -553,19 +603,17 @@ def resolve(
     """
     assert closures, "an authority names at least one subject"
     need = LEVEL_RANK[level]
+    postures = postures_of(rows)
     by_principal: dict[str, list[str]] = {}
-    star: dict[str, GrantLevel] = {}
     for row in rows:
-        if row.principal_id == EVERYONE_NAME:
-            star[row.path_prefix] = row.level
-        elif LEVEL_RANK[row.level] >= need:
+        if row.principal_id != EVERYONE_NAME and LEVEL_RANK[row.level] >= need:
             by_principal.setdefault(row.principal_id, []).append(row.path_prefix)
     members = list(closures)
     covering = [minimise(p for pid in (sub, *closures[sub]) for p in by_principal.get(pid, ())) for sub in members]
     shared = meet_all(covering)
     unsettled = sorted(pending)
-    covers, holes = inflight_regions(star, unsettled, need)
-    spans = union(cover_all(shared), covers)
+    inflight = inflight_regions(postures, unsettled, need)
+    spans = union(cover_all(shared), inflight.widened)
     if spans == FULL:
         return Rights.everything(level)
     owner_arms: list[OwnerArm] = []
@@ -574,8 +622,8 @@ def resolve(
             trimmed = _uncovered(rest, shared)
             if trimmed:
                 owner_arms.append(OwnerArm(sub, trimmed))
-    widened = [prefix for prefix in unsettled if LEVEL_RANK[star[prefix]] >= need]
-    return Rights(level, spans, tuple(owner_arms), _roots(spans, (*shared, *widened)), holes)
+    widening = [prefix for prefix in unsettled if LEVEL_RANK[postures[prefix]] >= need]
+    return Rights(level, spans, tuple(owner_arms), _roots(spans, (*shared, *widening)), inflight.narrowed)
 
 
 # ---------------------------------------------------------------------------
@@ -587,13 +635,18 @@ def _parent(path: str) -> str:
     return path.rsplit("/", 1)[0] or ROOT
 
 
-def _posture_children(star: Mapping[str, GrantLevel]) -> dict[str, list[str]]:
+def _up_to(path: str) -> RangeSet:
+    """Every path at or before *path*: one span from the root through it."""
+    return RangeSet(((ROOT, path + _NEXT),))
+
+
+def _posture_children(postures: PostureRows) -> dict[str, list[str]]:
     """Each posture prefix's nearest posture rows beneath it, the prefixes in tree order.
 
     A stack over the tree-ordered prefixes finds every row's nearest
     posture parent in one pass.
     """
-    ordered = sorted(star, key=tree_key)
+    ordered = sorted(postures, key=tree_key)
     children: dict[str, list[str]] = {prefix: [] for prefix in ordered}
     stack: list[str] = []
     for prefix in ordered:
@@ -605,25 +658,25 @@ def _posture_children(star: Mapping[str, GrantLevel]) -> dict[str, list[str]]:
     return children
 
 
-def _contains_span(spans: RangeSet, lo: str, hi: str) -> bool:
-    """Whether ``[lo, hi)`` lies whole inside one span."""
+def _contains_span(spans: tuple[Span, ...], lo: str, hi: str) -> bool:
+    """Whether ``[lo, hi)`` lies whole inside one span; on the base tuple, as :func:`contains` is."""
     i = bisect_left(spans, (lo + _NEXT,)) - 1
     return i >= 0 and spans[i][0] <= lo and hi <= spans[i][1]
 
 
-def _meet_all_but_each(sets: Sequence[tuple[str, ...]]) -> list[tuple[str, ...]]:
-    """For each set, the meet of every other one — prefix and suffix meets, three per set."""
-    before: list[tuple[str, ...]] = [(ROOT,)]
+def _meet_all_but_each(sets: Sequence[Covering]) -> list[Covering]:
+    """For each covering, the meet of every other one — prefix and suffix meets, three per set."""
+    before = [ROOT_COVERING]
     for prefixes in sets[:-1]:
         before.append(meet(before[-1], prefixes))
-    after: list[tuple[str, ...]] = [(ROOT,)]
+    after = [ROOT_COVERING]
     for prefixes in reversed(sets[1:]):
         after.append(meet(prefixes, after[-1]))
     return [meet(before[i], after[len(sets) - 1 - i]) for i in range(len(sets))]
 
 
-def _uncovered(prefixes: Sequence[str], by: Sequence[str]) -> tuple[str, ...]:
-    """The tree-ordered *prefixes* no prefix of the minimised, tree-ordered *by* covers."""
+def _uncovered(prefixes: Covering, by: Covering) -> Covering:
+    """The prefixes of *prefixes* that no prefix of *by* covers, in tree order."""
     out: list[str] = []
     j = -1
     for prefix in prefixes:
@@ -632,7 +685,7 @@ def _uncovered(prefixes: Sequence[str], by: Sequence[str]) -> tuple[str, ...]:
             j += 1
         if j < 0 or not covers(by[j], prefix):
             out.append(prefix)
-    return tuple(out)
+    return Covering(tuple(out))
 
 
 def _roots(spans: RangeSet, candidates: Iterable[str]) -> tuple[str, ...]:

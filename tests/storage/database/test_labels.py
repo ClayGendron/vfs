@@ -38,7 +38,7 @@ from vfs.storage.backends.database.labels import (
 )
 from vfs.storage.backends.database.revision import bump_revision, hold_revision, read_revision
 from vfs.storage.backends.memory import InMemoryStorage
-from vfs.storage.grants import GrantLevel, GrantRow, Posture
+from vfs.storage.grants import GrantLevel, GrantRow, Posture, normalise
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -100,9 +100,9 @@ async def test_a_batch_takes_its_labels_from_the_deepest_covering_posture(storag
         labels = await labels_for(
             session, host.tables, host.profile, host.membership_budget, ["/x.md", "/a/x.md", "/a/b/x.md", "/a/b"]
         )
-        star = await posture_beneath(session, host.tables, host.profile, host.membership_budget, "/a")
+        postures = await posture_beneath(session, host.tables, host.profile, host.membership_budget, "/a")
     assert labels == {"/x.md": 1, "/a/x.md": 0, "/a/b/x.md": 2, "/a/b": 2}
-    assert star == {"/a": "none", "/a/b": "read_write"}
+    assert postures == {"/a": "none", "/a/b": "read_write"}
 
 
 async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStorage) -> None:
@@ -200,10 +200,10 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
     async with host.session_factory() as session:
         stale = set((await session.execute(select(entry.c.everyone_level))).scalars())
         marks = await inflight_marks(session, host.tables)
-        star = await inflight_postures(session, host.tables, host.profile, host.membership_budget, marks)
+        postures = await inflight_postures(session, host.tables, host.profile, host.membership_budget, marks)
     # A chunk ran, so some labels are stale and some already rewritten; the
     # mark still stands, so the in-flight compile covers the whole subtree.
-    assert stale == {0, 1} and marks == (Mark("/", revision),) and star == {"/": "none"}
+    assert stale == {0, 1} and marks == (Mark("/", revision),) and postures == {"/": "none"}
     # A fresh driver resumes from the cursor and clears the mark.
     resumed = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
@@ -233,8 +233,8 @@ async def test_the_marks_and_the_pending_postures_follow_the_table(storage: InMe
         await session.execute(host.tables.relabels.update().values(cursor="/a/x"))
         await mark_relabel(session, host.tables, "/a", 9)
         marks = await inflight_marks(session, host.tables)
-        star = await inflight_postures(session, host.tables, host.profile, host.membership_budget, marks)
-    assert marks == (Mark("/a", 9),) and star == {"/a": "read", "/a/b": "none"}
+        postures = await inflight_postures(session, host.tables, host.profile, host.membership_budget, marks)
+    assert marks == (Mark("/a", 9),) and postures == {"/a": "read", "/a/b": "none"}
     async with host.session_factory() as session:
         row = (await session.execute(select(host.tables.relabels))).one()
     assert row.path_prefix == "/a" and row.cursor is None and row.revision == 9
@@ -244,17 +244,17 @@ def test_batched_flushes_before_a_walked_span_and_when_a_chunk_fills() -> None:
     # A small span accumulates, then one over the row cap forces a flush and
     # becomes a walked batch of its own; the points after it fill a chunk and
     # flush again when the next would overflow. Piece and row caps both bind.
-    spans = (("/a", "/a\x00"), ("/b/", "/b0"), *((f"/c{n}", f"/c{n}\x00") for n in range(12)))
+    spans = normalise([("/a", "/a\x00"), ("/b/", "/b0"), *((f"/c{n}", f"/c{n}\x00") for n in range(12))])
     counts = {("/b/", "/b0"): 50}
     batches = _batched(spans, counts, piece_cap=100, row_cap=10)
     walked = [b for b in batches if b.walked]
-    assert walked == [_Batch((("/b/", "/b0"),), walked=True)]
-    assert batches[0] == _Batch((("/a", "/a\x00"),), walked=False)
+    assert walked == [_Batch(normalise([("/b/", "/b0")]), walked=True)]
+    assert batches[0] == _Batch(normalise([("/a", "/a\x00")]), walked=False)
     # The twelve points after the walked span split across chunks at the row cap.
     point_batches = [b for b in batches[2:] if not b.walked]
     assert len(point_batches) >= 2 and all(len(b.spans) <= 10 for b in point_batches)
     # The piece cap also splits: two points per chunk when it is two.
-    tight = _batched(tuple((f"/p{n}", f"/p{n}\x00") for n in range(5)), {}, piece_cap=2, row_cap=100)
+    tight = _batched(normalise((f"/p{n}", f"/p{n}\x00") for n in range(5)), {}, piece_cap=2, row_cap=100)
     assert [len(b.spans) for b in tight] == [2, 2, 1]
 
 
