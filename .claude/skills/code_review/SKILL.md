@@ -152,7 +152,9 @@ observed silently failing to bind — see §2).
    four engines with query-level health waits (postgres via plain
    `up -d --wait`, the heavyweights by name), and install every
    driver in one `uv sync --extra postgres --extra mariadb --extra
-   mssql --extra oracle --group dev`. The checker refuses to PASS
+   mssql --extra oracle --extra documents --group dev` (the document
+   libraries, because the conformance contract renders real files on
+   every engine). The checker refuses to PASS
    while any engine port is unreachable. Engines stay up for the
    whole run — reviewers and verifiers both use them — and come down
    in §3.

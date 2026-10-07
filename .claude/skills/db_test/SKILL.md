@@ -60,10 +60,13 @@ needs the host ODBC driver (`brew install msodbcsql18`, one-time).
 
 Install the drivers for **every** engine you will test in one sync —
 `uv sync` makes the venv match exactly, so syncing one extra evicts the
-others' drivers:
+others' drivers. Always include `documents`: the conformance contract
+renders real PDFs and Office files on every engine, and the test
+modules import those libraries at the top (the CI dialect job installs
+the same set):
 
 ```sh
-uv sync --extra postgres --extra mariadb --group dev   # add --extra mssql / oracle as needed
+uv sync --extra postgres --extra mariadb --extra documents --group dev   # add --extra mssql / oracle as needed
 ```
 
 ## 3. Test

@@ -69,8 +69,10 @@ jobs:
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
 
+      # The conformance contract renders real documents on every engine,
+      # so the document libraries install beside the engine's driver.
       - name: Install dependencies
-        run: uv sync --extra ${{ matrix.dialect }} --group dev
+        run: uv sync --extra ${{ matrix.dialect }} --extra documents --group dev
 
       # Container-healthy can precede login-ready (app-user creation lags
       # on Oracle); probe with the real driver before handing pytest a

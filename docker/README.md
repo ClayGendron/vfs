@@ -22,7 +22,7 @@ Postgres — native arm64, up in seconds:
 
 ```sh
 docker compose -f docker/compose.test.yml up -d --wait
-uv sync --extra postgres --group dev
+uv sync --extra postgres --extra documents --group dev
 VFS_TEST_POSTGRES_URL="postgresql+asyncpg://vfs:vfs@localhost:54320/vfs" \
   uv run pytest -m postgres
 ```
