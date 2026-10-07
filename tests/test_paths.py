@@ -7,8 +7,8 @@ so it collects and runs while the rest of the tree is mid-refactor.
 from __future__ import annotations
 
 import posixpath
-import time
-from typing import cast
+import sys
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -41,6 +41,27 @@ from vfs.paths import (
     validate_relative_path,
     validate_segment,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def profiled_calls(function: Callable[[str], str], argument: str) -> tuple[int, str]:
+    """Python and C calls made while ``function(argument)`` runs — work counted without a clock."""
+    calls = 0
+
+    def tally(frame: object, event: str, arg: object) -> None:
+        nonlocal calls
+        if event in ("call", "c_call"):
+            calls += 1
+
+    sys.setprofile(tally)
+    try:
+        result = function(argument)
+    finally:
+        sys.setprofile(None)
+    return calls, result
+
 
 # =========================================================================
 # normalize_path
@@ -129,11 +150,12 @@ class TestNormalizePath:
         assert normalize_path("/a/b/ ") == "/a/b"
 
     def test_normalize_is_linear(self):
-        # Regression guard: a pathological "/. " repetition must not be O(n^2).
-        big = "/a" + "/. " * 100000
-        start = time.perf_counter()
-        assert normalize_path(big) == "/a"
-        assert time.perf_counter() - start < 1.0
+        # Regression guard: a pathological "/. " repetition must not be O(n^2) in
+        # Python-level work. Counted in calls, not seconds: doubling the input may at most double them.
+        small, result = profiled_calls(normalize_path, "/a" + "/. " * 20_000)
+        big, _ = profiled_calls(normalize_path, "/a" + "/. " * 40_000)
+        assert result == "/a"
+        assert big <= 2 * small + 16, (small, big)
 
 
 # =========================================================================

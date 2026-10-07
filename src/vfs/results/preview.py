@@ -5,7 +5,8 @@ text alone: one fold of the chunk, a score per line from the query's
 terms, the best short window of lines, the terms bolded in Markdown, and
 hard caps on characters so a result page stays token-bounded by
 construction. No second fetch ever happens here — that is the module's
-speed contract, pinned by a budget test.
+speed contract, pinned by a test that counts the folds, splits and line
+scores rather than the clock.
 
     >>> select_preview(
     ...     "def parse(stream):\\n    return tokens_from(stream)\\n", 10, ["tokens"]

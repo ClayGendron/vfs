@@ -351,6 +351,21 @@ private *types and constants* stay next to what they support.
   never be the thing that turns bad input into a refusal — that is a
   classified `Result`, and `python -O` must change no behavior.
 
+## Performance tests
+
+- **Count operations, never wall-clock time** (Clay, 2026-10-06). A
+  performance pin in `tests/` asserts how much work ran — calls to a
+  spied function, statements issued, rows visited, a doubling ratio of
+  profiled calls — never how many seconds it took. A clock measures the
+  CI runner, not the algorithm: the preview budget (50 µs a chunk, a
+  2–5× margin over a laptop) failed two of four GitHub legs on every
+  push with the code unchanged. Every mature project we study does the
+  same — SQLAlchemy's cProfile call counts, SQLite's
+  `sqlite_search_count`, zoekt's exact `Stats`, neo4j's `dbHits`,
+  lancedb's `read_iops` — and keeps the clock in a separate benchmark
+  (cachegrind, CodSpeed, criterion, asv) that cannot fail a test run.
+  Wall-clock belongs in a bench or a research memo, never in a test.
+
 ## Explaining things to Clay
 
 - **Explain simply and repetitively** (Clay, 2026-08-26). Dense, packed

@@ -1,12 +1,11 @@
-"""The preview selector: window choice, bolding, folding, caps, the head fallback, and its speed budget."""
+"""The preview selector: window choice, bolding, folding, caps, the head fallback, and its operation counts."""
 
 from __future__ import annotations
 
-import time
+from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
-import coverage
-import pytest
-
+from vfs.results import preview
 from vfs.results.preview import (
     LINE_CHAR_CAP,
     PREVIEW_CHAR_CAP,
@@ -14,6 +13,9 @@ from vfs.results.preview import (
     Preview,
     select_preview,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 # The study's three example chunks, reproduced from the repository text they were cut from.
 ROWS_PY = (
@@ -154,21 +156,46 @@ class TestHeadFallback:
         assert select_preview("only\n", 9, ["only"]) == Preview("**only**", 9, 9, True)
 
 
-class TestBudget:
-    def test_ten_thousand_chunks_stay_under_the_per_chunk_budget(self) -> None:
-        # The speed contract: one fold, no I/O. The corpus mirrors the study's
-        # shape (28-line chunks, a term on roughly one line in nine); 50 µs is
-        # two to five times the measured cost, leaving room for slow CI hardware.
-        if coverage.Coverage.current() is not None:
-            pytest.skip("a timing pin on pure Python runs untraced; the plain legs carry it")
+class TestOperationCounts:
+    """The speed contract, pinned by counting the work rather than timing it.
+
+    One fold of the whole chunk plus one per query term; two line splits
+    (the original text and the folded text); a fold-offset map only when
+    folding changed a line's length; and line scoring only on the lines a
+    term occurs in. A clock would measure the CI runner; these counts
+    measure the algorithm, so they hold on any hardware.
+    """
+
+    SPIED = ("fold_content", "split_lines", "_fold_offsets", "_score_line")
+
+    @staticmethod
+    def _spies(monkeypatch: pytest.MonkeyPatch) -> dict[str, Mock]:
+        spies = {name: Mock(wraps=getattr(preview, name)) for name in TestOperationCounts.SPIED}
+        for name, spy in spies.items():
+            monkeypatch.setattr(preview, name, spy)
+        return spies
+
+    def test_study_shaped_chunks_fold_once_and_score_only_the_hit_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The study's shape: 28-line ASCII chunks, a term on one line in nine (four hit lines each).
         words = ["the", "index", "builds", "postings", "for", "every", "entry", "and", "router", "merges", "rows"]
         lines = [" ".join(words[(i + j) % len(words)] for j in range(9)) for i in range(28)]
         for i in range(0, 28, 9):
             lines[i] += " chunk_index embedding"
-        chunks = [("\n".join(lines[k % 28 :] + lines[: k % 28]) + "\n", 1 + k) for k in range(10_000)]
+        chunks = [("\n".join(lines[k % 28 :] + lines[: k % 28]) + "\n", 1 + k) for k in range(1_000)]
         terms = ["chunk", "line_start", "embedding"]
-        started = time.perf_counter()
+        hit_lines_per_chunk = 4
+        spies = self._spies(monkeypatch)
         for content, line_start in chunks:
             select_preview(content, line_start, terms)
-        elapsed = time.perf_counter() - started
-        assert elapsed / len(chunks) < 50e-6, f"{elapsed / len(chunks) * 1e6:.1f} µs per chunk"
+        assert spies["fold_content"].call_count == len(chunks) * (1 + len(terms))
+        assert spies["split_lines"].call_count == 2 * len(chunks)
+        assert spies["_fold_offsets"].call_count == 0
+        assert spies["_score_line"].call_count == len(chunks) * hit_lines_per_chunk
+
+    def test_a_chunk_holding_no_term_stops_at_the_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The any-term gate decides in one search: no folded split, no line scored.
+        spies = self._spies(monkeypatch)
+        assert select_preview("alpha\nbeta\ngamma\n", 1, ["delta"]) == Preview("alpha\nbeta\ngamma", 1, 3, False)
+        assert spies["fold_content"].call_count == 2
+        assert spies["split_lines"].call_count == 1
+        assert spies["_score_line"].call_count == 0

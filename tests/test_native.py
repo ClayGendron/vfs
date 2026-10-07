@@ -16,7 +16,6 @@ import re
 import subprocess
 import sys
 import unicodedata
-from time import monotonic
 
 import pytest
 
@@ -192,20 +191,16 @@ class TestCandidateKernel:
             _native.candidate_ids([[encode_postings([]), b"\x02\x01\x00"]], None, 10)
 
     @pytest.mark.slow
-    def test_the_widest_ladder_stays_sub_millisecond(self) -> None:
+    def test_the_widest_ladder_caps_on_the_engine_side(self) -> None:
         # The `return` shape from the landing store: ~200 K postings over
-        # four blobs, 46 K survivors. Generous against CI noise.
+        # four blobs, 46 K survivors; only the capped prefix crosses the seam.
         rng = random.Random(7)
         rare = sorted(rng.sample(range(1, 700_000), 46_000))
         wider = [sorted(set(rare) | set(rng.sample(range(1, 700_000), 50_000))) for _ in range(3)]
         fed = [[encode_postings(ids) for ids in (rare, *wider)]]
-        timings = []
-        for _ in range(5):
-            started = monotonic()
-            ids, total = _native.candidate_ids(fed, None, 25_000)
-            timings.append(monotonic() - started)
+        ids, total = _native.candidate_ids(fed, None, 25_000)
         assert (len(ids), total) == (25_000, 46_000)
-        assert sorted(timings)[2] < 0.005, timings
+        assert ids == rare[:25_000]
 
 
 class TestBuilderContract:
