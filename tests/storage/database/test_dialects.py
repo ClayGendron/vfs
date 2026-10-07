@@ -51,6 +51,7 @@ from vfs.storage.backends.database.dialects import (
     op_execution_options,
     profile_for,
     rows_per_statement,
+    wire_bytes,
 )
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.replace import EditOperation
@@ -978,3 +979,18 @@ class TestValueTooLarge:
         wrapped = DBAPIError("INSERT", None, sqlite3.DataError("too big"))
         assert is_value_too_large(wrapped) is True
         assert is_value_too_large(RuntimeError("nope")) is False
+
+
+class TestValueCap:
+    def test_the_mysql_family_declares_its_packet_cap_and_the_rest_declare_none(self) -> None:
+        assert MARIADB.value_cap_query == "SELECT @@max_allowed_packet"
+        assert MARIADB.value_cap_setting == "max_allowed_packet"
+        for profile in (SQLITE, POSTGRESQL, MSSQL, ORACLE, GENERIC):
+            assert (profile.value_cap_query, profile.value_cap_setting) == (None, None)
+
+
+class TestWireBytes:
+    def test_escaped_bytes_count_twice(self) -> None:
+        assert wire_bytes(b"plain") == 5
+        assert wire_bytes(b"\x00\n\r\\'\"\x1a") == 14
+        assert wire_bytes(bytes(1024)) == 2048

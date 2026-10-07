@@ -1,11 +1,16 @@
 # 152 — Binary bodies and text renderings: bytes in a blob row, a stamped Markdown rendering in the content row
 
-- **Status:** drafted 2026-10-05, awaiting Clay's review. Written the
-  same day as the research memo it stands on, after Clay fixed the two
-  forks the memo left to him: the file's bytes are versioned and are
-  edited only by replacing them through `write`; there is no edit
-  through the rendering in this spec ("edit the bytes at this time
-  through write, no edit through rendering right now"). Not started.
+- **Status:** **slices A and B built, 2026-10-05 and 2026-10-06,
+  awaiting Clay's review.** Slice A (bytes in and out) landed on
+  `main` as `6db7053`; slice B (the renderer seam, the registry, the
+  four document renderers and the `render` stage of reindex) is in
+  the working tree. Slices C (images) and D (docs) are not started.
+  Drafted 2026-10-05, the same day as the research memo it stands on,
+  after Clay fixed the two forks the memo left to him: the file's
+  bytes are versioned and are edited only by replacing them through
+  `write`; there is no edit through the rendering in this spec ("edit
+  the bytes at this time through write, no edit through rendering
+  right now").
 - **Date:** 2026-10-05
 - **Owner:** Clay Gendron
 - **Kind:** feature (two tables touched, one added; one new reindex
@@ -61,7 +66,7 @@ way to change a binary.
 
 ### 1. The body is bytes or text, never both
 
-- A new table `vfs_blobs(entry_id, created_at, body)`, keyed by entry
+- A new table `vfs_blobs(entry_id, created_at, data)`, keyed by entry
   identity like `vfs_content`, holds the file's bytes. The body column
   is physically last (the `vfs_content` rule; measured as an elevenfold
   scan win on SQLite in the memo).
@@ -80,7 +85,9 @@ way to change a binary.
   **bytes** for a bytes entry: that is what the caller wrote and what
   `write`, `move`, `copy` and a change-detecting pipeline compare.
   `lines` describes the text the verbs see, which for a bytes entry is
-  the rendering (zero until rendered); the column docstring says so.
+  the rendering (zero until rendered), counted under the one law every
+  `lines` column shares (`line_count` in `models/version.py`); the
+  column comment says so.
 - `mime_type` on a bytes entry is sniffed from the leading bytes for
   the formats this spec renders (PDF, the four OOXML types, PNG, JPEG,
   GIF, WebP, TIFF); the caller's declared value and the extension may
@@ -161,8 +168,9 @@ way to change a binary.
   header row is the Excel column letters and the first column is the
   1-based Excel row number, so a grep hit reads as a cell address and a
   sheet with no header row renders without inventing one; each
-  contiguous cell region is its own table (Docling), so a sparse sheet
-  is not a grid of blanks. For docx and pptx tables the first row is
+  contiguous cell region — cells touching by side or corner, regions
+  whose bounding boxes overlap merged — is its own table (Docling), so
+  a sparse sheet is not a grid of blanks. For docx and pptx tables the first row is
   the header.
 - **Per format**, following Tika's conventions as conventions:
   - *PDF*: one page block per page in page order, paragraphs inside;
@@ -218,11 +226,17 @@ way to change a binary.
 - **Dedup.** Two entries with the same `render_source_hash` under the
   current generation copy the rendering row instead of rendering twice
   (the `carry_embeddings` shape; Oak's reason for its cache).
-- **The conditional write-back.** The stamp is written `WHERE
-  render_source_hash IS DISTINCT FROM :hash OR render_generation IS
-  DISTINCT FROM :generation` in the engine's spelling, so a render that
-  began under one generation is not written once another is
-  configured, and a rival's identical write is a no-op (ADR 054 rule 6).
+- **The conditional write-back.** The stamp is written where the row
+  still holds the bytes it was rendered from and does not already carry
+  this exact stamp (`content_hash = :hash AND (render_source_hash IS
+  DISTINCT FROM :hash OR render_generation IS DISTINCT FROM
+  :generation)`, spelled as plain null-safe comparisons every engine
+  runs), one guarded UPDATE per row with its rowcount as the proof of
+  what landed, so a bytes change in flight is a miss and a rival's
+  identical write is a no-op (ADR 054 rule 6). No stamp guard can
+  order two generation strings: the lease, checked before every
+  landing, is what keeps a straggler's generation from overwriting a
+  rival's.
 - **Pending is visible.** Between the write and the first reindex the
   entry's `render_status` is `pending` and it has no content row. A
   verb that needs text says so (§6); nothing invents an empty body.
@@ -252,9 +266,10 @@ way to change a binary.
   `TextExtractionError`), and an empty body would make "no text" and
   "not attempted" one row (Nuxeo, paperless).
 - `stat` and `ls` project `render_status` like any entry column.
-  `glean` reports the unrendered count in its envelope as it reports
-  `unembedded`. The `reindex` result reports `rendered, cached,
-  unrendered` at warning severity when `unrendered > 0`.
+  The `reindex` result reports `rendered, empty, unsupported, failed,
+  cached, unrendered` — every landed row under exactly one count — at
+  warning severity when `unrendered > 0`. (`glean` does not yet report
+  an unrendered count in its envelope; an open item.)
 - Retry follows the skip law: the same bytes under the same generation
   are not retried for `unsupported`, `unavailable`, `encrypted`,
   `corrupt` or `failed`; a generation bump, an extra install (which
@@ -281,10 +296,17 @@ way to change a binary.
   `<name>/unavailable`, so installing the extra changes the generation
   and the skip law retries.
 - **One `RenderLimits` value** passed to every render: `chars` (§4's
-  budget), `ratio` (output to input, Tika's decompression-bomb guard,
-  always a loud `failed`), `embedded_depth` and `embedded_count`
-  (non-throwing, set `partial`), `pages`, `seconds`. Defaults are
-  module constants; a host may lower them, never raise `ratio`.
+  budget, checked on every line so nothing renders past it),
+  `ratio` (output to input, Tika's decompression-bomb guard, always a
+  loud `failed`), `embedded_depth` and `embedded_count` (non-throwing,
+  set `partial`), `pages` (a cap on marked units — pages, slides,
+  sheets — never on a markerless format's body blocks), `seconds`
+  (the clock starts at the renderer's entry, before parsing). Defaults
+  are module constants; a host may lower them, never raise `ratio`.
+  A renderer's answer is settled at the seam before it is served: an
+  unknown status is `failed`, text is cleaned of NULs and lone
+  surrogates and ends with one newline, and a no-body status carries
+  no text.
 - **Bundled renderers and extras**: `pdf` on pypdf (`vfs[pdf]`),
   `docx` on python-docx (`vfs[docx]`), `pptx` on python-pptx
   (`vfs[pptx]`), `xlsx` on openpyxl, read-only mode, no pandas
@@ -425,7 +447,7 @@ way to change a binary.
 | A | Bytes in and out: `vfs_blobs`, the `data` column on `vfs_versions`, `source`, the render stamp and status columns, `media_width`/`media_height`, format 19 and the migration; `Entry.data` and the XOR; `Observation.data` elided by default; `write` with bytes (single and batch, the bytes page, the per-value cap classification, source switching), `read`/`stat`/`ls` with `pending`; `edit` refusal; the topology verbs carrying the blob row; the contract extension for bytes round-trips on all five legs. No renderer yet: every bytes entry is `pending`. | yes |
 | B | The renderer seam: `Rendering`, `RenderLimits`, the registry with probing and generations, the `render_dirty` stage with dedup and the conditional write-back, the status machine, the normaliser and the unit table; the `pdf`, `docx`, `pptx` and `xlsx` renderers behind their extras; the unit-marker and table conventions; grep and glean honouring the statuses; the status fixtures and the mutant pins. | yes |
 | C | Images: the `image` renderer (header, dimensions, EXIF subset, the two dimension columns) behind `vfs[images]`, its pins; the `vfs[documents]` umbrella. | yes |
-| D | Docs and the API surface: `docs/api.md`, the how-to, the explanation page, the reference pages; the `Session` facade's `write(data=…)`; the glossary entries (source, rendering, unit marker, render status). | yes |
+| D | Docs and the API surface: `docs/api.md`, the how-to, the explanation page, the reference pages; the glossary entries (source, rendering, unit marker, render status). (The `Session` facade's `write(data=…)` landed with slice A.) | yes |
 
 A lands first and alone; B needs A; C needs B; D closes. The engine
 legs run on A (the blob facts) and B (the statuses are engine-neutral,
@@ -520,3 +542,161 @@ its body in `vfs_blobs` and its stamp as `pending`; nothing renders yet.
   chunked-and-ineligible with its bytes hash as `chunk_source_hash`;
   when the renderer writes a content row it must also clear that stamp,
   or the skip law would keep the rendering unsplit.
+
+## Implementation progress — slice B
+
+**2026-10-06.** The renderer seam and the four document renderers; the
+render stage of reindex. A PDF, docx, pptx or xlsx written as bytes is
+greppable and gleanable after the next `reindex`, under its unit
+markers; every other outcome is a stamped state with its reason.
+
+- **The seam** (`vfs/rendering/seam.py`): `RenderSource`,
+  `RenderLimits` (a frozen value validated at construction — every cap
+  positive, the ratio lowerable and never raisable), `Unit`,
+  `Rendering` (a status, the text or none, the unit table, the detail,
+  the image dimensions), the `Renderer` protocol with read-only `name`,
+  `extra`, `mimes` and `version`; `generation_of` (`<name>/<version>`
+  or `<name>/unavailable`), the bounded detail, the unit table as JSON
+  on the row, and `BundledRenderer`, which resolves its parser library
+  once per process (`load_library`, cached) and derives its version from
+  its own revision plus the installed distribution's version.
+- **The Markdown subset** (`vfs/rendering/markdown.py`): one `Builder`
+  owns the conventions — the unit-marker grammar
+  (`<!-- page 3 -->`, `<!-- sheet 2: Budget -->`), pipe tables with
+  `|` escaped and in-cell breaks collapsed, image placeholders
+  `![alt](embedded:n)`, normalisation at append time (trailing spaces,
+  blank runs, NULs, one final newline) so unit `first_line` numbers are
+  exact — and the verdict: `truncated` at a unit boundary with the
+  visible notice (an oversized unit is cut inside its table and counts
+  as incomplete), `partial` on the wall clock or the embedded budget,
+  `failed` on the ratio guard past the floor, `empty` when only
+  structure was emitted (a sheet's title heading is structural, a
+  document's own headings are text).
+- **The registry** (`vfs/rendering/registry.py`): exact type, then the
+  supertype walk over `media.SUPERTYPES` (the macro-enabled, template
+  and slideshow Office types fall to their plain renderer; `x-pdf` to
+  pdf), last registered wins; `generations()` is the renderer-sized
+  set the dirty predicate complements; `render` answers `unsupported`
+  and `unavailable` (naming the extra) itself and wraps a renderer's
+  surprise as `failed`. The extras: `vfs[pdf]` pypdf, `vfs[docx]`
+  python-docx, `vfs[pptx]` python-pptx, `vfs[xlsx]` openpyxl, and
+  `vfs[documents]` for all four; `vfs[all]` includes them.
+- **The renderers.** *pdf*: one page block per page, the empty
+  password tried, `encrypted` otherwise, every `PyPdfError` `corrupt`;
+  embedded images are not placeholder-marked (a decode per image —
+  left for a later slice). *docx*: `iter_inner_content` for body order,
+  `Title` and `Heading N` to levels, tables interleaved with the first
+  row as header, section headers first and footers last, footnotes and
+  comments inline at their reference (`[footnote 7: text]`, read from
+  their parts with the stdlib parser), pictures by their `docPr` alt
+  text; no unit markers, truncation counted in body blocks. *pptx*:
+  one slide block per slide, the title as a heading, shapes in slide
+  order with groups walked, tables as rows, pictures as placeholders
+  carrying the shape's name (python-pptx exposes no alt text), notes
+  as a `### Notes` sub-block; master and layout text off. *xlsx*:
+  read-only with computed values, every sheet visible or hidden with
+  the flag in the unit table, each contiguous run of non-empty rows its
+  own table with the column letters across and the row number down,
+  booleans as `TRUE`/`FALSE`, floats at fifteen significant digits,
+  dates ISO.
+- **The stage** (`storage/backends/database/render.py`, the backend's
+  `_render_step`): first under the lease, before the chunk pass. Keyset
+  pages of `RENDER_PAGE_ROWS` dirty bytes rows (stamp absent, generation
+  not in the registry's set, or hash mismatch), each cut by
+  `BLOB_PAGE_BYTES` in flight; per cut, settled twins borrowed by
+  `(hash, generation)` from any row (text or verdict), the rest's blobs
+  read, the cut rendered on the offload pool with no transaction open,
+  and landed in one short write. The landing leaves rows already
+  carrying the exact stamp whole, writes the guarded stamp for the
+  rest (`entry_id`, `source='bytes'`, `content_hash` equal, stamp pair
+  not already this one — spelled as plain null-safe comparisons, which
+  every engine runs), reads back which rows it reached, drops their old
+  content rows, inserts the renderings with text in bytes-bounded
+  pages, sets `lines`, and resets `chunked`, `encoded` and
+  `chunk_source_hash` so the same run's chunk pass splits the new text
+  (the trap slice A left). The result's `rendering` extra reports
+  `rendered`, `cached`, `failed`, `unrendered`, with a retryable
+  warning when bytes rows remain pending; a text-only mount reports no
+  extra. `DatabaseStorage(renderers=…, render_limits=…)` takes a host
+  registry and lowered limits; `storage.renderers` exposes the registry.
+- **Where the spec bent.** (1) *The same-bytes overwrite re-renders
+  once*: slice A's write clears every render column and drops the
+  rendering, so the skip law has no stamp to compare; the entry is
+  rendered again from the same bytes and then settles. Keeping the
+  stamp and the content row across a bytes write whose hash is
+  unchanged is the fix, and it lives in the write path. (2) *No stamp
+  guard can order two generations*: a straggler that rendered under A
+  cannot tell a rival's B from an older stale value, so the lease is
+  the arbiter — `lost` is checked before every landing — and the guard
+  makes an identical rival write a no-op and a bytes change a miss.
+  (3) `glean` does not yet report an `unrendered` count in its
+  envelope; the reindex result does.
+- **Tests.** `tests/rendering/` (the seam's values, the builder's laws,
+  the registry's resolution and states, the four renderers against
+  documents generated with their own libraries —
+  `tests/support/documents.py`); `tests/storage/database/test_render.py`
+  (every format rendered and grep hitting under the right marker, the
+  rendering chunked in the same run, the skip and generation laws,
+  twins rendered once within and across runs, a failed twin lending its
+  verdict, every status stamped with its reason and no content row and
+  not retried, `unavailable` retried once the extra is present, a cut
+  rendering's info note on read, `partial` on the clock, bytes replaced
+  mid-render not stamped with the old text, the lost lease stopping
+  before the landing, a failing landing ending the run classified, an
+  identical rival stamp left whole, keyset pages and byte cuts, the
+  loop ticking through a slow render, a host renderer displacing the
+  bundled one); the `StorageContract` gains the four-format round trip
+  with grep under the markers on every engine leg.
+
+**2026-10-07, after the review.** The five-lens review of slices A
+and B (1 critical, 12 major, 20 minor, 7 design notes) is fixed in the
+working tree:
+
+- *The wedge (critical).* A lone surrogate or NUL from a parser or a
+  host renderer is cleaned at the seam (`sanitize`, applied by the
+  Builder on every line and by `settle` to every renderer's answer);
+  a landing the engine still refuses is retried row by row, and a row
+  refused even then lands as `failed` naming the refusal, so one bad
+  row never stops the stage or the phases after it.
+- *The lease.* The render stage consults `lost` only before a landing,
+  so a stage with nothing to land lets the gram phase run and stop at
+  its own boundary; the committed lease test holds unchanged.
+- *The skip law, per type.* The dirty predicate compares the stamp to
+  the generation the row's own media type resolves to today (a
+  renderer-sized CASE over `registry.claims()`), so a type newly
+  claimed — or a sibling type newly served through its supertype —
+  re-dirties the rows stamped unsupported.
+- *Budgets.* The character budget is checked on every appended line
+  with headroom reserved for the notice, so a cut rendering never
+  exceeds `chars` and stays gram-indexable; the unit cap applies to
+  marked units only and names itself in the detail; the clock starts
+  before parsing and is checked between table rows; `embedded_depth`
+  bounds the pptx group walk; xlsx regions are true contiguous cell
+  regions found by union-find, linear in the cell count.
+- *Scale.* `vfs_entries.content_hash` is indexed (format 20) and the
+  twin lookup is a two-step probe (lowest donor id per key, then those
+  rows alone); `copy` reads bodies in bytes-bounded pages after the
+  narrow metadata read, each page guarded on version and hash (a rival
+  between the reads redrives); MariaDB's `max_allowed_packet` is read
+  at first touch (`DialectProfile.value_cap_query`), a body over it is
+  refused `unsupported` naming the setting before it is sent — measured
+  in wire bytes, since the family's drivers inline a body as an escaped
+  literal and a NUL-heavy body doubles on the wire — and the blob page
+  is capped by it under the same meter (verified on MariaDB 11.8: a
+  15 MiB zero-filled body is refused, 15 MiB of random bytes lands,
+  six 3 MiB zero-filled bodies in one write page into packets).
+- *Contracts.* A generation string wider than the column is refused at
+  registration; the library version is read once; one `line_count` law
+  serves entries, versions and renderings; the report's six counts are
+  defined; the pdf detail no longer names the file; the `reindex` and
+  `media` docstrings are current; the Decided semantics above are
+  reconciled (the column is `data`, regions are cell regions, the
+  write-back guard is per row with its rowcount, `glean`'s unrendered
+  count is open).
+- *Pins.* The chunk-stamp reset, the byte-paged text insert, the keyset
+  page, the ratio floor, the trashed-row exclusion, the hash-mismatch
+  arm, the `empty` count, the purge of `vfs_blobs`, the two-sheet xlsx
+  cut, the linked header, blank notes, the surrogate PDF, the refused
+  landing, the per-type retry, the value cap and the paged copy each
+  have a test; the offload test asserts the worker thread, not a clock.
+

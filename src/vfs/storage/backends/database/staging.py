@@ -26,6 +26,7 @@ from ulid import ULID
 from vfs.paths import byte_length
 from vfs.results import ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain
+from vfs.storage.backends.database.dialects import wire_bytes
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from vfs.authority import Authority
     from vfs.models.media import Source
     from vfs.paths import ObjectKind, Path
+    from vfs.storage.backends.database.dialects import ValueCap
 
 Status = Literal["created", "updated", "unchanged"]
 # Which execution pass writes a staged row's material columns. Distinct
@@ -134,10 +136,18 @@ class WritePlan:
     plan is never executed.
     """
 
-    def __init__(self, committed: dict[str, RowMapping], *, authority: Authority | None, budget: int) -> None:
+    def __init__(
+        self,
+        committed: dict[str, RowMapping],
+        *,
+        authority: Authority | None,
+        budget: int,
+        value_cap: ValueCap | None = None,
+    ) -> None:
         self.committed = committed
         self.authority = authority
         self.budget = budget
+        self.value_cap = value_cap
         self.staged: dict[Path, StagedEntry] = {}
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
@@ -173,6 +183,24 @@ class WritePlan:
         if parent is not None:
             return parent.entry_id
         return self.committed[str(staged.parent)]["entry_id"]
+
+    def within_value_cap(self, path: Path, body: bytes | str | None) -> bool:
+        """A body past the engine's single-value cap is refused up front, naming the setting.
+
+        The cap is the server's own (the MySQL family's packet), read at
+        first touch; there is no vfs ceiling. The body is measured as
+        the driver sends it — escaped bytes count twice — so the refusal
+        is the engine's verdict given early, never a guess.
+        """
+        cap = self.value_cap
+        if cap is None or body is None:
+            return True
+        size = wire_bytes(body if isinstance(body, bytes) else body.encode())
+        if size <= cap.limit:
+            return True
+        message = f"Body of {size} bytes on the wire exceeds this engine's {cap.setting} of {cap.limit} bytes: {path}"
+        self.errors.append(classified(VFSErrorKind.unsupported, message, path, target=path))
+        return False
 
     def within_budget(self, path: Path) -> bool:
         """A lawful path can still exceed an engine's index-key byte cap."""
@@ -224,6 +252,8 @@ class WritePlan:
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended."""
         if not self.within_budget(target):
+            return None
+        if not self.within_value_cap(target, data if data is not None else content):
             return None
         if not self.parent_gate(target, parents=parents, target=target):
             return None

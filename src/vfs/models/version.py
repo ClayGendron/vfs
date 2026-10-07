@@ -44,6 +44,16 @@ from vfs.models.versioning import reconstruct_version
 from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 
 
+def line_count(text: str) -> int:
+    """The one line-count law: newlines plus the final line, zero for no text.
+
+    Every stored ``lines`` column — a text entry's, a version's, a
+    rendering's — is counted here, so the same text never carries two
+    numbers.
+    """
+    return text.count("\n") + 1 if text else 0
+
+
 class Version(BaseModel):
     """One version row, addressed by its owning file + version number.
 
@@ -135,7 +145,7 @@ class Version(BaseModel):
             version_diff=record.version_diff,
             content_hash=hashlib.sha256(encoded).hexdigest(),
             size_bytes=len(encoded),
-            lines=version_content.count("\n") + 1 if version_content else 0,
+            lines=line_count(version_content),
             actor=None if authority is None else authority.actor.sub,
             subjects=() if authority is None else authority.subject_names,
             provenance=None if authority is None else authority.provenance,

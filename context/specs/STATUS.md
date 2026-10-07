@@ -5,12 +5,18 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **152 slice A built 2026-10-05, awaiting Clay's review** — binary
-  bodies and text renderings. Slice A (bytes in and out: the blobs
-  table, format 19, `Entry.data`, `write(data=…)`, the pending stamp,
-  the `data` projection on read, the edit refusal, the engines' own
-  caps classified) is in the working tree, uncommitted; slices B to D
-  are not started. A binary file (PDF, docx, xlsx, pptx, image) is
+- **152 slices A and B built 2026-10-05/06, awaiting Clay's review** —
+  binary bodies and text renderings. Slice A (bytes in and out: the
+  blobs table, format 19, `Entry.data`, `write(data=…)`, the pending
+  stamp, the `data` projection on read, the edit refusal, the engines'
+  own caps classified) landed on `main` as `6db7053`. Slice B (the
+  renderer seam and registry, the pdf/docx/pptx/xlsx renderers behind
+  `vfs[documents]`, the `render` stage first in reindex with dedup and
+  the guarded landing, the `rendering` extra) is in the working tree,
+  uncommitted, with the 2026-10-07 five-lens review's findings fixed
+  (the surrogate wedge, the per-type skip law, the strict budgets,
+  the indexed twin lookup, the paged copy, the MariaDB packet cap);
+  slices C (images) and D (docs) are not started. A binary file (PDF, docx, xlsx, pptx, image) is
   an entry whose bytes live in a new `vfs_blobs` row; a per-format
   renderer writes a line-oriented Markdown rendering into `vfs_content`
   under the same entry id, stamped on the entry row with the bytes hash

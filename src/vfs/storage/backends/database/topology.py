@@ -595,7 +595,7 @@ async def transfer_rows(
         if dest.startswith(src + "/"):
             errors.append(classified(VFSErrorKind.invalid, f"Cannot {op} {src} into itself: {dest}"))
             continue
-        subtree = await _fetch_subtree(session, tables, profile, str(src), with_content=op == "copy")
+        subtree = await _fetch_subtree(session, tables, profile, str(src))
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
             message = f"Cannot {op} {src}: Path too long (max {MAX_PATH_LENGTH} bytes)"
@@ -617,7 +617,9 @@ async def transfer_rows(
             await _execute_copy(
                 session,
                 tables,
+                profile,
                 parameter_budget,
+                membership_budget,
                 subtree=subtree,
                 src_row=src_row,
                 dest=dest,
@@ -1203,23 +1205,18 @@ async def _dest_parent_id(
 
 
 async def _fetch_subtree(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile, src: str, *, with_content: bool = False
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, src: str
 ) -> list[RowMapping]:
-    """The source row and every descendant, with the columns a copy reproduces.
+    """The source row and every descendant, with the metadata columns a copy reproduces.
 
-    ``with_content`` joins the body in the same select, so a copy stamps
-    metadata and content from one observation — two reads under the
-    READ COMMITTED topology pin can straddle a rival's commit and tear
-    ``content_hash`` from the body it claims to describe.
+    Narrow rows only — never a body: a copy reads bodies afterwards in
+    bytes-bounded pages (:func:`_copy_bodies`), each guarded on the
+    version read here, so a rival's commit between the two reads is a
+    redrive rather than a torn ``content_hash``.
     """
     entry = tables.entry
     columns: list[Any] = [entry.c[name] for name in _SUBTREE_COLUMNS]
-    subtree = subtree_filter(entry, src, profile)
-    stmt = select(*columns).where(subtree)
-    if with_content:
-        bodies = [tables.content.c.content, tables.blobs.c.data]
-        stmt = select(*columns, *bodies).select_from(tables.bodies_joined(content=True, data=True)).where(subtree)
-    return list((await session.execute(stmt)).mappings())
+    return list((await session.execute(select(*columns).where(subtree_filter(entry, src, profile)))).mappings())
 
 
 async def _execute_move(
@@ -1292,7 +1289,9 @@ async def _execute_move(
 async def _execute_copy(
     session: AsyncSession,
     tables: VFSTables,
+    profile: DialectProfile,
     parameter_budget: int,
+    membership_budget: int,
     *,
     subtree: list[RowMapping],
     src_row: RowMapping,
@@ -1310,13 +1309,15 @@ async def _execute_copy(
     neither ``external_id`` nor any edge row is copied. A
     rival child committed under the destination mid-window merges
     rather than refusing: the outcome equals the legal serial history
-    copy-then-write, and a copy destroys nothing. Metadata and bodies
-    both come from the caller's single content-joined subtree read, so
-    the stamped ``content_hash``/``size_bytes`` and the copied body
-    cannot straddle a rival's commit. A unique violation on the inserts
-    — a rival write took an address under the destination after the
-    occupant probe — redrives the verb: the fresh ladder returns the
-    honest per-pair refusal at the address the race actually reached.
+    copy-then-write, and a copy destroys nothing. Bodies are copied
+    after the rows, in bytes-bounded pages, each page's source rows
+    guarded on the version the metadata read saw, so the stamped
+    ``content_hash``/``size_bytes`` and the copied body cannot straddle
+    a rival's commit — a changed version redrives. A unique violation on
+    the inserts — a rival write took an address under the destination
+    after the occupant probe — redrives the verb: the fresh ladder
+    returns the honest per-pair refusal at the address the race
+    actually reached.
     """
     entry = tables.entry
     root_id = src_row["entry_id"]
@@ -1353,20 +1354,49 @@ async def _execute_copy(
         for row in subtree
     ]
     await insert_fs_rows(session, tables.edges, mirror)
-    bodies = [
-        {"entry_id": id_map[row["entry_id"]], "created_at": now, "content": row["content"]}
-        for row in subtree
-        if row["content"] is not None
-    ]
-    await bulk_insert(session, tables.content, bodies)
-    blobs = [
-        {"entry_id": id_map[row["entry_id"]], "created_at": now, "data": row["data"]}
-        for row in subtree
-        if row["data"] is not None
-    ]
-    for page in byte_chunked(blobs, lambda blob: len(cast("bytes", blob["data"])), BLOB_PAGE_BYTES):
-        await bulk_insert(session, tables.blobs, page)
+    await _copy_bodies(session, tables, profile, membership_budget, subtree, id_map, now)
     await _bump(session, entry, dest_parent_id)
+
+
+async def _copy_bodies(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    subtree: list[RowMapping],
+    id_map: dict[str, str],
+    now: datetime,
+) -> None:
+    """Copy the subtree's bodies under the fresh ids, one bytes-bounded page in flight at a time.
+
+    The content-bearing rows are cut by their recorded sizes under the
+    blob page; each cut's bodies are read with the row's current
+    version and hash and refused as stale when either differs from the
+    metadata read — a rival wrote the source between the two reads, and
+    the copy redrives whole rather than stamping a torn pair.
+    """
+    entry, content, blobs = tables.entry, tables.content, tables.blobs
+    bearing = [row for row in subtree if row["kind"] != "directory"]
+    observed = {row["entry_id"]: (row["version"], row["content_hash"]) for row in bearing}
+    joined = tables.bodies_joined(content=True, data=True)
+    for cut in byte_chunked(bearing, lambda row: cast("int", row["size_bytes"]), BLOB_PAGE_BYTES):
+        texts: list[dict[str, object]] = []
+        binaries: list[dict[str, object]] = []
+        for ids in chunked([row["entry_id"] for row in cut], membership_budget):
+            stmt = (
+                select(entry.c.entry_id, entry.c.version, entry.c.content_hash, content.c.content, blobs.c.data)
+                .select_from(joined)
+                .where(membership(entry.c.entry_id, ids, profile))
+            )
+            for row in await session.execute(stmt):
+                if (row.version, row.content_hash) != observed[row.entry_id]:
+                    raise StaleSnapshot(f"a rival write changed {row.entry_id} under the copy")
+                if row.content is not None:
+                    texts.append({"entry_id": id_map[row.entry_id], "created_at": now, "content": row.content})
+                if row.data is not None:
+                    binaries.append({"entry_id": id_map[row.entry_id], "created_at": now, "data": row.data})
+        await bulk_insert(session, content, texts)
+        await bulk_insert(session, blobs, binaries)
 
 
 async def _final_rows(

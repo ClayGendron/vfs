@@ -11,6 +11,7 @@ generated the engine's tables.
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import subprocess
@@ -244,7 +245,11 @@ class TestBuilderContract:
 # seam: the seam's module-level refusals cannot be exercised in-process.
 def _import_seam_with(stand_in: str) -> subprocess.CompletedProcess[str]:
     script = f"import sys, types\nsys.modules['vfs._native'] = {stand_in}\nimport vfs.native\n"
-    return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+    # A colour-forcing terminal (FORCE_COLOR) would splice escape codes into the child's traceback.
+    env: dict[str, str] = dict(os.environ)
+    env.pop("FORCE_COLOR", None)
+    env.update(PYTHON_COLORS="0", NO_COLOR="1")
+    return subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False, env=env)
 
 
 class TestSeamGate:

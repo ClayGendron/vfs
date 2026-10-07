@@ -68,6 +68,7 @@ from ulid import ULID
 
 from vfs.models.lexical import MAX_TERM_BYTES
 from vfs.models.links import MAX_LINK_CONTEXT_LENGTH
+from vfs.models.media import MAX_RENDER_DETAIL_LENGTH, MAX_RENDER_GENERATION_LENGTH
 from vfs.models.vector import NativeEmbeddingConfig, VectorType
 from vfs.paths import MAX_PATH_LENGTH, MAX_SEGMENT_LENGTH
 
@@ -134,7 +135,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 19
+SCHEMA_FORMAT_VERSION: Final = 20
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -147,9 +148,6 @@ MAX_SIGNAL_NAME_LENGTH: Final = 32
 
 # The widest ``embedding_model`` the meta row stores (``provider/model@dim``).
 MAX_MODEL_ID_LENGTH: Final = 255
-# The bounded reason a failed or cut rendering carries on its entry row.
-MAX_RENDER_DETAIL_LENGTH: Final = 1024
-
 # pgvector's HNSW and IVFFlat indexes accept at most this many components.
 PGVECTOR_INDEX_MAX_DIMENSION: Final = 2_000
 
@@ -412,6 +410,8 @@ def build_vfs_tables(
         Column("content_hash", String(64)),
         Column("mime_type", _string(MAX_SEGMENT_LENGTH)),
         Column("ext", _string(32), index=True),
+        # Lines of the text the verbs see — the rendering's for a bytes
+        # row, zero until rendered — under the one law in ``line_count``.
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
         # Grep-overlay dirty flags: derived state reflects this content /
@@ -435,7 +435,7 @@ def build_vfs_tables(
         # Render provenance: the bytes hash and renderer generation the
         # stored rendering derives from — the same skip law, its own stamp.
         Column("render_source_hash", String(64)),
-        Column("render_generation", _string(64)),
+        Column("render_generation", _string(MAX_RENDER_GENERATION_LENGTH)),
         # Where the rendering stands; NULL on text rows. A failure is a
         # status with its reason in ``render_detail``, never a body.
         Column("render_status", String(16)),
@@ -471,6 +471,10 @@ def build_vfs_tables(
         # The range join for trashed rows seeks their origin as it seeks
         # ``path`` for live ones; the index holds only the trashed rows.
         Index("ix_vfs_entries_origin_path", "origin_path"),
+        # The twin lookups: a body hash shared by many rows is found by index, never a scan.
+        Index("ix_vfs_entries_content_hash", "content_hash"),
+        # The unrendered count and the pending probe: render state, never a scan of every row.
+        Index("ix_vfs_entries_render_status", "render_status"),
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -560,6 +564,8 @@ def build_vfs_tables(
         Column("embedding", embedding_type),
         Column("content", _body_text(), nullable=False),
         UniqueConstraint("entry_id", "chunk_index", name="uq_vfs_chunks_entry_index"),
+        # The embed step's twin lookup: a chunk hash shared by many rows is found by index.
+        Index("ix_vfs_chunks_content_hash", "content_hash"),
         schema=schema,
         sqlite_autoincrement=True,
     )

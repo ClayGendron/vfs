@@ -8,7 +8,7 @@ could not be made is a status with a reason, never a body.
 
 ``sniff_mime`` reads the leading bytes: magic decides the family, and
 the declared type or the extension may only narrow among the
-candidates magic allows (one zip container, three Office types).
+candidates magic allows (one zip container, the ten Office types).
 """
 
 from __future__ import annotations
@@ -34,19 +34,52 @@ RENDER_STATUSES: Final[frozenset[str]] = frozenset(get_args(RenderStatus))
 
 # Statuses that leave a content row behind: the text the verbs may serve.
 RENDERED_STATUSES: Final[frozenset[str]] = frozenset({"ok", "truncated", "partial"})
+# Statuses a renderer has pronounced: everything but the not-yet-attempted one.
+SETTLED_STATUSES: Final[frozenset[str]] = RENDER_STATUSES - {"pending"}
+# Settled with no text and a reason: no renderer, no library, or a refusal.
+FAILURE_STATUSES: Final[frozenset[str]] = SETTLED_STATUSES - RENDERED_STATUSES - {"empty"}
+
+# The bounded reason a failed or cut rendering carries on its entry row.
+MAX_RENDER_DETAIL_LENGTH: Final = 1024
+# The widest renderer generation the entry row stores (``<name>/<version>``).
+MAX_RENDER_GENERATION_LENGTH: Final = 64
 
 OCTET_STREAM: Final = "application/octet-stream"
 ZIP: Final = "application/zip"
+PDF: Final = "application/pdf"
+DOCX: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX: Final = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX: Final = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+# The zip-container Office types by extension: the three plain ones and
+# their macro-enabled, template and slideshow siblings.
 OOXML_TYPES: Final[dict[str, str]] = {
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "docx": DOCX,
+    "docm": "application/vnd.ms-word.document.macroEnabled.12",
+    "dotx": "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+    "xlsx": XLSX,
+    "xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "xltx": "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+    "pptx": PPTX,
+    "pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+    "potx": "application/vnd.openxmlformats-officedocument.presentationml.template",
+    "ppsx": "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
 }
 _OOXML_BY_TYPE: Final[frozenset[str]] = frozenset(OOXML_TYPES.values())
+# The supertype walk: a sibling type falls to the plain type whose renderer reads it.
+SUPERTYPES: Final[dict[str, str]] = {
+    OOXML_TYPES["docm"]: DOCX,
+    OOXML_TYPES["dotx"]: DOCX,
+    OOXML_TYPES["xlsm"]: XLSX,
+    OOXML_TYPES["xltx"]: XLSX,
+    OOXML_TYPES["pptm"]: PPTX,
+    OOXML_TYPES["potx"]: PPTX,
+    OOXML_TYPES["ppsx"]: PPTX,
+    "application/x-pdf": PDF,
+}
 
 # Leading-byte signatures, longest first where one is a prefix of another.
 _MAGIC: Final[tuple[tuple[bytes, str], ...]] = (
-    (b"%PDF-", "application/pdf"),
+    (b"%PDF-", PDF),
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
     (b"GIF87a", "image/gif"),

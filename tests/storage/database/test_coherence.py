@@ -233,10 +233,11 @@ class TestWriteVsTopologyCoherence:
         assert (row.version, row.path) == (5, "/elsewhere/late.txt")
         await storage.close()
 
-    async def test_copy_stamps_metadata_and_body_from_one_observation(self, tmp_path) -> None:
+    async def test_copy_refuses_a_torn_pair_when_a_rival_lands_between_its_reads(self, tmp_path) -> None:
+        # Metadata is read narrow, bodies in bounded pages afterwards; a
+        # rival between the two reads is a redrive, never a torn pair.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/src.txt"), content="original body")])
-        expected_hash = Entry(path=Path("/src.txt"), content="original body").content_hash
         host = storage._host
         tables = host.tables
         entry = tables.entry
@@ -253,8 +254,8 @@ class TestWriteVsTopologyCoherence:
                     insert(tables.content).values(entry_id=src, created_at=datetime.now(UTC), content="rival body")
                 )
 
-            with installed("transfer:post-collect", rival):
-                result = await transfer_rows(
+            with installed("transfer:post-collect", rival), pytest.raises(StaleSnapshot, match="under the copy"):
+                await transfer_rows(
                     session,
                     tables,
                     host.profile,
@@ -265,16 +266,12 @@ class TestWriteVsTopologyCoherence:
                     authority=None,
                     lock_key=host.topology_key,
                 )
-            assert result.success is True
-            copied = (
-                await session.execute(select(entry.c.entry_id, entry.c.content_hash).where(entry.c.path == "/copy.txt"))
-            ).one()
-            body_query = select(tables.content.c.content).where(tables.content.c.entry_id == copied.entry_id)
-            body = (await session.execute(body_query)).scalar_one()
             await session.rollback()
-        # Metadata and body ride one read: the pre-rival pair, coherent.
-        assert copied.content_hash == expected_hash
-        assert body == "original body"
+        # Nothing landed under the torn observation; the redrive copies the rival's coherent pair.
+        copied = await storage.copy(operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))])
+        assert copied.success is True
+        back = await storage.read(path=Path("/copy.txt"), columns=frozenset({"content", "content_hash"}))
+        assert back.observations[0].content == "original body"
         await storage.close()
 
     async def test_delete_claim_misses_when_a_rival_lands_post_collect(self, tmp_path) -> None:

@@ -30,7 +30,7 @@ per-mount counter, and no two entries' versions are comparable.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import Integer, bindparam, column, delete, insert, select, update, values
 from sqlalchemy import cast as sql_cast
@@ -45,12 +45,14 @@ from vfs.storage.backends.database.descent import miss_errors, rows_by_path, tar
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
+    ValueCap,
     bulk_insert,
     byte_chunked,
     chunked,
     rows_per_statement,
     statement_budget,
     supports_values_update,
+    wire_bytes,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
@@ -116,6 +118,7 @@ async def write_rows(
     overwrite: bool,
     parents: bool,
     authority: Authority | None,
+    value_cap: ValueCap | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of entry writes as a set.
 
@@ -129,7 +132,7 @@ async def write_rows(
     Any error fails the whole batch before a statement runs.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
-    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
     for entry in entries:
         if entry.kind == "directory":
             status = plan.put_dir(entry.path, parents=parents)
@@ -361,7 +364,10 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, authority=plan.authority, now=now
     ):
         return errors
-    await _replace_bodies(session, tables, profile, membership_budget, list(plan.staged.values()), now)
+    page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
+    if plan.value_cap is not None:
+        page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
+    await _replace_bodies(session, tables, profile, membership_budget, list(plan.staged.values()), now, page)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 
@@ -892,6 +898,7 @@ async def _replace_bodies(
     membership_budget: int,
     staged: list[StagedEntry],
     now: datetime,
+    page: _BlobPage,
 ) -> None:
     """Delete-then-insert the batch's body rows — portable, idempotent.
 
@@ -899,7 +906,9 @@ async def _replace_bodies(
     switches a row's source leaves no body in the other table, and a
     bytes write drops the rendering its stamp no longer vouches for.
     Text inserts page under the dialect's parameter budget inside
-    ``bulk_insert``; blob inserts page by bytes in flight first.
+    ``bulk_insert``; blob inserts page by bytes in flight first, under
+    *page* — the declared page metered raw, or the engine's packet
+    metered as the driver sends it when that is tighter.
     """
     bearing = [s for s in staged if s.kind in CONTENT_KINDS and (s.content is not None or s.data is not None)]
     if not bearing:
@@ -910,14 +919,28 @@ async def _replace_bodies(
     texts = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing if s.data is None]
     await bulk_insert(session, tables.content, texts)
     blobs = [{"entry_id": s.entry_id, "created_at": now, "data": s.data} for s in bearing if s.data is not None]
-    for page in byte_chunked(blobs, _blob_row_size, BLOB_PAGE_BYTES):
-        await bulk_insert(session, tables.blobs, page)
+    for rows in byte_chunked(blobs, page.size_of, page.budget):
+        await bulk_insert(session, tables.blobs, rows)
+
+
+class _BlobPage(NamedTuple):
+    """How blob inserts page: the byte budget per statement and the meter that charges a row against it."""
+
+    budget: int
+    size_of: Callable[[Mapping[str, object]], int]
 
 
 def _blob_row_size(row: Mapping[str, object]) -> int:
     data = row["data"]
     assert isinstance(data, bytes)
     return len(data)
+
+
+def _blob_wire_size(row: Mapping[str, object]) -> int:
+    """A blob row as the MySQL family sends it: the packet cap's meter."""
+    data = row["data"]
+    assert isinstance(data, bytes)
+    return wire_bytes(data)
 
 
 def _binary_target(target: Path) -> ResultError:

@@ -23,6 +23,7 @@ from vfs.models import (
     Observation,
     Version,
 )
+from vfs.models.version import line_count
 from vfs.paths import Path, skill_path, tool_path
 
 # ---------------------------------------------------------------------------
@@ -861,3 +862,12 @@ class TestBytesVersions:
     def test_a_bytes_diff_row_is_refused(self) -> None:
         with pytest.raises(ValidationError, match="always a snapshot"):
             Version(file=Path("/r.pdf"), number=2, is_snapshot=False, data=b"x", content_hash="0" * 64)
+
+
+class TestLineCount:
+    def test_the_one_line_count_law(self) -> None:
+        assert line_count("") == 0
+        assert line_count("a") == 1
+        assert line_count("a\n") == 2
+        assert line_count("a\nb\n") == 3
+        assert Entry(path=Path("/a.md"), content="a\nb\n").lines == line_count("a\nb\n")

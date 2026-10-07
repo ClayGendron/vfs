@@ -59,6 +59,7 @@ from vfs.results import ResultError, VFSErrorKind
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
+    ValueCap,
     is_permanent_defect,
     is_retryable,
     is_value_too_large,
@@ -161,6 +162,9 @@ class EngineHost:
         self.embedding_identity: tuple[str, int] | None = None
         # pgvector's version, read at first touch on PostgreSQL; ``None`` elsewhere.
         self.pgvector_version: tuple[int, ...] | None = None
+        # The engine's single-value cap where it is a server setting (the
+        # MySQL family's packet); read at first touch, ``None`` elsewhere.
+        self.value_cap: ValueCap | None = None
         self._engine: AsyncEngine | None
         self.session_factory: Callable[[], AsyncSession]
         if session_factory is not None:
@@ -383,6 +387,8 @@ class EngineHost:
         profile = self._policy().profile
         if profile.file_settings:
             await self._apply_file_settings(profile)
+        if profile.value_cap_query is not None and profile.value_cap_setting is not None:
+            self.value_cap = await self._read_value_cap(profile.value_cap_query, profile.value_cap_setting)
         if profile.name == "sqlite":
             refusal = await self._probe_sqlite_vec()
             if refusal is not None:
@@ -391,6 +397,13 @@ class EngineHost:
         if refusal is None:
             self._ready = True
         return refusal
+
+    async def _read_value_cap(self, query: str, setting: str) -> ValueCap:
+        """The server's single-value cap, so an oversized body is refused before it is sent."""
+        async with self.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_no_begin": True})
+            limit = (await conn.exec_driver_sql(query)).scalar_one()
+        return ValueCap(int(limit), setting)
 
     async def _apply_file_settings(self, profile: DialectProfile) -> None:
         # Database-file state (WAL, page_size) cannot run inside a

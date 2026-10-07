@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, fiel
 
 from vfs.models.edge import Edge
 from vfs.models.media import SNIFF_LENGTH, RenderStatus, Source, sniff_mime
-from vfs.models.version import Version
+from vfs.models.version import Version, line_count
 from vfs.paths import ObjectKind, Path, is_reserved_directory
 
 # Stored kinds whose rows carry text content; everything else refuses
@@ -125,11 +125,7 @@ class Entry(BaseModel):
     def _content_metadata(content: str) -> tuple[str, int, int]:
         """Return ``(sha256, size_bytes, lines)`` for *content*."""
         encoded = content.encode()
-        return (
-            hashlib.sha256(encoded).hexdigest(),
-            len(encoded),
-            content.count("\n") + 1 if content else 0,
-        )
+        return hashlib.sha256(encoded).hexdigest(), len(encoded), line_count(content)
 
     @staticmethod
     def _bytes_metadata(data: bytes) -> tuple[str, int]:

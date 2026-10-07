@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import event, insert, select, update
+from sqlalchemy import event, func, insert, select, update
 from ulid import ULID
 
 from tests.support.database_helpers import _url
@@ -640,6 +640,7 @@ class TestSweepPurge:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.mkdir(path=Path("/proj"))
         await storage.write(entries=[Entry(path=Path("/proj/f.txt"), content="x")])
+        await storage.write(entries=[Entry(path=Path("/proj/b.bin"), data=b"\x00\x01")])
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
@@ -670,6 +671,8 @@ class TestSweepPurge:
             for table in (tables.entry, tables.content, tables.versions, tables.chunks):
                 remaining = (await session.execute(select(table).where(table.c.entry_id == target_id))).all()
                 assert remaining == []
+            # The bytes body goes with its row: the purge drains both body tables.
+            assert (await session.execute(select(func.count()).select_from(tables.blobs))).scalar_one() == 0
             edges = (
                 await session.execute(
                     select(tables.edges).where(

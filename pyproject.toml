@@ -61,7 +61,13 @@ deepagents = ["deepagents>=0.4"]
 langchain = ["langchain-core>=0.3"]
 langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
 embed-local = ["model2vec>=0.5"]
-all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mariadb,oracle,deepagents,langchain,langgraph,embed-local]"]
+# Document renderers: one parser per format, and the umbrella for all of them.
+pdf = ["pypdf>=5.0"]
+docx = ["python-docx>=1.1"]
+pptx = ["python-pptx>=1.0"]
+xlsx = ["openpyxl>=3.1"]
+documents = ["vfs-py[pdf,docx,pptx,xlsx]"]
+all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mariadb,oracle,deepagents,langchain,langgraph,embed-local,documents]"]
 
 [dependency-groups]
 dev = [

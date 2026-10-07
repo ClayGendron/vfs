@@ -102,6 +102,31 @@ measured safe statement size on every engine (see ``relabel_rows``)."""
 BLOB_PAGE_BYTES: Final = 8 * 1024 * 1024
 
 
+class ValueCap(NamedTuple):
+    """An engine's single-value cap read from the live server: the bytes and the setting's name.
+
+    The cap binds the statement as sent, so a body is measured in wire
+    bytes (:func:`wire_bytes`), not raw bytes.
+    """
+
+    limit: int
+    setting: str
+
+
+# The bytes the MySQL family's text protocol escapes: each costs two on the wire.
+_ESCAPED_BYTES: Final = (b"\x00", b"\n", b"\r", b"\\", b"'", b'"', b"\x1a")
+
+
+def wire_bytes(data: bytes) -> int:
+    """The bytes *data* occupies inside a MySQL-family statement: every escaped byte counted twice.
+
+    The drivers inline a body as an escaped string literal, so a
+    NUL-heavy body (a zero-filled region, a padded archive) is about
+    twice its size on the wire; the packet cap judges that size.
+    """
+    return len(data) + sum(data.count(escaped) for escaped in _ESCAPED_BYTES)
+
+
 @dataclass(frozen=True)
 class DialectProfile:
     """One engine's declared policy.
@@ -310,6 +335,10 @@ class DialectProfile:
     range_source: RangeSource | None = None
     range_join: str = "JOIN"
     range_entry_hint: str | None = None
+    # Where the engine's single-value cap is a server setting it answers
+    # for, the query that reads it and the setting's name for the refusal.
+    value_cap_query: str | None = None
+    value_cap_setting: str | None = None
     range_hints: RangeHints = NO_RANGE_HINTS
     range_settings: tuple[str, ...] = ()
     range_fence: str | None = None
@@ -426,6 +455,10 @@ MARIADB: Final = DialectProfile(
     range_join="STRAIGHT_JOIN",
     range_entry_hint="FORCE INDEX ({index})",
     vector_dimension_cap=16_383,
+    # An oversized statement is not answered with error 1153: the server
+    # drops the connection, so the cap is read up front and refused before sending.
+    value_cap_query="SELECT @@max_allowed_packet",
+    value_cap_setting="max_allowed_packet",
 )
 
 # Budgets stay at the floor Oracle itself defines (ORA-01795's 1,000

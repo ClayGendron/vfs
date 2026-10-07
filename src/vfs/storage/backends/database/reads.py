@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
+from vfs.models.media import FAILURE_STATUSES
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     ROW_GATE_FIELDS,
@@ -548,6 +549,7 @@ def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[R
             message = f"Rendering cut short ({status}): {row.path}"
             kind, severity, retryable = VFSErrorKind.truncated, Severity.info, False
         else:
+            assert status in FAILURE_STATUSES
             message = f"No text rendering ({status}): {row.path}"
             kind, severity, retryable = VFSErrorKind.unsupported, Severity.warning, False
         notes.append(ResultError(kind=kind, message=message, severity=severity, path=row.path, retryable=retryable))

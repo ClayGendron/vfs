@@ -31,6 +31,7 @@ from typing import Protocol
 
 import pytest
 
+from tests.support.documents import docx_bytes, pdf_bytes, pptx_bytes, xlsx_bytes
 from vfs import _native
 from vfs.authority import Authority, Principal
 from vfs.embedding import EmbeddingProvider
@@ -2590,3 +2591,32 @@ class StorageContract:
         assert (by_name["t.md"].source, by_name["t.md"].render_status) == ("text", None)
         assert (by_name["b.bin"].source, by_name["b.bin"].render_status) == ("bytes", "pending")
         assert all(row.data is None and "data" not in row.populated for row in listing.observations)
+
+    @needs("write", "read", "stat", "grep")
+    async def test_reindex_renders_binaries_and_grep_hits_inside_them(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        documents = {
+            "/docs/q.pdf": (pdf_bytes(["The quokka smiles"]), "quokka", "<!-- page 1 -->"),
+            "/docs/w.docx": (docx_bytes(["A wombat digs"]), "wombat", None),
+            "/docs/n.xlsx": (xlsx_bytes({"Budget": {"A1": "numbat"}}), "numbat", "<!-- sheet 1: Budget -->"),
+            "/docs/e.pptx": (pptx_bytes([("Echidna", ["spines"])]), "spines", "<!-- slide 1 -->"),
+        }
+        entries = [Entry(path=Path(path), data=data) for path, (data, _, _) in documents.items()]
+        written = await storage.write(entries=entries, parents=True)
+        assert written.success is True
+        for path, (data, needle, _) in documents.items():
+            back = await storage.read(path=Path(path), columns=frozenset({"data"}))
+            assert back.observations[0].data == data
+            assert (await storage.stat(path=Path(path))).observations[0].render_status == "pending"
+            assert (await storage.grep(pattern=needle)).observations == []
+        assert (await reindexer.reindex()).success is True
+        for path, (_, needle, marker) in documents.items():
+            hits = await storage.grep(pattern=needle)
+            assert [str(row.path) for row in hits.observations] == [path]
+            text = (await storage.read(path=Path(path))).observations[0].content
+            assert text is not None and needle in text
+            matches = hits.observations[0].matches
+            assert matches is not None and matches[0].match is not None
+            if marker is not None:
+                assert marker in text.splitlines()[: matches[0].match - 1]
+            assert (await storage.stat(path=Path(path))).observations[0].render_status == "ok"

@@ -39,11 +39,15 @@ from ulid import ULID
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.paths import Path, is_trash_path
+from vfs.rendering.registry import RendererRegistry
+from vfs.rendering.seam import RenderLimits, failure
 from vfs.results import Result, ResultError, Severity, VFSErrorKind
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
+    BLOB_PAGE_BYTES,
     PROFILES,
     StaleSnapshot,
+    byte_chunked,
     op_execution_options,
     topology_execution_options,
 )
@@ -87,7 +91,20 @@ from vfs.storage.backends.database.indexing import (
     with_notes,
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller, labels_for
+from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.render import (
+    RENDER_PAGE_ROWS,
+    Rendered,
+    RenderReport,
+    cached_renderings,
+    count_unrendered,
+    land_renderings,
+    load_blobs,
+    render_rows,
+    row_size,
+    select_render_dirty,
+)
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
     RightsCache,
@@ -174,6 +191,8 @@ class DatabaseStorage:
         embed_concurrency: int = EMBED_CONCURRENCY,
         embed_timeout_seconds: float = EMBED_TIMEOUT_SECONDS,
         ranker: Ranker | None = None,
+        renderers: RendererRegistry | None = None,
+        render_limits: RenderLimits | None = None,
         posture: Posture = "open",
     ) -> None:
         if trash_days < 0:
@@ -202,6 +221,9 @@ class DatabaseStorage:
         self._embed_concurrency = embed_concurrency
         self._embed_timeout = embed_timeout_seconds
         self._ranker = ranker if ranker is not None else Ranker()
+        # The per-format renderers a bytes entry's text comes from, probed once here.
+        self._renderers = renderers if renderers is not None else RendererRegistry.bundled()
+        self._render_limits = render_limits if render_limits is not None else RenderLimits()
         # The last queries' vectors, keyed by space: a re-asked question costs no provider call.
         self._query_vectors: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         if glean_wall_seconds <= 0:
@@ -228,6 +250,11 @@ class DatabaseStorage:
     def ranker(self) -> Ranker:
         """The mount's ranking declaration: its fusion and its chunk aggregate."""
         return self._ranker
+
+    @property
+    def renderers(self) -> RendererRegistry:
+        """The renderers a bytes entry's text comes from, by media type."""
+        return self._renderers
 
     def capabilities(self) -> frozenset[Op]:
         """The method surface, minus what this mount cannot vouch for.
@@ -603,6 +630,7 @@ class DatabaseStorage:
                 overwrite=overwrite,
                 parents=parents,
                 authority=authority,
+                value_cap=host.value_cap,
             )
 
         return await self._execute_write("write", run)
@@ -986,18 +1014,24 @@ class DatabaseStorage:
         return Result(ops=("first_touch",))
 
     async def reindex(self) -> Result:
-        """Batch index maintenance: segments re-converged, gram epochs rebuilt.
+        """Batch index maintenance: binaries rendered, gram epochs rebuilt, segments re-converged, vectors filled.
 
         One runner at a time: the verb claims the single-runner lease up
         front — a live rival refuses loudly with a retryable conflict —
         and releases it best-effort at the end; a crashed run frees the
-        lease by heartbeat expiry. The segment pass re-converges the
+        lease by heartbeat expiry. The render stage runs first: every
+        bytes entry whose stamp misses is rendered to text through the
+        mount's renderers and lands as a content row or a stamped state,
+        reported in the ``rendering`` extra (a retryable warning when
+        rows remain pending). The segment pass re-converges the
         path-segment postings to the recomputed truth under per-row path
         guards, reporting any found drift loudly. The gram side is
         idempotent-cheap when nothing is dirty and the epoch fingerprint
         matches; each phase runs in its own writer transaction, and
         posting rows are invisible until the publish transaction flips
-        the ``encoded`` flags and the epoch pointer together.
+        the ``encoded`` flags and the epoch pointer together. With an
+        embedder configured, the embed step then fills every missing
+        vector and reports in the ``embedding`` extra.
         """
         tables = self._host.tables
         token = str(ULID())
@@ -1010,7 +1044,7 @@ class DatabaseStorage:
                 return result
             embedded = await self._embed_step(tables, lost)
             errors = [*result.errors, *embedded.errors]
-            extras = dict(embedded.model_extra or {})
+            extras = {**(result.model_extra or {}), **(embedded.model_extra or {})}
             return Result(ops=result.ops, observations=result.observations, errors=errors, **extras)
 
     @asynccontextmanager
@@ -1049,9 +1083,12 @@ class DatabaseStorage:
                 return
 
     async def _reindex_phases(self, tables: VFSTables, lost: asyncio.Event) -> Result:
-        """The lease-held phases: the gram epochs, then the re-convergence passes.
+        """The lease-held phases: the renderings, the gram epochs, then the re-convergence passes.
 
-        The segment pass rebuilds the path-segment postings and the edge
+        The render stage runs first so the chunk pass splits the text it
+        wrote in the same run; its counts ride out as the ``rendering``
+        extra, at warning severity when bytes rows remain pending. The
+        segment pass rebuilds the path-segment postings and the edge
         pass re-converges the fs mirror to ``parent_id`` — each wholesale
         in effect, guarded delta in application: a plain read diffs the
         table against the recomputed truth, and only found drift opens a
@@ -1059,10 +1096,23 @@ class DatabaseStorage:
         (drift is a maintenance bug surfacing) ride on the verb's final
         Result.
         """
+        rendered, report = await self._render_step(tables, lost)
+        if rendered is not None:
+            return rendered
         result = await self._gram_phases(tables, lost)
         if not result.success:
             return result
         warnings: list[ResultError] = []
+        if report.unrendered:
+            warnings.append(
+                ResultError(
+                    kind=VFSErrorKind.unavailable,
+                    severity=Severity.warning,
+                    message=f"{report.unrendered} binaries are still pending a rendering; run reindex again",
+                    retryable=True,
+                    data=report.as_extra(),
+                )
+            )
         segment_state = SegmentRebuildState()
         outcome = await self._reconverge(
             lost,
@@ -1090,9 +1140,83 @@ class DatabaseStorage:
         outcome = await self._signal_phase(tables, lost)
         if isinstance(outcome, Result):
             return outcome
-        if not warnings:
+        extras = {"rendering": report.as_extra()} if report.touched else {}
+        if not warnings and not extras:
             return result
-        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *warnings])
+        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *warnings], **extras)
+
+    async def _render_step(self, tables: VFSTables, lost: asyncio.Event) -> tuple[Result | None, RenderReport]:
+        """Render every dirty bytes row in short, resumable pages under the held lease.
+
+        Pages advance by keyset and are cut by bytes in flight; each cut
+        borrows the settled renderings its hashes already have, reads the
+        rest's blobs, renders them on the offload pool with no
+        transaction open, and lands in one short write. The lease's
+        ``lost`` flag is checked before every landing — a straggler never
+        stamps over a rival's run — and a stage with nothing to land
+        never consults it, so the phases after it still run. Answers the
+        failing Result, or ``None`` with the stage's counts.
+        """
+        registry, limits = self._renderers, self._render_limits
+        claims = registry.claims()
+        profile, budget = self._host.profile, self._host.membership_budget
+        report = RenderReport()
+        last = 0
+        while True:
+            select_page = partial(select_render_dirty, tables=tables, claims=claims, after=last, limit=RENDER_PAGE_ROWS)
+            page = await self._rows("reindex", select_page)
+            if not page:
+                break
+            last = page[-1].id
+            for cut in byte_chunked(page, row_size, BLOB_PAGE_BYTES):
+                lend = partial(
+                    cached_renderings,
+                    tables=tables,
+                    profile=profile,
+                    membership_budget=budget,
+                    hashes=[row.content_hash for row in cut],
+                    claims=claims,
+                )
+                cached = await self._rows("reindex", lend)
+                wanted = [row.entry_id for row in cut if row.key(registry) not in cached]
+                fetch = partial(load_blobs, tables=tables, profile=profile, membership_budget=budget, entry_ids=wanted)
+                blobs = await self._rows("reindex", fetch) if wanted else {}
+                await seam("reindex:before-render")
+                work = partial(render_rows, cut, blobs, registry, limits, cached)
+                rendered = await call_offloaded(self._host.offload_executor, work)
+                await seam("reindex:before-render-land")
+                if lost.is_set():
+                    return lease_lost_result(), report
+                refused = await self._land(tables, rendered, report)
+                if refused is not None:
+                    return refused, report
+        report.unrendered = await self._rows("reindex", partial(count_unrendered, tables=tables))
+        return None, report
+
+    async def _land(self, tables: VFSTables, rendered: list[Rendered], report: RenderReport) -> Result | None:
+        """Land one cut; a refused landing is retried row by row, and a row still refused lands as failed.
+
+        One bad row — a value the engine will not take, whatever the seam
+        missed — must not stop the stage or the phases after it: the
+        row's rendering is replaced by a ``failed`` state naming the
+        engine's refusal, which the skip law then leaves alone. Answers
+        the failing Result only when even that state cannot land.
+        """
+        host = self._host
+        land = partial(land_renderings, tables=tables, profile=host.profile, membership_budget=host.membership_budget)
+        outcome = await self._execute_write("reindex", partial(land, rendered=rendered, report=report))
+        if outcome.success or len(rendered) == 0:
+            return None
+        for item in rendered:
+            single = await self._execute_write("reindex", partial(land, rendered=[item], report=report))
+            if single.success:
+                continue
+            reason = "; ".join(error.message for error in single.errors) or "the engine refused the row"
+            quarantined = item._replace(rendering=failure("failed", f"landing refused: {reason}"), cached=False)
+            fallback = await self._execute_write("reindex", partial(land, rendered=[quarantined], report=report))
+            if not fallback.success:
+                return fallback
+        return None
 
     async def _signal_phase(self, tables: VFSTables, lost: asyncio.Event) -> Result | None:
         """Store every declared prior under a fresh generation; signals no longer declared are swept.
