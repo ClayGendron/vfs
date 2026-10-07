@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from sqlalchemy import Select, event, select, update
+from sqlalchemy import Select, event, insert, select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -46,6 +46,8 @@ from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -123,14 +125,14 @@ class TestWriteMechanics:
         assert created.success is True
         # The round-trip budget is a contract: fetch, the posture rows
         # read for the label, insert, fs mirror insert, content delete +
-        # insert, parent bump.
-        assert len(mutations()) == 7, mutations()
+        # blob delete + content insert, parent bump.
+        assert len(mutations()) == 8, mutations()
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
-        # Fetch, guarded update, content delete + insert — the update is
-        # attributed from its own statement, so no read-back appears.
-        assert len(mutations()) == 4, mutations()
+        # Fetch, guarded update, the two body deletes + content insert — the
+        # update is attributed from its own statement, so no read-back appears.
+        assert len(mutations()) == 5, mutations()
         await storage.close()
 
     async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
@@ -383,10 +385,11 @@ class TestArbitration:
         assert len(created) == 50
         # "Nothing read back" is a pin: one plan-fetch SELECT, the posture
         # rows SELECT that labels the creates, three depth-layer inserts, the
-        # segment-posting and fs-mirror inserts riding the creates, content
-        # delete + insert, parent bump.
+        # segment-posting and fs-mirror inserts riding the creates, the two
+        # body-table deletes + content insert, parent bump.
         shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
-        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "INSERT", "UPDATE"]
+        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "DELETE", "INSERT"]
+        expected.append("UPDATE")
         assert shapes == expected, statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"
         again = await storage.write(entries=[Entry(path=Path("/bulk/d0/f007.txt"), content="y")])
@@ -1172,4 +1175,150 @@ class TestGuardedAttribution:
             )
         assert [e.kind for e in errors] == [VFSErrorKind.unsupported]
         assert "cannot be verified" in errors[0].message
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Bytes bodies — the blob row, the source switch, the render stamp
+# ---------------------------------------------------------------------------
+
+
+class TestBytesBodies:
+    """A bytes write lands a blob row and a pending stamp; text and bytes never share a row."""
+
+    async def test_a_bytes_write_lands_the_blob_and_no_content_row(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        body = b"%PDF-1.4\x00\xff" * 100
+        written = await storage.write(entries=[Entry(path=Path("/r.pdf"), data=body)])
+        assert written.success is True
+        assert written.observations[0].size_bytes == len(body)
+        inserts = [s for s in statements if s.startswith("INSERT INTO vfs_")]
+        assert any("vfs_blobs" in s for s in inserts) and not any("vfs_content" in s for s in inserts)
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session:
+            blob = (await session.execute(select(tables.blobs.c.data))).scalar_one()
+            texts = (await session.execute(select(tables.content.c.entry_id))).all()
+            row = (await session.execute(select(tables.entry).where(tables.entry.c.path == "/r.pdf"))).one()
+        assert blob == body and texts == []
+        assert (row.source, row.render_status, row.render_source_hash, row.render_generation) == (
+            "bytes",
+            "pending",
+            None,
+            None,
+        )
+        assert row.mime_type == "application/pdf" and row.lines == 0
+        await storage.close()
+
+    async def test_switching_the_source_leaves_one_body_and_clears_the_other(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        tables = storage._host.tables
+
+        async def bodies() -> tuple[list[str], list[bytes]]:
+            async with storage._host.session_factory() as session:
+                texts = (await session.execute(select(tables.content.c.content))).scalars().all()
+                blobs = (await session.execute(select(tables.blobs.c.data))).scalars().all()
+            return list(texts), list(blobs)
+
+        assert (await storage.write(entries=[Entry(path=Path("/f"), content="text")])).success is True
+        assert await bodies() == (["text"], [])
+        assert (await storage.write(entries=[Entry(path=Path("/f"), data=b"\x00bytes")])).success is True
+        assert await bodies() == ([], [b"\x00bytes"])
+        stat = (await storage.stat(path=Path("/f"))).observations[0]
+        assert (stat.source, stat.render_status, stat.version) == ("bytes", "pending", 2)
+        assert (await storage.write(entries=[Entry(path=Path("/f"), content="again")])).success is True
+        assert await bodies() == (["again"], [])
+        stat = (await storage.stat(path=Path("/f"))).observations[0]
+        assert (stat.source, stat.render_status, stat.version) == ("text", None, 3)
+        await storage.close()
+
+    async def test_overwriting_bytes_drops_the_rendering_and_restarts_the_stamp(self, tmp_path) -> None:
+        # Slice B writes the rendering and the stamp; a later write of new
+        # bytes must leave neither behind, or a stale text would be served.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1")])).success is True
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            key = (
+                await conn.execute(select(tables.entry.c.entry_id).where(tables.entry.c.path == "/r.pdf"))
+            ).scalar_one()
+            await conn.execute(
+                update(tables.entry)
+                .where(tables.entry.c.entry_id == key)
+                .values(render_status="ok", render_source_hash="h" * 64, render_generation="pdf/1", lines=3)
+            )
+            await conn.execute(insert(tables.content).values(entry_id=key, created_at=datetime.now(UTC), content="x"))
+            await session.commit()
+        assert (await storage.read(path=Path("/r.pdf"))).observations[0].content == "x"
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-2")])).success is True
+        async with storage._host.session_factory() as session:
+            row = (await session.execute(select(tables.entry).where(tables.entry.c.path == "/r.pdf"))).one()
+            texts = (await session.execute(select(tables.content.c.entry_id))).all()
+        assert (row.render_status, row.render_source_hash, row.render_generation, row.lines) == (
+            "pending",
+            None,
+            None,
+            0,
+        )
+        assert texts == []
+        await storage.close()
+
+    async def test_blob_inserts_page_by_bytes_in_flight(self, tmp_path, monkeypatch) -> None:
+        # Ten 1 KB bodies under a 2.5 KB page budget land in five statements;
+        # a body past the budget rides alone (the flush law's singleton rule).
+        from vfs.storage.backends.database import writes as writes_module
+
+        monkeypatch.setattr(writes_module, "BLOB_PAGE_BYTES", 2500)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        statements: list[str] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement)
+
+        entries = [Entry(path=Path(f"/b{i}.bin"), data=bytes([i]) * 1000) for i in range(10)]
+        entries.append(Entry(path=Path("/huge.bin"), data=b"\xff" * 9000))
+        written = await storage.write(entries=entries)
+        assert written.success is True
+        assert sum(1 for s in statements if s.startswith("INSERT INTO vfs_blobs")) == 6
+        read = await storage.read(path=Path("/huge.bin"), columns=frozenset({"data"}))
+        assert read.observations[0].data == b"\xff" * 9000
+        await storage.close()
+
+    async def test_edit_refuses_a_bytes_sourced_row(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1")])).success is True
+        result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="a", new="b")])
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.unsupported
+        assert "write replaces its bytes" in result.errors[0].message
+        assert result.errors[0].path == "/r.pdf"
+        await storage.close()
+
+    async def test_a_body_past_the_engines_value_cap_classifies_unsupported(self, tmp_path) -> None:
+        # SQLite's length limit lowered on the live connection: the engine's
+        # own cap, named by the engine, never a vfs ceiling.
+        import sqlite3
+
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        async with storage._host.session_factory() as session:
+            raw = await (await session.connection()).get_raw_connection()
+            driver = cast("Any", raw.driver_connection)
+            driver._conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 4096)
+        result = await storage.write(entries=[Entry(path=Path("/big.bin"), data=b"x" * 10_000)])
+        assert result.success is False
+        assert result.errors[0].kind is VFSErrorKind.unsupported
+        assert "single-value limit" in result.errors[0].message
+        assert result.errors[0].retryable is False
+        small = await storage.write(entries=[Entry(path=Path("/small.bin"), data=b"x" * 100)])
+        assert small.success is True
         await storage.close()

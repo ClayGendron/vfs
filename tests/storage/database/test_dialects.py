@@ -45,6 +45,7 @@ from vfs.storage.backends.database.dialects import (
     byte_chunked,
     is_permanent_defect,
     is_retryable,
+    is_value_too_large,
     lock_rows,
     membership_budget,
     op_execution_options,
@@ -947,3 +948,33 @@ class TestBulkInsert:
             "mssql": "core",
             "oracle": "core",
         }
+
+
+class TestValueTooLarge:
+    """The engines' own single-value caps, recognised by code and type, never text."""
+
+    def test_sqlite_reports_a_value_past_its_length_limit_as_a_data_error(self) -> None:
+        import sqlite3
+
+        assert is_value_too_large(sqlite3.DataError("string or blob too big")) is True
+        assert is_value_too_large(_SqliteError(5)) is False
+
+    def test_the_sqlstate_program_limit_class_counts(self) -> None:
+        assert is_value_too_large(_PgError("54000")) is True
+        assert is_value_too_large(_PgError("54001")) is True
+        assert is_value_too_large(_PgError("23505")) is False
+
+    def test_the_mysql_packet_error_counts(self) -> None:
+        class _PacketError(Exception):
+            def __init__(self) -> None:
+                super().__init__(1153, "Got a packet bigger than 'max_allowed_packet' bytes")
+
+        assert is_value_too_large(_PacketError()) is True
+        assert is_value_too_large(_MySQLError(1213)) is False
+
+    def test_a_wrapped_driver_error_is_unwrapped_first(self) -> None:
+        import sqlite3
+
+        wrapped = DBAPIError("INSERT", None, sqlite3.DataError("too big"))
+        assert is_value_too_large(wrapped) is True
+        assert is_value_too_large(RuntimeError("nope")) is False

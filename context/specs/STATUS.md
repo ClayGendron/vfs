@@ -5,8 +5,12 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **152 drafted 2026-10-05, awaiting Clay's review** — binary bodies
-  and text renderings. A binary file (PDF, docx, xlsx, pptx, image) is
+- **152 slice A built 2026-10-05, awaiting Clay's review** — binary
+  bodies and text renderings. Slice A (bytes in and out: the blobs
+  table, format 19, `Entry.data`, `write(data=…)`, the pending stamp,
+  the `data` projection on read, the edit refusal, the engines' own
+  caps classified) is in the working tree, uncommitted; slices B to D
+  are not started. A binary file (PDF, docx, xlsx, pptx, image) is
   an entry whose bytes live in a new `vfs_blobs` row; a per-format
   renderer writes a line-oriented Markdown rendering into `vfs_content`
   under the same entry id, stamped on the entry row with the bytes hash

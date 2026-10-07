@@ -24,6 +24,7 @@ integer driver error number — never by message text.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Generic, Literal, NamedTuple, TypeVar, cast
 
@@ -95,6 +96,10 @@ NO_RANGE_HINTS: Final = RangeHints()
 RELABEL_ROWS: Final = 50_000
 """Entry rows per relabel chunk, the default every profile declares: the
 measured safe statement size on every engine (see ``relabel_rows``)."""
+
+# Bytes of body per bulk blob statement: the mysql family sends one
+# statement as one packet, and every engine materialises the page in RAM.
+BLOB_PAGE_BYTES: Final = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -838,6 +843,24 @@ def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:
     return _driver_code_of(origin) in profile.retryable_driver_codes
 
 
+def is_value_too_large(exc: BaseException) -> bool:
+    """Whether *exc* reports one value past the engine's single-value cap.
+
+    SQLite raises ``DataError`` for a string or blob over its length
+    limit; the mysql family reports a statement over
+    ``max_allowed_packet`` as error 1153; SQLSTATE class 54 is the
+    program-limit class. By code and type, never message text.
+    """
+    origin = getattr(exc, "orig", None) or exc
+    if isinstance(origin, sqlite3.DataError):
+        return True
+    state = _sqlstate_of(origin)
+    if state is not None and state[:2] == _SQLSTATE_LIMIT_CLASS:
+        return True
+    first = next(iter(getattr(origin, "args", ())), None)
+    return first == _MYSQL_PACKET_TOO_LARGE
+
+
 def is_permanent_defect(exc: BaseException) -> bool:
     """Whether *exc* reports a statement defect no retry can clear.
 
@@ -866,6 +889,8 @@ def is_permanent_defect(exc: BaseException) -> bool:
 # ISO 9075 classes 42 (syntax/access-rule violation) and 07 (dynamic
 # SQL error): the statement itself is defective, never transient.
 _SQLSTATE_DEFECT_CLASSES: Final = frozenset({"42", "07"})
+_SQLSTATE_LIMIT_CLASS: Final = "54"
+_MYSQL_PACKET_TOO_LARGE: Final = 1153
 
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).

@@ -84,12 +84,15 @@ if TYPE_CHECKING:
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
     {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "origin_path", "version"}
     | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"}
-    | {"link_source_hash", "link_generation", "everyone_level"},
+    | {"link_source_hash", "link_generation", "everyone_level"}
+    | {"render_source_hash", "render_generation", "render_detail", "render_units", "media_width", "media_height"},
 )
 
-# The Entry field homed in the content table rather than the entries row —
-# bodies leave the narrow row so metadata writes never rewrite content.
-ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset({"content"})
+# The Entry fields homed in a body table rather than the entries row —
+# bodies leave the narrow row so metadata writes never rewrite them. Each
+# names the ``VFSTables`` attribute of the table holding it.
+ENTRY_BODY_HOMES: Final[dict[str, str]] = {"content": "content", "data": "blobs"}
+ENTRY_CONTENT_FIELDS: Final[frozenset[str]] = frozenset(ENTRY_BODY_HOMES)
 
 # Per-model column exemptions for the metadata family: the id backbone plus
 # the owner references, which the models carry as Path fields (below) and
@@ -131,7 +134,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 18
+SCHEMA_FORMAT_VERSION: Final = 19
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -144,6 +147,8 @@ MAX_SIGNAL_NAME_LENGTH: Final = 32
 
 # The widest ``embedding_model`` the meta row stores (``provider/model@dim``).
 MAX_MODEL_ID_LENGTH: Final = 255
+# The bounded reason a failed or cut rendering carries on its entry row.
+MAX_RENDER_DETAIL_LENGTH: Final = 1024
 
 # pgvector's HNSW and IVFFlat indexes accept at most this many components.
 PGVECTOR_INDEX_MAX_DIMENSION: Final = 2_000
@@ -245,6 +250,20 @@ def _body_text() -> Text:
     return Text().with_variant(LONGTEXT(), *_MYSQL_FAMILY).with_variant(Text(collation=MSSQL_UTF8_COLLATION), "mssql")
 
 
+def _body_bytes() -> LargeBinary:
+    """An unbounded bytes body that provisions on every engine.
+
+    ``LargeBinary`` maps to BLOB on SQLite and Oracle and BYTEA on
+    Postgres. The mysql family's bare BLOB caps a body at 64KB, so it is
+    pinned to LONGBLOB exactly as the text body is pinned to LONGTEXT;
+    MSSQL is pinned to its unbounded VARBINARY (``max`` is what an
+    unlengthed VARBINARY renders there) because the unpinned type
+    renders the deprecated IMAGE on a dialect that has not probed its
+    server.
+    """
+    return LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY).with_variant(VARBINARY(), "mssql")
+
+
 def _uuid_native(dialect: Dialect) -> bool:
     """True where the engine's own uuid type keeps ULID time-order.
 
@@ -306,6 +325,7 @@ class VFSTables(NamedTuple):
     metadata: MetaData
     entry: Table
     content: Table
+    blobs: Table
     versions: Table
     version_subjects: Table
     chunks: Table
@@ -328,6 +348,15 @@ class VFSTables(NamedTuple):
     def content_joined(self) -> FromClause:
         """Entries LEFT-joined to content on ``entry_id`` — the one canonical join."""
         return self.entry.outerjoin(self.content, self.content.c.entry_id == self.entry.c.entry_id)
+
+    def bodies_joined(self, *, content: bool, data: bool) -> FromClause:
+        """Entries LEFT-joined to whichever body tables a read projects."""
+        source: FromClause = self.entry
+        if content:
+            source = source.outerjoin(self.content, self.content.c.entry_id == self.entry.c.entry_id)
+        if data:
+            source = source.outerjoin(self.blobs, self.blobs.c.entry_id == self.entry.c.entry_id)
+        return source
 
     def epoch_scoped(self) -> tuple[Table, ...]:
         """Every table keyed by gram epoch — what a build fills and a reclaim sweeps."""
@@ -400,6 +429,21 @@ def build_vfs_tables(
         # extracted out-edges derive from — the same skip law, its own stamp.
         Column("link_source_hash", String(64)),
         Column("link_generation", _string(32)),
+        # Which body table holds this row's body: text in ``vfs_content``,
+        # bytes in ``vfs_blobs``. A bytes row's text is its rendering.
+        Column("source", String(8), nullable=False, default="text"),
+        # Render provenance: the bytes hash and renderer generation the
+        # stored rendering derives from — the same skip law, its own stamp.
+        Column("render_source_hash", String(64)),
+        Column("render_generation", _string(64)),
+        # Where the rendering stands; NULL on text rows. A failure is a
+        # status with its reason in ``render_detail``, never a body.
+        Column("render_status", String(16)),
+        Column("render_detail", _string(MAX_RENDER_DETAIL_LENGTH)),
+        # The rendering's unit table (pages, slides, sheets) as JSON text.
+        Column("render_units", _body_text()),
+        Column("media_width", Integer),
+        Column("media_height", Integer),
         Column("owner_id", _string(255), index=True),
         # The everyone level at this path (0 none, 1 read, 2 read_write):
         # the deepest covering posture row's level, stamped with the row.
@@ -445,6 +489,18 @@ def build_vfs_tables(
         schema=schema,
     )
 
+    # Current bytes, one body per bytes-sourced row, keyed by entry identity.
+    # The body column is physically last for the same reason as above.
+    blobs = Table(
+        "vfs_blobs",
+        metadata,
+        Column("entry_id", ULIDKey(), primary_key=True),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("data", _body_bytes(), nullable=False),
+        schema=schema,
+    )
+    _attach_blob_storage_ddl(blobs)
+
     # Version history. The write path stores full snapshots
     # (``is_snapshot=True``, body in ``content``); the batch pack verb
     # rewrites cold ranges into snapshot-every-N + forward diffs
@@ -470,6 +526,8 @@ def build_vfs_tables(
         Column("created_at", DateTime(timezone=True)),
         Column("content", _body_text()),
         Column("version_diff", _body_text()),
+        # A bytes-sourced entry's version is a full bytes snapshot; no diff form.
+        Column("data", _body_bytes()),
         schema=schema,
     )
 
@@ -762,6 +820,7 @@ def build_vfs_tables(
         metadata=metadata,
         entry=entry,
         content=content,
+        blobs=blobs,
         versions=versions,
         version_subjects=version_subjects,
         chunks=chunks,
@@ -786,6 +845,18 @@ def build_vfs_tables(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _attach_blob_storage_ddl(blobs: Table) -> None:
+    """Skip TOAST compression on the bytes body — PostgreSQL only.
+
+    File bytes are mostly pre-compressed, so compressing them again buys
+    nothing, and EXTERNAL storage makes a ``substring`` a ranged fetch.
+    """
+    external = DDL(f"ALTER TABLE {blobs.fullname} ALTER COLUMN data SET STORAGE EXTERNAL").execute_if(
+        dialect="postgresql"
+    )
+    event.listen(blobs, "after_create", external)
 
 
 def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, config: NativeEmbeddingConfig) -> None:

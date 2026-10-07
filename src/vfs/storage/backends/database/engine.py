@@ -61,6 +61,7 @@ from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
     is_permanent_defect,
     is_retryable,
+    is_value_too_large,
     membership_budget,
     profile_for,
     topology_execution_options,
@@ -319,6 +320,10 @@ class EngineHost:
             return ResultError(
                 kind=VFSErrorKind.backend_unavailable, message=f"{context} failed: {origin}", retryable=True
             )
+        if is_value_too_large(exc):
+            # The engine's own single-value cap, named by the engine: not a vfs ceiling.
+            message = f"{context} exceeded this engine's single-value limit: {origin}"
+            return ResultError(kind=VFSErrorKind.unsupported, message=message, retryable=False)
         if is_permanent_defect(exc):
             message = f"{context} hit a permanent statement defect: {origin}"
             return ResultError(kind=VFSErrorKind.internal, message=message, retryable=False)

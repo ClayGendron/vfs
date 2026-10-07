@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 ParamKind = Literal[
     "path",  # gated downstream by resolve_path — presence checked here only
     "str",
+    "bytes",
     "int",
     "bool",
     "dict",
@@ -136,7 +137,8 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "write": (
         ParamSpec("entries", "entries", doc="batch form: entries route by their own paths"),
         ParamSpec("path", "path", doc="single form: the file to write"),
-        ParamSpec("content", "str", doc="single form: the file's content"),
+        ParamSpec("content", "str", doc="single form: the file's text body"),
+        ParamSpec("data", "bytes", doc="single form: the file's bytes body; its text is a rendering"),
         ParamSpec("overwrite", "bool", nullable=False, default=True, doc="replace an existing file"),
         ParamSpec("parents", "bool", nullable=False, default=False, doc="mint missing ancestors, mkdir -p style"),
         _AUTHORITY,
@@ -352,10 +354,14 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     ),
     "write": (
         ShapeRule(
-            (("entries",), ("path", "content")),
-            exactly_one=True,
+            (("entries",), ("path", "content", "data")),
+            exactly_one=False,
             msg_both="write takes entries or path/content, not both",
-            msg_missing="write requires entries or path and content",
+        ),
+        ShapeRule(
+            (("content",), ("data",)),
+            exactly_one=False,
+            msg_both="write takes content or data, not both",
         ),
     ),
     "move": (
@@ -470,6 +476,10 @@ def _check_value(op: Op, spec: ParamSpec, value: object) -> str | None:
             return f"{op} {spec.name} must be a string, got {type(value).__name__}"
         if spec.choices is not None and value not in spec.choices:
             return f"{op} {spec.name} must be one of {sorted(spec.choices)}, got {value!r}"
+        return None
+    if kind == "bytes":
+        if not isinstance(value, bytes):
+            return f"{op} {spec.name} must be bytes, got {type(value).__name__}"
         return None
     if kind == "int":
         in_range = (

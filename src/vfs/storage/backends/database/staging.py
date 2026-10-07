@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
 
     from vfs.authority import Authority
+    from vfs.models.media import Source
     from vfs.paths import ObjectKind, Path
 
 Status = Literal["created", "updated", "unchanged"]
@@ -53,6 +54,8 @@ class StagedEntry:
     persistence: PersistenceState  # which pass writes this row; arbitration may rewrite it
     entry_id: str  # durable identity: minted for creates; an arbitration clobber adopts the rival's
     content: str | None = None
+    data: bytes | None = None  # the bytes body of a bytes-sourced row; its text is a rendering
+    source: Source = "text"
     content_hash: str | None = None
     size_bytes: int = 0
     lines: int = 0
@@ -75,10 +78,14 @@ class StagedEntry:
         lines: int,
         mime_type: str | None,
         owner_id: str | None = None,
+        data: bytes | None = None,
+        source: Source = "text",
     ) -> None:
         """Replace material state, preserving identity and persistence bookkeeping."""
         self.kind = kind
         self.content = content
+        self.data = data
+        self.source = source
         self.content_hash = content_hash
         self.size_bytes = size_bytes
         self.lines = lines
@@ -212,6 +219,8 @@ class WritePlan:
         overwrite: bool,
         parents: bool,
         owner_id: str | None = None,
+        data: bytes | None = None,
+        source: Source = "text",
     ) -> Status | None:
         """Gate and stage one content-bearing row; ``None`` means an error was appended."""
         if not self.within_budget(target):
@@ -237,6 +246,8 @@ class WritePlan:
             lines=lines,
             mime_type=mime_type,
             owner_id=owner_id,
+            data=data,
+            source=source,
         )
         return "created" if occupant is None else "updated"
 
@@ -273,6 +284,8 @@ class WritePlan:
         lines: int = 0,
         mime_type: str | None = None,
         owner_id: str | None = None,
+        data: bytes | None = None,
+        source: Source = "text",
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:  # a repeat target folds into the one staged row
@@ -284,6 +297,8 @@ class WritePlan:
                 lines=lines,
                 mime_type=mime_type,
                 owner_id=owner_id,
+                data=data,
+                source=source,
             )
             return
         self.staged[path] = StagedEntry(
@@ -293,6 +308,8 @@ class WritePlan:
             persistence="insert",
             entry_id=str(ULID()),
             content=content,
+            data=data,
+            source=source,
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,
@@ -311,6 +328,8 @@ class WritePlan:
         lines: int,
         mime_type: str | None,
         owner_id: str | None = None,
+        data: bytes | None = None,
+        source: Source = "text",
     ) -> None:
         prior = self.staged.get(path)
         if prior is not None:
@@ -322,6 +341,8 @@ class WritePlan:
                 lines=lines,
                 mime_type=mime_type,
                 owner_id=owner_id,
+                data=data,
+                source=source,
             )
             return
         row = self.committed[str(path)]
@@ -332,6 +353,8 @@ class WritePlan:
             persistence="update",
             entry_id=row["entry_id"],
             content=content,
+            data=data,
+            source=source,
             content_hash=content_hash,
             size_bytes=size_bytes,
             lines=lines,

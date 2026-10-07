@@ -78,7 +78,7 @@ async def test_write_requires_entries_or_path_and_content() -> None:
     result = await fs.write()
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
-    assert "entries or path and content" in result.errors[0].message
+    assert "path and content or data, or entries" in result.errors[0].message
     assert fs.calls == []
 
 
@@ -90,7 +90,33 @@ async def test_write_rechecks_the_form_even_if_the_param_gate_drifts(monkeypatch
     result = await fs.write(path="/f.txt")
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.invalid
-    assert "path and content, or entries" in result.errors[0].message
+    assert "path and content or data, or entries" in result.errors[0].message
+    assert fs.calls == []
+
+
+async def test_write_data_localizes_a_bytes_entry() -> None:
+    # The bytes form is the same sugar: storage receives a bytes-sourced
+    # Entry whose text is a rendering, never the raw bytes beside a path.
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+    await root.write(path="/m/r.pdf", data=b"%PDF-1.4")
+    op, kwargs = child.calls[0]
+    assert op == "write"
+    [entry] = kwargs["entries"]
+    assert entry.path == "/r.pdf"
+    assert entry.data == b"%PDF-1.4"
+    assert entry.content is None
+    assert entry.source == "bytes"
+    assert entry.render_status == "pending"
+
+
+async def test_write_refuses_content_beside_data() -> None:
+    fs = RecorderFS()
+    result = await fs.write(path="/f.txt", content="x", data=b"y")
+    assert result.success is False
+    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert "content or data, not both" in result.errors[0].message
     assert fs.calls == []
 
 

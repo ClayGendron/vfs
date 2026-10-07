@@ -49,7 +49,8 @@ class Version(BaseModel):
 
     ``file`` references the owning file by its path — a reference, not this
     version's own address. Exactly one payload is stored: a snapshot's full
-    ``content`` or a non-snapshot's ``version_diff``.
+    ``content``, a non-snapshot's ``version_diff``, or a bytes-sourced
+    entry's full ``data`` (always a snapshot; bytes have no diff form).
     ``content_hash``/``size_bytes``/``lines`` always describe the *full*
     content of this version — for a diff row they are the metrics of the
     reconstructed text, never of the stored diff.
@@ -60,6 +61,7 @@ class Version(BaseModel):
     is_snapshot: bool
     content: str | None = None
     version_diff: str | None = None
+    data: bytes | None = None
     content_hash: str
     lines: int = 0
     size_bytes: int = 0
@@ -89,6 +91,12 @@ class Version(BaseModel):
             raise ValueError(msg)
         if self.content is not None and self.version_diff is not None:
             msg = "Version rows must not set both content and version_diff"
+            raise ValueError(msg)
+        if self.data is not None and (self.content is not None or self.version_diff is not None):
+            msg = "Version rows must not set data beside content or version_diff"
+            raise ValueError(msg)
+        if self.data is not None and not self.is_snapshot:
+            msg = "a bytes version is always a snapshot"
             raise ValueError(msg)
         return self
 

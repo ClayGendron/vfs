@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
-from vfs.models import CONTENT_KINDS, Observation
+from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
 from vfs.paths import Path, _under_meta_root, normalize_ext_channel
 from vfs.pattern_matching import (
     ROW_GATE_FIELDS,
@@ -38,7 +38,7 @@ from vfs.pattern_matching import (
     expand_channel,
     passes_row_filters,
 )
-from vfs.results import Result, ResultError, VFSErrorKind, wrong_kind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_miss,
@@ -71,8 +71,13 @@ if TYPE_CHECKING:
 # label IS its version (one per-entry sequence); version_number surfaces
 # only on Version rows, never from the entries table.
 ENTRY_OBSERVATION_FIELDS: Final[frozenset[str]] = frozenset(
-    {"path", "kind", "version", "content_hash", "mime_type", "size_bytes"} | {"created_at", "updated_at"},
+    {"path", "kind", "version", "content_hash", "mime_type", "size_bytes"}
+    | {"source", "render_status", "created_at", "updated_at"},
 )
+
+# The Observation fields homed in a body table, served only by the verbs
+# that carry bodies: ``content`` by default, ``data`` only when projected.
+BODY_FIELDS: Final[frozenset[str]] = frozenset({"content", "data"})
 
 # Identity fields every observation carries regardless of projection.
 ALWAYS_ON_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind", "version"})
@@ -95,7 +100,8 @@ def effective_columns(columns: frozenset[str] | None, *, content: bool) -> froze
     """The Observation fields this op fetches — also the populated mask.
 
     ``None`` means no push-down: every entry-backed field (plus content
-    when the verb carries it). A concrete projection narrows to the
+    when the verb carries it; never the bytes, which only an explicit
+    projection fetches). A concrete projection narrows to the
     requested ∩ servable fields, identity fields always on; a requested
     field with no backing column yet is simply not in the mask.
     """
@@ -105,8 +111,8 @@ def effective_columns(columns: frozenset[str] | None, *, content: bool) -> froze
             fetched.add("content")
         return frozenset(fetched)
     fetched = set((columns & ENTRY_OBSERVATION_FIELDS) | ALWAYS_ON_FIELDS)
-    if content and "content" in columns:
-        fetched.add("content")
+    if content:
+        fetched |= columns & BODY_FIELDS
     return frozenset(fetched)
 
 
@@ -128,6 +134,9 @@ async def read_rows(
     rows, errors = await _point_rows(
         session, tables, profile, membership_budget, targets, fetched, content_only=True, view=view
     )
+    if "content" in fetched:
+        rows, notes = render_notes(rows)
+        errors = [*errors, *notes]
     return Result(ops=("read",), observations=rows, errors=errors)
 
 
@@ -512,6 +521,39 @@ async def _point_rows(
     return rows, errors
 
 
+def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[ResultError]]:
+    """What a read says about a bytes-sourced row's text, by its render status.
+
+    The text is a rendering, so a status that left no content row is
+    reported beside the row rather than invented: pending is a
+    transient absence (run ``reindex``), a failure is a permanent one
+    naming its reason, and an empty rendering is the empty string. A
+    cut rendering is served with an info note. Text rows pass untouched.
+    """
+    shown: list[Observation] = []
+    notes: list[ResultError] = []
+    for row in rows:
+        status = row.render_status
+        if row.source != "bytes" or status in (None, "ok"):
+            shown.append(row)
+            continue
+        if status == "empty":
+            shown.append(row.model_copy(update={"content": ""}))
+            continue
+        shown.append(row)
+        if status == "pending":
+            message = f"Not rendered yet: {row.path} is a binary awaiting reindex"
+            kind, severity, retryable = VFSErrorKind.unavailable, Severity.warning, True
+        elif status in RENDERED_STATUSES:
+            message = f"Rendering cut short ({status}): {row.path}"
+            kind, severity, retryable = VFSErrorKind.truncated, Severity.info, False
+        else:
+            message = f"No text rendering ({status}): {row.path}"
+            kind, severity, retryable = VFSErrorKind.unsupported, Severity.warning, False
+        notes.append(ResultError(kind=kind, message=message, severity=severity, path=row.path, retryable=retryable))
+    return shown, notes
+
+
 def road_observation(path: str) -> Observation:
     """A directory shown only because a visible row lies beneath it: path and kind."""
     return Observation.model_validate({"path": Path._brand(path), "kind": "directory", "populated": ROAD_FIELDS})
@@ -661,19 +703,24 @@ async def _children_by_parent(
 
 def _entry_projection(
     tables: VFSTables, fetched: frozenset[str], *, with_entry_id: bool
-) -> tuple[list[Column[object]], FromClause | None]:
-    """The select list serving *fetched*, plus the FROM override when content joins."""
+) -> tuple[list[ColumnElement[Any]], FromClause | None]:
+    """The select list serving *fetched*, plus the FROM override when a body joins."""
     entry = tables.entry
-    columns = _entry_columns(entry, fetched)
+    columns: list[ColumnElement[Any]] = list(_entry_columns(entry, fetched))
     if with_entry_id:
         columns = [entry.c.entry_id, *columns]
-    if "content" not in fetched:
+    bodies = fetched & BODY_FIELDS
+    if not bodies:
         return columns, None
-    return [*columns, tables.content.c.content], tables.content_joined()
+    if "content" in bodies:
+        columns.append(tables.content.c.content)
+    if "data" in bodies:
+        columns.append(tables.blobs.c.data)
+    return columns, tables.bodies_joined(content="content" in bodies, data="data" in bodies)
 
 
 def _entry_columns(entry: Table, fetched: frozenset[str]) -> list[Column[object]]:
-    return [entry.c[field] for field in sorted(fetched - {"content"})]
+    return [entry.c[field] for field in sorted(fetched - BODY_FIELDS)]
 
 
 def _observe(mapping: RowMapping, fetched: frozenset[str]) -> Observation:

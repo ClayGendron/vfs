@@ -453,6 +453,70 @@ but the MariaDB packet pin is A's).
 - **The ADR.** Cut from §Decided semantics on ratification; the memo's
   §5 lists the forks it should record as decided.
 
-## Implementation progress
+## Implementation progress — slice A
 
-Not started.
+**2026-10-05.** Bytes in and out, on every engine. A bytes entry lands
+its body in `vfs_blobs` and its stamp as `pending`; nothing renders yet.
+
+- **Schema, format 19.** `vfs_blobs(entry_id, created_at, data)` with
+  the body last; `LargeBinary` pinned to `LONGBLOB` on the mysql family
+  and to the unlengthed `VARBINARY` on MSSQL (which renders `max`), with
+  a Postgres `after_create` DDL setting `STORAGE EXTERNAL`. The entry
+  row gains `source`, `render_status`, `render_source_hash`,
+  `render_generation`, `render_detail`, `render_units`, `media_width`
+  and `media_height`; `vfs_versions` gains `data`. `ENTRY_BODY_HOMES`
+  names which table homes each body field, and the drift pins check it.
+- **Models.** `Entry.data`, `Entry.source` (derived from the body) and
+  `Entry.render_status`; a bytes body is a content statement for every
+  gate, is refused beside `content`, hashes and sizes as the bytes,
+  sniffs its `mime_type` by magic with the extension and the declared
+  type narrowing only (`models/media.py`), and starts `pending`. A
+  hydrated bytes entry keeps its row's metrics and rendering.
+  `with_content` refuses a bytes entry. `Observation` mirrors the three
+  fields and serialises bytes as base64 both ways. `Version.data` is a
+  snapshot-only payload, exclusive with the text payloads.
+- **Write path.** `write(path=…, data=…)` and `Entry(data=…)` rows;
+  the param gate knows `bytes` and refuses `content` beside `data`. The
+  plan stages `data` and `source`; the clobber set clears every render
+  column so an overwrite restarts the stamp and drops a stale
+  rendering; both body tables are cleared for every bearing row so a
+  source switch leaves one body; blob inserts page by bytes in flight
+  under `BLOB_PAGE_BYTES` (8 MiB) inside the bind-count page. `edit`
+  on a bytes row refuses `unsupported` naming `write`. The set-based
+  VALUES update casts its integer cells: an all-NULL VALUES column is
+  text to Postgres, and the two dimension columns are integers.
+- **Read path.** `source` and `render_status` are entry-backed
+  observation fields; `data` is a body field fetched only when
+  projected, through `bodies_joined`. `read` appends a render note per
+  bytes row: `pending` is a transient `unavailable` warning, a cut
+  rendering an info `truncated`, a failure an `unsupported` warning,
+  `empty` the empty string. Copy carries both bodies and every render
+  column; purge and the orphan sweep drain both body tables.
+- **The engines' own caps.** `is_value_too_large` recognises SQLite's
+  `DataError`, SQLSTATE class 54 and the mysql packet error 1153 by code
+  and type; the host classifies them `unsupported`, naming the engine's
+  message, never a vfs number. Pinned on SQLite by lowering
+  `SQLITE_LIMIT_LENGTH` on the live connection.
+- **Tests.** `test_media.py`; bytes entries and versions in
+  `test_models.py`; the body-home drift pins in `test_rows.py`; the
+  bytes section of `StorageContract` (seven tests: round trip and
+  metrics, the pending read, the source switch both ways, the edit
+  refusal, copy, delete and restore, listings); the blob write
+  mechanics in `test_writes.py` (statement shape, source switch,
+  overwrite dropping the rendering, byte paging, the edit refusal, the
+  cap); the projection and render notes in `test_reads.py`; the cap
+  classifier in `test_dialects.py`; orphan blobs in `test_coherence.py`;
+  the catalog pins per engine in `test_conformance.py` (`bytea` stored
+  `e`, `longblob`, `varbinary(-1)`, `BLOB`).
+- **Gates.** `ruff check`, `ruff format --check`, `ty` at zero. Full
+  suite: 3,773 passed, 1,344 skipped, 100% coverage (10,337
+  statements); `pytest docs`: 23 passed. Postgres leg: 336 passed
+  (including the bytes contract and the `bytea`/`EXTERNAL` catalog
+  pin). Oracle leg: 332 passed, plus its catalog pin and two bytes
+  contract tests run against the live server. MariaDB and MSSQL legs
+  not run (no container up); their catalog pins run with the next
+  engine session. `scripts/ci.sh` not run (Clay's rule).
+- **Left for slice B.** The chunk pass stamps a pending bytes row as
+  chunked-and-ineligible with its bytes hash as `chunk_source_hash`;
+  when the renderer writes a content row it must also clear that stamp,
+  or the skip law would keep the rendering unsplit.

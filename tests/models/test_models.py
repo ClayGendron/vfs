@@ -281,9 +281,12 @@ class TestObservationMirrors:
 
 class TestEntryToObservation:
     def test_projection_covers_every_entry_owned_mirror(self) -> None:
-        entry = Entry(path=Path("/docs/a.md"), content="hello", mime_type="text/markdown")
-        obs = entry.to_observation()
+        text = Entry(path=Path("/docs/a.md"), content="hello", mime_type="text/markdown")
+        binary = Entry(path=Path("/docs/b.pdf"), data=b"%PDF-1.4 hello")
         for name in ENTRY_OWNED_MIRRORS:
+            # A text entry carries no bytes and no render state; the bytes entry does.
+            entry = binary if getattr(text, name) is None else text
+            obs = entry.to_observation()
             assert getattr(obs, name) == getattr(entry, name), f"mirror {name!r} not projected"
             assert getattr(obs, name) is not None, f"mirror {name!r} unexercised by this entry"
 
@@ -764,3 +767,97 @@ class TestVersionAttribution:
     def test_no_authority_records_nothing(self) -> None:
         row = self._row(None)
         assert (row.actor, row.subjects, row.provenance, row.source_identity) == (None, (), None, None)
+
+
+# ---------------------------------------------------------------------------
+# Bytes bodies — a bytes-sourced entry and its version row
+# ---------------------------------------------------------------------------
+
+
+class TestBytesEntries:
+    def test_a_bytes_body_makes_the_entry_bytes_sourced_and_pending(self) -> None:
+        entry = Entry(path=Path("/docs/r.pdf"), data=b"%PDF-1.4\x00\xff")
+        assert entry.source == "bytes"
+        assert entry.render_status == "pending"
+        assert entry.content is None
+        assert entry.kind == "file"
+        assert entry.mime_type == "application/pdf"
+
+    def test_metrics_describe_the_bytes_and_lines_are_the_renderings(self) -> None:
+        body = b"\x00\x01" * 500
+        entry = Entry(path=Path("/blob.bin"), data=body)
+        assert entry.content_hash == hashlib.sha256(body).hexdigest()
+        assert entry.size_bytes == 1000
+        assert entry.lines == 0
+
+    def test_the_declared_type_only_narrows_what_magic_allows(self) -> None:
+        zipped = b"PK\x03\x04" + bytes(12)
+        docx = Entry(path=Path("/a.docx"), data=zipped).mime_type
+        assert docx is not None
+        assert docx.endswith("wordprocessingml.document")
+        assert Entry(path=Path("/a.bin"), data=zipped, mime_type="text/plain").mime_type == "application/zip"
+        assert Entry(path=Path("/a.bin"), data=b"\x01\x02", mime_type="application/x-custom").mime_type == (
+            "application/x-custom"
+        )
+
+    def test_text_and_bytes_never_share_a_body(self) -> None:
+        with pytest.raises(ValidationError, match="text or bytes, never both"):
+            Entry(path=Path("/a.md"), content="x", data=b"y")
+
+    def test_bytes_on_a_directory_or_the_root_are_refused_like_content(self) -> None:
+        with pytest.raises(ValidationError, match="directory carries no content"):
+            Entry(path=Path("/d"), kind="directory", data=b"y")
+        with pytest.raises(ValidationError, match="carries no content"):
+            Entry(path=Path("/"), data=b"y")
+
+    def test_a_hydrated_bytes_entry_keeps_its_rows_metrics_and_rendering(self) -> None:
+        # Storage hydrates a bytes entry without its body: the rendering is
+        # the text, the metrics are the bytes', nothing is recomputed.
+        entry = Entry(
+            path=Path("/r.pdf"),
+            source="bytes",
+            content="# Report\n",
+            content_hash="a" * 64,
+            size_bytes=4096,
+            lines=1,
+            render_status="ok",
+        )
+        assert entry.source == "bytes"
+        assert entry.content == "# Report\n"
+        assert (entry.content_hash, entry.size_bytes, entry.lines) == ("a" * 64, 4096, 1)
+        assert entry.render_status == "ok"
+
+    def test_a_caller_supplied_status_on_a_bytes_body_is_kept(self) -> None:
+        assert Entry(path=Path("/r.pdf"), data=b"%PDF-", render_status="ok").render_status == "ok"
+
+    def test_with_content_refuses_a_bytes_sourced_entry(self) -> None:
+        entry = Entry(path=Path("/r.pdf"), data=b"%PDF-")
+        with pytest.raises(ValueError, match="rendering"):
+            entry.with_content("x")
+
+    def test_the_observation_carries_the_bytes_as_base64_on_the_wire(self) -> None:
+        body = b"\x00\xff\x10 binary"
+        obs = Entry(path=Path("/b.bin"), data=body).to_observation()
+        assert obs.data == body
+        assert {"data", "source", "render_status"} <= obs.populated
+        payload = json.loads(obs.model_dump_json(exclude_none=True))
+        assert payload["data"] == "AP8QIGJpbmFyeQ=="
+        assert Observation.model_validate_json(obs.model_dump_json(exclude_none=True)).data == body
+
+
+class TestBytesVersions:
+    def test_a_bytes_version_is_a_snapshot_with_no_text_payload(self) -> None:
+        row = Version(file=Path("/r.pdf"), number=1, is_snapshot=True, data=b"%PDF-", content_hash="0" * 64)
+        assert row.data == b"%PDF-"
+
+    def test_bytes_beside_a_text_payload_are_refused(self) -> None:
+        with pytest.raises(ValidationError, match="data beside content"):
+            Version(file=Path("/r.pdf"), number=1, is_snapshot=True, data=b"x", content="x", content_hash="0" * 64)
+        with pytest.raises(ValidationError, match="data beside content"):
+            Version(
+                file=Path("/r.pdf"), number=2, is_snapshot=False, data=b"x", version_diff="d", content_hash="0" * 64
+            )
+
+    def test_a_bytes_diff_row_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="always a snapshot"):
+            Version(file=Path("/r.pdf"), number=2, is_snapshot=False, data=b"x", content_hash="0" * 64)

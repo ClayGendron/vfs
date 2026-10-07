@@ -116,7 +116,14 @@ from vfs.storage.backends.database.descent import (
     subtree_filter,
     targets_with_ancestors,
 )
-from vfs.storage.backends.database.dialects import StaleSnapshot, bulk_insert, chunked, rows_per_statement
+from vfs.storage.backends.database.dialects import (
+    BLOB_PAGE_BYTES,
+    StaleSnapshot,
+    bulk_insert,
+    byte_chunked,
+    chunked,
+    rows_per_statement,
+)
 from vfs.storage.backends.database.edges import delete_authored_edges, fs_row, insert_fs_rows, repoint_fs_row
 from vfs.storage.backends.database.labels import label_of, labels_for, posture_beneath
 from vfs.storage.backends.database.membership import membership
@@ -151,7 +158,23 @@ _SNAPSHOT_COLUMNS: Final[tuple[str, ...]] = (
 )
 
 # A transfer subtree adds the material columns a copy reproduces.
-_SUBTREE_COLUMNS: Final[tuple[str, ...]] = (*_SNAPSHOT_COLUMNS, "content_hash", "mime_type", "ext", "lines")
+_SUBTREE_COLUMNS: Final[tuple[str, ...]] = (
+    *_SNAPSHOT_COLUMNS,
+    "content_hash",
+    "mime_type",
+    "ext",
+    "lines",
+    "source",
+    "render_status",
+    "render_source_hash",
+    "render_generation",
+    "render_detail",
+    "render_units",
+    "media_width",
+    "media_height",
+)
+# The copied material beyond the snapshot: every column a copy carries verbatim.
+_COPIED_COLUMNS: Final[tuple[str, ...]] = _SUBTREE_COLUMNS[len(_SNAPSHOT_COLUMNS) :]
 
 # A restore source adds the columns the restore contract consumes, and its owner.
 _RESTORE_COLUMNS: Final[tuple[str, ...]] = (
@@ -684,6 +707,7 @@ async def _purge_subtree(
             if 0 <= result.rowcount != len(chunk):
                 raise StaleSnapshot(f"purge lost {len(chunk) - result.rowcount} collected row(s) mid-transaction")
             await session.execute(delete(tables.content).where(membership(tables.content.c.entry_id, chunk, profile)))
+            await session.execute(delete(tables.blobs).where(membership(tables.blobs.c.entry_id, chunk, profile)))
             await session.execute(delete(tables.versions).where(membership(tables.versions.c.entry_id, chunk, profile)))
             subjects = tables.version_subjects
             await session.execute(delete(subjects).where(membership(subjects.c.entry_id, chunk, profile)))
@@ -708,25 +732,25 @@ async def _reclaim_orphan_content(
     survive until a later sweep, keeping any in-flight rival's freshly
     written body out of reach.
     """
-    content = tables.content
     entry = tables.entry
     fence = datetime.now(UTC) - _ORPHAN_AGE_FENCE
-    referenced = select(entry.c.id).where(entry.c.entry_id == content.c.entry_id)
-    stmt = select(content.c.entry_id).where(~referenced.exists(), content.c.created_at < fence)
-    orphans = sorted(row.entry_id for row in await session.execute(stmt))
-    if not orphans:
-        return []
-    for chunk in chunked(orphans, membership_budget):
-        await session.execute(delete(content).where(membership(content.c.entry_id, chunk, profile)))
-    return [
-        ResultError(
-            kind=VFSErrorKind.internal,
-            message=f"Sweep reclaimed an orphaned content row: entry {entry_id}",
-            severity=Severity.warning,
-            data={"entry_id": entry_id},
+    notes: list[ResultError] = []
+    for body in (tables.content, tables.blobs):
+        referenced = select(entry.c.id).where(entry.c.entry_id == body.c.entry_id)
+        stmt = select(body.c.entry_id).where(~referenced.exists(), body.c.created_at < fence)
+        orphans = sorted(row.entry_id for row in await session.execute(stmt))
+        for chunk in chunked(orphans, membership_budget):
+            await session.execute(delete(body).where(membership(body.c.entry_id, chunk, profile)))
+        notes.extend(
+            ResultError(
+                kind=VFSErrorKind.internal,
+                message=f"Sweep reclaimed an orphaned {body.name} row: entry {entry_id}",
+                severity=Severity.warning,
+                data={"entry_id": entry_id},
+            )
+            for entry_id in orphans
         )
-        for entry_id in orphans
-    ]
+    return notes
 
 
 class _TrashChain:
@@ -1193,7 +1217,8 @@ async def _fetch_subtree(
     subtree = subtree_filter(entry, src, profile)
     stmt = select(*columns).where(subtree)
     if with_content:
-        stmt = select(*columns, tables.content.c.content).select_from(tables.content_joined()).where(subtree)
+        bodies = [tables.content.c.content, tables.blobs.c.data]
+        stmt = select(*columns, *bodies).select_from(tables.bodies_joined(content=True, data=True)).where(subtree)
     return list((await session.execute(stmt)).mappings())
 
 
@@ -1304,10 +1329,8 @@ async def _execute_copy(
             "name": dest.name if row["entry_id"] == root_id else row["name"],
             "kind": row["kind"],
             "version": 1,
-            "content_hash": row["content_hash"],
-            "mime_type": row["mime_type"],
+            **{name: row[name] for name in _COPIED_COLUMNS},
             "ext": dest.ext if row["entry_id"] == root_id else row["ext"],
-            "lines": row["lines"],
             "size_bytes": row["size_bytes"],
             "owner_id": owner_for(authority),
             "everyone_level": label_of(postures, new_paths[row["entry_id"]]),
@@ -1335,8 +1358,14 @@ async def _execute_copy(
         for row in subtree
         if row["content"] is not None
     ]
-    if bodies:
-        await bulk_insert(session, tables.content, bodies)
+    await bulk_insert(session, tables.content, bodies)
+    blobs = [
+        {"entry_id": id_map[row["entry_id"]], "created_at": now, "data": row["data"]}
+        for row in subtree
+        if row["data"] is not None
+    ]
+    for page in byte_chunked(blobs, lambda blob: len(cast("bytes", blob["data"])), BLOB_PAGE_BYTES):
+        await bulk_insert(session, tables.blobs, page)
     await _bump(session, entry, dest_parent_id)
 
 

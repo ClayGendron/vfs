@@ -32,7 +32,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import bindparam, column, delete, insert, select, update, values
+from sqlalchemy import Integer, bindparam, column, delete, insert, select, update, values
+from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -42,8 +43,10 @@ from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
 from vfs.storage.backends.database.dialects import (
+    BLOB_PAGE_BYTES,
     StaleSnapshot,
     bulk_insert,
+    byte_chunked,
     chunked,
     rows_per_statement,
     statement_budget,
@@ -84,6 +87,14 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "chunked",
     "encoded",
     "indexable",
+    "source",
+    "render_status",
+    "render_source_hash",
+    "render_generation",
+    "render_detail",
+    "render_units",
+    "media_width",
+    "media_height",
     "owner_id",
     "updated_at",
 )
@@ -134,6 +145,8 @@ async def write_rows(
                 overwrite=overwrite,
                 parents=parents,
                 owner_id=entry.owner_id,
+                data=entry.data,
+                source=entry.source,
             )
         if status is not None:
             plan.pending.append((entry.path, status))
@@ -213,6 +226,9 @@ async def edit_rows(
         if row is None:
             plan.errors.append(missing[target])
             continue
+        if row["source"] == "bytes":
+            plan.errors.append(_binary_target(target))
+            continue
         kind, current = plan.material_of(target)
         edited = edited_entry(target, kind=kind, content=current, edits=edits)
         if isinstance(edited, ResultError):
@@ -256,6 +272,7 @@ async def _fetch_committed(
         entry.c.ext,
         entry.c.mime_type,
         entry.c.owner_id,
+        entry.c.source,
     ]
     source: FromClause | None = None
     if with_content:
@@ -344,7 +361,7 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, authority=plan.authority, now=now
     ):
         return errors
-    await _replace_content(session, tables.content, profile, membership_budget, list(plan.staged.values()), now)
+    await _replace_bodies(session, tables, profile, membership_budget, list(plan.staged.values()), now)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 
@@ -741,7 +758,7 @@ def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, gua
         *(column(f"v_{name}", entry.c[name].type) for name in _CLOBBER_COLUMNS),
         name="incoming",
     ).data(list(rows))
-    set_: dict[str, Any] = {name: incoming.c[f"v_{name}"] for name in _CLOBBER_COLUMNS}
+    set_: dict[str, Any] = {name: _typed_cell(incoming.c[f"v_{name}"], entry.c[name]) for name in _CLOBBER_COLUMNS}
     where = [entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path]
     if guard:
         set_["version"] = incoming.c.v_ver
@@ -749,6 +766,11 @@ def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, gua
     else:
         set_["version"] = entry.c.version + 1
     return update(entry).where(*where).values(**set_).returning(entry.c.entry_id, entry.c.version)
+
+
+def _typed_cell(cell: ColumnElement[Any], target: Column[Any]) -> ColumnElement[Any]:
+    """An all-NULL VALUES column has no type and Postgres infers text; an integer target refuses it."""
+    return sql_cast(cell, target.type) if isinstance(target.type, Integer) else cell
 
 
 async def _guarded_by_aggregate(
@@ -863,26 +885,45 @@ def _conflict(staged: StagedEntry) -> ResultError:
     return classified(VFSErrorKind.conflict, message, staged.path, target=staged.path, retryable=True)
 
 
-async def _replace_content(
+async def _replace_bodies(
     session: AsyncSession,
-    content: Table,
+    tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
     staged: list[StagedEntry],
     now: datetime,
 ) -> None:
-    """Delete-then-insert the batch's content rows — portable, idempotent.
+    """Delete-then-insert the batch's body rows — portable, idempotent.
 
-    The insert is ``bulk_insert`` — paged under the dialect's parameter
-    budget there; only the membership-predicate delete chunks here.
+    Both body tables are cleared for every bearing row: a write that
+    switches a row's source leaves no body in the other table, and a
+    bytes write drops the rendering its stamp no longer vouches for.
+    Text inserts page under the dialect's parameter budget inside
+    ``bulk_insert``; blob inserts page by bytes in flight first.
     """
-    bearing = [s for s in staged if s.content is not None and s.kind in CONTENT_KINDS]
+    bearing = [s for s in staged if s.kind in CONTENT_KINDS and (s.content is not None or s.data is not None)]
     if not bearing:
         return
-    for chunk in chunked([s.entry_id for s in bearing], membership_budget):
-        await session.execute(delete(content).where(membership(content.c.entry_id, chunk, profile)))
-    rows = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing]
-    await bulk_insert(session, content, rows)
+    for body in (tables.content, tables.blobs):
+        for chunk in chunked([s.entry_id for s in bearing], membership_budget):
+            await session.execute(delete(body).where(membership(body.c.entry_id, chunk, profile)))
+    texts = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing if s.data is None]
+    await bulk_insert(session, tables.content, texts)
+    blobs = [{"entry_id": s.entry_id, "created_at": now, "data": s.data} for s in bearing if s.data is not None]
+    for page in byte_chunked(blobs, _blob_row_size, BLOB_PAGE_BYTES):
+        await bulk_insert(session, tables.blobs, page)
+
+
+def _blob_row_size(row: Mapping[str, object]) -> int:
+    data = row["data"]
+    assert isinstance(data, bytes)
+    return len(data)
+
+
+def _binary_target(target: Path) -> ResultError:
+    """A bytes-sourced row has no editable text: its content is a rendering."""
+    message = f"Not editable: {target} is a binary; its text is a rendering, and write replaces its bytes"
+    return classified(VFSErrorKind.unsupported, message, target)
 
 
 async def _bump_parents(
@@ -1019,7 +1060,11 @@ def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInse
 
 
 def _material_values(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
-    """The clobber-column values for *staged*; ownership derives from the authority."""
+    """The clobber-column values for *staged*; ownership derives from the authority.
+
+    A write clears every render stamp: a bytes row starts over as
+    pending, a text row carries no render state at all.
+    """
     return {
         "kind": staged.kind,
         "content_hash": staged.content_hash,
@@ -1030,6 +1075,14 @@ def _material_values(staged: StagedEntry, authority: Authority | None, now: date
         "chunked": False,
         "encoded": False,
         "indexable": False,
+        "source": staged.source,
+        "render_status": "pending" if staged.source == "bytes" else None,
+        "render_source_hash": None,
+        "render_generation": None,
+        "render_detail": None,
+        "render_units": None,
+        "media_width": None,
+        "media_height": None,
         "owner_id": owner_for(authority, staged.owner_id),
         "updated_at": now,
     }

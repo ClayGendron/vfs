@@ -19,6 +19,7 @@ from vfs.models.entry import (
     Match,
     Observation,
 )
+from vfs.models.media import RENDER_STATUSES, RENDERED_STATUSES, SOURCES, RenderStatus, Source, sniff_mime
 from vfs.models.version import Version
 
 __all__ = [
@@ -27,11 +28,17 @@ __all__ = [
     "OBSERVATION_MIRROR_FIELDS",
     "OBSERVATION_MIRROR_OWNERS",
     "OBSERVATION_QUERY_FIELDS",
+    "RENDERED_STATUSES",
+    "RENDER_STATUSES",
+    "SOURCES",
     "Chunk",
     "ContentHash",
     "Edge",
     "Entry",
     "Match",
     "Observation",
+    "RenderStatus",
+    "Source",
     "Version",
+    "sniff_mime",
 ]

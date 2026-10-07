@@ -132,13 +132,20 @@ class Session:
         *,
         path: str | None = None,
         content: str | None = None,
+        data: bytes | None = None,
         overwrite: bool = True,
         parents: bool = False,
     ) -> Result:
         if (refusal := self._refuse_closed("write")) is not None:
             return refusal
         return await self._fs.write(
-            entries, path=path, content=content, overwrite=overwrite, parents=parents, authority=self._authority
+            entries,
+            path=path,
+            content=content,
+            data=data,
+            overwrite=overwrite,
+            parents=parents,
+            authority=self._authority,
         )
 
     async def edit(

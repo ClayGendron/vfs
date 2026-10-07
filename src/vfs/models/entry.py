@@ -35,6 +35,7 @@ from typing import Annotated, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, field_validator, model_validator
 
 from vfs.models.edge import Edge
+from vfs.models.media import SNIFF_LENGTH, RenderStatus, Source, sniff_mime
 from vfs.models.version import Version
 from vfs.paths import ObjectKind, Path, is_reserved_directory
 
@@ -86,6 +87,9 @@ class Entry(BaseModel):
     # --- Content ------------------------------------------------------------
 
     content: str | None = None
+    data: bytes | None = None
+    source: Source = "text"
+    render_status: RenderStatus | None = None
     content_hash: ContentHash | None = None
     mime_type: str | None = None
     ext: str | None = None
@@ -126,6 +130,11 @@ class Entry(BaseModel):
             len(encoded),
             content.count("\n") + 1 if content else 0,
         )
+
+    @staticmethod
+    def _bytes_metadata(data: bytes) -> tuple[str, int]:
+        """Return ``(sha256, size_bytes)`` for a bytes body; its line count is its rendering's."""
+        return hashlib.sha256(data).hexdigest(), len(data)
 
     # -----------------------------------------------------------------------
     # Construction and validation
@@ -172,6 +181,12 @@ class Entry(BaseModel):
         data["path"] = path
         kind = data.get("kind")
         content = data.get("content")
+        if data.get("data") is not None:
+            if content is not None:
+                msg = f"content conflicts with data: a body is text or bytes, never both (path={path!r})"
+                raise ValueError(msg)
+            # A bytes body is a content statement for every gate below.
+            content = data["data"]
         if content is not None and path == "/":
             msg = "content conflicts with the root path: '/' carries no content"
             raise ValueError(msg)
@@ -216,13 +231,25 @@ class Entry(BaseModel):
         self.ext = self.path.ext
 
         # Content invariants. The directory null is pure normalization of
-        # absence — presence conflicts raise in _derive_identity.
+        # absence — presence conflicts raise in _derive_identity. A bytes
+        # body makes the entry bytes-sourced: its metrics describe the
+        # bytes, its text is a rendering storage fills in later, and it
+        # starts pending. A bytes-sourced entry hydrated without its body
+        # keeps the metrics the row carries.
         if self.kind == "directory":
             self.content = None
-        elif self.content is None:
+        elif self.data is not None:
+            self.source = "bytes"
+            self.content = None
+            self.content_hash, self.size_bytes = self._bytes_metadata(self.data)
+            self.lines = 0
+            self.mime_type = sniff_mime(self.data[:SNIFF_LENGTH], declared=self.mime_type, ext=self.ext)
+            if self.render_status is None:
+                self.render_status = "pending"
+        elif self.source == "text" and self.content is None:
             self.content = ""
 
-        if isinstance(self.content, str):
+        if self.source == "text" and isinstance(self.content, str):
             self.content_hash, self.size_bytes, self.lines = self._content_metadata(self.content)
 
         now = datetime.now(UTC)
@@ -262,6 +289,9 @@ class Entry(BaseModel):
             path=self.path,
             kind=self.kind,
             content=self.content,
+            data=self.data,
+            source=self.source,
+            render_status=self.render_status,
             content_hash=self.content_hash,
             mime_type=self.mime_type,
             size_bytes=self.size_bytes,
@@ -310,6 +340,9 @@ class Entry(BaseModel):
         """
         if self.kind == "directory":
             msg = f"Cannot set content on a directory: {self.path}"
+            raise ValueError(msg)
+        if self.source == "bytes":
+            msg = f"Cannot set content on a bytes-sourced entry; its text is a rendering: {self.path}"
             raise ValueError(msg)
         if "\x00" in content:
             msg = f"content contains null bytes (path={self.path!r})"
@@ -403,13 +436,17 @@ class Observation(BaseModel):
     be projected.
     """
 
-    model_config = ConfigDict(frozen=True)
+    # Bytes cross the wire as base64 both ways; utf8 would garble a body.
+    model_config = ConfigDict(frozen=True, ser_json_bytes="base64", val_json_bytes="base64")
 
     # --- Model mirrors -------------------------------------------------------
 
     path: Path
     kind: ObjectKind | None = None
     content: str | None = None
+    data: bytes | None = None
+    source: Source | None = None
+    render_status: RenderStatus | None = None
     content_hash: ContentHash | None = None
     mime_type: str | None = None
     size_bytes: int | None = None

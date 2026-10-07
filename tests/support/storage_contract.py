@@ -2496,3 +2496,97 @@ class StorageContract:
         traits = storage.traits()
         assert traits.get("glean_signals") in TRAIT_VALUES["glean_signals"]
         assert traits.get("glean_staleness") in TRAIT_VALUES["glean_staleness"]
+
+    # ------------------------------------------------------------------
+    # Bytes bodies — a binary is an entry whose text is a rendering
+    # ------------------------------------------------------------------
+
+    @needs("write", "read", "stat")
+    async def test_bytes_round_trip_byte_identical_with_the_bytes_metrics(self, storage: ConformanceBackend) -> None:
+        body = bytes(range(256)) * 40 + b"\x00\xff"
+        written = await storage.write(entries=[Entry(path=Path("/docs/r.pdf"), data=body)], parents=True)
+        assert written.success is True
+        assert written.observations[0].status == "created"
+        assert written.observations[0].size_bytes == len(body)
+        back = await storage.read(path=Path("/docs/r.pdf"), columns=frozenset({"data", "content_hash", "size_bytes"}))
+        assert back.success is True
+        [row] = back.observations
+        assert row.data == body
+        assert row.size_bytes == len(body)
+        assert row.content_hash == Entry(path=Path("/x"), data=body).content_hash
+        stat = (await storage.stat(path=Path("/docs/r.pdf"))).observations[0]
+        assert (stat.source, stat.render_status, stat.kind) == ("bytes", "pending", "file")
+        assert stat.mime_type == "application/octet-stream"
+        assert "data" not in stat.populated
+
+    @needs("write", "read")
+    async def test_a_binary_not_yet_rendered_reads_as_no_text_with_a_transient_note(
+        self, storage: ConformanceBackend
+    ) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1.4\n")])).success is True
+        result = await storage.read(path=Path("/r.pdf"))
+        assert result.success is True
+        [row] = result.observations
+        assert row.content is None and "content" in row.populated
+        assert row.mime_type == "application/pdf"
+        [note] = result.errors
+        assert (note.kind, note.severity, note.retryable) == (VFSErrorKind.unavailable, Severity.warning, True)
+        assert note.path == "/r.pdf"
+
+    @needs("write", "read", "stat")
+    async def test_a_write_switches_the_source_both_ways(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/f"), content="text")])).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/f"), data=b"\x00\x01")])).success is True
+        stat = (await storage.stat(path=Path("/f"))).observations[0]
+        assert (stat.source, stat.render_status, stat.version) == ("bytes", "pending", 2)
+        assert (await storage.read(path=Path("/f"), columns=frozenset({"data"}))).observations[0].data == b"\x00\x01"
+        assert (await storage.read(path=Path("/f"))).observations[0].content is None
+        assert (await storage.write(entries=[Entry(path=Path("/f"), content="again")])).success is True
+        stat = (await storage.stat(path=Path("/f"))).observations[0]
+        assert (stat.source, stat.render_status, stat.version) == ("text", None, 3)
+        read = await storage.read(path=Path("/f"), columns=frozenset({"data", "content"}))
+        assert (read.observations[0].content, read.observations[0].data) == ("again", None)
+        assert read.errors == []
+
+    @needs("write", "edit")
+    async def test_edit_refuses_a_binary_and_names_write(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1.4")])).success is True
+        result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="PDF", new="x")])
+        assert result.success is False
+        assert result.errors[0].kind == VFSErrorKind.unsupported
+        assert "write" in result.errors[0].message
+        back = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data"}))
+        assert back.observations[0].data == b"%PDF-1.4"
+
+    @needs("write", "read", "copy", "stat")
+    async def test_copy_carries_the_bytes_and_the_render_state(self, storage: ConformanceBackend) -> None:
+        body = b"\x89PNG\r\n\x1a\n" + bytes(64)
+        assert (await storage.write(entries=[Entry(path=Path("/img/a.png"), data=body)], parents=True)).success
+        copied = await storage.copy(operations=[ResolvedPair(src=Path("/img/a.png"), dest=Path("/img/b.png"))])
+        assert copied.success is True
+        twin = await storage.read(path=Path("/img/b.png"), columns=frozenset({"data", "mime_type"}))
+        assert twin.observations[0].data == body
+        assert twin.observations[0].mime_type == "image/png"
+        stat = (await storage.stat(path=Path("/img/b.png"))).observations[0]
+        assert (stat.source, stat.render_status) == ("bytes", "pending")
+
+    @needs("write", "read", "delete", "restore")
+    async def test_delete_and_restore_keep_the_bytes(self, storage: ConformanceBackend) -> None:
+        body = b"GIF89a" + bytes(32)
+        assert (await storage.write(entries=[Entry(path=Path("/g.gif"), data=body)])).success is True
+        deleted = await storage.delete(path=Path("/g.gif"))
+        assert deleted.success is True
+        restored = await storage.restore(path=Path("/g.gif"))
+        assert restored.success is True
+        back = await storage.read(path=Path("/g.gif"), columns=frozenset({"data"}))
+        assert back.observations[0].data == body
+
+    @needs("write", "ls")
+    async def test_listings_show_the_source_and_render_state_without_bodies(self, storage: ConformanceBackend) -> None:
+        assert (await storage.write(entries=[Entry(path=Path("/d/t.md"), content="t")], parents=True)).success
+        assert (await storage.write(entries=[Entry(path=Path("/d/b.bin"), data=b"\x00")], parents=True)).success
+        listing = await storage.ls(path=Path("/d"))
+        by_name = {row.path.name: row for row in listing.observations}
+        assert (by_name["t.md"].source, by_name["t.md"].render_status) == ("text", None)
+        assert (by_name["b.bin"].source, by_name["b.bin"].render_status) == ("bytes", "pending")
+        assert all(row.data is None and "data" not in row.populated for row in listing.observations)

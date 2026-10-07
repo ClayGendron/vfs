@@ -413,34 +413,33 @@ class TestWriteVsTopologyCoherence:
         assert leftovers == []
         await storage.close()
 
-    async def test_sweep_reclaims_only_aged_orphan_content(self, tmp_path) -> None:
+    async def test_sweep_reclaims_only_aged_orphan_bodies(self, tmp_path) -> None:
+        # Both body tables drain the same way: an aged orphan text row and
+        # an aged orphan blob row go, the young ones stay for a later sweep.
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.first_touch()).success is True
         host = storage._host
         tables = host.tables
-        old_id, young_id = str(ULID()), str(ULID())
+        old_id, young_id, old_blob, young_blob = (str(ULID()) for _ in range(4))
+        aged, fresh = datetime.now(UTC) - timedelta(hours=25), datetime.now(UTC) - timedelta(hours=1)
         async with host.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_writer": True})
-            await conn.execute(
-                insert(tables.content).values(
-                    entry_id=old_id, created_at=datetime.now(UTC) - timedelta(hours=25), content="old orphan"
-                )
-            )
-            await conn.execute(
-                insert(tables.content).values(
-                    entry_id=young_id, created_at=datetime.now(UTC) - timedelta(hours=1), content="young orphan"
-                )
-            )
+            await conn.execute(insert(tables.content).values(entry_id=old_id, created_at=aged, content="old orphan"))
+            await conn.execute(insert(tables.content).values(entry_id=young_id, created_at=fresh, content="young"))
+            await conn.execute(insert(tables.blobs).values(entry_id=old_blob, created_at=aged, data=b"\x00old"))
+            await conn.execute(insert(tables.blobs).values(entry_id=young_blob, created_at=fresh, data=b"\x00new"))
             await session.commit()
         result = await storage.sweep(path=Path("/.vfs/trash"))
         assert result.success is True  # reclaims are warnings, not failures
         warnings = [e for e in result.errors if e.severity == Severity.warning]
-        assert [w.data["entry_id"] for w in warnings if w.data] == [old_id]
-        assert warnings[0].kind == VFSErrorKind.internal
+        assert [w.data["entry_id"] for w in warnings if w.data] == [old_id, old_blob]
+        assert {w.kind for w in warnings} == {VFSErrorKind.internal}
+        assert "vfs_content row" in warnings[0].message and "vfs_blobs row" in warnings[1].message
         async with host.session_factory() as session:
             conn = await session.connection()
-            remaining = {row.entry_id for row in await conn.execute(select(tables.content.c.entry_id))}
-        assert remaining == {young_id}
+            texts = {row.entry_id for row in await conn.execute(select(tables.content.c.entry_id))}
+            blobs = {row.entry_id for row in await conn.execute(select(tables.blobs.c.entry_id))}
+        assert (texts, blobs) == ({young_id}, {young_blob})
         await storage.close()
 
     async def test_a_trash_root_squatter_never_blocks_orphan_reclaim(self, tmp_path) -> None:
@@ -1225,11 +1224,13 @@ class TestWriteVsTopologyCoherence:
         width = len(_CLOBBER_COLUMNS) + 4
         now = datetime.now(UTC)
         owner = "O" * 26
+        # The eight render-state columns ride between the flags and the owner.
+        render = ("text", None, None, None, None, None, None, None)
         full = (
             *(str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4),
-            *(False, False, False, owner, now),
+            *(False, False, False, *render, owner, now),
         )
-        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False, None, now)
+        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False, *render, None, now)
 
         def budget(row: tuple[object, ...]) -> int:
             return statement_budget(

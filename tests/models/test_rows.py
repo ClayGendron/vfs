@@ -23,6 +23,7 @@ from vfs.models.rows import (
     CHUNK_ROW_ONLY_COLUMNS,
     EDGE_ROW_ONLY_COLUMNS,
     ENCODING_DELTA_VARINT,
+    ENTRY_BODY_HOMES,
     ENTRY_CONTENT_FIELDS,
     ENTRY_ROW_ONLY_COLUMNS,
     MAX_PRINCIPAL_ID_LENGTH,
@@ -91,10 +92,12 @@ class TestEntryRowDrift:
         resident = set(Entry.model_fields) - ENTRY_CONTENT_FIELDS
         assert set(tables.entry.c.keys()) == resident | ENTRY_ROW_ONLY_COLUMNS
 
-    def test_content_table_homes_the_body(self, tables: VFSTables) -> None:
-        for field in ENTRY_CONTENT_FIELDS:
+    def test_body_tables_home_the_bodies(self, tables: VFSTables) -> None:
+        assert set(ENTRY_BODY_HOMES) == ENTRY_CONTENT_FIELDS
+        for field, home in ENTRY_BODY_HOMES.items():
             assert field in Entry.model_fields
-            assert field in tables.content.c
+            assert field in getattr(tables, home).c
+            assert field not in tables.entry.c
 
     def test_row_only_columns_never_exist_on_entry(self) -> None:
         assert not ENTRY_ROW_ONLY_COLUMNS & set(Entry.model_fields)
@@ -153,6 +156,7 @@ class TestBuildVFSTables:
         assert set(tables.metadata.tables) == {
             "vfs_entries",
             "vfs_content",
+            "vfs_blobs",
             "vfs_versions",
             "vfs_version_subjects",
             "vfs_chunks",
@@ -237,7 +241,8 @@ class TestBuildVFSTables:
         assert "content" not in tables.entry.c
         assert "version_diff" not in tables.entry.c
         assert list(tables.content.c.keys())[-1] == "content"
-        assert list(tables.versions.c.keys())[-2:] == ["content", "version_diff"]
+        assert list(tables.blobs.c.keys())[-1] == "data"
+        assert list(tables.versions.c.keys())[-3:] == ["content", "version_diff", "data"]
         assert list(tables.chunks.c.keys())[-1] == "content"
 
     def test_dependent_tables_key_on_entry_identity_never_path(self, tables: VFSTables) -> None:

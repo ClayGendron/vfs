@@ -20,13 +20,19 @@ from tests.support.database_helpers import _SqliteError, _url
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
-from vfs.results import VFSErrorKind
+from vfs.results import Severity, VFSErrorKind
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import StaleSnapshot
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.reads import ENTRY_OBSERVATION_FIELDS, _glob_like, ext_membership
+from vfs.storage.backends.database.reads import (
+    ENTRY_OBSERVATION_FIELDS,
+    _glob_like,
+    effective_columns,
+    ext_membership,
+    render_notes,
+)
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -820,3 +826,57 @@ class TestUnicodeAndCollation:
         result = await storage.stat(path=Path("/dir/a.TXT"))
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.not_found
+
+
+# ---------------------------------------------------------------------------
+# Bytes bodies — the data projection and the render notes
+# ---------------------------------------------------------------------------
+
+
+class TestBytesReads:
+    def test_the_bytes_column_is_never_fetched_unless_projected(self) -> None:
+        assert "data" not in effective_columns(None, content=True)
+        assert "content" in effective_columns(None, content=True)
+        assert effective_columns(frozenset({"data"}), content=True) == {"path", "kind", "version", "data"}
+        assert effective_columns(frozenset({"data", "content"}), content=False) == {"path", "kind", "version"}
+
+    def test_render_notes_leave_text_rows_and_rendered_bytes_rows_alone(self) -> None:
+        text = Observation(path=Path("/a.md"), content="x", source="text")
+        rendered = Observation(path=Path("/r.pdf"), content="# r", source="bytes", render_status="ok")
+        rows, notes = render_notes([text, rendered])
+        assert rows == [text, rendered] and notes == []
+
+    def test_render_notes_name_the_pending_the_cut_and_the_failed(self) -> None:
+        pending = Observation(path=Path("/p.pdf"), source="bytes", render_status="pending")
+        cut = Observation(path=Path("/c.xlsx"), content="|a|", source="bytes", render_status="truncated")
+        failed = Observation(path=Path("/f.pdf"), source="bytes", render_status="encrypted")
+        rows, notes = render_notes([pending, cut, failed])
+        assert rows == [pending, cut, failed]
+        assert [(n.kind, n.severity, n.retryable, str(n.path)) for n in notes] == [
+            (VFSErrorKind.unavailable, Severity.warning, True, "/p.pdf"),
+            (VFSErrorKind.truncated, Severity.info, False, "/c.xlsx"),
+            (VFSErrorKind.unsupported, Severity.warning, False, "/f.pdf"),
+        ]
+        assert "awaiting reindex" in notes[0].message and "(encrypted)" in notes[2].message
+
+    def test_render_notes_serve_an_empty_rendering_as_the_empty_string(self) -> None:
+        empty = Observation(path=Path("/scan.pdf"), source="bytes", render_status="empty")
+        rows, notes = render_notes([empty])
+        assert rows[0].content == "" and notes == []
+
+    async def test_reading_a_pending_binary_warns_and_the_projection_fetches_its_bytes(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        body = b"%PDF-1.4\x00"
+        assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=body)])).success is True
+        default = await storage.read(path=Path("/r.pdf"))
+        assert default.success is True
+        [row] = default.observations
+        assert row.content is None and row.data is None
+        assert (row.source, row.render_status) == ("bytes", "pending")
+        assert "data" not in row.populated and "content" in row.populated
+        assert [(e.kind, e.severity) for e in default.errors] == [(VFSErrorKind.unavailable, Severity.warning)]
+        projected = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data", "content_hash"}))
+        [row] = projected.observations
+        assert row.data == body and row.content is None and projected.errors == []
+        assert row.populated == {"path", "kind", "version", "data", "content_hash"}
+        await storage.close()

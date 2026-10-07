@@ -717,3 +717,66 @@ class TestOracleContentBytesAudit:
         # CLOB reaches bytes only through DBMS_LOB conversion in the
         # database charset — a copy, not a reinterpretation; str arm only.
         await _content_bytes_audit("VFS_TEST_ORACLE_URL", None)
+
+
+# ---------------------------------------------------------------------------
+# The bytes body's column, as each engine's catalog reports it
+# ---------------------------------------------------------------------------
+
+
+async def _blob_column(env_var: str, probe: str) -> tuple[object, ...]:
+    """Provision a mount on *env_var*'s server and run *probe* against its catalog."""
+    async with _server_storage(env_var) as storage:
+        assert (await storage.first_touch()).success is True
+        schema = storage._host.tables.blobs.schema
+        assert schema is not None
+        async with storage._host.session_factory() as session:
+            row = (await session.execute(text(probe), {"schema": schema})).one()
+    return tuple(row)
+
+
+@pytest.mark.postgres
+class TestPostgresBlobColumn:
+    async def test_the_body_is_bytea_stored_external(self) -> None:
+        # EXTERNAL: file bytes are pre-compressed, and substring reads a range.
+        kind, storage = await _blob_column(
+            "VFS_TEST_POSTGRES_URL",
+            "SELECT format_type(a.atttypid, a.atttypmod), a.attstorage::text FROM pg_attribute a "
+            "JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = :schema AND c.relname = 'vfs_blobs' AND a.attname = 'data'",
+        )
+        assert (kind, storage) == ("bytea", "e")
+
+
+@pytest.mark.mariadb
+class TestMariaDBBlobColumn:
+    async def test_the_body_is_longblob_not_the_64k_blob(self) -> None:
+        (column_type,) = await _blob_column(
+            "VFS_TEST_MARIADB_URL",
+            "SELECT column_type FROM information_schema.columns "
+            "WHERE table_schema = :schema AND table_name = 'vfs_blobs' AND column_name = 'data'",
+        )
+        assert column_type == "longblob"
+
+
+@pytest.mark.mssql
+class TestMSSQLBlobColumn:
+    async def test_the_body_is_varbinary_max_not_image(self) -> None:
+        data_type, length = await _blob_column(
+            "VFS_TEST_MSSQL_URL",
+            "SELECT data_type, character_maximum_length FROM information_schema.columns "
+            "WHERE table_schema = :schema AND table_name = 'vfs_blobs' AND column_name = 'data'",
+        )
+        assert (data_type, length) == ("varbinary", -1)
+
+
+@pytest.mark.oracle
+class TestOracleBlobColumn:
+    async def test_the_body_is_a_blob(self) -> None:
+        (data_type,) = await _blob_column(
+            "VFS_TEST_ORACLE_URL",
+            # Unquoted identifiers fold to uppercase on Oracle, the schema name included.
+            "SELECT data_type FROM all_tab_columns "
+            "WHERE owner = UPPER(:schema) AND table_name = 'VFS_BLOBS' AND column_name = 'DATA'",
+        )
+        assert data_type == "BLOB"

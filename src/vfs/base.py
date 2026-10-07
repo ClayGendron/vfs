@@ -917,18 +917,20 @@ class VirtualFileSystem:
         *,
         path: str | None = None,
         content: str | None = None,
+        data: bytes | None = None,
         overwrite: bool = True,
         parents: bool = False,
         authority: Authority | None = None,
     ) -> Result:
-        """Write one file (*path* + *content*) or a batch of *entries*.
+        """Write one file (*path* + *content* or *data*) or a batch of *entries*.
 
         Batch entries route by their own paths — grouped per entry,
         rebased, and gated per row before anything dispatches. *entries*
-        and *path*/*content* are mutually exclusive. The single form is
-        sugar: this gate constructs the validated :class:`Entry`, and
-        storage only ever receives entries — raw content never crosses
-        the storage seam.
+        and the single form are mutually exclusive, as are *content* (a
+        text body) and *data* (a bytes body, whose text is a rendering
+        the reindex pass derives). The single form is sugar: this gate
+        constructs the validated :class:`Entry`, and storage only ever
+        receives entries — raw content never crosses the storage seam.
 
         The parent chain must already exist as directories;
         ``parents=True`` mints the missing ancestors, ``mkdir -p`` style,
@@ -939,6 +941,7 @@ class VirtualFileSystem:
             entries=entries,
             path=path,
             content=content,
+            data=data,
             overwrite=overwrite,
             parents=parents,
             authority=authority,
@@ -947,9 +950,9 @@ class VirtualFileSystem:
             return refusal
         if entries is not None:
             return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, authority=authority)
-        if path is None or content is None:
+        if path is None or (content is None and data is None):
             return self._error(
-                "write requires path and content, or entries",
+                "write requires path and content or data, or entries",
                 kind=VFSErrorKind.invalid,
                 op="write",
             )
@@ -957,7 +960,7 @@ class VirtualFileSystem:
         if resolved.path is None:
             return self._invalid_path(resolved, path, "write")
         try:
-            entry = Entry(path=str(resolved.path), content=content)
+            entry = Entry(path=str(resolved.path), content=content, data=data)
         except ValidationError as exc:
             return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="write")
         return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)

@@ -58,6 +58,8 @@ def test_violation_messages_name_the_parameter() -> None:
         "grep case_mode must be one of ['insensitive', 'sensitive', 'smart'], got 'bogus'"
     )
     assert param_violation("run", {"path": "/t", "arguments": 5}) == "run arguments must be a dict, got int"
+    assert param_violation("write", {"path": "/f", "data": "x"}) == "write data must be bytes, got str"
+    assert param_violation("write", {"path": "/f", "data": b"x"}) is None
 
 
 # ----------------------------------------------------------------------
@@ -77,7 +79,10 @@ GARBAGE = [
     ("write-content-only", lambda fs: fs.write(content="x")),
     ("write-path-only", lambda fs: fs.write(path="/f.txt")),
     ("write-non-str-content", lambda fs: fs.write(path="/f.txt", content=7)),
+    ("write-non-bytes-data", lambda fs: fs.write(path="/f.txt", data="x")),
+    ("write-content-and-data", lambda fs: fs.write(path="/f.txt", content="x", data=b"y")),
     ("write-both-forms", lambda fs: fs.write(entries=[], path="/f.txt", content="x")),
+    ("write-entries-and-data", lambda fs: fs.write(entries=[], data=b"y")),
     ("write-truthy-overwrite", lambda fs: fs.write(path="/f.txt", content="x", overwrite="yes")),
     ("write-truthy-parents", lambda fs: fs.write(path="/f.txt", content="x", parents=1)),
     ("edit-partial-pair", lambda fs: fs.edit("/f.txt", old="a")),
