@@ -1,6 +1,8 @@
 # 058. The Access Layer for Agents: the Category, the Namespace as the Mechanism, "Control Plane" Reserved for the Subsystem, and the Layer/Plane Product Split
 
-- **Status:** proposed 2026-08-27 — drafted as the follow-through the
+- **Status:** proposed 2026-08-27; refined by ADR 075 (2026-10-08): the
+  README headline is "Governed data access for AI agents." and the
+  category phrase of pin 1 moves to prose — drafted as the follow-through the
   positioning memo names in its §9 ("a positioning ADR"); **awaiting
   Clay's ratification.** The README rewrite that rides on it landed in
   the same session and stands or falls with it. Companions: ADR 006
