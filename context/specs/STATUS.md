@@ -5,6 +5,41 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **162 cut 2026-10-08 from ADR 074 (accepted)** — trash as a tombstone
+  on the row. Delete sets `deleted_at` and `trash_root_id` in place
+  (one column write per row, chunked; no path rewrite, no posting
+  move); `liveness_filters` gains the term; `restore` clears it; a
+  `write` at a tombstoned path revives the row and mints a version
+  (slice B, the first landing of 161's mint); edges survive; the
+  trash is a view under `/.vfs/trash`; sweep is a `WHERE`. Removes
+  the origin columns and the trashed predicate forms spec 150 §8 built.
+  Memo `research/2026-10-08-trash-as-a-tombstone-on-the-row.md`
+  (measured six row writes per file today; MinIO, JuiceFS, SQLAlchemy
+  and three peers studied).
+- **153–161 drafted 2026-10-08, awaiting Clay's read** — nine specs
+  cut from the SmartOwl workspace-integration memo
+  (`research/2026-10-08-smartowl-workspace-integration-issues.md`),
+  every item of which was re-verified against `06e14b0` the same day.
+  **153** docs tell the truth about v2 (README imports, the
+  `"read_only"` string, the versioning sentence, a Known-limits
+  section). **154** error text states the cause (no mount-local path
+  in `message`, no `allow_scan=True` in a hint). **155** the text
+  renderer for agents (a render budget, `(empty directory)` and
+  `(no matches)`, a trailing `/` on directories, collapsed fan-out
+  errors, rank instead of a `0.0000` score). **156** mount admission
+  closes the namespace holes (the default root seals on first mount,
+  the trash is restore-only, a `..` gate test, `add_mount` refuses a
+  bare node — the memo missed that `glob` through one crashes on
+  `patterns=` vs `pattern=`). **157** Postgres provisioning for host
+  apps (`CREATE SCHEMA IF NOT EXISTS`; bulk insert chosen by driver so
+  a psycopg session factory works). **158** the first v2 release
+  (`0.1.0`; `publish.yml` already builds the manylinux wheels and has
+  never run). **159** render at write time below a budget and a
+  path-scoped reindex. **160** cross-mount copy as read-plus-write for
+  files. **161** (seed) every mutation mints a version row — the undo
+  the README promises; needs a research pass and an ADR first. Each
+  spec carries its own `[NEEDS CLARIFICATION]` markers; pointers in
+  `open-questions.md`.
 - **152 slices A and B built 2026-10-05/06, awaiting Clay's review** —
   binary bodies and text renderings. Slice A (bytes in and out: the
   blobs table, format 19, `Entry.data`, `write(data=…)`, the pending
@@ -44,7 +79,7 @@ lines first; regenerate this file when the picture shifts (review the
   base tuple because `ty` cannot pass a brand to `bisect_left`. From a
   three-perspective review (typing, maintainer, domain) the same day.
   `scripts/ci.sh` not run.
-- **150 drafted 2026-10-02, awaiting Clay's read** — rights at
+- **150 built 2026-10-03 (`f823436`), awaiting Clay's review** — rights at
   scale. The 2026-10-01 review of the permissioning commits (49
   verified findings: one critical, the trash leak; thirteen major)
   and three executed studies the next day showed 058's compile model

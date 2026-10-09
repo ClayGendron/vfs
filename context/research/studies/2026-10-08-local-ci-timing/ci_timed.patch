@@ -1,0 +1,40 @@
+--- scripts/ci.sh	2026-09-11 09:55:16
++++ /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/43b6589b-ef25-4c9d-bb0c-6b349cc75791/scratchpad/ci_timed.sh	2026-10-08 18:40:57
+@@ -13,7 +13,9 @@
+ # Legs run to completion even after a failure (CI sets fail-fast: false);
+ # within a leg, a failing step ends the leg, exactly as CI steps do.
+ set -uo pipefail
+-cd "$(dirname "$0")/.."
++cd "${VFS_REPO:?path to the vfs checkout}"
++TIMINGS=()
++MATRIX_START=$(date +%s)
+ 
+ VERSIONS=("$@")
+ [ ${#VERSIONS[@]} -eq 0 ] && VERSIONS=(3.11 3.12 3.13 3.14)
+@@ -29,8 +31,16 @@
+     local name=$1
+     shift
+     echo -e "\n${BOLD}--- ${name}${RESET}"
+-    "$@" && echo -e "${GREEN}${BOLD}PASS${RESET} ${name}" && return 0
+-    echo -e "${RED}${BOLD}FAIL${RESET} ${name}"
++    local t0=$(date +%s) rc=0
++    "$@" || rc=1
++    local dt=$(( $(date +%s) - t0 ))
++    if [ $rc -eq 0 ]; then
++        echo -e "${GREEN}${BOLD}PASS${RESET} ${name} (${dt}s)"
++        TIMINGS+=("PASS|${name}|${dt}")
++        return 0
++    fi
++    echo -e "${RED}${BOLD}FAIL${RESET} ${name} (${dt}s)"
++    TIMINGS+=("FAIL|${name}|${dt}")
+     leg_status="${name} failed"
+     return 1
+ }
+@@ -89,4 +99,7 @@
+ else
+     echo -e "${RED}${BOLD}RED — fix before committing or pushing.${RESET}"
+ fi
++echo -e "\n${BOLD}=== Timings ===${RESET}"
++for t in "${TIMINGS[@]}"; do echo "TIMING $t"; done
++echo "TIMING TOTAL|matrix|$(( $(date +%s) - MATRIX_START ))"
+ exit "$overall"

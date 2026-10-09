@@ -1,6 +1,7 @@
 # 014. Trash Namespace: Normal-FS Parity, Not a Reserved Scope
 
-- **Status:** accepted
+- **Status:** accepted; amended by ADR 074 (2026-10-08): the trash is a
+  view over tombstoned rows, not a physical subtree.
 - **Date:** 2026-07-18
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay chose normal-fs parity in the 2026-07-18

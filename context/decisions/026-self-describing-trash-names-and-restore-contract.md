@@ -1,6 +1,8 @@
 # 026. Self-Describing Trash Names and the Restore Contract
 
-- **Status:** accepted
+- **Status:** accepted; superseded in part by ADR 074 (2026-10-08): the
+  rejection of option (e) is reversed and the naming rules have no referent
+  (nothing moves). The occupied-site refusal on restore stands.
 - **Date:** 2026-07-23
 - **Deciders:** Clay Gendron
 - **Decided by:** AI-with-approval (five-researcher prior-art pass run

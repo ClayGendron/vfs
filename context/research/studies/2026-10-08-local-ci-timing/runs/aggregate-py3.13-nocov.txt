@@ -1,0 +1,106 @@
+TOTAL measured 243.6s over 5262 tests
+
+BY PHASE
+  call        224.5s 92.1%
+  setup        15.9s  6.5%
+  teardown      3.2s  1.3%
+
+BY DIRECTORY
+     92.7s 38.0%  tests/storage/database
+     63.1s 25.9%  tests/ranking/test_harness.py
+     50.2s 20.6%  tests/storage/test_conformance.py
+      7.3s  3.0%  tests/storage/test_grants.py
+      5.5s  2.2%  tests/base/test_glob_namespace.py
+      5.1s  2.1%  tests/base/test_dispatch.py
+      3.9s  1.6%  tests/pattern_matching/test_matcher_parity.py
+      3.0s  1.2%  tests/base/test_grep_namespace.py
+      2.6s  1.1%  tests/pattern_matching/test_glob.py
+      1.9s  0.8%  tests/test_native.py
+      1.8s  0.8%  tests/base/test_mounts.py
+      1.6s  0.7%  tests/base/test_gates.py
+      0.7s  0.3%  tests/rendering/test_renderers.py
+      0.6s  0.2%  tests/models/test_lexical.py
+      0.5s  0.2%  tests/models/test_code_grams.py
+
+TOP 25 FILES
+     63.1s 25.9%  tests/ranking/test_harness.py
+     50.2s 20.6%  tests/storage/test_conformance.py
+     31.4s 12.9%  tests/storage/database/test_rights.py
+      9.1s  3.7%  tests/storage/database/test_dialects.py
+      7.7s  3.2%  tests/storage/database/test_grep.py
+      7.3s  3.0%  tests/storage/test_grants.py
+      5.9s  2.4%  tests/storage/database/test_indexing.py
+      5.5s  2.2%  tests/base/test_glob_namespace.py
+      5.1s  2.1%  tests/base/test_dispatch.py
+      3.9s  1.6%  tests/pattern_matching/test_matcher_parity.py
+      3.7s  1.5%  tests/storage/database/test_render.py
+      3.6s  1.5%  tests/storage/database/test_reads.py
+      3.4s  1.4%  tests/storage/database/test_offload.py
+      3.0s  1.2%  tests/base/test_grep_namespace.py
+      2.9s  1.2%  tests/storage/database/test_embed.py
+      2.9s  1.2%  tests/storage/database/test_glean.py
+      2.7s  1.1%  tests/storage/database/test_trash.py
+      2.6s  1.1%  tests/pattern_matching/test_glob.py
+      2.3s  0.9%  tests/storage/database/test_coherence.py
+      2.2s  0.9%  tests/storage/database/test_edges.py
+      2.2s  0.9%  tests/storage/database/test_lexical.py
+      2.1s  0.8%  tests/storage/database/test_writes.py
+      1.9s  0.8%  tests/test_native.py
+      1.8s  0.8%  tests/base/test_mounts.py
+      1.8s  0.7%  tests/storage/database/test_sqlite_vec.py
+
+TOP 25 TEST FUNCTIONS (params summed)
+     18.4s  tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_beir
+     10.2s  tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded
+      9.3s  tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir
+      6.4s  tests/storage/database/test_rights.py::test_the_clauses_admit_exactly_what_the_rights_admit
+      4.8s  tests/storage/test_grants.py::test_the_resolver_agrees_with_the_oracle_on_every_path
+      4.5s  tests/storage/database/test_rights.py::test_the_trash_is_judged_by_its_origin_against_the_oracle
+      4.5s  tests/storage/database/test_rights.py::test_glob_names_exactly_the_visible_rows_and_their_road
+      4.4s  tests/storage/database/test_dialects.py::TestMembershipChunking::test_ten_thousand_edge_batch_round_trips
+      4.0s  tests/storage/database/test_rights.py::test_reads_match_the_oracle_while_a_posture_relabel_is_held_midway
+      3.9s  tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+      3.6s  tests/storage/database/test_rights.py::test_every_row_carries_the_oracles_everyone_level_after_every_mutation
+      3.6s  tests/storage/test_conformance.py::TestSqliteConformance::test_anonymous_is_unauthenticated_on_every_verb_of_a_private_mount
+      3.3s  tests/storage/database/test_dialects.py::TestMembershipChunking::test_ten_thousand_entry_batch_round_trips
+      3.0s  tests/storage/database/test_rights.py::test_a_road_row_carries_its_name_and_kind_only
+      2.9s  tests/ranking/test_harness.py::TestDeterminism::test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts
+      2.6s  tests/pattern_matching/test_glob.py::TestTranslateParity::test_exhaustive_class_machinery_fuzz_stays_byte_identical
+      2.5s  tests/storage/test_conformance.py::TestSqliteConformance::test_delete_and_restore_keep_the_bytes
+      2.4s  tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_on_sqlite
+      2.3s  tests/storage/database/test_rights.py::test_the_range_join_admits_exactly_what_the_rights_admit
+      2.3s  tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+      2.2s  tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+      2.2s  tests/ranking/test_harness.py::TestSignalArms::test_the_centrality_prior_reads_the_extracted_links
+      2.1s  tests/storage/database/test_indexing.py::TestReindexLoopResponsiveness::test_the_loop_keeps_ticking_through_every_reindex_hop
+      2.1s  tests/storage/database/test_rights.py::test_without_a_range_source_the_arms_answer_as_the_join_did
+      1.9s  tests/base/test_glob_namespace.py::test_mount_placement_is_invisible_to_patterns
+
+TOP 20 SINGLE TESTS
+     11.0s  tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_beir[scifact]
+      7.4s  tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_beir[nfcorpus]
+      5.2s  tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[hash]
+      5.1s  tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[scifact]
+      4.9s  tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[potion]
+      4.5s  tests/storage/database/test_rights.py::test_glob_names_exactly_the_visible_rows_and_their_road
+      4.4s  tests/storage/database/test_dialects.py::TestMembershipChunking::test_ten_thousand_edge_batch_round_trips
+      4.2s  tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[nfcorpus]
+      4.0s  tests/storage/database/test_rights.py::test_reads_match_the_oracle_while_a_posture_relabel_is_held_midway
+      3.9s  tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+      3.3s  tests/storage/database/test_dialects.py::TestMembershipChunking::test_ten_thousand_entry_batch_round_trips
+      3.0s  tests/storage/database/test_rights.py::test_a_road_row_carries_its_name_and_kind_only
+      2.9s  tests/ranking/test_harness.py::TestDeterminism::test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts
+      2.6s  tests/pattern_matching/test_glob.py::TestTranslateParity::test_exhaustive_class_machinery_fuzz_stays_byte_identical
+      2.5s  tests/storage/test_conformance.py::TestSqliteConformance::test_delete_and_restore_keep_the_bytes
+      2.4s  tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_on_sqlite
+      2.3s  tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+      2.3s  tests/storage/database/test_rights.py::test_the_trash_is_judged_by_its_origin_against_the_oracle[siblings]
+      2.2s  tests/storage/database/test_rights.py::test_the_trash_is_judged_by_its_origin_against_the_oracle[base]
+      2.2s  tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+
+50% of time is in the slowest 49 tests (0.9% of tests)
+
+80% of time is in the slowest 575 tests (10.9% of tests)
+
+90% of time is in the slowest 968 tests (18.4% of tests)
+tests over 1s: 44, over 0.1s: 277

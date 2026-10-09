@@ -327,6 +327,11 @@ finding 5; the race was executed on Oracle and SQL Server.
 
 ### 8. The trash keeps its label
 
+> **2026-10-08:** built as written in `f823436`. ADR 074 (accepted) retires
+> the trashed predicate forms this section added: a tombstoned row keeps its
+> path, so it is judged by origin with one form. Spec 162 removes them. See
+> `../../../research/2026-10-08-trash-as-a-tombstone-on-the-row.md`.
+
 Today a deleted row is reparented under `/.vfs/trash/<bucket>/` and
 judged by that path, which the root posture covers; a private row
 becomes world-readable on delete (review finding 1, critical). With
