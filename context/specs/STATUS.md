@@ -18,6 +18,22 @@ lines first; regenerate this file when the picture shifts (review the
   and three peers studied). The review fixed two tree-tearing cases
   (a non-root restore; a kind-changing revive) and asks Clay to amend
   ADR 074 item 5 to same-kind revive only (spec task 0).
+- **154 built 2026-10-10, awaiting Clay's review** — errors are
+  facts. Rewritten the same day after a design pass with Clay (the
+  2026-10-08 cut stripped the path from 51 messages; this cut removes
+  the class of bug), ADR 076 accepted, then both slices landed at
+  once: `KindContract` gains a `phrase`; `classified` takes no
+  message and composes it from the phrase plus a path-free `detail`
+  (`invalid` and `internal` require one); the raw `ResultError(...)`
+  door is closed outside `results/` and pinned by a grep test;
+  `data["target"]` is `vfs.target`, rebased by both seams and dropped
+  when equal to the locus; the renderer prints locus and target last;
+  the binary edit refuses `wrong_kind`; every hint names no language.
+  109 producer sites and 27 test files migrated; 17 new tests in
+  `tests/results/test_facts.py`. Prior art in
+  `research/2026-10-10-who-composes-the-error-message.md`. Dir
+  renamed `154-errors-are-facts`. See the spec's *Landing notes* for
+  the deviations and the suite's outcome.
 - **153 built 2026-10-10, awaiting Clay's review** — docs tell the
   truth about v2. The README's first block runs under Sybil against
   the live API (a root `conftest.py` now collects `README.md` and the
@@ -35,8 +51,7 @@ lines first; regenerate this file when the picture shifts (review the
   cut from the SmartOwl workspace-integration memo
   (`research/2026-10-08-smartowl-workspace-integration-issues.md`),
   every item of which was re-verified against `06e14b0` the same day.
-  **153** docs tell the truth about v2 (built 2026-10-10, above). **154** error text states the cause (no mount-local path
-  in `message`, no `allow_scan=True` in a hint). **155** the text
+  **153** docs tell the truth about v2 (built 2026-10-10, above). **154** errors are facts (rewritten 2026-10-10, below). **155** the text
   renderer for agents (a render budget, `(empty directory)` and
   `(no matches)`, a trailing `/` on directories, collapsed fan-out
   errors, rank instead of a `0.0000` score). **156** mount admission (a `..` gate test; `add_mount` refuses a

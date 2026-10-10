@@ -74,10 +74,11 @@ class TestResultError:
         assert hop.with_mount("/outer").source == "/outer/data"
         assert hop.without_mount("/data") == err
 
-    def test_is_a_names_the_occupant_kind_article_and_all(self) -> None:
+    def test_wrong_kind_names_the_occupant_kind_as_detail_and_field(self) -> None:
         edge = wrong_kind("edge", Path("/e"))
-        assert (edge.kind, edge.message) == (VFSErrorKind.wrong_kind, "Is an edge: /e")
-        assert wrong_kind("file", Path("/f")).message == "Is a file: /f"
+        assert (edge.kind, edge.message, edge.path) == (VFSErrorKind.wrong_kind, "Wrong kind: edge", "/e")
+        assert edge.data == {"kind": "edge"}
+        assert wrong_kind("file", Path("/f")).message == "Wrong kind: file"
 
 
 # ---------------------------------------------------------------------------

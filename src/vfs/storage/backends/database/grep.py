@@ -73,7 +73,7 @@ from vfs.pattern_matching import (
     compile_verifier,
     expand_channel,
 )
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.membership import membership
@@ -188,19 +188,19 @@ async def grep_rows(
         admissions = expand_channel("globs", globs)
         exclusions = expand_channel("globs_not", globs_not)
     except PatternError as exc:
-        return Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.invalid, message=str(exc))])
+        return Result(ops=("grep",), errors=[classified(VFSErrorKind.invalid, detail=str(exc))])
     try:
         verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
     except PatternError as exc:
-        error = ResultError(kind=VFSErrorKind.invalid, message=f"grep pattern {pattern!r}: {exc}")
+        error = classified(VFSErrorKind.invalid, detail=f"grep pattern {pattern!r}: {exc}")
         return Result(ops=("grep",), errors=[error])
     plan = build_code_gram_query(pattern, fixed_strings=fixed_strings)
     if plan.is_any() and not invert_match and not allow_scan:
-        message = (
+        detail = (
             f"grep pattern {pattern!r} yields no indexable literal; "
-            f"pass allow_scan=True to run the scan tier, or {_REFINE_GUIDANCE}"
+            f"request the scan tier (allow_scan), or {_REFINE_GUIDANCE}"
         )
-        return Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.unindexable_pattern, message=message)])
+        return Result(ops=("grep",), errors=[classified(VFSErrorKind.unindexable_pattern, detail=detail)])
     scan_all = invert_match or plan.is_any()
 
     errors: list[ResultError] = []
@@ -241,7 +241,7 @@ async def grep_rows(
             try:
                 laddered = await _index_doc_ids(session, tables, profile, membership_budget, epoch, plan, allow)
             except PostingCorruptionError as exc:
-                error = ResultError(kind=VFSErrorKind.internal, message=f"grep posting blob is corrupt: {exc}")
+                error = classified(VFSErrorKind.internal, detail=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
             if laddered is None:
                 # The ladder priced above verifying the whole scope: the
@@ -363,8 +363,8 @@ async def grep_rows(
                 truncations.append("wall-time budget")
             break
     for reason in truncations:
-        message = f"grep result truncated at the {reason}; {_REFINE_GUIDANCE}"
-        errors.append(ResultError(kind=VFSErrorKind.truncated, severity=Severity.warning, message=message))
+        detail = f"at the {reason}; {_REFINE_GUIDANCE}"
+        errors.append(classified(VFSErrorKind.truncated, severity=Severity.warning, detail=detail))
     return Result(ops=("grep",), observations=rows, errors=errors)
 
 

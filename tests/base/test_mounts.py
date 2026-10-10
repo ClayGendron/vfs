@@ -554,7 +554,7 @@ async def test_closed_router_answers_backend_unavailable_for_every_verb(call: An
     result = await call(root)
     assert result.success is False
     assert result.errors[0].kind is VFSErrorKind.backend_unavailable
-    assert result.errors[0].message == "Filesystem is closed"
+    assert result.errors[0].message == "Backend unavailable: the filesystem is closed"
 
 
 # ----------------------------------------------------------------------

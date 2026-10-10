@@ -285,7 +285,7 @@ def test_replace_rejects_replace_all_on_a_fuzzy_match() -> None:
     result = replace("def f():\n    return 1", "def f():\n  return 1", "new", replace_all=True)
     assert not result.success
     assert result.error is not None
-    assert "replace_all=True is only allowed with exact matches" in result.error
+    assert "replace_all applies only to exact matches" in result.error
     assert "line_trimmed" in result.error
 
 

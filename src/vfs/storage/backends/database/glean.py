@@ -77,7 +77,7 @@ from vfs.native import extension
 from vfs.paths import Path, normalize_ext_channel
 from vfs.pattern_matching import PatternError, compile_filter, escape_glob, expand_channel
 from vfs.pattern_matching.grep import split_lines
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.results.preview import select_preview
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.distance import cosine_distance
@@ -253,15 +253,15 @@ async def glean_rows(
     ranker = ranker or Ranker()
     terms = list(dict.fromkeys(tokenize(query)))
     if not terms:
-        message = f"glean query {query!r} has no searchable term after folding"
-        return Result(ops=("glean",), errors=[ResultError(kind=VFSErrorKind.invalid, message=message)])
+        detail = f"glean query {query!r} has no searchable term after folding"
+        return Result(ops=("glean",), errors=[classified(VFSErrorKind.invalid, detail=detail)])
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
         admissions = expand_channel("globs", globs)
         exclusions = expand_channel("globs_not", globs_not)
     except PatternError as exc:
-        return Result(ops=("glean",), errors=[ResultError(kind=VFSErrorKind.invalid, message=str(exc))])
+        return Result(ops=("glean",), errors=[classified(VFSErrorKind.invalid, detail=str(exc))])
     entry = tables.entry
     channel = compile_channel(admissions)
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
@@ -393,10 +393,10 @@ async def glean_rows(
         *records,
         *signals.records,
         *(
-            ResultError(
-                kind=VFSErrorKind.truncated,
+            classified(
+                VFSErrorKind.truncated,
                 severity=Severity.warning,
-                message=f"glean result truncated at the {reason}; {REFINE_GUIDANCE}",
+                detail=f"at the {reason}; {REFINE_GUIDANCE}",
                 data=data,
             )
             for reason, data in truncations

@@ -72,7 +72,7 @@ class TestRefusalGate:
         result = await storage.grep(pattern="ab")
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.unindexable_pattern
-        assert "allow_scan=True" in result.errors[0].message
+        assert "allow_scan" in result.errors[0].message and "=True" not in result.errors[0].message
         await storage.close()
 
     async def test_allow_scan_runs_the_refused_pattern_on_the_scan_tier(self, tmp_path) -> None:

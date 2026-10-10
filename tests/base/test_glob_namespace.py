@@ -249,7 +249,7 @@ async def test_exclusion_refusals_share_one_label_across_verbs() -> None:
     grepped = await fs.grep("x", globs_not=("{a",))
     assert globbed.success is False and grepped.success is False
     for result in (globbed, grepped):
-        assert result.errors[0].message.startswith("glob exclusion '{a'"), result.errors[0].message
+        assert result.errors[0].message.startswith("Invalid: glob exclusion '{a'"), result.errors[0].message
 
 
 async def test_brace_defect_refuses_naming_the_manufactured_arm() -> None:

@@ -94,9 +94,15 @@ class ResultError(BaseModel):
     N-occurrence semantics from one source must add a ``data``
     discriminator — distinct facts must differ in some field.
 
-    **No consumer may parse ``message``.** It is non-load-bearing and
-    truncatable; every load-bearing fact must be a structured field.
-    Rebase seams touch ``path``/``source``/``data``, never ``message``.
+    **No consumer may parse ``message``, and no producer authors it.**
+    It is non-load-bearing and truncatable; every load-bearing fact must
+    be a structured field. A ``vfs.*`` error is built only by
+    :func:`classified` and its two conveniences, which compose
+    ``message`` from the kind's contract phrase and a path-free detail;
+    the locus and the second entry (``data["vfs.target"]``) are fields
+    the renderer attaches last. Rebase seams touch ``path``/``source``/
+    ``data``, never ``message`` — which is why a message may never
+    carry a path.
 
     The model is open (``extra='allow'``): fields from a newer peer ride
     through this hop and join value equality. A kind outside this
@@ -112,8 +118,6 @@ class ResultError(BaseModel):
     path: Path | None = None
     source: Path | None = None
     data: dict[str, Any] | None = None
-    # Orthogonal to the kind-derived retry_class: the producing backend's
-    # classifier saw a transient condition — same op, unchanged, may succeed.
     retryable: bool = False
 
     @field_validator("kind", mode="before")
@@ -166,31 +170,41 @@ class ResultError(BaseModel):
         once, never clobbered; ``source`` keeps rebasing, so the row's
         address reconstructs at any depth as ``source + local_path``. A
         ``source`` that itself overflows clamps to *mount* — the seam
-        never raises, and the nearest addressable locus wins.
+        never raises, and the nearest addressable locus wins. The second
+        entry, ``data["vfs.target"]``, rebases by the same rule: an
+        overflowing target is dropped from ``data`` and its local form
+        kept once under ``data["vfs.overflow"]["target"]``.
         """
         mount = Path(mount)
         clamps = self.source is None or rebase_overflows(mount, self.source)
         source = mount if clamps else self.source.with_mount(mount)
         updates: dict[str, Any] = {"source": source}
+        data = dict(self.data or {})
         if self.path is not None:
             if rebase_overflows(mount, self.path):
-                data = dict(self.data or {})
                 if "vfs.overflow" not in data:
-                    local = self.path
-                    if self.source is not None:
-                        try:
-                            local = self.path.without_mount(self.source)
-                        except ValueError:
-                            local = self.path
-                    data["vfs.overflow"] = {"local_path": str(local)}
-                updates |= {"path": None, "data": data}
+                    data["vfs.overflow"] = {"local_path": str(self._local(self.path))}
+                updates["path"] = None
             else:
                 updates["path"] = self.path.with_mount(mount)
+        target = data.get("vfs.target")
+        if target is not None:
+            second = Path(target)
+            if rebase_overflows(mount, second):
+                overflow = dict(data.get("vfs.overflow") or {})
+                overflow.setdefault("target", str(self._local(second)))
+                data["vfs.overflow"] = overflow
+                del data["vfs.target"]
+            else:
+                data["vfs.target"] = str(second.with_mount(mount))
+        if data != (self.data or {}):
+            updates["data"] = data
         return self.model_copy(update=updates)
 
     def without_mount(self, mount: str) -> ResultError:
-        """Frozen copy with the *mount* prefix stripped from ``path`` and
-        ``source`` — the inbound rebase, inverse of :meth:`with_mount`.
+        """Frozen copy with the *mount* prefix stripped from ``path``,
+        ``source`` and the second entry — the inbound rebase, inverse of
+        :meth:`with_mount`.
 
         A ``source`` that strips to ``/`` returns to ``None``: in the
         producer's own frame the error has no upstream hop, so the
@@ -202,40 +216,87 @@ class ResultError(BaseModel):
         if self.source is not None:
             stripped = self.source.without_mount(mount)
             updates["source"] = None if stripped == "/" else stripped
+        data = self.data or {}
+        target = data.get("vfs.target")
+        if target is not None:
+            updates["data"] = {**data, "vfs.target": str(Path(target).without_mount(mount))}
         return self.model_copy(update=updates) if updates else self
+
+    def _local(self, path: Path) -> Path:
+        """*path* in the producing frame — stripped of ``source`` when it has one."""
+        if self.source is None:
+            return path
+        try:
+            return path.without_mount(self.source)
+        except ValueError:
+            return path
+
+
+# Kinds whose cause is never the kind alone: a producer must say what was wrong.
+_DETAIL_REQUIRED = frozenset({VFSErrorKind.invalid, VFSErrorKind.internal})
 
 
 def classified(
     kind: VFSErrorKind,
-    message: str,
     path: Path | None = None,
     *,
     target: Path | None = None,
+    detail: str | None = None,
+    severity: Severity = Severity.error,
     retryable: bool = False,
+    data: Mapping[str, Any] | None = None,
+    source: Path | None = None,
 ) -> ResultError:
-    """One classified error; *target* names the requested row for merge dedup.
+    """The one construction of a ``vfs.*`` error: a kind, a locus and fields — never prose.
 
-    The ``data`` discriminator keeps value-identical failures from distinct
-    batch targets as distinct facts — the envelope's documented contract.
-    *retryable* passes through the producing classifier's transient signal.
+    *source* is for the router alone: a coverage record it mints above
+    the rebase seam stamps its own bind path as provenance, since no seam
+    will run for it. Storage producers leave it ``None``.
+
+    ``message`` is composed here from the kind's contract phrase, then
+    ``: `` and *detail* when one is given. A detail is a path-free phrase
+    for the cause a kind alone cannot carry — a driver's own text, a
+    parameter — and never repeats the phrase or names a Python keyword.
+    *path* is the locus the renderer prints. *target* is the second
+    entry, kept at ``data["vfs.target"]``: rebased with ``path`` by the
+    seams, printed by the renderer, and the discriminator that keeps
+    value-identical failures from distinct batch rows distinct facts; a
+    target equal to the locus is not recorded, since the locus already
+    tells the rows apart.
+    ``invalid`` and ``internal`` require a detail; a producer that omits
+    one has a bug, so the omission raises rather than ships a bare word.
     """
-    data = {"target": str(target)} if target is not None else None
-    return ResultError(kind=kind, message=message, path=path, data=data, retryable=retryable)
+    if detail is None and kind in _DETAIL_REQUIRED:
+        msg = f"{kind} needs a detail: its cause is never the kind alone"
+        raise ValueError(msg)
+    phrase = KIND_CONTRACTS[kind].phrase
+    message = phrase if detail is None else f"{phrase}: {detail}"
+    fields = dict(data) if data else {}
+    if target is not None and target != path:
+        fields["vfs.target"] = str(target)
+    return ResultError(
+        kind=kind,
+        message=message,
+        severity=severity,
+        path=path,
+        source=source,
+        data=fields or None,
+        retryable=retryable,
+    )
 
 
 def already_exists(path: Path, *, target: Path | None = None) -> ResultError:
-    """The one construction of the occupied-site ``exists`` classification.
+    """The occupied-site ``exists`` fact.
 
     *target* attributes the refusal to the caller's requested row when it
     differs from the occupied *path* — a trash-side restore, a batch pair.
     """
-    return classified(VFSErrorKind.exists, f"Already exists: {path}", path, target=target)
+    return classified(VFSErrorKind.exists, path, target=target)
 
 
 def wrong_kind(kind: str, path: Path, *, target: Path | None = None) -> ResultError:
-    """The ``wrong_kind`` classification naming the occupant's actual *kind*, article and all."""
-    article = "an" if kind.startswith(("a", "e", "i", "o", "u")) else "a"
-    return classified(VFSErrorKind.wrong_kind, f"Is {article} {kind}: {path}", path, target=target)
+    """The ``wrong_kind`` fact naming the occupant's actual *kind* as its detail and its field."""
+    return classified(VFSErrorKind.wrong_kind, path, target=target, detail=kind, data={"kind": kind})
 
 
 def validation_message(exc: ValidationError) -> str:
@@ -628,8 +689,8 @@ class Result(BaseModel):
                     ResultError(
                         kind=VFSErrorKind.unaddressable,
                         message=(
-                            f"Path exceeds {MAX_PATH_LENGTH} bytes when rebased under "
-                            f"'{mount}' and cannot be addressed through this mount"
+                            f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
+                            "under this mount and cannot be addressed through it"
                         ),
                         severity=Severity.warning,
                         source=mount,

@@ -624,9 +624,9 @@ class GrantsContract:
         for target, named in cases.items():
             refused = await storage.restore(path=Path(target), authority=ZED)
             assert _kind(refused) == VFSErrorKind.not_found, target
-            assert refused.errors[0].message == f"Not found: {named}" and str(refused.errors[0].path) == named
+            assert refused.errors[0].message == "Not found" and str(refused.errors[0].path) == named
             read = await storage.read(path=Path(target), authority=ZED)
-            assert read.errors[0].message == refused.errors[0].message, target
+            assert (read.errors[0].message, read.errors[0].path) == ("Not found", refused.errors[0].path), target
         # Under an open root the bucket is visible: the hidden row is named
         # exactly as an absent sibling, and a visible folder's miss names the
         # path sent, not what was never trashed.
@@ -634,15 +634,14 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
         hidden = await storage.restore(path=trashed, authority=ZED)
         absent = await storage.restore(path=Path(f"{trashed}-nope"), authority=ZED)
-        assert (
-            hidden.errors[0].message == f"Not found: {trashed}"
-            and absent.errors[0].message == f"Not found: {trashed}-nope"
-        )
-        assert (await storage.restore(path=Path("/hr/other.md"), authority=ZED)).errors[0].message == "Not found: /hr"
+        assert (hidden.errors[0].message, hidden.errors[0].path) == ("Not found", trashed)
+        assert (absent.errors[0].message, absent.errors[0].path) == ("Not found", f"{trashed}-nope")
+        assert (await storage.restore(path=Path("/hr/other.md"), authority=ZED)).errors[0].path == "/hr"
         missed = await storage.restore(path=Path("/pub/nope.md"), authority=ZED)
-        assert _kind(missed) == VFSErrorKind.not_found and missed.errors[0].message == "Not found: /pub/nope.md"
+        assert _kind(missed) == VFSErrorKind.not_found
+        assert (missed.errors[0].message, missed.errors[0].path) == ("Not found", "/pub/nope.md")
         whole = await storage.restore(path=Path("/pub/nope.md"), authority=SYSTEM)
-        assert _kind(whole) == VFSErrorKind.not_found and "No trashed entry" in whole.errors[0].message
+        assert _kind(whole) == VFSErrorKind.not_found and "no trashed entry" in whole.errors[0].message
 
     @needs("grant", "delete", "restore", "move", "stat")
     async def test_a_trash_side_restore_never_names_an_original_parent_the_caller_cannot_see(
@@ -658,9 +657,11 @@ class GrantsContract:
         assert (await storage.stat(path=trashed, authority=ANN)).success is True
         parent = _trash_path(await storage.delete(path=Path("/hr"), authority=SYSTEM))
         refused = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(refused) == VFSErrorKind.not_found and refused.errors[0].message == f"Not found: {trashed}"
+        assert _kind(refused) == VFSErrorKind.not_found
+        assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", trashed)
         whole = await storage.restore(path=trashed, authority=SYSTEM)
-        assert _kind(whole) == VFSErrorKind.invalid and str(parent) in whole.errors[0].message
+        assert _kind(whole) == VFSErrorKind.invalid and str(whole.errors[0].path) == str(parent)
+        assert (whole.errors[0].data or {}).get("vfs.target") == str(trashed)
         # Once she may see /hr — and so its trashed row, judged at that origin — the ladder's own answer stands.
         assert (await storage.grant(path=Path("/hr"), principal="ann", level="read", authority=SYSTEM)).success is True
         seen = await storage.restore(path=trashed, authority=ANN)
@@ -689,7 +690,8 @@ class GrantsContract:
             await storage.move(operations=[ResolvedPair(Path("/eng/box"), Path("/hr/box"))], authority=SYSTEM)
         ).success
         refused = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(refused) == VFSErrorKind.not_found and refused.errors[0].message == "Not found: /hr/box/doc.md"
+        assert _kind(refused) == VFSErrorKind.not_found
+        assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", "/hr/box/doc.md")
         assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
         assert (await storage.restore(path=trashed, authority=SYSTEM)).success is True
 

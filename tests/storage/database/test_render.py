@@ -747,13 +747,17 @@ class TestBounds:
         assert result.success is False
         [error] = result.errors
         assert (error.kind, error.retryable) == (VFSErrorKind.unsupported, False)
-        assert "Body of 9 bytes on the wire exceeds this engine's max_allowed_packet of 8 bytes" in error.message
+        assert (
+            error.message
+            == "Unsupported: a body of 9 bytes on the wire exceeds this engine's max_allowed_packet of 8 bytes"
+        )
+        assert error.path == "/big.bin"
         assert (await storage.write(entries=[Entry(path=Path("/ok.bin"), data=b"abcdefgh")])).success is True
         # Measured as the driver sends it: five NULs are ten bytes on the wire.
         nul = await storage.write(entries=[Entry(path=Path("/nul.bin"), data=bytes(5))])
-        assert nul.success is False and "Body of 10 bytes on the wire" in nul.errors[0].message
+        assert nul.success is False and "a body of 10 bytes on the wire" in nul.errors[0].message
         text = await storage.write(entries=[Entry(path=Path("/t.md"), content="x" * 9)])
-        assert text.success is False and "Body of 9 bytes on the wire" in text.errors[0].message
+        assert text.success is False and "a body of 9 bytes on the wire" in text.errors[0].message
         await storage.close()
 
     async def test_copy_moves_bodies_in_bounded_pages(self, tmp_path, monkeypatch) -> None:

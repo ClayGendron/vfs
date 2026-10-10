@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Protocol, runtime_checkable
 
 from vfs.models.lexical import idf, term_weight, tokenize
-from vfs.results import ResultError, Severity, VFSErrorKind
+from vfs.results import ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.ranking import REFINE_GUIDANCE, SCORE_DECIMALS, min_max
 
 if TYPE_CHECKING:
@@ -221,10 +221,10 @@ async def merge_ranked(
     ordered = order_law(candidates)
     rows = _scaled_rows(ordered)[:limit]
     records = [
-        ResultError(
-            kind=VFSErrorKind.truncated,
+        classified(
+            VFSErrorKind.truncated,
             severity=Severity.warning,
-            message=f"glean fan-out reached the {FANOUT_CAP}-row cap on {mount}; the merge may have lost recall; "
+            detail=f"glean fan-out reached the {FANOUT_CAP}-row cap on one mount; the merge may have lost recall; "
             f"{REFINE_GUIDANCE}",
             data={"mount": str(mount), "cap": FANOUT_CAP},
         )

@@ -208,7 +208,8 @@ class TestDeleteTrash:
         result = await storage.delete(observations=targets)
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
-        assert result.errors[0].message == "Cannot delete /.vfs: contains the active trash chain — sweep reclaims trash"
+        assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
+        assert result.errors[0].path == "/.vfs"
         assert (await storage.stat(path=Path("/y.txt"))).success is True
         assert (await storage.stat(path=Path("/.vfs/trash"))).success is True
         await storage.close()
@@ -224,7 +225,8 @@ class TestDeleteTrash:
         result = await storage.delete(observations=targets)
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
-        assert result.errors[0].message == "Cannot delete /.vfs: contains the active trash chain — sweep reclaims trash"
+        assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
+        assert result.errors[0].path == "/.vfs"
         # The refused batch never commits: the previously-trashed row survives.
         assert (await storage.stat(path=trashed)).success is True
         await storage.close()
@@ -272,7 +274,7 @@ class TestDeleteTrash:
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.wrong_kind
         assert result.errors[0].path == "/.vfs/trash"
-        assert (result.errors[0].data or {}).get("target") == "/x.txt"
+        assert (result.errors[0].data or {}).get("vfs.target") == "/x.txt"
         # The batch never commits: the target survives.
         assert (await storage.stat(path=Path("/x.txt"))).success is True
         await storage.close()
@@ -725,8 +727,8 @@ class TestTrashChainRefusal:
         result = await storage.delete(path=Path("/.vfs/trash"))
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.invalid
-        expected = "Cannot delete /.vfs/trash: contains the active trash chain — sweep reclaims trash"
-        assert result.errors[0].message == expected
+        assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
+        assert result.errors[0].path == "/.vfs/trash"
         assert (await storage.stat(path=deleted.observations[0].trash_path)).success is True
         await _assert_no_cycles_or_orphans(storage)
         await storage.close()

@@ -758,7 +758,7 @@ class StorageContract:
         result = await storage.restore(observations=[Observation(path=first), Observation(path=second)])
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
-        assert {e.data["target"] for e in result.errors if e.data} == {str(first), str(second)}
+        assert {e.data["vfs.target"] for e in result.errors if e.data} == {str(first), str(second)}
 
     @needs("write", "mkdir", "move")
     async def test_move_refusals_onto_one_destination_carry_their_sources(self, storage: ConformanceBackend) -> None:
@@ -769,14 +769,15 @@ class StorageContract:
         result = await storage.move(operations=pairs)
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
-        assert {e.data["target"] for e in result.errors if e.data} == {"/s1", "/s2"}
+        assert {e.data["vfs.target"] for e in result.errors if e.data} == {"/s1", "/s2"}
 
     @needs("move")
     async def test_moving_the_root_carries_its_source_target(self, storage: ConformanceBackend) -> None:
         result = await storage.move(operations=[ResolvedPair(src=Path("/"), dest=Path("/copy"))])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.invalid
-        assert result.errors[0].data == {"target": "/"}
+        assert result.errors[0].path == "/"
+        assert result.errors[0].data == {"vfs.target": "/copy"}
 
     @needs("write", "move")
     async def test_unaddressable_move_carries_its_source_target(self, storage: ConformanceBackend) -> None:
@@ -787,7 +788,7 @@ class StorageContract:
         result = await storage.move(operations=[ResolvedPair(src=Path("/s"), dest=Path("/" + "d" * 30))])
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.unaddressable
-        assert result.errors[0].data == {"target": "/s"}
+        assert result.errors[0].data == {"vfs.target": "/s"}
 
     @needs("write", "delete", "read")
     async def test_restore_onto_an_occupied_site_is_exists(self, storage: ConformanceBackend) -> None:
@@ -1469,7 +1470,7 @@ class StorageContract:
             result = await storage.grep(pattern=pattern)
             assert result.success is False, pattern
             assert result.errors[0].kind == VFSErrorKind.unindexable_pattern
-            assert "allow_scan=True" in result.errors[0].message
+            assert "allow_scan" in result.errors[0].message and "=True" not in result.errors[0].message
             assert result.observations == []
 
     @needs("write", "grep")
@@ -2256,7 +2257,8 @@ class StorageContract:
         )
         assert result.success is False
         assert len(result.errors) == 2
-        assert {(e.data or {}).get("target") for e in result.errors} == {"/dead/x", "/dead/y"}
+        assert {e.path for e in result.errors} == {"/dead"}
+        assert {(e.data or {}).get("vfs.target") for e in result.errors} == {"/dead/x", "/dead/y"}
 
     @needs("mkdir", "move", "stat")
     async def test_move_refuses_a_source_inside_another_moved_source_in_either_order(
@@ -2554,8 +2556,8 @@ class StorageContract:
         assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1.4")])).success is True
         result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="PDF", new="x")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unsupported
-        assert "write" in result.errors[0].message
+        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].message == "Wrong kind: binary body; replace the bytes through write"
         back = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data"}))
         assert back.observations[0].data == b"%PDF-1.4"
 

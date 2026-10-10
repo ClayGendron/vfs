@@ -165,10 +165,7 @@ async def mkedge_rows(
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
-    errors = [
-        classified(VFSErrorKind.not_found, f"Not found: {endpoint}", endpoint)
-        for endpoint in _missing_endpoints(edges, ids)
-    ]
+    errors = [classified(VFSErrorKind.not_found, endpoint) for endpoint in _missing_endpoints(edges, ids)]
     if errors:
         return Result(ops=("mkedge",), errors=errors)
     existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
@@ -238,9 +235,15 @@ async def rmedge_rows(
         source_id, target_id = ids.get(str(edge.source)), ids.get(str(edge.target))
         row_id = existing.get((source_id, target_id, edge.edge_type)) if source_id and target_id else None
         if row_id is None:
-            message = f"No edge: {edge.source} -> {edge.target} ({edge.edge_type})"
             warnings.append(
-                ResultError(kind=VFSErrorKind.not_found, message=message, path=edge.source, severity=Severity.warning)
+                classified(
+                    VFSErrorKind.not_found,
+                    edge.source,
+                    target=edge.target,
+                    severity=Severity.warning,
+                    detail=f"no {edge.edge_type} edge to the target",
+                    data={"edge_type": edge.edge_type},
+                )
             )
             continue
         doomed.add(row_id)
@@ -570,33 +573,33 @@ def _observe_edge(edge: Edge, *, status: Literal["created", "updated", "deleted"
 
 
 def _drift_warning(delta: FsDelta) -> ResultError:
-    message = (
-        f"Reindex repaired the fs mirror for entry {delta.entry_id}: "
+    detail = (
+        f"reindex repaired the fs mirror for entry {delta.entry_id}: "
         f"{len(delta.wrong_row_ids)} wrong row(s), {'1' if delta.missing else '0'} missing"
     )
-    return ResultError(
-        kind=VFSErrorKind.internal,
-        message=message,
+    return classified(
+        VFSErrorKind.internal,
+        detail=detail,
         severity=Severity.warning,
         data={"entry_id": delta.entry_id, "wrong": len(delta.wrong_row_ids), "missing": delta.missing},
     )
 
 
 def _dangling_warning(count: int) -> ResultError:
-    message = f"Reindex reclaimed {count} edge row(s) naming an endpoint with no entry row"
-    return ResultError(
-        kind=VFSErrorKind.internal,
-        message=message,
+    detail = f"reindex reclaimed {count} edge row(s) naming an endpoint with no entry row"
+    return classified(
+        VFSErrorKind.internal,
+        detail=detail,
         severity=Severity.warning,
         data={"dangling": count},
     )
 
 
 def _stray_warning(count: int) -> ResultError:
-    message = f"Reindex reclaimed {count} authored edge row(s) touching trashed entries"
-    return ResultError(
-        kind=VFSErrorKind.internal,
-        message=message,
+    detail = f"reindex reclaimed {count} authored edge row(s) touching trashed entries"
+    return classified(
+        VFSErrorKind.internal,
+        detail=detail,
         severity=Severity.warning,
         data={"strays": count},
     )

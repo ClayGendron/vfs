@@ -87,10 +87,13 @@ def _render_errors(errors: list[ResultError]) -> str:
 
 
 def _error_line(error: ResultError) -> str:
-    """``SEVERITY locus: message — hint (retry: class)`` on one line.
+    """``SEVERITY locus: message (target <second entry>) — hint (retry: class)`` on one line.
 
-    The locus is the implicated ``path``, else ``mount <source>``. Hint and
-    retry directive come from the contract table via ``kind_family``; an
+    The locus is the implicated ``path``, else ``mount <source>``; the
+    second entry, when the fact names one, is ``data["vfs.target"]``.
+    Both are read here, after every rebase, so the line shows the
+    reader's coordinates and never the producer's. Hint and retry
+    directive come from the contract table via ``kind_family``; an
     unknown kind renders bare — no hint is better than a wrong one. A
     rollup entry appends its count. One-line-ness is enforced, not
     assumed: peer-controlled fields (message, unknown severities, rollup
@@ -105,6 +108,9 @@ def _error_line(error: ResultError) -> str:
     else:
         locus = ""
     line = f"{severity}{locus}: {error.message}"
+    target = (error.data or {}).get("vfs.target")
+    if target is not None:
+        line += f" (target {target})"
     family = kind_family(error.kind)
     if family is not None:
         contract = KIND_CONTRACTS[family]

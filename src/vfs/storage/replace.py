@@ -296,9 +296,7 @@ def replace(
         if replace_all and not is_exact:
             return ReplaceResult(
                 success=False,
-                error=(
-                    f"replace_all=True is only allowed with exact matches. Found fuzzy match using '{method}' method."
-                ),
+                error=f"replace_all applies only to exact matches; the match found was fuzzy, by the '{method}' method",
             )
 
         if replace_all and is_exact:

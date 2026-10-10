@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Final
 from sqlalchemy import or_, select
 
 from vfs.paths import METADATA_ROOT, ROOT, Path
-from vfs.results import ResultError, VFSErrorKind, classified
+from vfs.results import ResultError, VFSErrorKind, classified, wrong_kind
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.membership import membership
 
@@ -75,10 +75,10 @@ def classify_miss(target: Path, kinds: Mapping[str, str]) -> ResultError:
     for ancestor in ancestor_chain(target):
         kind = kinds.get(ancestor)
         if kind is None:
-            return classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
+            return classified(VFSErrorKind.not_found, ancestor, target=target)
         if kind != "directory":
-            return classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
-    return classified(VFSErrorKind.not_found, f"Not found: {target}", target, target=target)
+            return wrong_kind(kind, ancestor, target=target)
+    return classified(VFSErrorKind.not_found, target)
 
 
 async def miss_errors(

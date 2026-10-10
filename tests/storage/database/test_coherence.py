@@ -1157,7 +1157,7 @@ class TestWriteVsTopologyCoherence:
         error = result.errors[0]
         assert error.kind == VFSErrorKind.conflict
         assert error.retryable is True
-        assert "First touch kept losing to concurrent changes" in error.message
+        assert "first touch kept losing to concurrent changes" in error.message
         assert "outlived 3 attempts" in error.message
         monkeypatch.undo()
         recovered = await storage.stat(path=Path("/"))
@@ -1287,5 +1287,5 @@ class TestWriteVsTopologyCoherence:
         assert error.kind == VFSErrorKind.conflict
         assert error.retryable is True
         assert "may not adopt" in error.message
-        assert error.data == {"target": "/d/late.txt"}  # distinct refusals stay distinct facts
+        assert error.path == "/d/late.txt"  # distinct refusals stay distinct facts, told apart by their locus
         assert staged.persistence == "insert"  # the ghost was never absorbed

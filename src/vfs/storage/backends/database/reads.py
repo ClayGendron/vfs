@@ -39,7 +39,7 @@ from vfs.pattern_matching import (
     expand_channel,
     passes_row_filters,
 )
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, wrong_kind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_miss,
@@ -297,7 +297,7 @@ async def glob_rows(
         live = expand_channel("pattern", patterns)
         exclusions = expand_channel("globs_not", globs_not)
     except PatternError as exc:
-        return Result(ops=("glob",), errors=[ResultError(kind=VFSErrorKind.invalid, message=str(exc))])
+        return Result(ops=("glob",), errors=[classified(VFSErrorKind.invalid, detail=str(exc))])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = normalize_ext_channel(ext)
@@ -543,16 +543,20 @@ def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[R
             continue
         shown.append(row)
         if status == "pending":
-            message = f"Not rendered yet: {row.path} is a binary awaiting reindex"
+            detail = "the binary awaits a rendering; run reindex"
             kind, severity, retryable = VFSErrorKind.unavailable, Severity.warning, True
         elif status in RENDERED_STATUSES:
-            message = f"Rendering cut short ({status}): {row.path}"
+            detail = f"the rendering was cut short ({status})"
             kind, severity, retryable = VFSErrorKind.truncated, Severity.info, False
         else:
             assert status in FAILURE_STATUSES
-            message = f"No text rendering ({status}): {row.path}"
+            detail = f"no text rendering ({status})"
             kind, severity, retryable = VFSErrorKind.unsupported, Severity.warning, False
-        notes.append(ResultError(kind=kind, message=message, severity=severity, path=row.path, retryable=retryable))
+        notes.append(
+            classified(
+                kind, row.path, severity=severity, retryable=retryable, detail=detail, data={"render_status": status}
+            )
+        )
     return shown, notes
 
 

@@ -777,7 +777,7 @@ class TestArbitration:
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
         assert errors[0].retryable is True
-        assert "Concurrent modification" in errors[0].message
+        assert errors[0].message == "Conflict: concurrent modification"
         await storage.close()
 
     async def test_absorb_row_relocated_before_version_learning_redrives(self, tmp_path) -> None:
@@ -936,7 +936,7 @@ class TestArbitration:
         assert result.success is False
         assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
         assert result.errors[0].retryable is True
-        assert "Concurrent modification" in result.errors[0].message
+        assert result.errors[0].message == "Conflict: concurrent modification"
         assert (await storage.read(path=target)).observations[0].content == "v3"
         await storage.close()
 
@@ -974,7 +974,7 @@ class TestGuardedAttribution:
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
-        assert str(lost.path) in errors[0].message
+        assert errors[0].path == lost.path
         updates = [s for s in double.statements if not isinstance(s, Select)]
         assert len(updates) == 1  # both rows rode one chunk
 
@@ -993,7 +993,7 @@ class TestGuardedAttribution:
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [VFSErrorKind.not_found]
-        assert str(gone.path) in errors[0].message
+        assert errors[0].path == gone.path
 
     async def test_returning_arm_statement_is_a_guarded_values_join(self) -> None:
         tables = build_vfs_tables()
@@ -1102,7 +1102,7 @@ class TestGuardedAttribution:
             after = await session.execute(select(entry.c.path, entry.c.version))
             versions = {m["path"]: m["version"] for m in after.mappings()}
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
-        assert str(stale.path) in errors[0].message
+        assert errors[0].path == stale.path
         # The fresh row applied exactly once; the stale row never moved.
         assert versions["/a.txt"] == rows["/a.txt"]["version"] + 1
         assert versions["/b.txt"] == rows["/b.txt"]["version"]
@@ -1150,7 +1150,7 @@ class TestGuardedAttribution:
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [VFSErrorKind.conflict]
-        assert str(stale.path) in errors[0].message
+        assert errors[0].path == stale.path
         await storage.close()
 
     async def test_unverifiable_guard_classifies_instead_of_guessing(self, tmp_path, monkeypatch) -> None:
@@ -1298,8 +1298,8 @@ class TestBytesBodies:
         assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1")])).success is True
         result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="a", new="b")])
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.unsupported
-        assert "write replaces its bytes" in result.errors[0].message
+        assert result.errors[0].kind is VFSErrorKind.wrong_kind
+        assert result.errors[0].message == "Wrong kind: binary body; replace the bytes through write"
         assert result.errors[0].path == "/r.pdf"
         await storage.close()
 

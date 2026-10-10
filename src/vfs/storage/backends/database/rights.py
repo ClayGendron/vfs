@@ -327,10 +327,7 @@ def posture_refusal(authority: Authority, resolution: Resolution, level: GrantLe
     """``unauthenticated`` when an anonymous call needs more than the mount root gives everyone."""
     if not authority.is_anonymous or LEVEL_RANK[resolution.root_level] >= LEVEL_RANK[level]:
         return None
-    return ResultError(
-        kind=VFSErrorKind.unauthenticated,
-        message="this mount's posture needs a name: open a session, or configure default_authority",
-    )
+    return classified(VFSErrorKind.unauthenticated)
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +499,7 @@ class Visibility:
 
 def denied(path: Path, *, target: Path | None = None) -> ResultError:
     """The ``permission_denied`` refusal for a path the caller can see but may not act on."""
-    return classified(VFSErrorKind.permission_denied, f"Permission denied: {path}", path, target=target)
+    return classified(VFSErrorKind.permission_denied, path, target=target)
 
 
 class WriteGate:
@@ -624,7 +621,7 @@ class WriteGate:
         *named*, the path the caller sent, never the one the row sits at.
         """
         if not self.resolution.read.admits(judged, owner_id, everyone_level):
-            return classified(VFSErrorKind.not_found, f"Not found: {named}", named)
+            return classified(VFSErrorKind.not_found, named)
         if level == "read_write" and not self.resolution.write.admits(judged, owner_id, everyone_level):
             return denied(named)
         return None
@@ -747,11 +744,14 @@ async def revoke_rows(
         ),
     )
     if removed.rowcount == 0:
-        message = f"no grant for {principal} on {path}"
-        return Result(
-            ops=("revoke",),
-            errors=[ResultError(kind=VFSErrorKind.not_found, message=message, severity=Severity.warning)],
+        fact = classified(
+            VFSErrorKind.not_found,
+            path,
+            severity=Severity.warning,
+            detail=f"no grant held by {principal}",
+            data={"principal_id": principal},
         )
+        return Result(ops=("revoke",), errors=[fact])
     await stamp_principals(session, tables, [principal], revision)
     return Result(ops=("revoke",), grants=[{"principal_id": principal, "path_prefix": str(path), "level": None}])
 
@@ -784,7 +784,7 @@ async def list_grants(
     postures = postures_of(GrantRow(r["principal_id"], r["path_prefix"], r["level"]) for r in rows)
     label = label_of(postures, str(path))
     if not gate.resolution.read.reaches(str(path), label):
-        return Result(ops=("grants",), errors=[classified(VFSErrorKind.not_found, f"Not found: {path}", path)])
+        return Result(ops=("grants",), errors=[classified(VFSErrorKind.not_found, path)])
     if not gate.resolution.write.reaches(str(path), label):
         own = await _own_ids(session, tables, profile, membership_budget, authority)
         rows = [row for row in rows if row["principal_id"] in own]
@@ -853,11 +853,11 @@ async def add_member_rows(
     above = await _walk(session, tables, profile, membership_budget, group, upward=True)
     below = await _walk(session, tables, profile, membership_budget, member, upward=False)
     if member == group or member in above.reached:
-        message = f"adding {member} to {group} would make the group nesting cyclic"
-        return Result(ops=("add_member",), errors=[ResultError(kind=VFSErrorKind.authority_budget, message=message)])
+        detail = f"adding {member} to {group} would make the group nesting cyclic"
+        return Result(ops=("add_member",), errors=[classified(VFSErrorKind.authority_budget, detail=detail)])
     if below.depth + 1 + above.depth > MAX_GROUP_DEPTH:
-        message = f"adding {member} to {group} would nest groups deeper than {MAX_GROUP_DEPTH}"
-        return Result(ops=("add_member",), errors=[ResultError(kind=VFSErrorKind.authority_budget, message=message)])
+        detail = f"adding {member} to {group} would nest groups deeper than {MAX_GROUP_DEPTH}"
+        return Result(ops=("add_member",), errors=[classified(VFSErrorKind.authority_budget, detail=detail)])
     memberships = tables.memberships
     exists = await session.execute(
         select(memberships.c.group_id).where(memberships.c.principal_id == member, memberships.c.group_id == group)
@@ -893,11 +893,13 @@ async def remove_member_rows(
         ),
     )
     if removed.rowcount == 0:
-        message = f"{member} is not a direct member of {group}"
-        return Result(
-            ops=("remove_member",),
-            errors=[ResultError(kind=VFSErrorKind.not_found, message=message, severity=Severity.warning)],
+        fact = classified(
+            VFSErrorKind.not_found,
+            severity=Severity.warning,
+            detail=f"{member} is not a direct member of {group}",
+            data={"group_id": group, "principal_id": member},
         )
+        return Result(ops=("remove_member",), errors=[fact])
     await stamp_principals(session, tables, [member], revision)
     return Result(ops=("remove_member",), members=[{"principal_id": member, "group_id": group}])
 
@@ -931,8 +933,8 @@ async def _closures(
             member_of.setdefault(principal, set()).update(groups)
         reached = {group for principal in frontier for group in found.get(principal, ())} - seen
         if reached and depth >= MAX_GROUP_DEPTH:
-            message = f"group nesting deeper than {MAX_GROUP_DEPTH}; the membership rows break their bound"
-            return ResultError(kind=VFSErrorKind.authority_budget, message=message)
+            detail = f"group nesting deeper than {MAX_GROUP_DEPTH}; the membership rows break their bound"
+            return classified(VFSErrorKind.authority_budget, detail=detail)
         depth += 1
         seen |= reached
         frontier = reached
@@ -1139,25 +1141,25 @@ async def _grant_refusal(
     posture rows on its chain, as a creation's does.
     """
     if principal is not None and not _lawful_principal(principal):
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {principal!r} is not a grantable principal id")
+        return classified(VFSErrorKind.invalid, detail=f"{op}: {principal!r} is not a grantable principal id")
     if level not in ("read", "read_write") and principal is not None:
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: level must be 'read' or 'read_write'")
+        return classified(VFSErrorKind.invalid, detail=f"{op}: level must be 'read' or 'read_write'")
     postures = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
     label = label_of(postures, str(path))
     if gate.resolution.write.reaches(str(path), label):
         return None
     if gate.resolution.read.reaches(str(path), label):
         return denied(path)
-    return classified(VFSErrorKind.not_found, f"Not found: {path}", path)
+    return classified(VFSErrorKind.not_found, path)
 
 
 def _membership_refusal(op: str, group: str, member: str, authority: Authority) -> ResultError | None:
     if not authority.is_system:
-        return ResultError(kind=VFSErrorKind.permission_denied, message=f"{op} is reserved to the system actor")
+        return classified(VFSErrorKind.permission_denied, detail=f"{op} is reserved to the system actor")
     if not group.startswith(GROUP_NAME_PREFIX) or len(group) == len(GROUP_NAME_PREFIX) or not _lawful_principal(group):
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: a group id starts with {GROUP_NAME_PREFIX!r}")
+        return classified(VFSErrorKind.invalid, detail=f"{op}: a group id starts with {GROUP_NAME_PREFIX!r}")
     if not _lawful_principal(member):
-        return ResultError(kind=VFSErrorKind.invalid, message=f"{op}: {member!r} cannot be a member")
+        return classified(VFSErrorKind.invalid, detail=f"{op}: {member!r} cannot be a member")
     return None
 
 

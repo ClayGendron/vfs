@@ -41,7 +41,7 @@ from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.paths import Path, is_trash_path
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
@@ -361,7 +361,7 @@ class DatabaseStorage:
         if max_depth is not None and max_depth < 1:
             return Result(
                 ops=("tree",),
-                errors=[ResultError(kind=VFSErrorKind.invalid, message=f"max_depth must be >= 1, got {max_depth}")],
+                errors=[classified(VFSErrorKind.invalid, detail=f"max_depth must be >= 1, got {max_depth}")],
             )
         host = self._host
         return await self._execute(
@@ -535,21 +535,21 @@ class DatabaseStorage:
         """
         provider = self._host.embedder
         if provider is None:
-            note = ResultError(
-                kind=VFSErrorKind.unavailable,
+            note = classified(
+                VFSErrorKind.unavailable,
                 severity=Severity.info,
-                message="no embedding provider is configured; the lexical leg alone answered",
+                detail="no embedding provider is configured; the lexical leg alone answered",
                 data={"leg": "vector", "reason": "no_provider"},
             )
             return None, [note]
         stored = self._host.embedding_identity
         if self._host.embedding_stale and stored is not None:
-            note = ResultError(
-                kind=VFSErrorKind.conflict,
+            note = classified(
+                VFSErrorKind.conflict,
                 severity=Severity.warning,
-                message=(
+                detail=(
                     f"the stored embeddings belong to {stored[0]!r} at {stored[1]} but the mount is configured for "
-                    f"{provider.model_id!r}; the lexical leg alone answered — run reindex to migrate"
+                    f"{provider.model_id!r}; the lexical leg alone answered; run reindex to migrate"
                 ),
                 data={
                     "leg": "vector",
@@ -562,10 +562,10 @@ class DatabaseStorage:
         try:
             embedded = await self._embed_query(provider, query)
         except Exception as exc:  # the provider's failure is an operating condition, never a raise
-            note = ResultError(
-                kind=VFSErrorKind.unavailable,
+            note = classified(
+                VFSErrorKind.unavailable,
                 severity=Severity.warning,
-                message=f"embedding the query failed ({type(exc).__name__}: {exc}); the lexical leg alone answered",
+                detail=f"embedding the query failed ({type(exc).__name__}: {exc}); the lexical leg alone answered",
                 retryable=True,
                 data={"leg": "vector", "reason": "embed_failed", "provider": provider.model_id},
             )
@@ -1105,10 +1105,10 @@ class DatabaseStorage:
         warnings: list[ResultError] = []
         if report.unrendered:
             warnings.append(
-                ResultError(
-                    kind=VFSErrorKind.unavailable,
+                classified(
+                    VFSErrorKind.unavailable,
                     severity=Severity.warning,
-                    message=f"{report.unrendered} binaries are still pending a rendering; run reindex again",
+                    detail=f"{report.unrendered} binaries are still pending a rendering; run reindex again",
                     retryable=True,
                     data=report.as_extra(),
                 )
@@ -1370,10 +1370,10 @@ class DatabaseStorage:
         errors: list[ResultError] = []
         if report.stopped_by is not None:
             errors.append(
-                ResultError(
-                    kind=VFSErrorKind.unavailable,
+                classified(
+                    VFSErrorKind.unavailable,
                     severity=Severity.warning,
-                    message=f"embedding stopped after {report.requests} requests: {report.stopped_by}",
+                    detail=f"embedding stopped after {report.requests} requests: {report.stopped_by}",
                     retryable=True,
                     data={"provider": provider.model_id},
                 )
@@ -1508,8 +1508,8 @@ class DatabaseStorage:
         try:
             return await self._rows(op, fn)
         except StaleSnapshot as exc:
-            message = f"{op} kept losing to concurrent changes: {exc.context}"
-            return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
+            detail = f"{op} kept losing to concurrent changes: {exc.context}"
+            return Result(ops=(op,), errors=[classified(VFSErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
             # SQLAlchemyError, not just DBAPIError: pool exhaustion
             # (TimeoutError) is an operating condition, never a raise.
@@ -1609,7 +1609,7 @@ class DatabaseStorage:
         except StaleSnapshot as exc:
             # Guards kept proving the snapshot stale through every redrive:
             # an honest transient outcome, never a torn commit.
-            message = f"{op} kept losing to concurrent changes: {exc.context}"
-            return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)])
+            detail = f"{op} kept losing to concurrent changes: {exc.context}"
+            return Result(ops=(op,), errors=[classified(VFSErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])

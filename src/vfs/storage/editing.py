@@ -34,12 +34,12 @@ def edited_entry(
     when ``Entry`` — owner of every content invariant — rejects it.
     """
     if kind not in CONTENT_KINDS or content is None:
-        return classified(VFSErrorKind.wrong_kind, f"No editable content: {target}", target)
+        return classified(VFSErrorKind.wrong_kind, target, detail="no editable content", data={"kind": kind})
     outcome = apply_edits(content, edits)
     if not outcome.success or outcome.content is None:
-        return classified(VFSErrorKind.invalid, outcome.error or "edit failed", target)
+        return classified(VFSErrorKind.invalid, target, detail=outcome.error or "the edit did not apply")
     try:
         # Stored kinds wider than ObjectKind (chunk, version) are Entry's to refuse.
         return Entry(path=target, kind=cast("ObjectKind", kind), content=outcome.content)
     except ValidationError as exc:
-        return classified(VFSErrorKind.invalid, validation_message(exc), target)
+        return classified(VFSErrorKind.invalid, target, detail=validation_message(exc))

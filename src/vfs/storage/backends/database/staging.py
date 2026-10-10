@@ -198,8 +198,8 @@ class WritePlan:
         size = wire_bytes(body if isinstance(body, bytes) else body.encode())
         if size <= cap.limit:
             return True
-        message = f"Body of {size} bytes on the wire exceeds this engine's {cap.setting} of {cap.limit} bytes: {path}"
-        self.errors.append(classified(VFSErrorKind.unsupported, message, path, target=path))
+        detail = f"a body of {size} bytes on the wire exceeds this engine's {cap.setting} of {cap.limit} bytes"
+        self.errors.append(classified(VFSErrorKind.unsupported, path, detail=detail))
         return False
 
     def within_budget(self, path: Path) -> bool:
@@ -209,9 +209,8 @@ class WritePlan:
         self.errors.append(
             classified(
                 VFSErrorKind.unaddressable,
-                f"Path exceeds this engine's {self.budget}-byte key budget: {path}",
                 path,
-                target=path,
+                detail=f"the path exceeds this engine's {self.budget}-byte key budget",
             )
         )
         return False
@@ -223,14 +222,10 @@ class WritePlan:
             if kind is None:
                 if parents:
                     return True
-                self.errors.append(
-                    classified(VFSErrorKind.not_found, f"Not found: {ancestor}", ancestor, target=target)
-                )
+                self.errors.append(classified(VFSErrorKind.not_found, ancestor, target=target))
                 return False
             if kind != "directory":
-                self.errors.append(
-                    classified(VFSErrorKind.wrong_kind, f"Not a directory: {ancestor}", ancestor, target=target)
-                )
+                self.errors.append(wrong_kind(kind, ancestor, target=target))
                 return False
         return True
 
@@ -285,7 +280,7 @@ class WritePlan:
         occupant = self.kind_of(target)
         if occupant is not None:
             if occupant != "directory":
-                self.errors.append(classified(VFSErrorKind.wrong_kind, f"Not a directory: {target}", target))
+                self.errors.append(wrong_kind(occupant, target))
                 return None
             return "unchanged"
         if not self.within_budget(target) or not self.parent_gate(target, parents=parents, target=target):

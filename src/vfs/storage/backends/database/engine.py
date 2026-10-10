@@ -55,7 +55,7 @@ from ulid import ULID
 
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
-from vfs.results import ResultError, VFSErrorKind
+from vfs.results import ResultError, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
@@ -269,8 +269,8 @@ class EngineHost:
             try:
                 return await self.with_retry(self._first_touch)
             except StaleSnapshot as exc:
-                message = f"First touch kept losing to concurrent changes: {exc.context}"
-                return ResultError(kind=VFSErrorKind.conflict, message=message, retryable=True)
+                detail = f"first touch kept losing to concurrent changes: {exc.context}"
+                return classified(VFSErrorKind.conflict, retryable=True, detail=detail)
             except (SQLAlchemyError, OSError) as exc:
                 # SQLAlchemyError, not just DBAPIError: pool exhaustion
                 # (TimeoutError) is an operating condition, never a raise.
@@ -321,17 +321,14 @@ class EngineHost:
         except Exception:
             disconnected = False
         if disconnected:
-            return ResultError(
-                kind=VFSErrorKind.backend_unavailable, message=f"{context} failed: {origin}", retryable=True
-            )
+            return classified(VFSErrorKind.backend_unavailable, retryable=True, detail=f"{context} failed: {origin}")
         if is_value_too_large(exc):
             # The engine's own single-value cap, named by the engine: not a vfs ceiling.
-            message = f"{context} exceeded this engine's single-value limit: {origin}"
-            return ResultError(kind=VFSErrorKind.unsupported, message=message, retryable=False)
+            detail = f"{context} exceeded this engine's single-value limit: {origin}"
+            return classified(VFSErrorKind.unsupported, detail=detail)
         if is_permanent_defect(exc):
-            message = f"{context} hit a permanent statement defect: {origin}"
-            return ResultError(kind=VFSErrorKind.internal, message=message, retryable=False)
-        return ResultError(kind=VFSErrorKind.unavailable, message=f"{context} failed: {origin}", retryable=True)
+            return classified(VFSErrorKind.internal, detail=f"{context} hit a permanent statement defect: {origin}")
+        return classified(VFSErrorKind.unavailable, retryable=True, detail=f"{context} failed: {origin}")
 
     async def close(self) -> None:
         """Dispose iff built; every close releases; borrowed connectivity is never touched.
@@ -427,9 +424,9 @@ class EngineHost:
             try:
                 await conn.exec_driver_sql(SQLITE_VEC_PROBE)
             except DBAPIError:
-                return ResultError(
-                    kind=VFSErrorKind.unavailable,
-                    message=(
+                return classified(
+                    VFSErrorKind.unavailable,
+                    detail=(
                         "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
                         "(enable_load_extension is missing); use a Python built with extension loading"
                     ),
@@ -463,11 +460,11 @@ class EngineHost:
             if row is None:
                 # The unique violation was NOT the designed meta race: rows
                 # conflict with provisioning yet no schema-version row exists.
-                outcome: ResultError | None = ResultError(
-                    kind=VFSErrorKind.unavailable,
-                    message=(
-                        "Database is inconsistently provisioned: existing rows conflict with "
-                        "first touch but no schema-version row is present. Repair or re-provision the mount."
+                outcome: ResultError | None = classified(
+                    VFSErrorKind.unavailable,
+                    detail=(
+                        "the database is inconsistently provisioned: existing rows conflict with "
+                        "first touch but no schema-version row is present; repair or re-provision the mount"
                     ),
                 )
             else:
@@ -522,12 +519,13 @@ class EngineHost:
         vector leg declines it per call and ``reindex`` migrates.
         """
         if row.schema_format_version != SCHEMA_FORMAT_VERSION:
-            return ResultError(
-                kind=VFSErrorKind.schema_mismatch,
-                message=(
-                    f"Database schema format is {row.schema_format_version}; this build expects "
-                    f"{SCHEMA_FORMAT_VERSION}. Refusing to serve — upgrade or re-provision the mount."
+            return classified(
+                VFSErrorKind.schema_mismatch,
+                detail=(
+                    f"the database schema format is {row.schema_format_version}; this build expects "
+                    f"{SCHEMA_FORMAT_VERSION}; upgrade or re-provision the mount"
                 ),
+                data={"found": row.schema_format_version, "expected": SCHEMA_FORMAT_VERSION},
             )
         stored = (
             (row.embedding_model, row.embedding_dimension)
@@ -536,9 +534,9 @@ class EngineHost:
         )
         native = self.native_embedding
         if stored is not None and native is not None and stored[1] != native.dimension:
-            return ResultError(
-                kind=VFSErrorKind.invalid,
-                message=(
+            return classified(
+                VFSErrorKind.invalid,
+                detail=(
                     f"the mount's native vector column is {native.dimension} wide but its stored embeddings "
                     f"are {stored[0]!r} at {stored[1]}; re-provision the mount or restore the matching embedder"
                 ),

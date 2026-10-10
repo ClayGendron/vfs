@@ -69,7 +69,7 @@ from vfs.permissions import (
     coerce_permissions,
 )
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
-from vfs.results import Result, ResultError, VFSErrorKind, validation_message
+from vfs.results import Result, ResultError, VFSErrorKind, classified, validation_message
 from vfs.results.kinds import Severity, kind_family
 from vfs.session import Session
 from vfs.storage import (
@@ -952,9 +952,7 @@ class VirtualFileSystem:
             return await self._route_entry_batch(entries, overwrite=overwrite, parents=parents, authority=authority)
         if path is None or (content is None and data is None):
             return self._error(
-                "write requires path and content or data, or entries",
-                kind=VFSErrorKind.invalid,
-                op="write",
+                VFSErrorKind.invalid, op="write", detail="write requires path and content or data, or entries"
             )
         resolved = resolve_path(path, mutation=True)
         if resolved.path is None:
@@ -962,7 +960,7 @@ class VirtualFileSystem:
         try:
             entry = Entry(path=str(resolved.path), content=content, data=data)
         except ValidationError as exc:
-            return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op="write")
+            return self._error(VFSErrorKind.invalid, op="write", detail=validation_message(exc))
         return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)
 
     async def edit(
@@ -1000,9 +998,7 @@ class VirtualFileSystem:
             ops = self._as_list(edits)
             if ops is None or not all(isinstance(e, EditOperation) for e in ops):
                 return self._error(
-                    "edit edits must be an iterable of EditOperation",
-                    kind=VFSErrorKind.invalid,
-                    op="edit",
+                    VFSErrorKind.invalid, op="edit", detail="edit edits must be an iterable of EditOperation"
                 )
             edits = ops
         else:
@@ -1279,7 +1275,7 @@ class VirtualFileSystem:
             arms = expand_channel("pattern", (pattern,))
             globs_not = expand_channel("globs_not", globs_not)
         except PatternError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid, op="glob")
+            return self._error(VFSErrorKind.invalid, op="glob", detail=str(exc))
         if observations is not None:
             if not self._bindings:
                 return self._closed_error("glob")
@@ -1378,7 +1374,7 @@ class VirtualFileSystem:
             globs = expand_channel("globs", globs)
             globs_not = expand_channel("globs_not", globs_not)
         except PatternError as exc:
-            return self._error(str(exc), kind=VFSErrorKind.invalid, op="grep")
+            return self._error(VFSErrorKind.invalid, op="grep", detail=str(exc))
         if observations is not None:
             if not self._bindings:
                 return self._closed_error("grep")
@@ -1740,18 +1736,12 @@ class VirtualFileSystem:
         """Materialize and type-check an observations batch, or refuse it whole."""
         rows = self._as_list(observations)
         if rows is None:
-            return [], self._error(
-                f"observations must be an iterable of Observation, got {type(observations).__name__}",
-                kind=VFSErrorKind.invalid,
-                op=op,
-            )
+            detail = f"observations must be an iterable of Observation, got {type(observations).__name__}"
+            return [], self._error(VFSErrorKind.invalid, op=op, detail=detail)
         for obs in rows:
             if not isinstance(obs, Observation):
-                return [], self._error(
-                    f"observations must be Observation instances, got {type(obs).__name__}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
+                detail = f"observations must be Observation instances, got {type(obs).__name__}"
+                return [], self._error(VFSErrorKind.invalid, op=op, detail=detail)
         return rows, None
 
     async def _glob_rows_in_hand(
@@ -1833,7 +1823,7 @@ class VirtualFileSystem:
                 pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode
             )
         except PatternError as exc:
-            return self._error(f"grep pattern {pattern!r}: {exc}", kind=VFSErrorKind.invalid, op="grep")
+            return self._error(VFSErrorKind.invalid, op="grep", detail=f"grep pattern {pattern!r}: {exc}")
         keep = set(
             filter_candidates([row.path for row in rows], ext=ext, ext_not=ext_not, globs=globs, globs_not=globs_not)
         )
@@ -2341,12 +2331,12 @@ class VirtualFileSystem:
             terminal = self._resolve_terminal(root)
             if "stat" not in terminal.binding.meta.caps:
                 unverifiable.append(
-                    ResultError(
-                        kind=VFSErrorKind.unsupported,
-                        message=f"Root {root} is unverifiable: {terminal.binding.path} does not support stat",
+                    classified(
+                        VFSErrorKind.unsupported,
+                        root,
                         severity=Severity.warning,
-                        path=root,
                         source=terminal.binding.path,
+                        detail="the root is unverifiable: the storage mounted here does not support stat",
                     )
                 )
                 continue
@@ -2465,11 +2455,7 @@ class VirtualFileSystem:
             src_terminal = self._resolve_terminal(src_full)
             dest_terminal = self._resolve_terminal(dest_full)
             if src_terminal.binding.path != dest_terminal.binding.path:
-                return self._error(
-                    f"Cross-mount {op} is not supported: {src_full} and {dest_full} resolve to different mounts",
-                    kind=VFSErrorKind.cross_mount,
-                    op=op,
-                )
+                return self._error(VFSErrorKind.cross_mount, op=op, path=src_full, target=dest_full)
             write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
             err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels)
             if err is not None:
@@ -2520,11 +2506,8 @@ class VirtualFileSystem:
         if batch is not None:
             pairs = self._as_list(batch)
             if pairs is None:
-                return self._error(
-                    f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
+                detail = f"{op} batch must be an iterable of (src, dest) pairs, got {type(batch).__name__}"
+                return self._error(VFSErrorKind.invalid, op=op, detail=detail)
         else:
             assert src is not None and dest is not None
             pairs = [TwoPathOperation(src=src, dest=dest)]
@@ -2533,9 +2516,7 @@ class VirtualFileSystem:
             pair = self._coerce_two_path(item)
             if pair is None:
                 return self._error(
-                    f"{op} pair must be (src, dest) of two strings: {item!r}",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
+                    VFSErrorKind.invalid, op=op, detail=f"{op} pair must be (src, dest) of two strings: {item!r}"
                 )
             operations.append(pair)
         return await self._route_two_path(op, operations, authority=authority)
@@ -2566,22 +2547,16 @@ class VirtualFileSystem:
             return self._closed_error("write")
         rows = self._as_list(entries)
         if rows is None:
-            return self._error(
-                f"write entries must be an iterable of Entry, got {type(entries).__name__}",
-                kind=VFSErrorKind.invalid,
-                op="write",
-            )
+            detail = f"write entries must be an iterable of Entry, got {type(entries).__name__}"
+            return self._error(VFSErrorKind.invalid, op="write", detail=detail)
         if not rows:
             return Result(ops=("write",))
 
         groups: dict[Path, tuple[Binding, list[Entry]]] = {}
         for entry in rows:
             if not isinstance(entry, Entry):
-                return self._error(
-                    f"write entries must be Entry instances, got {type(entry).__name__}",
-                    kind=VFSErrorKind.invalid,
-                    op="write",
-                )
+                detail = f"write entries must be Entry instances, got {type(entry).__name__}"
+                return self._error(VFSErrorKind.invalid, op="write", detail=detail)
             resolved = resolve_path(entry.path, mutation=True)
             if resolved.path is None:
                 return self._invalid_path(resolved, entry.path, "write")
@@ -2634,11 +2609,7 @@ class VirtualFileSystem:
         else:
             listed = self._as_list(edges)
             if listed is None or not all(isinstance(edge, Edge) for edge in listed):
-                return self._error(
-                    f"{op} edges must be an iterable of Edge",
-                    kind=VFSErrorKind.invalid,
-                    op=op,
-                )
+                return self._error(VFSErrorKind.invalid, op=op, detail=f"{op} edges must be an iterable of Edge")
             if not listed:
                 return Result(ops=(op,))
             rows = [(str(e.source), str(e.target), e.edge_type, e.weight, e.distance) for e in listed]
@@ -2655,9 +2626,11 @@ class VirtualFileSystem:
             identity = (src.path, tgt.path, raw_type)
             if identity in seen:
                 return self._error(
-                    f"Duplicate edge identity in batch: {src.path} -> {tgt.path} ({raw_type})",
-                    kind=VFSErrorKind.invalid,
+                    VFSErrorKind.invalid,
                     op=op,
+                    path=src.path,
+                    target=tgt.path,
+                    detail=f"duplicate {raw_type} edge in batch",
                 )
             seen.add(identity)
             src_terminal = self._resolve_terminal(src.path)
@@ -2671,12 +2644,14 @@ class VirtualFileSystem:
                     distance=distance,
                 )
             except ValidationError as exc:
-                return self._error(validation_message(exc), kind=VFSErrorKind.invalid, op=op)
+                return self._error(VFSErrorKind.invalid, op=op, detail=validation_message(exc))
             if src_terminal.binding.path != tgt_terminal.binding.path:
                 return self._error(
-                    f"Cross-mount edges are not supported: {src.path} and {tgt.path} resolve to different mounts",
-                    kind=VFSErrorKind.cross_mount,
+                    VFSErrorKind.cross_mount,
                     op=op,
+                    path=src.path,
+                    target=tgt.path,
+                    detail="the edge's endpoints resolve to different mounts",
                 )
             # An edge write mutates both endpoints' metadata sets, so
             # both endpoint paths must be writable.
@@ -2712,9 +2687,9 @@ class VirtualFileSystem:
             budget = self._hop_budget_default
         if budget <= 0:
             refusal = self._error(
-                f"Hop budget exhausted while routing {op!r} — a mount loop, or a composition deeper than the budget",
-                kind=VFSErrorKind.budget_exhausted,
+                VFSErrorKind.budget_exhausted,
                 op=op,
+                detail=f"the hop budget ran out routing {op!r}: a mount loop, or a composition deeper than the budget",
             )
             return _HopGrant(token=None, refusal=refusal)
         return _HopGrant(token=_hop_budget.set(budget - 1), refusal=None)
@@ -2801,7 +2776,7 @@ class VirtualFileSystem:
         problem = param_violation(op, params)
         if problem is None:
             return None
-        return self._error(problem, kind=VFSErrorKind.invalid, op=op)
+        return self._error(VFSErrorKind.invalid, op=op, detail=problem)
 
     def _gate_entry(
         self,
@@ -2826,10 +2801,10 @@ class VirtualFileSystem:
         """
         if op not in binding.meta.caps:
             return self._error(
-                f"Operation {op!r} is not supported for storage mounted at {binding.path}",
-                kind=VFSErrorKind.unsupported,
+                VFSErrorKind.unsupported,
                 op=op,
                 path=binding.path,
+                detail=f"operation {op!r} is not declared by the storage mounted here",
             )
         for rel in write_rels:
             full = rel.with_mount(binding.path)
@@ -2873,12 +2848,7 @@ class VirtualFileSystem:
         beneath = self._bindings_beneath(full) if subtree else []
         if not at_bind and not beneath:
             return None
-        return self._error(
-            f"{full} is a mount point or contains one — unmount first",
-            kind=VFSErrorKind.busy,
-            op=op,
-            path=full,
-        )
+        return self._error(VFSErrorKind.busy, op=op, path=full, detail="a mount point, or contains one; unmount first")
 
     # -------------------------------------------------------------------
     # the funnel — one seam from op to storage, one seam back out
@@ -3029,10 +2999,7 @@ class VirtualFileSystem:
                     assert_never(op)
         except TransportError as exc:
             return self._error(
-                f"Backend for {binding.path} is unavailable: {exc}",
-                kind=VFSErrorKind.backend_unavailable,
-                op=op,
-                path=ROOT,
+                VFSErrorKind.backend_unavailable, op=op, path=ROOT, detail=f"the transport failed: {exc}"
             )
 
     def _admitted(self, authority: Authority | None) -> Authority:
@@ -3056,12 +3023,7 @@ class VirtualFileSystem:
         Entry-anchored under the funnel's seam invariant (see
         :meth:`_call_storage`): ``path=ROOT`` rebases to the bind path.
         """
-        return self._error(
-            f"Storage backend does not support operation: {op}",
-            kind=VFSErrorKind.unsupported,
-            op=op,
-            path=ROOT,
-        )
+        return self._error(VFSErrorKind.unsupported, op=op, path=ROOT, detail=f"the storage does not implement {op!r}")
 
     def _shadow_filter(self, result: Result, binding: Binding) -> Result:
         """Drop rows a deeper binding shadows — the full-shadow mount rule.
@@ -3117,12 +3079,12 @@ class VirtualFileSystem:
         path is stamped as both anchor (``path``) and provenance
         (``source``) here.
         """
-        return ResultError(
-            kind=VFSErrorKind.unsupported,
-            message=f"Skipped {binding.path}: operation {op!r} is not supported for its storage",
+        return classified(
+            VFSErrorKind.unsupported,
+            binding.path,
             severity=Severity.info,
-            path=binding.path,
             source=binding.path,
+            detail=f"skipped: operation {op!r} is not declared by the storage mounted here",
         )
 
     @staticmethod
@@ -3168,27 +3130,28 @@ class VirtualFileSystem:
 
     def _error(
         self,
-        message: str,
-        *,
         kind: VFSErrorKind,
+        *,
         op: str,
-        severity: Severity = Severity.error,
         path: Path | None = None,
+        target: Path | None = None,
+        detail: str | None = None,
+        severity: Severity = Severity.error,
         data: dict[str, Any] | None = None,
     ) -> Result:
-        """Compose a failed ``Result``.  The router never raises — values in,
-        ``Result`` out; raising is the call boundary's job (``raise_if_failed``).
+        """Compose a failed ``Result`` from a fact.  The router never raises —
+        values in, ``Result`` out; raising is the call boundary's job
+        (``raise_if_failed``).
 
-        Pass the prose *message*, the structured *kind*, and the producing
-        *op* — all required; the router always knows its verb and a failure
-        always reports it.  The verdict is derived from the entries, never
-        stored.  Callers that already hold a shaped ``Result`` should
-        return it directly.
+        Pass the structured *kind* and the producing *op* — the router
+        always knows its verb and a failure always reports it — plus the
+        locus, the second entry and a path-free *detail* as the fact has
+        them; the words come from the contract table.  The verdict is
+        derived from the entries, never stored.  Callers that already hold
+        a shaped ``Result`` should return it directly.
         """
-        return Result(
-            ops=(op,),
-            errors=[ResultError(kind=kind, message=message, severity=severity, path=path, data=data)],
-        )
+        fact = classified(kind, path, target=target, detail=detail, severity=severity, data=data)
+        return Result(ops=(op,), errors=[fact])
 
     def _invalid_path(self, resolved: ResolvedPath, raw: str, op: Op) -> Result:
         """Classify a failed path resolution — the one invalid-path mint.
@@ -3196,12 +3159,10 @@ class VirtualFileSystem:
         Total: called only in the ``resolved.path is None`` branch, so the
         resolve idiom keeps its narrowing; prefers the gate's own prose.
         """
-        return self._error(resolved.error or f"Invalid path: {raw!r}", kind=VFSErrorKind.invalid, op=op)
+        return self._error(
+            VFSErrorKind.invalid, op=op, detail=resolved.error or "the path did not resolve", data={"raw": str(raw)}
+        )
 
     def _closed_error(self, op: Op) -> Result:
         """Classified answer for a dispatch attempted after ``close()``."""
-        return self._error(
-            "Filesystem is closed",
-            kind=VFSErrorKind.backend_unavailable,
-            op=op,
-        )
+        return self._error(VFSErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")

@@ -88,7 +88,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
 from vfs.ops import WRITE_GATED_OPS
 from vfs.paths import ROOT, Path, normalize_path
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import Result, VFSErrorKind, classified
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -305,14 +305,15 @@ def check_writable(
     if resolved.permission == "read_write":
         return None
     full = rel.with_mount(mount_prefix)
-    detail = "mount default" if resolved.rule_prefix is None else f"read-only by mount rule '{resolved.rule_prefix}'"
+    by_rule = resolved.rule_prefix is not None
     return Result(
         ops=(op,),
         errors=[
-            ResultError(
-                kind=VFSErrorKind.read_only,
-                message=f"Cannot write to read-only path '{full}' ({detail})",
-                path=full,
+            classified(
+                VFSErrorKind.read_only,
+                full,
+                detail="by a mount rule" if by_rule else "by the mount default",
+                data={"rule_prefix": resolved.rule_prefix} if by_rule else None,
             )
         ],
     )

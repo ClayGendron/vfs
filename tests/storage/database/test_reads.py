@@ -126,7 +126,8 @@ class TestReadFamily:
         result = await storage.read(path=Path("/docs"))
         assert result.success is False
         assert result.errors[0].kind == VFSErrorKind.wrong_kind
-        assert "Is a directory" in result.errors[0].message
+        assert result.errors[0].message == "Wrong kind: directory"
+        assert result.errors[0].data == {"kind": "directory"}
 
     async def test_read_batch_keeps_good_rows_and_classifies_misses(self, storage: DatabaseStorage) -> None:
         targets = [Observation(path=Path("/docs/a.txt")), Observation(path=Path("/missing.txt"))]
@@ -134,7 +135,8 @@ class TestReadFamily:
         assert result.success is False
         assert [o.path for o in result.observations] == ["/docs/a.txt"]
         assert result.errors[0].kind == VFSErrorKind.not_found
-        assert (result.errors[0].data or {})["target"] == "/missing.txt"
+        assert result.errors[0].path == "/missing.txt"
+        assert result.errors[0].data is None  # the locus already names the row; no second entry
 
     async def test_stat_shapes_and_mask(self, storage: DatabaseStorage) -> None:
         file_row = (await storage.stat(path=Path("/docs/a.txt"))).observations[0]
@@ -166,7 +168,8 @@ class TestReadFamily:
         targets = [Observation(path=Path("/dead/x")), Observation(path=Path("/dead/y"))]
         result = await storage.stat(observations=targets)
         assert len(result.errors) == 2
-        assert {(e.data or {}).get("target") for e in result.errors} == {"/dead/x", "/dead/y"}
+        assert {e.path for e in result.errors} == {"/dead"}
+        assert {(e.data or {}).get("vfs.target") for e in result.errors} == {"/dead/x", "/dead/y"}
 
     async def test_ls_orders_children_by_byte_value(self, storage: DatabaseStorage) -> None:
         result = await storage.ls(path=Path("/docs"))
@@ -857,7 +860,8 @@ class TestBytesReads:
             (VFSErrorKind.truncated, Severity.info, False, "/c.xlsx"),
             (VFSErrorKind.unsupported, Severity.warning, False, "/f.pdf"),
         ]
-        assert "awaiting reindex" in notes[0].message and "(encrypted)" in notes[2].message
+        assert "run reindex" in notes[0].message and "(encrypted)" in notes[2].message
+        assert [n.data for n in notes] == [{"render_status": s} for s in ("pending", "truncated", "encrypted")]
 
     def test_render_notes_serve_an_empty_rendering_as_the_empty_string(self) -> None:
         empty = Observation(path=Path("/scan.pdf"), source="bytes", render_status="empty")

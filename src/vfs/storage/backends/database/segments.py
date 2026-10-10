@@ -34,7 +34,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, select, update
 
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.paths import Path
+from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.membership import locked_lookup, membership
 
@@ -241,23 +242,24 @@ async def repair_segment_drift(
 
 
 def _drift_warning(delta: EntryDelta) -> ResultError:
-    message = (
-        f"Reindex repaired segment postings for entry {delta.entry_id} at {delta.path}: "
+    detail = (
+        f"reindex repaired segment postings for entry {delta.entry_id}: "
         f"{len(delta.missing)} missing, {len(delta.excess)} excess"
     )
-    return ResultError(
-        kind=VFSErrorKind.internal,
-        message=message,
+    return classified(
+        VFSErrorKind.internal,
+        Path(delta.path),
+        detail=detail,
         severity=Severity.warning,
         data={"entry_id": delta.entry_id, "missing": delta.missing, "excess": delta.excess},
     )
 
 
 def _orphan_warning(entry_id: str, held: list[str]) -> ResultError:
-    message = f"Reindex reclaimed {len(held)} orphaned segment posting(s) for entry {entry_id}: no entry row"
-    return ResultError(
-        kind=VFSErrorKind.internal,
-        message=message,
+    detail = f"reindex reclaimed {len(held)} orphaned segment posting(s) for entry {entry_id}: no entry row"
+    return classified(
+        VFSErrorKind.internal,
+        detail=detail,
         severity=Severity.warning,
         data={"entry_id": entry_id, "excess": held},
     )
