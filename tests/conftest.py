@@ -57,7 +57,7 @@ async def _dispose_test_local_storages(monkeypatch: pytest.MonkeyPatch) -> Async
 
 
 # ---------------------------------------------------------------------------
-# Selection: the slow tier and the real-engine legs
+# Selection: the real-engine legs
 # ---------------------------------------------------------------------------
 
 ENGINE_URLS: Final = {
@@ -69,28 +69,20 @@ ENGINE_URLS: Final = {
 """Each engine marker and the URL variables that make its leg runnable."""
 
 
-def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption(
-        "--slow",
-        action="store_true",
-        default=False,
-        help="run the slow tier too: the BEIR gates, the 10k pins, the memory conformance class",
-    )
-
-
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Deselect the slow tier without ``--slow``, and every engine leg whose URL is unset.
+    """Deselect every engine leg whose URL is unset.
 
     Deselection rather than a skip: a skipped engine item still pays its
     fixtures and lands in the summary line, and a local run has nothing to
     report about servers it was never pointed at. The fixture-time skip in
     ``server_storage`` stays as the backstop for a leg selected by hand.
+    The ``slow`` marks stay plain markers: everything runs by default, and
+    ``-m "not slow"`` is the opt-out.
     """
-    slow = config.getoption("--slow")
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
     for item in items:
-        if (not slow and item.get_closest_marker("slow")) or _engine_leg_without_url(item):
+        if _engine_leg_without_url(item):
             deselected.append(item)
         else:
             selected.append(item)

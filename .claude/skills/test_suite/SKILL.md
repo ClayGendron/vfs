@@ -11,7 +11,7 @@ paths are exactly what triggers the CI Tests job.
 
 | Tier | Command | Covers | When |
 | --- | --- | --- | --- |
-| 1 Inner loop | `uv run pytest --tb=short` (+ ruff/ty below) | one Python, sqlite, parallel workers, the default tier | while iterating |
+| 1 Inner loop | `uv run pytest --tb=short` (+ ruff/ty below) | one Python, sqlite, parallel workers, the whole suite | while iterating |
 | 2 CI parity | `scripts/ci.sh` | Python 3.11–3.14, lint, format, types, 100% coverage | before commit/push |
 | 3 Real engines | `db_test` skill | Postgres/MariaDB/MSSQL/Oracle in Docker | database-touching changes |
 
@@ -20,8 +20,8 @@ paths are exactly what triggers the CI Tests job.
 Runs in the project's main `.venv` on the default interpreter:
 
 ```sh
-uv run pytest --tb=short                    # default tier, sqlite, one worker per core
-uv run pytest --slow --tb=short             # plus the slow tier (BEIR gates, 10k pins, memory conformance)
+uv run pytest --tb=short                    # the whole suite, sqlite, one worker per core (~55 s)
+uv run pytest -m "not slow" --tb=short      # leave out the BEIR gates, 10k pins and memory conformance
 uv run pytest tests/pattern_matching/ -q -n 0   # one area, serial: a few files are faster without workers
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
@@ -31,10 +31,11 @@ uv run ty check src/ tests/
 `addopts` carries `-n auto --dist worksteal` (pytest-xdist), so every
 invocation is parallel unless you pass `-n 0`; work-stealing matters here
 because a few tests run ten seconds and the plain scheduler leaves them on
-one worker at the end (78 s against 57 s, measured 2026-10-10). `tests/conftest.py` deselects the `slow` tier
-without `--slow`, and deselects each real-engine leg whose
+one worker at the end (78 s against 57 s, measured 2026-10-10).
+`tests/conftest.py` deselects each real-engine leg whose
 `VFS_TEST_<ENGINE>_URL` is unset, so a local summary line counts only what
-ran. The harness rewrite modes (`VFS_RANKING_REBASELINE`, `VFS_RANKING_REPIN`)
+ran. Everything else runs by default; `slow` is an opt-out marker.
+The harness rewrite modes (`VFS_RANKING_REBASELINE`, `VFS_RANKING_REPIN`)
 refuse to run under workers; pass `-n 0` with them.
 
 Green here is *not* "green in CI": it exercises one Python version, and
@@ -53,7 +54,7 @@ same order, per matrix leg —
 2. `ruff check src/ tests/`
 3. `ruff format --check src/ tests/`
 4. `ty check src/ tests/` — **3.13 leg only**
-5. `pytest --tb=short` — on the **3.13 leg** with `--slow` and
+5. `pytest --tb=short` — on the **3.13 leg** with
    `--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100`;
    the docs fences run separately with `-n 0` (Sybil changes directory
    per page)
@@ -94,8 +95,8 @@ never need Docker.
 
 ## Reading results
 
-- A healthy default run reports **~3650 passed, 0 skipped** in about
-  45 s on a ten-core laptop, and a `--slow` run **~3959 passed**; the engine legs are deselected, not
+- A healthy run reports **~3959 passed, 0 skipped** in about 55 s on a
+  ten-core laptop; the engine legs are deselected, not
   skipped, so they never appear in the count (set a `VFS_TEST_<ENGINE>_URL`
   and they do). A pass-count far below that means collection broke, not
   that the tree got smaller.

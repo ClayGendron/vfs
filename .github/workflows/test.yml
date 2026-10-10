@@ -51,7 +51,7 @@ jobs:
       - name: Tests
         run: >-
           uv run pytest --tb=short
-          ${{ matrix.python-version == '3.13' && '--slow --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100' || '' }}
+          ${{ matrix.python-version == '3.13' && '--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100' || '' }}
 
       - name: Doc examples
         if: matrix.python-version == '3.13'

@@ -7,9 +7,10 @@ lines first; regenerate this file when the picture shifts (review the
 
 - **163 built 2026-10-10, awaiting Clay's review** — the one-minute
   test run. Cut and landed the same day in six commits (2bf0138 …
-  b648082): the default run is **43 s** quiet (was 253 s serial, 101 s
-  at ten workers), 3,650 tests, no skips; the `--slow` coverage leg
-  103 s at 100%; all four real-engine legs green. Work-stealing turned
+  b648082): the whole suite runs in **54–56 s** quiet (was 253 s serial, 101 s
+  at ten workers), 3,959 tests, no skips, no tier: Clay withdrew the
+  `--slow` option the same day since it saved only eleven seconds; the
+  coverage leg 103 s at 100%; all four real-engine legs green. Work-stealing turned
   out to be the missing half of xdist (the memo measured it under load):
   the plain scheduler left the ten-second rights sweeps on one worker at
   the end. Statements per serial run 303k → 181k, cold mounts 1,201 →

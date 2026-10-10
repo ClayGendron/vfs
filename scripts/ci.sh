@@ -57,7 +57,7 @@ run_leg() {
     step "format (py${v})" uv run --no-sync --python "$v" ruff format --check src/ tests/ || return 1
     if [ "$v" = "$COVERAGE_LEG" ]; then
         step "types (py${v})" uv run --no-sync --python "$v" ty check src/ tests/ || return 1
-        step "tests+cov (py${v})" uv run --no-sync --python "$v" pytest --tb=short --slow \
+        step "tests+cov (py${v})" uv run --no-sync --python "$v" pytest --tb=short \
             --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100 || return 1
         step "docs examples (py${v})" uv run --no-sync --python "$v" ruff check conftest.py \
             && uv run --no-sync --python "$v" pytest docs README.md --tb=short -p no:cov -n 0 || return 1

@@ -96,15 +96,16 @@ Consequences that bind design work:
   `ruff format --check`, and format drift has reached `main` twice by
   sessions running only `ruff check`. `src2/` and `tests2/` are excluded
   in `pyproject.toml` — never chase errors there.
-- **`uv run pytest` is the inner loop and it is parallel** (`-n auto --dist worksteal`
-  in `addopts`, pytest-xdist) and runs the default tier: `tests/conftest.py`
-  deselects `slow` tests unless you pass `--slow`, and deselects the
+- **`uv run pytest` is the inner loop, it is parallel, and it runs the
+  whole suite** (`-n auto --dist worksteal` in `addopts`, pytest-xdist;
+  about 55 s on a ten-core laptop). `tests/conftest.py` deselects the
   real-engine legs whose `VFS_TEST_<ENGINE>_URL` is unset. A test that is
   deliberately heavy (a BEIR corpus, a 10k batch, a second backend for a
-  contract already proven on one) is marked `slow`; the 3.13 CI leg runs
-  the tier, so nothing leaves CI, only the inner loop. Never assert on
-  elapsed time, and never skip a test by hand where a marker and this
-  hook can deselect it.
+  contract already proven on one) is marked `slow` so `-m "not slow"` can
+  leave it out while iterating; nothing deselects it by default (Clay,
+  2026-10-10: the tier cost eleven seconds and the goal is one minute).
+  Never assert on elapsed time, and never skip a test by hand where a
+  marker and this hook can deselect it.
 - **Before any commit touching `src/`, `tests/`, `crates/`, or
   `pyproject.toml`, run `scripts/ci.sh 3.13`** (the coverage leg — lint,
   format, types, tests, 100% coverage, pure-Python engine), or the full

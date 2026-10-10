@@ -370,3 +370,12 @@ and is left for Clay. The wall-clock goal does not need it.
 **Still open.** Why per-test CPU inflates under ten workers
 (`open-questions.md`); the MariaDB leg's 48 pooled-connection warnings
 in the hot-row storm test, which predate this spec.
+
+**Amendment, 2026-10-10 (Clay).** Decision D1 is withdrawn: the slow
+tier cost eleven seconds on the landed tree (54–56 s for all 3,959 tests
+against 43 s without), still under the minute, so `--slow` is gone and
+`uv run pytest` runs the whole suite. The `slow` marks stay as plain
+markers, so `-m "not slow"` is the opt-out while iterating. D2 and D3
+are moot for the same reason: the memory conformance class and the 10k
+pins run by default again, beside the 2,500 and 2,000 sized siblings,
+and CI runs exactly what a local run runs.
