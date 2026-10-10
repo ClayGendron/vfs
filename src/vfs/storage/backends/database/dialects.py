@@ -769,9 +769,10 @@ _COPY_PROLOGUE: Final = "SELECT 1"
 # savepoint re-drives key on when a raw driver call raises it.
 _SQLSTATE_INTEGRITY_CLASS: Final = "23"
 
-# Compiled once per (dialect facts, table, key set); bounded by the product
-# of live dialects, mounts and bulk sites, never by rows.
-_BULK_STATEMENTS: dict[tuple[str, str, str, Table, tuple[str, ...]], _BulkStatement] = {}
+# Compiled once per (dialect facts, table shape, key set): the key holds
+# strings only, so no mount's metadata is ever retained by this cache.
+_BulkKey = tuple[str, str, str, str | None, str, tuple[tuple[str, str], ...], tuple[str, ...]]
+_BULK_STATEMENTS: dict[_BulkKey, _BulkStatement] = {}
 
 
 async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mapping[str, object]]) -> None:
@@ -961,7 +962,8 @@ def _driver_code_of(origin: object) -> int | None:
 
 
 def _bulk_statement(dialect: Dialect, table: Table, keys: tuple[str, ...]) -> _BulkStatement:
-    cache_key = (dialect.name, dialect.driver, dialect.paramstyle, table, keys)
+    shape = tuple((column.key, repr(column.type)) for column in table.columns)
+    cache_key = (dialect.name, dialect.driver, dialect.paramstyle, table.schema, table.name, shape, keys)
     cached = _BULK_STATEMENTS.get(cache_key)
     if cached is not None:
         return cached

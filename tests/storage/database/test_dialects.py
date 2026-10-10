@@ -994,3 +994,24 @@ class TestWireBytes:
         assert wire_bytes(b"plain") == 5
         assert wire_bytes(b"\x00\n\r\\'\"\x1a") == 14
         assert wire_bytes(bytes(1024)) == 2048
+
+
+class TestBulkStatementCache:
+    async def test_statements_are_cached_per_shape_and_retain_no_table(self, tmp_path) -> None:
+        # Two mounts of one shape compile each bulk statement once between
+        # them, and the key holds strings only, so a closed mount's metadata
+        # is never pinned by this module.
+        sizes: list[int] = []
+        for name in ("first", "second"):
+            home = tmp_path / name
+            home.mkdir()
+            storage = DatabaseStorage(url=_url(home))
+            try:
+                written = await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
+                assert written.success is True
+            finally:
+                await storage.close()
+            sizes.append(len(dialects._BULK_STATEMENTS))
+        assert sizes[0] == sizes[1]
+        for key in dialects._BULK_STATEMENTS:
+            assert all(isinstance(part, str | tuple | type(None)) for part in key), key

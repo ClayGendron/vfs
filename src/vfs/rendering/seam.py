@@ -281,12 +281,8 @@ class BundledRenderer:
 
     def __init__(self) -> None:
         self._library = self.load()
-        # The version is read once: dist-info metadata costs a file read per lookup.
-        self._version = (
-            None
-            if self._library is None
-            else f"{self.revision}+{self.distribution}-{importlib.metadata.version(self.distribution)}"
-        )
+        version = None if self._library is None else _distribution_version(self.distribution)
+        self._version = None if version is None else f"{self.revision}+{self.distribution}-{version}"
 
     def load(self) -> Any | None:
         """Resolve the parser library; a test may override this to stage its absence."""
@@ -305,3 +301,14 @@ class BundledRenderer:
     @property
     def version(self) -> str | None:
         return self._version
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+@cache
+def _distribution_version(distribution: str) -> str:
+    """The installed version of *distribution*, read once per process: dist-info is a file read per lookup."""
+    return importlib.metadata.version(distribution)

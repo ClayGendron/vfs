@@ -31,6 +31,7 @@ from vfs.models.rows import (
     MODEL_FIELD_ONLY,
     MODEL_OWNER_FIELDS,
     SCHEMA_FORMAT_VERSION,
+    TABLE_FAMILY_CACHE,
     ULID_LENGTH,
     VERSION_ROW_ONLY_COLUMNS,
     BytewiseString,
@@ -179,8 +180,8 @@ class TestBuildVFSTables:
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
 
-    def test_mounts_never_share_schema_objects(self, tables: VFSTables) -> None:
-        other = build_vfs_tables()
+    def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:
+        other = build_vfs_tables(schema="tenant")
         assert other.metadata is not tables.metadata
         assert other.entry is not tables.entry
 
@@ -605,3 +606,20 @@ class TestDDL:
             conn.execute(
                 insert(tables.entry), [_entries_row(clone, entry_id="1" * ULID_LENGTH, parent_id=shared_parent)]
             )
+
+
+class TestFamilySharing:
+    def test_mounts_of_one_shape_share_one_family(self) -> None:
+        # The family is immutable after construction and carries no engine
+        # binding, so a second mount of the same shape gets the same objects.
+        assert build_vfs_tables() is build_vfs_tables()
+        assert build_vfs_tables(schema="tenant") is build_vfs_tables(schema="tenant")
+        assert build_vfs_tables(schema="tenant") is not build_vfs_tables()
+        native = NativeEmbeddingConfig(dimension=8)
+        assert build_vfs_tables(native_embedding=native) is build_vfs_tables(native_embedding=native)
+        assert build_vfs_tables(native_embedding=native) is not build_vfs_tables()
+
+    def test_the_family_cache_is_bounded(self) -> None:
+        # A host placing thousands of tenants in their own schemas must not
+        # hold every family forever; cold shapes rebuild.
+        assert build_vfs_tables.cache_info().maxsize == TABLE_FAMILY_CACHE

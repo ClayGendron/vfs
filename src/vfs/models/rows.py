@@ -34,6 +34,7 @@ nicety.
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, NamedTuple
 
 from sqlalchemy import (
@@ -154,6 +155,9 @@ PGVECTOR_INDEX_MAX_DIMENSION: Final = 2_000
 # Auto-named indexes take the bare table name: SQLAlchemy's default folds
 # the schema in, so a long schema would push them past identifier caps.
 _NAMING_CONVENTION: Final = {"ix": "ix_%(table_name)s_%(column_0_name)s"}
+
+# Table families cached by shape: hot tenants stay resident, cold ones rebuild.
+TABLE_FAMILY_CACHE: Final = 64
 
 # Posting-list encoding tag. v1 writes ``delta+varint`` only; the per-row tag
 # lets the format evolve per gram without a migration (``roaring`` is the
@@ -361,20 +365,26 @@ class VFSTables(NamedTuple):
         return (self.posting_list, self.lex_docs, self.lex_postings, self.lex_df, self.lex_stats, self.gram_epochs)
 
 
+@functools.lru_cache(maxsize=TABLE_FAMILY_CACHE)
 def build_vfs_tables(
     *,
     schema: str | None = None,
     native_embedding: NativeEmbeddingConfig | None = None,
 ) -> VFSTables:
-    """Build one mount's table family in memory.
+    """Build one mount's table family in memory, once per shape.
 
     Constructs the schema objects only; issues no DDL. Every table binds to
-    one fresh :class:`MetaData` so a single ``create_all`` provisions them.
+    one :class:`MetaData` so a single ``create_all`` provisions them.
     Integer PKs that feed posting-list ``doc_id`` values are SQLite
     ``AUTOINCREMENT`` so a deleted top rowid is never reused.
 
     The names are fixed — every table is ``vfs_*`` — so one schema holds one
     mount; *schema* is what places a mount, on engines that have schemas.
+    The family is immutable after construction and carries no engine
+    binding, so mounts of one shape share it: the cache is keyed by
+    *schema* and *native_embedding*, and bounded so a host that places
+    thousands of tenants in their own schemas rebuilds cold ones (a few
+    milliseconds) rather than holding every family forever.
     """
     metadata = MetaData(naming_convention=_NAMING_CONVENTION)
 

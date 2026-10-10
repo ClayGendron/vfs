@@ -20,6 +20,7 @@ from vfs.rendering import (
     units_from_json,
     units_to_json,
 )
+from vfs.rendering import seam as seam_module
 from vfs.rendering.pdf import PdfRenderer
 from vfs.rendering.seam import RENDER_RATIO, bounded_detail, failure, failure_from, load_library, sanitize, settle
 
@@ -145,7 +146,9 @@ class TestSettling:
 
 
 class TestVersionCaching:
-    def test_the_library_version_is_read_once_at_construction(self, monkeypatch) -> None:
+    def test_the_library_version_is_read_once_per_process(self, monkeypatch) -> None:
+        # Dist-info is a file read per lookup; every renderer instance of a
+        # distribution shares the one read, however many registries are built.
         calls: list[str] = []
         real = importlib.metadata.version
 
@@ -154,7 +157,9 @@ class TestVersionCaching:
             return real(name)
 
         monkeypatch.setattr(importlib.metadata, "version", counting)
-        renderer = PdfRenderer()
-        for _ in range(5):
-            assert renderer.version is not None
+        seam_module._distribution_version.cache_clear()
+        renderers = [PdfRenderer() for _ in range(3)]
+        for renderer in renderers:
+            for _ in range(5):
+                assert renderer.version is not None
         assert calls == ["pypdf"]
