@@ -58,8 +58,8 @@ Limitations
 -----------
 
 **Permissions are per-filesystem-instance, not per-storage.**  The
-permission map lives on a ``DatabaseFileSystem`` instance, not on the
-SQL engine or schema it points at.  Two ``DatabaseFileSystem``
+permission map lives on a ``VirtualFileSystem`` instance, not on the
+SQL engine or schema it points at.  Two ``VirtualFileSystem``
 instances that share the same underlying engine (or the same schema in
 the same engine) are independent from the permission system's point of
 view.  If one is constructed with ``permissions="read"`` and another
@@ -78,7 +78,7 @@ underlying block device can still write bytes.  VFS treats the SQL
 engine as that block device.  If you need hard isolation between a
 read-only view and a writable view of the same data, use separate
 engines (or separate schemas within one engine) — not two
-``DatabaseFileSystem`` instances sharing one.
+``VirtualFileSystem`` instances sharing one.
 """
 
 from __future__ import annotations

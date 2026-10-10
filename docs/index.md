@@ -1,177 +1,91 @@
-# vfs
+# VFS: Agentic Search on your Database
 
-**The virtual file system for agents.** `vfs` gives applications and agent loops one path-based interface for CRUD, search, graph traversal, and composable CLI-style queries.
+Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.
 
-!!! warning "Alpha"
-    `vfs` is still in alpha. Expect API changes while the core filesystem, query engine, and native database backends settle.
+VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and identifying what well established patterns of computer science can we applied towards making great AI agents. The beliefs below capture an opinionated understanding of what LLMs and AI agents are and how they work and create a high level framework of how to build with them.
 
-The docs site is published on GitHub Pages at `https://claygendron.github.io/vfs/`.
+## 1. Building AI Agents is a Data Engineering Problem
 
-## Install
+LLMs will continue to gain intelligence
 
-```bash
-pip install vfs-py
-```
+Intelligence cannot replace knowledge. An LLM is trained as a predictive model, and like any predictive model, it predicts on its inputs — what a classical model does with features, an LLM does with context. Everything left out of the context window, the model must reconstruct from what it internalized during training: knowledge frozen at a cutoff, impossible to verify at inference time, and blind to your systems. Modern models reconstruct impressively well, but the context window is the only input you control.
 
-Requires Python 3.11+.
+The weights are like a memory: something real is encoded there, but recalling is not reading. A memory cannot be swapped out, curated, or checked against its source; a page open on the desk can be all three.
 
-## Quick Start
+This is why so many failures blamed on a model's intelligence are really failures of supply. Ask about your codebase, your customers, or a decision made yesterday — facts no training run ever saw — and the model has nothing to consult. It can only produce its best statistical estimate, and we call the wrong ones hallucinations. Context is not sufficient (models can misread what they are given), but it is necessary. The model was starved, not stupid.
 
-```python
-from sqlalchemy.ext.asyncio import create_async_engine
+When most of the world met LLMs through the first chat products in late 2022, those products exposed no tools — no search, no files. The value on display was the weights themselves, a lossy compression of much of the public web, and prompt engineering matured into the craft of steering what the model rendered from them.
 
-from vfs import VFSClient
-from vfs.backends import DatabaseFileSystem, PostgresFileSystem
+But a model treated this way — as an oracle to be prompted — has two hard limits. Its default answer is the consensus answer, because training makes the generic response the path of least resistance. And the knowledge that makes work valuable — private, recent, fast-changing — is exactly what weights hold worst: it can be fine-tuned in, but slowly, expensively, and stale on arrival.
 
-workspace_engine = create_async_engine("sqlite+aiosqlite:///workspace.db")
-docs_engine = create_async_engine("postgresql+asyncpg://localhost/vfs_docs")
+Context engineering is deciding what information the model reasons over. Prompt engineering is directing how the model uses it. Both are essential to the modern stack, and only one of them is a data problem.
 
-g = VFSClient()
-g.add_mount("workspace", DatabaseFileSystem(engine=workspace_engine))
-g.add_mount("docs", PostgresFileSystem(engine=docs_engine))
+It is a data problem with a familiar shape. Organizations have spent two decades building engineering, governance, and operational discipline around data for human consumers — analysts, dashboards, applications. Agents consume data differently: they search it, iteratively and mid-task, pulling what they need into context themselves. Products bolt retrieval onto agents today, but no standard layer of the data ecosystem is engineered for an agent's read loop the way the warehouse was engineered for an analyst's query. VFS is built to be that layer.
 
-g.write("/workspace/auth.py", "def login(user):\n    return user\n")
-g.write("/docs/notes.md", "# Auth notes\n\nLogin is implemented in auth.py.\n")
-g.mkedge("/docs/notes.md", "/workspace/auth.py", "references")
+## 2. LLMs Output Two Things, Human Consumable Content and Code
 
-matches = g.grep("login", paths=("/workspace", "/docs"))
-ranked = g.pagerank(candidates=matches | g.neighborhood(candidates=matches))
-print(ranked.top(10).to_str())
+## 3. File Systems Create Environments for AI Agents
 
-print(g.cli('grep "login" | nbr | pagerank | top 10'))
+Every blog or tutorial about AI agents will describe the simplest form of them as something like the following.
 
-g.close()
-```
+> *"An AI agent is an LLM that operates in a loop by using tools to interact with an environment."*
 
-`VFSClientAsync` exposes the same API without the sync wrapper. It is the preferred facade for application servers and long-running agent processes.
+This definition is fair, but the term **environment** is the least understood term in this phrase — and often not considered at all. Developers, and people generally, think about agents as an LLM with tools, not an LLM in an environment — but Claude Code has demonstrated to us all what an LLM is capable of doing inside the well-defined environment of a computer terminal. 
 
-## Core Ideas
+But what is it about a computer terminal that makes it a good environment for an LLM? There are two main reasons.
 
-- **Everything is addressed by path.** User content lives in ordinary paths like `/workspace/auth.py`.
-- **Metadata is explicit.** Chunks, versions, and edges live under canonical `/.vfs/.../__meta__/...` paths instead of being hidden behind side channels.
-- **Results compose.** Every operation returns a `VFSResult`, so grep output can be piped into graph traversal, ranking, or further filtering without reshaping the data.
-- **Mounts are first-class.** One client can route across multiple mounted filesystems and rebase paths automatically.
+One, the terminal is a text-in, text-out environment, or a command line interface. Because software development tasks, and many others, can be done completely through a computer terminal, AI labs are able to continually run reinforcement learning loops in a nice environment that provides feedback and rewards that train the LLM. This means that out of the box, LLMs know how to use a CLI as a tool to get work done.
 
-## Metadata Namespace
+Two, the terminal is directly integrated with a computer's file system, and critically, **everything in a computer is a file**. Agents can use the file system to search a computer, find anything they need, and then perform the actions required to complete a task. File systems allow for this navigation because they define a **namespace**, and the namespace arguably provides as much contextual information to the LLM as the content of the files. For example, the next time you do a Google search, imagine having to select a link without knowing which website it goes to. Knowing the source of information, and how it relates to other sources of information, is critical.
 
-`vfs` reserves `/.vfs/<endpoint>/__meta__/...` for metadata paths:
+Now lets re-write the agent defintion to make it specific to a coding agent:
 
-```text
-/
-├── workspace/
-│   └── auth.py
-└── .vfs/
-    └── workspace/
-        └── auth.py/
-            └── __meta__/
-                ├── chunks/
-                │   └── login
-                ├── versions/
-                │   └── 3
-                └── edges/
-                    └── out/
-                        └── references/
-                            └── docs/notes.md
-```
+> *"An AI **coding** agent is an LLM that operates in a loop by using a **terminal** to interact with a **file system**."*
 
-Helper functions in `vfs.paths` build and decode these paths:
+This framing helps explain why coding agents generally perform better than other types of AI agents. Instead of having dozens, or hundreds, of tools, coding agents have a small set of tools with a text-based interface for composing commands. Instead of having a poorly defined environment to work in, coding agents have a well-defined and structured namespace where they can navigate, perform actions, and get feedback.
 
-```python
-from vfs.paths import chunk_path, decompose_edge, edge_out_path, version_path
+This is why VFS adopts the file system as its core abstraction. File systems produce environments well-suited for LLMs to act as agents.
 
-chunk_path("/workspace/auth.py", "login")
-version_path("/workspace/auth.py", 3)
-edge = edge_out_path("/workspace/auth.py", "/docs/notes.md", "references")
+## 4. Knowledge and Capabilities are Distributed
 
-parts = decompose_edge(edge)
-assert parts.source == "/workspace/auth.py"
-assert parts.target == "/docs/notes.md"
-assert parts.edge_type == "references"
-```
+## 5. Agentic Search has Four Verbs
 
-## Backends
+Agentic search is autonomous knowledge retervial where an LLM is identfying the intent of a task, planning a multi-step retrieval strategy, executing searches, evaluating results, and then applying that knowledge to copmlete the task. Agentic search is seperate and different from RAG (retrival augmented generation) with RAG being a non-autonomous search where knowledge is injected into context without action by an LLM.
 
-`vfs` currently ships three database-backed filesystems:
+What does not exist today is a framework for developers to use for the data engineering and tool building required to make the agentic search process effective. Some have argued that agentic search is solved by using the `glob` and `grep` commands within a Unix terminal, but this falls short in the following areas.
 
-- `DatabaseFileSystem` is the portable SQL baseline. It stores files, directories, chunks, versions, and edges in one `vfs_entries` table.
-- `PostgresFileSystem` keeps the same public API but pushes grep, glob, lexical search, and native vector search into PostgreSQL when the schema supports it. Its lexical path is native PostgreSQL FTS: a stored `search_tsv` column plus partial `GIN` index handle recall, and `ts_rank_cd(search_tsv, q, 1|32)` handles ranking in one SQL query. Its pattern path uses `text_pattern_ops` and `pg_trgm` indexes for sound narrowing, then applies the authoritative final glob/grep match in Python so valid patterns keep the same semantics.
-- `MSSQLFileSystem` provides the same API for SQL Server and Azure SQL with native full-text and regex pushdown. Its lexical path is a single `FREETEXTTABLE` query against the `vfs_ftcat` full-text index; tokenization, stemming, stoplists, and thesaurus expansion all run server-side, and ranking uses SQL Server's BM25 implementation.
+1. **Spec-Driven Development:** This development pattern, popularized by agentic coding, has development teams focus much more effort on writing prose than code. The code base is now meant to contain much more documentation about the code than the code itself. The `glob` and `grep` commands are still useful, but do not allow for searching semantically or in a way that understands the dependacy structure of prose.
+2. **Enterprise Search:** Enterprise knowledge is much less structured than a codebase and pattern matching techniques do not meet the needs for most searches. Search tools that understand the semantic meaning of documents and the relationships between them is critical for the scale and type of content that would in an enterprises-wide knowledge base.
+3. **Multi-Layered Information:** There are four types of information that can be contained by a file in a file sytem. These are, (1) its path of where it is located in the namespace, (2) specific string patterns in its content (3) the meaning of its content, and (4) how it relates to other files in the file system. `glob` achieves number one, `grep` covers number 2, but neither is able to help with number three or four. Agents need to be able to search a knowledge base in all of these ways directions, and crucially, concert with each other.
 
-All three work behind the same client and return the same `VFSResult` envelope.
+These use cases highlight the need for four specific verbs that can compose and define agentic seach.
 
-For Postgres lexical search, provision the native FTS artifacts outside the application:
+Three of these verbs are already familiar — `glob` and `grep` from any Unix terminal and `graph` from how we already think about connected data. One is new, and we are calling it `glean`. This verb is coined to represent semantic and lexical search patterns that rank documents by relevance, and because it has nice alliteration.
 
-```sql
-ALTER TABLE vfs_entries
-ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (
-    to_tsvector('simple', coalesce(content, ''))
-) STORED;
+- `glob` searches on the dimension of **location**. It produces file matches against the structure of the file's path providing agents a way to reason on the meaning carried by a files place in the namespace.
+- `grep` searches on the dimension of **content**. It matches exact strings and regular expressions inside files, which makes it precise and predictable for finding structured content and literal strings.
+- `glean` searches on the dimension of **meaning**. It ranks files by semantic and lexical relevance to a specific query enabling search with natural language.
+- `graph` searches on the dimension of **connection**. It traverses the edges between files and ranks files with centrality algorithms to present a topological view of how information flows within a knowledge base.
 
-CREATE INDEX ix_vfs_entries_search_tsv_gin
-    ON vfs_entries USING GIN (search_tsv)
-    WHERE content IS NOT NULL
-      AND deleted_at IS NULL
-      AND kind != 'version';
-```
+Together, these four verbs cover every dimension along which a file carries information, and thus these verbs cover the needs of agentic search. Additionally, the outputs of one search method can be used as input to the next because everything is addressable by a file path. A file system with these four verbs allows agents to navigate and search an environment in an interative and preditable fashion. This meets the definition of agentic search, and thus provides us with a framework for how to engineer data for it.
 
-This is intentionally different from SQL Server: MSSQL `FREETEXTTABLE` returns BM25-derived ranks (unbounded positive, integer on the wire, returned as `float`), while Postgres returns native `ts_rank_cd` cover-density scores bounded to `[0, 1)`. The two scales are not comparable across backends.
 
-For Postgres `glob()` / `grep()`, provision the pattern-search artifacts too:
 
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE INDEX ix_vfs_entries_path_pattern
-    ON vfs_entries (path text_pattern_ops)
-    WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_vfs_entries_path_trgm_gin
-    ON vfs_entries USING GIN (path gin_trgm_ops)
-    WHERE deleted_at IS NULL;
 
-CREATE INDEX ix_vfs_entries_content_trgm_gin
-    ON vfs_entries USING GIN (content gin_trgm_ops)
-    WHERE kind = 'file'
-      AND content IS NOT NULL
-      AND deleted_at IS NULL;
-```
 
-These indexes add write/storage cost, but they let Postgres cut down the
-candidate set aggressively for prefix-, literal-, and trigram-friendly
-patterns without redefining which glob or grep patterns are valid.
 
-## Result Model
 
-`VFSResult` is the common result type for reads, writes, listings, searches, and graph algorithms.
 
-```python
-result = g.grep("login", paths=("/workspace",))
-result.success
-result.function
-result.candidates
 
-top = result.top(5)
-merged = result | g.glob("**/*.py", paths=("/workspace",))
-print(top.to_str())
-```
 
-Each row is a `Candidate` with a stable set of fields such as `path`, `kind`, `content`, `lines`, `score`, `in_degree`, `out_degree`, and `updated_at`.
 
-## Query Engine
 
-The query engine accepts CLI-style strings and executes them against the same mounted filesystems:
 
-```python
-plan = g.parse_query('grep "login" | nbr | pagerank | top 10')
-result = g.run_query('grep "login" | nbr | pagerank')
-rendered = g.cli('grep "login" | nbr | pagerank | top 10')
-```
 
-Useful stages include `grep`, `glob`, `search`, `lexical_search`, `pred`, `succ`, `nbr`, `meetinggraph`, `pagerank`, and `top`.
 
-## Next Pages
 
-- [API Reference](api.md) for the current client, backend, result, and query interfaces.
-- [Architecture](architecture.md) for the routing, storage, and graph design.
-- [Filesystem Internals](internals/fs.md) for the write path, session model, and storage details.
-- [Contributing](contributing.md) for local setup and release workflow.
+
+
+

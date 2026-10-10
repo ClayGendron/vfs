@@ -5,7 +5,7 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **162 cut 2026-10-08 from ADR 074 (accepted)** — trash as a tombstone
+- **162 cut 2026-10-08 from ADR 074 (accepted); revised the same day after review** — trash as a tombstone
   on the row. Delete sets `deleted_at` and `trash_root_id` in place
   (one column write per row, chunked; no path rewrite, no posting
   move); `liveness_filters` gains the term; `restore` clears it; a
@@ -15,27 +15,40 @@ lines first; regenerate this file when the picture shifts (review the
   the origin columns and the trashed predicate forms spec 150 §8 built.
   Memo `research/2026-10-08-trash-as-a-tombstone-on-the-row.md`
   (measured six row writes per file today; MinIO, JuiceFS, SQLAlchemy
-  and three peers studied).
-- **153–161 drafted 2026-10-08, awaiting Clay's read** — nine specs
+  and three peers studied). The review fixed two tree-tearing cases
+  (a non-root restore; a kind-changing revive) and asks Clay to amend
+  ADR 074 item 5 to same-kind revive only (spec task 0).
+- **153 built 2026-10-10, awaiting Clay's review** — docs tell the
+  truth about v2. The README's first block runs under Sybil against
+  the live API (a root `conftest.py` now collects `README.md` and the
+  four Diátaxis directories; `sybil` moved to the `dev` group); the
+  banner, verb table, permission strings and Status section match
+  `0760fe9`; a Known-limits section links into `context/`; the six
+  previous-generation pages, the deepagents page and `docs/plans/` are
+  deleted (Clay, 2026-10-10: delete, not archive); `docs/home.md` is
+  `docs/index.md` so mkdocs builds a root page; five dead extras are
+  gone from `pyproject.toml`. ruff, format, ty and the doc fences are
+  green; the full `scripts/ci.sh` leg was not run. One finding for a
+  later spec: a borrowed session factory over an in-memory SQLite
+  engine fails `grep` (pointer in `open-questions.md`).
+- **154–161 drafted 2026-10-08 and revised the same day after a per-spec review, awaiting Clay's read; 158 dropped the same day** — eight specs
   cut from the SmartOwl workspace-integration memo
   (`research/2026-10-08-smartowl-workspace-integration-issues.md`),
   every item of which was re-verified against `06e14b0` the same day.
-  **153** docs tell the truth about v2 (README imports, the
-  `"read_only"` string, the versioning sentence, a Known-limits
-  section). **154** error text states the cause (no mount-local path
+  **153** docs tell the truth about v2 (built 2026-10-10, above). **154** error text states the cause (no mount-local path
   in `message`, no `allow_scan=True` in a hint). **155** the text
   renderer for agents (a render budget, `(empty directory)` and
   `(no matches)`, a trailing `/` on directories, collapsed fan-out
-  errors, rank instead of a `0.0000` score). **156** mount admission
-  closes the namespace holes (the default root seals on first mount,
-  the trash is restore-only, a `..` gate test, `add_mount` refuses a
-  bare node — the memo missed that `glob` through one crashes on
-  `patterns=` vs `pattern=`). **157** Postgres provisioning for host
+  errors, rank instead of a `0.0000` score). **156** mount admission (a `..` gate test; `add_mount` refuses a
+  bare node, which passes the structural check today and crashes
+  `glob`; the root seal dropped 2026-10-08, Clay: the default root is
+  an in-process SQLite `DatabaseStorage`, the owner's choice). **157** Postgres provisioning for host
   apps (`CREATE SCHEMA IF NOT EXISTS`; bulk insert chosen by driver so
-  a psycopg session factory works). **158** the first v2 release
-  (`0.1.0`; `publish.yml` already builds the manylinux wheels and has
-  never run). **159** render at write time below a budget and a
-  path-scoped reindex. **160** cross-mount copy as read-plus-write for
+  a psycopg session factory works). **158** (dropped 2026-10-08,
+  Clay: no release soon; its verified workflow facts moved to
+  `standards/release.md`). **159** render at write time below a budget (narrowed
+  2026-10-08, Clay: no scoped reindex; the posting index is
+  whole-corpus, and a rival run keeps refusing `conflict`). **160** cross-mount copy as read-plus-write for
   files. **161** (seed) every mutation mints a version row — the undo
   the README promises; needs a research pass and an ADR first. Each
   spec carries its own `[NEEDS CLARIFICATION]` markers; pointers in

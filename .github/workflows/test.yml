@@ -55,7 +55,7 @@ jobs:
 
       - name: Doc examples
         if: matrix.python-version == '3.13'
-        run: uv run ruff check docs/conftest.py && uv run pytest docs --tb=short -p no:cov
+        run: uv run ruff check conftest.py && uv run pytest docs README.md --tb=short -p no:cov
 
       - name: Upload coverage
         if: matrix.python-version == '3.13'

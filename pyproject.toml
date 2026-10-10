@@ -47,27 +47,22 @@ Repository = "https://github.com/ClayGendron/vfs"
 Issues = "https://github.com/ClayGendron/vfs/issues"
 
 [project.optional-dependencies]
-search = [
-    "usearch>=2.0",
-]
+# Embedding providers: each one has an importer under src/vfs/embedding.
 openai = ["openai>=1.0"]
-pinecone = ["pinecone[asyncio]>=5.0"]
-databricks = ["databricks-vectorsearch>=0.40"]
+langchain = ["langchain-core>=0.3"]
+embed-local = ["model2vec>=0.5"]
+# Database drivers: SQLAlchemy loads the driver named in the URL.
 postgres = ["asyncpg>=0.29", "pgvector>=0.3"]
 mssql = ["aioodbc>=0.5", "pyodbc>=5.0"]
 mariadb = ["aiomysql>=0.2"]
 oracle = ["oracledb>=2.0"]
-deepagents = ["deepagents>=0.4"]
-langchain = ["langchain-core>=0.3"]
-langgraph = ["langchain-core>=0.3", "langgraph>=0.2"]
-embed-local = ["model2vec>=0.5"]
 # Document renderers: one parser per format, and the umbrella for all of them.
 pdf = ["pypdf>=5.0"]
 docx = ["python-docx>=1.1"]
 pptx = ["python-pptx>=1.0"]
 xlsx = ["openpyxl>=3.1"]
 documents = ["vfs-py[pdf,docx,pptx,xlsx]"]
-all = ["vfs-py[search,openai,pinecone,databricks,postgres,mssql,mariadb,oracle,deepagents,langchain,langgraph,embed-local,documents]"]
+all = ["vfs-py[openai,langchain,embed-local,postgres,mssql,mariadb,oracle,documents]"]
 
 [dependency-groups]
 dev = [
@@ -81,10 +76,11 @@ dev = [
     "ty>=0.0.60",
     "ruff>=0.15.22",
     "ranx>=0.3.21",
+    # the root conftest runs the README and docs fences through Sybil
+    "sybil>=9",
 ]
 docs = [
     "mkdocs-material>=9.0",
-    "sybil>=9",
 ]
 
 [tool.ruff]

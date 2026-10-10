@@ -3,7 +3,7 @@ DIÁTAXIS TYPE: Tutorial (learning-oriented)
 THE RULE: A lesson, not a task. One reliable path, no alternatives, no
 explanation (link out instead). Every step produces a visible result.
 Must work end-to-end every time — test it.
-SOURCE TO MIGRATE FROM: docs/index.md "Quick Start"
+SOURCE TO MIGRATE FROM: README.md "One namespace, mounted from your stack"
 -->
 
 # Get started

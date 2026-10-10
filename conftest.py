@@ -1,11 +1,14 @@
 """The documentation's code examples are tests.
 
-Every ``python`` fence under the four Diátaxis directories runs against the
-live package through Sybil, one namespace per page, in document order. A page
-gets a fresh SQLite-backed ``storage`` and ``fs`` before its first example and
-has them closed after its last. Top-level ``await`` is allowed in a fence.
+Every ``python`` fence in ``README.md`` and under the four Diátaxis
+directories runs against the live package through Sybil, one namespace
+per page, in document order. A page gets a fresh SQLite-backed
+``storage`` and ``fs`` before its first example and has them closed
+after its last, and runs inside a scratch directory so a relative
+database path in an example lands there, not in the repo. Top-level
+``await`` is allowed in a fence.
 
-    uv run pytest docs
+    uv run pytest docs README.md
 
 A fence that is not runnable (a signature, a sketch) is preceded by
 ``<!-- skip: next -->`` in the Markdown.
@@ -15,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -30,10 +34,17 @@ from vfs.storage.backends.database import DatabaseStorage
 if TYPE_CHECKING:
     from sybil import Example
 
-DIATAXIS_PATTERNS = ("tutorials/*.md", "how-to/*.md", "reference/*.md", "explanation/*.md")
+DOC_PATTERNS = (
+    "README.md",
+    "docs/tutorials/*.md",
+    "docs/how-to/*.md",
+    "docs/reference/*.md",
+    "docs/explanation/*.md",
+)
 
 _LOOP = "__loop__"
 _TMP = "__tmp__"
+_CWD = "__cwd__"
 
 
 class AsyncPythonEvaluator:
@@ -53,9 +64,11 @@ def _setup(namespace: dict[str, Any]) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="vfs-docs-"))
     storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp}/vfs.sqlite")
     namespace[_TMP] = tmp
+    namespace[_CWD] = Path.cwd()
     namespace[_LOOP] = asyncio.new_event_loop()
     namespace["storage"] = storage
     namespace["fs"] = VirtualFileSystem(storage=storage)
+    os.chdir(tmp)
 
 
 def _teardown(namespace: dict[str, Any]) -> None:
@@ -64,12 +77,13 @@ def _teardown(namespace: dict[str, Any]) -> None:
     for fs in filesystems.values():
         loop.run_until_complete(fs.close())
     loop.close()
+    os.chdir(namespace[_CWD])
     shutil.rmtree(namespace[_TMP], ignore_errors=True)
 
 
 pytest_collect_file = Sybil(
     parsers=[CodeBlockParser(language="python", evaluator=AsyncPythonEvaluator()), SkipParser()],
-    patterns=DIATAXIS_PATTERNS,
+    patterns=DOC_PATTERNS,
     setup=_setup,
     teardown=_teardown,
 ).pytest()

@@ -35,7 +35,7 @@ theme:
     repo: fontawesome/brands/github
 
 nav:
-  - Home: home.md
+  - Home: index.md
   - Tutorials:
     - Get started: tutorials/getting-started.md
   - How-to guides:
@@ -94,5 +94,4 @@ plugins:
   - search
 
 exclude_docs: |
-  conftest.py
   __pycache__/
