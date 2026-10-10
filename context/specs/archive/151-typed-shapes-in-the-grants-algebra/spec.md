@@ -1,6 +1,7 @@
 # 151 — Typed shapes in the grants algebra: brand the ordered kinds, name the rest
 
-- **Status:** **built 2026-10-03, awaiting Clay's review; `scripts/ci.sh`
+- **Status:** landed and archived 2026-10-10 — commit `d49c5ff`; the gate `scripts/ci.sh` ran green on 2026-10-10 at `b446c76`, which closes the caveat below.
+- **Earlier status:** **built 2026-10-03, awaiting Clay's review; `scripts/ci.sh`
   not run.** Drafted the same day from a three-perspective review Clay
   asked for (typing, maintainer, domain); Clay: "create a spec for
   these typing changes and then implement it". Landed as one slice:

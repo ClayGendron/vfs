@@ -5,7 +5,7 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **163 built 2026-10-10, awaiting Clay's review** — the one-minute
+- **163 landed and archived 2026-10-10** (`2bf0138` … `b648082`, `12a8f39`, `b446c76`) — the one-minute
   test run. Cut and landed the same day in six commits (2bf0138 …
   b648082): the whole suite runs in **54–56 s** quiet (was 253 s serial, 101 s
   at ten workers), 3,959 tests, no skips, no tier: Clay withdrew the
@@ -43,7 +43,7 @@ lines first; regenerate this file when the picture shifts (review the
   and three peers studied). The review fixed two tree-tearing cases
   (a non-root restore; a kind-changing revive) and asks Clay to amend
   ADR 074 item 5 to same-kind revive only (spec task 0).
-- **154 built 2026-10-10, awaiting Clay's review** — errors are
+- **154 landed and archived 2026-10-10** (`a64b48a`, `76ce536`) — errors are
   facts. Rewritten the same day after a design pass with Clay (the
   2026-10-08 cut stripped the path from 51 messages; this cut removes
   the class of bug), ADR 076 accepted, then both slices landed at
@@ -60,7 +60,7 @@ lines first; regenerate this file when the picture shifts (review the
   renamed `154-errors-are-facts`. `VFSErrorKind` renamed `ErrorKind`
   in a follow-up commit the same day (Clay). See the spec's *Landing
   notes* for the deviations and the suite's outcome.
-- **153 built 2026-10-10, awaiting Clay's review** — docs tell the
+- **153 landed and archived 2026-10-10** (`4b598bc`) — docs tell the
   truth about v2. The README's first block runs under Sybil against
   the live API (a root `conftest.py` now collects `README.md` and the
   four Diátaxis directories; `sybil` moved to the `dev` group); the
@@ -121,7 +121,7 @@ lines first; regenerate this file when the picture shifts (review the
   in and out; the renderer seam and four renderers; images; docs). From
   the 2026-10-05 memo and its seven studies; no ADR cut yet. Clay's two
   answers: versioned, and edit the bytes through `write` only.
-- **151 built 2026-10-03, awaiting Clay's review** — typed shapes in
+- **151 landed and archived 2026-10-10** (`d49c5ff`, built 2026-10-03) — typed shapes in
   the grants algebra. Two brands the checker enforces, `RangeSet`
   (normal form) and `Covering` (minimised, tree order), minted only by
   the functions that establish them; `Rank` for the ladder's integer;
@@ -133,7 +133,7 @@ lines first; regenerate this file when the picture shifts (review the
   base tuple because `ty` cannot pass a brand to `bisect_left`. From a
   three-perspective review (typing, maintainer, domain) the same day.
   `scripts/ci.sh` not run.
-- **150 built 2026-10-03 (`f823436`), awaiting Clay's review** — rights at
+- **150 landed and archived 2026-10-10** (`f823436`, built 2026-10-03) — rights at
   scale. The 2026-10-01 review of the permissioning commits (49
   verified findings: one critical, the trash leak; thirteen major)
   and three executed studies the next day showed 058's compile model
@@ -160,7 +160,7 @@ lines first; regenerate this file when the picture shifts (review the
   change relabels in 2.3 s with no statement over 49,998 rows, and one
   user grant retires 1 cached caller of 200, a group grant exactly its
   members, a posture change none; green on all five engines.
-- **058 built 2026-09-29, awaiting Clay's review** — row-level
+- **058 landed and archived 2026-10-10** (`8ce8c72`, `4759bc6`; built 2026-09-29) — row-level
   grants end to end: the resolver and compiler (`storage/grants.py`,
   `storage/backends/database/rights.py`), every database verb filtered
   or gated, glean's visible-set statistics, the six grant verbs on the
@@ -999,7 +999,7 @@ pass):
 - ~~**054 — serve() locks topology**~~ — **cancelled and archived
   2026-09-05**: the flag is dead and the rule holds by construction
   (mount admin is not an op).
-- **058 — row-level grants** (written in full 2026-09-06; 070 landed, so it is next).
+- ~~**058 — row-level grants**~~ — **landed and archived 2026-10-10** (`4759bc6`; see the 058 entry above).
 - ~~**067 — graph traversal-only**~~ — **cancelled and archived
   2026-09-05**: every decision landed via `ops.py`, 136 and 143; the
   backend graph verb is its own future spec.

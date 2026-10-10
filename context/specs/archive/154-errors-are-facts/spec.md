@@ -1,6 +1,7 @@
 # 154 — Errors are facts: storage names a kind and its fields, the contract table owns the words
 
-- **Status:** **built 2026-10-10, awaiting Clay's review** — both
+- **Status:** landed and archived 2026-10-10 — commit `a64b48a`, the `ErrorKind` rename following as `76ce536`; the gate `scripts/ci.sh` ran green on 2026-10-10 at `b446c76`.
+- **Earlier status:** **built 2026-10-10, awaiting Clay's review** — both
   slices in one landing over `4b598bc`: the phrase table, the one
   constructor, the seams' `vfs.target`, the renderer's target clause,
   all 109 producer sites and 27 test files migrated, 17 new tests in

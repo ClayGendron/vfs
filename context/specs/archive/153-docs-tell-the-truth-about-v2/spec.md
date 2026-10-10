@@ -1,6 +1,7 @@
 # 153 — Docs tell the truth about v2: every README claim matches the live tree
 
-- **Status:** **built 2026-10-10, awaiting Clay's review** — every
+- **Status:** landed and archived 2026-10-10 — commit `4b598bc`; the gate `scripts/ci.sh` ran green on 2026-10-10 at `b446c76`.
+- **Earlier status:** **built 2026-10-10, awaiting Clay's review** — every
   scope item landed in one pass over `0760fe9`; ruff, format, ty and
   the doc fences green (the full `scripts/ci.sh` leg was not run, at
   Clay's ask); see *Landing notes* at the end. Cut 2026-10-08 from the

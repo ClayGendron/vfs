@@ -1,6 +1,7 @@
 # 163 — The one-minute test run: parallel workers, a `slow` tier, and 300,000 fewer statements
 
-- **Status:** **built 2026-10-10, awaiting Clay's review** — all six
+- **Status:** landed and archived 2026-10-10 — six slice commits `2bf0138` … `b648082`, the amendment that withdrew the slow tier `12a8f39`, and `b446c76`, which made the 3.13 leg the local gate (the other matrix legs are CI's); not yet mined.
+- **Earlier status:** **built 2026-10-10, awaiting Clay's review** — all six
   slices landed as six commits the same day the spec was cut (2bf0138,
   740718e, cee25f8, 6c6f343, 21a9cad, b648082); the default run is 43 s
   quiet, the slow-tier coverage leg 103 s at 100%, and the four real-engine

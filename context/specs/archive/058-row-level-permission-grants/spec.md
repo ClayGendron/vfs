@@ -1,6 +1,7 @@
 # 058 — Row-level grants: the enforcement spine
 
-- **Status:** **built 2026-09-29, awaiting Clay's review** — the
+- **Status:** landed and archived 2026-10-10 — commits `8ce8c72` (the storage half) and `4759bc6` (built end to end, with ADR 072); the gate `scripts/ci.sh` ran green on 2026-10-10 at `b446c76`, which closes the caveat below.
+- **Earlier status:** **built 2026-09-29, awaiting Clay's review** — the
   storage half, the router surface, the tests, the real-engine legs,
   the performance gate and the records are done; `scripts/ci.sh` has
   not been run. See *Implementation progress* at the end of this spec.

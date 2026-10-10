@@ -1,6 +1,7 @@
 # 150 — Rights at scale: the everyone level on the row, caller-sized ranges, and the linear range algebra
 
-- **Status:** **built 2026-10-03, awaiting Clay's review; `scripts/ci.sh`
+- **Status:** landed and archived 2026-10-10 — commit `f823436`; the gate `scripts/ci.sh` ran green on 2026-10-10 at `b446c76`, which closes the caveat below.
+- **Earlier status:** **built 2026-10-03, awaiting Clay's review; `scripts/ci.sh`
   not run.** Drafted 2026-10-02 with Claude's recommendations; Clay
   took all four recommendations the same day ("I'll take your
   recommendation based on the research for the four forks. please get
