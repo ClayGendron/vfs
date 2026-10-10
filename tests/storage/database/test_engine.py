@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _fresh_url
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind
@@ -47,10 +47,10 @@ if TYPE_CHECKING:
 
 class TestConstruction:
     async def test_url_and_session_factory_together_are_refused(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+        engine = create_async_engine(_fresh_url(tmp_path))
         factory = async_sessionmaker(engine, expire_on_commit=False)
         with pytest.raises(ValueError, match="exactly one"):
-            DatabaseStorage(url=_url(tmp_path), session_factory=factory)
+            DatabaseStorage(url=_fresh_url(tmp_path), session_factory=factory)
         await engine.dispose()
 
     def test_neither_url_nor_session_factory_is_refused(self) -> None:
@@ -58,17 +58,17 @@ class TestConstruction:
             DatabaseStorage()
 
     def test_the_default_description_names_the_schema_when_one_is_set(self, tmp_path) -> None:
-        assert DatabaseStorage(url=_url(tmp_path)).description == "Database storage"
-        assert DatabaseStorage(url=_url(tmp_path), schema="tenant").description == "Database storage (tenant)"
+        assert DatabaseStorage(url=_fresh_url(tmp_path)).description == "Database storage"
+        assert DatabaseStorage(url=_fresh_url(tmp_path), schema="tenant").description == "Database storage (tenant)"
 
     def test_satisfies_the_storage_protocols(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert isinstance(storage, StorageBackend)
         assert isinstance(storage, SupportsClose)
         assert isinstance(storage, SupportsTraits)
 
     def test_traits_stay_within_the_vocabulary(self, tmp_path) -> None:
-        traits = DatabaseStorage(url=_url(tmp_path)).traits()
+        traits = DatabaseStorage(url=_fresh_url(tmp_path)).traits()
         assert set(traits) <= TRAIT_KEYS
         assert all(value in TRAIT_VALUES[key] for key, value in traits.items())
 
@@ -76,12 +76,12 @@ class TestConstruction:
         # pyodbc's ANSI setinputsizes mangles non-Latin1 bytes; only the
         # mssql built path carries the lossless override.
         assert _engine_kwargs("mssql+aioodbc://sa:pw@host/db") == {"use_setinputsizes": False}
-        assert _engine_kwargs(_url(tmp_path)) == {}
+        assert _engine_kwargs(_fresh_url(tmp_path)) == {}
 
     def test_durability_full_is_declared_per_tuned_profile(self, tmp_path, monkeypatch) -> None:
         # Durability is a contract a caller must be able to read: every
         # tuned profile declares it full; the generic floor never does.
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         for profile in PROFILES.values():
             monkeypatch.setattr(EngineHost, "profile", property(lambda self, p=profile: p))
             traits = storage.traits()
@@ -102,13 +102,13 @@ class TestFirstTouch:
         # provisioning transaction exercises the same wiring a real pin takes.
         pinned = replace(SQLITE, topology_isolation="SERIALIZABLE")
         monkeypatch.setattr(engine_module, "profile_for", lambda _name: pinned)
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         assert storage._host.profile.topology_isolation == "SERIALIZABLE"
         await storage.close()
 
     async def test_provisions_meta_and_root_rows(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         result = await storage.first_touch()
         assert result.success is True
         assert storage.mount_identity is not None
@@ -127,7 +127,7 @@ class TestFirstTouch:
         await storage.close()
 
     async def test_is_idempotent(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         assert (await storage.first_touch()).success is True
         async with storage._host.engine.connect() as conn:
@@ -136,7 +136,7 @@ class TestFirstTouch:
         await storage.close()
 
     async def test_applies_database_file_settings(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         await storage.first_touch()
         async with storage._host.engine.connect() as conn:
             journal = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar_one()
@@ -146,23 +146,23 @@ class TestFirstTouch:
         await storage.close()
 
     async def test_restart_rebind_keeps_the_mount_identity(self, tmp_path) -> None:
-        first = DatabaseStorage(url=_url(tmp_path))
+        first = DatabaseStorage(url=_fresh_url(tmp_path))
         await first.first_touch()
         identity = first.mount_identity
         await first.close()
-        second = DatabaseStorage(url=_url(tmp_path))
+        second = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await second.first_touch()).success is True
         assert second.mount_identity == identity
         await second.close()
 
     async def test_version_mismatch_refuses_loudly(self, tmp_path) -> None:
-        seeded = DatabaseStorage(url=_url(tmp_path))
+        seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
         async with seeded._host.engine.begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
-        stale = DatabaseStorage(url=_url(tmp_path))
+        stale = DatabaseStorage(url=_fresh_url(tmp_path))
         result = await stale.first_touch()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.schema_mismatch
@@ -170,7 +170,7 @@ class TestFirstTouch:
         await stale.close()
 
     async def test_the_first_routed_op_triggers_first_touch(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         result = await storage.stat(path=Path("/"))
         assert result.success is True
         assert result.observations[0].kind == "directory"
@@ -178,13 +178,13 @@ class TestFirstTouch:
         await storage.close()
 
     async def test_ops_surface_the_mismatch_refusal(self, tmp_path) -> None:
-        seeded = DatabaseStorage(url=_url(tmp_path))
+        seeded = DatabaseStorage(url=_fresh_url(tmp_path))
         await seeded.first_touch()
         meta = seeded._host.tables.meta
         async with seeded._host.engine.begin() as conn:
             await conn.execute(update(meta).values(schema_format_version=SCHEMA_FORMAT_VERSION + 1))
         await seeded.close()
-        stale = DatabaseStorage(url=_url(tmp_path))
+        stale = DatabaseStorage(url=_fresh_url(tmp_path))
         result = await stale.stat(path=Path("/"))
         assert result.errors[0].kind == ErrorKind.schema_mismatch
         await stale.close()
@@ -193,7 +193,7 @@ class TestFirstTouch:
         # Root entry present but no meta row: the provision IntegrityError
         # is NOT the designed meta race and must classify, never leak raw.
         tables = build_vfs_tables()
-        seed = create_async_engine(_url(tmp_path))
+        seed = create_async_engine(_fresh_url(tmp_path))
         now = datetime.now(UTC)
         async with seed.begin() as conn:
             await conn.run_sync(tables.metadata.create_all)
@@ -211,7 +211,7 @@ class TestFirstTouch:
                 )
             )
         await seed.dispose()
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         result = await storage.first_touch()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.unavailable
@@ -220,8 +220,8 @@ class TestFirstTouch:
         await storage.close()
 
     async def test_two_instances_first_touch_concurrently(self, tmp_path) -> None:
-        a = DatabaseStorage(url=_url(tmp_path))
-        b = DatabaseStorage(url=_url(tmp_path))
+        a = DatabaseStorage(url=_fresh_url(tmp_path))
+        b = DatabaseStorage(url=_fresh_url(tmp_path))
         first, second = await asyncio.gather(a.first_touch(), b.first_touch())
         assert first.success is True
         assert second.success is True
@@ -233,14 +233,14 @@ class TestFirstTouch:
         await b.close()
 
     async def test_concurrent_ensure_ready_on_one_host_serves_both_waiters(self, tmp_path) -> None:
-        host = EngineHost(url=_url(tmp_path))
+        host = EngineHost(url=_fresh_url(tmp_path))
         first, second = await asyncio.gather(host.ensure_ready(), host.ensure_ready())
         assert first is None and second is None
         assert host.mount_identity is not None
         await host.close()
 
     async def test_serialization_point_takes_the_postgres_advisory_lock(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         await storage.first_touch()
         host = storage._host
 
@@ -269,7 +269,7 @@ class TestFirstTouch:
 class TestLifecycle:
     def test_construct_on_one_loop_first_touch_on_another(self, tmp_path) -> None:
         async def construct() -> DatabaseStorage:
-            return DatabaseStorage(url=_url(tmp_path))
+            return DatabaseStorage(url=_fresh_url(tmp_path))
 
         loop = asyncio.new_event_loop()
         try:
@@ -286,7 +286,7 @@ class TestLifecycle:
         assert asyncio.run(touch_and_close()) is not None
 
     async def test_borrowed_pool_pre_existing_connections_get_session_settings(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+        engine = create_async_engine(_fresh_url(tmp_path))
         # Pool a connection BEFORE the borrow; checkout must still stamp it.
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
@@ -301,7 +301,7 @@ class TestLifecycle:
         await engine.dispose()
 
     async def test_borrowed_close_never_disposes(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+        engine = create_async_engine(_fresh_url(tmp_path))
         storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
         assert (await storage.first_touch()).success is True
         await storage.close()
@@ -310,14 +310,14 @@ class TestLifecycle:
         await engine.dispose()
 
     async def test_a_borrowed_host_never_holds_an_engine(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+        engine = create_async_engine(_fresh_url(tmp_path))
         storage = DatabaseStorage(session_factory=async_sessionmaker(engine, expire_on_commit=False))
         with pytest.raises(RuntimeError, match="borrowed host"):
             _ = storage._host.engine
         await engine.dispose()
 
     async def test_borrowed_dialect_policy_defers_to_first_use(self, tmp_path) -> None:
-        engine = create_async_engine(_url(tmp_path))
+        engine = create_async_engine(_fresh_url(tmp_path))
         maker = async_sessionmaker(engine, expire_on_commit=False)
         calls = 0
 
@@ -335,7 +335,7 @@ class TestLifecycle:
         await engine.dispose()
 
     async def test_built_close_is_idempotent(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         await storage.first_touch()
         await storage.close()
         await storage.close()
@@ -343,7 +343,7 @@ class TestLifecycle:
     async def test_every_close_releases_what_revival_re_minted(self, tmp_path) -> None:
         # close → verb → close: the revived verb re-mints connections,
         # and the second close must release them — close is never one-shot.
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         await storage.close()
         result = await storage.stat(path=Path("/"))
@@ -357,7 +357,7 @@ class TestLifecycle:
     async def test_a_cancelled_close_retry_finishes_the_job(self, tmp_path) -> None:
         # A close cancelled mid-dispose records nothing as torn down:
         # the documented recovery — close again — must reclaim the pool.
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         host = storage._host
         pool = host.engine.sync_engine.pool
@@ -441,7 +441,7 @@ class TestPoolExhaustion:
     async def test_pool_exhaustion_classifies_instead_of_raising(self, tmp_path) -> None:
         # sqlalchemy.exc.TimeoutError is not a DBAPIError: the verb must
         # still classify it, never leak it raw (the no-raw-raise criterion).
-        engine = create_async_engine(_url(tmp_path), pool_size=1, max_overflow=0, pool_timeout=0.2)
+        engine = create_async_engine(_fresh_url(tmp_path), pool_size=1, max_overflow=0, pool_timeout=0.2)
         maker = async_sessionmaker(engine, expire_on_commit=False)
         storage = DatabaseStorage(session_factory=maker)
         assert (await storage.first_touch()).success is True
@@ -457,7 +457,7 @@ class TestPoolExhaustion:
 
 class TestValueCap:
     async def test_the_cap_is_read_from_the_server_and_sqlite_declares_none(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         host = storage._host
         assert host.value_cap is None
@@ -470,7 +470,7 @@ class TestValueCapAtFirstTouch:
     async def test_a_profile_that_declares_the_cap_query_reads_it_at_first_touch(self, tmp_path, monkeypatch) -> None:
         declared = replace(SQLITE, value_cap_query="SELECT 4096", value_cap_setting="max_allowed_packet")
         monkeypatch.setattr(engine_module, "profile_for", lambda name: declared)
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
         assert (await storage.first_touch()).success is True
         assert storage._host.value_cap == ValueCap(4096, "max_allowed_packet")
         await storage.close()

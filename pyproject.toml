@@ -138,8 +138,9 @@ root = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Workers from the machine; the slow tier and the engine legs are selected in tests/conftest.py.
-addopts = "-n auto"
+# One worker per core, stealing work so the heavy tail does not run alone at the end;
+# the slow tier and the engine legs are selected in tests/conftest.py.
+addopts = "-n auto --dist worksteal"
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures", "tests2", "src2"]
 markers = [

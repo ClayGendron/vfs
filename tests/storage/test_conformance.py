@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -62,10 +63,31 @@ class TestMemoryConformance(StorageContract, GrantsContract):
         await storage.close()
 
 
+@pytest.fixture(scope="session")
+def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """A provisioned sqlite file, built once per worker and copied under every file-backed storage.
+
+    The contract proves the verbs, not provisioning; `test_engine.py`
+    proves first touch from nothing. Copying costs 0.2 ms where the schema
+    build cost 94 statements per test.
+    """
+    path = tmp_path_factory.mktemp("template") / "vfs.sqlite"
+
+    async def build() -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{path}", embedder=HashEmbeddingProvider())
+        assert (await storage.first_touch()).success, "the template must provision cleanly"
+        await storage.close()
+
+    asyncio.run(build())
+    return path
+
+
 class TestSqliteConformance(StorageContract, GrantsContract):
     @pytest.fixture
-    async def storage(self, tmp_path: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
-        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/vfs.sqlite", embedder=HashEmbeddingProvider())
+    async def storage(self, tmp_path: pathlib.Path, sqlite_template: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
+        db = tmp_path / "vfs.sqlite"
+        shutil.copy(sqlite_template, db)
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider())
         yield storage
         await storage.close()
 

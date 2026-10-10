@@ -9,6 +9,12 @@ execute). Helpers used by a single file stay in that file.
 
 from __future__ import annotations
 
+import asyncio
+import functools
+import pathlib
+import shutil
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -16,10 +22,10 @@ from sqlalchemy import Select
 from sqlalchemy.dialects import postgresql
 
 from vfs.paths import Path
+from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.staging import StagedEntry
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Iterator
 
     from vfs.storage.backends.database.staging import PersistenceState
@@ -31,7 +37,42 @@ if TYPE_CHECKING:
 
 
 def _url(tmp_path: pathlib.Path) -> str:
+    """A mount URL under *tmp_path*, already provisioned: first touch adopts instead of creating.
+
+    The file is a copy of one template provisioned once per process, so a
+    test pays a 0.2 ms copy rather than the 94-statement schema build.
+    Two calls on one *tmp_path* name the same file, as before. A test that
+    proves provisioning itself takes :func:`_fresh_url`.
+    """
+    target = tmp_path / "vfs.sqlite"
+    if not target.exists():
+        shutil.copy(_template(), target)
+    return f"sqlite+aiosqlite:///{target}"
+
+
+def _fresh_url(tmp_path: pathlib.Path) -> str:
+    """A mount URL under *tmp_path* with no file behind it: first touch provisions from nothing."""
     return f"sqlite+aiosqlite:///{tmp_path}/vfs.sqlite"
+
+
+@functools.cache
+def _template() -> pathlib.Path:
+    """The provisioned sqlite file every `_url` copies, built once per process on a private thread.
+
+    A private thread because the first caller is usually inside a running
+    loop, where ``asyncio.run`` is refused; the template's own loop lives
+    and dies on that thread.
+    """
+    target = pathlib.Path(tempfile.mkdtemp(prefix="vfs-template-")) / "vfs.sqlite"
+
+    async def provision() -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{target}")
+        assert (await storage.first_touch()).success, "the template must provision cleanly"
+        await storage.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, provision()).result()
+    return target
 
 
 # ---------------------------------------------------------------------------

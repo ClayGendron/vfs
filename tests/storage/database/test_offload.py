@@ -8,6 +8,7 @@ guard, and the backend-owned pool's lazy birth and non-blocking death.
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -97,6 +98,17 @@ async def _until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
     while not predicate():
         assert monotonic() - start < timeout, "condition never held"
         await asyncio.sleep(0.01)
+
+
+async def _close_and_collect(storage: DatabaseStorage) -> None:
+    """Close, then collect the connection a verb re-minted past the first close while the loop still lives.
+
+    That connection belongs to the disposed pool and nothing owns it; left
+    to a later collection its driver thread reports into a closed loop.
+    """
+    await storage.close()
+    gc.collect()
+    await asyncio.sleep(0.01)
 
 
 @pytest.fixture
@@ -361,6 +373,7 @@ class TestExecutorOwnership:
             raced = await storage.grep(pattern="needle")
         assert raced.success is True, raced.errors
         assert [str(o.path) for o in raced.observations] == ["/a.txt"]
+        await _close_and_collect(storage)
 
     async def test_a_reindex_racing_close_is_served_whole(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         # close lands mid-reindex, after the chunk pass captured its pool:
@@ -390,7 +403,7 @@ class TestExecutorOwnership:
         found = await storage.grep(pattern="return")
         assert found.success is True, found.errors
         assert sorted(str(o.path) for o in found.observations) == ["/f0.py", "/f1.py", "/f2.py"]
-        await storage.close()
+        await _close_and_collect(storage)
 
     async def test_a_borrowed_host_still_shuts_its_own_pool(self, tmp_path) -> None:
         engine = create_async_engine(_url(tmp_path))
@@ -438,4 +451,4 @@ class TestExecutorOwnership:
         assert (await first).success is True
         await _until(lambda: gated.finished)
         # The queued grep re-touched the disposed engine; the next close owns it.
-        await storage.close()
+        await _close_and_collect(storage)

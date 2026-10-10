@@ -96,8 +96,8 @@ Consequences that bind design work:
   `ruff format --check`, and format drift has reached `main` twice by
   sessions running only `ruff check`. `src2/` and `tests2/` are excluded
   in `pyproject.toml` — never chase errors there.
-- **`uv run pytest` is the inner loop and it is parallel** (`-n auto` in
-  `addopts`, pytest-xdist) and runs the default tier: `tests/conftest.py`
+- **`uv run pytest` is the inner loop and it is parallel** (`-n auto --dist worksteal`
+  in `addopts`, pytest-xdist) and runs the default tier: `tests/conftest.py`
   deselects `slow` tests unless you pass `--slow`, and deselects the
   real-engine legs whose `VFS_TEST_<ENGINE>_URL` is unset. A test that is
   deliberately heavy (a BEIR corpus, a 10k batch, a second backend for a

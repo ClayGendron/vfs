@@ -28,8 +28,10 @@ uv run ruff format --check src/ tests/
 uv run ty check src/ tests/
 ```
 
-`addopts` carries `-n auto` (pytest-xdist), so every invocation is parallel
-unless you pass `-n 0`. `tests/conftest.py` deselects the `slow` tier
+`addopts` carries `-n auto --dist worksteal` (pytest-xdist), so every
+invocation is parallel unless you pass `-n 0`; work-stealing matters here
+because a few tests run ten seconds and the plain scheduler leaves them on
+one worker at the end (78 s against 57 s, measured 2026-10-10). `tests/conftest.py` deselects the `slow` tier
 without `--slow`, and deselects each real-engine leg whose
 `VFS_TEST_<ENGINE>_URL` is unset, so a local summary line counts only what
 ran. The harness rewrite modes (`VFS_RANKING_REBASELINE`, `VFS_RANKING_REPIN`)
