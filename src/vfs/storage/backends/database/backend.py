@@ -248,8 +248,16 @@ class DatabaseStorage:
 
     @property
     def ranker(self) -> Ranker:
-        """The mount's ranking declaration: its fusion and its chunk aggregate."""
+        """The mount's ranking declaration: its fusion and its chunk aggregate.
+
+        Settable: fusion and aggregation are query-time choices over the
+        same index, so a mount may be re-ranked without a reindex.
+        """
         return self._ranker
+
+    @ranker.setter
+    def ranker(self, ranker: Ranker) -> None:
+        self._ranker = ranker
 
     @property
     def renderers(self) -> RendererRegistry:

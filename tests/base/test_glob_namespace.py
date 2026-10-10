@@ -10,7 +10,10 @@ pre-existing contract placement does change.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
@@ -18,6 +21,9 @@ from vfs.models import Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 # The demo tree: /notes.txt at the root, a.txt and deep/b.txt under /data.
 TREE = (("/notes.txt", "root"), ("/data/a.txt", "a"), ("/data/deep/b.txt", "b"))
@@ -64,10 +70,29 @@ async def test_the_headline_repro_flips() -> None:
     assert direct.paths == ("/data/a.txt",)
 
 
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def plain_world() -> AsyncIterator[VirtualFileSystem]:
+    """The plain world once per module; the invariance battery only reads it."""
+    fs = await _plain_world()
+    yield fs
+    await fs.close()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
+    """The mounted world once per module; the invariance battery only reads it."""
+    fs = await _mounted_world()
+    yield fs
+    await fs.close()
+
+
+@pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("pattern", INVARIANCE_BATTERY)
-async def test_mount_placement_is_invisible_to_patterns(pattern: str) -> None:
-    plain = await (await _plain_world()).glob(pattern)
-    mounted = await (await _mounted_world()).glob(pattern)
+async def test_mount_placement_is_invisible_to_patterns(
+    pattern: str, plain_world: VirtualFileSystem, mounted_world: VirtualFileSystem
+) -> None:
+    plain = await plain_world.glob(pattern)
+    mounted = await mounted_world.glob(pattern)
     assert plain.success is True and mounted.success is True
     assert sorted(plain.paths) == sorted(mounted.paths)
 

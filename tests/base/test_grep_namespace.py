@@ -8,9 +8,10 @@ seam as composed pattern text.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
@@ -19,6 +20,9 @@ from vfs.params import INT_CEILING
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 # The demo tree: needle sits at every level; decoy never matches.
 TREE = (("/notes.txt", "needle root"), ("/data/a.txt", "needle a"), ("/data/deep/b.py", "needle b"))
@@ -53,10 +57,29 @@ INVARIANCE_BATTERY: tuple[dict[str, Any], ...] = (
 )
 
 
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def plain_world() -> AsyncIterator[VirtualFileSystem]:
+    """The plain world once per module; the invariance battery only reads it."""
+    fs = await _plain_world()
+    yield fs
+    await fs.close()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
+    """The mounted world once per module; the invariance battery only reads it."""
+    fs = await _mounted_world()
+    yield fs
+    await fs.close()
+
+
+@pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("kwargs", INVARIANCE_BATTERY)
-async def test_mount_placement_is_invisible_to_grep(kwargs: dict[str, Any]) -> None:
-    plain = await (await _plain_world()).grep("needle", **kwargs)
-    mounted = await (await _mounted_world()).grep("needle", **kwargs)
+async def test_mount_placement_is_invisible_to_grep(
+    kwargs: dict[str, Any], plain_world: VirtualFileSystem, mounted_world: VirtualFileSystem
+) -> None:
+    plain = await plain_world.grep("needle", **kwargs)
+    mounted = await mounted_world.grep("needle", **kwargs)
     assert plain.success is True and mounted.success is True
     assert sorted(plain.paths) == sorted(mounted.paths)
 

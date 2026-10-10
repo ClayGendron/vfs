@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import asyncio
 from itertools import chain
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, select, update
 
 from tests.support.database_helpers import _url
 from tests.support.embedding_doubles import RateLimitedError, ScriptedProvider
-from vfs.embedding import HashEmbeddingProvider
+from vfs.embedding import Embedded, HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.paths import Path
@@ -25,6 +25,9 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import embed as embed_module
 from vfs.storage.backends.database.embed import EmbedRow, token_batched, truncated_for
 from vfs.storage.backends.database.seams import installed
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 CORPUS = {
     "/a.txt": "alpha bravo charlie\n",
@@ -38,6 +41,27 @@ CORPUS = {
 def _long_body(tail: str) -> str:
     paragraphs = [f"paragraph {i} " + "word " * 120 + "\n\n" for i in range(8)]
     return "".join(paragraphs) + tail
+
+
+class _WaitsForBeats(ScriptedProvider):
+    """A provider whose batch returns once the reindex heartbeat has fired *wanted* times.
+
+    Proves the loop stayed free while the provider waited: a held loop
+    cannot beat, so the wait runs out its liveness bound and the beat
+    count stays short.
+    """
+
+    def __init__(self, beats: Callable[[], int], *, wanted: int) -> None:
+        super().__init__()
+        self._beats = beats
+        self._wanted = wanted
+
+    async def embed_documents(self, texts: Sequence[str]) -> Embedded:
+        for _ in range(100_000):
+            if self._beats() >= self._wanted:
+                break
+            await asyncio.sleep(0)
+        return await super().embed_documents(texts)
 
 
 async def _fresh(tmp_path: Any, files: dict[str, str] | None = None, **kwargs: Any) -> DatabaseStorage:
@@ -298,9 +322,9 @@ class TestStep:
 
     async def test_the_beat_keeps_ticking_through_a_slow_batch(self, tmp_path: Any, monkeypatch) -> None:
         monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.02)
-        provider = ScriptedProvider(delay=0.3)
-        storage = await _fresh(tmp_path, {"/a.txt": "slow body\n"}, embedder=provider)
         beats = 0
+        provider = _WaitsForBeats(lambda: beats, wanted=5)
+        storage = await _fresh(tmp_path, {"/a.txt": "slow body\n"}, embedder=provider)
 
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             nonlocal beats
@@ -314,7 +338,7 @@ class TestStep:
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
         result = await storage.reindex()
         assert result.success is True and _extra(result)["unembedded"] == 0
-        assert beats >= 5  # the loop stayed free while the provider's socket waited
+        assert beats >= 5  # the heartbeat ran while the provider waited: the loop stayed free
         await storage.close()
 
     async def test_trashed_entries_are_not_embedded_nor_counted(self, tmp_path: Any) -> None:

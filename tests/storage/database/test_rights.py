@@ -124,6 +124,7 @@ def _expected(world: GrantWorld, subjects: tuple[str, ...], level: GrantLevel) -
 
 async def test_glob_names_exactly_the_visible_rows_and_their_road() -> None:
     rng = random.Random(58)
+    checked = 0
     for _ in range(WORLDS):
         world = random_world(rng)
         storage = await _replay(world)
@@ -132,20 +133,8 @@ async def test_glob_names_exactly_the_visible_rows_and_their_road() -> None:
                 result = await storage.glob(patterns=("/**",), authority=_authority(subjects))
                 assert result.success is True, (subjects, result.errors)
                 named = {str(o.path) for o in result.observations} - {"/"}
-                assert named == _expected(world, subjects, "read"), (world, subjects)
-        finally:
-            await storage.close()
-
-
-async def test_a_road_row_carries_its_name_and_kind_only() -> None:
-    rng = random.Random(59)
-    checked = 0
-    for _ in range(WORLDS):
-        world = random_world(rng)
-        storage = await _replay(world)
-        try:
-            for subjects in SUBJECT_SETS:
                 visible = _expected(world, subjects, "read")
+                assert named == visible, (world, subjects)
                 admitted = {p for p in PATHS if set_rank(world, subjects, p) >= LEVEL_RANK["read"]}
                 for road in sorted(visible - admitted):
                     row = (await storage.stat(path=Path(road), authority=_authority(subjects))).one()
@@ -162,9 +151,8 @@ async def test_a_road_row_carries_its_name_and_kind_only() -> None:
 
 
 @pytest.mark.parametrize("layout", LAYOUTS, ids=["base", "siblings"])
-@pytest.mark.parametrize("parameter_budget", [4, 9, 2_099])
-async def test_the_clauses_admit_exactly_what_the_rights_admit(layout: Layout, parameter_budget: int) -> None:
-    rng = random.Random(60 + parameter_budget)
+async def test_the_clauses_admit_exactly_what_the_rights_admit(layout: Layout) -> None:
+    rng = random.Random(60)
     for _ in range(WORLDS // 3):
         world = random_world(rng, layout)
         storage = await _replay(world)
@@ -177,15 +165,17 @@ async def test_the_clauses_admit_exactly_what_the_rights_admit(layout: Layout, p
                 for subjects in SUBJECT_SETS:
                     for level in ("read", "read_write"):
                         rights = resolve(world.closures(subjects), world.grants, level)
-                        clauses = visibility_clauses(entry, rights, host.profile, parameter_budget)
                         wanted = {row["path"] for row in stored if _admits(rights, row)}
-                        if clauses is None:
-                            assert wanted == {row["path"] for row in stored}
-                            continue
-                        got: set[str] = set()
-                        for clause in clauses:
-                            got |= set((await session.execute(select(entry.c.path).where(clause.predicate))).scalars())
-                        assert got == wanted, (world, subjects, level, parameter_budget)
+                        for parameter_budget in (4, 9, 2_099):
+                            clauses = visibility_clauses(entry, rights, host.profile, parameter_budget)
+                            if clauses is None:
+                                assert wanted == {row["path"] for row in stored}
+                                continue
+                            got: set[str] = set()
+                            for clause in clauses:
+                                admitted = await session.execute(select(entry.c.path).where(clause.predicate))
+                                got |= set(admitted.scalars())
+                            assert got == wanted, (world, subjects, level, parameter_budget)
         finally:
             await storage.close()
 

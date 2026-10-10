@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.support.database_helpers import _url
+from tests.support.loop_ticks import LoopTicker
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.pattern_matching import compile_verifier
@@ -26,6 +27,7 @@ from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
+from vfs.storage.backends.database import offload as offload_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
 if TYPE_CHECKING:
@@ -111,6 +113,30 @@ async def _close_and_collect(storage: DatabaseStorage) -> None:
     await asyncio.sleep(0.01)
 
 
+class _QueueClock:
+    """A queue wait the offload module's clock can see without anyone sleeping.
+
+    One job holds the pool's single worker while the clock stands at the
+    submit instant; the job then moves the clock forward by *wait* and
+    returns, so the next job starts on a worker that reads a later time.
+    A budget cut at worker start reads ``left_at_worker_start``; one hoisted
+    to submit time would read the whole span.
+    """
+
+    span = 100.0
+    wait = 60.0
+
+    def __init__(self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._now = monotonic()
+        monkeypatch.setattr(offload_module, "monotonic", lambda: self._now)
+        self.deadline = self._now + self.span
+        self.left_at_worker_start = self.span - self.wait
+        pool.submit(self._advance)
+
+    def _advance(self) -> None:
+        self._now += self.wait
+
+
 @pytest.fixture
 def pool() -> Iterator[ThreadPoolExecutor]:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-verify")
@@ -142,23 +168,27 @@ class TestVerifyOffload:
         )
         assert offloaded == direct
 
-    async def test_queue_wait_shortens_the_budget_never_the_wall(self, pool: ThreadPoolExecutor) -> None:
+    async def test_queue_wait_shortens_the_budget_never_the_wall(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Guards: the budget cut moves to submit time (deadline - monotonic()
         hoisted out of the worker fn), silently extending the wall by the
         queue wait."""
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
-        pool.submit(time.sleep, 0.5)
-        await offload.count_lines(["text"], cap=None, invert=False, deadline=monotonic() + 0.6)
-        assert matcher.budgets and matcher.budgets[0] <= 0.35
+        clock = _QueueClock(pool, monkeypatch)
+        await offload.count_lines(["text"], cap=None, invert=False, deadline=clock.deadline)
+        assert matcher.budgets == [pytest.approx(clock.left_at_worker_start)]
 
-    async def test_hit_lines_budget_is_cut_at_worker_start_too(self, pool: ThreadPoolExecutor) -> None:
+    async def test_hit_lines_budget_is_cut_at_worker_start_too(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Guards: the same submit-time hoist on the hit_lines arm."""
         matcher = _RecordingMatcher()
         offload = VerifyOffload(matcher, pool)
-        pool.submit(time.sleep, 0.5)
-        await offload.hit_lines(["text"], before=0, after=0, cap=None, invert=False, deadline=monotonic() + 0.6)
-        assert matcher.budgets and matcher.budgets[0] <= 0.35
+        clock = _QueueClock(pool, monkeypatch)
+        await offload.hit_lines(["text"], before=0, after=0, cap=None, invert=False, deadline=clock.deadline)
+        assert matcher.budgets == [pytest.approx(clock.left_at_worker_start)]
 
     async def test_overlapping_calls_are_refused(self, pool: ThreadPoolExecutor) -> None:
         """Guards: the one-in-flight guard is deleted, letting a second batch
@@ -187,13 +217,16 @@ class TestVerifyOffload:
 # ---------------------------------------------------------------------------
 
 
-class _SleepingMatcher:
-    """A matcher double whose work releases the GIL — the engines' shape."""
+class _HoppingMatcher:
+    """A matcher double whose work waits for the loop to turn, as the engines' GIL-releasing work lets it."""
+
+    def __init__(self, ticker: LoopTicker) -> None:
+        self._ticker = ticker
 
     def count_lines(
         self, texts: Sequence[Body], *, cap: int | None, invert: bool, budget: float | None
     ) -> tuple[list[int], bool]:
-        time.sleep(1.0)
+        self._ticker.hop()
         return [1] * len(texts), True
 
     def hit_lines(
@@ -206,7 +239,7 @@ class _SleepingMatcher:
         invert: bool,
         budget: float | None,
     ) -> tuple[list[list[MatchSpan]], bool]:  # pragma: no cover - protocol completeness
-        time.sleep(1.0)
+        self._ticker.hop()
         return [[] for _ in texts], True
 
 
@@ -214,22 +247,12 @@ class TestLoopResponsiveness:
     async def test_the_loop_keeps_ticking_while_verify_runs(self, pool: ThreadPoolExecutor) -> None:
         """Guards: `_run` calls the work inline instead of through the pool,
         holding the loop for the whole batch."""
-        offload = VerifyOffload(_SleepingMatcher(), pool)
-        gaps: list[float] = []
-
-        async def tick() -> None:
-            last = monotonic()
-            while True:
-                await asyncio.sleep(0.01)
-                now = monotonic()
-                gaps.append(now - last)
-                last = now
-
-        ticker = asyncio.ensure_future(tick())
+        ticker = LoopTicker().start()
+        offload = VerifyOffload(_HoppingMatcher(ticker), pool)
         counts, completed = await offload.count_lines(["a"], cap=None, invert=False, deadline=monotonic() + 5.0)
-        ticker.cancel()
+        ticker.stop()
         assert counts == [1] and completed is True
-        assert gaps and max(gaps) < 0.5
+        assert ticker.hops == 1  # the one batch hopped off the loop and saw it turn
 
 
 # ---------------------------------------------------------------------------

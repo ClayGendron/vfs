@@ -600,6 +600,7 @@ class TestEpochLadder:
         # The post-scan re-read sees the pointer move on attempt one; the
         # redrive re-reads everything from current state and serves correctly.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         assert (await storage.reindex()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.current_epoch

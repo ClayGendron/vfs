@@ -400,6 +400,7 @@ class TestOverlay:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = await _indexed(tmp_path)
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
         real = glean_module.current_epoch
         calls = {"n": 0}

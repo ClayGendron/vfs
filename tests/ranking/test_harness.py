@@ -16,11 +16,12 @@ import json
 from typing import TYPE_CHECKING, Final
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import func, select
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
-from tests.ranking.driver import Loaded, bm25_run, glean_run, load_corpus
+from tests.ranking.driver import Loaded, Run, bm25_run, glean_run, load_corpus
 from tests.ranking.embedders import HASH_DIMENSION, PIN_SENTENCE, POTION_MODEL, potion_embed
 from tests.ranking.merge import halves, merged_glean_run, naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
@@ -56,7 +57,7 @@ def gate(corpus: str, arm: str, numbers: dict[str, float]) -> None:
     assert numbers["ndcg@10"] >= baseline["ndcg@10"] - GATE, (corpus, arm, numbers, baseline)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(loop_scope="module")
 async def sqlite(tmp_path: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
     storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/vfs.sqlite")
     yield storage
@@ -66,6 +67,48 @@ async def sqlite(tmp_path: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
 @pytest.fixture(scope="module")
 def golden() -> Corpus:
     return vfs_native()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def golden_loaded(tmp_path_factory: pytest.TempPathFactory, golden: Corpus) -> AsyncIterator[Loaded]:
+    """The golden corpus loaded once per module on a plain sqlite mount; tests only read it."""
+    root = tmp_path_factory.mktemp("golden")
+    storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{root}/vfs.sqlite")
+    try:
+        yield await load_corpus(storage, golden)
+    finally:
+        await storage.close()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module", params=["scifact", "nfcorpus"])
+async def beir_loaded(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> AsyncIterator[tuple[Loaded, Run]]:
+    """One BEIR corpus loaded once per module with its BM25 driver run."""
+    corpus = beir(request.param)
+    root = tmp_path_factory.mktemp(request.param)
+    storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{root}/vfs.sqlite")
+    try:
+        loaded = await load_corpus(storage, corpus)
+        yield loaded, await bm25_run(loaded)
+    finally:
+        await storage.close()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def golden_mounts(
+    tmp_path_factory: pytest.TempPathFactory, golden: Corpus
+) -> AsyncIterator[tuple[Loaded, Loaded]]:
+    """The golden corpus split by top-level directory into two backends, once per module."""
+    root = tmp_path_factory.mktemp("mounts")
+    split = halves(golden)
+    stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{root}/{i}.sqlite") for i in range(len(split))]
+    try:
+        loaded = [await load_corpus(store, half) for store, half in zip(stores, split, strict=True)]
+        yield loaded[0], loaded[1]
+    finally:
+        for store in stores:
+            await store.close()
 
 
 class TestFixture:
@@ -93,39 +136,37 @@ def assert_arms_agree(left: dict[str, float], right: dict[str, float]) -> None:
         assert left[metric] == pytest.approx(right[metric], abs=1e-9), metric
 
 
+@pytest.mark.asyncio(loop_scope="module")
 class TestBaseline:
-    async def test_bm25_holds_the_gate_on_vfs_native(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
-        loaded = await load_corpus(sqlite, golden)
-        run = await bm25_run(loaded)
+    async def test_bm25_holds_the_gate_on_vfs_native(self, golden_loaded: Loaded, golden: Corpus) -> None:
+        run = await bm25_run(golden_loaded)
         assert set(run) == set(golden.queries)
         assert all(run[qid] for qid in run)  # every golden query finds something
         gate("vfs_native", "bm25", evaluate(golden.qrels, run))
 
-    async def test_glean_equals_the_bm25_baseline_on_vfs_native(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
-        loaded = await load_corpus(sqlite, golden)
+    async def test_glean_equals_the_bm25_baseline_on_vfs_native(self, golden_loaded: Loaded, golden: Corpus) -> None:
+        loaded = golden_loaded
         baseline = evaluate(golden.qrels, await bm25_run(loaded))
         arm = evaluate(golden.qrels, await glean_run(loaded))
         assert_arms_agree(arm, baseline)
         gate("vfs_native", "glean", arm)
 
     @pytest.mark.slow
-    @pytest.mark.parametrize("name", ["scifact", "nfcorpus"])
-    async def test_bm25_holds_the_gate_on_beir(self, sqlite: DatabaseStorage, name: str) -> None:
-        corpus = beir(name)
-        loaded = await load_corpus(sqlite, corpus)
-        gate(name, "bm25", evaluate(corpus.qrels, await bm25_run(loaded)))
+    async def test_bm25_holds_the_gate_on_beir(self, beir_loaded: tuple[Loaded, Run]) -> None:
+        loaded, run = beir_loaded
+        gate(loaded.corpus.name, "bm25", evaluate(loaded.corpus.qrels, run))
 
     @pytest.mark.slow
-    @pytest.mark.parametrize("name", ["scifact", "nfcorpus"])
-    async def test_glean_equals_the_bm25_baseline_on_beir(self, sqlite: DatabaseStorage, name: str) -> None:
-        corpus = beir(name)
-        loaded = await load_corpus(sqlite, corpus)
-        baseline = evaluate(corpus.qrels, await bm25_run(loaded))
+    async def test_glean_equals_the_bm25_baseline_on_beir(self, beir_loaded: tuple[Loaded, Run]) -> None:
+        loaded, run = beir_loaded
+        corpus = loaded.corpus
+        baseline = evaluate(corpus.qrels, run)
         arm = evaluate(corpus.qrels, await glean_run(loaded))
         assert_arms_agree(arm, baseline)
-        gate(name, "glean", arm)
+        gate(corpus.name, "glean", arm)
 
 
+@pytest.mark.asyncio(loop_scope="module")
 class TestDeterminism:
     async def test_the_ordered_top10_pin_holds_on_sqlite(self, sqlite: DatabaseStorage) -> None:
         await assert_top10_pin(sqlite)
@@ -172,6 +213,7 @@ def _embedders() -> dict[str, EmbeddingProvider]:
     return embedders
 
 
+@pytest.mark.asyncio(loop_scope="module")
 class TestHybridArms:
     """The vector leg alone and the fused verb, per embedder, recorded beside the lexical baseline.
 
@@ -190,18 +232,17 @@ class TestHybridArms:
             "vector": Ranker(fusion=Convex({"vector": 1.0})),
             "fused": Ranker(fusion=Convex({"vector": 0.5, "lexical": 0.5})),
         }
-        for arm, ranker in arms.items():
-            storage = DatabaseStorage(
-                url=f"sqlite+aiosqlite:///{tmp_path}/{name}_{arm}.sqlite", embedder=embedder, ranker=ranker
-            )
-            try:
-                loaded = await load_corpus(storage, golden)
-                numbers = evaluate(golden.qrels, await glean_run(loaded))
-            finally:
-                await storage.close()
-            gate("vfs_native", f"{arm}/{name}", numbers)
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{name}.sqlite", embedder=embedder)
+        try:
+            loaded = await load_corpus(storage, golden)
+            for arm, ranker in arms.items():
+                storage.ranker = ranker  # the fusion is a query-time choice; the index is the same
+                gate("vfs_native", f"{arm}/{name}", evaluate(golden.qrels, await glean_run(loaded)))
+        finally:
+            await storage.close()
 
 
+@pytest.mark.asyncio(loop_scope="module")
 class TestSignalArms:
     """The stored priors on the golden set, whose reference edges the reindex extracts from its markdown.
 
@@ -244,20 +285,13 @@ class TestSignalArms:
         gate("vfs_native", "signals/path_shape", numbers)
 
 
+@pytest.mark.asyncio(loop_scope="module")
 class TestArms:
     """The named floors and the control, recorded beside the baseline."""
 
     @pytest.fixture
-    async def mounts(self, tmp_path: pathlib.Path, golden: Corpus) -> AsyncIterator[tuple[Loaded, Loaded]]:
-        """The golden corpus split by top-level directory into two backends."""
-        split = halves(golden)
-        stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{i}.sqlite") for i in range(len(split))]
-        try:
-            loaded = [await load_corpus(store, half) for store, half in zip(stores, split, strict=True)]
-            yield loaded[0], loaded[1]
-        finally:
-            for store in stores:
-                await store.close()
+    def mounts(self, golden_mounts: tuple[Loaded, Loaded]) -> tuple[Loaded, Loaded]:
+        return golden_mounts
 
     async def test_the_merge_floors_are_recorded(self, mounts: tuple[Loaded, Loaded], golden: Corpus) -> None:
         runs = [await bm25_run(mount) for mount in mounts]
@@ -278,12 +312,12 @@ class TestArms:
         )
         assert numbers["ndcg@10"] >= floors["glean"]["ndcg@10"] - 0.02
 
-    async def test_the_uninformative_prior_control_is_recorded(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
-        run = await bm25_run(await load_corpus(sqlite, golden))
+    async def test_the_uninformative_prior_control_is_recorded(self, golden_loaded: Loaded, golden: Corpus) -> None:
+        run = await bm25_run(golden_loaded)
         gate("vfs_native", "control/uninformative_prior", evaluate(golden.qrels, uninformative_prior(run)))
 
-    async def test_compare_reports_the_arms(self, sqlite: DatabaseStorage, golden: Corpus) -> None:
-        run = await bm25_run(await load_corpus(sqlite, golden))
+    async def test_compare_reports_the_arms(self, golden_loaded: Loaded, golden: Corpus) -> None:
+        run = await bm25_run(golden_loaded)
         report = compare(golden.qrels, {"bm25": run, "control": uninformative_prior(run)})
         table = report.to_dict()
         assert set(table["model_names"]) == {"bm25", "control"}

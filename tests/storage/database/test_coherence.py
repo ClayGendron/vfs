@@ -135,8 +135,9 @@ class TestWriteVsTopologyCoherence:
         assert (await storage.stat(path=Path("/d/f.txt"))).success is False
         await storage.close()
 
-    async def test_backend_redrives_a_stale_snapshot_and_classifies_exhaustion(self, tmp_path) -> None:
+    async def test_backend_redrives_a_stale_snapshot_and_classifies_exhaustion(self, tmp_path, monkeypatch) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         await storage.mkdir(path=Path("/d"))
         fired = 0
 

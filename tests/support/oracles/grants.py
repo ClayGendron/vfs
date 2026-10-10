@@ -40,20 +40,27 @@ class GrantWorld:
     member_of: dict[str, set[str]] = field(default_factory=dict)
     owners: dict[str, str | None] = field(default_factory=dict)
     origins: dict[str, str] = field(default_factory=dict)
+    _closures: dict[str, frozenset[str]] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def judged(self, path: str) -> str:
         """The path *path*'s rights are judged by: its origin when it is a trash path, else itself."""
         return self.origins.get(path, path)
 
     def closure(self, principal: str) -> frozenset[str]:
-        """Every group *principal* reaches, directly or through nesting."""
+        """Every group *principal* reaches, directly or through nesting.
+
+        Memoised per world: memberships never change after construction,
+        and the parity sweeps ask for the same closure hundreds of times.
+        """
+        if principal in self._closures:
+            return self._closures[principal]
         seen: set[str] = set()
         frontier = {principal}
         while frontier:
             reached = set().union(*(self.member_of.get(p, set()) for p in frontier)) - seen
             seen |= reached
             frontier = reached
-        return frozenset(seen - {principal})
+        return self._closures.setdefault(principal, frozenset(seen - {principal}))
 
     def closures(self, subjects: Iterable[str]) -> Mapping[str, frozenset[str]]:
         return {sub: self.closure(sub) for sub in subjects}

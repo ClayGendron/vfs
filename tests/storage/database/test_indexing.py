@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -19,6 +18,7 @@ from sqlalchemy import event, func, select, update
 from sqlalchemy.dialects import mssql, postgresql
 
 from tests.support.database_helpers import _url
+from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.postings import decode_postings
 from vfs.models import Entry
 from vfs.models.chunk import Chunk
@@ -939,18 +939,19 @@ class TestReindexLease:
 # ---------------------------------------------------------------------------
 
 
-class _SleepyBuilder:
-    """A builder double whose work releases the GIL — the engines' shape."""
+class _HoppingBuilder:
+    """A builder double whose work waits for the loop to turn, as the engines' GIL-releasing work lets it."""
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, ticker: LoopTicker) -> None:
         self._inner = inner
+        self._ticker = ticker
 
     def add_docs(self, batch: Any) -> None:
-        time.sleep(0.5)
+        self._ticker.hop()
         self._inner.add_docs(batch)
 
     def next_batch(self, cap: int) -> Any:
-        time.sleep(0.5)
+        self._ticker.hop()
         return self._inner.next_batch(cap)
 
 
@@ -960,31 +961,23 @@ class TestReindexLoopResponsiveness:
         fold-and-feed, or the drain running inline on the loop."""
         real_assess = indexing._assess_and_split
         real_builder = indexing.postings_builder
+        ticker = LoopTicker()
 
-        def sleepy_assess(rows: Any, generation: str, links_generation: str) -> Any:
-            time.sleep(0.5)
+        def hopping_assess(rows: Any, generation: str, links_generation: str) -> Any:
+            ticker.hop()
             return real_assess(rows, generation, links_generation)
 
-        monkeypatch.setattr(indexing, "_assess_and_split", sleepy_assess)
-        monkeypatch.setattr(indexing, "postings_builder", lambda: _SleepyBuilder(real_builder()))
+        monkeypatch.setattr(indexing, "_assess_and_split", hopping_assess)
+        monkeypatch.setattr(indexing, "postings_builder", lambda: _HoppingBuilder(real_builder(), ticker))
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn_{i}():\n    return {i}\n") for i in range(8)]
         assert (await storage.write(entries=entries, parents=True)).success is True
-        gaps: list[float] = []
-
-        async def tick() -> None:
-            last = time.monotonic()
-            while True:
-                await asyncio.sleep(0.01)
-                now = time.monotonic()
-                gaps.append(now - last)
-                last = now
-
-        ticker = asyncio.ensure_future(tick())
+        ticker.start()
         result = await storage.reindex()
-        ticker.cancel()
-        assert result.success is True
-        assert gaps and max(gaps) < 0.25
+        ticker.stop()
+        assert result.success is True, result.errors
+        # One assessment, at least one feed and one drain: every hop saw the loop turn.
+        assert ticker.hops >= 3
         assert await _flags(storage, "/f0.py") == (True, True)
         await storage.close()
 

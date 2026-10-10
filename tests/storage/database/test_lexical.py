@@ -5,8 +5,6 @@ probe, the batch budgets, and the BM25 fidelity referees on sqlite.
 
 from __future__ import annotations
 
-import asyncio
-import time
 from functools import partial
 from typing import Any
 
@@ -14,6 +12,7 @@ from sqlalchemy import event, func, select, update
 
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
+from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles.lexical import pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import Entry
@@ -255,26 +254,19 @@ class TestBuild:
 
     async def test_the_loop_keeps_ticking_through_a_slow_feed(self, tmp_path, monkeypatch) -> None:
         real_builder = lexical_store.lexical_builder
-        monkeypatch.setattr(
-            lexical_store, "lexical_builder", lambda: _Observed(real_builder(), lambda _d: time.sleep(0.3))
-        )
+        ticker = LoopTicker()
+
+        def hopping_builder() -> Any:
+            return _Observed(real_builder(), lambda _d: ticker.hop())
+
+        monkeypatch.setattr(lexical_store, "lexical_builder", hopping_builder)
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="slow_body = 1\n")])).success is True
-        gaps: list[float] = []
-
-        async def tick() -> None:
-            last = time.monotonic()
-            while True:
-                await asyncio.sleep(0.01)
-                now = time.monotonic()
-                gaps.append(now - last)
-                last = now
-
-        ticker = asyncio.ensure_future(tick())
+        ticker.start()
         result = await storage.reindex()
-        ticker.cancel()
-        assert result.success is True
-        assert gaps and max(gaps) < 0.2
+        ticker.stop()
+        assert result.success is True, result.errors
+        assert ticker.hops >= 1  # the feed hopped off the loop and saw it turn
         await storage.close()
 
 
