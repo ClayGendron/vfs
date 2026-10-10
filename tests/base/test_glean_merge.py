@@ -13,7 +13,7 @@ from vfs.base import VirtualFileSystem
 from vfs.models import Match, Observation
 from vfs.paths import Path
 from vfs.rerank import FANOUT_CAP, BM25Rerank, Candidate
-from vfs.results import Result, VFSErrorKind
+from vfs.results import ErrorKind, Result
 
 STATS = {"n_docs": 50, "avg_dl": 3.0, "terms": {"lease": {"df": 5, "idf": 0.0}}}
 
@@ -117,7 +117,7 @@ async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
     await root.add_mount(other, "/other")
     result = await root.glean("lease", limit=100)
     assert result.success is True and len(result.observations) == 100
-    [record] = [e for e in result.errors if e.kind is VFSErrorKind.truncated]
+    [record] = [e for e in result.errors if e.kind is ErrorKind.truncated]
     assert record.data == {"mount": "/full", "cap": FANOUT_CAP}
     assert _limits(full) == [FANOUT_CAP]
 
@@ -133,7 +133,7 @@ async def test_a_dead_mount_among_answering_ones_is_loss_on_record() -> None:
     await root.add_mount(dead, "/dead")
     result = await root.glean("lease", limit=5)
     assert result.success is True and result.paths == ("/live/a",)
-    assert [e.kind for e in result.warnings] == [VFSErrorKind.unavailable]
+    assert [e.kind for e in result.warnings] == [ErrorKind.unavailable]
 
 
 # ---------------------------------------------------------------------------

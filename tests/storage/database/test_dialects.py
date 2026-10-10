@@ -25,7 +25,7 @@ from tests.support.database_helpers import _SqliteError, _url
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, dialects
 from vfs.storage.backends.database.descent import escape_like
@@ -283,7 +283,7 @@ class TestDialectPolicy:
 
         monkeypatch.setattr(host._dialect, "is_disconnect", broken)
         error = host.classify_failure(DBAPIError("SELECT 1", None, _SqliteError(5)), context="stat")
-        assert error.kind == VFSErrorKind.unavailable
+        assert error.kind == ErrorKind.unavailable
         assert error.retryable is True
         await storage.close()
 
@@ -293,7 +293,7 @@ class TestDialectPolicy:
         host = storage._host
         monkeypatch.setattr(host._dialect, "is_disconnect", lambda *args: True)
         error = host.classify_failure(DBAPIError("SELECT 1", None, _SqliteError(5)), context="stat")
-        assert error.kind == VFSErrorKind.backend_unavailable
+        assert error.kind == ErrorKind.backend_unavailable
         assert error.retryable is True
         await storage.close()
 
@@ -302,7 +302,7 @@ class TestDialectPolicy:
         await storage.first_touch()
         exc = ProgrammingError("SELECT EXISTS (SELECT 1)", None, Exception("42000", "Incorrect syntax"))
         error = storage._host.classify_failure(exc, context="reindex")
-        assert error.kind == VFSErrorKind.internal
+        assert error.kind == ErrorKind.internal
         assert error.retryable is False
         await storage.close()
 
@@ -423,7 +423,7 @@ class TestMembershipChunking:
         # pattern fan chunks: 60 composed arms across many statements.
         misses = await storage.stat(observations=[Observation(path=Path(f"/ghost/g{i}.txt")) for i in range(40)])
         assert len(misses.errors) == 40
-        assert {e.kind for e in misses.errors} == {VFSErrorKind.not_found}
+        assert {e.kind for e in misses.errors} == {ErrorKind.not_found}
         scoped = await storage.glob(patterns=tuple(f"{p.parent_dir}/**/*.txt" for p in paths))
         assert len(scoped.observations) == 60
         # Batch ls spans chunk boundaries: 60 anchors at 16 per statement,

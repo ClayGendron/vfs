@@ -31,7 +31,7 @@ from vfs.models import Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.permissions import read_write
-from vfs.results import Result, ResultError, RetryClass, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.replace import EditOperation
 
@@ -69,7 +69,7 @@ async def test_edit_requires_old_new_or_edits() -> None:
     fs = RecorderFS()
     result = await fs.edit(path="/f.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -77,7 +77,7 @@ async def test_write_requires_entries_or_path_and_content() -> None:
     fs = RecorderFS()
     result = await fs.write()
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "path and content or data, or entries" in result.errors[0].message
     assert fs.calls == []
 
@@ -89,7 +89,7 @@ async def test_write_rechecks_the_form_even_if_the_param_gate_drifts(monkeypatch
     monkeypatch.setattr(fs, "_gate_params", lambda *args, **kwargs: None)
     result = await fs.write(path="/f.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "path and content or data, or entries" in result.errors[0].message
     assert fs.calls == []
 
@@ -115,7 +115,7 @@ async def test_write_refuses_content_beside_data() -> None:
     fs = RecorderFS()
     result = await fs.write(path="/f.txt", content="x", data=b"y")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "content or data, not both" in result.errors[0].message
     assert fs.calls == []
 
@@ -124,7 +124,7 @@ async def test_write_single_form_rejects_invalid_content_before_dispatch() -> No
     fs = RecorderFS()
     result = await fs.write(path="/f.txt", content="a\x00b")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -145,7 +145,7 @@ async def test_tree_rejects_a_bad_max_depth_before_dispatch() -> None:
     for bad in (0, -1, "2", 1.5):
         result = await root.tree("/m", max_depth=bad)  # ty: ignore[invalid-argument-type]
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
     assert child.calls == []
 
 
@@ -174,7 +174,7 @@ async def test_two_path_cross_mount_rejected(op: str) -> None:
     method = getattr(root, op)
     result = await method(src="/a/x.txt", dest="/b/y.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.cross_mount
+    assert result.errors[0].kind is ErrorKind.cross_mount
     assert a.calls == [] and b.calls == []
 
 
@@ -185,7 +185,7 @@ async def test_two_path_batch_one_bad_pair_rejects_all() -> None:
     await root.add_mount(b, "/b")
     result = await root.move(moves=[TwoPathOperation(src="/a/x.txt", dest="/a/y.txt"), ("/a/z.txt", "/b/w.txt")])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.cross_mount
+    assert result.errors[0].kind is ErrorKind.cross_mount
     assert a.calls == [] and b.calls == []  # nothing half-executes
 
 
@@ -195,9 +195,9 @@ async def test_move_gates_both_endpoints() -> None:
     await root.add_mount(child, "/m", permissions=read_write(read=["/frozen"]))
     src_frozen = await root.move(src="/m/frozen/a.txt", dest="/m/b.txt")
     dest_frozen = await root.move(src="/m/a.txt", dest="/m/frozen/b.txt")
-    assert src_frozen.errors[0].kind is VFSErrorKind.read_only
+    assert src_frozen.errors[0].kind is ErrorKind.read_only
     assert src_frozen.errors[0].path == "/m/frozen/a.txt"
-    assert dest_frozen.errors[0].kind is VFSErrorKind.read_only
+    assert dest_frozen.errors[0].kind is ErrorKind.read_only
     assert dest_frozen.errors[0].path == "/m/frozen/b.txt"
     assert child.calls == []
 
@@ -220,7 +220,7 @@ async def test_two_path_unrouted_target_is_not_found_from_backend() -> None:
     root = VirtualFileSystem()
     result = await root.move(src="/nope/a.txt", dest="/nope/b.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.not_found
+    assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_two_path_capability_gate_blocks() -> None:
@@ -228,7 +228,7 @@ async def test_two_path_capability_gate_blocks() -> None:
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.move(src="/m/a.txt", dest="/m/b.txt")
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert child.calls == []
 
 
@@ -243,7 +243,7 @@ async def test_delete_bind_site_is_busy() -> None:
     await root.add_mount(a, "/a")
     result = await root.delete("/a")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -255,7 +255,7 @@ async def test_restore_addressing_a_bind_site_is_busy() -> None:
     await root.add_mount(a, "/a")
     result = await root.restore("/a")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -267,7 +267,7 @@ async def test_sweep_addressing_a_bind_site_is_busy() -> None:
     await root.add_mount(a, "/m")
     result = await root.sweep("/m")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -279,7 +279,7 @@ async def test_sweep_region_containing_bind_site_is_busy() -> None:
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.sweep("/data")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -289,7 +289,7 @@ async def test_delete_region_containing_bind_site_is_busy() -> None:
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.delete("/data")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_cascade_delete_refused_busy_when_region_holds_a_bind() -> None:
@@ -298,7 +298,7 @@ async def test_cascade_delete_refused_busy_when_region_holds_a_bind() -> None:
     await root.add_mount(a, "/data/m", parents=True)
     result = await root.delete("/data", cascade=True)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -308,7 +308,7 @@ async def test_grouped_delete_bind_site_is_busy() -> None:
     await root.add_mount(a, "/a")
     result = await root.delete(observations=[Observation(path=Path("/a"))])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -319,7 +319,7 @@ async def test_move_onto_bind_site_is_busy() -> None:
     await root.add_mount(b, "/b")
     result = await root.move(src="/a/x.txt", dest="/b")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == [] and b.calls == []
 
 
@@ -329,7 +329,7 @@ async def test_move_source_bind_site_is_busy() -> None:
     await root.add_mount(a, "/a")
     result = await root.move(src="/a", dest="/z")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -339,7 +339,7 @@ async def test_move_region_containing_bind_site_is_busy() -> None:
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.move(src="/data", dest="/moved")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
     assert a.calls == []
 
 
@@ -378,7 +378,7 @@ async def test_mkedge_cross_mount_rejected() -> None:
     await root.add_mount(b, "/b")
     result = await root.mkedge(source="/a/x.py", target="/b/y.py", edge_type="imports")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.cross_mount
+    assert result.errors[0].kind is ErrorKind.cross_mount
     assert a.calls == [] and b.calls == []
 
 
@@ -386,7 +386,7 @@ async def test_mkedge_rejects_bad_edge_type() -> None:
     fs = RecorderFS()
     result = await fs.mkedge(source="/a.py", target="/b.py", edge_type="im/ports")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -394,12 +394,12 @@ async def test_mkedge_missing_endpoints_is_not_found() -> None:
     # The funnel surfaces the backend's own classification untranslated.
     miss = Result(
         ops=("mkedge",),
-        errors=[ResultError(kind=VFSErrorKind.not_found, message="No such entry: /nope/a.py")],
+        errors=[ResultError(kind=ErrorKind.not_found, message="No such entry: /nope/a.py")],
     )
     root = VirtualFileSystem(storage=CannedStorage({"mkedge": miss}))
     result = await root.mkedge(source="/nope/a.py", target="/nope/b.py", edge_type="imports")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.not_found
+    assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_mkedge_capability_gate_blocks() -> None:
@@ -407,7 +407,7 @@ async def test_mkedge_capability_gate_blocks() -> None:
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert child.calls == []
 
 
@@ -415,8 +415,8 @@ async def test_mkedge_invalid_endpoints_rejected() -> None:
     fs = RecorderFS()
     bad_source = await fs.mkedge(source="/a\x00.py", target="/b.py", edge_type="imports")
     bad_target = await fs.mkedge(source="/a.py", target="/b\x00.py", edge_type="imports")
-    assert bad_source.errors[0].kind is VFSErrorKind.invalid
-    assert bad_target.errors[0].kind is VFSErrorKind.invalid
+    assert bad_source.errors[0].kind is ErrorKind.invalid
+    assert bad_target.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -424,7 +424,7 @@ async def test_mkedge_rejects_non_string_edge_type() -> None:
     fs = RecorderFS()
     result = await fs.mkedge(source="/a.py", target="/b.py", edge_type=123)  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_mkedge_refuses_the_reserved_fs_type() -> None:
@@ -433,7 +433,7 @@ async def test_mkedge_refuses_the_reserved_fs_type() -> None:
     fs = RecorderFS()
     result = await fs.mkedge(source="/a.py", target="/b.py", edge_type="fs")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -448,7 +448,7 @@ async def test_mkedge_refuses_extracted_provenance() -> None:
         provenance="extracted",  # ty: ignore[invalid-argument-type]
     )
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -460,7 +460,7 @@ async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
     for source in ("/", "/.vfs/ghost.py"):
         result = await root.mkedge(source=source, target="/m/b.py", edge_type="imports")
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_mkedge_gates_the_target_endpoint_path() -> None:
@@ -471,7 +471,7 @@ async def test_mkedge_gates_the_target_endpoint_path() -> None:
     await root.add_mount(child, "/m", permissions=read_write(read=["/b.py"]))
     result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert child.calls == []
 
 
@@ -487,7 +487,7 @@ async def test_mkedge_batch_rejects_non_edge_items() -> None:
     fs = RecorderFS()
     result = await fs.mkedge(edges=["not an edge"])  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -504,7 +504,7 @@ async def test_mkedge_duplicate_identity_in_batch_is_refused() -> None:
     edge = Edge(source=Path("/a.py"), target=Path("/b.py"), edge_type="imports")
     result = await fs.mkedge(edges=[edge, edge])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert result.errors[0].message == "Invalid: duplicate imports edge in batch"
     assert (result.errors[0].path, result.errors[0].data) == ("/a.py", {"vfs.target": "/b.py"})
     assert fs.calls == []
@@ -513,7 +513,7 @@ async def test_mkedge_duplicate_identity_in_batch_is_refused() -> None:
 async def test_rmedge_requires_edges_or_the_sugar_triple() -> None:
     result = await RecorderFS().rmedge()
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "requires edges" in result.errors[0].message
 
 
@@ -552,7 +552,7 @@ async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None
     assert b.calls == []
     # glean also skips the root entry (memory declares no glean) — every
     # skip is an info-severity unsupported record anchored at its bind path.
-    assert all(e.kind is VFSErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
+    assert all(e.kind is ErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
     skip = next(e for e in result.errors if e.path == "/b")
     assert skip.source == "/b"
 
@@ -588,7 +588,7 @@ async def test_fanout_scoped_incapable_terminal_is_unsupported() -> None:
     await root.add_mount(b, "/b")
     result = await root.glob("*.py", paths=("/b/src",))
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert b.calls == []
 
 
@@ -613,7 +613,7 @@ async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
     assert result.op == "glean"
     [skip] = result.errors
     assert skip.severity is Severity.info
-    assert skip.kind is VFSErrorKind.unsupported
+    assert skip.kind is ErrorKind.unsupported
 
 
 async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
@@ -627,7 +627,7 @@ async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
     assert result.success is True
     assert result.paths == (f"{mount}/ok.py",)
     [err] = result.errors
-    assert err.kind is VFSErrorKind.unaddressable
+    assert err.kind is ErrorKind.unaddressable
     assert err.severity is Severity.warning
     assert err.source == mount
     assert err.data == {"vfs.overflow": {"local_path": DeepRowStorage.DEEP}}
@@ -676,7 +676,7 @@ async def test_glob_capability_skip_still_records_when_the_mount_is_reachable() 
     reachable = await root.glob("/data/*.py")
     assert incapable.calls == []
     [skip] = reachable.errors
-    assert skip.kind is VFSErrorKind.unsupported and skip.severity is Severity.info
+    assert skip.kind is ErrorKind.unsupported and skip.severity is Severity.info
     assert skip.path == "/data"
     unreachable = await root.glob("/elsewhere/*.py")
     assert unreachable.errors == []  # dead and incapable: routing wins, no record
@@ -693,7 +693,7 @@ async def test_glob_capability_skip_survives_a_root_inside_the_entry() -> None:
     await root.add_mount(deep, "/data/sub/deep", parents=True)
     result = await root.glob("**/*.py", paths=("/data/sub",))
     assert result.success is True
-    [skip] = [e for e in result.errors if e.kind is VFSErrorKind.unsupported]
+    [skip] = [e for e in result.errors if e.kind is ErrorKind.unsupported]
     assert skip.path == "/data"
 
 
@@ -826,7 +826,7 @@ async def test_glob_root_in_a_stat_incapable_entry_is_undeterminable() -> None:
     result = await root.glob("*.py", paths=("/data/sub",))
     assert result.success is True
     [warning] = [e for e in result.errors if e.severity is Severity.warning]
-    assert warning.kind is VFSErrorKind.unsupported
+    assert warning.kind is ErrorKind.unsupported
     assert warning.path == "/data/sub"
     assert [op for op, _ in incapable.calls] == ["glob"]
 
@@ -837,7 +837,7 @@ async def test_glob_missing_scope_root_still_asserts() -> None:
     root = VirtualFileSystem()
     result = await root.glob("**/*.py", paths=("/missing",))
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.not_found
+    assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_glob_name_arm_broadcasts_verbatim() -> None:
@@ -867,7 +867,7 @@ async def test_glob_invalid_pattern_refuses_before_any_routing() -> None:
     await fs.add_mount(data, "/data")
     result = await fs.glob("/data/a**b.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert data.calls == []
     assert all(op != "glob" for op, _ in fs.calls)
 
@@ -901,7 +901,7 @@ async def test_fanout_one_dead_mount_demotes_to_warning() -> None:
     assert result.success is True
     assert result.paths == ("/live/hit.md",)
     [warning] = [e for e in result.errors if e.severity is Severity.warning]
-    assert warning.kind is VFSErrorKind.backend_unavailable
+    assert warning.kind is ErrorKind.backend_unavailable
     assert warning.source == "/dead"
     assert warning.retry_class is RetryClass.transient
 
@@ -924,7 +924,7 @@ async def test_scoped_dispatch_at_a_dead_mount_never_demotes() -> None:
     result = await root.grep("needle", paths=("/dead/src", "/live/src"))
     assert result.success is False
     [fatal] = result.failures
-    assert fatal.kind is VFSErrorKind.backend_unavailable
+    assert fatal.kind is ErrorKind.backend_unavailable
     assert fatal.source == "/dead"
 
 
@@ -938,7 +938,7 @@ async def test_named_scope_subsumed_by_a_region_still_fails_loudly() -> None:
     result = await root.grep("needle", paths=("/", "/dead/src"))
     assert result.success is False
     [fatal] = result.failures
-    assert fatal.kind is VFSErrorKind.backend_unavailable
+    assert fatal.kind is ErrorKind.backend_unavailable
     assert fatal.source == "/dead"
 
 
@@ -975,7 +975,7 @@ async def test_non_positive_result_bound_is_invalid() -> None:
     root = VirtualFileSystem()
     for result in (await root.glob("*.md", max_count=0), await root.glean("q", limit=-1)):
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_non_integer_result_bound_is_invalid() -> None:
@@ -987,7 +987,7 @@ async def test_non_integer_result_bound_is_invalid() -> None:
     for bad in ("5", 2.5):
         result = await root.glob("*", max_count=bad)  # ty: ignore[invalid-argument-type]
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
     assert child.calls == []
 
 
@@ -1029,7 +1029,7 @@ async def test_grouped_read_partial_rows_and_error_both_surface() -> None:
     partial = Result(
         ops=("stat",),
         observations=[Observation(path=Path("/ok.txt"), kind="file")],
-        errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/missing.txt"))],
+        errors=[ResultError(kind=ErrorKind.not_found, message="gone", path=Path("/missing.txt"))],
     )
     root = VirtualFileSystem()
     child = CannedStorage({"stat": partial})
@@ -1038,7 +1038,7 @@ async def test_grouped_read_partial_rows_and_error_both_surface() -> None:
     result = await root.stat(observations=rows)
     assert result.success is False
     assert result.paths == ("/m/ok.txt",)
-    assert result.errors[0].kind is VFSErrorKind.not_found
+    assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_observation_batch_mutation_gates_capability_before_dispatch() -> None:
@@ -1053,7 +1053,7 @@ async def test_observation_batch_mutation_gates_capability_before_dispatch() -> 
     rows = [Observation(path=Path("/cap/a.txt")), Observation(path=Path("/lim/b.txt"))]
     result = await root.delete(observations=rows)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert capable.calls == []  # not dispatched despite being capable
 
 
@@ -1067,7 +1067,7 @@ async def test_graph_rejects_unknown_and_centrality_methods() -> None:
     for method in ("pagerank", "not_a_method"):
         result = await fs.graph(method, path="/a.py")
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -1150,7 +1150,7 @@ async def test_write_entries_one_read_only_target_rejects_all() -> None:
     entries = [Entry(path=Path("/a/f.txt"), content="x"), Entry(path=Path("/b/g.txt"), content="y")]
     result = await root.write(entries)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert a.calls == [] and b.calls == []  # gated before any dispatch
 
 
@@ -1158,7 +1158,7 @@ async def test_write_entries_missing_parent_is_not_found() -> None:
     root = VirtualFileSystem()
     result = await root.write(entries=[Entry(path=Path("/missing/f.txt"), content="x")])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.not_found
+    assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_write_entries_capability_gate_blocks() -> None:
@@ -1166,7 +1166,7 @@ async def test_write_entries_capability_gate_blocks() -> None:
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.write(entries=[Entry(path=Path("/m/f.txt"), content="x")])
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert child.calls == []
 
 
@@ -1176,7 +1176,7 @@ async def test_write_entries_meta_root_rejected_but_meta_scope_admitted() -> Non
     fs = RecorderFS()
     result = await fs.write(entries=[Entry(path=Path("/.vfs"))])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
     admitted = await fs.write(entries=[Entry(path=Path("/.vfs/trash/2026-07-18-10/x.txt"), kind="file", content="x")])
     assert admitted.success is True
@@ -1194,14 +1194,14 @@ async def test_fanout_with_zero_hop_budget_is_budget_exhausted(op: str) -> None:
     await root.add_mount(EchoStorage(), "/m")
     result = await _fan(root, op)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.budget_exhausted
+    assert result.errors[0].kind is ErrorKind.budget_exhausted
 
 
 async def test_tree_with_zero_hop_budget_is_budget_exhausted() -> None:
     root = VirtualFileSystem(hop_budget=0)
     result = await root.tree("/")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.budget_exhausted
+    assert result.errors[0].kind is ErrorKind.budget_exhausted
 
 
 async def test_hop_budget_charged_once_per_call_not_per_binding() -> None:
@@ -1236,7 +1236,7 @@ async def test_transport_error_classifies_backend_unavailable() -> None:
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.read("/dead/f.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
     assert result.op == "read"
 
 
@@ -1250,7 +1250,7 @@ async def test_transport_error_message_names_the_failure() -> None:
 async def test_transport_error_at_root_storage_reports_root_path() -> None:
     fs = VirtualFileSystem(storage=TransportFailStorage())
     result = await fs.read("/f.txt")
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
     assert result.errors[0].path == "/"
 
 
@@ -1262,8 +1262,8 @@ async def test_backend_unavailable_keeps_the_binding_bound() -> None:
     await root.add_mount(dead, "/dead")
     first = await root.read("/dead/f.txt")
     second = await root.read("/dead/f.txt")
-    assert first.errors[0].kind is VFSErrorKind.backend_unavailable
-    assert second.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert first.errors[0].kind is ErrorKind.backend_unavailable
+    assert second.errors[0].kind is ErrorKind.backend_unavailable
     assert len(dead.calls) == 2  # both calls actually reached the backend
 
 
@@ -1292,7 +1292,7 @@ async def test_funnel_backstop_answers_unsupported_when_capability_overclaims() 
     fs = VirtualFileSystem(storage=OverclaimingStorage())
     gated = await fs.write(path="/f.txt", content="x")  # passes the gate (caps lie)
     assert gated.success is False
-    assert gated.errors[0].kind is VFSErrorKind.unsupported
+    assert gated.errors[0].kind is ErrorKind.unsupported
     assert gated.op == "write"
 
 
@@ -1309,7 +1309,7 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
     binding = fs._bindings[Path("/")]
     result = await fs._call_storage(binding, op)  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert result.op == op
 
 
@@ -1333,8 +1333,8 @@ async def test_route_single_requires_exactly_one_input() -> None:
     fs = RecorderFS()
     neither = await fs.read()
     both = await fs.read("/f.txt", observations=[Observation(path=Path("/f.txt"))])
-    assert neither.success is False and neither.errors[0].kind is VFSErrorKind.invalid
-    assert both.success is False and both.errors[0].kind is VFSErrorKind.invalid
+    assert neither.success is False and neither.errors[0].kind is ErrorKind.invalid
+    assert both.success is False and both.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -1360,7 +1360,7 @@ async def test_grouped_observations_mutation_gate_rejects_invalid_target() -> No
     fs = RecorderFS()
     result = await fs.delete(observations=[Observation(path=Path("/"))])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -1369,7 +1369,7 @@ async def test_grouped_observations_respect_read_only_mount() -> None:
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions="read")
     result = await root.delete(observations=[Observation(path=Path("/m/f.txt"))])
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert child.calls == []
 
 
@@ -1379,7 +1379,7 @@ async def test_grouped_observations_capability_error_is_rebased() -> None:
     await root.add_mount(child, "/m")
     result = await root.read(observations=[Observation(path=Path("/m/f.txt"))])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
     assert child.calls == []
 
 
@@ -1399,14 +1399,14 @@ async def test_two_path_empty_batch_is_empty_success() -> None:
 async def test_two_path_invalid_src_rejected() -> None:
     result = await RecorderFS().move(src="/a\x00b.txt", dest="/b.txt")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 @pytest.mark.parametrize("op", ["move", "copy"])
 async def test_two_path_requires_pair_or_batch(op: str) -> None:
     result = await getattr(RecorderFS(), op)()
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_write_entries_empty_batch_is_empty_success() -> None:
@@ -1419,8 +1419,8 @@ async def test_observation_dispatch_unroutable_path_is_not_found() -> None:
     fs = VirtualFileSystem()
     single = await fs.read("/nope")
     batch = await fs.read(observations=[Observation(path=Path("/nope"))])
-    assert single.errors[0].kind is VFSErrorKind.not_found
-    assert batch.errors[0].kind is VFSErrorKind.not_found
+    assert single.errors[0].kind is ErrorKind.not_found
+    assert batch.errors[0].kind is ErrorKind.not_found
 
 
 async def test_gated_denial_is_a_result_until_the_boundary() -> None:
@@ -1431,7 +1431,7 @@ async def test_gated_denial_is_a_result_until_the_boundary() -> None:
     await root.add_mount(child, "/c", permissions="read")
     denied = await root.write(path="/c/f.txt", content="x")
     assert denied.success is False
-    assert denied.errors[0].kind is VFSErrorKind.read_only
+    assert denied.errors[0].kind is ErrorKind.read_only
     assert denied.op == "write"
     with pytest.raises(WriteConflictError):
         raise_if_failed(denied)
@@ -1445,20 +1445,20 @@ async def test_gated_denial_is_a_result_until_the_boundary() -> None:
 async def test_grouped_observations_reject_non_observation_element() -> None:
     result = await RecorderFS().delete(observations=["notanobs"])  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_merge_preserves_distinct_but_equal_errors_from_different_mounts() -> None:
     # Two mounts failing identically are two real failures: the rebase seam
     # stamps each with its own source, so value-equality dedup keeps both.
-    fail = Result(ops=("grep",), errors=[ResultError(kind=VFSErrorKind.unavailable, message="down")])
+    fail = Result(ops=("grep",), errors=[ResultError(kind=ErrorKind.unavailable, message="down")])
     merged = fail.with_mount("/a") | fail.with_mount("/b")
     assert len(merged.errors) == 2
     assert {e.source for e in merged.errors} == {"/a", "/b"}
 
 
 async def test_merge_still_dedups_the_same_error_object_in_a_diamond() -> None:
-    err = ResultError(kind=VFSErrorKind.unavailable, message="down")
+    err = ResultError(kind=ErrorKind.unavailable, message="down")
     a = Result(ops=("grep",), observations=[Observation(path=Path("/a"))], errors=[err])
     b = Result(ops=("grep",), errors=[err])
     diamond = (a | b) & b  # same err instance flows down both arms
@@ -1469,27 +1469,27 @@ async def test_merge_still_dedups_the_same_error_object_in_a_diamond() -> None:
 async def test_two_path_batch_rejects_malformed_pairs(bad: object) -> None:
     result = await RecorderFS().move(moves=[bad])  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_write_entries_rejects_non_entry_element() -> None:
     result = await RecorderFS().write(entries=["notanentry"])  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_write_rejects_entries_and_path_together() -> None:
     fs = RecorderFS()
     result = await fs.write(entries=[Entry(path=Path("/a.txt"))], path="/b.txt", content="x")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_edit_rejects_old_new_and_edits_together() -> None:
     fs = RecorderFS()
     result = await fs.edit(path="/f.txt", old="a", new="b", edits=[EditOperation(old="c", new="d")])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 @pytest.mark.parametrize("op", ["move", "copy"])
@@ -1497,7 +1497,7 @@ async def test_two_path_rejects_pair_and_batch_together(op: str) -> None:
     method = getattr(RecorderFS(), op)
     result = await method(src="/a.txt", dest="/b.txt", **{"moves" if op == "move" else "copies": [("/c", "/d")]})
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
@@ -1506,7 +1506,7 @@ async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
     await root.add_mount(EchoStorage(), "/m")
     result = await _fan(root, op, paths=("/m/x",), observations=[Observation(path=Path("/m/y"))])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 # ----------------------------------------------------------------------
@@ -1528,7 +1528,7 @@ async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
 async def test_non_iterable_batch_arg_is_invalid_not_crash(verb: str, kwargs: dict[str, Any]) -> None:
     result = await getattr(RecorderFS(), verb)(**kwargs)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_generator_observations_are_not_silently_dropped() -> None:
@@ -1557,7 +1557,7 @@ async def test_generator_entries_survive() -> None:
 async def test_edit_rejects_malformed_edits(bad: object) -> None:
     result = await RecorderFS().edit(path="/f.txt", edits=bad)  # ty: ignore[invalid-argument-type]
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 # ----------------------------------------------------------------------
@@ -1579,7 +1579,7 @@ async def test_sibling_writes_settle_before_failure_is_reported() -> None:
     assert result.success is False
     assert ok.write_log == ["/a.txt"]  # completed before the router returned
     assert "/ok/a.txt" in result.paths  # and its outcome is reported, not dropped
-    assert any(e.kind is VFSErrorKind.unavailable for e in result.errors)
+    assert any(e.kind is ErrorKind.unavailable for e in result.errors)
 
 
 async def test_impl_bug_propagates_only_after_siblings_settle() -> None:
@@ -1653,7 +1653,7 @@ async def test_closed_filesystem_fails_every_verb_as_backend_unavailable(verb: s
     await fs.close()
     result = await call(fs)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
     assert result.op == verb
 
 
@@ -1667,7 +1667,7 @@ def _live(op: str, path: str) -> Result:
 
 
 def _dead(op: str) -> Result:
-    return Result(ops=(op,), errors=[ResultError(kind=VFSErrorKind.backend_unavailable, message="dead peer")])
+    return Result(ops=(op,), errors=[ResultError(kind=ErrorKind.backend_unavailable, message="dead peer")])
 
 
 def test_merge_fanout_pinned_failure_stays_fatal() -> None:
@@ -1680,7 +1680,7 @@ def test_merge_fanout_pinned_failure_stays_fatal() -> None:
     )
     assert merged.success is False
     [fatal] = merged.failures
-    assert fatal.kind is VFSErrorKind.backend_unavailable
+    assert fatal.kind is ErrorKind.backend_unavailable
 
 
 def test_merge_fanout_unpinned_failure_demotes_beside_live_branches() -> None:
@@ -1692,7 +1692,7 @@ def test_merge_fanout_unpinned_failure_demotes_beside_live_branches() -> None:
     )
     assert merged.success is True
     [warning] = [e for e in merged.errors if e.severity is Severity.warning]
-    assert warning.kind is VFSErrorKind.backend_unavailable
+    assert warning.kind is ErrorKind.backend_unavailable
 
 
 def test_merge_fanout_all_dead_unpinned_stays_loud() -> None:
@@ -1747,7 +1747,7 @@ async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
     root = VirtualFileSystem()
     plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),))
     assert plan.refusal is not None
-    assert plan.refusal.errors[0].kind is VFSErrorKind.invalid
+    assert plan.refusal.errors[0].kind is ErrorKind.invalid
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
 
 
@@ -1756,7 +1756,7 @@ async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
     await root.add_mount(ReadFamilyStorage(), "/thin")
     plan = root._classify_fanout_scopes("glob", ("/thin/sub",))
     assert plan.refusal is not None
-    assert plan.refusal.errors[0].kind is VFSErrorKind.unsupported
+    assert plan.refusal.errors[0].kind is ErrorKind.unsupported
     assert plan.scoped == {} and plan.unscoped == {} and plan.skips == []
 
 
@@ -1773,7 +1773,7 @@ async def test_hop_grant_exhaustion_refuses_without_token() -> None:
     grant = fs._enter_hop(op="glob")
     assert grant.token is None
     assert grant.refusal is not None
-    assert grant.refusal.errors[0].kind is VFSErrorKind.budget_exhausted
+    assert grant.refusal.errors[0].kind is ErrorKind.budget_exhausted
 
 
 async def test_hop_grant_exit_restores_the_callers_budget() -> None:
@@ -1799,7 +1799,7 @@ async def test_two_path_invalid_dest_beats_busy_src() -> None:
     await root.add_mount(RecorderStorage(), "/m")
     result = await root.move(src="/m", dest="/" + "x" * (MAX_PATH_LENGTH + 1))
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 # ----------------------------------------------------------------------
@@ -1813,7 +1813,7 @@ async def test_tree_named_target_failure_returns_loud() -> None:
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.tree("/dead")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
 
 
 async def test_closed_filesystem_rejects_an_entry_batch_write() -> None:
@@ -1821,7 +1821,7 @@ async def test_closed_filesystem_rejects_an_entry_batch_write() -> None:
     await fs.close()
     result = await fs.write(entries=[Entry(path=Path("/f.txt"), content="x")])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
 
 
 async def test_edit_passes_a_native_edits_list_through() -> None:

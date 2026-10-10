@@ -29,7 +29,7 @@ from sqlalchemy import and_, insert, select, update
 from vfs.authority import EVERYONE_NAME, Authority, Principal
 from vfs.models import Edge, Entry
 from vfs.paths import Path
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -123,7 +123,7 @@ def _paths(result: Result) -> set[str]:
     return {str(o.path) for o in result.observations}
 
 
-def _kind(result: Result) -> VFSErrorKind | str | None:
+def _kind(result: Result) -> ErrorKind | str | None:
     assert result.success is False, result
     return result.errors[0].kind
 
@@ -156,7 +156,7 @@ class GrantsContract:
         hidden = await storage.read(path=Path("/eng/spec.md"), authority=BOB)
         missing = await storage.read(path=Path("/eng/nope.md"), authority=BOB)
         nowhere = await storage.read(path=Path("/nope/spec.md"), authority=BOB)
-        assert _kind(hidden) == _kind(missing) == _kind(nowhere) == VFSErrorKind.not_found
+        assert _kind(hidden) == _kind(missing) == _kind(nowhere) == ErrorKind.not_found
         assert hidden.errors[0].message.replace("spec.md", "X") == missing.errors[0].message.replace("nope.md", "X")
 
     @needs("grant", "stat")
@@ -182,7 +182,7 @@ class GrantsContract:
         assert row.kind == "directory"
         assert row.populated == frozenset({"path", "kind"})
         assert row.version is None and row.size_bytes is None
-        assert _kind(await storage.read(path=Path("/pub"), authority=CAROL)) == VFSErrorKind.wrong_kind
+        assert _kind(await storage.read(path=Path("/pub"), authority=CAROL)) == ErrorKind.wrong_kind
 
     @needs("grant", "ls")
     async def test_a_road_directory_lists_only_its_visible_children(self, storage: GrantsBackend) -> None:
@@ -192,8 +192,8 @@ class GrantsContract:
     @needs("grant", "stat")
     async def test_a_directory_with_nothing_visible_beneath_is_hidden(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert _kind(await storage.stat(path=Path("/eng"), authority=BOB)) == VFSErrorKind.not_found
-        assert _kind(await storage.stat(path=Path("/eng/secret"), authority=CAROL)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/eng"), authority=BOB)) == ErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/eng/secret"), authority=CAROL)) == ErrorKind.not_found
 
     @needs("grant", "tree")
     async def test_tree_walks_only_the_visible_and_the_road(self, storage: GrantsBackend) -> None:
@@ -283,7 +283,7 @@ class GrantsContract:
     async def test_an_owner_reads_its_own_row_under_a_private_posture(self, storage: GrantsBackend) -> None:
         await _world(storage)
         assert (await storage.read(path=Path("/hr/case.md"), authority=ANN)).success is True
-        assert _kind(await storage.read(path=Path("/hr/case.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/hr/case.md"), authority=BOB)) == ErrorKind.not_found
 
     @needs("grant", "read")
     async def test_a_subject_set_holds_only_what_every_member_holds(self, storage: GrantsBackend) -> None:
@@ -291,8 +291,8 @@ class GrantsContract:
         # bob reaches neither, so the pair reaches neither. Both read /pub.
         await _world(storage)
         assert (await storage.read(path=Path("/pub/readme.md"), authority=PAIR)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=PAIR)) == VFSErrorKind.not_found
-        assert _kind(await storage.read(path=Path("/hr/case.md"), authority=PAIR)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=PAIR)) == ErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/hr/case.md"), authority=PAIR)) == ErrorKind.not_found
 
     # ------------------------------------------------------------------
     # Posture — what everyone holds
@@ -302,7 +302,7 @@ class GrantsContract:
     async def test_anonymous_is_unauthenticated_on_a_private_mount(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.read(path=Path("/pub/readme.md"), authority=ANON)
-        assert _kind(result) == VFSErrorKind.unauthenticated
+        assert _kind(result) == ErrorKind.unauthenticated
 
     @needs("grant", "write", "mkedge", "glean", "sweep", "move", "copy", "restore")
     @pytest.mark.parametrize("verb", sorted(ANONYMOUS_CALLS))
@@ -311,7 +311,7 @@ class GrantsContract:
     ) -> None:
         await _world(storage)
         result = await ANONYMOUS_CALLS[verb](storage)
-        assert _kind(result) == VFSErrorKind.unauthenticated, verb
+        assert _kind(result) == ErrorKind.unauthenticated, verb
 
     @needs("grant", "read", "write")
     async def test_a_shared_posture_lets_anyone_read_and_nobody_unnamed_write(self, storage: GrantsBackend) -> None:
@@ -320,9 +320,9 @@ class GrantsContract:
         assert (await storage.read(path=Path("/hr/other.md"), authority=ANON)).success is True
         assert (await storage.read(path=Path("/hr/other.md"), authority=DAVE)).success is True
         write = await storage.write(entries=[Entry(path=Path("/hr/new.md"), content="x")], authority=ANON)
-        assert _kind(write) == VFSErrorKind.unauthenticated
+        assert _kind(write) == ErrorKind.unauthenticated
         named = await storage.write(entries=[Entry(path=Path("/hr/new.md"), content="x")], authority=DAVE)
-        assert _kind(named) == VFSErrorKind.permission_denied
+        assert _kind(named) == ErrorKind.permission_denied
 
     @needs("grant", "read")
     async def test_a_deeper_posture_decides_beneath_it(self, storage: GrantsBackend) -> None:
@@ -330,7 +330,7 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
-        assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == ErrorKind.not_found
 
     @needs("grant", "read")
     async def test_a_posture_change_is_seen_by_a_caller_already_resolved(self, storage: GrantsBackend) -> None:
@@ -342,11 +342,11 @@ class GrantsContract:
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=ANON)).success is True
         assert (await storage.posture(path=Path("/"), posture="private", authority=SYSTEM)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == VFSErrorKind.unauthenticated
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == ErrorKind.unauthenticated
         assert (await storage.posture(path=Path("/eng"), posture="shared", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == VFSErrorKind.unauthenticated
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == ErrorKind.unauthenticated
 
     # ------------------------------------------------------------------
     # The write gate
@@ -360,7 +360,7 @@ class GrantsContract:
         assert result.success is True
         assert (await storage.remove_member(group="group:eng", member="ann", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/new.md"), authority=ANN)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANN)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANN)) == ErrorKind.not_found
 
     @needs("grant", "edit")
     async def test_a_visible_read_only_row_refuses_an_edit(self, storage: GrantsBackend) -> None:
@@ -368,13 +368,13 @@ class GrantsContract:
         result = await storage.edit(
             path=Path("/pub/readme.md"), edits=[EditOperation("readme", "README")], authority=BOB
         )
-        assert _kind(result) == VFSErrorKind.permission_denied
+        assert _kind(result) == ErrorKind.permission_denied
 
     @needs("grant", "edit")
     async def test_a_hidden_row_refuses_an_edit_as_missing(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.edit(path=Path("/eng/spec.md"), edits=[EditOperation("spec", "SPEC")], authority=BOB)
-        assert _kind(result) == VFSErrorKind.not_found
+        assert _kind(result) == ErrorKind.not_found
 
     @needs("grant", "write")
     async def test_a_write_under_a_road_directory_is_denied_before_lookup(self, storage: GrantsBackend) -> None:
@@ -383,7 +383,7 @@ class GrantsContract:
         await _world(storage)
         fresh = await storage.write(entries=[Entry(path=Path("/pub/new.md"), content="x")], authority=CAROL)
         taken = await storage.write(entries=[Entry(path=Path("/pub/readme.md"), content="x")], authority=CAROL)
-        assert _kind(fresh) == _kind(taken) == VFSErrorKind.permission_denied
+        assert _kind(fresh) == _kind(taken) == ErrorKind.permission_denied
 
     @needs("grant", "write", "mkdir")
     async def test_no_verb_acts_on_a_road_directory_itself(self, storage: GrantsBackend) -> None:
@@ -391,15 +391,15 @@ class GrantsContract:
         await _world(storage)
         mkdir = await storage.mkdir(path=Path("/pub"), exist_ok=True, authority=CAROL)
         write = await storage.write(entries=[Entry(path=Path("/pub"), content="x")], authority=CAROL)
-        assert _kind(mkdir) == _kind(write) == VFSErrorKind.permission_denied
+        assert _kind(mkdir) == _kind(write) == ErrorKind.permission_denied
 
     @needs("grant", "delete", "mkdir", "edit")
     async def test_a_partial_caller_is_refused_per_verb(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert _kind(await storage.delete(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
-        assert _kind(await storage.mkdir(path=Path("/eng/x"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.delete(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
+        assert _kind(await storage.mkdir(path=Path("/eng/x"), authority=BOB)) == ErrorKind.not_found
         missing = await storage.edit(path=Path("/eng/nope.md"), edits=[EditOperation("a", "b")], authority=ANN)
-        assert _kind(missing) == VFSErrorKind.not_found
+        assert _kind(missing) == ErrorKind.not_found
 
     @needs("grant", "mkedge", "rmedge")
     async def test_an_edge_needs_write_at_its_source_and_read_at_its_target(self, storage: GrantsBackend) -> None:
@@ -408,16 +408,16 @@ class GrantsContract:
         hidden = Edge(source=Path("/eng/spec.md"), target=Path("/hr/other.md"), edge_type="ref")
         read_only = Edge(source=Path("/pub/readme.md"), target=Path("/eng/spec.md"), edge_type="ref")
         assert (await storage.mkedge(edges=[visible], authority=ANN)).success is True
-        assert _kind(await storage.mkedge(edges=[hidden], authority=ANN)) == VFSErrorKind.not_found
-        assert _kind(await storage.mkedge(edges=[read_only], authority=BOB)) == VFSErrorKind.permission_denied
-        assert _kind(await storage.rmedge(edges=[read_only], authority=BOB)) == VFSErrorKind.permission_denied
+        assert _kind(await storage.mkedge(edges=[hidden], authority=ANN)) == ErrorKind.not_found
+        assert _kind(await storage.mkedge(edges=[read_only], authority=BOB)) == ErrorKind.permission_denied
+        assert _kind(await storage.rmedge(edges=[read_only], authority=BOB)) == ErrorKind.permission_denied
         assert (await storage.rmedge(edges=[visible], authority=ANN)).success is True
 
     @needs("grant", "write")
     async def test_a_write_under_a_hidden_directory_is_not_found(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.write(entries=[Entry(path=Path("/eng/new.md"), content="x")], authority=BOB)
-        assert _kind(result) == VFSErrorKind.not_found
+        assert _kind(result) == ErrorKind.not_found
 
     @needs("grant", "write", "stat")
     async def test_parents_never_mint_through_a_hidden_ancestor(self, storage: GrantsBackend) -> None:
@@ -426,7 +426,7 @@ class GrantsContract:
             entries=[Entry(path=Path("/eng/secret/deeper/n.md"), content="x")], parents=True, authority=CAROL
         )
         assert result.success is False
-        assert _kind(await storage.stat(path=Path("/eng/secret/deeper"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/eng/secret/deeper"), authority=SYSTEM)) == ErrorKind.not_found
 
     @needs("grant", "write", "stat")
     async def test_a_mixed_batch_fails_whole_and_writes_nothing(self, storage: GrantsBackend) -> None:
@@ -435,7 +435,7 @@ class GrantsContract:
         entries.append(Entry(path=Path("/pub/intruder.md"), content="x"))
         result = await storage.write(entries=entries, parents=True, authority=ANN)
         assert result.success is False
-        assert _kind(await storage.stat(path=Path("/eng/batch/0.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/eng/batch/0.md"), authority=SYSTEM)) == ErrorKind.not_found
 
     @needs("grant", "delete", "stat")
     async def test_a_subtree_mutation_checks_every_row_beneath(self, storage: GrantsBackend) -> None:
@@ -465,7 +465,7 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/open"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/open/empty"), posture="private", authority=SYSTEM)).success
         assert (await storage.delete(path=Path("/open"), authority=DAVE)).success is True
-        assert _kind(await storage.stat(path=Path("/open/k.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/open/k.md"), authority=SYSTEM)) == ErrorKind.not_found
 
     @needs("grant", "delete", "stat", "write")
     async def test_a_subtree_check_reads_past_its_first_page(self, storage: GrantsBackend) -> None:
@@ -481,7 +481,7 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/open/a"), posture="private", authority=SYSTEM)).success is True
         assert (await storage.write(entries=[Entry(path=Path("/open/z/k.md"), content="x")], parents=True)).success
         assert (await storage.posture(path=Path("/open/z"), posture="private", authority=SYSTEM)).success is True
-        assert _kind(await storage.delete(path=Path("/open"), authority=DAVE)) == VFSErrorKind.permission_denied
+        assert _kind(await storage.delete(path=Path("/open"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.stat(path=Path("/open/a/0000.md"), authority=SYSTEM)).success is True
         assert (await storage.delete(path=Path("/open/a"), authority=DAVE)).success is True
 
@@ -491,7 +491,7 @@ class GrantsContract:
         result = await storage.move(
             operations=[ResolvedPair(Path("/eng/spec.md"), Path("/pub/spec.md"))], authority=ANN
         )
-        assert _kind(result) == VFSErrorKind.permission_denied
+        assert _kind(result) == ErrorKind.permission_denied
         assert (await storage.stat(path=Path("/eng/spec.md"), authority=SYSTEM)).success is True
 
     @needs("grant", "move", "stat", "mkdir")
@@ -503,9 +503,9 @@ class GrantsContract:
         moved = await storage.move(
             operations=[ResolvedPair(Path("/pub/readme.md"), Path("/out/readme.md"))], authority=BOB
         )
-        assert _kind(moved) == VFSErrorKind.permission_denied
+        assert _kind(moved) == ErrorKind.permission_denied
         assert (await storage.stat(path=Path("/pub/readme.md"), authority=SYSTEM)).success is True
-        assert _kind(await storage.stat(path=Path("/out/readme.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/out/readme.md"), authority=SYSTEM)) == ErrorKind.not_found
 
     @needs("grant", "copy", "stat")
     async def test_a_copy_needs_read_at_its_source_and_write_at_its_destination(self, storage: GrantsBackend) -> None:
@@ -514,13 +514,13 @@ class GrantsContract:
         denied = await storage.copy(
             operations=[ResolvedPair(Path("/pub/readme.md"), Path("/pub/copy.md"))], authority=BOB
         )
-        assert _kind(denied) == VFSErrorKind.permission_denied
-        assert _kind(await storage.stat(path=Path("/pub/copy.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(denied) == ErrorKind.permission_denied
+        assert _kind(await storage.stat(path=Path("/pub/copy.md"), authority=SYSTEM)) == ErrorKind.not_found
         hidden = await storage.copy(
             operations=[ResolvedPair(Path("/eng/spec.md"), Path("/pub/deep/x2.md"))], authority=CAROL
         )
-        assert _kind(hidden) == VFSErrorKind.not_found
-        assert _kind(await storage.stat(path=Path("/pub/deep/x2.md"), authority=SYSTEM)) == VFSErrorKind.not_found
+        assert _kind(hidden) == ErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/pub/deep/x2.md"), authority=SYSTEM)) == ErrorKind.not_found
 
     @needs("grant", "delete", "restore", "read")
     async def test_an_owner_restores_its_own_trashed_row(self, storage: GrantsBackend) -> None:
@@ -534,7 +534,7 @@ class GrantsContract:
         await _world(storage)
         assert (await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM)).success is True
         result = await storage.restore(path=Path("/hr/other.md"), authority=ANN)
-        assert _kind(result) == VFSErrorKind.not_found
+        assert _kind(result) == ErrorKind.not_found
 
     @needs("grant", "delete", "restore")
     async def test_a_visible_trashed_row_the_caller_cannot_write_does_not_restore(self, storage: GrantsBackend) -> None:
@@ -542,7 +542,7 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
         assert (await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM)).success is True
         result = await storage.restore(path=Path("/hr/other.md"), authority=DAVE)
-        assert _kind(result) == VFSErrorKind.permission_denied
+        assert _kind(result) == ErrorKind.permission_denied
 
     @needs("grant", "sweep", "stat")
     async def test_sweep_needs_write_on_the_swept_prefix(self, storage: GrantsBackend) -> None:
@@ -568,19 +568,19 @@ class GrantsContract:
         assert (await storage.write(entries=[diary], authority=ANN)).success is True
         trashed = _trash_path(await storage.delete(path=Path("/ann/diary.md"), authority=ANN))
         for who in (DAVE, ANON):
-            assert _kind(await storage.read(path=trashed, authority=who)) == VFSErrorKind.not_found
-            assert _kind(await storage.stat(path=trashed, authority=who)) == VFSErrorKind.not_found
+            assert _kind(await storage.read(path=trashed, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.stat(path=trashed, authority=who)) == ErrorKind.not_found
             assert str(trashed) not in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=who))
             assert str(trashed) not in _paths(await storage.glob(patterns=("/.vfs/trash/**",), authority=who))
             found = await storage.grep(pattern="lantern", globs=("/.vfs/**",), allow_scan=True, authority=who)
             assert found.success is True and _paths(found) == set()
-            assert _kind(await storage.sweep(path=trashed, authority=who)) == VFSErrorKind.not_found
-            assert _kind(await storage.restore(path=trashed, authority=who)) == VFSErrorKind.not_found
-            assert _kind(await storage.restore(path=Path("/ann/diary.md"), authority=who)) == VFSErrorKind.not_found
-        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == VFSErrorKind.permission_denied
+            assert _kind(await storage.sweep(path=trashed, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.restore(path=trashed, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.restore(path=Path("/ann/diary.md"), authority=who)) == ErrorKind.not_found
+        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.grant(path=Path("/.vfs"), principal="dave", level="read_write", authority=SYSTEM)).success
-        assert _kind(await storage.read(path=trashed, authority=DAVE)) == VFSErrorKind.not_found
-        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == VFSErrorKind.permission_denied
+        assert _kind(await storage.read(path=trashed, authority=DAVE)) == ErrorKind.not_found
+        assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
         # Its owner sees it through the floor, and the bucket is on her road to it.
         assert str(trashed) in _paths(await storage.ls(path=trashed.parent_dir, authority=ANN))
@@ -589,7 +589,7 @@ class GrantsContract:
         assert (await storage.posture(path=Path("/ann"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.read(path=trashed, authority=DAVE)).success is True
         assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
-        assert _kind(await storage.read(path=trashed, authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=trashed, authority=DAVE)) == ErrorKind.not_found
         assert (await storage.restore(path=Path("/ann/diary.md"), authority=ANN)).success is True
         assert (await storage.read(path=Path("/ann/diary.md"), authority=ANN)).one().content == diary.content
 
@@ -601,7 +601,7 @@ class GrantsContract:
         # there she still sees in the trash and may restore, by either address.
         await _world(storage)
         trashed = _trash_path(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
-        assert _kind(await storage.read(path=trashed, authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=trashed, authority=BOB)) == ErrorKind.not_found
         assert str(trashed) not in _paths(await storage.tree(path=Path("/"), authority=BOB))
         assert (await storage.stat(path=trashed, authority=ANN)).success is True
         assert {str(trashed), str(trashed.parent_dir)} <= _paths(await storage.tree(path=Path("/.vfs"), authority=ANN))
@@ -623,7 +623,7 @@ class GrantsContract:
         cases = {"/hr/other.md": "/hr", "/hr/nope.md": "/hr", "/nodir/x.md": "/nodir", str(trashed): "/.vfs"}
         for target, named in cases.items():
             refused = await storage.restore(path=Path(target), authority=ZED)
-            assert _kind(refused) == VFSErrorKind.not_found, target
+            assert _kind(refused) == ErrorKind.not_found, target
             assert refused.errors[0].message == "Not found" and str(refused.errors[0].path) == named
             read = await storage.read(path=Path(target), authority=ZED)
             assert (read.errors[0].message, read.errors[0].path) == ("Not found", refused.errors[0].path), target
@@ -638,10 +638,10 @@ class GrantsContract:
         assert (absent.errors[0].message, absent.errors[0].path) == ("Not found", f"{trashed}-nope")
         assert (await storage.restore(path=Path("/hr/other.md"), authority=ZED)).errors[0].path == "/hr"
         missed = await storage.restore(path=Path("/pub/nope.md"), authority=ZED)
-        assert _kind(missed) == VFSErrorKind.not_found
+        assert _kind(missed) == ErrorKind.not_found
         assert (missed.errors[0].message, missed.errors[0].path) == ("Not found", "/pub/nope.md")
         whole = await storage.restore(path=Path("/pub/nope.md"), authority=SYSTEM)
-        assert _kind(whole) == VFSErrorKind.not_found and "no trashed entry" in whole.errors[0].message
+        assert _kind(whole) == ErrorKind.not_found and "no trashed entry" in whole.errors[0].message
 
     @needs("grant", "delete", "restore", "move", "stat")
     async def test_a_trash_side_restore_never_names_an_original_parent_the_caller_cannot_see(
@@ -657,15 +657,15 @@ class GrantsContract:
         assert (await storage.stat(path=trashed, authority=ANN)).success is True
         parent = _trash_path(await storage.delete(path=Path("/hr"), authority=SYSTEM))
         refused = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(refused) == VFSErrorKind.not_found
+        assert _kind(refused) == ErrorKind.not_found
         assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", trashed)
         whole = await storage.restore(path=trashed, authority=SYSTEM)
-        assert _kind(whole) == VFSErrorKind.invalid and str(whole.errors[0].path) == str(parent)
+        assert _kind(whole) == ErrorKind.invalid and str(whole.errors[0].path) == str(parent)
         assert (whole.errors[0].data or {}).get("vfs.target") == str(trashed)
         # Once she may see /hr — and so its trashed row, judged at that origin — the ladder's own answer stands.
         assert (await storage.grant(path=Path("/hr"), principal="ann", level="read", authority=SYSTEM)).success is True
         seen = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(seen) == VFSErrorKind.invalid and seen.errors[0].message == whole.errors[0].message
+        assert _kind(seen) == ErrorKind.invalid and seen.errors[0].message == whole.errors[0].message
         assert (await storage.revoke(path=Path("/hr"), principal="ann", authority=SYSTEM)).success is True
         # With the parent back and moved, her row follows it: she owns it, so she may put it there.
         assert (await storage.restore(path=parent, authority=SYSTEM)).success is True
@@ -690,7 +690,7 @@ class GrantsContract:
             await storage.move(operations=[ResolvedPair(Path("/eng/box"), Path("/hr/box"))], authority=SYSTEM)
         ).success
         refused = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(refused) == VFSErrorKind.not_found
+        assert _kind(refused) == ErrorKind.not_found
         assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", "/hr/box/doc.md")
         assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
         assert (await storage.restore(path=trashed, authority=SYSTEM)).success is True
@@ -712,7 +712,7 @@ class GrantsContract:
         assert road.populated == frozenset({"path", "kind"})
         walked = _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert walked == {"/pub", "/pub/deep", "/pub/deep/x.md"}
-        assert _kind(await storage.stat(path=Path("/pub/readme.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.stat(path=Path("/pub/readme.md"), authority=DAVE)) == ErrorKind.not_found
 
     @needs("grant", "read")
     async def test_a_posture_held_mid_relabel_is_in_force_before_its_labels_catch_up(
@@ -732,12 +732,12 @@ class GrantsContract:
         await _hold_posture(host, "/eng", "none")
         # The label under /eng is still read_write; only the in-flight compile hides it.
         assert (await _labels(storage))["/eng/spec.md"] == 2
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
         assert (await storage.read(path=Path("/pub/readme.md"), authority=DAVE)).success is True
         await _drain_relabels(host)
         labels = await _labels(storage)
         assert labels["/eng/spec.md"] == 0 and labels["/pub/readme.md"] == 2
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
         async with host.session_factory() as session:
             pending = (await session.execute(select(host.tables.relabels.c.path_prefix))).all()
         assert pending == []
@@ -752,7 +752,7 @@ class GrantsContract:
         walked = _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert {"/eng/spec.md", "/hr/case.md", "/d/n.md"} <= walked
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
-        assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == ErrorKind.not_found
         assert "/hr" not in _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert (await storage.read(path=Path("/hr/case.md"), authority=ANN)).success is True
 
@@ -792,28 +792,28 @@ class GrantsContract:
     @needs("grant", "read")
     async def test_a_widened_grant_is_seen_on_the_next_call(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
         granted = await storage.grant(path=Path("/eng/spec.md"), principal="bob", level="read", authority=ANN)
         assert granted.success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=BOB)).success is True
         revoked = await storage.revoke(path=Path("/eng/spec.md"), principal="bob", authority=ANN)
         assert revoked.success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
 
     @needs("grant")
     async def test_nobody_grants_more_than_it_holds(self, storage: GrantsBackend) -> None:
         await _world(storage)
         seen = await storage.grant(path=Path("/pub"), principal="dave", level="read", authority=BOB)
         hidden = await storage.grant(path=Path("/eng"), principal="dave", level="read", authority=BOB)
-        assert _kind(seen) == VFSErrorKind.permission_denied
-        assert _kind(hidden) == VFSErrorKind.not_found
+        assert _kind(seen) == ErrorKind.permission_denied
+        assert _kind(hidden) == ErrorKind.not_found
 
     @needs("grant")
     async def test_a_reserved_principal_cannot_be_granted(self, storage: GrantsBackend) -> None:
         await _world(storage)
         for principal in ("*", "system", "anon", " ", "x" * 256):
             result = await storage.grant(path=Path("/eng"), principal=principal, level="read", authority=SYSTEM)
-            assert _kind(result) == VFSErrorKind.invalid, principal
+            assert _kind(result) == ErrorKind.invalid, principal
 
     @needs("grant", "grants")
     async def test_grants_lists_the_rows_that_decide_a_path(self, storage: GrantsBackend) -> None:
@@ -829,13 +829,13 @@ class GrantsContract:
     @needs("grant", "revoke", "grants", "posture")
     async def test_every_grant_verb_is_gated_like_grant(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert _kind(await storage.revoke(path=Path("/eng"), principal="ann", authority=BOB)) == VFSErrorKind.not_found
-        assert _kind(await storage.grants(path=Path("/eng"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.revoke(path=Path("/eng"), principal="ann", authority=BOB)) == ErrorKind.not_found
+        assert _kind(await storage.grants(path=Path("/eng"), authority=BOB)) == ErrorKind.not_found
         denied = await storage.posture(path=Path("/pub"), posture="open", authority=BOB)
-        assert _kind(denied) == VFSErrorKind.permission_denied
+        assert _kind(denied) == ErrorKind.permission_denied
         # ``none`` narrows only a posture row; storage refuses it on a principal's.
         level = await storage.grant(path=Path("/eng"), principal="bob", level="none", authority=SYSTEM)
-        assert _kind(level) == VFSErrorKind.invalid
+        assert _kind(level) == ErrorKind.invalid
 
     @needs("grant", "revoke")
     async def test_revoking_a_missing_grant_is_a_warning(self, storage: GrantsBackend) -> None:
@@ -852,17 +852,17 @@ class GrantsContract:
     async def test_only_the_system_actor_changes_membership(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.add_member(group="group:eng", member="bob", authority=ANN)
-        assert _kind(result) == VFSErrorKind.permission_denied
+        assert _kind(result) == ErrorKind.permission_denied
 
     @needs("add_member", "remove_member", "read")
     async def test_a_membership_change_is_seen_by_a_caller_already_resolved(self, storage: GrantsBackend) -> None:
         # bob's rights are cached by the first read; each membership write must retire that cache.
         await _world(storage)
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
         assert (await storage.add_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=BOB)).success is True
         assert (await storage.remove_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
 
     @needs("grant", "add_member", "remove_member", "read")
     async def test_an_admin_write_retires_only_the_compiles_it_reaches(
@@ -904,7 +904,7 @@ class GrantsContract:
         assert (await storage.add_member(group="group:eng", member="group:all", authority=SYSTEM)).success
         assert (await storage.read(path=Path("/eng/spec.md"), authority=BOB)).success is True
         assert (await storage.remove_member(group="group:eng", member="group:all", authority=SYSTEM)).success
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == VFSErrorKind.not_found
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=BOB)) == ErrorKind.not_found
 
     @needs("add_member")
     async def test_a_membership_cycle_is_refused(self, storage: GrantsBackend) -> None:
@@ -922,13 +922,13 @@ class GrantsContract:
         ]
         assert outcomes[0].success is True
         assert outcomes[-1].success is False
-        assert _kind(outcomes[-1]) == VFSErrorKind.authority_budget
+        assert _kind(outcomes[-1]) == ErrorKind.authority_budget
 
     @needs("remove_member")
     async def test_removing_a_membership(self, storage: GrantsBackend) -> None:
         await _world(storage)
         refused = await storage.remove_member(group="group:eng", member="ann", authority=ANN)
-        assert _kind(refused) == VFSErrorKind.permission_denied
+        assert _kind(refused) == ErrorKind.permission_denied
         missing = await storage.remove_member(group="group:eng", member="bob", authority=SYSTEM)
         assert missing.success is True
         assert [error.severity for error in missing.errors] == [Severity.warning]
@@ -937,13 +937,13 @@ class GrantsContract:
     async def test_a_reserved_principal_cannot_be_a_member(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.add_member(group="group:eng", member="*", authority=SYSTEM)
-        assert _kind(result) == VFSErrorKind.invalid
+        assert _kind(result) == ErrorKind.invalid
 
     @needs("add_member")
     async def test_a_group_id_must_carry_its_prefix(self, storage: GrantsBackend) -> None:
         await _world(storage)
         result = await storage.add_member(group="eng", member="bob", authority=SYSTEM)
-        assert _kind(result) == VFSErrorKind.invalid
+        assert _kind(result) == ErrorKind.invalid
 
     # ------------------------------------------------------------------
     # Ranked search — hidden rows never move a visible score

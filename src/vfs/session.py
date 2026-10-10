@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from vfs.results import Result, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -408,5 +408,5 @@ class Session:
         """The structured refusal a closed session answers every verb with."""
         if not self._closed:
             return None
-        fact = classified(VFSErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
+        fact = classified(ErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
         return Result(ops=(op,), errors=[fact])

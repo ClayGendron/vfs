@@ -16,14 +16,14 @@ from vfs.authority import Authority
 from vfs.base import VirtualFileSystem
 from vfs.models import Entry, Observation
 from vfs.paths import ObjectKind, Path
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError
 from vfs.storage import TransportError, storage_ops
 
 if TYPE_CHECKING:
     from vfs.ops import Op
 
 
-def _failed(op: str, kind: VFSErrorKind, message: str, path: Path | None = None) -> Result:
+def _failed(op: str, kind: ErrorKind, message: str, path: Path | None = None) -> Result:
     """A backend-composed failure — doubles have no router ``_error`` helper."""
     return Result(ops=(op,), errors=[ResultError(kind=kind, message=message, path=path)])
 
@@ -233,7 +233,7 @@ class DictStorage(RecorderStorage):
             occupied = self._entries.get(node, "directory") != "directory"
             node = node.parent_dir
         if occupied:
-            return _failed("mkdir", VFSErrorKind.exists, "storage contents conflict with that path", path=path)
+            return _failed("mkdir", ErrorKind.exists, "storage contents conflict with that path", path=path)
         self._entries[str(path)] = "directory"
         return Result(ops=("mkdir",), observations=[Observation(path=path, kind="directory", status="created")])
 
@@ -265,7 +265,7 @@ class DictStorage(RecorderStorage):
         wanted = [path] if path is not None else [o.path for o in observations or []]
         rows = [Observation(path=Path(p), kind=self._entries[p]) for p in wanted if p in self._entries]
         if path is not None and not rows:
-            return _failed("stat", VFSErrorKind.not_found, f"Not found: {path}", path=Path(path))
+            return _failed("stat", ErrorKind.not_found, f"Not found: {path}", path=Path(path))
         return Result(ops=("stat",), observations=rows)
 
 
@@ -508,7 +508,7 @@ class FailingWriteStorage(RecorderStorage):
     """Backend whose write fails fast with a classified Result."""
 
     async def write(self, **_: Any) -> Result:
-        return _failed("write", VFSErrorKind.unavailable, "boom")
+        return _failed("write", ErrorKind.unavailable, "boom")
 
 
 class FailingWriteFS(VirtualFileSystem):

@@ -45,7 +45,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
 from vfs.paths import is_trash_path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked, statement_budget
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
@@ -165,7 +165,7 @@ async def mkedge_rows(
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
-    errors = [classified(VFSErrorKind.not_found, endpoint) for endpoint in _missing_endpoints(edges, ids)]
+    errors = [classified(ErrorKind.not_found, endpoint) for endpoint in _missing_endpoints(edges, ids)]
     if errors:
         return Result(ops=("mkedge",), errors=errors)
     existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
@@ -237,7 +237,7 @@ async def rmedge_rows(
         if row_id is None:
             warnings.append(
                 classified(
-                    VFSErrorKind.not_found,
+                    ErrorKind.not_found,
                     edge.source,
                     target=edge.target,
                     severity=Severity.warning,
@@ -578,7 +578,7 @@ def _drift_warning(delta: FsDelta) -> ResultError:
         f"{len(delta.wrong_row_ids)} wrong row(s), {'1' if delta.missing else '0'} missing"
     )
     return classified(
-        VFSErrorKind.internal,
+        ErrorKind.internal,
         detail=detail,
         severity=Severity.warning,
         data={"entry_id": delta.entry_id, "wrong": len(delta.wrong_row_ids), "missing": delta.missing},
@@ -588,7 +588,7 @@ def _drift_warning(delta: FsDelta) -> ResultError:
 def _dangling_warning(count: int) -> ResultError:
     detail = f"reindex reclaimed {count} edge row(s) naming an endpoint with no entry row"
     return classified(
-        VFSErrorKind.internal,
+        ErrorKind.internal,
         detail=detail,
         severity=Severity.warning,
         data={"dangling": count},
@@ -598,7 +598,7 @@ def _dangling_warning(count: int) -> ResultError:
 def _stray_warning(count: int) -> ResultError:
     detail = f"reindex reclaimed {count} authored edge row(s) touching trashed entries"
     return classified(
-        VFSErrorKind.internal,
+        ErrorKind.internal,
         detail=detail,
         severity=Severity.warning,
         data={"strays": count},

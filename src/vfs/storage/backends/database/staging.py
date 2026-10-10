@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Literal
 from ulid import ULID
 
 from vfs.paths import byte_length
-from vfs.results import ResultError, VFSErrorKind, already_exists, classified, wrong_kind
+from vfs.results import ErrorKind, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import ancestor_chain
 from vfs.storage.backends.database.dialects import wire_bytes
 
@@ -199,7 +199,7 @@ class WritePlan:
         if size <= cap.limit:
             return True
         detail = f"a body of {size} bytes on the wire exceeds this engine's {cap.setting} of {cap.limit} bytes"
-        self.errors.append(classified(VFSErrorKind.unsupported, path, detail=detail))
+        self.errors.append(classified(ErrorKind.unsupported, path, detail=detail))
         return False
 
     def within_budget(self, path: Path) -> bool:
@@ -208,7 +208,7 @@ class WritePlan:
             return True
         self.errors.append(
             classified(
-                VFSErrorKind.unaddressable,
+                ErrorKind.unaddressable,
                 path,
                 detail=f"the path exceeds this engine's {self.budget}-byte key budget",
             )
@@ -222,7 +222,7 @@ class WritePlan:
             if kind is None:
                 if parents:
                     return True
-                self.errors.append(classified(VFSErrorKind.not_found, ancestor, target=target))
+                self.errors.append(classified(ErrorKind.not_found, ancestor, target=target))
                 return False
             if kind != "directory":
                 self.errors.append(wrong_kind(kind, ancestor, target=target))

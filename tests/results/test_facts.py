@@ -14,15 +14,15 @@ import pytest
 
 from vfs import VirtualFileSystem
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import KIND_CONTRACTS, Result, Severity, VFSErrorKind, classified, wrong_kind
+from vfs.results import KIND_CONTRACTS, ErrorKind, Result, Severity, classified, wrong_kind
 from vfs.storage.backends import InMemoryStorage
 
 SRC = FsPath(__file__).resolve().parents[2] / "src" / "vfs"
 _PATH_TOKEN = re.compile(r"(?:^|\s)/\S")
-_DETAILED = frozenset({VFSErrorKind.invalid, VFSErrorKind.internal})
+_DETAILED = frozenset({ErrorKind.invalid, ErrorKind.internal})
 
 
-def _detail_for(kind: VFSErrorKind) -> str | None:
+def _detail_for(kind: ErrorKind) -> str | None:
     return "the cause, in words" if kind in _DETAILED else None
 
 
@@ -32,15 +32,15 @@ def _detail_for(kind: VFSErrorKind) -> str | None:
 
 
 def test_every_kind_has_a_phrase_that_names_no_locus_and_no_language() -> None:
-    for kind in VFSErrorKind:
+    for kind in ErrorKind:
         contract = KIND_CONTRACTS[kind]
         assert contract.phrase and not _PATH_TOKEN.search(contract.phrase), kind
         for words in (contract.phrase, contract.hint):
             assert "=True" not in words and "kwarg" not in words, kind
 
 
-@pytest.mark.parametrize("kind", list(VFSErrorKind))
-def test_a_message_never_carries_a_path_however_the_fact_is_rebased(kind: VFSErrorKind) -> None:
+@pytest.mark.parametrize("kind", list(ErrorKind))
+def test_a_message_never_carries_a_path_however_the_fact_is_rebased(kind: ErrorKind) -> None:
     fact = classified(kind, Path("/inner/a.md"), target=Path("/inner/b.md"), detail=_detail_for(kind))
     hop = fact.with_mount("/mine").with_mount("/outer")
     for error in (fact, hop):
@@ -51,19 +51,19 @@ def test_a_message_never_carries_a_path_however_the_fact_is_rebased(kind: VFSErr
 
 
 def test_the_message_is_the_phrase_then_the_detail() -> None:
-    assert classified(VFSErrorKind.not_found).message == "Not found"
-    assert classified(VFSErrorKind.conflict, detail="version 3 is current").message == "Conflict: version 3 is current"
+    assert classified(ErrorKind.not_found).message == "Not found"
+    assert classified(ErrorKind.conflict, detail="version 3 is current").message == "Conflict: version 3 is current"
 
 
 @pytest.mark.parametrize("kind", sorted(_DETAILED))
-def test_invalid_and_internal_require_a_detail(kind: VFSErrorKind) -> None:
+def test_invalid_and_internal_require_a_detail(kind: ErrorKind) -> None:
     with pytest.raises(ValueError, match="needs a detail"):
         classified(kind)
 
 
 def test_fields_ride_in_data_beside_the_second_entry() -> None:
     fact = classified(
-        VFSErrorKind.unavailable,
+        ErrorKind.unavailable,
         Path("/a"),
         target=Path("/b"),
         severity=Severity.warning,
@@ -75,7 +75,7 @@ def test_fields_ride_in_data_beside_the_second_entry() -> None:
 
 
 def test_a_target_equal_to_the_locus_is_not_recorded() -> None:
-    assert classified(VFSErrorKind.not_found, Path("/a"), target=Path("/a")).data is None
+    assert classified(ErrorKind.not_found, Path("/a"), target=Path("/a")).data is None
 
 
 def test_wrong_kind_carries_the_occupant_kind_as_detail_and_field() -> None:
@@ -90,7 +90,7 @@ def test_wrong_kind_carries_the_occupant_kind_as_detail_and_field() -> None:
 
 
 def test_the_second_entry_rebases_with_the_locus_and_round_trips() -> None:
-    fact = classified(VFSErrorKind.exists, Path("/a"), target=Path("/b"))
+    fact = classified(ErrorKind.exists, Path("/a"), target=Path("/b"))
     hop = fact.with_mount("/m")
     assert (hop.path, hop.data) == ("/m/a", {"vfs.target": "/m/b"})
     assert hop.without_mount("/m") == fact
@@ -102,14 +102,14 @@ _LONG_MOUNT = "/" + "m" * (MAX_PATH_LENGTH - len(_DEEP))
 
 
 def test_an_overflowing_second_entry_is_kept_local_under_overflow_once() -> None:
-    fact = classified(VFSErrorKind.exists, Path("/a"), target=_DEEP)
+    fact = classified(ErrorKind.exists, Path("/a"), target=_DEEP)
     hop = fact.with_mount(_LONG_MOUNT).with_mount("/outer")
     assert hop.path == f"/outer{_LONG_MOUNT}/a"
     assert hop.data == {"vfs.overflow": {"target": str(_DEEP)}}
 
 
 def test_a_locus_and_a_second_entry_overflow_independently() -> None:
-    fact = classified(VFSErrorKind.exists, _DEEP, target=Path("/b"))
+    fact = classified(ErrorKind.exists, _DEEP, target=Path("/b"))
     hop = fact.with_mount(_LONG_MOUNT)
     assert hop.path is None
     assert hop.data == {"vfs.overflow": {"local_path": str(_DEEP)}, "vfs.target": f"{_LONG_MOUNT}/b"}
@@ -121,7 +121,7 @@ def test_a_locus_and_a_second_entry_overflow_independently() -> None:
 
 
 def test_a_missing_file_renders_the_acceptance_line() -> None:
-    fact = classified(VFSErrorKind.not_found, Path("/missing.md")).with_mount("/mine")
+    fact = classified(ErrorKind.not_found, Path("/missing.md")).with_mount("/mine")
     expected = (
         "ERROR /mine/missing.md: Not found — Check the path with ls or glob, or create the entry first. (retry: never)"
     )

@@ -26,7 +26,7 @@ from vfs.authority import Authority, Principal
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import ObjectKind, Path
-from vfs.results import ResultError, VFSErrorKind
+from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE, StaleSnapshot
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -259,10 +259,10 @@ class TestWriteMechanics:
         long_path = Path("/" + "x" * 60 + ".txt")
         written = await storage.write(entries=[Entry(path=long_path, content="x")])
         assert written.success is False
-        assert written.errors[0].kind == VFSErrorKind.unaddressable
+        assert written.errors[0].kind == ErrorKind.unaddressable
         made = await storage.mkdir(path=Path("/" + "d" * 60))
         assert made.success is False
-        assert made.errors[0].kind == VFSErrorKind.unaddressable
+        assert made.errors[0].kind == ErrorKind.unaddressable
         await storage.close()
 
     async def test_edit_of_a_missing_target_classifies_at_the_failing_component(self, tmp_path) -> None:
@@ -270,7 +270,7 @@ class TestWriteMechanics:
         await storage.first_touch()
         result = await storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/ghost/a.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/ghost"
         await storage.close()
 
@@ -331,13 +331,13 @@ class TestTrashWritability:
         target = Path("/.vfs/trash/2026-07-18-10/x.txt")
         await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
         taken = await storage.write(entries=[Entry(path=target, kind="file", content="y")], overwrite=False)
-        assert taken.errors[0].kind == VFSErrorKind.exists
+        assert taken.errors[0].kind == ErrorKind.exists
         through_file = await storage.mkdir(path=target / "sub", parents=True)
-        assert through_file.errors[0].kind == VFSErrorKind.wrong_kind
+        assert through_file.errors[0].kind == ErrorKind.wrong_kind
         assert through_file.errors[0].path == str(target)
         orphan = Entry(path=Path("/.vfs/trash/GHOST/y.txt"), kind="file", content="y")
         no_parents = await storage.write(entries=[orphan])
-        assert no_parents.errors[0].kind == VFSErrorKind.not_found
+        assert no_parents.errors[0].kind == ErrorKind.not_found
         await storage.close()
 
     async def test_meta_paths_beside_trash_still_write(self, tmp_path) -> None:
@@ -462,8 +462,8 @@ class TestArbitration:
         # Rivals sit in chunks 1 and 3: both classify — errors accumulate
         # across conflicted chunks, the last chunk never wins alone.
         assert sorted((e.kind, str(e.path)) for e in errors) == [
-            (VFSErrorKind.exists, "/f001.txt"),
-            (VFSErrorKind.exists, "/f009.txt"),
+            (ErrorKind.exists, "/f001.txt"),
+            (ErrorKind.exists, "/f009.txt"),
         ]
         await storage.close()
 
@@ -502,14 +502,14 @@ class TestArbitration:
             errors = await _resolve_rows(
                 session, entry, [refused], [_entry_values(refused, root_key, None, now, 2)], overwrite=False
             )
-            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+            assert [e.kind for e in errors] == [ErrorKind.exists]
 
             # overwrite=True where the rival is a directory: wrong_kind.
             blocked = staged_for("/dir", "file")
             errors = await _resolve_rows(
                 session, entry, [blocked], [_entry_values(blocked, root_key, None, now, 2)], overwrite=True
             )
-            assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
+            assert [e.kind for e in errors] == [ErrorKind.wrong_kind]
 
             # a directory create losing to a directory at the matching
             # address adopts it: mkdir-p forgiveness, no error.
@@ -526,7 +526,7 @@ class TestArbitration:
             errors = await _resolve_rows(
                 session, entry, [dir_loss], [_entry_values(dir_loss, root_key, None, now, 2)], overwrite=False
             )
-            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+            assert [e.kind for e in errors] == [ErrorKind.exists]
         await storage.close()
 
     async def test_resolve_rows_redrives_when_no_occupant_is_observable(self, tmp_path) -> None:
@@ -725,13 +725,13 @@ class TestArbitration:
             # overwrite=False over a rival file: DO NOTHING, a definite exists.
             refused = staged_for("/f.txt", "file")
             errors = await run([refused], overwrite=False)
-            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+            assert [e.kind for e in errors] == [ErrorKind.exists]
 
             # overwrite=True where the rival is a directory: the clobber's
             # kind guard refuses to update it — wrong_kind.
             blocked = staged_for("/dir", "file")
             errors = await run([blocked], overwrite=True)
-            assert [e.kind for e in errors] == [VFSErrorKind.wrong_kind]
+            assert [e.kind for e in errors] == [ErrorKind.wrong_kind]
 
             # a directory create losing to a directory at the matching
             # address adopts it — no clobber, no error.
@@ -744,7 +744,7 @@ class TestArbitration:
             # a directory create losing to a file occupant never clobbers: exists.
             dir_loss = staged_for("/f.txt", "directory")
             errors = await run([dir_loss], overwrite=False)
-            assert [e.kind for e in errors] == [VFSErrorKind.exists]
+            assert [e.kind for e in errors] == [ErrorKind.exists]
         await storage.close()
 
     async def test_stale_guard_classifies_conflict(self, tmp_path) -> None:
@@ -775,7 +775,7 @@ class TestArbitration:
                 authority=None,
                 now=datetime.now(UTC),
             )
-        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].retryable is True
         assert errors[0].message == "Conflict: concurrent modification"
         await storage.close()
@@ -887,7 +887,7 @@ class TestArbitration:
                 overwrite=False,
             )
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.exists]
+        assert [e.kind for e in result.errors] == [ErrorKind.exists]
         assert (await storage.read(path=target)).observations[0].content == "rival"
         await storage.close()
 
@@ -934,7 +934,7 @@ class TestArbitration:
                 overwrite=True,
             )
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+        assert [e.kind for e in result.errors] == [ErrorKind.conflict]
         assert result.errors[0].retryable is True
         assert result.errors[0].message == "Conflict: concurrent modification"
         assert (await storage.read(path=target)).observations[0].content == "v3"
@@ -973,7 +973,7 @@ class TestGuardedAttribution:
             authority=None,
             now=datetime.now(UTC),
         )
-        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].path == lost.path
         updates = [s for s in double.statements if not isinstance(s, Select)]
         assert len(updates) == 1  # both rows rode one chunk
@@ -992,7 +992,7 @@ class TestGuardedAttribution:
             authority=None,
             now=datetime.now(UTC),
         )
-        assert [e.kind for e in errors] == [VFSErrorKind.not_found]
+        assert [e.kind for e in errors] == [ErrorKind.not_found]
         assert errors[0].path == gone.path
 
     async def test_returning_arm_statement_is_a_guarded_values_join(self) -> None:
@@ -1101,7 +1101,7 @@ class TestGuardedAttribution:
             )
             after = await session.execute(select(entry.c.path, entry.c.version))
             versions = {m["path"]: m["version"] for m in after.mappings()}
-        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].path == stale.path
         # The fresh row applied exactly once; the stale row never moved.
         assert versions["/a.txt"] == rows["/a.txt"]["version"] + 1
@@ -1149,7 +1149,7 @@ class TestGuardedAttribution:
                 authority=None,
                 now=datetime.now(UTC),
             )
-        assert [e.kind for e in errors] == [VFSErrorKind.conflict]
+        assert [e.kind for e in errors] == [ErrorKind.conflict]
         assert errors[0].path == stale.path
         await storage.close()
 
@@ -1173,7 +1173,7 @@ class TestGuardedAttribution:
                 authority=None,
                 now=datetime.now(UTC),
             )
-        assert [e.kind for e in errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in errors] == [ErrorKind.unsupported]
         assert "cannot be verified" in errors[0].message
         await storage.close()
 
@@ -1298,7 +1298,7 @@ class TestBytesBodies:
         assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1")])).success is True
         result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="a", new="b")])
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.wrong_kind
+        assert result.errors[0].kind is ErrorKind.wrong_kind
         assert result.errors[0].message == "Wrong kind: binary body; replace the bytes through write"
         assert result.errors[0].path == "/r.pdf"
         await storage.close()
@@ -1316,7 +1316,7 @@ class TestBytesBodies:
             driver._conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 4096)
         result = await storage.write(entries=[Entry(path=Path("/big.bin"), data=b"x" * 10_000)])
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.unsupported
+        assert result.errors[0].kind is ErrorKind.unsupported
         assert "single-value limit" in result.errors[0].message
         assert result.errors[0].retryable is False
         small = await storage.write(entries=[Entry(path=Path("/small.bin"), data=b"x" * 100)])

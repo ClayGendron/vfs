@@ -77,7 +77,7 @@ from vfs.native import extension
 from vfs.paths import Path, normalize_ext_channel
 from vfs.pattern_matching import PatternError, compile_filter, escape_glob, expand_channel
 from vfs.pattern_matching.grep import split_lines
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.distance import cosine_distance
@@ -254,14 +254,14 @@ async def glean_rows(
     terms = list(dict.fromkeys(tokenize(query)))
     if not terms:
         detail = f"glean query {query!r} has no searchable term after folding"
-        return Result(ops=("glean",), errors=[classified(VFSErrorKind.invalid, detail=detail)])
+        return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=detail)])
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
         admissions = expand_channel("globs", globs)
         exclusions = expand_channel("globs_not", globs_not)
     except PatternError as exc:
-        return Result(ops=("glean",), errors=[classified(VFSErrorKind.invalid, detail=str(exc))])
+        return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     entry = tables.entry
     channel = compile_channel(admissions)
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
@@ -394,7 +394,7 @@ async def glean_rows(
         *signals.records,
         *(
             classified(
-                VFSErrorKind.truncated,
+                ErrorKind.truncated,
                 severity=Severity.warning,
                 detail=f"at the {reason}; {REFINE_GUIDANCE}",
                 data=data,

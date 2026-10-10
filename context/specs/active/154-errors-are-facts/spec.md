@@ -167,7 +167,7 @@ moves the one remaining piece, the message, into the same model.
 | `internal` | Internal error | | required |
 
 A kind without a phrase cannot ship: the test in slice A renders every
-member of `VFSErrorKind` and fails on a missing one.
+member of `ErrorKind` and fails on a missing one.
 
 ## Scope
 
@@ -216,7 +216,7 @@ exception boundary (`exceptions.py` builds each kind's exception from
   `ERROR /mine/gone: Not found (target /mine/gone/a.md) — ...`: the
   locus is the missing ancestor, the target is the requested row, both
   in the caller's coordinates, and `message` is the bare phrase.
-- Every member of `VFSErrorKind` has a phrase; the slice A test renders
+- Every member of `ErrorKind` has a phrase; the slice A test renders
   each through a mount and finds no `/`-led token in any `message`.
 - `grep -rn "ResultError(" src/vfs | grep -v "src/vfs/results/"` is
   empty; `grep -rn "message=" src/vfs` finds no constructor call.
@@ -285,3 +285,10 @@ reason:
   coverage gate (3,957 passed, 1,347 skipped engine-leg tests, 100.00%
   of 11,291 statements). `scripts/ci.sh` was not run, at Clay's ask;
   the other four engines are untested on the migration.
+- **`VFSErrorKind` became `ErrorKind`** in a follow-up commit the same
+  day (Clay). The prefix repeated the package, the values already
+  carry the `vfs.` namespace, its siblings `Severity`, `RetryClass`
+  and `KindContract` are bare, and the prior art (Rust's
+  `io::ErrorKind`, opendal's `ErrorKind`) names it so. `VFSError`
+  keeps its prefix as the package's base exception; `VFSTables` is
+  untouched. The dated ADR and memo keep the old name as written.

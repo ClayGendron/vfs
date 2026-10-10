@@ -26,7 +26,7 @@ from vfs.base import Binding, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.models import Entry, Observation
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.memory import InMemoryStorage
 
 # ----------------------------------------------------------------------
@@ -152,7 +152,7 @@ async def test_add_mount_mkdir_failure_raises_mount_error_with_evidence() -> Non
     with pytest.raises(MountError, match="Cannot mount at /site") as exc:
         await root.add_mount(InMemoryStorage(), "/site")
     assert isinstance(exc.value, ValueError)
-    assert exc.value.errors[0].kind is VFSErrorKind.exists
+    assert exc.value.errors[0].kind is ErrorKind.exists
 
 
 async def test_remove_mount_rmdir_failure_raises_mount_error_with_evidence() -> None:
@@ -162,7 +162,7 @@ async def test_remove_mount_rmdir_failure_raises_mount_error_with_evidence() -> 
     await backend.write(entries=[Entry(path=Path("/m/foreign.txt"), content="secret")])  # bypasses the router
     with pytest.raises(MountError, match="removing its directory failed") as exc:
         await root.remove_mount("/m")
-    assert exc.value.errors[0].kind is VFSErrorKind.not_empty
+    assert exc.value.errors[0].kind is ErrorKind.not_empty
 
 
 async def test_bind_beneath_a_dead_backend_reports_the_transport_failure() -> None:
@@ -371,7 +371,7 @@ async def test_remove_mount_unbinds_and_rmdirs() -> None:
     assert Path("/data") not in root._bindings
     stat = await root.stat("/data")
     assert stat.success is False
-    assert stat.errors[0].kind is VFSErrorKind.not_found
+    assert stat.errors[0].kind is ErrorKind.not_found
 
 
 async def test_remove_mount_parks_the_directory_in_trash_restorable() -> None:
@@ -553,7 +553,7 @@ async def test_closed_router_answers_backend_unavailable_for_every_verb(call: An
     await root.close()
     result = await call(root)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.backend_unavailable
+    assert result.errors[0].kind is ErrorKind.backend_unavailable
     assert result.errors[0].message == "Backend unavailable: the filesystem is closed"
 
 
@@ -567,7 +567,7 @@ async def test_busy_guard_blocks_delete_at_a_bind_path() -> None:
     await root.add_mount(RecorderStorage(), "/m", parents=True)
     result = await root.delete("/m")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_busy_guard_blocks_delete_of_a_region_containing_a_bind() -> None:
@@ -575,28 +575,28 @@ async def test_busy_guard_blocks_delete_of_a_region_containing_a_bind() -> None:
     await root.add_mount(RecorderStorage(), "/a/m", parents=True)
     result = await root.delete("/a", cascade=True)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_busy_guard_blocks_move_dest_onto_a_bind_path() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m", parents=True)
     result = await root.move(src="/x.txt", dest="/m")
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_busy_guard_blocks_move_src_subtree_containing_a_bind() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/a/m", parents=True)
     result = await root.move(src="/a", dest="/b")
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_busy_guard_blocks_copy_onto_a_bind_path() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m", parents=True)
     result = await root.copy(src="/x.txt", dest="/m")
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_copy_from_a_subtree_containing_a_bind_is_not_busy() -> None:
@@ -668,7 +668,7 @@ async def test_readonly_root_makes_a_writable_mount_readonly() -> None:
     await root.bind(child, "/scratch", permissions="read_write")
     result = await root.write(entries=[Entry(path="/scratch/f.txt", content="x")])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert child.calls == []
 
 
@@ -740,7 +740,7 @@ async def test_tree_skips_incapable_binding_with_info_record() -> None:
     assert {"/data", "/data/a", "/data/b"} <= set(result.paths)
     assert dim.calls == []
     [skip] = result.errors
-    assert skip.kind is VFSErrorKind.unsupported
+    assert skip.kind is ErrorKind.unsupported
     assert skip.severity is Severity.info
     assert skip.path == "/data/b"
 
@@ -768,7 +768,7 @@ async def test_tree_dead_descent_demotes_beside_live_rows() -> None:
     assert {"/data", "/data/dead"} <= set(result.paths)
     [warning] = result.errors
     assert warning.severity is Severity.warning
-    assert warning.kind is VFSErrorKind.backend_unavailable
+    assert warning.kind is ErrorKind.backend_unavailable
 
 
 # ----------------------------------------------------------------------
@@ -813,7 +813,7 @@ async def test_grouped_and_single_delete_agree_on_a_stored_directory() -> None:
     grouped = await root.delete(observations=[Observation(path=Path("/data"))], cascade=False)
     assert single.success is False
     assert grouped.success is False
-    assert single.errors[0].kind is grouped.errors[0].kind is VFSErrorKind.not_empty
+    assert single.errors[0].kind is grouped.errors[0].kind is ErrorKind.not_empty
 
 
 # ----------------------------------------------------------------------
@@ -851,7 +851,7 @@ async def test_bind_advises_mkdir_when_stat_answers_without_the_row() -> None:
 async def test_bind_surfaces_a_failed_mount_point_listing() -> None:
     answers = {
         "stat": Result(ops=("stat",), observations=[Observation(path=Path("/m"), kind="directory")]),
-        "ls": Result(ops=("ls",), errors=[ResultError(kind=VFSErrorKind.internal, message="listing broke")]),
+        "ls": Result(ops=("ls",), errors=[ResultError(kind=ErrorKind.internal, message="listing broke")]),
     }
     root = VirtualFileSystem(storage=CannedStorage(answers))
     with pytest.raises(ValueError, match="listing broke"):

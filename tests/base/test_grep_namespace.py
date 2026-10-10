@@ -17,7 +17,7 @@ from vfs.base import VirtualFileSystem
 from vfs.models import Observation
 from vfs.params import INT_CEILING
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
 # The demo tree: needle sits at every level; decoy never matches.
@@ -93,7 +93,7 @@ async def test_missing_roots_stay_loud_per_root_assertions() -> None:
     fs = await _mounted_world()
     result = await fs.grep("needle", paths=("/data", "/data/nope"))
     assert result.success is False
-    assert [(e.kind, e.path) for e in result.failures] == [(VFSErrorKind.not_found, "/data/nope")]
+    assert [(e.kind, e.path) for e in result.failures] == [(ErrorKind.not_found, "/data/nope")]
     assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.py"]
 
 
@@ -125,7 +125,7 @@ async def test_defective_globs_refuse_before_any_dispatch() -> None:
     for channel in channels:
         result = await fs.grep("needle", **channel)
         assert result.success is False
-        assert result.errors[0].kind is VFSErrorKind.invalid
+        assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_unscoped_glob_channels_cross_the_seam_composed() -> None:
@@ -204,7 +204,7 @@ async def test_chained_grep_fetches_absent_content_and_errors_loudly() -> None:
     result = await fs.grep("needle", observations=rows)
     assert result.success is False
     assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
-    assert [e.kind for e in result.errors] == [VFSErrorKind.not_found]
+    assert [e.kind for e in result.errors] == [ErrorKind.not_found]
 
 
 async def test_chained_grep_skips_contentless_kinds_silently() -> None:
@@ -285,11 +285,11 @@ async def test_int_channels_refuse_past_the_shared_ceiling() -> None:
     fs = await _plain_world()
     over = await fs.grep("needle", before_context=2**32)
     assert over.success is False
-    assert over.errors[0].kind is VFSErrorKind.invalid
+    assert over.errors[0].kind is ErrorKind.invalid
     assert "before_context" in over.errors[0].message
     huge_count = await fs.grep("needle", max_count=2**64)
     assert huge_count.success is False
-    assert huge_count.errors[0].kind is VFSErrorKind.invalid
+    assert huge_count.errors[0].kind is ErrorKind.invalid
 
 
 async def test_the_ceiling_itself_is_served_on_the_live_engine() -> None:

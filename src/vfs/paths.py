@@ -233,17 +233,17 @@ class Path(str):
 
     @property
     def parent_dir(self) -> Path:
-        """Literal parent directory — same derivation as ``VFSEntry.parent_dir``."""
+        """Literal parent directory — same derivation as ``Entry.parent_dir``."""
         return compute_parent_dir(self)
 
     @property
     def name(self) -> str:
-        """Leaf segment (mirrors ``VFSEntry.name``)."""
+        """Leaf segment (mirrors ``Entry.name``)."""
         return split_path(self).name
 
     @property
     def kind(self) -> ObjectKind:
-        """Structural kind from path markers (mirrors ``VFSEntry.kind``)."""
+        """Structural kind from path markers (mirrors ``Entry.kind``)."""
         return parse_kind(self)
 
     @property

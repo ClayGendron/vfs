@@ -20,7 +20,7 @@ from vfs.models import Entry
 from vfs.models import lexical as lexical_model
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import lexical as lexical_store
 from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
@@ -333,7 +333,7 @@ class TestReclaim:
 
         with installed("reindex:before-publish", rival):
             result = await storage.reindex()
-        assert result.success is False and result.errors[0].kind == VFSErrorKind.conflict
+        assert result.success is False and result.errors[0].kind == ErrorKind.conflict
         for table in _lexical_tables(storage):
             assert await _count(storage, table) == 0
         await storage.close()
@@ -358,7 +358,7 @@ class TestReclaim:
         await _seed_lexical_rows(storage, 1)  # only the lexical stats row: the postings insert never collides
         result = await storage.reindex()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].kind == ErrorKind.conflict
         await storage.close()
 
 

@@ -38,7 +38,7 @@ from vfs.embedding import EmbeddingProvider
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
-from vfs.results import Severity, VFSErrorKind
+from vfs.results import ErrorKind, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
     TRAIT_KEYS,
@@ -135,7 +135,7 @@ class StorageContract:
     async def test_write_without_parents_missing_ancestor_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.write(entries=[Entry(path=Path("/a/b/c.txt"), content="hi")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/a"
 
     @needs("write", "stat")
@@ -159,7 +159,7 @@ class StorageContract:
     async def test_mkdir_without_parents_missing_ancestor_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.mkdir(path=Path("/a/b"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/a"
 
     @needs("write")
@@ -167,7 +167,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         result = await storage.write(entries=[Entry(path=Path("/f/sub.txt"), content="x")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/f"
 
     @needs("write", "mkdir")
@@ -176,7 +176,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         result = await storage.mkdir(path=Path("/f/sub"), parents=True)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/f"
 
     @needs("write", "mkdir")
@@ -184,7 +184,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/d"))
         result = await storage.write(entries=[Entry(path=Path("/d"), content="x")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
 
     @needs("write")
     async def test_write_onto_an_existing_file_without_overwrite_is_exists(self, storage: ConformanceBackend) -> None:
@@ -192,7 +192,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="first")])
         result = await storage.write(entries=[Entry(path=Path("/a.txt"), content="second")], overwrite=False)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     @needs("write", "mkdir")
     async def test_write_entries_creates_and_forgives_directories(self, storage: ConformanceBackend) -> None:
@@ -214,15 +214,15 @@ class StorageContract:
         )
         assert result.success is False
         kinds = {str(e.path): e.kind for e in result.errors}
-        assert kinds["/f"] == VFSErrorKind.wrong_kind
-        assert kinds["/ghost"] == VFSErrorKind.not_found
+        assert kinds["/f"] == ErrorKind.wrong_kind
+        assert kinds["/ghost"] == ErrorKind.not_found
 
     @needs("mkdir")
     async def test_mkdir_on_occupied_site_is_exists(self, storage: ConformanceBackend) -> None:
         await storage.mkdir(path=Path("/a"))
         result = await storage.mkdir(path=Path("/a"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     @needs("mkdir")
     async def test_mkdir_exist_ok_on_a_directory_occupant_is_unchanged(self, storage: ConformanceBackend) -> None:
@@ -236,7 +236,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a"), content="x")])
         result = await storage.mkdir(path=Path("/a"), exist_ok=True)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     # ------------------------------------------------------------------
     # ls / read / tree / stat shapes
@@ -268,7 +268,7 @@ class StorageContract:
     async def test_ls_missing_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.ls(path=Path("/nope"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("mkdir", "ls")
     async def test_ls_of_an_empty_directory_is_an_empty_success(self, storage: ConformanceBackend) -> None:
@@ -298,7 +298,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/a"))
         result = await storage.read(path=Path("/a"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
 
     @needs("write", "mkdir", "tree")
     async def test_tree_max_depth_budgets_the_subtree(self, storage: ConformanceBackend) -> None:
@@ -324,13 +324,13 @@ class StorageContract:
     async def test_tree_rejects_a_sub_one_max_depth(self, storage: ConformanceBackend) -> None:
         result = await storage.tree(path=Path("/"), max_depth=0)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("tree")
     async def test_tree_missing_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.tree(path=Path("/nope"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkdir", "stat")
     async def test_stat_row_shapes(self, storage: ConformanceBackend) -> None:
@@ -357,7 +357,7 @@ class StorageContract:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/ghost/deep/x.txt"))
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.not_found
+            assert result.errors[0].kind == ErrorKind.not_found
             assert result.errors[0].path == "/ghost"
 
     @needs("write", "read", "stat", "ls", "tree")
@@ -368,17 +368,17 @@ class StorageContract:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/f/deep/x.txt"))
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.wrong_kind
+            assert result.errors[0].kind == ErrorKind.wrong_kind
             assert result.errors[0].path == "/f"
 
     @needs("write", "edit", "delete")
     async def test_mutation_misses_classify_the_first_failing_boundary(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/f"), content="x")])
         edited = await storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/ghost/a.txt"))
-        assert edited.errors[0].kind == VFSErrorKind.not_found
+        assert edited.errors[0].kind == ErrorKind.not_found
         assert edited.errors[0].path == "/ghost"
         deleted = await storage.delete(path=Path("/f/deep/a.txt"))
-        assert deleted.errors[0].kind == VFSErrorKind.wrong_kind
+        assert deleted.errors[0].kind == ErrorKind.wrong_kind
         assert deleted.errors[0].path == "/f"
 
     # ------------------------------------------------------------------
@@ -412,8 +412,8 @@ class StorageContract:
         shallow = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/sub"))])
         deep = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/b/c"))])
         assert shallow.success is False and deep.success is False
-        assert shallow.errors[0].kind == VFSErrorKind.invalid
-        assert deep.errors[0].kind == VFSErrorKind.invalid
+        assert shallow.errors[0].kind == ErrorKind.invalid
+        assert deep.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "move", "read")
     async def test_move_to_the_same_path_is_a_no_op(self, storage: ConformanceBackend) -> None:
@@ -428,7 +428,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/dest.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/ghost.txt"), dest=Path("/dest.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkdir", "move")
     async def test_move_into_itself_is_invalid(self, storage: ConformanceBackend) -> None:
@@ -437,7 +437,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/a"))
         result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/inner"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "mkdir", "move")
     async def test_move_onto_an_occupied_descendant_is_exists_before_the_cycle(
@@ -450,7 +450,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/a/f.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     @needs("write", "mkdir", "move")
     async def test_move_onto_own_ancestor_is_exists(self, storage: ConformanceBackend) -> None:
@@ -459,7 +459,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/a/b"), parents=True)
         result = await storage.move(operations=[ResolvedPair(src=Path("/a/b"), dest=Path("/a"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     @needs("write", "mkdir", "move")
     async def test_move_onto_an_occupied_destination_is_exists_before_kind(self, storage: ConformanceBackend) -> None:
@@ -469,8 +469,8 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
         onto_dir = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/d"))])
         onto_file = await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/f.txt"))])
-        assert onto_dir.errors[0].kind == VFSErrorKind.exists
-        assert onto_file.errors[0].kind == VFSErrorKind.exists
+        assert onto_dir.errors[0].kind == ErrorKind.exists
+        assert onto_file.errors[0].kind == ErrorKind.exists
 
     @needs("write", "mkdir", "move", "stat")
     async def test_move_dir_over_empty_dir_is_exists(self, storage: ConformanceBackend) -> None:
@@ -481,7 +481,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/empty"))
         result = await storage.move(operations=[ResolvedPair(src=Path("/src"), dest=Path("/empty"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert (await storage.stat(path=Path("/empty"))).success is True
         assert (await storage.stat(path=Path("/src/f.txt"))).success is True
 
@@ -492,7 +492,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/empty"))
         result = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/empty"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert (await storage.stat(path=Path("/empty/f.txt"))).success is False
         assert (await storage.stat(path=Path("/src/f.txt"))).success is True
 
@@ -503,7 +503,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/dst/keep.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert (await storage.stat(path=Path("/dst/keep.txt"))).success is True
 
     @needs("write", "move")
@@ -512,7 +512,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="b")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
 
     @needs("write", "mkdir", "move", "copy", "read")
     async def test_transfer_classifies_a_row_that_overflows_at_the_destination(
@@ -529,7 +529,7 @@ class StorageContract:
         for op in (storage.move, storage.copy):
             result = await op(operations=[ResolvedPair(src=Path("/d"), dest=dest)])
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.unaddressable
+            assert result.errors[0].kind == ErrorKind.unaddressable
         assert (await storage.read(path=Path("/d/" + tail))).success is True
 
     @needs("mkdir", "move")
@@ -537,15 +537,15 @@ class StorageContract:
         await storage.mkdir(path=Path("/a"))
         as_source = await storage.move(operations=[ResolvedPair(src=Path("/"), dest=Path("/a/root"))])
         as_target = await storage.move(operations=[ResolvedPair(src=Path("/a"), dest=Path("/"))])
-        assert as_source.errors[0].kind == VFSErrorKind.invalid
-        assert as_target.errors[0].kind == VFSErrorKind.invalid
+        assert as_source.errors[0].kind == ErrorKind.invalid
+        assert as_target.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "move")
     async def test_move_destination_under_a_missing_parent_is_not_found(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/ghost/a.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/ghost"
 
     @needs("write", "move", "stat")
@@ -589,7 +589,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="clean text")])
         result = await storage.edit(edits=[EditOperation(old="clean", new="cl\x00ean")], path=Path("/a.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "clean text"
 
     @needs("mkdir", "edit")
@@ -597,7 +597,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/d"))
         result = await storage.edit(edits=[EditOperation(old="a", new="b")], path=Path("/d"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
 
     # ------------------------------------------------------------------
     # delete — the leaf table
@@ -607,13 +607,13 @@ class StorageContract:
     async def test_delete_root_is_invalid(self, storage: ConformanceBackend) -> None:
         result = await storage.delete(path=Path("/"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("delete")
     async def test_delete_missing_victim_is_not_found_first(self, storage: ConformanceBackend) -> None:
         result = await storage.delete(path=Path("/ghost.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkdir", "delete", "stat")
     async def test_delete_non_empty_directory_without_cascade_is_not_empty(self, storage: ConformanceBackend) -> None:
@@ -621,7 +621,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")])
         result = await storage.delete(path=Path("/a"), cascade=False)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_empty
+        assert result.errors[0].kind == ErrorKind.not_empty
         assert (await storage.stat(path=Path("/a/f.txt"))).success is True
 
     @needs("write", "mkdir", "delete", "stat")
@@ -666,7 +666,7 @@ class StorageContract:
         assert (await storage.read(path=covered_trash)).observations[0].content == "deep"
         refused = await storage.restore(path=covered_trash)
         assert refused.success is False
-        assert refused.errors[0].kind == VFSErrorKind.invalid
+        assert refused.errors[0].kind == ErrorKind.invalid
         assert (await storage.restore(path=root_trash)).success is True
         assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "deep"
 
@@ -681,7 +681,7 @@ class StorageContract:
         for target in (Path("/.vfs"), Path("/.vfs/trash")):
             result = await storage.delete(path=target)
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.errors[0].kind == ErrorKind.invalid
             assert "sweep" in (result.errors[0].message or "")
         # Nothing purged: the trashed row is still addressable.
         assert (await storage.stat(path=trash_path)).success is True
@@ -697,7 +697,7 @@ class StorageContract:
         if str(bucket) != f"/.vfs/trash/{datetime.now(UTC).strftime('%Y-%m-%d-%H')}":
             pytest.skip("hour boundary crossed between deletes")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert "sweep" in (result.errors[0].message or "")
         assert (await storage.stat(path=trash_path)).success is True
 
@@ -757,7 +757,7 @@ class StorageContract:
         assert first is not None and second is not None
         result = await storage.restore(observations=[Observation(path=first), Observation(path=second)])
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
+        assert [e.kind for e in result.errors] == [ErrorKind.exists] * 2
         assert {e.data["vfs.target"] for e in result.errors if e.data} == {str(first), str(second)}
 
     @needs("write", "mkdir", "move")
@@ -768,14 +768,14 @@ class StorageContract:
         pairs = [ResolvedPair(src=Path("/s1"), dest=Path("/d")), ResolvedPair(src=Path("/s2"), dest=Path("/d"))]
         result = await storage.move(operations=pairs)
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.exists] * 2
+        assert [e.kind for e in result.errors] == [ErrorKind.exists] * 2
         assert {e.data["vfs.target"] for e in result.errors if e.data} == {"/s1", "/s2"}
 
     @needs("move")
     async def test_moving_the_root_carries_its_source_target(self, storage: ConformanceBackend) -> None:
         result = await storage.move(operations=[ResolvedPair(src=Path("/"), dest=Path("/copy"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert result.errors[0].path == "/"
         assert result.errors[0].data == {"vfs.target": "/copy"}
 
@@ -787,7 +787,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=deep, content="x")], parents=True)
         result = await storage.move(operations=[ResolvedPair(src=Path("/s"), dest=Path("/" + "d" * 30))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].kind == ErrorKind.unaddressable
         assert result.errors[0].data == {"vfs.target": "/s"}
 
     @needs("write", "delete", "read")
@@ -797,7 +797,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="squatter")])
         refused = await storage.restore(path=Path("/a.txt"))
         assert refused.success is False
-        assert refused.errors[0].kind == VFSErrorKind.exists
+        assert refused.errors[0].kind == ErrorKind.exists
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "squatter"
 
     @needs("write", "delete", "move", "read")
@@ -809,7 +809,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="incoming")])
         refused = await storage.move(operations=[ResolvedPair(src=Path("/b.txt"), dest=Path("/a.txt"))])
         assert refused.success is False
-        assert refused.errors[0].kind == VFSErrorKind.exists
+        assert refused.errors[0].kind == ErrorKind.exists
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "old"
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         moved = await storage.move(operations=[ResolvedPair(src=Path("/b.txt"), dest=Path("/a.txt"))])
@@ -818,17 +818,17 @@ class StorageContract:
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "incoming"
         held = await storage.restore(path=Path("/a.txt"))
         assert held.success is False
-        assert held.errors[0].kind == VFSErrorKind.exists
+        assert held.errors[0].kind == ErrorKind.exists
 
     async def test_restore_with_no_candidate_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.restore(path=Path("/ghost.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     async def test_restore_of_a_missing_trash_path_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.restore(path=Path("/.vfs/trash/1999-01-01-00/ghost"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkdir", "delete", "stat")
     async def test_restore_of_a_directory_brings_the_subtree(self, storage: ConformanceBackend) -> None:
@@ -844,7 +844,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=squatter, content="mine")], parents=True)
         result = await storage.restore(path=squatter)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "mkdir", "delete", "read")
     async def test_failed_restore_keeps_the_row_in_trash(self, storage: ConformanceBackend) -> None:
@@ -857,10 +857,10 @@ class StorageContract:
         await storage.sweep(path=Path("/d"))
         by_site = await storage.restore(path=Path("/d/f.txt"))
         assert by_site.success is False
-        assert by_site.errors[0].kind == VFSErrorKind.not_found
+        assert by_site.errors[0].kind == ErrorKind.not_found
         by_row = await storage.restore(path=trash_path)
         assert by_row.success is False
-        assert by_row.errors[0].kind == VFSErrorKind.not_found
+        assert by_row.errors[0].kind == ErrorKind.not_found
         assert (await storage.read(path=trash_path)).observations[0].content == "x"
 
     # ------------------------------------------------------------------
@@ -942,12 +942,12 @@ class StorageContract:
     async def test_sweep_of_the_root_is_invalid(self, storage: ConformanceBackend) -> None:
         result = await storage.sweep(path=Path("/"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     async def test_sweep_of_a_missing_address_is_not_found(self, storage: ConformanceBackend) -> None:
         result = await storage.sweep(path=Path("/ghost"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "delete", "stat")
     async def test_sweep_of_a_bucket_address_reclaims_it_regardless_of_age(self, storage: ConformanceBackend) -> None:
@@ -1016,7 +1016,7 @@ class StorageContract:
         for pattern in ("a**b.txt", "/x/a**b.txt", "***"):
             result = await storage.glob(patterns=(pattern,))
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.errors[0].kind == ErrorKind.invalid
             assert result.observations == []
 
     @needs("write", "glob")
@@ -1027,7 +1027,7 @@ class StorageContract:
         for pattern in ("/data/", "data/", "//x", "/*/", "/"):
             result = await storage.glob(patterns=(pattern,))
             assert result.success is False, pattern
-            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.errors[0].kind == ErrorKind.invalid
             assert result.observations == []
 
     @needs("write", "glob")
@@ -1167,7 +1167,7 @@ class StorageContract:
         result = await storage.glob(patterns=("*.txt", "a**b"))
         assert result.success is False
         assert result.observations == []
-        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
 
     @needs("write", "mkdir", "glob")
     async def test_glob_exclusions_gate_beside_the_authority(self, storage: ConformanceBackend) -> None:
@@ -1210,7 +1210,7 @@ class StorageContract:
         assert sorted(str(o.path) for o in literal.observations) == ["/a.txt"]
         over_cap = await storage.glob(patterns=("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}",))
         assert over_cap.success is False
-        assert [e.kind for e in over_cap.errors] == [VFSErrorKind.invalid]
+        assert [e.kind for e in over_cap.errors] == [ErrorKind.invalid]
         assert "arm cap" in over_cap.errors[0].message
 
     @needs("write", "glob")
@@ -1219,7 +1219,7 @@ class StorageContract:
         result = await storage.glob(patterns=("*.txt",), globs_not=("a**b",))
         assert result.success is False
         assert result.observations == []
-        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
 
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak
@@ -1417,7 +1417,7 @@ class StorageContract:
     async def test_grep_rejects_an_uncompilable_pattern_as_invalid(self, storage: ConformanceBackend) -> None:
         result = await storage.grep(pattern="(")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "grep")
     async def test_grep_accepts_allow_scan(self, storage: ConformanceBackend) -> None:
@@ -1469,7 +1469,7 @@ class StorageContract:
         for pattern in ("ab", ".*", "alpha|ab"):
             result = await storage.grep(pattern=pattern)
             assert result.success is False, pattern
-            assert result.errors[0].kind == VFSErrorKind.unindexable_pattern
+            assert result.errors[0].kind == ErrorKind.unindexable_pattern
             assert "allow_scan" in result.errors[0].message and "=True" not in result.errors[0].message
             assert result.observations == []
 
@@ -1483,7 +1483,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/fold.txt"), content="grosse")])
         refused = await storage.grep(pattern="ẞ")
         assert refused.success is False
-        assert refused.errors[0].kind == VFSErrorKind.unindexable_pattern
+        assert refused.errors[0].kind == ErrorKind.unindexable_pattern
         scanned = await storage.grep(pattern="ẞ", allow_scan=True)
         assert [o.path for o in scanned.observations] == ["/sharp.txt"]
 
@@ -1636,7 +1636,7 @@ class StorageContract:
     async def test_glean_rejects_a_query_with_no_term_as_invalid(self, storage: ConformanceBackend) -> None:
         result = await storage.glean(query="... !!!")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
 
     @needs("write", "glean")
     async def test_glean_answers_entries_not_chunks_in_both_worlds(self, storage: ConformanceBackend) -> None:
@@ -1794,7 +1794,7 @@ class StorageContract:
         edge = Edge(source=Path("/src.py"), target=Path("/dst.py"), edge_type="imports")
         result = await storage.mkedge(edges=[edge])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/dst.py"
 
     @needs("write", "mkedge")
@@ -1838,7 +1838,7 @@ class StorageContract:
         again = await storage.rmedge(edges=[edge])
         assert again.success is True
         assert again.observations == []
-        assert again.errors[0].kind == VFSErrorKind.not_found
+        assert again.errors[0].kind == ErrorKind.not_found
         assert again.errors[0].severity == Severity.warning
 
     @needs("write", "mkedge", "rmedge", "delete")
@@ -1852,7 +1852,7 @@ class StorageContract:
         assert (await storage.delete(path=Path("/src.py"))).success is True
         gone = await storage.rmedge(edges=[edge])
         assert gone.observations == []
-        assert gone.errors[0].kind == VFSErrorKind.not_found
+        assert gone.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkedge", "rmedge", "delete")
     async def test_delete_cascades_edges_naming_the_deleted_entry_as_target(self, storage: ConformanceBackend) -> None:
@@ -1863,7 +1863,7 @@ class StorageContract:
         assert (await storage.delete(path=Path("/dst.py"))).success is True
         gone = await storage.rmedge(edges=[edge])
         assert gone.observations == []
-        assert gone.errors[0].kind == VFSErrorKind.not_found
+        assert gone.errors[0].kind == ErrorKind.not_found
 
     @needs("write", "mkedge", "rmedge", "delete", "restore")
     async def test_restore_never_re_mints_an_authored_edge(self, storage: ConformanceBackend) -> None:
@@ -1879,7 +1879,7 @@ class StorageContract:
         assert (await storage.restore(path=trash_path)).success is True
         gone = await storage.rmedge(edges=[edge])
         assert gone.observations == []
-        assert gone.errors[0].kind == VFSErrorKind.not_found
+        assert gone.errors[0].kind == ErrorKind.not_found
 
     # ------------------------------------------------------------------
     # Per-row classification for batched reads
@@ -1898,7 +1898,7 @@ class StorageContract:
         assert result.success is False
         assert {o.path: o.content for o in result.observations} == {"/a.txt": "a", "/b.txt": "b"}
         assert len(result.errors) == 1
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/missing.txt"
 
     @needs("write", "mkdir", "read")
@@ -1910,7 +1910,7 @@ class StorageContract:
         result = await storage.read(observations=[Observation(path=Path("/a.txt")), Observation(path=Path("/d"))])
         assert result.success is False
         assert len(result.observations) == 1
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/d"
 
     @needs("read")
@@ -2235,7 +2235,7 @@ class StorageContract:
         await storage.mkdir(path=Path("/a"))
         result = await storage.delete(observations=[Observation(path=Path("/a")), Observation(path=Path("/a/ghost"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/a/ghost"
         assert (await storage.stat(path=Path("/a"))).success is True
 
@@ -2274,7 +2274,7 @@ class StorageContract:
         for operations in (pairs, list(reversed(pairs))):
             result = await storage.move(operations=operations)
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.errors[0].kind == ErrorKind.invalid
             assert result.errors[0].path == "/a/b"
             assert (await storage.stat(path=Path("/a/b"))).success is True
 
@@ -2290,7 +2290,7 @@ class StorageContract:
             ]
         )
         assert result.success is False
-        assert all(e.kind == VFSErrorKind.invalid for e in result.errors)
+        assert all(e.kind == ErrorKind.invalid for e in result.errors)
 
     @needs("move")
     async def test_move_duplicate_missing_source_classifies_the_miss(self, storage: ConformanceBackend) -> None:
@@ -2303,7 +2303,7 @@ class StorageContract:
             ]
         )
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.not_found, VFSErrorKind.not_found]
+        assert [e.kind for e in result.errors] == [ErrorKind.not_found, ErrorKind.not_found]
         assert {str(e.path) for e in result.errors} == {"/ghost"}
 
     @needs("write", "copy", "read")
@@ -2362,7 +2362,7 @@ class StorageContract:
         )
         result = await storage.move(operations=[ResolvedPair(src=Path("/f.txt"), dest=Path("/blocker.txt/f.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/blocker.txt"
 
     @needs("write", "move", "read", "stat")
@@ -2371,7 +2371,7 @@ class StorageContract:
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="beta")])
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "beta"
         assert (await storage.read(path=Path("/a.txt"))).observations[0].content == "alpha"
 
@@ -2384,7 +2384,7 @@ class StorageContract:
         before = await _revision_of(storage, "/b.txt")
         result = await storage.copy(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/b.txt"))])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert await _revision_of(storage, "/b.txt") == before
         assert (await storage.read(path=Path("/b.txt"))).observations[0].content == "beta"
 
@@ -2533,7 +2533,7 @@ class StorageContract:
         assert row.content is None and "content" in row.populated
         assert row.mime_type == "application/pdf"
         [note] = result.errors
-        assert (note.kind, note.severity, note.retryable) == (VFSErrorKind.unavailable, Severity.warning, True)
+        assert (note.kind, note.severity, note.retryable) == (ErrorKind.unavailable, Severity.warning, True)
         assert note.path == "/r.pdf"
 
     @needs("write", "read", "stat")
@@ -2556,7 +2556,7 @@ class StorageContract:
         assert (await storage.write(entries=[Entry(path=Path("/r.pdf"), data=b"%PDF-1.4")])).success is True
         result = await storage.edit(path=Path("/r.pdf"), edits=[EditOperation(old="PDF", new="x")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].message == "Wrong kind: binary body; replace the bytes through write"
         back = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data"}))
         assert back.observations[0].data == b"%PDF-1.4"

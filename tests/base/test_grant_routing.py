@@ -18,7 +18,7 @@ from vfs.authority import Authority, Principal
 from vfs.base import VirtualFileSystem
 from vfs.models import Entry
 from vfs.paths import Path
-from vfs.results import Result, VFSErrorKind
+from vfs.results import ErrorKind, Result
 from vfs.results.render import render_result
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -76,7 +76,7 @@ async def test_a_grant_on_the_root_mount_needs_no_rebase(fs: VirtualFileSystem) 
 
 async def test_the_grant_takes_effect_for_the_next_routed_read(fs: VirtualFileSystem) -> None:
     assert (await fs.posture("/m", "private")).success is True
-    assert (await fs.read("/m/eng/spec.md", authority=ANN)).errors[0].kind == VFSErrorKind.not_found
+    assert (await fs.read("/m/eng/spec.md", authority=ANN)).errors[0].kind == ErrorKind.not_found
     assert (await fs.grant("/m/eng", "ann", "read")).success is True
     assert (await fs.read("/m/eng/spec.md", authority=ANN)).success is True
 
@@ -95,14 +95,14 @@ async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: VirtualFileS
         await fs.add_member("group:eng", "ann", path="/m"),
         await fs.remove_member("group:eng", "ann", path="/m"),
     ):
-        assert refused.errors[0].kind == VFSErrorKind.read_only
+        assert refused.errors[0].kind == ErrorKind.read_only
     assert (await fs.grants("/m/eng")).success is True
 
 
 async def test_a_backend_without_grants_is_unsupported() -> None:
     fs = VirtualFileSystem(storage=ReadFamilyStorage())
     result = await fs.grant("/x", "bob", "read")
-    assert result.errors[0].kind == VFSErrorKind.unsupported
+    assert result.errors[0].kind == ErrorKind.unsupported
 
 
 async def test_a_closed_filesystem_refuses_grants() -> None:
@@ -136,7 +136,7 @@ async def test_an_invalid_grant_path_is_refused_before_dispatch() -> None:
 async def test_garbage_grant_parameters_are_invalid_with_zero_dispatch(call) -> None:
     fs = RecorderFS()
     result = await call(fs)
-    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert result.errors[0].kind == ErrorKind.invalid
     assert fs.calls == []
 
 

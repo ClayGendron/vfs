@@ -19,7 +19,7 @@ from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import embed as embed_module
@@ -138,7 +138,7 @@ class TestStep:
     async def test_a_failed_write_back_ends_the_step_with_its_failure(self, tmp_path: Any, monkeypatch) -> None:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, embedder=provider)
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="write broke")])
+        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="write broke")])
         real = storage._execute_write
 
         async def failing(op: str, fn: Any) -> Result:
@@ -157,7 +157,7 @@ class TestStep:
         assert (await storage.reindex()).success is True
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(model="two"))
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="clear broke")])
+        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="clear broke")])
         real = other._execute_write
 
         async def failing(op: str, fn: Any) -> Result:
@@ -213,7 +213,7 @@ class TestStep:
         result = await storage.reindex()
         assert result.success is True
         [record] = result.errors
-        assert record.kind == VFSErrorKind.unavailable and record.severity == Severity.warning
+        assert record.kind == ErrorKind.unavailable and record.severity == Severity.warning
         assert record.retryable is True and record.data == {"provider": "scripted/fake@4"}
         assert "RuntimeError: provider down" in record.message
         assert (_extra(result)["embedded"], _extra(result)["unembedded"]) == (2, 3)
@@ -240,7 +240,7 @@ class TestStep:
         result = await storage.reindex()
         assert result.success is True
         [record] = result.errors
-        assert record.kind == VFSErrorKind.unavailable and "TimeoutError" in record.message
+        assert record.kind == ErrorKind.unavailable and "TimeoutError" in record.message
         assert _extra(result)["unembedded"] == len(CORPUS)
         await storage.close()
 
@@ -291,7 +291,7 @@ class TestStep:
 
         with installed("reindex:before-embed", rival):
             result = await storage._embed_step(storage._host.tables, lost)
-        assert result.success is False and result.errors[0].kind == VFSErrorKind.conflict
+        assert result.success is False and result.errors[0].kind == ErrorKind.conflict
         vectors = await _vectors(storage)
         assert sum(v is not None for v in vectors.values()) == 2  # the page in flight landed; nothing more
         await storage.close()
@@ -346,7 +346,7 @@ class TestStep:
         async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw):
             from vfs.results import Result, ResultError
 
-            return Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="chunk broke")])
+            return Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
 
         monkeypatch.setattr(backend_module, "chunk_dirty", broken)
         result = await storage.reindex()
@@ -410,7 +410,7 @@ class TestIdentity:
         wider = DatabaseStorage(url=_url(tmp_path), native_embedding=NativeEmbeddingConfig(dimension=8))
         result = await wider.first_touch()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid and "8 wide" in result.errors[0].message
+        assert result.errors[0].kind == ErrorKind.invalid and "8 wide" in result.errors[0].message
         await wider.close()
 
     async def test_a_stored_model_mismatch_is_stale_not_refused(self, tmp_path: Any) -> None:

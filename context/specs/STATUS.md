@@ -32,8 +32,9 @@ lines first; regenerate this file when the picture shifts (review the
   109 producer sites and 27 test files migrated; 17 new tests in
   `tests/results/test_facts.py`. Prior art in
   `research/2026-10-10-who-composes-the-error-message.md`. Dir
-  renamed `154-errors-are-facts`. See the spec's *Landing notes* for
-  the deviations and the suite's outcome.
+  renamed `154-errors-are-facts`. `VFSErrorKind` renamed `ErrorKind`
+  in a follow-up commit the same day (Clay). See the spec's *Landing
+  notes* for the deviations and the suite's outcome.
 - **153 built 2026-10-10, awaiting Clay's review** — docs tell the
   truth about v2. The README's first block runs under Sybil against
   the live API (a root `conftest.py` now collects `README.md` and the

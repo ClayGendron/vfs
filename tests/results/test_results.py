@@ -10,7 +10,7 @@ import pytest
 
 from vfs.models import Match, Observation
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, Severity, wrong_kind
 
 
 def obs(path: str, **kwargs: Any) -> Observation:
@@ -24,32 +24,32 @@ def obs(path: str, **kwargs: Any) -> Observation:
 
 class TestResultError:
     def test_kind_serializes_to_namespaced_value(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="no such path", path=Path("/a/b.md"))
+        err = ResultError(kind=ErrorKind.not_found, message="no such path", path=Path("/a/b.md"))
         assert err.model_dump(mode="json")["kind"] == "vfs.not_found"
 
     def test_kind_parses_from_wire_value(self) -> None:
         err = ResultError.model_validate({"kind": "vfs.timeout", "message": "took too long"})
-        assert err.kind is VFSErrorKind.timeout
+        assert err.kind is ErrorKind.timeout
         assert err.path is None
 
     def test_unknown_kind_from_newer_peer_is_preserved_as_string(self) -> None:
         err = ResultError.model_validate({"kind": "vfs.quota_exceeded", "message": "over quota"})
         assert err.kind == "vfs.quota_exceeded"
-        assert not isinstance(err.kind, VFSErrorKind)
+        assert not isinstance(err.kind, ErrorKind)
         restored = ResultError.model_validate(err.model_dump(mode="json"))
         assert restored == err
 
     def test_frozen(self) -> None:
-        err = ResultError(kind=VFSErrorKind.invalid, message="bad")
+        err = ResultError(kind=ErrorKind.invalid, message="bad")
         with pytest.raises(Exception, match="frozen"):
             err.message = "other"  # ty: ignore[invalid-assignment]
 
     def test_data_defaults_none(self) -> None:
-        assert ResultError(kind=VFSErrorKind.invalid, message="x").data is None
+        assert ResultError(kind=ErrorKind.invalid, message="x").data is None
 
     def test_data_round_trips_on_the_wire(self) -> None:
         err = ResultError(
-            kind=VFSErrorKind.conflict,
+            kind=ErrorKind.conflict,
             message="stale version",
             path=Path("/a.md"),
             data={"expected": 3, "actual": 5},
@@ -59,7 +59,7 @@ class TestResultError:
         assert restored == err
 
     def test_mount_rebase_round_trip(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/docs/a.md"))
+        err = ResultError(kind=ErrorKind.not_found, message="gone", path=Path("/docs/a.md"))
         rebased = err.with_mount("/data")
         assert rebased.path == "/data/docs/a.md"
         assert rebased.without_mount("/data") == err
@@ -67,7 +67,7 @@ class TestResultError:
     def test_mount_rebase_always_stamps_provenance(self) -> None:
         # with_mount is never the identity: the first hop stamps source and
         # every later hop re-roots it; without_mount inverts the round-trip.
-        err = ResultError(kind=VFSErrorKind.unavailable, message="backend down")
+        err = ResultError(kind=ErrorKind.unavailable, message="backend down")
         hop = err.with_mount("/data")
         assert hop is not err
         assert hop.source == "/data"
@@ -76,7 +76,7 @@ class TestResultError:
 
     def test_wrong_kind_names_the_occupant_kind_as_detail_and_field(self) -> None:
         edge = wrong_kind("edge", Path("/e"))
-        assert (edge.kind, edge.message, edge.path) == (VFSErrorKind.wrong_kind, "Wrong kind: edge", "/e")
+        assert (edge.kind, edge.message, edge.path) == (ErrorKind.wrong_kind, "Wrong kind: edge", "/e")
         assert edge.data == {"kind": "edge"}
         assert wrong_kind("file", Path("/f")).message == "Wrong kind: file"
 
@@ -126,7 +126,7 @@ class TestRowAccess:
     def test_failed_result_is_falsy_even_with_rows(self) -> None:
         result = Result(
             observations=[obs("/a.md")],
-            errors=[ResultError(kind=VFSErrorKind.unavailable, message="partial")],
+            errors=[ResultError(kind=ErrorKind.unavailable, message="partial")],
         )
         assert not result
         assert result.error_message == "partial"
@@ -167,7 +167,7 @@ class TestSetAlgebra:
         assert diff.op == "glob"
 
     def test_errors_and_success_propagate(self) -> None:
-        err = ResultError(kind=VFSErrorKind.timeout, message="slow mount")
+        err = ResultError(kind=ErrorKind.timeout, message="slow mount")
         a = Result(observations=[obs("/a.md")])
         b = Result(errors=[err])
         combined = a | b
@@ -181,7 +181,7 @@ class TestSetAlgebra:
         assert (empty | dup).observations == dup.observations
 
     def test_diamond_chains_do_not_duplicate_errors(self) -> None:
-        err = ResultError(kind=VFSErrorKind.unavailable, message="mount down")
+        err = ResultError(kind=ErrorKind.unavailable, message="mount down")
         a = Result(observations=[obs("/a.md")])
         b = Result(errors=[err], observations=[obs("/a.md")])
         assert ((a | b) & b).errors == [err]
@@ -248,7 +248,7 @@ class TestEnrichment:
         assert result.kinds("directory").paths == ("/docs",)
 
     def test_chains_preserve_envelope(self) -> None:
-        err = ResultError(kind=VFSErrorKind.unavailable, message="one mount down")
+        err = ResultError(kind=ErrorKind.unavailable, message="one mount down")
         result = Result(
             ops=("glean",),
             observations=[obs("/a.md", score=0.5)],
@@ -269,7 +269,7 @@ class TestMountRebasing:
         result = Result(
             ops=("ls",),
             observations=[obs("/a.md"), obs("/")],
-            errors=[ResultError(kind=VFSErrorKind.not_found, message="gone", path=Path("/b.md"))],
+            errors=[ResultError(kind=ErrorKind.not_found, message="gone", path=Path("/b.md"))],
         )
         rebased = result.with_mount("/data")
         assert rebased.paths == ("/data/a.md", "/data")
@@ -311,7 +311,7 @@ class TestRebaseOverflow:
         assert rebased.success is True  # loss on record, not failure
         assert rebased.paths == (f"{LONG_MOUNT}/ok.py",)  # sibling row survives
         [err] = rebased.errors
-        assert err.kind is VFSErrorKind.unaddressable
+        assert err.kind is ErrorKind.unaddressable
         assert err.severity is Severity.warning
         assert err.path is None
         assert err.source == LONG_MOUNT
@@ -334,21 +334,21 @@ class TestRebaseOverflow:
 
     def test_error_path_overflow_drops_to_none_and_keeps_location_in_data(self) -> None:
         err = ResultError(
-            kind=VFSErrorKind.not_found,
+            kind=ErrorKind.not_found,
             message="missing",
             path=DEEP_LOCAL,
             data={"attempt": 1},
         )
         rebased = err.with_mount(LONG_MOUNT)
         assert rebased.path is None
-        assert rebased.kind is VFSErrorKind.not_found
+        assert rebased.kind is ErrorKind.not_found
         assert rebased.message == "missing"
         assert rebased.source == LONG_MOUNT
         assert rebased.data == {"attempt": 1, "vfs.overflow": {"local_path": DEEP_LOCAL}}
 
     def test_error_path_at_exactly_the_limit_rebases(self) -> None:
         mount = "/" + "m" * 19
-        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=DEEP_LOCAL)
+        err = ResultError(kind=ErrorKind.not_found, message="missing", path=DEEP_LOCAL)
         rebased = err.with_mount(mount)
         assert rebased.path is not None
         assert len(rebased.path) == MAX_PATH_LENGTH
@@ -356,7 +356,7 @@ class TestRebaseOverflow:
     def test_error_overflow_with_a_foreign_source_keeps_the_path_whole(self) -> None:
         # source is not a prefix of path: the local strip fails closed and
         # the overflow record carries the path unstripped.
-        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=DEEP_LOCAL, source="/elsewhere")
+        err = ResultError(kind=ErrorKind.not_found, message="missing", path=DEEP_LOCAL, source="/elsewhere")
         rebased = err.with_mount(LONG_MOUNT)
         assert rebased.path is None
         assert (rebased.data or {})["vfs.overflow"] == {"local_path": str(DEEP_LOCAL)}
@@ -374,19 +374,19 @@ class TestRebaseOverflowMeasuresBytes:
         rebased = result.with_mount(LONG_MOUNT)
         assert rebased.success is True  # loss on record — the seam never raises
         [err] = rebased.errors
-        assert err.kind is VFSErrorKind.unaddressable
+        assert err.kind is ErrorKind.unaddressable
         assert err.severity is Severity.warning
         assert err.data == {"vfs.overflow": {"local_path": MULTIBYTE_LOCAL}}
 
     def test_multibyte_error_path_overflow_drops_to_none(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="missing", path=MULTIBYTE_LOCAL)
+        err = ResultError(kind=ErrorKind.not_found, message="missing", path=MULTIBYTE_LOCAL)
         rebased = err.with_mount(LONG_MOUNT)
         assert rebased.path is None
         assert rebased.source == LONG_MOUNT
         assert (rebased.data or {})["vfs.overflow"] == {"local_path": str(MULTIBYTE_LOCAL)}
 
     def test_multibyte_source_overflow_clamps_to_mount(self) -> None:
-        err = ResultError(kind=VFSErrorKind.not_found, message="missing", source=MULTIBYTE_LOCAL)
+        err = ResultError(kind=ErrorKind.not_found, message="missing", source=MULTIBYTE_LOCAL)
         rebased = err.with_mount(LONG_MOUNT)
         assert rebased.source == LONG_MOUNT
 
@@ -410,7 +410,7 @@ def rich_result() -> Result:
             ),
             obs("/src/db.py", status="updated"),
         ],
-        errors=[ResultError(kind=VFSErrorKind.permission_denied, message="read-only mount", path=Path("/ro/x.md"))],
+        errors=[ResultError(kind=ErrorKind.permission_denied, message="read-only mount", path=Path("/ro/x.md"))],
     )
 
 
@@ -468,18 +468,18 @@ class TestWireContract:
 
 class TestRetryableFlag:
     def test_defaults_false_and_is_orthogonal_to_retry_class(self) -> None:
-        entry = ResultError(kind=VFSErrorKind.internal, message="boom")
+        entry = ResultError(kind=ErrorKind.internal, message="boom")
         assert entry.retryable is False
         # The flag comes from the producing backend's classifier, never
         # from the kind's contract-table retry class.
-        flagged = ResultError(kind=VFSErrorKind.internal, message="boom", retryable=True)
+        flagged = ResultError(kind=ErrorKind.internal, message="boom", retryable=True)
         assert flagged.retryable is True
         assert flagged.retry_class == entry.retry_class
 
     def test_round_trips_the_wire(self) -> None:
         result = Result(
             ops=("write",),
-            errors=[ResultError(kind=VFSErrorKind.conflict, message="rival writer", retryable=True)],
+            errors=[ResultError(kind=ErrorKind.conflict, message="rival writer", retryable=True)],
         )
         restored = Result.from_payload(json.loads(result.to_json()))
         assert restored.errors[0].retryable is True
@@ -487,6 +487,6 @@ class TestRetryableFlag:
     def test_never_renders(self) -> None:
         result = Result(
             ops=("read",),
-            errors=[ResultError(kind=VFSErrorKind.conflict, message="rival writer", retryable=True)],
+            errors=[ResultError(kind=ErrorKind.conflict, message="rival writer", retryable=True)],
         )
         assert "retryable" not in str(result).lower()

@@ -41,7 +41,7 @@ from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.paths import Path, is_trash_path
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
@@ -361,7 +361,7 @@ class DatabaseStorage:
         if max_depth is not None and max_depth < 1:
             return Result(
                 ops=("tree",),
-                errors=[classified(VFSErrorKind.invalid, detail=f"max_depth must be >= 1, got {max_depth}")],
+                errors=[classified(ErrorKind.invalid, detail=f"max_depth must be >= 1, got {max_depth}")],
             )
         host = self._host
         return await self._execute(
@@ -536,7 +536,7 @@ class DatabaseStorage:
         provider = self._host.embedder
         if provider is None:
             note = classified(
-                VFSErrorKind.unavailable,
+                ErrorKind.unavailable,
                 severity=Severity.info,
                 detail="no embedding provider is configured; the lexical leg alone answered",
                 data={"leg": "vector", "reason": "no_provider"},
@@ -545,7 +545,7 @@ class DatabaseStorage:
         stored = self._host.embedding_identity
         if self._host.embedding_stale and stored is not None:
             note = classified(
-                VFSErrorKind.conflict,
+                ErrorKind.conflict,
                 severity=Severity.warning,
                 detail=(
                     f"the stored embeddings belong to {stored[0]!r} at {stored[1]} but the mount is configured for "
@@ -563,7 +563,7 @@ class DatabaseStorage:
             embedded = await self._embed_query(provider, query)
         except Exception as exc:  # the provider's failure is an operating condition, never a raise
             note = classified(
-                VFSErrorKind.unavailable,
+                ErrorKind.unavailable,
                 severity=Severity.warning,
                 detail=f"embedding the query failed ({type(exc).__name__}: {exc}); the lexical leg alone answered",
                 retryable=True,
@@ -1106,7 +1106,7 @@ class DatabaseStorage:
         if report.unrendered:
             warnings.append(
                 classified(
-                    VFSErrorKind.unavailable,
+                    ErrorKind.unavailable,
                     severity=Severity.warning,
                     detail=f"{report.unrendered} binaries are still pending a rendering; run reindex again",
                     retryable=True,
@@ -1371,7 +1371,7 @@ class DatabaseStorage:
         if report.stopped_by is not None:
             errors.append(
                 classified(
-                    VFSErrorKind.unavailable,
+                    ErrorKind.unavailable,
                     severity=Severity.warning,
                     detail=f"embedding stopped after {report.requests} requests: {report.stopped_by}",
                     retryable=True,
@@ -1509,7 +1509,7 @@ class DatabaseStorage:
             return await self._rows(op, fn)
         except StaleSnapshot as exc:
             detail = f"{op} kept losing to concurrent changes: {exc.context}"
-            return Result(ops=(op,), errors=[classified(VFSErrorKind.conflict, retryable=True, detail=detail)])
+            return Result(ops=(op,), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
             # SQLAlchemyError, not just DBAPIError: pool exhaustion
             # (TimeoutError) is an operating condition, never a raise.
@@ -1610,6 +1610,6 @@ class DatabaseStorage:
             # Guards kept proving the snapshot stale through every redrive:
             # an honest transient outcome, never a torn commit.
             detail = f"{op} kept losing to concurrent changes: {exc.context}"
-            return Result(ops=(op,), errors=[classified(VFSErrorKind.conflict, retryable=True, detail=detail)])
+            return Result(ops=(op,), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])

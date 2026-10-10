@@ -88,7 +88,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, TypedDict
 
 from vfs.ops import WRITE_GATED_OPS
 from vfs.paths import ROOT, Path, normalize_path
-from vfs.results import Result, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -310,7 +310,7 @@ def check_writable(
         ops=(op,),
         errors=[
             classified(
-                VFSErrorKind.read_only,
+                ErrorKind.read_only,
                 full,
                 detail="by a mount rule" if by_rule else "by the mount default",
                 data={"rule_prefix": resolved.rule_prefix} if by_rule else None,

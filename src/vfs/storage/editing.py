@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 from pydantic import ValidationError
 
 from vfs.models import CONTENT_KINDS, Entry
-from vfs.results import ResultError, VFSErrorKind, classified, validation_message
+from vfs.results import ErrorKind, ResultError, classified, validation_message
 from vfs.storage.replace import apply_edits
 
 if TYPE_CHECKING:
@@ -34,12 +34,12 @@ def edited_entry(
     when ``Entry`` — owner of every content invariant — rejects it.
     """
     if kind not in CONTENT_KINDS or content is None:
-        return classified(VFSErrorKind.wrong_kind, target, detail="no editable content", data={"kind": kind})
+        return classified(ErrorKind.wrong_kind, target, detail="no editable content", data={"kind": kind})
     outcome = apply_edits(content, edits)
     if not outcome.success or outcome.content is None:
-        return classified(VFSErrorKind.invalid, target, detail=outcome.error or "the edit did not apply")
+        return classified(ErrorKind.invalid, target, detail=outcome.error or "the edit did not apply")
     try:
         # Stored kinds wider than ObjectKind (chunk, version) are Entry's to refuse.
         return Entry(path=target, kind=cast("ObjectKind", kind), content=outcome.content)
     except ValidationError as exc:
-        return classified(VFSErrorKind.invalid, target, detail=validation_message(exc))
+        return classified(ErrorKind.invalid, target, detail=validation_message(exc))

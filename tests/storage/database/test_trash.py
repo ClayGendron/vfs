@@ -20,7 +20,7 @@ from tests.support.database_helpers import _url
 from vfs.models import Entry, Observation
 from vfs.models.rows import ULID_LENGTH, build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, Path, byte_length
-from vfs.results import Severity, VFSErrorKind
+from vfs.results import ErrorKind, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
@@ -207,7 +207,7 @@ class TestDeleteTrash:
         targets = [Observation(path=Path("/y.txt")), Observation(path=Path("/.vfs"))]
         result = await storage.delete(observations=targets)
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
         assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
         assert result.errors[0].path == "/.vfs"
         assert (await storage.stat(path=Path("/y.txt"))).success is True
@@ -224,7 +224,7 @@ class TestDeleteTrash:
         targets = [Observation(path=Path("/.vfs/trash")), Observation(path=Path("/.vfs"))]
         result = await storage.delete(observations=targets)
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.invalid]
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
         assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
         assert result.errors[0].path == "/.vfs"
         # The refused batch never commits: the previously-trashed row survives.
@@ -272,7 +272,7 @@ class TestDeleteTrash:
         await storage.write(entries=[Entry(path=Path("/x.txt"), content="x")])
         result = await storage.delete(path=Path("/x.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/.vfs/trash"
         assert (result.errors[0].data or {}).get("vfs.target") == "/x.txt"
         # The batch never commits: the target survives.
@@ -360,7 +360,7 @@ class TestRestore:
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
         by_old_site = await storage.restore(path=Path("/d/f.txt"))
         assert by_old_site.success is False
-        assert by_old_site.errors[0].kind == VFSErrorKind.not_found
+        assert by_old_site.errors[0].kind == ErrorKind.not_found
         restored = await storage.restore(path=trash_path)
         assert restored.success is True
         assert restored.observations[0].path == "/e/f.txt"
@@ -375,7 +375,7 @@ class TestRestore:
         assert (await storage.delete(path=Path("/d"))).success is True
         result = await storage.restore(path=deleted.observations[0].trash_path)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert "restore" in result.errors[0].message
         await storage.close()
 
@@ -421,7 +421,7 @@ class TestRestore:
             await session.commit()
         result = await storage.restore(path=deleted.observations[0].trash_path)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         await storage.close()
 
     async def test_restore_destination_overflow_refuses_unaddressable(self, tmp_path) -> None:
@@ -438,7 +438,7 @@ class TestRestore:
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path(f"{deep}/d"))])).success is True
         result = await storage.restore(path=trash_path)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].kind == ErrorKind.unaddressable
         assert (await storage.stat(path=trash_path)).success is True
         await storage.close()
 
@@ -454,7 +454,7 @@ class TestRestore:
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path(f"{deep}/d"))])).success is True
         result = await storage.restore(path=trash_path)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].kind == ErrorKind.unaddressable
         assert (await storage.stat(path=trash_path)).success is True
         await storage.close()
 
@@ -466,7 +466,7 @@ class TestRestore:
         await storage.mkdir(path=Path("/a.txt"))
         result = await storage.restore(path=Path("/a.txt"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         await storage.close()
 
     async def test_restore_onto_a_nonempty_directory_occupant_is_exists(self, tmp_path) -> None:
@@ -477,7 +477,7 @@ class TestRestore:
         await storage.write(entries=[Entry(path=Path("/d/new.txt"), content="x")])
         result = await storage.restore(path=Path("/d"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         await storage.close()
 
     async def test_restore_onto_an_empty_directory_occupant_is_exists(self, tmp_path) -> None:
@@ -492,7 +492,7 @@ class TestRestore:
         await storage.mkdir(path=Path("/d"))
         result = await storage.restore(path=trashed)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.exists
+        assert result.errors[0].kind == ErrorKind.exists
         assert (await storage.delete(path=Path("/d"))).success is True
         result = await storage.restore(path=trashed)
         assert result.success is True
@@ -559,11 +559,11 @@ class TestSweep:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="x")])
         deep = await storage.sweep(path=Path("/ghost/deep"))
         assert deep.success is False
-        assert deep.errors[0].kind == VFSErrorKind.not_found
+        assert deep.errors[0].kind == ErrorKind.not_found
         assert deep.errors[0].path == "/ghost"
         wrong = await storage.sweep(path=Path("/a.txt/child"))
         assert wrong.success is False
-        assert wrong.errors[0].kind == VFSErrorKind.wrong_kind
+        assert wrong.errors[0].kind == ErrorKind.wrong_kind
         assert wrong.errors[0].path == "/a.txt"
         await storage.close()
 
@@ -726,7 +726,7 @@ class TestTrashChainRefusal:
         assert deleted.success
         result = await storage.delete(path=Path("/.vfs/trash"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert result.errors[0].message == "Invalid: contains the active trash chain; sweep reclaims trash"
         assert result.errors[0].path == "/.vfs/trash"
         assert (await storage.stat(path=deleted.observations[0].trash_path)).success is True
@@ -782,7 +782,7 @@ class TestTrashChainRefusal:
         await storage.write(entries=[Entry(path=over, content="deep")], parents=True)
         result = await storage.delete(path=Path("/e"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unaddressable
+        assert result.errors[0].kind == ErrorKind.unaddressable
         assert result.errors[0].path == "/e"
         # The refused batch never commits: the tree survives whole.
         assert (await storage.stat(path=over)).success is True
@@ -790,7 +790,7 @@ class TestTrashChainRefusal:
         # the over-budget derivation yields None instead of raising.
         both = await storage.delete(observations=[Observation(path=over), Observation(path=Path("/e"))])
         assert both.success is False
-        assert any(e.kind == VFSErrorKind.unaddressable for e in both.errors)
+        assert any(e.kind == ErrorKind.unaddressable for e in both.errors)
         # The developer-plane sweep stays the lawful removal for such trees.
         assert (await storage.sweep(path=Path("/e"))).success is True
         await storage.close()

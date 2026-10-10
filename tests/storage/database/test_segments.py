@@ -21,7 +21,7 @@ from ulid import ULID
 from tests.support.database_helpers import _url
 from vfs.models import Entry, Observation
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
@@ -162,7 +162,7 @@ class TestTopologyMirror:
         assert (await storage.write(entries=[Entry(path=Path("/a/y/g.txt"), content="keeper")])).success is True
         pair = ResolvedPair(src=Path("/a/x/g.txt"), dest=Path("/a/y/g.txt"))
         refused = await storage.move(operations=[pair])
-        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
+        assert [e.kind for e in refused.errors] == [ErrorKind.exists]
         await _assert_mirror(storage)
 
     async def test_copy_mints_postings_for_the_fresh_tree(self, storage: DatabaseStorage) -> None:
@@ -175,7 +175,7 @@ class TestTopologyMirror:
         assert (await storage.write(entries=[Entry(path=Path("/dest.txt"), content="old")])).success is True
         pair = ResolvedPair(src=Path("/a/x/g.txt"), dest=Path("/dest.txt"))
         refused = await storage.copy(operations=[pair])
-        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
+        assert [e.kind for e in refused.errors] == [ErrorKind.exists]
         await _assert_mirror(storage)
 
     async def test_delete_mirrors_the_trash_side(self, storage: DatabaseStorage) -> None:
@@ -364,7 +364,7 @@ class TestSegmentPhaseBoundaries:
 
     async def test_a_failed_collect_returns_its_classification(self, storage: DatabaseStorage, monkeypatch) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")], parents=True)).success
-        failed = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="collect broke")])
+        failed = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="collect broke")])
 
         async def broken(session, tables, state) -> Result:
             return failed
@@ -400,7 +400,7 @@ class TestSegmentPhaseBoundaries:
         async with storage._host.session_factory() as session:
             await session.execute(insert(storage._host.tables.segments), [{"segment": "gone", "entry_id": str(ULID())}])
             await session.commit()
-        failed = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="repair broke")])
+        failed = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="repair broke")])
 
         async def broken(session, tables, profile, membership_budget, state) -> Result:
             return failed

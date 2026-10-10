@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select, update
 
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.membership import locked_lookup, membership
 
@@ -247,7 +247,7 @@ def _drift_warning(delta: EntryDelta) -> ResultError:
         f"{len(delta.missing)} missing, {len(delta.excess)} excess"
     )
     return classified(
-        VFSErrorKind.internal,
+        ErrorKind.internal,
         Path(delta.path),
         detail=detail,
         severity=Severity.warning,
@@ -258,7 +258,7 @@ def _drift_warning(delta: EntryDelta) -> ResultError:
 def _orphan_warning(entry_id: str, held: list[str]) -> ResultError:
     detail = f"reindex reclaimed {len(held)} orphaned segment posting(s) for entry {entry_id}: no entry row"
     return classified(
-        VFSErrorKind.internal,
+        ErrorKind.internal,
         detail=detail,
         severity=Severity.warning,
         data={"entry_id": entry_id, "excess": held},

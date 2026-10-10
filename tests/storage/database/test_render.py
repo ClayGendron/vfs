@@ -28,7 +28,7 @@ from vfs.models.version import line_count
 from vfs.paths import Path
 from vfs.rendering import Builder, RendererRegistry, Rendering, RenderLimits, RenderSource
 from vfs.rendering.pdf import PdfRenderer
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import render as render_module
@@ -334,7 +334,7 @@ class TestStatuses:
             assert shown.content == "" and read.errors == []
         else:
             assert shown.content is None
-            assert [e.kind for e in read.errors] == [VFSErrorKind.unsupported]
+            assert [e.kind for e in read.errors] == [ErrorKind.unsupported]
         assert (await storage.grep(pattern=".")).observations == []
         counted = "empty" if status == "empty" else "unsupported" if status == "unsupported" else "failed"
         assert _report(result) == _counts(**{counted: 1})
@@ -384,7 +384,7 @@ class TestStatuses:
         assert read.observations[0].content is not None
         assert read.observations[0].content.endswith("<!-- truncated: 2 of 3 units -->\n")
         [note] = read.errors
-        assert (note.kind, note.severity) == (VFSErrorKind.truncated, Severity.info)
+        assert (note.kind, note.severity) == (ErrorKind.truncated, Severity.info)
         assert [str(r.path) for r in (await storage.grep(pattern="quokka")).observations] == ["/q.pdf"]
         await storage.close()
 
@@ -423,7 +423,7 @@ class TestLanding:
         assert row.render_status == "pending"
         assert "/q.pdf" not in await _content_rows(storage)
         assert _report(result)["unrendered"] == 1
-        [warning] = [e for e in result.errors if e.kind == VFSErrorKind.unavailable]
+        [warning] = [e for e in result.errors if e.kind == ErrorKind.unavailable]
         assert warning.severity == Severity.warning and warning.retryable is True
         result = await storage.reindex()
         assert _report(result)["rendered"] == 1
@@ -462,7 +462,7 @@ class TestLanding:
 
         async def refused(*args: Any, **kwargs: Any) -> Result:
             return Result(
-                ops=("reindex",), errors=[backend_module.ResultError(kind=VFSErrorKind.unavailable, message="disk")]
+                ops=("reindex",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="disk")]
             )
 
         monkeypatch.setattr(backend_module, "land_renderings", refused)
@@ -602,7 +602,7 @@ class TestPoison:
         async def refusing(*args: Any, rendered: list[Any], report: Any, **kwargs: Any) -> Result:
             poisoned = [item for item in rendered if item.entry_id == bad_id and item.rendering.status == "ok"]
             if poisoned:
-                refusal = backend_module.ResultError(kind=VFSErrorKind.unavailable, message="engine refused the bind")
+                refusal = backend_module.ResultError(kind=ErrorKind.unavailable, message="engine refused the bind")
                 return Result(ops=("reindex",), errors=[refusal])
             return await real(*args, rendered=rendered, report=report, **kwargs)
 
@@ -623,7 +623,7 @@ class TestPoison:
 
         async def refusing(*args: Any, **kwargs: Any) -> Result:
             return Result(
-                ops=("reindex",), errors=[backend_module.ResultError(kind=VFSErrorKind.unavailable, message="down")]
+                ops=("reindex",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="down")]
             )
 
         monkeypatch.setattr(backend_module, "land_renderings", refusing)
@@ -697,7 +697,7 @@ class TestRetryByType:
         await _put(storage, "/live.pdf", QUOKKA_PDF)
         result = await storage.reindex()
         assert _report(result) == _counts(rendered=1)
-        assert [e for e in result.errors if e.kind == VFSErrorKind.unavailable] == []
+        assert [e for e in result.errors if e.kind == ErrorKind.unavailable] == []
         trashed = [r for r in (await storage.ls(path=Path("/.vfs/trash"))).observations if r.path.name == "gone.pdf"]
         assert trashed == [] or trashed[0].render_status == "pending"
         await storage.close()
@@ -746,7 +746,7 @@ class TestBounds:
         result = await storage.write(entries=[Entry(path=Path("/big.bin"), data=b"abcdefghi")])
         assert result.success is False
         [error] = result.errors
-        assert (error.kind, error.retryable) == (VFSErrorKind.unsupported, False)
+        assert (error.kind, error.retryable) == (ErrorKind.unsupported, False)
         assert (
             error.message
             == "Unsupported: a body of 9 bytes on the wire exceeds this engine's max_allowed_packet of 8 bytes"

@@ -34,7 +34,7 @@ from ulid import ULID
 from tests.support.server_schemas import server_storage, sibling
 from vfs.models import Edge, Entry
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 
@@ -50,7 +50,7 @@ ENGINE_LEGS = [
 
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
-_RACE_KINDS = frozenset({VFSErrorKind.not_found, VFSErrorKind.conflict, VFSErrorKind.exists, VFSErrorKind.invalid})
+_RACE_KINDS = frozenset({ErrorKind.not_found, ErrorKind.conflict, ErrorKind.exists, ErrorKind.invalid})
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -165,7 +165,7 @@ class TestMkedgeEndpointLocks:
             # proven by absence through the public verb.
             gone = await storage.rmedge(edges=[edge])
             assert gone.observations == []
-            assert gone.errors[0].kind == VFSErrorKind.not_found
+            assert gone.errors[0].kind == ErrorKind.not_found
             await _audit(storage)
 
     @pytest.mark.slow
@@ -329,7 +329,7 @@ class TestTransferCollision:
             assert rival_results and rival_results[0].success is True
             assert victim.success is False
             [error] = victim.errors
-            assert error.kind == VFSErrorKind.exists
+            assert error.kind == ErrorKind.exists
             lowered = error.message.lower()
             assert not any(t in lowered for t in ("unique", "duplicate", "ora-", "sqlstate", "constraint"))
             assert (await storage.read(path=Path("/dest/a.txt"))).observations[0].content == "rival"
@@ -381,11 +381,11 @@ class TestObservationHonesty:
     # Per-engine pins for the same staged race: the reprobe engines
     # classify the definite conflict; the redrive engines re-execute
     # against fresh state and report what a fresh attempt finds.
-    _EXPECTED: ClassVar[dict[str, VFSErrorKind]] = {
-        "VFS_TEST_POSTGRES_URL": VFSErrorKind.not_found,
-        "VFS_TEST_MARIADB_URL": VFSErrorKind.not_found,
-        "VFS_TEST_MSSQL_URL": VFSErrorKind.conflict,
-        "VFS_TEST_ORACLE_URL": VFSErrorKind.conflict,
+    _EXPECTED: ClassVar[dict[str, ErrorKind]] = {
+        "VFS_TEST_POSTGRES_URL": ErrorKind.not_found,
+        "VFS_TEST_MARIADB_URL": ErrorKind.not_found,
+        "VFS_TEST_MSSQL_URL": ErrorKind.conflict,
+        "VFS_TEST_ORACLE_URL": ErrorKind.conflict,
     }
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
@@ -404,7 +404,7 @@ class TestObservationHonesty:
             assert rival_results and rival_results[0].success is True
             assert victim.success is False
             assert [e.kind for e in victim.errors] == [self._EXPECTED[env_var]]
-            if victim.errors[0].kind == VFSErrorKind.conflict:
+            if victim.errors[0].kind == ErrorKind.conflict:
                 assert victim.errors[0].retryable is True
             # The relocated row is untouched at its real address.
             after = await storage.read(path=Path("/e/f.txt"))
@@ -447,7 +447,7 @@ class TestGhostRefusal:
                 await session.commit()
             victim = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
             assert victim.success is False
-            assert all(e.kind == VFSErrorKind.conflict and e.retryable for e in victim.errors)
+            assert all(e.kind == ErrorKind.conflict and e.retryable for e in victim.errors)
             async with host.session_factory() as session:
                 conn = await session.connection()
                 found = await conn.execute(select(entry.c.version, entry.c.path).where(entry.c.entry_id == ghost_id))
@@ -476,7 +476,7 @@ class TestAddressRaceClassification:
             assert rival_results and rival_results[0].success is True
             assert victim.success is False
             [error] = victim.errors
-            assert error.kind in {VFSErrorKind.exists, VFSErrorKind.conflict}
+            assert error.kind in {ErrorKind.exists, ErrorKind.conflict}
             # No raw driver text on the public surface; detail is machine data.
             lowered = error.message.lower()
             assert not any(t in lowered for t in ("unique", "duplicate", "ora-", "sqlstate", "constraint"))
@@ -651,7 +651,7 @@ class TestExhaustionClassification:
                 conflicts = 0
                 for result in (r for burst in rounds for r in burst):
                     for error in result.errors:
-                        assert error.kind == VFSErrorKind.conflict, (error.kind, error.message)
+                        assert error.kind == ErrorKind.conflict, (error.kind, error.message)
                         assert error.retryable is True
                         assert any(template in error.message for template in clean), error.message
                         conflicts += 1
@@ -724,7 +724,7 @@ class TestGrepEpochConsistency:
             assert first.success is True, first.errors
             assert rival_results and rival_results[0].success is False
             [error] = rival_results[0].errors
-            assert error.kind == VFSErrorKind.conflict
+            assert error.kind == ErrorKind.conflict
             assert error.retryable is True
             assert "already running" in error.message
             await _audit(storage)

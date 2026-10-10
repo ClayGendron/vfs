@@ -29,7 +29,7 @@ from vfs.exceptions import (
 from vfs.models import Entry, Observation
 from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, Severity
 
 # ----------------------------------------------------------------------
 # _error and kind-based exception dispatch
@@ -37,20 +37,20 @@ from vfs.results import Result, ResultError, Severity, VFSErrorKind
 
 
 def test_exception_for_kind_maps_known_kinds() -> None:
-    assert exception_for_kind(VFSErrorKind.not_found) is NotFoundError
-    assert exception_for_kind(VFSErrorKind.read_only) is WriteConflictError
-    assert exception_for_kind(VFSErrorKind.invalid) is ValidationError
-    assert exception_for_kind(VFSErrorKind.unauthenticated) is UnauthenticatedError
+    assert exception_for_kind(ErrorKind.not_found) is NotFoundError
+    assert exception_for_kind(ErrorKind.read_only) is WriteConflictError
+    assert exception_for_kind(ErrorKind.invalid) is ValidationError
+    assert exception_for_kind(ErrorKind.unauthenticated) is UnauthenticatedError
 
 
 def test_exception_for_kind_unmapped_and_unknown_fall_back_to_base() -> None:
     # internal is a real kind with no explicit mapping; the str is a newer peer's kind.
-    assert exception_for_kind(VFSErrorKind.internal) is VFSError
+    assert exception_for_kind(ErrorKind.internal) is VFSError
     assert exception_for_kind("vfs.quota_exceeded") is VFSError
 
 
-@pytest.mark.parametrize("kind", [VFSErrorKind.busy, VFSErrorKind.backend_unavailable, VFSErrorKind.budget_exhausted])
-def test_exception_for_kind_new_kinds_fall_back_to_base(kind: VFSErrorKind) -> None:
+@pytest.mark.parametrize("kind", [ErrorKind.busy, ErrorKind.backend_unavailable, ErrorKind.budget_exhausted])
+def test_exception_for_kind_new_kinds_fall_back_to_base(kind: ErrorKind) -> None:
     # The three kinds this story adds have no dedicated exception class yet —
     # they still raise loud, just as the generic VFSError.
     assert exception_for_kind(kind) is VFSError
@@ -58,16 +58,16 @@ def test_exception_for_kind_new_kinds_fall_back_to_base(kind: VFSErrorKind) -> N
 
 def test_error_returns_failed_result_by_default() -> None:
     fs = VirtualFileSystem()
-    r = fs._error(VFSErrorKind.not_found, op="read", path=Path("/x"))
+    r = fs._error(ErrorKind.not_found, op="read", path=Path("/x"))
     assert r.success is False
-    assert r.errors[0].kind is VFSErrorKind.not_found
+    assert r.errors[0].kind is ErrorKind.not_found
     assert r.errors[0].path == "/x"
     assert r.errors[0].message == "Not found"
 
 
 def test_error_attaches_structured_data() -> None:
     fs = VirtualFileSystem()
-    r = fs._error(VFSErrorKind.conflict, op="edit", detail="stale", data={"expected": 1})
+    r = fs._error(ErrorKind.conflict, op="edit", detail="stale", data={"expected": 1})
     assert r.errors[0].data == {"expected": 1}
     assert r.errors[0].message == "Conflict: stale"
 
@@ -76,15 +76,15 @@ def test_error_never_raises_and_carries_the_op() -> None:
     # The router has one failure channel: a returned Result. The op rides
     # the envelope so a wire consumer can tell which verb failed.
     fs = VirtualFileSystem()
-    r = fs._error(VFSErrorKind.not_found, op="read")
+    r = fs._error(ErrorKind.not_found, op="read")
     assert r.success is False
     assert r.op == "read"
 
 
 def test_error_severity_defaults_to_error_and_accepts_tiers() -> None:
     fs = VirtualFileSystem()
-    fatal = fs._error(VFSErrorKind.not_found, op="read")
-    advisory = fs._error(VFSErrorKind.unsupported, op="grep", severity=Severity.info)
+    fatal = fs._error(ErrorKind.not_found, op="read")
+    advisory = fs._error(ErrorKind.unsupported, op="grep", severity=Severity.info)
     assert fatal.errors[0].severity is Severity.error
     assert advisory.success is True
     assert advisory.errors[0].severity is Severity.info
@@ -96,7 +96,7 @@ def test_raise_if_failed_passes_success_through() -> None:
 
 
 def test_raise_if_failed_maps_single_error_to_kind_exception() -> None:
-    failed = VirtualFileSystem()._error(VFSErrorKind.not_found, op="read")
+    failed = VirtualFileSystem()._error(ErrorKind.not_found, op="read")
     with pytest.raises(NotFoundError) as exc:
         raise_if_failed(failed)
     # the raised exception still carries the full failed result
@@ -108,8 +108,8 @@ def test_raise_if_failed_groups_multiple_errors() -> None:
     # A fan-out failure reports every downed terminal, not just the first.
     failed = Result(
         errors=[
-            ResultError(kind=VFSErrorKind.not_found, message="gone"),
-            ResultError(kind=VFSErrorKind.read_only, message="frozen"),
+            ResultError(kind=ErrorKind.not_found, message="gone"),
+            ResultError(kind=ErrorKind.read_only, message="frozen"),
         ],
     )
     with pytest.raises(ExceptionGroup) as exc:
@@ -124,8 +124,8 @@ def test_raise_if_failed_passes_warnings_and_info_through() -> None:
     result = Result(
         ops=("glob",),
         errors=[
-            ResultError(kind=VFSErrorKind.unaddressable, message="deep row", severity=Severity.warning),
-            ResultError(kind=VFSErrorKind.unsupported, message="skipped", severity=Severity.info),
+            ResultError(kind=ErrorKind.unaddressable, message="deep row", severity=Severity.warning),
+            ResultError(kind=ErrorKind.unsupported, message="skipped", severity=Severity.info),
         ],
     )
     assert raise_if_failed(result) is result
@@ -176,7 +176,7 @@ async def test_run_on_default_root_is_unsupported() -> None:
     root = VirtualFileSystem()
     r = await root.run("/nope/tool")
     assert r.success is False
-    assert r.errors[0].kind is VFSErrorKind.unsupported
+    assert r.errors[0].kind is ErrorKind.unsupported
 
 
 async def test_run_routes_to_child_and_rebases() -> None:
@@ -195,7 +195,7 @@ async def test_capabilities_gate_blocks_unsupported_op() -> None:
     await root.add_mount(catalog, "/nonvfs")
     blocked = await root.run("/nonvfs/clone-repo")
     assert blocked.success is False
-    assert blocked.errors[0].kind is VFSErrorKind.unsupported
+    assert blocked.errors[0].kind is ErrorKind.unsupported
     assert catalog.calls == []  # never dispatched
 
 
@@ -221,7 +221,7 @@ async def test_read_only_mount_rejects_every_mutation(op: str) -> None:
     await root.add_mount(child, "/m", permissions="read")
     result = await _mutate(root, op, "/m")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert child.calls == []  # gated before any dispatch
 
 
@@ -242,7 +242,7 @@ async def test_root_and_reserved_targets_rejected(op: str, target: str) -> None:
     fs = RecorderFS()
     result = await _mutate_at_root(fs, op, target)
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
@@ -250,7 +250,7 @@ async def test_meta_root_is_not_a_write_target_but_the_scope_is() -> None:
     fs = RecorderFS()
     result = await fs.write(path="/.vfs", content="x")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
     admitted = await fs.write(path="/.vfs/trash/2026-07-18-10/x.txt", content="x")
     assert admitted.success is True
@@ -271,47 +271,47 @@ async def _gated_namespace() -> VirtualFileSystem:
 
 
 GATE_FAILURES = [
-    ("single/read-only", lambda r: r.write(path="/ro/x.txt", content="c"), VFSErrorKind.read_only, "/ro/x.txt"),
+    ("single/read-only", lambda r: r.write(path="/ro/x.txt", content="c"), ErrorKind.read_only, "/ro/x.txt"),
     (
         "grouped/read-only",
         lambda r: r.delete(observations=[Observation(path=Path("/ro/f.txt"))]),
-        VFSErrorKind.read_only,
+        ErrorKind.read_only,
         "/ro/f.txt",
     ),
-    ("pair-src/read-only", lambda r: r.move(src="/ro/a.txt", dest="/ro/b.txt"), VFSErrorKind.read_only, "/ro/a.txt"),
-    ("pair-dest/read-only", lambda r: r.copy(src="/ro/a.txt", dest="/ro/b.txt"), VFSErrorKind.read_only, "/ro/b.txt"),
+    ("pair-src/read-only", lambda r: r.move(src="/ro/a.txt", dest="/ro/b.txt"), ErrorKind.read_only, "/ro/a.txt"),
+    ("pair-dest/read-only", lambda r: r.copy(src="/ro/a.txt", dest="/ro/b.txt"), ErrorKind.read_only, "/ro/b.txt"),
     (
         "entries/read-only",
         lambda r: r.write(entries=[Entry(path=Path("/ro/y.txt"), content="c")]),
-        VFSErrorKind.read_only,
+        ErrorKind.read_only,
         "/ro/y.txt",
     ),
-    ("single/incapable", lambda r: r.write(path="/dim/x.txt", content="c"), VFSErrorKind.unsupported, "/dim"),
+    ("single/incapable", lambda r: r.write(path="/dim/x.txt", content="c"), ErrorKind.unsupported, "/dim"),
     (
         "grouped/incapable",
         lambda r: r.stat(observations=[Observation(path=Path("/dim/f.txt"))]),
-        VFSErrorKind.unsupported,
+        ErrorKind.unsupported,
         "/dim",
     ),
-    ("pair/incapable", lambda r: r.move(src="/dim/a.txt", dest="/dim/b.txt"), VFSErrorKind.unsupported, "/dim"),
+    ("pair/incapable", lambda r: r.move(src="/dim/a.txt", dest="/dim/b.txt"), ErrorKind.unsupported, "/dim"),
     (
         "entries/incapable",
         lambda r: r.write(entries=[Entry(path=Path("/dim/f.txt"), content="c")]),
-        VFSErrorKind.unsupported,
+        ErrorKind.unsupported,
         "/dim",
     ),
-    ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), VFSErrorKind.unsupported, "/dim"),
+    ("scoped/incapable", lambda r: r.grep("x", paths=("/dim/sub",)), ErrorKind.unsupported, "/dim"),
     (
         "mkedge/incapable",
         lambda r: r.mkedge(source="/dim/a.py", target="/dim/b.py", edge_type="imports"),
-        VFSErrorKind.unsupported,
+        ErrorKind.unsupported,
         "/dim",
     ),
 ]
 
 
 @pytest.mark.parametrize(("call", "kind", "path"), [c[1:] for c in GATE_FAILURES], ids=[c[0] for c in GATE_FAILURES])
-async def test_gate_failures_carry_the_router_side_path(call: Any, kind: VFSErrorKind, path: str) -> None:
+async def test_gate_failures_carry_the_router_side_path(call: Any, kind: ErrorKind, path: str) -> None:
     # Every chokepoint x every gate failure: a permission denial reports the
     # addressed path; a capability miss reports the entry's bind path.
     root = await _gated_namespace()
@@ -326,7 +326,7 @@ async def test_mkedge_permission_denial_reports_the_endpoint_path() -> None:
     # the endpoint router-side, rebased under the mount prefix.
     root = await _gated_namespace()
     result = await root.mkedge(source="/ro/a.py", target="/ro/b.py", edge_type="imports")
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert result.errors[0].path == "/ro/a.py"
 
 
@@ -337,7 +337,7 @@ async def test_gate_order_capability_outranks_permission() -> None:
     child = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m", permissions="read")
     result = await root.write(path="/m/f.txt", content="c")
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported
 
 
 async def test_gate_order_busy_outranks_capability_and_permission() -> None:
@@ -347,7 +347,7 @@ async def test_gate_order_busy_outranks_capability_and_permission() -> None:
     child = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m", permissions="read")
     result = await root.delete("/m")
-    assert result.errors[0].kind is VFSErrorKind.busy
+    assert result.errors[0].kind is ErrorKind.busy
 
 
 async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> None:
@@ -360,7 +360,7 @@ async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> Non
     await root.bind(child, "/scratch", permissions="read_write")
     result = await root.write(path="/scratch/f.txt", content="c")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.read_only
+    assert result.errors[0].kind is ErrorKind.read_only
     assert child.calls == []
 
 
@@ -375,4 +375,4 @@ async def test_partial_backend_gates_unimplemented_family_as_unsupported() -> No
     fs = VirtualFileSystem(storage=ReadFamilyStorage())
     result = await fs.write(path="/f.txt", content="x")
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.unsupported
+    assert result.errors[0].kind is ErrorKind.unsupported

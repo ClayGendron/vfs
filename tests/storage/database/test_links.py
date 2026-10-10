@@ -21,7 +21,7 @@ from tests.support.server_schemas import server_storage
 from vfs.models import Edge, Entry
 from vfs.models import links as links_model
 from vfs.paths import Path
-from vfs.results import Severity, VFSErrorKind
+from vfs.results import ErrorKind, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.protocol import ResolvedPair
@@ -119,7 +119,7 @@ class TestExtraction:
         assert edges[("/docs/guide.md", "/docs/notes", "links")][1] == 1.0
         # The dead link is counted, never an error; the url and the self-link are not references.
         [note] = [error for error in result.errors if error.data and error.data.get("leg") == "links"]
-        assert (note.severity, note.kind) == (Severity.info, VFSErrorKind.not_found)
+        assert (note.severity, note.kind) == (Severity.info, ErrorKind.not_found)
         assert note.data == {"leg": "links", "sources": 3, "edges": 4, "unresolved": 1}
         assert (await _stamps(storage, "/docs/guide.md"))[1] == links_model.link_generation()
         await storage.close()

@@ -106,7 +106,7 @@ from vfs.paths import (
     byte_length,
     is_trash_path,
 )
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, already_exists, classified, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
     classify_miss,
@@ -290,7 +290,7 @@ async def delete_rows(
     segment_moves: list[tuple[str, str, str]] = []
     for target in targets:
         if target == ROOT:
-            errors.append(classified(VFSErrorKind.invalid, target, detail="the root directory cannot be deleted"))
+            errors.append(classified(ErrorKind.invalid, target, detail="the root directory cannot be deleted"))
             continue
         # A target inside another target's cascade — or a repeat — is
         # subsumed: judged against committed state, order-independent.
@@ -309,13 +309,13 @@ async def delete_rows(
             errors.append(classify_miss(target, kinds))
             continue
         if not cascade and await _has_live_children(session, entry, row["entry_id"]):
-            errors.append(classified(VFSErrorKind.not_empty, target))
+            errors.append(classified(ErrorKind.not_empty, target))
             continue
         # Trashing a chain holder would reparent the chain into its own
         # cascade — refused; only the developer-plane sweep destroys.
         if trash.chain_inside(target):
             detail = "contains the active trash chain; sweep reclaims trash"
-            errors.append(classified(VFSErrorKind.invalid, target, detail=detail))
+            errors.append(classified(ErrorKind.invalid, target, detail=detail))
             continue
         bucket_id = await trash.ensure(session, target)
         if isinstance(bucket_id, ResultError):
@@ -326,7 +326,7 @@ async def delete_rows(
         is_directory = row["kind"] == "directory"
         rewrites = await _descendant_rewrites(session, entry, profile, str(target), trash_path) if is_directory else []
         if any(byte_length(p) > MAX_PATH_LENGTH for p in (trash_path, *(r["b_path"] for r in rewrites))):
-            errors.append(classified(VFSErrorKind.unaddressable, target, detail=_PATH_BUDGET))
+            errors.append(classified(ErrorKind.unaddressable, target, detail=_PATH_BUDGET))
             continue
         # The reverse-ordering window: rewrites collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
@@ -423,7 +423,7 @@ async def restore_rows(
         subtree = await _fetch_subtree(session, tables, profile, row["path"])
         new_paths = (str(dest) + r["path"][len(row["path"]) :] for r in subtree)
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths):
-            errors.append(classified(VFSErrorKind.unaddressable, target, detail=_PATH_BUDGET))
+            errors.append(classified(ErrorKind.unaddressable, target, detail=_PATH_BUDGET))
             continue
         # The claim window: ladder passed, address not yet taken — a
         # rival write landing here loses honestly at the claim.
@@ -479,7 +479,7 @@ async def sweep_rows(
     del authority
     entry = tables.entry
     if path == ROOT:
-        fact = classified(VFSErrorKind.invalid, path, detail="the root directory cannot be swept")
+        fact = classified(ErrorKind.invalid, path, detail="the root directory cannot be swept")
         return Result(ops=("sweep",), errors=[fact])
     await _serialize(session, profile, tables.meta, lock_key)
     if gate is not None and (refused := await gate(session)):
@@ -575,7 +575,7 @@ async def transfer_rows(
             continue
         if src == ROOT or dest == ROOT:
             detail = f"{op}: the root directory may be neither source nor destination"
-            errors.append(classified(VFSErrorKind.invalid, src, target=dest, detail=detail))
+            errors.append(classified(ErrorKind.invalid, src, target=dest, detail=detail))
             continue
         if dest == src:
             # POSIX rename-to-self: a successful no-op, never a refusal.
@@ -593,12 +593,12 @@ async def transfer_rows(
             errors.append(already_exists(dest, target=src))
             continue
         if dest.startswith(src + "/"):
-            errors.append(classified(VFSErrorKind.invalid, src, target=dest, detail=f"{op} of a directory into itself"))
+            errors.append(classified(ErrorKind.invalid, src, target=dest, detail=f"{op} of a directory into itself"))
             continue
         subtree = await _fetch_subtree(session, tables, profile, str(src))
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
-            errors.append(classified(VFSErrorKind.unaddressable, dest, target=src, detail=_PATH_BUDGET))
+            errors.append(classified(ErrorKind.unaddressable, dest, target=src, detail=_PATH_BUDGET))
             continue
         # The reverse-ordering window: subtree collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
@@ -744,7 +744,7 @@ async def _reclaim_orphan_content(
             await session.execute(delete(body).where(membership(body.c.entry_id, chunk, profile)))
         notes.extend(
             classified(
-                VFSErrorKind.internal,
+                ErrorKind.internal,
                 detail=f"sweep reclaimed an orphaned {body.name} row for entry {entry_id}",
                 severity=Severity.warning,
                 data={"entry_id": entry_id},
@@ -903,7 +903,7 @@ def _bucket_hour(name: str) -> datetime | None:
 def _skipped(path: Path) -> ResultError:
     """A warning-severity skip: the row in bucket position is not a bucket."""
     return classified(
-        VFSErrorKind.wrong_kind, path, severity=Severity.warning, detail="skipped by sweep: not a trash bucket"
+        ErrorKind.wrong_kind, path, severity=Severity.warning, detail="skipped by sweep: not a trash bucket"
     )
 
 
@@ -932,7 +932,7 @@ async def _lookup_restore(
         return RestoreLookup(None, None, parent_id)
     row = await _newest_candidate(session, entry, parent_id, target.name)
     if row is None:
-        return RestoreLookup(None, None, classified(VFSErrorKind.not_found, target, detail="no trashed entry"))
+        return RestoreLookup(None, None, classified(ErrorKind.not_found, target, detail="no trashed entry"))
     return RestoreLookup(row, await _row_by_id(session, entry, parent_id), None)
 
 
@@ -946,20 +946,20 @@ def _restore_site(target: Path, lookup: RestoreLookup) -> RestoreSource | Result
         assert parent is not None
         return RestoreSource(row, parent["entry_id"], target)
     if row["original_parent_id"] is None or row["original_name"] is None:
-        return classified(VFSErrorKind.invalid, target, detail="no restore metadata")
+        return classified(ErrorKind.invalid, target, detail="no restore metadata")
     if parent is None:
-        return classified(VFSErrorKind.not_found, target, detail="the original parent no longer exists")
+        return classified(ErrorKind.not_found, target, detail="the original parent no longer exists")
     if parent["kind"] != "directory":
         return wrong_kind(parent["kind"], Path(parent["path"]), target=target)
     # Trash status, not address: a live parent under the trash root
     # (the hour bucket, a squatter) is an ordinary restore site.
     if parent["deleted_at"] is not None:
         detail = "the original parent is in the trash; restore it first"
-        return classified(VFSErrorKind.invalid, Path(parent["path"]), target=target, detail=detail)
+        return classified(ErrorKind.invalid, Path(parent["path"]), target=target, detail=detail)
     prefix = "" if parent["path"] == "/" else parent["path"]
     dest = f"{prefix}/{row['original_name']}"
     if byte_length(dest) > MAX_PATH_LENGTH:
-        return classified(VFSErrorKind.unaddressable, target, detail=_PATH_BUDGET)
+        return classified(ErrorKind.unaddressable, target, detail=_PATH_BUDGET)
     return RestoreSource(row, parent["entry_id"], Path(dest))
 
 
@@ -1010,7 +1010,7 @@ async def _claim(
         matched = len((await session.execute(stmt.returning(proof))).all())
     else:
         detail = f"guarded claims cannot be verified on {profile.name}: no RETURNING, no sane rowcount"
-        return classified(VFSErrorKind.unsupported, detail=detail)
+        return classified(ErrorKind.unsupported, detail=detail)
     if matched == 0:
         raise StaleSnapshot(miss)
     return None
@@ -1167,10 +1167,10 @@ def _overlap_error(
     if str(src) not in committed:
         return classify_miss(src, committed_kinds)
     if move_srcs[src] > 1:
-        return classified(VFSErrorKind.invalid, src, detail="duplicate move source in batch")
+        return classified(ErrorKind.invalid, src, detail="duplicate move source in batch")
     ancestor = _covering_ancestor(src, move_srcs)
     detail = "inside another source this batch also moves"
-    return classified(VFSErrorKind.invalid, src, target=ancestor, detail=detail)
+    return classified(ErrorKind.invalid, src, target=ancestor, detail=detail)
 
 
 async def _point_row(session: AsyncSession, entry: Table, path: str) -> RowMapping | None:
@@ -1194,7 +1194,7 @@ async def _dest_parent_id(
     for ancestor in chain:
         row = found.get(str(ancestor))
         if row is None:
-            return classified(VFSErrorKind.not_found, ancestor, target=dest)
+            return classified(ErrorKind.not_found, ancestor, target=dest)
         if row["kind"] != "directory":
             return wrong_kind(row["kind"], ancestor, target=dest)
     return found[str(dest.parent_dir)]["entry_id"]

@@ -23,7 +23,7 @@ from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import compile_filter
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
@@ -53,7 +53,7 @@ class TestRefusalGate:
         storage = await _fresh(tmp_path, {"/a.txt": "body"})
         result = await storage.grep(pattern="(")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     async def test_defective_glob_classifies_invalid(self, tmp_path) -> None:
@@ -62,7 +62,7 @@ class TestRefusalGate:
         for channel in channels:
             result = await storage.grep(pattern="body", **channel)
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.invalid
+            assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     async def test_gramless_pattern_refuses_naming_the_scan_tier(self, tmp_path) -> None:
@@ -71,7 +71,7 @@ class TestRefusalGate:
         storage = await _fresh(tmp_path, {"/a.txt": "ab here"})
         result = await storage.grep(pattern="ab")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unindexable_pattern
+        assert result.errors[0].kind == ErrorKind.unindexable_pattern
         assert "allow_scan" in result.errors[0].message and "=True" not in result.errors[0].message
         await storage.close()
 
@@ -236,7 +236,7 @@ class TestOverlayPartition:
             await conn.execute(update(posting).values(postings=blob))
         result = await storage.grep(pattern="needle")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.internal
+        assert result.errors[0].kind == ErrorKind.internal
         assert message in result.errors[0].message
         await storage.close()
 
@@ -448,7 +448,7 @@ class TestBudgets:
         assert result.success is True
         assert len(result.observations) == 1
         [warning] = result.errors
-        assert warning.kind == VFSErrorKind.truncated
+        assert warning.kind == ErrorKind.truncated
         assert warning.severity is Severity.warning
         assert "narrow the pattern" in warning.message
         await storage.close()
@@ -460,7 +460,7 @@ class TestBudgets:
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert len(result.observations) == 1
-        assert any(e.kind == VFSErrorKind.truncated for e in result.errors)
+        assert any(e.kind == ErrorKind.truncated for e in result.errors)
         await storage.close()
 
     async def test_wall_time_budget_truncates_between_stages(self, tmp_path) -> None:
@@ -471,7 +471,7 @@ class TestBudgets:
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert result.observations == []
-        assert {e.kind for e in result.errors} == {VFSErrorKind.truncated}
+        assert {e.kind for e in result.errors} == {ErrorKind.truncated}
         await storage.close()
 
     def test_a_non_positive_wall_budget_refuses_at_construction(self, tmp_path) -> None:
@@ -513,7 +513,7 @@ class TestBudgets:
         result = await storage.grep(pattern="alpha_first|omega_second")
         assert result.success is True
         assert result.observations == []
-        assert {e.kind for e in result.errors} == {VFSErrorKind.truncated}
+        assert {e.kind for e in result.errors} == {ErrorKind.truncated}
         await storage.close()
 
     async def test_a_saturated_index_side_names_the_skipped_overlay(self, tmp_path, monkeypatch) -> None:
@@ -527,7 +527,7 @@ class TestBudgets:
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert "/fresh.txt" not in _paths(result)
-        [warning] = [e for e in result.errors if e.kind == VFSErrorKind.truncated]
+        [warning] = [e for e in result.errors if e.kind == ErrorKind.truncated]
         assert "overlay not consulted" in warning.message
         await storage.close()
 
@@ -543,7 +543,7 @@ class TestBudgets:
         result = await storage.grep(pattern="needle", ext=("txt",))
         assert result.success is True
         assert _paths(result) == ["/a.txt", "/d.txt"]
-        [warning] = [e for e in result.errors if e.kind == VFSErrorKind.truncated]
+        [warning] = [e for e in result.errors if e.kind == ErrorKind.truncated]
         assert "candidate budget" in warning.message
         await storage.close()
 
@@ -637,7 +637,7 @@ class TestEpochLadder:
         monkeypatch.setattr(grep_module, "current_epoch", always_moving)
         result = await storage.grep(pattern="needle")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].kind == ErrorKind.conflict
         assert result.errors[0].retryable is True
         await storage.close()
 

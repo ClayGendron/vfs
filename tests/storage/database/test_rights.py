@@ -25,7 +25,7 @@ from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
-from vfs.results import Result, VFSErrorKind
+from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
@@ -387,7 +387,7 @@ async def test_the_trash_is_judged_by_its_origin_against_the_oracle(layout: Layo
                     assert restored.success is True, (subjects, restored.errors)
                 else:
                     # A trashed root the caller sees, or walks through to a row it sees, is denied; else absent.
-                    kind = VFSErrorKind.permission_denied if trashed in shown else VFSErrorKind.not_found
+                    kind = ErrorKind.permission_denied if trashed in shown else ErrorKind.not_found
                     assert _kind(restored) == kind, (world.grants, subjects, root)
                     assert _kind(await storage.sweep(path=Path(trashed), authority=authority)) == kind
                     assert (await storage.stat(path=Path(trashed), authority=SYSTEM)).success is True
@@ -479,7 +479,7 @@ async def test_an_admin_write_decides_after_it_takes_the_lock(tmp_path, op: str)
         host = storage._host
         grants, ann = host.tables.grants, Authority.of(Principal("ann"))
         refused = await _locked_admin_write(host, op, ann, revoke_in_gap=grants)
-        assert _kind(refused) in (VFSErrorKind.permission_denied, VFSErrorKind.not_found)
+        assert _kind(refused) in (ErrorKind.permission_denied, ErrorKind.not_found)
         rows = {(g["principal_id"], g["path_prefix"]) for g in _granted(await storage.grants(path=Path("/x")))}
         assert ("bob", "/x") not in rows and ("ann", "/x") in rows
     finally:
@@ -590,7 +590,7 @@ async def test_a_posture_change_retires_the_anonymous_compile(
     assert compiled == [(ANONYMOUS_NAME,)]
     assert (await storage.posture(path=Path("/"), posture="private", authority=SYSTEM)).success is True
     refused = await storage.read(path=Path("/d/f.md"), authority=anon)
-    assert _kind(refused) == VFSErrorKind.unauthenticated
+    assert _kind(refused) == ErrorKind.unauthenticated
     assert compiled == [(ANONYMOUS_NAME,), (ANONYMOUS_NAME,)]
 
 
@@ -704,7 +704,7 @@ async def test_nesting_past_the_cap_on_read_is_an_authority_budget_refusal(stora
             ],
         )
     result = await storage.read(path=Path("/"), authority=Authority.of(Principal("ann")))
-    assert result.errors[0].kind == VFSErrorKind.authority_budget
+    assert result.errors[0].kind == ErrorKind.authority_budget
 
 
 # ---------------------------------------------------------------------------
@@ -732,7 +732,7 @@ async def _answers(storage: InMemoryStorage, authority: Authority) -> list[objec
     ]
 
 
-def _kind(result: Result) -> VFSErrorKind | str | None:
+def _kind(result: Result) -> ErrorKind | str | None:
     assert result.success is False, result
     return result.errors[0].kind
 

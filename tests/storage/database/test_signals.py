@@ -18,7 +18,7 @@ from tests.support.database_helpers import _url
 from tests.support.server_schemas import server_storage
 from vfs.models import Edge, Entry
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import signals as phase
@@ -196,7 +196,7 @@ class TestPhase:
 
     async def test_a_failed_publish_fails_the_reindex(self, tmp_path, monkeypatch) -> None:
         async def broken(session, tables, signal, generation, values) -> Result:
-            return Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="publish broke")])
+            return Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="publish broke")])
 
         monkeypatch.setattr(backend_module, "publish_signal", broken)
         storage = _mount(tmp_path)
@@ -213,7 +213,7 @@ class TestPhase:
         lost.set()
         outcome = await storage._signal_phase(storage._host.tables, lost)
         assert outcome is not None and outcome.success is False
-        assert outcome.errors[0].kind is VFSErrorKind.conflict
+        assert outcome.errors[0].kind is ErrorKind.conflict
         assert await _pointers(storage) == {}
         await storage.close()
 
@@ -250,7 +250,7 @@ class TestProbe:
         result = await changed.glean(query="needle")
         records = [error for error in result.errors if error.data and error.data.get("leg") == "signal"]
         assert len(records) == 1 and records[0].severity is Severity.warning
-        assert records[0].kind is VFSErrorKind.unavailable and "other options" in records[0].message
+        assert records[0].kind is ErrorKind.unavailable and "other options" in records[0].message
         assert _order(result) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         await changed.close()
 

@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from tests.support.database_helpers import _url
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import GENERIC
@@ -47,7 +47,7 @@ class TestSqliteVec:
         result = await storage.first_touch()
         assert result.success is False
         [refusal] = result.errors
-        assert refusal.kind == VFSErrorKind.unavailable and "enable_load_extension" in refusal.message
+        assert refusal.kind == ErrorKind.unavailable and "enable_load_extension" in refusal.message
         assert (await storage.stat(path=Path("/"))).success is False  # the latch never set
         await storage.close()
 

@@ -39,7 +39,7 @@ from vfs.pattern_matching import (
     expand_channel,
     passes_row_filters,
 )
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_miss,
@@ -297,7 +297,7 @@ async def glob_rows(
         live = expand_channel("pattern", patterns)
         exclusions = expand_channel("globs_not", globs_not)
     except PatternError as exc:
-        return Result(ops=("glob",), errors=[classified(VFSErrorKind.invalid, detail=str(exc))])
+        return Result(ops=("glob",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = normalize_ext_channel(ext)
@@ -544,14 +544,14 @@ def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[R
         shown.append(row)
         if status == "pending":
             detail = "the binary awaits a rendering; run reindex"
-            kind, severity, retryable = VFSErrorKind.unavailable, Severity.warning, True
+            kind, severity, retryable = ErrorKind.unavailable, Severity.warning, True
         elif status in RENDERED_STATUSES:
             detail = f"the rendering was cut short ({status})"
-            kind, severity, retryable = VFSErrorKind.truncated, Severity.info, False
+            kind, severity, retryable = ErrorKind.truncated, Severity.info, False
         else:
             assert status in FAILURE_STATUSES
             detail = f"no text rendering ({status})"
-            kind, severity, retryable = VFSErrorKind.unsupported, Severity.warning, False
+            kind, severity, retryable = ErrorKind.unsupported, Severity.warning, False
         notes.append(
             classified(
                 kind, row.path, severity=severity, retryable=retryable, detail=detail, data={"render_status": status}

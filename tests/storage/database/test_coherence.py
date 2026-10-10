@@ -21,7 +21,7 @@ from tests.support.database_helpers import _ReturningSession, _staged_material, 
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import MAX_PATH_LENGTH, Path
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.dialects import (
@@ -158,7 +158,7 @@ class TestWriteVsTopologyCoherence:
             exhausted = await storage.write(entries=[Entry(path=Path("/d/g.txt"), content="x")])
         assert exhausted.success is False
         [error] = exhausted.errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         await storage.close()
 
@@ -190,7 +190,7 @@ class TestWriteVsTopologyCoherence:
             await session.rollback()
         assert result.success is False
         [error] = result.errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "old"
         await storage.close()
 
@@ -225,7 +225,7 @@ class TestWriteVsTopologyCoherence:
         result = await storage.write(entries=[Entry(path=Path("/d/late.txt"), content="mine")], overwrite=True)
         assert result.success is False
         [error] = result.errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         async with host.session_factory() as session:
             conn = await session.connection()
@@ -430,7 +430,7 @@ class TestWriteVsTopologyCoherence:
         assert result.success is True  # reclaims are warnings, not failures
         warnings = [e for e in result.errors if e.severity == Severity.warning]
         assert [w.data["entry_id"] for w in warnings if w.data] == [old_id, old_blob]
-        assert {w.kind for w in warnings} == {VFSErrorKind.internal}
+        assert {w.kind for w in warnings} == {ErrorKind.internal}
         assert "vfs_content row" in warnings[0].message and "vfs_blobs row" in warnings[1].message
         async with host.session_factory() as session:
             conn = await session.connection()
@@ -674,7 +674,7 @@ class TestWriteVsTopologyCoherence:
         result = await storage.restore(path=Path("/d/f.txt"))
         assert result.success is False
         [error] = result.errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "UNIQUE" not in error.message
         await storage.close()
@@ -763,7 +763,7 @@ class TestWriteVsTopologyCoherence:
             errors = await _resolve_rows(session, entry, [staged], rows, overwrite=True)
             await session.rollback()
         [error] = errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert staged.persistence == "insert"  # never rewritten to absorb
         await storage.close()
@@ -817,7 +817,7 @@ class TestWriteVsTopologyCoherence:
             )
         )
         errors = await _bump_parents(cast("AsyncSession", blind), tables.entry, GENERIC, 32_000, 900, plan())
-        assert [e.kind for e in errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in errors] == [ErrorKind.unsupported]
 
     async def test_new_seams_fire_inside_their_verbs(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -872,10 +872,10 @@ class TestWriteVsTopologyCoherence:
         blind = _ReturningSession([])
         blind.get_bind = lambda: insane_bind(returning=False)  # ty: ignore[invalid-assignment]
         refused = await _claim(cast("AsyncSession", blind), GENERIC, stmt, entry.c.entry_id, miss="m")
-        assert refused is not None and refused.kind == VFSErrorKind.unsupported
+        assert refused is not None and refused.kind == ErrorKind.unsupported
         destroy = delete(entry).where(entry.c.entry_id == "X" * 26)
         refused = await _claim(cast("AsyncSession", blind), GENERIC, destroy, entry.c.entry_id, miss="m")
-        assert refused is not None and refused.kind == VFSErrorKind.unsupported
+        assert refused is not None and refused.kind == ErrorKind.unsupported
 
     async def test_unverifiable_claims_refuse_the_topology_verbs(self, tmp_path, monkeypatch) -> None:
         # An insane-rowcount, no-RETURNING dialect must refuse each claim
@@ -894,15 +894,15 @@ class TestWriteVsTopologyCoherence:
         # The delete reparent claim (its trash chain pre-minted above).
         result = await storage.delete(path=Path("/a.txt"))
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
         # The move source claim, no occupant in the way.
         result = await storage.move(operations=[ResolvedPair(src=Path("/a.txt"), dest=Path("/c.txt"))])
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
         # The restore claim, through the shared executor.
         result = await storage.restore(path=Path("/t.txt"))
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
         await storage.close()
 
     async def test_delete_recollects_rewrites_after_its_claim(self, tmp_path) -> None:
@@ -1119,7 +1119,7 @@ class TestWriteVsTopologyCoherence:
         monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
         result = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
         assert result.success is False
-        assert [e.kind for e in result.errors] == [VFSErrorKind.unsupported]
+        assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
         monkeypatch.undo()
         assert (await storage.stat(path=Path("/d/f.txt"))).success is False
         assert (await storage.stat(path=Path("/d"))).observations[0].version == parent_version
@@ -1138,7 +1138,7 @@ class TestWriteVsTopologyCoherence:
         result = await storage.stat(path=Path("/"))
         assert result.success is False
         error = result.errors[0]
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "outlived 3 attempts" in error.message
         await storage.close()
@@ -1155,7 +1155,7 @@ class TestWriteVsTopologyCoherence:
         result = await storage.stat(path=Path("/"))
         assert result.success is False
         error = result.errors[0]
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "first touch kept losing to concurrent changes" in error.message
         assert "outlived 3 attempts" in error.message
@@ -1284,7 +1284,7 @@ class TestWriteVsTopologyCoherence:
             cast("AsyncSession", _EscapeSession()), tables.entry, SQLITE, [staged], rows, 50, overwrite=True
         )
         [error] = errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "may not adopt" in error.message
         assert error.path == "/d/late.txt"  # distinct refusals stay distinct facts, told apart by their locus

@@ -24,7 +24,7 @@ from ulid import ULID
 from tests.support.database_helpers import _url
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
@@ -165,7 +165,7 @@ class TestFirstTouch:
         stale = DatabaseStorage(url=_url(tmp_path))
         result = await stale.first_touch()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.schema_mismatch
+        assert result.errors[0].kind == ErrorKind.schema_mismatch
         assert stale.mount_identity is None
         await stale.close()
 
@@ -186,7 +186,7 @@ class TestFirstTouch:
         await seeded.close()
         stale = DatabaseStorage(url=_url(tmp_path))
         result = await stale.stat(path=Path("/"))
-        assert result.errors[0].kind == VFSErrorKind.schema_mismatch
+        assert result.errors[0].kind == ErrorKind.schema_mismatch
         await stale.close()
 
     async def test_half_provisioned_database_refuses_with_a_classified_error(self, tmp_path) -> None:
@@ -214,7 +214,7 @@ class TestFirstTouch:
         storage = DatabaseStorage(url=_url(tmp_path))
         result = await storage.first_touch()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].kind == ErrorKind.unavailable
         assert "inconsistently provisioned" in result.errors[0].message
         assert storage.mount_identity is None
         await storage.close()
@@ -449,7 +449,7 @@ class TestPoolExhaustion:
             await hog.connection()  # hold the only pooled connection
             result = await storage.stat(path=Path("/"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
         await storage.close()
         await engine.dispose()

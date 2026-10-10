@@ -14,21 +14,21 @@ from vfs.results.envelope import (
 )
 from vfs.results.kinds import (
     KIND_CONTRACTS,
+    ErrorKind,
     KindContract,
     RetryClass,
     Severity,
-    VFSErrorKind,
     kind_family,
 )
 
 __all__ = [
     "KIND_CONTRACTS",
+    "ErrorKind",
     "KindContract",
     "Result",
     "ResultError",
     "RetryClass",
     "Severity",
-    "VFSErrorKind",
     "already_exists",
     "classified",
     "kind_family",

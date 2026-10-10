@@ -18,7 +18,7 @@ from tests.support.database_helpers import _url
 from vfs.models import Entry
 from vfs.models.lexical import encode_block
 from vfs.paths import Path
-from vfs.results import Result, Severity, VFSErrorKind
+from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import glean as glean_module
 from vfs.storage.backends.database.lexical import TermStatistics
@@ -62,14 +62,14 @@ class TestRefusals:
         storage = await _fresh(tmp_path)
         result = await storage.glean(query="!!! ...")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     async def test_a_defective_glob_classifies_invalid(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
         result = await storage.glean(query="tokens", globs=("a**b",))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     def test_the_wall_budget_must_be_positive(self, tmp_path: Any) -> None:
@@ -276,7 +276,7 @@ class TestProbes:
         result = await storage.glean(query="tokens", limit=10)
         assert result.success is True
         [record] = [e for e in result.errors if e.severity == Severity.warning]
-        assert record.kind == VFSErrorKind.truncated and record.severity == Severity.warning
+        assert record.kind == ErrorKind.truncated and record.severity == Severity.warning
         assert record.data == {"window": 1, "found": 1}
         assert "scope probe budget" in record.message
         await storage.close()
@@ -346,7 +346,7 @@ class TestOverlay:
         result = await storage.glean(query="tokens")
         assert result.success is True
         [record] = [e for e in result.errors if e.severity == Severity.warning]
-        assert record.kind == VFSErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
+        assert record.kind == ErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
         await storage.close()
 
     async def test_a_rival_publish_between_the_reads_is_redriven(self, tmp_path: Any) -> None:
@@ -411,7 +411,7 @@ class TestOverlay:
         monkeypatch.setattr(glean_module, "current_epoch", always_moving)
         result = await storage.glean(query="tokens")
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict and result.errors[0].retryable is True
+        assert result.errors[0].kind == ErrorKind.conflict and result.errors[0].retryable is True
         await storage.close()
 
     def test_overlay_blocks_take_decoded_bodies_and_local_statistics(self) -> None:

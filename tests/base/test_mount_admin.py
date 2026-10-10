@@ -21,7 +21,7 @@ from vfs.authority import Authority
 from vfs.base import Location, MountMeta, VirtualFileSystem
 from vfs.exceptions import MountError
 from vfs.permissions import PermissionMap, read_only, read_write, validate_permission
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError
 
 if TYPE_CHECKING:
     from vfs.ops import Op
@@ -239,7 +239,7 @@ async def test_remount_read_makes_writes_classify_as_permission_denials() -> Non
     await fs.remount("/", permissions="read")
     after = await fs.write(path="/f.md", content="x")
     assert not after.success
-    assert after.errors[0].kind is VFSErrorKind.read_only
+    assert after.errors[0].kind is ErrorKind.read_only
 
 
 async def test_unbind_bind_has_a_gap_and_remount_does_not() -> None:
@@ -378,7 +378,7 @@ async def test_deny_run_is_noexec_for_a_tool_mount() -> None:
 
     ran = await fs.run("/tools/x")
     assert not ran.success
-    assert ran.errors[0].kind is VFSErrorKind.unsupported
+    assert ran.errors[0].kind is ErrorKind.unsupported
     assert str(ran.errors[0].path) == "/tools"
     read = await fs.read(path="/tools/x")
     assert read.success
@@ -480,7 +480,7 @@ async def test_constructor_deny_ops_masks_the_root_entry() -> None:
     fs = VirtualFileSystem(storage=RecorderStorage(), deny_ops={"write"})
     denied = await fs.write(path="/f.md", content="x")
     assert not denied.success
-    assert denied.errors[0].kind is VFSErrorKind.unsupported
+    assert denied.errors[0].kind is ErrorKind.unsupported
     row = fs.mounts()[0]
     assert row.deny_ops == ("write",)
     assert "write" not in row.caps
@@ -551,7 +551,7 @@ async def test_locate_edge_agrees_with_mkedge_on_the_boundary() -> None:
     assert (split.source.mount, split.target.mount) == ("/a", "/b")
     assert split.reason == "an edge cannot cross a mount boundary; the source lives on /a and the target on /b"
     refused = await fs.mkedge(source="/a/x.md", target="/b/y.md", edge_type="links")
-    assert refused.errors[0].kind is VFSErrorKind.cross_mount
+    assert refused.errors[0].kind is ErrorKind.cross_mount
     together = await fs.locate_edge("/a/x.md", "/a/deep/y.md")
     assert together.same_storage is True and together.reason is None
     assert together.target.storage_path == "/deep/y.md"
@@ -584,9 +584,7 @@ class _DeadStorage(RecorderStorage):
     def _answer(self, op: str, kwargs: dict[str, Any], authority: Authority | None = None) -> Result:
         self.calls.append((op, kwargs))
         self.authorities.append(authority)
-        return Result(
-            ops=(op,), errors=[ResultError(kind=VFSErrorKind.backend_unavailable, message="connection refused")]
-        )
+        return Result(ops=(op,), errors=[ResultError(kind=ErrorKind.backend_unavailable, message="connection refused")])
 
 
 async def test_locate_with_exists_reports_a_storage_that_cannot_answer() -> None:

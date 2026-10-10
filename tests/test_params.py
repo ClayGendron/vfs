@@ -11,7 +11,7 @@ from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS
 from vfs.params import INT_CEILING, PARAMS, RULES, param_violation
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 
 # ----------------------------------------------------------------------
 # drift — the table and the public surface may never diverge
@@ -132,7 +132,7 @@ async def test_garbage_classifies_invalid_with_zero_dispatch(label: str, call) -
     fs = RecorderFS()
     result = await call(fs)
     assert result.success is False, label
-    assert result.errors[0].kind is VFSErrorKind.invalid, label
+    assert result.errors[0].kind is ErrorKind.invalid, label
     assert fs.calls == [], label
 
 
@@ -145,14 +145,14 @@ async def test_param_gate_beats_closed_table() -> None:
     fs = VirtualFileSystem()
     await fs.close()
     result = await fs.tree("/", max_depth="2")  # ty: ignore[invalid-argument-type]
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_param_gate_beats_busy() -> None:
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m/inner", parents=True)
     result = await root.delete("/m", cascade="x")  # ty: ignore[invalid-argument-type]
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 # ----------------------------------------------------------------------

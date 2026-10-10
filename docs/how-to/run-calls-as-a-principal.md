@@ -41,11 +41,11 @@ async with fs.session(alice) as s:
 A closed session refuses every verb with the error kind `vfs.invalid`, and re-entering it raises `ValueError`. Open a new one instead.
 
 ```python
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 
 assert s.closed
 result = await s.read("/notes/session.md")
-assert result.errors[0].kind is VFSErrorKind.invalid
+assert result.errors[0].kind is ErrorKind.invalid
 ```
 
 ## Or set a filesystem default
@@ -74,9 +74,9 @@ await fs.write(path="/notes/room.md", content="hi", authority=room)
 A non-authority value is refused before dispatch:
 
 ```python
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 
 result = await fs.read("/notes/alice.md", authority="alice")
-assert result.errors[0].kind is VFSErrorKind.invalid
-assert result.errors[0].message == "read authority must be an Authority, got str"
+assert result.errors[0].kind is ErrorKind.invalid
+assert result.errors[0].message == "Invalid: read authority must be an Authority, got str"
 ```

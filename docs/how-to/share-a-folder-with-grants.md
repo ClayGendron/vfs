@@ -15,7 +15,7 @@ The system actor sees and writes everything, whatever the posture.
 
 ```python
 from vfs import Authority, Principal
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 
 system = Authority.system()
 await fs.write(path="/eng/spec.md", content="the spec", parents=True, authority=system)
@@ -42,14 +42,14 @@ await fs.grant("/pub", "alice", "read", authority=system)
 
 assert (await fs.read("/pub/readme.md", authority=alice)).success
 hidden = await fs.read("/eng/spec.md", authority=alice)
-assert hidden.errors[0].kind is VFSErrorKind.not_found
+assert hidden.errors[0].kind is ErrorKind.not_found
 ```
 
 A path the caller cannot see answers `not_found`, exactly as a path that does not exist. A path it can see but not write answers `permission_denied`:
 
 ```python
 denied = await fs.write(path="/pub/readme.md", content="edited", authority=alice)
-assert denied.errors[0].kind is VFSErrorKind.permission_denied
+assert denied.errors[0].kind is ErrorKind.permission_denied
 ```
 
 The levels are `read` and `read_write`. Grants only widen: there is no deny row.
@@ -95,7 +95,7 @@ assert ("bob", "/eng/plan.md", "read") in rows
 
 ```python
 await fs.revoke("/eng/plan.md", "bob", authority=alice)
-assert (await fs.read("/eng/plan.md", authority=bob)).errors[0].kind is VFSErrorKind.not_found
+assert (await fs.read("/eng/plan.md", authority=bob)).errors[0].kind is ErrorKind.not_found
 ```
 
 ## What a caller with no name gets
@@ -104,5 +104,5 @@ A call that names nobody runs as the anonymous principal. On a private mount it 
 
 ```python
 anonymous = await fs.read("/pub/readme.md")
-assert anonymous.errors[0].kind is VFSErrorKind.unauthenticated
+assert anonymous.errors[0].kind is ErrorKind.unauthenticated
 ```

@@ -27,7 +27,7 @@ from vfs.models.code_grams import pack_gram
 from vfs.models.postings import encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
-from vfs.results import Result, ResultError, VFSErrorKind
+from vfs.results import ErrorKind, Result, ResultError
 from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL
@@ -251,7 +251,7 @@ class TestPublishRace:
         result = await storage.reindex()
         assert result.success is False
         error = result.errors[0]
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "unique" not in error.message.lower() and "constraint" not in error.message.lower()
         await storage.close()
@@ -283,7 +283,7 @@ class TestPublishRace:
         with installed("reindex:before-publish", rival):
             result = await storage.reindex()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].kind == ErrorKind.conflict
         assert await _epoch(storage) == 99  # the rival's publish stood
         await storage.close()
 
@@ -343,7 +343,7 @@ class TestFlagAlgebra:
         assert (await storage.reindex()).success is True
         pair = ResolvedPair(Path("/src.txt"), Path("/dst.txt"))
         refused = await storage.copy(operations=[pair])
-        assert [e.kind for e in refused.errors] == [VFSErrorKind.exists]
+        assert [e.kind for e in refused.errors] == [ErrorKind.exists]
         assert await _flags(storage, "/dst.txt") == (True, True)
         found = await storage.grep(pattern="alpha")
         assert sorted(str(o.path) for o in found.observations) == ["/src.txt"]
@@ -386,7 +386,7 @@ class TestReclaim:
         with installed("reindex:before-publish", rival):
             result = await storage.reindex()
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].kind == ErrorKind.conflict
         tables = storage._host.tables
         assert await _count(storage, tables.posting_list) == 0  # the lost build left no residue
         assert await _count(storage, tables.gram_epochs) == 0
@@ -784,7 +784,7 @@ class TestReindexLease:
         result = await storage.reindex()
         assert result.success is False
         [error] = result.errors
-        assert error.kind == VFSErrorKind.conflict
+        assert error.kind == ErrorKind.conflict
         assert error.retryable is True
         assert "already running" in error.message
         holder, _ = await self._lease(storage)
@@ -828,7 +828,7 @@ class TestReindexLease:
         lost.set()
         result = await storage._reindex_phases(storage._host.tables, lost)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.conflict
+        assert result.errors[0].kind == ErrorKind.conflict
         assert "expired mid-run" in result.errors[0].message
         assert await _flags(storage, "/a.txt") == (True, False)
         await storage.close()
@@ -853,7 +853,7 @@ class TestReindexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         stalled = Result(
             ops=("reindex",),
-            errors=[ResultError(kind=VFSErrorKind.conflict, message="reindex kept losing", retryable=True)],
+            errors=[ResultError(kind=ErrorKind.conflict, message="reindex kept losing", retryable=True)],
         )
         beats = 0
 
@@ -902,7 +902,7 @@ class TestReindexLease:
         # clears the lease for the next claimant.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=VFSErrorKind.internal, message="chunk broke")])
+        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
 
         async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw) -> Result:
             return failure

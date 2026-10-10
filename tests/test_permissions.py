@@ -13,7 +13,7 @@ import pytest
 
 from vfs.paths import Path
 from vfs.permissions import PermissionMap, check_writable, coerce_permissions, read_only, validate_permission
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 
 # ---------------------------------------------------------------------------
 # Vocabulary and coercion
@@ -74,7 +74,7 @@ def test_writable_hole_reaches_its_metadata_projection() -> None:
     assert check_writable(pmap, "write", Path("/.vfs/synthesis/notes.md")) is None
     denied = check_writable(pmap, "write", Path("/.vfs/other/notes.md"))
     assert denied is not None
-    assert denied.errors[0].kind is VFSErrorKind.read_only
+    assert denied.errors[0].kind is ErrorKind.read_only
 
 
 def test_explicit_metadata_rule_outranks_the_alias() -> None:
@@ -84,4 +84,4 @@ def test_explicit_metadata_rule_outranks_the_alias() -> None:
     )
     denied = check_writable(pmap, "write", Path("/.vfs/synthesis/notes.md"))
     assert denied is not None
-    assert denied.errors[0].kind is VFSErrorKind.read_only
+    assert denied.errors[0].kind is ErrorKind.read_only

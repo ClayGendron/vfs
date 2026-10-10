@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from vfs.results.kinds import VFSErrorKind, kind_family
+from vfs.results.kinds import ErrorKind, kind_family
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,23 +69,23 @@ class SchemaMismatchError(VFSError):
 # Kind → exception class, keyed by the kind's resolved family. An unmapped
 # family (``unavailable``/``timeout``/``cancelled``/``internal``) or a kind
 # with no known prefix falls back to the base ``VFSError``.
-_KIND_TO_EXC: dict[VFSErrorKind, type[VFSError]] = {
-    VFSErrorKind.not_found: NotFoundError,
-    VFSErrorKind.wrong_kind: NotFoundError,
-    VFSErrorKind.exists: WriteConflictError,
-    VFSErrorKind.not_empty: WriteConflictError,
-    VFSErrorKind.conflict: WriteConflictError,
-    VFSErrorKind.cross_mount: WriteConflictError,
-    VFSErrorKind.unauthenticated: UnauthenticatedError,
-    VFSErrorKind.permission_denied: WriteConflictError,
-    VFSErrorKind.read_only: WriteConflictError,
-    VFSErrorKind.invalid: ValidationError,
-    VFSErrorKind.unsupported: ValidationError,
-    VFSErrorKind.unrecognized: ValidationError,
+_KIND_TO_EXC: dict[ErrorKind, type[VFSError]] = {
+    ErrorKind.not_found: NotFoundError,
+    ErrorKind.wrong_kind: NotFoundError,
+    ErrorKind.exists: WriteConflictError,
+    ErrorKind.not_empty: WriteConflictError,
+    ErrorKind.conflict: WriteConflictError,
+    ErrorKind.cross_mount: WriteConflictError,
+    ErrorKind.unauthenticated: UnauthenticatedError,
+    ErrorKind.permission_denied: WriteConflictError,
+    ErrorKind.read_only: WriteConflictError,
+    ErrorKind.invalid: ValidationError,
+    ErrorKind.unsupported: ValidationError,
+    ErrorKind.unrecognized: ValidationError,
 }
 
 
-def exception_for_kind(kind: VFSErrorKind | str) -> type[VFSError]:
+def exception_for_kind(kind: ErrorKind | str) -> type[VFSError]:
     """Return the exception class for a structured error *kind*.
 
     Dispatches through :func:`kind_family` — no message inspection — so an

@@ -22,11 +22,11 @@ from vfs.models import Observation
 from vfs.paths import MAX_PATH_LENGTH
 from vfs.results import (
     KIND_CONTRACTS,
+    ErrorKind,
     Result,
     ResultError,
     RetryClass,
     Severity,
-    VFSErrorKind,
     kind_family,
 )
 from vfs.results.envelope import _QUARANTINE_CLIP
@@ -36,7 +36,7 @@ def obs(path: str, **kwargs: object) -> Observation:
     return Observation.model_validate({"path": path, **kwargs})
 
 
-def err(kind: VFSErrorKind | str = VFSErrorKind.timeout, message: str = "slow", **kwargs: object) -> ResultError:
+def err(kind: ErrorKind | str = ErrorKind.timeout, message: str = "slow", **kwargs: object) -> ResultError:
     return ResultError.model_validate({"kind": kind, "message": message, **kwargs})
 
 
@@ -59,9 +59,7 @@ class TestAlgebraLaws:
     def test_l1_union_is_associative(self) -> None:
         a = Result(ops=("glob",), observations=[obs("/x.md", score=0.9)], errors=[err(message="a down")])
         b = Result(ops=("grep",), observations=[obs("/x.md", size_bytes=42), obs("/y.md")])
-        c = Result(
-            ops=("glob",), observations=[obs("/z.md")], errors=[err(kind=VFSErrorKind.not_found, message="gone")]
-        )
+        c = Result(ops=("glob",), observations=[obs("/z.md")], errors=[err(kind=ErrorKind.not_found, message="gone")])
         assert (a | b) | c == a | (b | c)
 
     def test_l2_union_is_idempotent_over_path_distinct_rows(self) -> None:
@@ -76,7 +74,7 @@ class TestAlgebraLaws:
     def test_l3_success_is_a_homomorphism(self) -> None:
         ok = Result(observations=[obs("/a.md")])
         warned = Result(errors=[err(severity=Severity.warning)])
-        failed = Result(errors=[err(kind=VFSErrorKind.unavailable, message="down")])
+        failed = Result(errors=[err(kind=ErrorKind.unavailable, message="down")])
         for left, right in [(ok, warned), (ok, failed), (failed, warned), (failed, failed)]:
             assert (left | right).success == (left.success and right.success)
 
@@ -112,7 +110,7 @@ class TestAlgebraLaws:
     def test_l5_diamond_dedup_survives_the_wire(self) -> None:
         # (a|b)&b in-process and across one hop must agree — value
         # identity, not id() identity, is the dedup key.
-        a = Result(ops=("ls",), errors=[err(kind=VFSErrorKind.not_found, message="a gone")])
+        a = Result(ops=("ls",), errors=[err(kind=ErrorKind.not_found, message="a gone")])
         b = Result(ops=("ls",), errors=[err(message="b slow")])
         union = a | b
         in_process = (union & b).errors
@@ -135,19 +133,19 @@ class TestAlgebraLaws:
 
 class TestKindContracts:
     def test_contract_table_is_total_over_the_vocabulary(self) -> None:
-        for kind in VFSErrorKind:
+        for kind in ErrorKind:
             contract = KIND_CONTRACTS[kind]
             assert isinstance(contract.retry_class, RetryClass)
             assert contract.hint
             assert contract.path_means
 
     def test_every_kind_is_its_own_family(self) -> None:
-        for kind in VFSErrorKind:
+        for kind in ErrorKind:
             assert kind_family(kind) is kind
 
     def test_unknown_child_degrades_to_longest_known_prefix(self) -> None:
-        assert kind_family("vfs.unavailable.dns") is VFSErrorKind.unavailable
-        assert kind_family("vfs.unavailable.backend.tls") is VFSErrorKind.backend_unavailable
+        assert kind_family("vfs.unavailable.dns") is ErrorKind.unavailable
+        assert kind_family("vfs.unavailable.backend.tls") is ErrorKind.backend_unavailable
         assert err(kind="vfs.unavailable.dns").retry_class is RetryClass.transient
 
     def test_unknown_namespace_degrades_to_none_no_assumption(self) -> None:
@@ -156,9 +154,9 @@ class TestKindContracts:
 
     def test_retired_kind_string_parses_to_its_new_value(self) -> None:
         e = err(kind="vfs.backend_unavailable")
-        assert e.kind is VFSErrorKind.backend_unavailable
+        assert e.kind is ErrorKind.backend_unavailable
         assert str(e.kind) == "vfs.unavailable.backend"
-        assert kind_family("vfs.backend_unavailable") is VFSErrorKind.backend_unavailable
+        assert kind_family("vfs.backend_unavailable") is ErrorKind.backend_unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +233,7 @@ class TestRebaseOverflow:
         assert rebased.success is True
         assert rebased.paths == (f"{LONG_MOUNT}/ok.py",)
         [warning] = rebased.errors
-        assert warning.kind is VFSErrorKind.unaddressable
+        assert warning.kind is ErrorKind.unaddressable
         assert warning.severity is Severity.warning
         assert warning.path is None
         assert warning.source == LONG_MOUNT
@@ -254,14 +252,14 @@ class TestRebaseOverflow:
         m1, m2 = "/" + "a" * 100, "/" + "b" * 100
         assert len(m1) + len(local) <= MAX_PATH_LENGTH
         assert len(m2) + len(m1) + len(local) > MAX_PATH_LENGTH
-        e = err(kind=VFSErrorKind.not_found, message="x", path=local).with_mount(m1).with_mount(m2)
+        e = err(kind=ErrorKind.not_found, message="x", path=local).with_mount(m1).with_mount(m2)
         assert e.path is None
         record = (e.data or {})["vfs.overflow"]
         assert record["local_path"] == local
         assert str(e.source) + record["local_path"] == m2 + m1 + local
 
     def test_overflow_locus_reconstructs_after_three_hops(self) -> None:
-        e = err(kind=VFSErrorKind.not_found, message="missing", path=DEEP_LOCAL)
+        e = err(kind=ErrorKind.not_found, message="missing", path=DEEP_LOCAL)
         hopped = e.with_mount(LONG_MOUNT).with_mount("/b").with_mount("/c")
         assert hopped.path is None
         assert hopped.source == "/c/b" + LONG_MOUNT
@@ -306,7 +304,7 @@ class TestWireLeniency:
         assert r.paths == ("/good/row.txt",)
         assert r.success is True
         [quarantine] = r.errors
-        assert quarantine.kind is VFSErrorKind.internal
+        assert quarantine.kind is ErrorKind.internal
         assert quarantine.severity is Severity.warning
         assert (quarantine.data or {})["vfs.quarantine"]["item"] == {"path": "/bad/\x00row", "kind": "file"}
 
@@ -316,7 +314,7 @@ class TestWireLeniency:
         r = Result.from_payload({"errors": [{"message": "kindless"}]})
         assert r.success is False
         [quarantine] = r.errors
-        assert quarantine.kind is VFSErrorKind.internal
+        assert quarantine.kind is ErrorKind.internal
         assert quarantine.is_fatal
 
     def test_strict_restores_raise_on_invalid(self) -> None:
@@ -328,7 +326,7 @@ class TestWireLeniency:
         for garbage in ("garbage", None, 42, ["not", "a", "mapping"]):
             r = Result.from_payload(garbage)
             assert r.success is False
-            assert r.errors[0].kind is VFSErrorKind.internal
+            assert r.errors[0].kind is ErrorKind.internal
 
     def test_hostile_mapping_is_hopeless_never_raises(self) -> None:
         # A Mapping whose iteration blows up reaches past the per-item
@@ -345,7 +343,7 @@ class TestWireLeniency:
 
         r = Result.from_payload(Hostile())
         assert r.success is False
-        assert r.errors[0].kind is VFSErrorKind.internal
+        assert r.errors[0].kind is ErrorKind.internal
         assert "boom" in (r.errors[0].data or {})["vfs.quarantine"]["reason"]
 
     def test_single_item_payloads_are_wrapped_into_lists(self) -> None:
@@ -356,7 +354,7 @@ class TestWireLeniency:
             }
         )
         assert r.paths == ("/one.txt",)
-        assert [e.kind for e in r.errors] == [VFSErrorKind.timeout]
+        assert [e.kind for e in r.errors] == [ErrorKind.timeout]
 
     def test_oversized_string_item_quarantines_clipped(self) -> None:
         r = Result.from_payload({"observations": ["x" * (2 * _QUARANTINE_CLIP)]})
@@ -389,7 +387,7 @@ class TestWireLeniency:
         r = Result.from_payload({"success": False, "observations": [], "errors": []})
         assert r.success is False
         [synthesized] = r.errors
-        assert synthesized.kind is VFSErrorKind.internal
+        assert synthesized.kind is ErrorKind.internal
         assert (synthesized.data or {})["vfs.claim"] == {"success": False}
 
     def test_reconciliation_skipped_when_a_fatal_error_survived(self) -> None:
@@ -405,13 +403,13 @@ class TestWireLeniency:
     def test_stored_success_is_unrepresentable_at_construction(self) -> None:
         # success= is no longer a field: the type checker rejects the
         # kwarg, and any dict form is stripped then re-derived.
-        lying = Result.model_validate({"success": True, "errors": [err(kind=VFSErrorKind.not_found, message="gone")]})
+        lying = Result.model_validate({"success": True, "errors": [err(kind=ErrorKind.not_found, message="gone")]})
         assert lying.success is False
 
     def test_smuggled_success_extra_never_reaches_the_wire(self) -> None:
         # model_copy/model_construct bypass validation; the wire dict
         # must still carry only the derived verdict.
-        r = Result(errors=[err(kind=VFSErrorKind.not_found, message="gone")])
+        r = Result(errors=[err(kind=ErrorKind.not_found, message="gone")])
         for lying in (r.model_copy(update={"success": True}), Result.model_construct(errors=r.errors, success=True)):
             assert lying.success is False
             assert lying.to_payload()["success"] is False
@@ -538,7 +536,7 @@ class TestMaskedMerge:
 def outage(n: int) -> Result:
     merged = Result()
     for i in range(n):
-        down = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")])
+        down = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")])
         merged = merged | down.with_mount(f"/m{i}")
     return merged
 
@@ -567,10 +565,10 @@ class TestRollup:
         # groups, and every rolled entry keeps its group's retryable.
         merged = Result()
         for i in range(3):
-            transient = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down", retryable=True)])
+            transient = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down", retryable=True)])
             merged = merged | transient.with_mount(f"/t{i}")
         for i in range(3):
-            settled = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")])
+            settled = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")])
             merged = merged | settled.with_mount(f"/s{i}")
         payload = merged.to_payload(max_errors=2)
         restored = Result.from_payload(payload)
@@ -592,33 +590,33 @@ class TestRollup:
 class TestMergePolicy:
     def test_merge_is_the_plain_fold_no_demotion(self) -> None:
         live = Result(observations=[obs("/a.md")])
-        dead = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")])
+        dead = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")])
         merged = Result.merge([live, dead], op="grep")
         assert merged.success is False
         assert merged.ops == ("grep",)
 
     def test_merge_branches_demotes_when_any_branch_progressed(self) -> None:
         live = Result(observations=[obs("/live/hit.txt")]).with_mount("/live")
-        dead = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")]).with_mount("/dead")
+        dead = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")]).with_mount("/dead")
         merged = Result.merge_branches([live, dead], op="grep")
         assert merged.success is True
         assert merged.paths == ("/live/live/hit.txt",)
         [demoted] = merged.errors
         assert demoted.severity is Severity.warning
-        assert demoted.kind is VFSErrorKind.backend_unavailable
+        assert demoted.kind is ErrorKind.backend_unavailable
         assert demoted.source == "/dead"
         assert demoted.retry_class is RetryClass.transient
 
     def test_merge_branches_stays_fatal_when_every_branch_failed(self) -> None:
-        dead_a = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")]).with_mount("/a")
-        dead_b = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")]).with_mount("/b")
+        dead_a = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")]).with_mount("/a")
+        dead_b = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")]).with_mount("/b")
         merged = Result.merge_branches([dead_a, dead_b], op="grep")
         assert merged.success is False
         assert all(e.is_fatal for e in merged.errors)
 
     def test_an_empty_successful_branch_counts_as_progress(self) -> None:
         empty = Result(ops=("grep",))
-        dead = Result(errors=[err(kind=VFSErrorKind.backend_unavailable, message="down")])
+        dead = Result(errors=[err(kind=ErrorKind.backend_unavailable, message="down")])
         merged = Result.merge_branches([empty, dead], op="grep")
         assert merged.success is True
         assert merged.errors[0].severity is Severity.warning

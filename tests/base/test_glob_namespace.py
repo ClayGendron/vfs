@@ -16,7 +16,7 @@ from tests.support.base_doubles import RecorderStorage
 from vfs.base import VirtualFileSystem
 from vfs.models import Observation
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage.backends.memory import InMemoryStorage
 
 # The demo tree: /notes.txt at the root, a.txt and deep/b.txt under /data.
@@ -138,7 +138,7 @@ async def test_name_arm_root_covered_by_a_region_keeps_its_assertion() -> None:
     await fs.write(path="/data/api/sub/z.txt", content="z", parents=True)
     missing = await fs.glob("*.txt", paths=("/data", "/data/api/nope"))
     assert missing.success is False
-    assert missing.errors[0].kind is VFSErrorKind.not_found
+    assert missing.errors[0].kind is ErrorKind.not_found
     both = await fs.glob("*.txt", paths=("/data", "/data/api/sub"))
     assert both.success is True
     assert sorted(both.paths) == ["/data/a.txt", "/data/api/sub/z.txt", "/data/deep/b.txt"]
@@ -180,7 +180,7 @@ async def test_roots_stay_assertions() -> None:
     assert empty.success is True and empty.paths == ()
     missing = await fs.glob("**/*.txt", paths=("/missing",))
     assert missing.success is False
-    assert missing.errors[0].kind is VFSErrorKind.not_found
+    assert missing.errors[0].kind is ErrorKind.not_found
     hit = await fs.glob("*.txt", paths=("/notes.txt",))
     assert hit.paths == ("/notes.txt",)
     miss = await fs.glob("*.py", paths=("/notes.txt",))
@@ -237,7 +237,7 @@ async def test_brace_expansion_past_the_cap_refuses_loudly() -> None:
     fs = await _mounted_world()
     result = await fs.glob("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}")  # 128 arms
     assert result.success is False
-    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert result.errors[0].kind == ErrorKind.invalid
     assert "arm cap" in result.errors[0].message
 
 
@@ -256,7 +256,7 @@ async def test_brace_defect_refuses_naming_the_manufactured_arm() -> None:
     fs = await _mounted_world()
     result = await fs.glob("/data/{deep,}/b.txt")
     assert result.success is False
-    assert result.errors[0].kind == VFSErrorKind.invalid
+    assert result.errors[0].kind == ErrorKind.invalid
     assert "'/data//b.txt'" in result.errors[0].message
 
 
@@ -378,7 +378,7 @@ async def test_chained_kind_on_a_vanished_row_classifies_loudly() -> None:
     result = await fs.glob("**", observations=rows, kind="file")
     assert [str(o.path) for o in result.observations] == ["/data/a.txt"]
     assert result.success is False
-    assert any(e.kind == VFSErrorKind.not_found for e in result.errors)
+    assert any(e.kind == ErrorKind.not_found for e in result.errors)
 
 
 async def test_chained_without_kind_never_touches_storage() -> None:

@@ -40,7 +40,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.authority import owner_for
 from vfs.models import CONTENT_KINDS, Entry, Observation
-from vfs.results import Result, ResultError, VFSErrorKind, already_exists, classified, wrong_kind
+from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
@@ -517,7 +517,7 @@ def _incoherent_row(path: Path) -> ResultError:
     it can know; the squatting row is a defect decisions upstream repair.
     """
     detail = "the address is held by a row this write may not adopt"
-    return classified(VFSErrorKind.conflict, path, retryable=True, detail=detail)
+    return classified(ErrorKind.conflict, path, retryable=True, detail=detail)
 
 
 async def _catch_retry_layer(
@@ -664,7 +664,7 @@ async def _update_materials(
             )
         else:
             detail = f"guarded updates cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
-            return [classified(VFSErrorKind.unsupported, detail=detail)]
+            return [classified(ErrorKind.unsupported, detail=detail)]
     if unguarded:
         if set_based:
             learned = await _values_update(
@@ -860,7 +860,7 @@ async def _classify_guard_misses(
         if staged.entry_id in present:
             errors.append(_conflict(staged))
         else:
-            errors.append(classified(VFSErrorKind.not_found, staged.path))
+            errors.append(classified(ErrorKind.not_found, staged.path))
     return errors
 
 
@@ -885,7 +885,7 @@ def _guarded_params(staged: StagedEntry, authority: Authority | None, now: datet
 def _conflict(staged: StagedEntry) -> ResultError:
     # Retryable by declaration: an identical immediate retry adjudicates
     # against the rival's committed state and resolves honestly.
-    return classified(VFSErrorKind.conflict, staged.path, retryable=True, detail="concurrent modification")
+    return classified(ErrorKind.conflict, staged.path, retryable=True, detail="concurrent modification")
 
 
 async def _replace_bodies(
@@ -942,7 +942,7 @@ def _blob_wire_size(row: Mapping[str, object]) -> int:
 
 def _binary_target(target: Path) -> ResultError:
     """A bytes-sourced row has no editable text: its content is a rendering."""
-    return classified(VFSErrorKind.wrong_kind, target, detail="binary body; replace the bytes through write")
+    return classified(ErrorKind.wrong_kind, target, detail="binary body; replace the bytes through write")
 
 
 async def _bump_parents(
@@ -984,7 +984,7 @@ async def _bump_parents(
         await _bump_by_rowcount(session, entry, membership_budget, pairs, per_row=per_row)
     else:
         detail = f"guarded parent bumps cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
-        return [classified(VFSErrorKind.unsupported, detail=detail)]
+        return [classified(ErrorKind.unsupported, detail=detail)]
     needed: set[str] = set()
     for path, _ in plan.pending:
         staged = plan.staged.get(path)

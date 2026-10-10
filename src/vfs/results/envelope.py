@@ -44,10 +44,10 @@ from vfs.paths import MAX_PATH_LENGTH, Path, rebase_overflows
 from vfs.results.kinds import (
     _KIND_ALIASES,
     KIND_CONTRACTS,
+    ErrorKind,
     KindContract,
     RetryClass,
     Severity,
-    VFSErrorKind,
     kind_family,
 )
 from vfs.results.render import render_result
@@ -59,12 +59,12 @@ if TYPE_CHECKING:
 # renderer); re-exported here as the envelope's one import surface.
 __all__ = [
     "KIND_CONTRACTS",
+    "ErrorKind",
     "KindContract",
     "Result",
     "ResultError",
     "RetryClass",
     "Severity",
-    "VFSErrorKind",
     "kind_family",
 ]
 
@@ -112,7 +112,7 @@ class ResultError(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    kind: VFSErrorKind | str
+    kind: ErrorKind | str
     message: str
     severity: Severity | str = Severity.error
     path: Path | None = None
@@ -125,13 +125,13 @@ class ResultError(BaseModel):
     def _coerce_known_kind(cls, value: object) -> object:
         """Resolve aliases, map a known kind to the enum, keep unknowns as-is.
 
-        ``VFSErrorKind(value)`` rejects any non-member; ``TypeError`` covers
+        ``ErrorKind(value)`` rejects any non-member; ``TypeError`` covers
         non-string values, which Pydantic then validates and refuses.
         """
         if isinstance(value, str):
             value = _KIND_ALIASES.get(value, value)
         try:
-            return VFSErrorKind(value)
+            return ErrorKind(value)
         except (ValueError, TypeError):
             return value
 
@@ -233,11 +233,11 @@ class ResultError(BaseModel):
 
 
 # Kinds whose cause is never the kind alone: a producer must say what was wrong.
-_DETAIL_REQUIRED = frozenset({VFSErrorKind.invalid, VFSErrorKind.internal})
+_DETAIL_REQUIRED = frozenset({ErrorKind.invalid, ErrorKind.internal})
 
 
 def classified(
-    kind: VFSErrorKind,
+    kind: ErrorKind,
     path: Path | None = None,
     *,
     target: Path | None = None,
@@ -291,12 +291,12 @@ def already_exists(path: Path, *, target: Path | None = None) -> ResultError:
     *target* attributes the refusal to the caller's requested row when it
     differs from the occupied *path* — a trash-side restore, a batch pair.
     """
-    return classified(VFSErrorKind.exists, path, target=target)
+    return classified(ErrorKind.exists, path, target=target)
 
 
 def wrong_kind(kind: str, path: Path, *, target: Path | None = None) -> ResultError:
     """The ``wrong_kind`` fact naming the occupant's actual *kind* as its detail and its field."""
-    return classified(VFSErrorKind.wrong_kind, path, target=target, detail=kind, data={"kind": kind})
+    return classified(ErrorKind.wrong_kind, path, target=target, detail=kind, data={"kind": kind})
 
 
 def validation_message(exc: ValidationError) -> str:
@@ -687,7 +687,7 @@ class Result(BaseModel):
             if rebase_overflows(mount, o.path):
                 errors.append(
                     ResultError(
-                        kind=VFSErrorKind.unaddressable,
+                        kind=ErrorKind.unaddressable,
                         message=(
                             f"Unaddressable: the path exceeds {MAX_PATH_LENGTH} bytes when rebased "
                             "under this mount and cannot be addressed through it"
@@ -779,7 +779,7 @@ class Result(BaseModel):
             if data.get("success") is False and not any(e.is_fatal for e in errors):
                 errors.append(
                     ResultError(
-                        kind=VFSErrorKind.internal,
+                        kind=ErrorKind.internal,
                         message="Peer payload claimed failure but carried no classifiable error",
                         data={"vfs.claim": {"success": False}},
                     )
@@ -867,7 +867,7 @@ class Result(BaseModel):
         return cls(
             errors=[
                 ResultError(
-                    kind=VFSErrorKind.internal,
+                    kind=ErrorKind.internal,
                     message="Peer payload could not be parsed as a Result",
                     data={"vfs.quarantine": {"item": _clip(repr(payload)), "reason": _clip(reason)}},
                 )
@@ -902,7 +902,7 @@ def _quarantine(item: Any, exc: Exception, severity: Severity, what: str) -> Res
             if len(serialized) > _QUARANTINE_CLIP:
                 raw = _clip(serialized)
     return ResultError(
-        kind=VFSErrorKind.internal,
+        kind=ErrorKind.internal,
         message=f"Quarantined malformed {what} from peer payload",
         severity=severity,
         data={"vfs.quarantine": {"item": raw, "reason": _clip(str(exc))}},

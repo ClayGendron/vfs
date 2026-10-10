@@ -22,7 +22,7 @@ from vfs.rerank import (
     order_law,
     region_texts,
 )
-from vfs.results import Result, VFSErrorKind
+from vfs.results import ErrorKind, Result
 
 
 def _row(path: str, score: float, *texts: str, content_hash: str | None = None) -> Observation:
@@ -246,7 +246,7 @@ class TestMergeRanked:
         merged = await merge_ranked("lease", answers, limit=100, depth=FANOUT_CAP, rerankers=(BM25Rerank(),))
         assert len(merged.observations) == 100
         [record] = merged.records
-        assert record.kind is VFSErrorKind.truncated and record.data == {"mount": "/a", "cap": FANOUT_CAP}
+        assert record.kind is ErrorKind.truncated and record.data == {"mount": "/a", "cap": FANOUT_CAP}
         below = await merge_ranked("lease", answers, limit=10, depth=30, rerankers=(BM25Rerank(),))
         assert below.records == []
 

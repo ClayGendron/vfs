@@ -66,7 +66,7 @@ from vfs.models.links import link_generation
 from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
 from vfs.paths import Path
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import (
     ByteBatcher,
     StaleSnapshot,
@@ -166,7 +166,7 @@ async def claim_reindex_lease(session: AsyncSession, tables: VFSTables, token: s
     held = (await session.execute(select(meta.c.reindex_heartbeat).where(meta.c.id == 1))).scalar_one_or_none()
     age = max(0, now - held) // 1000 if held is not None else 0
     detail = f"a reindex is already running (lease heartbeat {age}s ago); retry after it finishes"
-    return Result(ops=("reindex",), errors=[classified(VFSErrorKind.conflict, retryable=True, detail=detail)])
+    return Result(ops=("reindex",), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
 
 
 async def heartbeat_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
@@ -190,7 +190,7 @@ def lease_lost_result() -> Result:
     marked in ``data`` so the beat task can tell it from a transport
     conflict (a writer stalled behind the build's own lock, on SQLite)."""
     detail = "the reindex lease expired mid-run and was claimed by a rival; this run stopped"
-    error = classified(VFSErrorKind.conflict, retryable=True, detail=detail, data=LEASE_LOST_DATA)
+    error = classified(ErrorKind.conflict, retryable=True, detail=detail, data=LEASE_LOST_DATA)
     return Result(ops=("reindex",), errors=[error])
 
 
@@ -350,7 +350,7 @@ async def chunk_dirty(
     if not links.unresolved:
         return Result(ops=("reindex",))
     note = classified(
-        VFSErrorKind.not_found,
+        ErrorKind.not_found,
         severity=Severity.info,
         detail=f"{links.unresolved} markdown references across {links.sources} documents name no live entry",
         data={"leg": "links", "sources": links.sources, "edges": links.edges, "unresolved": links.unresolved},
@@ -495,7 +495,7 @@ async def publish_epoch(
     result = cast("CursorResult[Any]", await session.execute(cas))
     if result.rowcount != 1:
         detail = f"reindex lost the epoch pointer race publishing epoch {state.epoch}"
-        return Result(ops=("reindex",), errors=[classified(VFSErrorKind.conflict, detail=detail)])
+        return Result(ops=("reindex",), errors=[classified(ErrorKind.conflict, detail=detail)])
     return Result(ops=("reindex",))
 
 

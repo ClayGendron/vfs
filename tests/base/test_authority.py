@@ -16,7 +16,7 @@ from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.authority import Authority, Principal
 from vfs.base import VirtualFileSystem
 from vfs.ops import ALL_OPS, Op
-from vfs.results import Result, VFSErrorKind
+from vfs.results import ErrorKind, Result
 from vfs.session import Session
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -105,18 +105,18 @@ async def test_a_verb_with_no_authority_and_no_default_runs_as_anonymous(op: Op)
 
 async def test_garbage_is_still_refused_first() -> None:
     result = await RecorderFS().read("/f.txt", columns=123)  # ty: ignore[invalid-argument-type]
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_a_non_authority_value_is_invalid_not_unauthenticated() -> None:
     result = await RecorderFS().read("/f.txt", authority="alice")  # ty: ignore[invalid-argument-type]
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "must be an Authority" in result.errors[0].message
 
 
 async def test_unauthenticated_is_its_own_kind_beside_permission_denied() -> None:
-    assert VFSErrorKind.unauthenticated.value == "vfs.unauthenticated"
-    assert VFSErrorKind.unauthenticated is not VFSErrorKind.permission_denied
+    assert ErrorKind.unauthenticated.value == "vfs.unauthenticated"
+    assert ErrorKind.unauthenticated is not ErrorKind.permission_denied
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
     assert s.closed is True
     result = await getattr(s, op)(**CALLS[op])
     assert result.success is False
-    assert result.errors[0].kind is VFSErrorKind.invalid
+    assert result.errors[0].kind is ErrorKind.invalid
     assert "closed" in result.errors[0].message
     assert storage.calls == []
 

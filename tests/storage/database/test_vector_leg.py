@@ -16,7 +16,7 @@ from vfs.embedding import Embedded, HashEmbeddingProvider, estimate_tokens
 from vfs.models import Entry
 from vfs.models.vector import cosine_topk, pack_vector
 from vfs.paths import Path
-from vfs.results import Severity, VFSErrorKind
+from vfs.results import ErrorKind, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import glean as glean_module
@@ -203,7 +203,7 @@ class TestRecords:
         storage = await _indexed(tmp_path)
         result = await storage.glean(query="alpha")
         [note] = result.errors
-        assert note.severity == Severity.info and note.kind == VFSErrorKind.unavailable
+        assert note.severity == Severity.info and note.kind == ErrorKind.unavailable
         assert note.data == {"leg": "vector", "reason": "no_provider"}
         assert result.legs["vector"] is None and _paths(result) == ["/notes/one.md"]  # ty: ignore[unresolved-attribute]
         assert storage.traits()["glean_signals"] == "lexical"
@@ -215,7 +215,7 @@ class TestRecords:
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(8, model="two"))
         result = await other.glean(query="alpha")
         [note] = [e for e in result.errors if e.severity == Severity.warning]
-        assert note.kind == VFSErrorKind.conflict and note.data is not None
+        assert note.kind == ErrorKind.conflict and note.data is not None
         assert note.data["reason"] == "stale_identity" and note.data["stored"] == "scripted/one@8"
         assert result.legs["vector"] is None and _paths(result) == ["/notes/one.md"]  # ty: ignore[unresolved-attribute]
         assert other.traits()["glean_signals"] == "hybrid"

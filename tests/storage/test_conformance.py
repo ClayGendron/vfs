@@ -38,7 +38,7 @@ from tests.support.storage_contract import StorageContract
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Observation
 from vfs.paths import Path
-from vfs.results import VFSErrorKind
+from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database.dialects import bulk_insert
@@ -252,7 +252,7 @@ class TestMSSQLTornRowRegression:
         async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
             result = await _one_increment_race(storage)
             assert result.success is False
-            assert [e.kind for e in result.errors] == [VFSErrorKind.conflict]
+            assert [e.kind for e in result.errors] == [ErrorKind.conflict]
             read = await storage.read(path=Path("/race.txt"), columns=frozenset({"content", "content_hash"}))
             after = read.observations[0]
             assert after.content == "rival"
@@ -332,7 +332,7 @@ async def _serialization_point_blocks_a_rival_topology_verb(env_var: str) -> Non
         rival_result = await asyncio.wait_for(tasks[0], timeout=60)
         assert victim.success is True, victim.errors
         assert rival_result.success is False
-        assert rival_result.errors[0].kind == VFSErrorKind.not_found
+        assert rival_result.errors[0].kind == ErrorKind.not_found
         assert (await storage.stat(path=Path("/y.txt"))).success is False
 
 

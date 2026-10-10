@@ -20,7 +20,7 @@ from tests.support.database_helpers import _SqliteError, _url
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
-from vfs.results import Severity, VFSErrorKind
+from vfs.results import ErrorKind, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
@@ -125,7 +125,7 @@ class TestReadFamily:
     async def test_read_on_a_directory_is_wrong_kind(self, storage: DatabaseStorage) -> None:
         result = await storage.read(path=Path("/docs"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].message == "Wrong kind: directory"
         assert result.errors[0].data == {"kind": "directory"}
 
@@ -134,7 +134,7 @@ class TestReadFamily:
         result = await storage.read(observations=targets)
         assert result.success is False
         assert [o.path for o in result.observations] == ["/docs/a.txt"]
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
         assert result.errors[0].path == "/missing.txt"
         assert result.errors[0].data is None  # the locus already names the row; no second entry
 
@@ -154,14 +154,14 @@ class TestReadFamily:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/ghost/deep/x.txt"))
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.not_found
+            assert result.errors[0].kind == ErrorKind.not_found
             assert result.errors[0].path == "/ghost"
 
     async def test_file_ancestor_classifies_wrong_kind_at_that_component(self, storage: DatabaseStorage) -> None:
         for verb in (storage.read, storage.stat, storage.ls, storage.tree):
             result = await verb(path=Path("/top.txt/deep/x.txt"))
             assert result.success is False
-            assert result.errors[0].kind == VFSErrorKind.wrong_kind
+            assert result.errors[0].kind == ErrorKind.wrong_kind
             assert result.errors[0].path == "/top.txt"
 
     async def test_sibling_misses_under_one_dead_ancestor_stay_distinct(self, storage: DatabaseStorage) -> None:
@@ -217,7 +217,7 @@ class TestReadFamily:
         storage = DatabaseStorage(url=_url(tmp_path))
         result = await storage.tree(path=Path("/"), max_depth=0)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.invalid
+        assert result.errors[0].kind == ErrorKind.invalid
         assert storage.mount_identity is None  # refused before first touch
         await storage.close()
 
@@ -647,17 +647,17 @@ class TestNamespaceScopes:
         # file — identical to descent anywhere else in the namespace.
         result = await storage.read(path=Path("/.vfs/trash/bucket/01ARZ/child"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.wrong_kind
+        assert result.errors[0].kind == ErrorKind.wrong_kind
         assert result.errors[0].path == "/.vfs/trash/bucket/01ARZ"
 
     async def test_trash_misses_classify_at_their_first_failing_component(self, storage: DatabaseStorage) -> None:
         # The standard descent ladder, not a uniform concealment shape:
         # each miss names its own first missing ancestor.
         under_real_bucket = await storage.stat(path=Path("/.vfs/trash/bucket/GHOST/x"))
-        assert under_real_bucket.errors[0].kind == VFSErrorKind.not_found
+        assert under_real_bucket.errors[0].kind == ErrorKind.not_found
         assert under_real_bucket.errors[0].path == "/.vfs/trash/bucket/GHOST"
         under_no_bucket = await storage.stat(path=Path("/.vfs/trash/NOBUCKET/x"))
-        assert under_no_bucket.errors[0].kind == VFSErrorKind.not_found
+        assert under_no_bucket.errors[0].kind == ErrorKind.not_found
         assert under_no_bucket.errors[0].path == "/.vfs/trash/NOBUCKET"
 
 
@@ -671,7 +671,7 @@ class TestReadFailureHandling:
             await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.stat(path=Path("/"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
         await storage.close()
 
@@ -717,7 +717,7 @@ class TestReadFailureHandling:
             await conn.exec_driver_sql("DROP TABLE vfs_entries")
         result = await storage.write(entries=[Entry(path=Path("/f.txt"), content="x")])
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].kind == ErrorKind.unavailable
         assert result.errors[0].retryable is True
         await storage.close()
 
@@ -726,7 +726,7 @@ class TestReadFailureHandling:
         result = await storage.grep(pattern="x")  # a stub verb still gates on first touch
         assert result.ops == ("grep",)
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.unavailable
+        assert result.errors[0].kind == ErrorKind.unavailable
         assert "First touch failed" in result.errors[0].message
         await storage.close()
 
@@ -783,7 +783,7 @@ class TestUnlandedVerbStubs:
             stale.reindex(),
         ):
             result = await call
-            assert result.errors[0].kind == VFSErrorKind.schema_mismatch
+            assert result.errors[0].kind == ErrorKind.schema_mismatch
         await stale.close()
 
     async def test_reads_with_no_targets_return_an_empty_success(self, tmp_path) -> None:
@@ -828,7 +828,7 @@ class TestUnicodeAndCollation:
     async def test_point_read_misses_on_case_difference(self, storage: DatabaseStorage) -> None:
         result = await storage.stat(path=Path("/dir/a.TXT"))
         assert result.success is False
-        assert result.errors[0].kind == VFSErrorKind.not_found
+        assert result.errors[0].kind == ErrorKind.not_found
 
 
 # ---------------------------------------------------------------------------
@@ -856,9 +856,9 @@ class TestBytesReads:
         rows, notes = render_notes([pending, cut, failed])
         assert rows == [pending, cut, failed]
         assert [(n.kind, n.severity, n.retryable, str(n.path)) for n in notes] == [
-            (VFSErrorKind.unavailable, Severity.warning, True, "/p.pdf"),
-            (VFSErrorKind.truncated, Severity.info, False, "/c.xlsx"),
-            (VFSErrorKind.unsupported, Severity.warning, False, "/f.pdf"),
+            (ErrorKind.unavailable, Severity.warning, True, "/p.pdf"),
+            (ErrorKind.truncated, Severity.info, False, "/c.xlsx"),
+            (ErrorKind.unsupported, Severity.warning, False, "/f.pdf"),
         ]
         assert "run reindex" in notes[0].message and "(encrypted)" in notes[2].message
         assert [n.data for n in notes] == [{"render_status": s} for s in ("pending", "truncated", "encrypted")]
@@ -878,7 +878,7 @@ class TestBytesReads:
         assert row.content is None and row.data is None
         assert (row.source, row.render_status) == ("bytes", "pending")
         assert "data" not in row.populated and "content" in row.populated
-        assert [(e.kind, e.severity) for e in default.errors] == [(VFSErrorKind.unavailable, Severity.warning)]
+        assert [(e.kind, e.severity) for e in default.errors] == [(ErrorKind.unavailable, Severity.warning)]
         projected = await storage.read(path=Path("/r.pdf"), columns=frozenset({"data", "content_hash"}))
         [row] = projected.observations
         assert row.data == body and row.content is None and projected.errors == []

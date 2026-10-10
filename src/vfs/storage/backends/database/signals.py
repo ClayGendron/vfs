@@ -32,7 +32,7 @@ from sqlalchemy import delete, insert, select, update
 from vfs.models import CONTENT_KINDS
 from vfs.models.edge import RESERVED_EDGE_TYPE
 from vfs.models.signals import NO_PARENT, centrality_prior
-from vfs.results import Result, ResultError, Severity, VFSErrorKind, classified
+from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import call_offloaded
@@ -229,7 +229,7 @@ async def signal_factors(
         explain[signal.name] = {"applied": False, "reason": reason}
         records.append(
             classified(
-                VFSErrorKind.unavailable,
+                ErrorKind.unavailable,
                 severity=Severity.warning,
                 detail=f"signal {signal.name!r} not applied: {reason}",
                 data={"leg": "signal", "signal": signal.name, "reason": reason},
