@@ -6,13 +6,13 @@ significance report.
 Set ``VFS_RANKING_REBASELINE=1`` to rewrite ``baselines.json`` from the
 current numbers and ``VFS_RANKING_REPIN=1`` to rewrite ``top10.json`` —
 each is a deliberate act recorded in the landing note of the spec that
-moved the number.
+moved the number. Both rewrite files that every test reads, so they need
+one process: run with ``-n 0``.
 """
 
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING, Final
 
 import pytest
@@ -24,7 +24,7 @@ from tests.ranking.driver import Loaded, bm25_run, glean_run, load_corpus
 from tests.ranking.embedders import HASH_DIMENSION, PIN_SENTENCE, POTION_MODEL, potion_embed
 from tests.ranking.merge import halves, merged_glean_run, naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
-from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin
+from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin, rewriting
 from tests.storage.database.test_signals import ENGINE_LEGS
 from tests.support.server_schemas import server_storage
 from vfs.base import VirtualFileSystem
@@ -49,7 +49,7 @@ def recorded() -> dict[str, dict[str, dict[str, float]]]:
 def gate(corpus: str, arm: str, numbers: dict[str, float]) -> None:
     """Assert the arm's nDCG@10 holds the recorded baseline; rebaseline on request."""
     baselines = recorded()
-    if os.environ.get("VFS_RANKING_REBASELINE"):
+    if rewriting("VFS_RANKING_REBASELINE"):
         baselines.setdefault(corpus, {})[arm] = {metric: round(value, 4) for metric, value in numbers.items()}
         BASELINES.write_text(json.dumps(baselines, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     baseline = baselines[corpus][arm]

@@ -103,4 +103,4 @@ jobs:
       - name: Conformance suite
         run: |
           export ${{ matrix.env_var }}="${{ matrix.url }}"
-          uv run pytest -m ${{ matrix.dialect }} --tb=short
+          uv run pytest -m ${{ matrix.dialect }} --tb=short -n 0

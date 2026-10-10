@@ -78,6 +78,7 @@ dev = [
     "ranx>=0.3.21",
     # the root conftest runs the README and docs fences through Sybil
     "sybil>=9",
+    "pytest-xdist>=3.6",
 ]
 docs = [
     "mkdocs-material>=9.0",
@@ -137,6 +138,8 @@ root = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Workers from the machine; the slow tier and the engine legs are selected in tests/conftest.py.
+addopts = "-n auto"
 asyncio_mode = "auto"
 norecursedirs = ["tests/fixtures", "tests2", "src2"]
 markers = [

@@ -483,18 +483,20 @@ class TestPatternFan:
         # A derived ext contradicting the caller's set is provably empty:
         # the arm never reaches SQL, and the live arm still serves.
         storage = DatabaseStorage(url=_url(tmp_path))
-        await _seed(storage, [("/a/x.py", "file", "x"), ("/b/y.txt", "file", "x")])
-        statements: list[str] = []
+        try:
+            await _seed(storage, [("/a/x.py", "file", "x"), ("/b/y.txt", "file", "x")])
+            statements: list[str] = []
 
-        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
-        def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            statements.append(statement)
+            @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+            def record(conn, cursor, statement, parameters, context, executemany) -> None:
+                statements.append(statement)
 
-        result = await storage.glob(patterns=("/a/**/*.py", "/b/**/*.txt"), ext=("py",))
-        assert [str(o.path) for o in result.observations] == ["/a/x.py"]
-        [fan] = [s for s in statements if "LIKE" in s]
-        assert ".txt" not in fan
-        await storage.close()
+            result = await storage.glob(patterns=("/a/**/*.py", "/b/**/*.txt"), ext=("py",))
+            assert [str(o.path) for o in result.observations] == ["/a/x.py"]
+            [fan] = [s for s in statements if "LIKE" in s]
+            assert ".txt" not in fan
+        finally:
+            await storage.close()
 
     async def test_multi_index_or_plan_survives_the_ext_facts(self, tmp_path) -> None:
         # The measured ~350x cliff: one conjunct beside the fan demotes

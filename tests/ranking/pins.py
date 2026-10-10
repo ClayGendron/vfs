@@ -34,7 +34,17 @@ TOP10_HYBRID: Final = VFS_NATIVE / "top10_hybrid.json"
 TOP10_MERGE: Final = VFS_NATIVE / "top10_merge.json"
 MERGE_MOUNTS: Final = ("/a", "/b")
 REPIN_VAR: Final = "VFS_RANKING_REPIN"
+WORKER_VAR: Final = "PYTEST_XDIST_WORKER"
 HYBRID_PIN_MODEL: Final = "hash/blake2b-tokens-bigrams@64"
+
+
+def rewriting(var: str) -> bool:
+    """Whether *var* asks to rewrite a recorded file; refused under xdist, where workers would race the write."""
+    if not os.environ.get(var):
+        return False
+    if os.environ.get(WORKER_VAR):
+        raise RuntimeError(f"{var} rewrites recorded files and needs one process: run pytest with -n 0")
+    return True
 
 
 async def ordered_top10(loaded: Loaded) -> dict[str, list[str]]:
@@ -59,7 +69,7 @@ async def assert_top10_pin(storage: DatabaseStorage) -> None:
     the hashing embedder)."""
     loaded = await load_corpus(storage, vfs_native())
     actual = await ordered_top10(loaded)
-    if os.environ.get(REPIN_VAR):
+    if rewriting(REPIN_VAR):
         TOP10.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")
     expected = json.loads(TOP10.read_text(encoding="utf-8"))
     assert actual == expected
@@ -68,7 +78,7 @@ async def assert_top10_pin(storage: DatabaseStorage) -> None:
         assert via_verb == expected
         return
     assert storage.embedder.model_id == HYBRID_PIN_MODEL, "the hybrid pin is recorded on the 64-d hashing embedder"
-    if os.environ.get(REPIN_VAR):
+    if rewriting(REPIN_VAR):
         TOP10_HYBRID.write_text(json.dumps(via_verb, indent=1) + "\n", encoding="utf-8")
     assert via_verb == json.loads(TOP10_HYBRID.read_text(encoding="utf-8"))
 
@@ -87,6 +97,6 @@ async def assert_merge_top10_pin(first: DatabaseStorage, second: DatabaseStorage
         qid: [path for path, _ in await merged_ranking(vfs, query, MERGE_MOUNTS, 10)]
         for qid, query in corpus.queries.items()
     }
-    if os.environ.get(REPIN_VAR):
+    if rewriting(REPIN_VAR):
         TOP10_MERGE.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")
     assert actual == json.loads(TOP10_MERGE.read_text(encoding="utf-8"))

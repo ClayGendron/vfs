@@ -11,7 +11,7 @@ paths are exactly what triggers the CI Tests job.
 
 | Tier | Command | Covers | When |
 | --- | --- | --- | --- |
-| 1 Inner loop | `uv run pytest --tb=short` (+ ruff/ty below) | one Python, sqlite | while iterating |
+| 1 Inner loop | `uv run pytest --tb=short` (+ ruff/ty below) | one Python, sqlite, parallel workers, the default tier | while iterating |
 | 2 CI parity | `scripts/ci.sh` | Python 3.11–3.14, lint, format, types, 100% coverage | before commit/push |
 | 3 Real engines | `db_test` skill | Postgres/MariaDB/MSSQL/Oracle in Docker | database-touching changes |
 
@@ -20,12 +20,20 @@ paths are exactly what triggers the CI Tests job.
 Runs in the project's main `.venv` on the default interpreter:
 
 ```sh
-uv run pytest --tb=short                    # full suite, sqlite backend
-uv run pytest tests/pattern_matching/ -q    # one area while iterating
+uv run pytest --tb=short                    # default tier, sqlite, one worker per core
+uv run pytest --slow --tb=short             # plus the slow tier (BEIR gates, 10k pins, memory conformance)
+uv run pytest tests/pattern_matching/ -q -n 0   # one area, serial: a few files are faster without workers
 uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run ty check src/ tests/
 ```
+
+`addopts` carries `-n auto` (pytest-xdist), so every invocation is parallel
+unless you pass `-n 0`. `tests/conftest.py` deselects the `slow` tier
+without `--slow`, and deselects each real-engine leg whose
+`VFS_TEST_<ENGINE>_URL` is unset, so a local summary line counts only what
+ran. The harness rewrite modes (`VFS_RANKING_REBASELINE`, `VFS_RANKING_REPIN`)
+refuse to run under workers; pass `-n 0` with them.
 
 Green here is *not* "green in CI": it exercises one Python version, and
 version-conditional behavior is real (e.g. the stdlib glob translators
@@ -43,8 +51,10 @@ same order, per matrix leg —
 2. `ruff check src/ tests/`
 3. `ruff format --check src/ tests/`
 4. `ty check src/ tests/` — **3.13 leg only**
-5. `pytest --tb=short` — on the **3.13 leg** with
-   `--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100`
+5. `pytest --tb=short` — on the **3.13 leg** with `--slow` and
+   `--cov --cov-report=term-missing --cov-report=xml --cov-fail-under=100`;
+   the docs fences run separately with `-n 0` (Sybil changes directory
+   per page)
 
 ```sh
 scripts/ci.sh              # full matrix: 3.11 3.12 3.13 3.14
@@ -82,10 +92,11 @@ never need Docker.
 
 ## Reading results
 
-- A healthy full-suite leg currently reports **~2276 passed, ~838
-  skipped** (skips are the engine legs and race tests — identical in
-  CI). A pass-count far below that means collection broke, not that the
-  tree got smaller.
+- A healthy default run reports **~3951 passed, 0 skipped** and a
+  `--slow` run **~3957 passed**; the engine legs are deselected, not
+  skipped, so they never appear in the count (set a `VFS_TEST_<ENGINE>_URL`
+  and they do). A pass-count far below that means collection broke, not
+  that the tree got smaller.
 - Coverage below 100 on the 3.13 leg is a hard failure in CI — cover the
   lines or justify a `pragma: no cover`; version-conditional code should
   prefer shapes that stay covered on 3.13 (a one-line ternary over an
