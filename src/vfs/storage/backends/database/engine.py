@@ -45,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
-from sqlalchemy import Engine, event, func, insert, select, text
+from sqlalchemy import Engine, event, func, insert, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -74,7 +74,7 @@ from vfs.storage.grants import LEVEL_RANK, POSTURE_LEVELS
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from sqlalchemy.engine import Dialect
+    from sqlalchemy.engine import Connection, Dialect
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -443,10 +443,11 @@ class EngineHost:
             # BEGIN IMMEDIATE) plus the declared topology-isolation pin.
             conn = await session.connection(execution_options=topology_execution_options(self.profile))
             await self._serialization_point(conn)
-            # DDL joins the serialized transaction where the engine keeps
-            # DDL transactional (SQLite/Postgres/MSSQL); elsewhere the
-            # unique-violation arbitration below remains the backstop.
-            await conn.run_sync(self.tables.metadata.create_all, checkfirst=True)
+            # An existing mount is verified, never repaired: its meta row is
+            # the contract. A fresh one is provisioned, DDL joining the
+            # serialized transaction where the engine keeps DDL transactional.
+            if not await conn.run_sync(self._has_meta_table):
+                await conn.run_sync(self.tables.metadata.create_all, checkfirst=True)
             row = (await conn.execute(version_and_identity)).one_or_none()
             if row is None:
                 try:
@@ -508,6 +509,10 @@ class EngineHost:
         # unique-violation arbitration.
         if self.profile.name == "postgresql":
             await conn.execute(select(func.pg_advisory_xact_lock(self._table_key)))
+
+    def _has_meta_table(self, connection: Connection) -> bool:
+        meta = self.tables.meta
+        return inspect(connection).has_table(meta.name, schema=meta.schema)
 
     def _adopt(self, row: Any) -> ResultError | None:
         """Verify the meta row and adopt its identities; a refusal names the mismatch.

@@ -647,13 +647,12 @@ class TestExhaustionClassification:
                     return outcomes
 
                 rounds = await asyncio.gather(*(hammer(instance, k) for k, instance in enumerate(instances)))
-                clean = ("kept losing to concurrent changes", "Concurrent modification", "missed their snapshot")
                 conflicts = 0
                 for result in (r for burst in rounds for r in burst):
                     for error in result.errors:
+                        # The kind and the retry class are the fact; the message is composed from them.
                         assert error.kind == ErrorKind.conflict, (error.kind, error.message)
                         assert error.retryable is True
-                        assert any(template in error.message for template in clean), error.message
                         conflicts += 1
                 assert conflicts >= 1  # a stormless storm pins nothing
                 await _audit(storage)

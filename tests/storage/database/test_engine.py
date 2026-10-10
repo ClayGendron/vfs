@@ -16,12 +16,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from sqlalchemy import create_engine, insert, select, text, update
+from sqlalchemy import create_engine, event, insert, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import QueuePool
 from ulid import ULID
 
 from tests.support.database_helpers import _fresh_url
+from vfs.models import Entry
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, ULID_LENGTH, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind
@@ -125,6 +126,32 @@ class TestFirstTouch:
         assert root["kind"] == "directory"
         assert root["parent_id"] is None
         await storage.close()
+
+    async def test_an_existing_mount_is_verified_never_repaired(self, tmp_path) -> None:
+        # The meta row is the contract: a reopened mount issues no DDL, and a
+        # table that went missing since is refused by the verb that needs it,
+        # like a schema-version mismatch, rather than silently recreated.
+        url = _fresh_url(tmp_path)
+        seeded = DatabaseStorage(url=url)
+        assert (await seeded.first_touch()).success is True
+        await seeded.close()
+        engine = create_async_engine(url)
+        async with engine.begin() as conn:
+            await conn.run_sync(build_vfs_tables().edges.drop)
+        await engine.dispose()
+        reopened = DatabaseStorage(url=url)
+        statements: list[str] = []
+
+        @event.listens_for(reopened._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append(statement.lstrip().upper())
+
+        assert (await reopened.first_touch()).success is True
+        assert not [s for s in statements if s.startswith("CREATE")]
+        written = await reopened.write(entries=[Entry(path=Path("/a.txt"), content="a")])
+        assert written.success is False
+        assert written.errors[0].kind == ErrorKind.unavailable
+        await reopened.close()
 
     async def test_is_idempotent(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_fresh_url(tmp_path))
