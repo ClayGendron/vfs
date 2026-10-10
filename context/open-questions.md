@@ -361,3 +361,11 @@
 - **Blocking:** nothing; the README borrows a file-backed engine. A host that hands vfs a shared-connection session factory (tests, demos) hits it.
 - **Options considered:** read the pool class off the borrowed factory's bind and serialize when it is a `StaticPool`, as the owned form does; refuse a borrowed `StaticPool` factory at construction with a classified reason; document the shape as unsupported in the `DatabaseStorage` docstring.
 - **Status:** open — small; a slice of spec 157 (provisioning for host apps) or a one-line spec of its own
+
+## Per-test CPU inflates 2× under ten xdist workers
+
+- **Asked:** 2026-10-10 by Claude while measuring `pytest-xdist` for spec 163 (memo `research/2026-10-10-the-test-suite-slice-by-slice.md` §3).
+- **Context:** The whole suite is 253s serial and ~100s at 10, 16 or 20 workers on the M1 Pro, with about 5 of 10 cores busy. Two subtrees at 1/5/10 workers show the same tests burning 2.2 to 2.8× the CPU time at ten workers that they burn at one. About 25s of that is per-worker startup; the rest is per-test inflation whose cause was not separated: performance versus efficiency cores, all-core clock, shared cache, or kernel wake-up latency on the aiosqlite thread hand-off (two wake-ups per statement, ~300k statements a run).
+- **Blocking:** nothing in spec 163; the statement-count levers help regardless. It decides which later lever helps xdist most (fewer statements per test versus fewer workers than cores).
+- **Options considered:** `py-spy` one worker at `-n 1` against `-n 10` and compare where the extra time lands; repeat the 1/5/10 probe on a Linux box with homogeneous cores; measure `-n 8` (performance cores only) against `-n 10`.
+- **Status:** open — a one-hour probe when spec 163's frame has landed

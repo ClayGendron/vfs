@@ -1,0 +1,9 @@
+tests/base n=1 wall=24.649083000 :: 636 passed in 23.02s
+tests/base n=2 wall=15.298450000 :: 636 passed in 14.00s
+tests/base n=5 wall=9.796643000 :: 636 passed in 8.56s
+tests/base n=10 wall=9.177007000 :: 636 passed in 8.13s
+tests/storage/database --ignore=tests/storage/database/test_rights.py n=1 wall=.944896000 :: E   ModuleNotFoundError: No module named 'vfs.backends'
+tests/storage/database --ignore=tests/storage/database/test_rights.py n=2 wall=.939955000 :: E   ModuleNotFoundError: No module named 'vfs.backends'
+tests/storage/database --ignore=tests/storage/database/test_rights.py n=5 wall=.894444000 :: E   ModuleNotFoundError: No module named 'vfs.backends'
+tests/storage/database --ignore=tests/storage/database/test_rights.py n=10 wall=.920766000 :: E   ModuleNotFoundError: No module named 'vfs.backends'
+done

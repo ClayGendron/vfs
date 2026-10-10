@@ -5,6 +5,25 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **163 drafted 2026-10-10 from the slice-by-slice memo, awaiting Clay's read** — the
+  one-minute test run. One serial run is 253s and ten xdist workers cap
+  at ~100s because the suite crosses the async hop ~300k times a run
+  (1,201 mounts provisioned at 94 statements each) and the cores
+  saturate. Three compounding parts: `pytest-xdist` with `-n auto` and
+  a real `slow` tier that CI runs (`--slow` on the 3.13 leg); template
+  databases provisioned once per process, module-scoped corpora and
+  worlds, a memoised grants oracle, tick-counting instead of sleeping;
+  and four `src/` changes — skip `create_all` on an existing mount,
+  cache `build_vfs_tables`, cache renderer generations, and move the
+  leaking `_BULK_STATEMENTS` cache onto the host (1.86M objects retained
+  after `tests/base` today). Takes four decisions in place of an ADR
+  (Clay): the tier is real, the conformance contract runs once by
+  default, the 10k pins stay 10k under `slow` with 2,500/2,000 siblings
+  by default, the guard touches only existing mounts. Memo
+  `research/2026-10-10-the-test-suite-slice-by-slice.md`, five parallel
+  measured investigations, every strategy timed before/after; two
+  product findings (glean's 1,000-candidate entry fetch and unconditional
+  preview; per-page INSERT compilation) recorded for their own specs.
 - **162 cut 2026-10-08 from ADR 074 (accepted); revised the same day after review** — trash as a tombstone
   on the row. Delete sets `deleted_at` and `trash_root_id` in place
   (one column write per row, chunked; no path rewrite, no posting

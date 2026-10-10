@@ -1,0 +1,53 @@
+docs=5183 queries=300 chunks=6324
+== scifact embedder=None ==  (wall, cpu)
+  parse                            wall    0.02s   0.2%   cpu    0.02s   0.2%
+  entries                          wall    0.07s   0.5%   cpu    0.07s   0.5%
+  write(batch=5000)                wall    1.42s   9.5%   cpu    1.40s   9.6%
+  reindex                          wall    2.03s  13.5%   cpu    2.00s  13.8%
+  path_of map                      wall    0.01s   0.1%   cpu    0.01s   0.1%
+  bm25_run (driver)                wall    2.22s  14.8%   cpu    2.05s  14.1%
+  glean_run (verb)                 wall    7.78s  51.8%   cpu    7.52s  51.7%
+  evaluate #1 (ranx, incl JIT)     wall    1.43s   9.5%   cpu    1.43s   9.8%
+  evaluate #2 (ranx warm)          wall    0.02s   0.1%   cpu    0.02s   0.2%
+  close                            wall    0.02s   0.2%   cpu    0.01s   0.1%
+  TOTAL                            wall   15.04s          cpu   14.55s
+docs=3633 queries=323 chunks=4454
+== nfcorpus embedder=None ==  (wall, cpu)
+  parse                            wall    0.03s   0.3%   cpu    0.03s   0.3%
+  entries                          wall    0.05s   0.5%   cpu    0.05s   0.6%
+  write(batch=5000)                wall    0.93s   9.7%   cpu    0.93s  10.1%
+  reindex                          wall    1.37s  14.2%   cpu    1.35s  14.7%
+  path_of map                      wall    0.01s   0.1%   cpu    0.01s   0.1%
+  bm25_run (driver)                wall    1.27s  13.1%   cpu    1.11s  12.1%
+  glean_run (verb)                 wall    4.39s  45.5%   cpu    4.11s  44.8%
+  evaluate #1 (ranx, incl JIT)     wall    1.57s  16.2%   cpu    1.54s  16.8%
+  evaluate #2 (ranx warm)          wall    0.02s   0.3%   cpu    0.03s   0.4%
+  close                            wall    0.02s   0.2%   cpu    0.01s   0.1%
+  TOTAL                            wall    9.67s          cpu    9.17s
+docs=200 queries=40 chunks=1540
+== vfs_native embedder=hash ==  (wall, cpu)
+  parse                            wall    0.03s   0.7%   cpu    0.02s   0.3%
+  entries                          wall    0.01s   0.2%   cpu    0.01s   0.2%
+  write(batch=5000)                wall    0.11s   2.5%   cpu    0.11s   1.7%
+  reindex                          wall    1.42s  31.2%   cpu    3.36s  52.5%
+  path_of map                      wall    0.00s   0.1%   cpu    0.00s   0.1%
+  bm25_run (driver)                wall    0.16s   3.4%   cpu    0.13s   2.1%
+  glean_run (verb)                 wall    1.29s  28.3%   cpu    1.24s  19.4%
+  evaluate #1 (ranx, incl JIT)     wall    1.47s  32.4%   cpu    1.46s  22.9%
+  evaluate #2 (ranx warm)          wall    0.04s   1.0%   cpu    0.05s   0.7%
+  close                            wall    0.01s   0.2%   cpu    0.01s   0.1%
+  TOTAL                            wall    4.55s          cpu    6.39s
+Fetching 10 files:   0%|          | 0/10 [00:00<?, ?it/s]Fetching 10 files: 100%|██████████| 10/10 [00:00<00:00, 2673.06it/s]
+docs=200 queries=40 chunks=1540
+== vfs_native embedder=potion ==  (wall, cpu)
+  parse                            wall    0.02s   0.3%   cpu    0.02s   0.2%
+  entries                          wall    0.01s   0.2%   cpu    0.01s   0.1%
+  write(batch=5000)                wall    0.13s   2.9%   cpu    0.12s   1.7%
+  reindex                          wall    1.42s  31.7%   cpu    3.96s  57.0%
+  path_of map                      wall    0.00s   0.1%   cpu    0.00s   0.1%
+  bm25_run (driver)                wall    0.18s   4.0%   cpu    0.15s   2.2%
+  glean_run (verb)                 wall    1.22s  27.3%   cpu    1.18s  17.0%
+  evaluate #1 (ranx, incl JIT)     wall    1.44s  32.2%   cpu    1.44s  20.8%
+  evaluate #2 (ranx warm)          wall    0.04s   1.0%   cpu    0.05s   0.7%
+  close                            wall    0.01s   0.2%   cpu    0.01s   0.1%
+  TOTAL                            wall    4.48s          cpu    6.94s

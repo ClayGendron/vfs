@@ -1,0 +1,45 @@
+.............ssss........                                                [100%]
+=============================== warnings summary ===============================
+tests/ranking/test_harness.py::TestFixture::test_the_snapshot_is_the_declared_shape
+  tests/ranking/test_harness.py:115: PytestWarning: The test <Function test_the_snapshot_is_the_declared_shape> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_the_snapshot_is_the_declared_shape(self, golden: Corpus) -> None:
+
+tests/ranking/test_harness.py::TestFixture::test_every_judgment_names_a_document_and_every_query_has_a_relevant_one
+  tests/ranking/test_harness.py:120: PytestWarning: The test <Function test_every_judgment_names_a_document_and_every_query_has_a_relevant_one> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_every_judgment_names_a_document_and_every_query_has_a_relevant_one(self, golden: Corpus) -> None:
+
+tests/ranking/test_harness.py::TestFixture::test_beir_loader_skips_when_the_cache_is_absent
+  tests/ranking/test_harness.py:126: PytestWarning: The test <Function test_beir_loader_skips_when_the_cache_is_absent> is marked with '@pytest.mark.asyncio' but it is not an async function. Please remove the asyncio mark. If the test is not marked explicitly, check for global marks applied via 'pytestmark'.
+    def test_beir_loader_skips_when_the_cache_is_absent(self, tmp_path: pathlib.Path, monkeypatch) -> None:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================== slowest durations ===============================
+7.02s call     tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_beir[scifact]
+5.80s setup    tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[scifact]
+5.33s call     tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[hash]
+4.95s call     tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[potion]
+4.03s call     tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_beir[nfcorpus]
+3.81s call     tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+3.68s setup    tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[nfcorpus]
+2.89s call     tests/ranking/test_harness.py::TestDeterminism::test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts
+2.28s call     tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_on_sqlite
+2.10s call     tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_in_memory
+1.98s call     tests/ranking/test_harness.py::TestSignalArms::test_the_path_shape_prior_is_recorded
+1.83s call     tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+1.82s call     tests/ranking/test_harness.py::TestSignalArms::test_the_centrality_prior_reads_the_extracted_links
+1.74s call     tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+1.37s setup    tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+1.32s setup    tests/ranking/test_harness.py::TestArms::test_the_merge_floors_are_recorded
+1.07s call     tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+0.55s call     tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[nfcorpus]
+0.46s call     tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_beir[scifact]
+0.33s call     tests/ranking/test_harness.py::TestArms::test_the_merge_floors_are_recorded
+0.23s call     tests/ranking/test_harness.py::TestArms::test_compare_reports_the_arms
+0.19s call     tests/ranking/test_harness.py::TestArms::test_the_uninformative_prior_control_is_recorded
+0.06s teardown tests/ranking/test_harness.py::TestArms::test_compare_reports_the_arms
+0.03s setup    tests/ranking/test_harness.py::TestFixture::test_the_snapshot_is_the_declared_shape
+0.01s teardown tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+0.01s setup    tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+
+(49 durations < 0.005s hidden.  Use -vv to show these durations.)
+21 passed, 4 skipped, 3 warnings in 56.69s

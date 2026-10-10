@@ -1,0 +1,11 @@
+base1 TestMemoryConformance 300 passed in 28.42s statements total=51026 in_first_touch=27918 protocol wall 28.06 protocol cpu 23.46  9.55 9.38 8.35
+tmpl1 TestMemoryConformance 300 passed in 24.58s statements total=30992 in_first_touch=7884 protocol wall 24.19 protocol cpu 20.93  8.61 9.17 8.31
+base1 TestSqliteConformance 300 passed in 33.18s statements total=50960 in_first_touch=27850 protocol wall 32.76 protocol cpu 25.99  8.27 8.98 8.27
+tmpl1 TestSqliteConformance 300 passed in 24.96s statements total=30926 in_first_touch=7816 protocol wall 24.59 protocol cpu 21.48  7.49 8.74 8.21
+base2 TestMemoryConformance 300 passed in 27.81s statements total=51026 in_first_touch=27918 protocol wall 27.40 protocol cpu 23.71  9.22 9.01 8.32
+tmpl2 TestMemoryConformance 300 passed in 25.44s statements total=30992 in_first_touch=7884 protocol wall 25.15 protocol cpu 21.24  14.82 10.59 8.93
+base2 TestSqliteConformance 300 passed in 37.91s statements total=50960 in_first_touch=27850 protocol wall 37.51 protocol cpu 31.96  13.44 10.78 9.09
+tmpl2 TestSqliteConformance 300 passed in 28.15s statements total=30926 in_first_touch=7816 protocol wall 27.70 protocol cpu 23.11  11.82 10.67 9.10
+tmplskip TestMemoryConformance 300 passed in 21.28s statements total=25076 in_first_touch=1968 protocol wall 20.95 protocol cpu 18.77  12.00 10.81 9.20
+tmplskip TestSqliteConformance 300 passed in 24.11s statements total=24988 in_first_touch=1878 protocol wall 23.84 protocol cpu 21.16  10.35 10.51 9.14
+done

@@ -1,0 +1,46 @@
+=== Python 3.11 ===
+PASS install (py3.11) (1s)
+PASS lint (py3.11) (0s)
+PASS format (py3.11) (0s)
+PASS tests (py3.11) (283s)
+=== Python 3.12 ===
+PASS install (py3.12) (0s)
+PASS lint (py3.12) (0s)
+PASS format (py3.12) (0s)
+PASS tests (py3.12) (284s)
+=== Python 3.13 ===
+PASS install (py3.13) (0s)
+PASS lint (py3.13) (0s)
+PASS format (py3.13) (0s)
+PASS types (py3.13) (0s)
+PASS tests+cov (py3.13) (549s)
+PASS docs examples (py3.13) (1s)
+PASS wheel size (3s)
+=== Python 3.14 ===
+PASS install (py3.14) (0s)
+PASS lint (py3.14) (0s)
+PASS format (py3.14) (0s)
+PASS tests (py3.14) (286s)
+=== Matrix summary ===
+=== Timings ===
+TIMING PASS|install (py3.11)|1
+TIMING PASS|lint (py3.11)|0
+TIMING PASS|format (py3.11)|0
+TIMING PASS|tests (py3.11)|283
+TIMING PASS|install (py3.12)|0
+TIMING PASS|lint (py3.12)|0
+TIMING PASS|format (py3.12)|0
+TIMING PASS|tests (py3.12)|284
+TIMING PASS|install (py3.13)|0
+TIMING PASS|lint (py3.13)|0
+TIMING PASS|format (py3.13)|0
+TIMING PASS|types (py3.13)|0
+TIMING PASS|tests+cov (py3.13)|549
+TIMING PASS|docs examples (py3.13)|1
+TIMING PASS|wheel size|3
+TIMING PASS|install (py3.14)|0
+TIMING PASS|lint (py3.14)|0
+TIMING PASS|format (py3.14)|0
+TIMING PASS|tests (py3.14)|286
+TIMING TOTAL|matrix|1408
+exit=0

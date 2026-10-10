@@ -1,0 +1,66 @@
+SLICE total 30.3s over 2380 tests (whole run measured 243.6s)
+
+BY PHASE
+  call        29.3s 96.5%
+  setup        1.0s  3.2%
+  teardown     0.1s  0.3%
+
+BY DIRECTORY
+     18.2s 60.1%  tests/base
+      6.5s 21.4%  tests/pattern_matching
+      2.6s  8.5%  tests
+      1.6s  5.3%  tests/models
+      0.8s  2.7%  tests/rendering
+      0.3s  1.0%  tests/storage
+      0.2s  0.6%  tests/embedding
+      0.1s  0.2%  tests/results
+      0.0s  0.1%  tests/ranking
+
+TOP 20 FILES (tests, setup/call/teardown)
+     5.5s 18.0% n=  47 mean= 116.4ms  s=0.0 c=5.4 t=0.0  tests/base/test_glob_namespace.py
+     5.1s 16.9% n= 211 mean=  24.2ms  s=0.0 c=5.1 t=0.0  tests/base/test_dispatch.py
+     3.9s 12.8% n= 139 mean=  28.0ms  s=0.5 c=3.4 t=0.0  tests/pattern_matching/test_matcher_parity.py
+     3.0s  9.9% n=  31 mean=  96.8ms  s=0.0 c=3.0 t=0.0  tests/base/test_grep_namespace.py
+     2.6s  8.6% n=  81 mean=  32.1ms  s=0.0 c=2.6 t=0.0  tests/pattern_matching/test_glob.py
+     1.9s  6.4% n=  54 mean=  35.9ms  s=0.0 c=1.9 t=0.0  tests/test_native.py
+     1.8s  6.1% n=  91 mean=  20.2ms  s=0.0 c=1.8 t=0.0  tests/base/test_mounts.py
+     1.6s  5.4% n=  77 mean=  21.3ms  s=0.0 c=1.6 t=0.0  tests/base/test_gates.py
+     0.7s  2.4% n=  33 mean=  22.1ms  s=0.0 c=0.7 t=0.0  tests/rendering/test_renderers.py
+     0.6s  1.9% n=  41 mean=  14.1ms  s=0.0 c=0.6 t=0.0  tests/models/test_lexical.py
+     0.5s  1.7% n=  72 mean=   7.4ms  s=0.0 c=0.5 t=0.0  tests/models/test_code_grams.py
+     0.5s  1.6% n=   1 mean= 490.0ms  s=0.0 c=0.5 t=0.0  tests/test_dependencies.py
+     0.5s  1.6% n=  23 mean=  20.9ms  s=0.4 c=0.1 t=0.0  tests/base/test_grant_routing.py
+     0.5s  1.6% n=  11 mean=  42.7ms  s=0.0 c=0.5 t=0.0  tests/base/test_glean_merge.py
+     0.3s  1.1% n=  18 mean=  18.3ms  s=0.0 c=0.3 t=0.0  tests/models/test_links.py
+     0.3s  1.0% n=   4 mean=  75.0ms  s=0.0 c=0.3 t=0.0  tests/storage/test_memory.py
+     0.2s  0.6% n=  15 mean=  12.0ms  s=0.0 c=0.2 t=0.0  tests/embedding/test_adapters.py
+     0.2s  0.5% n= 112 mean=   1.4ms  s=0.0 c=0.2 t=0.0  tests/base/test_authority.py
+     0.1s  0.3% n=  30 mean=   3.0ms  s=0.0 c=0.1 t=0.0  tests/rendering/test_markdown.py
+     0.1s  0.3% n=  60 mean=   1.5ms  s=0.1 c=0.0 t=0.0  tests/models/test_rows.py
+
+TOP 25 FUNCTIONS
+    2.60s  tests/pattern_matching/test_glob.py::TestTranslateParity::test_exhaustive_class_machinery_fuzz_stays_byte_identical
+    1.95s  tests/base/test_glob_namespace.py::test_mount_placement_is_invisible_to_patterns
+    1.26s  tests/base/test_grep_namespace.py::test_mount_placement_is_invisible_to_grep
+    1.04s  tests/pattern_matching/test_matcher_parity.py::TestEngineParity::test_budgeted_scans_match_unbudgeted_on_the_pure_engine
+    0.94s  tests/test_native.py::TestCandidateKernel::test_generated_ladders_match_the_oracle
+    0.60s  tests/base/test_gates.py::test_writable_mount_dispatches_every_mutation_once
+    0.58s  tests/models/test_lexical.py::TestTokenizer::test_output_is_identical_across_hash_seeds
+    0.55s  tests/rendering/test_renderers.py::TestXlsxRegions::test_a_large_sheet_is_one_region_and_a_sparse_one_many
+    0.53s  tests/test_native.py::TestLexicalParity::test_character_classes_are_the_generating_interpreters
+    0.53s  tests/pattern_matching/test_matcher_parity.py::TestEngineParity::test_bytes_bodies_match_text_bodies_on_both_engines
+    0.53s  tests/pattern_matching/test_matcher_parity.py::TestEngineParity::test_hits_and_counts_identical
+    0.52s  tests/pattern_matching/test_matcher_parity.py::TestEngineParity::test_the_split_path_honors_the_wall_mid_body
+    0.51s  tests/pattern_matching/test_matcher_parity.py::TestEngineParity::test_expiry_mid_body_returns_a_lawful_subset
+    0.51s  tests/base/test_grep_namespace.py::test_a_scoped_call_carries_only_its_own_op_and_renders_natively
+    0.50s  tests/pattern_matching/test_matcher_parity.py::TestLanguageGate::test_engine_side_refuses
+    0.49s  tests/test_dependencies.py::test_importing_every_vfs_module_never_loads_numpy
+    0.48s  tests/models/test_code_grams.py::TestTurkicIFold::test_every_verifier_case_orbit_pair_folds_identically
+    0.45s  tests/base/test_gates.py::test_gate_failures_carry_the_router_side_path
+    0.44s  tests/base/test_glob_namespace.py::test_brace_defect_refuses_naming_the_manufactured_arm
+    0.37s  tests/base/test_gates.py::test_read_only_mount_rejects_every_mutation
+    0.35s  tests/base/test_dispatch.py::test_ten_thousand_roots_stay_two_calls
+    0.33s  tests/models/test_links.py::TestKernelParity::test_the_kernel_matches_the_oracle_on_the_golden_corpus
+    0.29s  tests/base/test_glob_namespace.py::test_metachar_roots_serve_exactly_their_own_subtree
+    0.27s  tests/base/test_dispatch.py::test_cap_expansion_across_many_roots_stays_one_call
+    0.26s  tests/base/test_grep_namespace.py::test_ten_thousand_roots_stay_two_calls

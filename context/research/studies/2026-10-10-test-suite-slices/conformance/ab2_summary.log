@@ -1,0 +1,5 @@
+syncfull_base 300 passed in 27.76s protocol wall 27.66 protocol cpu 24.65  17.40 12.44 9.96
+syncoff 300 passed in 29.48s protocol wall 29.18 protocol cpu 26.14  17.63 13.07 10.29
+syncfull_base2 300 passed in 32.09s protocol wall 31.75 protocol cpu 28.16  13.17 12.47 10.18
+syncoff2 300 passed in 28.12s protocol wall 27.78 protocol cpu 24.10  12.16 12.31 10.20
+done

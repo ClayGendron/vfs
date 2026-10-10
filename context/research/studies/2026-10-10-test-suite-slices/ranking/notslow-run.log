@@ -1,0 +1,32 @@
+.........ssss........                                                    [100%]
+============================== slowest durations ===============================
+5.77s call     tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[potion]
+5.60s call     tests/ranking/test_harness.py::TestHybridArms::test_vector_only_and_fused_are_recorded[hash]
+3.60s call     tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+2.94s call     tests/ranking/test_harness.py::TestDeterminism::test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts
+2.79s call     tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+2.35s call     tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_on_sqlite
+2.21s call     tests/ranking/test_harness.py::TestDeterminism::test_the_hybrid_ordered_top10_pin_holds_in_memory
+2.18s call     tests/ranking/test_harness.py::TestSignalArms::test_the_centrality_prior_reads_the_extracted_links
+2.12s call     tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+2.10s call     tests/ranking/test_harness.py::TestSignalArms::test_the_path_shape_prior_is_recorded
+1.74s call     tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+1.41s call     tests/ranking/test_harness.py::TestArms::test_compare_reports_the_arms
+1.31s setup    tests/ranking/test_harness.py::TestArms::test_the_merge_floors_are_recorded
+1.27s setup    tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+1.27s call     tests/ranking/test_harness.py::TestArms::test_the_uninformative_prior_control_is_recorded
+0.29s call     tests/ranking/test_harness.py::TestArms::test_the_merge_floors_are_recorded
+0.20s setup    tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+0.02s teardown tests/ranking/test_harness.py::TestArms::test_the_router_merge_beats_the_floors
+0.01s setup    tests/ranking/test_harness.py::TestFixture::test_the_snapshot_is_the_declared_shape
+0.01s teardown tests/ranking/test_harness.py::TestArms::test_the_merge_floors_are_recorded
+0.01s teardown tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+0.01s teardown tests/ranking/test_harness.py::TestBaseline::test_bm25_holds_the_gate_on_vfs_native
+0.01s teardown tests/ranking/test_harness.py::TestArms::test_the_uninformative_prior_control_is_recorded
+0.01s teardown tests/ranking/test_harness.py::TestArms::test_compare_reports_the_arms
+0.01s teardown tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+0.01s setup    tests/ranking/test_harness.py::TestDeterminism::test_the_ordered_top10_pin_holds_on_sqlite
+0.01s setup    tests/ranking/test_harness.py::TestBaseline::test_glean_equals_the_bm25_baseline_on_vfs_native
+
+(36 durations < 0.005s hidden.  Use -vv to show these durations.)
+17 passed, 4 skipped, 4 deselected in 40.99s
