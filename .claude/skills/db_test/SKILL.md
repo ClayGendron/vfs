@@ -112,7 +112,7 @@ Each test runs in its own schema, so the four legs never
 collide, and each container is its own server — run them **at the
 same time**, not one after another (Clay, 2026-08-26): wall time is
 the slowest leg (~2.5 min, Oracle) instead of the sum (~7 min). The
-sqlite CI leg (`scripts/ci.sh 3.13`) is CPU-bound in one process while
+sqlite CI leg (`scripts/ci.sh`) is CPU-bound in one process while
 the legs mostly wait on their databases, so it runs alongside them.
 
 ```sh
@@ -120,7 +120,7 @@ the legs mostly wait on their databases, so it runs alongside them.
 ( VFS_TEST_MARIADB_URL=...  uv run pytest -m mariadb  -q > leg_mariadb.log  2>&1 ) &
 ( VFS_TEST_MSSQL_URL=...    uv run pytest -m mssql    -q > leg_mssql.log    2>&1 ) &
 ( VFS_TEST_ORACLE_URL=...   uv run pytest -m oracle   -q > leg_oracle.log   2>&1 ) &
-( scripts/ci.sh 3.13 > leg_ci.log 2>&1 ) &
+( scripts/ci.sh > leg_ci.log 2>&1 ) &
 wait; tail -n 1 leg_*.log
 ```
 

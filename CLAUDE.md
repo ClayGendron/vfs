@@ -107,10 +107,13 @@ Consequences that bind design work:
   Never assert on elapsed time, and never skip a test by hand where a
   marker and this hook can deselect it.
 - **Before any commit touching `src/`, `tests/`, `crates/`, or
-  `pyproject.toml`, run `scripts/ci.sh 3.13`** (the coverage leg — lint,
-  format, types, tests, 100% coverage, pure-Python engine), or the full
-  matrix `scripts/ci.sh` before a push. It mirrors the CI Tests job
-  exactly; green here means green there.
+  `pyproject.toml`, run `scripts/ci.sh`** — the Python 3.13 gate: lint,
+  format, types, tests under 100% coverage, the docs fences and the
+  wheel budget, about a minute warm. It mirrors the CI Tests job's
+  3.13 leg exactly; green here means green there. The other matrix
+  legs (3.11, 3.12, 3.14) are CI's job on every push, not a local
+  gate (Clay, 2026-10-10: they rerun the same tests and cost three
+  minutes); `scripts/ci.sh 3.14` reproduces one when CI goes red.
 - **The Rust engine** lives in `crates/vfs-core` (pyo3 binding behind its
   `python` cargo feature; maturin builds it into the wheel as
   `vfs._native`, fronted by the `vfs/native.py` seam). **The extension

@@ -155,9 +155,10 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/vfs"]
-# SQLAlchemy's asyncio layer runs sync code inside greenlets; without
-# greenlet tracing, coverage silently drops lines after switch points.
-concurrency = ["greenlet", "thread"]
+# The sys.monitoring core halves the run (101 s to 59 s) and keeps no per-frame
+# state, so it sees across SQLAlchemy's greenlet switches with no greenlet tracing.
+core = "sysmon"
+concurrency = ["thread"]
 omit = [
     "tests/*",
 ]

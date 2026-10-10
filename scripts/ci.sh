@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Local mirror of the CI "Tests" job (.github/workflows/test.yml): same steps,
-# same flags, same locked tool versions, same Python matrix. Green here means
-# green there (the only CI-exclusive step is the Codecov upload).
+# Local mirror of the CI "Tests" job (.github/workflows/test.yml): the same
+# steps with the same flags and the same locked tool versions. By default it
+# runs the one leg that carries every gate — Python 3.13 with lint, format,
+# types, tests under 100% coverage, the docs fences and the wheel budget —
+# in about a minute. The other matrix legs (3.11, 3.12, 3.14) rerun the same
+# tests to catch stdlib drift between Python versions; CI runs them on every
+# push, so locally they are opt-in, for reproducing a red CI leg.
 #
 # Usage:
-#   scripts/ci.sh              # full matrix: 3.11 3.12 3.13 3.14
-#   scripts/ci.sh 3.14         # one leg
-#   scripts/ci.sh 3.13 3.14    # any subset
+#   scripts/ci.sh              # the gate: Python 3.13
+#   scripts/ci.sh 3.14         # one other leg (reproducing a CI failure)
+#   scripts/ci.sh 3.11 3.12 3.13 3.14   # the whole CI matrix
 #
 # Each leg syncs an isolated environment under .venv-ci/<version> (the main
 # .venv is never touched), so warm re-runs skip straight to the checks.
@@ -16,7 +20,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 VERSIONS=("$@")
-[ ${#VERSIONS[@]} -eq 0 ] && VERSIONS=(3.11 3.12 3.13 3.14)
+[ ${#VERSIONS[@]} -eq 0 ] && VERSIONS=(3.13)
 COVERAGE_LEG=3.13
 WHEEL_BUDGET_MB=50  # half of PyPI's 100 MB file cap; publish.yml enforces the same budget
 
@@ -37,11 +41,14 @@ step() {
 
 # Build the real release wheel and hold it under the declared budget. Runs on
 # the coverage leg only (the wheel is abi3 — one artifact serves the matrix);
-# the CI twin of this gate lives in publish.yml, not the Tests job.
+# the CI twin of this gate lives in publish.yml, not the Tests job. The build
+# gets its own cargo target directory: sharing one with the per-leg sync made
+# each build evict the other's output, so this step recompiled the crate
+# (24 s) every run instead of reusing it (2 s).
 check_wheel_size() {
     local out="target/wheels-ci"
     rm -rf "$out"
-    uv build --wheel -o "$out" || return 1
+    CARGO_TARGET_DIR="target/wheel-size" uv build --wheel -o "$out" || return 1
     local whl size
     whl=$(echo "$out"/*.whl)
     size=$(wc -c < "$whl")
@@ -85,7 +92,7 @@ for line in "${summary[@]}"; do
     esac
 done
 if [ "$overall" -eq 0 ]; then
-    echo -e "${GREEN}${BOLD}All legs green — parity with the CI Tests job.${RESET}"
+    echo -e "${GREEN}${BOLD}All legs green — parity with the CI Tests job on these versions.${RESET}"
 else
     echo -e "${RED}${BOLD}RED — fix before committing or pushing.${RESET}"
 fi
