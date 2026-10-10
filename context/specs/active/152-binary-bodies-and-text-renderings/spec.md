@@ -3,8 +3,8 @@
 - **Status:** **slices A and B built, 2026-10-05 and 2026-10-06,
   awaiting Clay's review.** Slice A (bytes in and out) landed on
   `main` as `6db7053`; slice B (the renderer seam, the registry, the
-  four document renderers and the `render` stage of reindex) is in
-  the working tree. Slices C (images) and D (docs) are not started.
+  four document renderers and the `render` stage of reindex) landed
+  as `be504a3`. Slices C (images) and D (docs) are not started.
   Drafted 2026-10-05, the same day as the research memo it stands on,
   after Clay fixed the two forks the memo left to him: the file's
   bytes are versioned and are edited only by replacing them through

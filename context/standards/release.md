@@ -10,6 +10,49 @@ VFS publishes to PyPI as `vfs-py`. Releases are cut from `main` after CI is gree
 - Minor (`X.Y.Z` → `X.Y+1.0`): new public methods, new backends, new providers.
 - Major (`X.Y.Z` → `X+1.Y.Z`): breaking changes. (Pre-1.0, breaking changes still bump minor — but call them out clearly in the changelog.)
 
+## Before the first v2 release (verified 2026-10-08, from the dropped spec 158)
+
+No release is planned yet (Clay, 2026-10-08). When one is, these are
+the facts a reviewer established against `0760fe9` and PyPI, so the
+first run does not rediscover them:
+
+- **The seven-platform matrix in `publish.yml` has never run.** The
+  v0.0.22 publish used a two-job workflow; the matrix (manylinux and
+  musllinux on x86_64 and aarch64, macOS arm64 and x86_64, Windows
+  x64, one wheel per platform on `abi3-py311`, plus an sdist) was
+  added 2026-08-16 and `uv publish --trusted-publishing` on
+  2026-08-25. Add a `workflow_dispatch` trigger and dry-run every
+  leg from `main` before cutting a release.
+- **The macOS x86_64 runner is retired.** `publish.yml` pins
+  `macos-13`, which GitHub retired in December 2025; use
+  `macos-15-intel`.
+- **The workflow runs no tests and never checks the tag.** It trusts
+  `main` is green (step 2). Add a step that fails unless
+  `github.event.release.tag_name` equals `v` + the project version,
+  so a release cut before the bump commit cannot rebuild the old
+  number.
+- **musllinux wheels publish but do not install.** `sqlite-vec`, a
+  core dependency, ships no musl wheel and no sdist, so `pip install
+  vfs-py` on Alpine fails resolution whatever vfs publishes. Say so
+  in the README's install section.
+- **The sdist is not a slim-image path.** `pyproject.toml` admits
+  `maturin>=1.8,<2.0`; 1.8.0–1.8.3 do not bootstrap Rust, so raise
+  the floor to `maturin>=1.8.4`. The tree-sitter crates need a C
+  compiler regardless.
+- **`bump_version.py` touches two files and cannot emit a
+  prerelease.** It rewrites `pyproject.toml` and `src/vfs/__init__.py`
+  with a `\d+\.\d+\.\d+` pattern; `uv.lock` carries the version
+  too, so run `uv lock` and commit it. `crates/vfs-core/Cargo.toml`
+  is independent (maturin reads the project version) and its comment
+  still says `vfs._accel`.
+- **The changelog's `[Unreleased]` section is previous-generation
+  residue** (`VFSObject`, `DatabaseFileSystem`, story links). The
+  first v2 section is written fresh, not renamed.
+- **PyPI state.** `vfs-py` has 0.0.20, 0.0.21 and 0.0.22 only; 0.1.0
+  is unused. Pre-1.0, the v2 rebuild bumps minor to `0.1.0`.
+- **The README ships in the wheel**, so the docs fix (spec 153)
+  lands first.
+
 ## Step-by-step
 
 ### 0. Format before pushing — every time
