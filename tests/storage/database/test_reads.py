@@ -523,10 +523,14 @@ class TestPatternFan:
         assert not any("SCAN" in detail for detail in details), details
         await storage.close()
 
-    async def test_contract_scale_pattern_batch_chunks_within_budget(self, tmp_path) -> None:
-        # The scale row: 10k patterns in one call chunk at the measured
-        # 200-arm width — 50 fan statements, every one inside the
-        # engine's bind and depth caps, one session throughout.
+    @pytest.mark.parametrize(
+        "patterns, fan",
+        [pytest.param(2_000, 10, id="2000"), pytest.param(10_000, 50, id="10k", marks=pytest.mark.slow)],
+    )
+    async def test_contract_scale_pattern_batch_chunks_within_budget(self, tmp_path, patterns: int, fan: int) -> None:
+        # The scale row: thousands of patterns in one call chunk at the
+        # measured 200-arm width — one fan statement per chunk, every one
+        # inside the engine's bind and depth caps, one session throughout.
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/part00000/a.parquet", "file", "x")])
         checkouts = 0
@@ -541,11 +545,9 @@ class TestPatternFan:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append(statement)
 
-        patterns = tuple(f"/part{i:05}/**/*.parquet" for i in range(10_000))
-        result = await storage.glob(patterns=patterns)
+        result = await storage.glob(patterns=tuple(f"/part{i:05}/**/*.parquet" for i in range(patterns)))
         assert [str(o.path) for o in result.observations] == ["/part00000/a.parquet"]
-        fan = [s for s in statements if "LIKE" in s and s.startswith("SELECT")]
-        assert len(fan) == 50
+        assert len([s for s in statements if "LIKE" in s and s.startswith("SELECT")]) == fan
         assert checkouts == 1
         await storage.close()
 

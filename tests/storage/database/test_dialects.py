@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, insert, select
+from sqlalchemy import Column, Integer, MetaData, String, Table, event, insert, select
 from sqlalchemy.dialects import mssql as mssql_dialect
 from sqlalchemy.dialects import mysql as mysql_dialect
 from sqlalchemy.dialects import oracle as oracle_dialect
@@ -362,6 +362,24 @@ class TestLockRows:
 # ---------------------------------------------------------------------------
 
 
+# The declared contract is 10k rows in one call; the default run pins the
+# same paging at a size that still pages, and the slow tier pins the contract.
+BATCH_SIZES = [pytest.param(2_500, id="2500"), pytest.param(10_000, id="10k", marks=pytest.mark.slow)]
+
+
+def _count_inserts(storage: DatabaseStorage, table: str) -> Callable[[], int]:
+    """A counter of INSERT statements issued against *table* on *storage*'s engine."""
+    seen = 0
+
+    @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        nonlocal seen
+        if statement.lstrip().upper().startswith(f"INSERT INTO {table.upper()}"):
+            seen += 1
+
+    return lambda: seen
+
+
 class TestMembershipChunking:
     """No statement grows unboundedly with batch size — the ETL contract.
 
@@ -490,33 +508,39 @@ class TestMembershipChunking:
         assert (await storage.stat(path=Path("/dst"))).success is False
         await storage.close()
 
-    async def test_ten_thousand_entry_batch_round_trips(self, tmp_path) -> None:
+    @pytest.mark.parametrize("batch", BATCH_SIZES)
+    async def test_a_large_entry_batch_round_trips(self, tmp_path, batch: int) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
+        inserts = _count_inserts(storage, "vfs_entries")
         entries = [
-            Entry(path=Path(f"/lake/d{i // 500:02}/r{i:05}.json"), content=f'{{"row": {i}}}') for i in range(10_000)
+            Entry(path=Path(f"/lake/d{i // 500:02}/r{i:05}.json"), content=f'{{"row": {i}}}') for i in range(batch)
         ]
         written = await storage.write(entries=entries, parents=True)
         assert written.success is True, written.errors[:3]
         created = [o for o in written.observations if str(o.path).endswith(".json")]
-        assert len(created) == 10_000
+        assert len(created) == batch
         assert all(o.status == "created" for o in created)
+        assert inserts() >= 2  # the batch paged the bulk insert; one page would prove nothing
         stats = await storage.stat(observations=created)
         assert stats.success is True, stats.errors[:3]
-        assert len(stats.observations) == 10_000
+        assert len(stats.observations) == batch
         await storage.close()
 
-    async def test_ten_thousand_edge_batch_round_trips(self, tmp_path) -> None:
+    @pytest.mark.parametrize("batch", BATCH_SIZES)
+    async def test_a_large_edge_batch_round_trips(self, tmp_path, batch: int) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
+        inserts = _count_inserts(storage, "vfs_edges")
         entries = [Entry(path=Path("/hub.py"), content="hub")] + [
-            Entry(path=Path(f"/spokes/s{i:05}.py"), content=f"s{i}") for i in range(10_000)
+            Entry(path=Path(f"/spokes/s{i:05}.py"), content=f"s{i}") for i in range(batch)
         ]
         assert (await storage.write(entries=entries, parents=True)).success is True
         edges = [
-            Edge(source=Path("/hub.py"), target=Path(f"/spokes/s{i:05}.py"), edge_type="imports") for i in range(10_000)
+            Edge(source=Path("/hub.py"), target=Path(f"/spokes/s{i:05}.py"), edge_type="imports") for i in range(batch)
         ]
         created = await storage.mkedge(edges=edges)
         assert created.success is True, created.errors[:3]
-        assert len(created.observations) == 10_000
+        assert len(created.observations) == batch
+        assert inserts() >= 2  # the batch paged the bulk insert
         assert all(o.status == "created" for o in created.observations)
         touched = await storage.mkedge(edges=edges)
         assert touched.success is True, touched.errors[:3]

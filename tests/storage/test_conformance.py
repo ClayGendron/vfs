@@ -55,7 +55,16 @@ if TYPE_CHECKING:
     from vfs.results import Result
 
 
+@pytest.mark.slow
 class TestMemoryConformance(StorageContract, GrantsContract):
+    """The contract on the in-memory backend, in the slow tier.
+
+    It is the same ``DatabaseStorage`` over ``sqlite+aiosqlite:///:memory:``
+    with a static pool, and every question here is asked of the file-backed
+    class too; the default run proves the contract once and CI proves the
+    pool shape.
+    """
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[InMemoryStorage]:
         storage = InMemoryStorage()
