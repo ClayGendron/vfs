@@ -5,11 +5,16 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
-- **163 drafted 2026-10-10 from the slice-by-slice memo, awaiting Clay's read** — the
-  one-minute test run. One serial run is 253s and ten xdist workers cap
-  at ~100s because the suite crosses the async hop ~300k times a run
-  (1,201 mounts provisioned at 94 statements each) and the cores
-  saturate. Three compounding parts: `pytest-xdist` with `-n auto` and
+- **163 built 2026-10-10, awaiting Clay's review** — the one-minute
+  test run. Cut and landed the same day in six commits (2bf0138 …
+  b648082): the default run is **43 s** quiet (was 253 s serial, 101 s
+  at ten workers), 3,650 tests, no skips; the `--slow` coverage leg
+  103 s at 100%; all four real-engine legs green. Work-stealing turned
+  out to be the missing half of xdist (the memo measured it under load):
+  the plain scheduler left the ten-second rights sweeps on one worker at
+  the end. Statements per serial run 303k → 181k, cold mounts 1,201 →
+  519; the rest are in-memory mounts, which no file template can serve
+  (landing notes name the lever). Three compounding parts: `pytest-xdist` with `-n auto` and
   a real `slow` tier that CI runs (`--slow` on the 3.13 leg); template
   databases provisioned once per process, module-scoped corpora and
   worlds, a memoised grants oracle, tick-counting instead of sleeping;

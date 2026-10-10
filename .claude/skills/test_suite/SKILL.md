@@ -94,8 +94,8 @@ never need Docker.
 
 ## Reading results
 
-- A healthy default run reports **~3951 passed, 0 skipped** and a
-  `--slow` run **~3957 passed**; the engine legs are deselected, not
+- A healthy default run reports **~3650 passed, 0 skipped** in about
+  45 s on a ten-core laptop, and a `--slow` run **~3959 passed**; the engine legs are deselected, not
   skipped, so they never appear in the count (set a `VFS_TEST_<ENGINE>_URL`
   and they do). A pass-count far below that means collection broke, not
   that the tree got smaller.

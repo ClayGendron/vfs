@@ -1,9 +1,14 @@
 # 163 — The one-minute test run: parallel workers, a `slow` tier, and 300,000 fewer statements
 
-- **Status:** draft, cut 2026-10-10 from the slice-by-slice memo; awaiting
-  Clay's read. Three decisions are taken inside the spec rather than in an
-  ADR (Clay, 2026-10-10: "no need for an ADR"); they are listed under
-  *Decisions this spec takes* so they can be overturned in one place.
+- **Status:** **built 2026-10-10, awaiting Clay's review** — all six
+  slices landed as six commits the same day the spec was cut (2bf0138,
+  740718e, cee25f8, 6c6f343, 21a9cad, b648082); the default run is 43 s
+  quiet, the slow-tier coverage leg 103 s at 100%, and the four real-engine
+  legs green. See *Landing notes* for the measurements, the deviations and
+  the one acceptance item not met. The decisions below were taken inside
+  the spec rather than in an ADR (Clay, 2026-10-10: "no need for an ADR")
+  and are listed under *Decisions this spec takes* so they can be
+  overturned in one place.
 - **Date:** 2026-10-10
 - **Owner:** Clay Gendron
 - **Kind:** test infrastructure (pytest configuration, fixtures, the
@@ -293,3 +298,75 @@ several.
    of acceptance 7.
 6. **Tiers**: 5a, 5b. Re-measure acceptance 1 and 4; write the landing
    notes with the before/after table; update `STATUS.md`.
+
+## Landing notes (2026-10-10)
+
+Six commits, one per slice, each green on its own (ruff, format, ty, the
+default run, the `--slow` coverage leg at 100%); the real-engine legs ran
+on slices 4 and 5 together. Every number is from Clay's M1 Pro, quiet.
+
+| Measure | Before | After |
+|---|---|---|
+| default run, wall | 253 s serial; 101 s at ten workers | **42.8 / 43.1 / 51.9 s** (three runs, the first after a venv sync) |
+| tests in the default run | 3,957 (plus 1,347 engine-leg skips) | 3,650 selected, 0 skipped |
+| `--slow` coverage leg | 549 s serial | 103 s, 3,959 passed, 100% |
+| CPU per default run | 244 s | 258 s across 7 cores |
+| SQL statements per serial run | ~303,000 | 180,962 |
+| mounts provisioned from nothing | 1,201 | 519 |
+| aiosqlite threads leaked | intermittent warning | 0 (thread-watch plugin over the whole suite) |
+| real-engine legs | — | Postgres 335, MariaDB 327 (+8 capability skips), MSSQL 336, Oracle 331 passed |
+
+**What the memo had wrong.** Work-stealing is not a no-op: the memo's
+97 s reading was taken under investigator load. Sampling a quiet
+ten-worker run showed the last twenty seconds on one worker, and
+`--dist worksteal` took 78–82 s to 57–59 s on the slice-1 tree. It is in
+the default options.
+
+**Deviations from the scope.**
+
+- *2b, the memory conformance template.* Not applied. The measured
+  variant reached into aiosqlite's private connection attributes to run
+  the `backup` API, and the class moved to the slow tier in slice 6, so
+  it bought three seconds of CI time. The file-backed template landed.
+- *1d.* `-p no:xdist` makes the `-n auto` default an unrecognised option;
+  the serial form is `-n 0`, used in `scripts/ci.sh`, the workflow and
+  the skill.
+- *1e.* The thread warning's cause was three executor-ownership tests
+  that race a verb against `close()`; the connection the verb re-minted
+  belonged to the disposed pool and was collected after the loop closed.
+  They now close, collect and yield while the loop lives. The autouse
+  disposer also widened from `InMemoryStorage` to every
+  `DatabaseStorage`.
+- *3d.* The tick tests are stricter than "count ticks during a hop": the
+  blocking double waits from its worker thread until the loop's turn
+  counter moves, so a hop that ran inline cannot pass, and the test
+  asserts the hop count. The two queue-wait budget tests drive the
+  offload module's clock from the job that holds the pool, so the budget
+  is an exact expected number rather than a bound.
+- *4b.* The family cache is a bounded LRU (64 shapes), not an unbounded
+  `cache`: a host placing tenants in their own schemas would otherwise
+  hold every family forever. The pin that two mounts never share schema
+  objects, from the original row definitions, became a cross-schema pin.
+- *4d.* The bulk-statement cache stays on the module; its key is now the
+  table's schema, name and column-type signature (strings only), which
+  bounds it by distinct shapes and retains no metadata. A pin asserts
+  two mounts of one shape add nothing and that no key holds a table.
+- *A spec-154 leftover.* The hot-row storm race test on MSSQL and Oracle
+  still matched message templates spec 154 retired; it asserts the kind
+  and retry class now. It skips on SQLite, which is why 154's landing
+  did not see it.
+
+**Acceptance.** Items 1, 2, 3, 5, 6, 7, 8, 9 and 10 are met as written.
+**Item 4 is not met**: 180,962 statements and 519 cold mounts against
+the 120,000 and 200 the spec projected. Every remaining cold mount is an
+`InMemoryStorage` (`:memory:`), which no file copy can serve: 155 in the
+rights replays, 107 in `test_dispatch.py`, 63 in `test_glob_namespace.py`,
+and the rest across `tests/base`. The lever is a process-level template
+restored through SQLite's `backup` API into the memory connection at
+first touch, inside `InMemoryStorage`, which means touching aiosqlite's
+connection internals or adding a seam for it; it is a src design choice
+and is left for Clay. The wall-clock goal does not need it.
+
+**Still open.** Why per-test CPU inflates under ten workers
+(`open-questions.md`); the MariaDB leg's 48 pooled-connection warnings
+in the hot-row storm test, which predate this spec.
