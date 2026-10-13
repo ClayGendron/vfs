@@ -119,23 +119,25 @@ class TestForwardOrdering:
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
-    async def test_write_under_a_restoring_trash_parent_never_tears(self, env_var: str) -> None:
-        # The restore carrier: the victim writes under the trash-side
-        # address while the rival restores it back to its original site.
+    async def test_a_revive_racing_a_restore_leaves_one_live_row(self, env_var: str) -> None:
+        # The victim writes at a deleted file's path (the revive) while the
+        # rival restores it mid-window: one row, live once, never torn.
         async with server_storage(env_var) as storage:
-            assert (await storage.mkdir(path=Path("/d"), parents=True)).success
-            deleted = await storage.delete(path=Path("/d"))
-            assert deleted.success is True
-            trash_dir = deleted.observations[0].trash_path
-            assert trash_dir is not None
+            assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="old")], parents=True)).success
+            assert (await storage.delete(path=Path("/d/f.txt"))).success is True
 
-            handler, rival_results = _self_clearing("write:before-apply", lambda: storage.restore(path=Path("/d")))
+            handler, rival_results = _self_clearing(
+                "write:before-apply", lambda: storage.restore(path=Path("/d/f.txt"))
+            )
             with seams.installed("write:before-apply", handler):
-                victim = await storage.write(entries=[Entry(path=Path(f"{trash_dir}/late.txt"), content="mine")])
+                victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")])
             assert rival_results and rival_results[0].success is True
-            assert victim.success is False
-            assert {e.kind for e in victim.errors} <= _RACE_KINDS
-            assert (await storage.stat(path=Path(f"{trash_dir}/late.txt"))).success is False
+            # The guard flipped: the redrive overwrote the restored row, or refused honestly.
+            if not victim.success:
+                assert {e.kind for e in victim.errors} <= _RACE_KINDS
+            body = (await storage.read(path=Path("/d/f.txt"))).observations[0].content
+            assert body == ("mine" if victim.success else "old")
+            assert (await storage.ls(path=Path("/.vfs/trash"))).observations == []
             await _audit(storage)
 
 
@@ -232,13 +234,6 @@ class TestReverseOrdering:
     async def test_delete_recollects_a_child_committed_post_collect(self, env_var: str) -> None:
         async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
-            # Pre-mint the trash chain: a first-ever delete creates /.vfs
-            # and bumps the root row, and on MSSQL's locking READ
-            # COMMITTED that uncommitted root lock parks every rival
-            # write's snapshot read — the staged interleaving is only
-            # reachable in the steady state, so stage it there.
-            assert (await storage.write(entries=[Entry(path=Path("/sacrifice.txt"), content="x")])).success
-            assert (await storage.delete(path=Path("/sacrifice.txt"))).success
 
             handler, rival_results = _self_clearing(
                 "delete:post-collect",
@@ -247,12 +242,10 @@ class TestReverseOrdering:
             with seams.installed("delete:post-collect", handler):
                 victim = await storage.delete(path=Path("/d"))
             assert rival_results and rival_results[0].success is True
-            # The guard flipped, the verb redrove, and the re-collection
-            # carried the late child into trash with its parent.
+            # The guard flipped, the verb redrove, and the cascade marked
+            # the late child with its parent.
             assert victim.success is True, victim.errors
-            trash_dir = victim.observations[0].trash_path
-            assert trash_dir is not None
-            assert (await storage.stat(path=Path(f"{trash_dir}/late.txt"))).success is True
+            assert (await storage.stat(path=Path("/.vfs/trash/d/late.txt"))).success is True
             assert (await storage.stat(path=Path("/d/late.txt"))).success is False
             await _audit(storage)
 
@@ -283,10 +276,6 @@ class TestReverseOrdering:
             assert (
                 await storage.write(entries=[Entry(path=Path("/d/sub/keep.txt"), content="x")], parents=True)
             ).success
-            # Steady-state staging: pre-mint the trash chain (see the
-            # depth-1 twin for the MSSQL locking-RC rationale).
-            assert (await storage.write(entries=[Entry(path=Path("/sacrifice.txt"), content="x")])).success
-            assert (await storage.delete(path=Path("/sacrifice.txt"))).success
 
             handler, rival_results = _self_clearing(
                 "delete:post-collect",
@@ -296,9 +285,7 @@ class TestReverseOrdering:
                 victim = await storage.delete(path=Path("/d"))
             assert rival_results and rival_results[0].success is True
             assert victim.success is True, victim.errors
-            trash_dir = victim.observations[0].trash_path
-            assert trash_dir is not None
-            assert (await storage.stat(path=Path(f"{trash_dir}/sub/new.txt"))).success is True
+            assert (await storage.stat(path=Path("/.vfs/trash/d/sub/new.txt"))).success is True
             assert (await storage.stat(path=Path("/d/sub/new.txt"))).success is False
             await _audit(storage)
 
@@ -462,7 +449,7 @@ class TestGhostRefusal:
 
 class TestAddressRaceClassification:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
-    async def test_restore_losing_the_address_classifies_exists(self, env_var: str) -> None:
+    async def test_restore_losing_to_a_revive_classifies_exists(self, env_var: str) -> None:
         async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
             assert (await storage.delete(path=Path("/d/f.txt"))).success

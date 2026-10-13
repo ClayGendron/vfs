@@ -38,7 +38,7 @@ from ulid import ULID
 
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.paths import Path, is_trash_path
+from vfs.paths import TRASH_ROOT, Path
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -90,7 +90,7 @@ from vfs.storage.backends.database.indexing import (
     release_reindex_lease,
     with_notes,
 )
-from vfs.storage.backends.database.labels import Relabel, Relabeller, labels_for
+from vfs.storage.backends.database.labels import Relabel, Relabeller
 from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.render import (
@@ -113,7 +113,6 @@ from vfs.storage.backends.database.rights import (
     add_member_rows,
     denied,
     grant_rows,
-    judged_path,
     list_grants,
     posture_refusal,
     remove_member_rows,
@@ -141,6 +140,7 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
+    from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -151,7 +151,6 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind
     from vfs.storage import ResolvedPair
     from vfs.storage.backends.database.rights import Resolution
-    from vfs.storage.backends.database.topology import RestoreLookup, RestoreSource
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
 
@@ -725,43 +724,36 @@ class DatabaseStorage:
             return []
 
         async def permit(
-            session: AsyncSession, target: Path, lookup: RestoreLookup, resolved: RestoreSource | ResultError
+            session: AsyncSession, target: Path, row: RowMapping | None, verdict: ResultError | None
         ) -> ResultError | None:
             """The caller's verdict on one target, worded from the path it sent.
 
-            The trash row is judged by its origin with the label it kept,
-            and a restore never mints an owner, so its owner may put back
-            what it deleted. A row the caller cannot see is answered as
-            the gate answers any target it cannot act on — absent, or
-            denied when it is a directory on the road; a trash-side
-            address whose original parent it cannot see is absent too.
-            The ladder's own refusals stand only once the caller may see
-            everything they name. The destination is judged under the
-            posture rows, as a creation there would be.
+            The tombstoned row is judged at its own path with the label
+            it kept, and a restore never mints an owner, so its owner may
+            put back what it deleted. A row the caller cannot see is
+            answered as the gate answers any target it cannot act on —
+            absent, or denied when it is a directory on the road through
+            the trash view. The ladder's own verdict stands only once the
+            caller may see the row it names.
             """
             assert checks is not None
             if checks.whole:
                 return None
-            row = lookup.row
             if row is None or not checks.view.admits(row):
-                road = row is not None and row["kind"] == "directory" and await checks.view.road(session, [row["path"]])
+                road = (
+                    row is not None
+                    and row["kind"] == "directory"
+                    and await checks.view.road(session, [row["path"]], trashed=row["deleted_at"] is not None)
+                )
                 return denied(target) if road else await checks.missing(session, target)
-            refused = checks.row(target, judged_path(row), row["owner_id"], row["everyone_level"], "read_write")
+            refused = checks.row(target, row["path"], row["owner_id"], row["everyone_level"], "read_write")
             if refused is None and row["kind"] == "directory":
                 beneath = await checks.subtrees(session, [Path._brand(row["path"])], "read_write")
                 refused = denied(target) if beneath else None
-            if refused is not None:
-                return refused
-            parent = lookup.parent
-            unseen = parent is None or not checks.view.admits(parent)
-            if is_trash_path(target) and row["original_parent_id"] is not None and unseen:
+            if refused is None and verdict is not None and verdict.path != target:
+                # The ladder named an ancestor: it is worded over what the caller may see.
                 return await checks.missing(session, target)
-            if isinstance(resolved, ResultError):
-                return None
-            host = self._host
-            dest = str(resolved.dest)
-            labels = await labels_for(session, host.tables, host.profile, host.membership_budget, [dest])
-            return checks.row(resolved.dest, dest, row["owner_id"], labels[dest], "read_write")
+            return refused
 
         return await self._execute_topology(
             "restore",
@@ -790,6 +782,9 @@ class DatabaseStorage:
                 return [checks]
             if checks.whole:
                 return []
+            if path == TRASH_ROOT:
+                # The retention arm may destroy a deleted row anywhere: it needs write over the whole mount.
+                return [denied(path)] if await checks.subtrees(session, [ROOT], "read_write") else []
             if refused := await checks.targets(session, [path], "modify"):
                 return refused
             return await checks.subtrees(session, [path], "read_write")

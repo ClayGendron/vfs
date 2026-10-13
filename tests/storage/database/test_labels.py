@@ -85,10 +85,8 @@ def test_the_relabel_renders_each_dialects_measured_form(
     assert "LIKE" not in sql
     # The text spellings carry the ranges as one bound value; the rest bind through Core.
     assert set(params) == ({"rank", "pairs"} if profile.name in ("mssql", "mariadb") else set())
-    # The live form keeps to rows with no origin; the trashed form seeks the origin alone.
-    assert "origin_path IS NULL" in sql and sql.count("origin_path") == 1
-    trashed = str(_relabel_opens(ENTRY, profile, 1, OPENS, trashed=True)[0].compile(dialect=dialect))
-    assert "IS NULL" not in trashed and "origin_path > " in trashed and "origin_path < " in trashed
+    # One form: a deleted row is relabelled where it sits.
+    assert "origin_path" not in sql and "deleted_at" not in sql
 
 
 async def test_a_batch_takes_its_labels_from_the_deepest_covering_posture(storage: InMemoryStorage) -> None:
@@ -113,9 +111,8 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
     result = await storage.posture(path=Path("/d"), posture="open", authority=SYSTEM)
     assert result.success is True
     # /d itself, its five files, and nothing under the deeper posture: one
-    # point, one range, each in its live and trashed form, one chunk after
-    # the transaction that wrote the row.
-    assert (result.model_extra or {})["relabel"] == {"rows": 6, "statements": 4, "transactions": 1}
+    # point, one range, one chunk after the transaction that wrote the row.
+    assert (result.model_extra or {})["relabel"] == {"rows": 6, "statements": 2, "transactions": 1}
     host = storage._host
     relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
     async with host.session_factory() as session:

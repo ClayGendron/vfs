@@ -130,9 +130,11 @@ class TestWriteMechanics:
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
-        # Fetch, guarded update, the two body deletes + content insert — the
-        # update is attributed from its own statement, so no read-back appears.
-        assert len(mutations()) == 5, mutations()
+        # Fetch, guarded update, the version mint (the revision read, the
+        # body read, the version insert), the two body deletes + content
+        # insert — the update is attributed from its own statement, so no
+        # read-back appears.
+        assert len(mutations()) == 8, mutations()
         await storage.close()
 
     async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
@@ -300,44 +302,17 @@ class TestWriteMechanics:
 
 
 class TestTrashWritability:
-    """Trash is an ordinary write target: standard gates, no trash-specific arm."""
+    """The trash view is read-only grammar: nothing is written into it; meta paths beside it write as ever."""
 
-    async def test_write_into_trash_mints_the_bucket_chain_and_reads_back(self, tmp_path) -> None:
+    async def test_nothing_is_written_into_the_trash_view(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        target = Path("/.vfs/trash/2026-07-18-10/x.txt")
-        written = await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
-        assert written.success is True
-        assert written.observations[0].status == "created"
-        assert (await storage.read(path=target)).observations[0].content == "x"
-        bucket = (await storage.stat(path=target.parent_dir)).observations[0]
-        assert bucket.kind == "directory"
-        listing = await storage.ls(path=target.parent_dir)
-        assert [o.path for o in listing.observations] == [str(target)]
-        await storage.close()
-
-    async def test_mkdir_and_edit_under_trash_take_the_ordinary_paths(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
-        bucket = Path("/.vfs/trash/2026-07-18-10")
-        assert (await storage.mkdir(path=bucket, parents=True)).success is True
-        target = bucket / "x.txt"
-        await storage.write(entries=[Entry(path=target, kind="file", content="old text")])
-        edited = await storage.edit(path=target, edits=[EditOperation(old="old", new="new")])
-        assert edited.success is True
-        assert (await storage.read(path=target)).observations[0].content == "new text"
-        await storage.close()
-
-    async def test_trash_writes_fail_through_the_standard_error_arms(self, tmp_path) -> None:
-        storage = DatabaseStorage(url=_url(tmp_path))
-        target = Path("/.vfs/trash/2026-07-18-10/x.txt")
-        await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
-        taken = await storage.write(entries=[Entry(path=target, kind="file", content="y")], overwrite=False)
-        assert taken.errors[0].kind == ErrorKind.exists
-        through_file = await storage.mkdir(path=target / "sub", parents=True)
-        assert through_file.errors[0].kind == ErrorKind.wrong_kind
-        assert through_file.errors[0].path == str(target)
-        orphan = Entry(path=Path("/.vfs/trash/GHOST/y.txt"), kind="file", content="y")
-        no_parents = await storage.write(entries=[orphan])
-        assert no_parents.errors[0].kind == ErrorKind.not_found
+        for target in (Path("/.vfs/trash"), Path("/.vfs/trash/x.txt"), Path("/.vfs/trash/d/y.txt")):
+            written = await storage.write(entries=[Entry(path=target, kind="file", content="x")], parents=True)
+            assert written.success is False
+            assert written.errors[0].kind == ErrorKind.invalid and written.errors[0].path == target
+            made = await storage.mkdir(path=target, parents=True)
+            assert made.success is False and made.errors[0].kind == ErrorKind.invalid
+        assert (await storage.stat(path=Path("/.vfs"))).success is False
         await storage.close()
 
     async def test_meta_paths_beside_trash_still_write(self, tmp_path) -> None:

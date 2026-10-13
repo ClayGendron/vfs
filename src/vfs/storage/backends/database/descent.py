@@ -17,12 +17,16 @@ subtree ``LIKE`` — ``escape=`` is always explicit, and the helper owns
 the ROOT branch, where naive prefix composition would produce ``//%``.
 
 :func:`liveness_filters` is the one-scope namespace filter enumeration
-verbs apply: the ``/.vfs`` meta subtree is excluded from default-scope
-enumeration, and a directly-addressed target inside it bypasses the
-exclusion. Trash is an ordinary subtree under that meta scope — a
-deleted file's original path reads as missing because the reparent
-rewrote its path cache (stable-node-identity), not because any filter
-hides the trash side.
+verbs apply: the tombstone term first — a deleted row stays at its own
+path with ``deleted_at`` set, and every live enumeration carries
+``deleted_at IS NULL``, every trash-view enumeration its negation —
+then the ``/.vfs`` meta subtree, excluded from default-scope
+enumeration unless the target is anchored inside it. A point verb
+fetches without the term and classifies a tombstoned row as absent
+through :func:`classify_miss`: ``not_found`` carrying the trashed hint
+(:func:`trashed_hint`), so an agent knows ``restore`` applies, and a
+tombstoned ancestor is ``not_found`` at that component for every
+parent gate.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from datetime import datetime
 
     from sqlalchemy import ColumnElement, FromClause, Table
     from sqlalchemy.engine import RowMapping
@@ -46,6 +51,12 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
 
 LIKE_ESCAPE: Final = "\\"
+
+# A tombstoned row's refusal carries these so an agent knows ``restore`` applies.
+TRASHED_KEY: Final = "vfs.trashed"
+DELETED_AT_KEY: Final = "vfs.deleted_at"
+# A restore aimed inside a tombstoned tree names the root that restores it.
+TRASH_ROOT_KEY: Final = "vfs.trash_root"
 
 
 # ---------------------------------------------------------------------------
@@ -56,29 +67,56 @@ LIKE_ESCAPE: Final = "\\"
 async def classify_misses(
     session: AsyncSession, entry: Table, targets: Sequence[Path], profile: DialectProfile, membership_budget: int
 ) -> list[ResultError]:
-    """Classify every missed *target*; one chunked ancestor query serves the batch."""
-    ancestors = {ancestor for target in targets for ancestor in ancestor_chain(target)}
+    """Classify every missed *target*; one chunked query of the targets and their ancestors serves the batch.
+
+    A tombstoned row reads as absent: at the leaf the miss is
+    ``not_found`` with the trashed hint, and a tombstoned ancestor is
+    ``not_found`` at that component with the hint — no verb reaches a
+    tombstoned row through its path, and ``restore`` is the answer.
+    """
     kinds: dict[str, str] = {}
-    for chunk in chunked(sorted(ancestors), membership_budget):
-        stmt = select(entry.c.path, entry.c.kind).where(membership(entry.c.path, chunk, profile))
-        kinds.update({row.path: row.kind for row in await session.execute(stmt)})
-    return [classify_miss(target, kinds) for target in targets]
+    tombstones: dict[str, datetime] = {}
+    for chunk in chunked(sorted(targets_with_ancestors(targets)), membership_budget):
+        stmt = select(entry.c.path, entry.c.kind, entry.c.deleted_at).where(membership(entry.c.path, chunk, profile))
+        for row in await session.execute(stmt):
+            if row.deleted_at is None:
+                kinds[row.path] = row.kind
+            else:
+                tombstones[row.path] = row.deleted_at
+    return [classify_miss(target, kinds, tombstones) for target in targets]
 
 
-def classify_miss(target: Path, kinds: Mapping[str, str]) -> ResultError:
-    """The descent ladder against an already-fetched ``path → kind`` map.
+def classify_miss(
+    target: Path, kinds: Mapping[str, str], tombstones: Mapping[str, datetime] | None = None
+) -> ResultError:
+    """The descent ladder against an already-fetched ``path → kind`` map of live rows.
 
     The pure half of :func:`classify_misses`, for callers that classify
     against a pinned snapshot rather than live state — a first failing
     boundary in the ancestor chain wins, then the leaf's own miss.
+    *tombstones* names the tombstoned rows the caller may learn about,
+    ``path → deleted_at``; a miss at one of them carries the hint.
     """
+    found = tombstones or {}
     for ancestor in ancestor_chain(target):
         kind = kinds.get(ancestor)
         if kind is None:
-            return classified(ErrorKind.not_found, ancestor, target=target)
+            return tombstone_miss(ancestor, found.get(ancestor), target=target)
         if kind != "directory":
             return wrong_kind(kind, ancestor, target=target)
-    return classified(ErrorKind.not_found, target)
+    return tombstone_miss(target, found.get(target))
+
+
+def tombstone_miss(path: Path, deleted_at: datetime | None, *, target: Path | None = None) -> ResultError:
+    """``not_found`` at *path* — with the trashed hint when a tombstoned row sits there."""
+    if deleted_at is None:
+        return classified(ErrorKind.not_found, path, target=target)
+    return classified(ErrorKind.not_found, path, target=target, data=trashed_hint(deleted_at))
+
+
+def trashed_hint(deleted_at: datetime) -> dict[str, object]:
+    """The fields a refusal at a tombstoned row carries: the flag and the time of the delete."""
+    return {TRASHED_KEY: True, DELETED_AT_KEY: deleted_at.isoformat()}
 
 
 async def miss_errors(
@@ -89,7 +127,7 @@ async def miss_errors(
     profile: DialectProfile,
     membership_budget: int,
 ) -> dict[Path, ResultError]:
-    """Descent-classified errors for each *target* absent from *found*, keyed by target."""
+    """Descent-classified errors for each *target* absent from *found* — the live rows — keyed by target."""
     misses = [target for target in dict.fromkeys(targets) if str(target) not in found]
     return dict(zip(misses, await classify_misses(session, entry, misses, profile, membership_budget), strict=True))
 
@@ -164,14 +202,18 @@ def descendant_filter(entry: Table, root: str, profile: DialectProfile) -> Colum
     return entry.c.path.like(escape_like(root, profile) + "/%", escape=LIKE_ESCAPE)
 
 
-def liveness_filters(entry: Table, profile: DialectProfile, *, include_meta: bool) -> list[ColumnElement[bool]]:
-    """Enumeration-scope predicates: meta hidden unless anchored inside it."""
-    if include_meta:
-        return []
-    return [
-        entry.c.path != METADATA_ROOT,
-        ~descendant_filter(entry, METADATA_ROOT, profile),
-    ]
+def liveness_filters(
+    entry: Table, profile: DialectProfile, *, include_meta: bool, trashed: bool = False
+) -> list[ColumnElement[bool]]:
+    """Enumeration-scope predicates: the tombstone term, then meta hidden unless anchored inside it.
+
+    *trashed* flips the term for the trash view, which enumerates the
+    tombstoned rows alone; the meta exclusion keeps its meaning either way.
+    """
+    terms: list[ColumnElement[bool]] = [entry.c.deleted_at.is_not(None) if trashed else entry.c.deleted_at.is_(None)]
+    if not include_meta:
+        terms += [entry.c.path != METADATA_ROOT, ~descendant_filter(entry, METADATA_ROOT, profile)]
+    return terms
 
 
 def escape_like(text: str, profile: DialectProfile) -> str:

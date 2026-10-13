@@ -1,25 +1,25 @@
-"""Edge-row maintenance for ``DatabaseStorage`` — the fs mirror, the
-authored-edge cascade, and reindex re-convergence.
+"""Edge-row maintenance for ``DatabaseStorage`` — the fs mirror and
+reindex re-convergence.
 
 One reserved-type ``"fs"`` edge row per non-root entry, ``(parent →
 entry)``, minted and maintained inside the same transactions that mutate
-the namespace: creates insert beside their segment postings, a move (and
-delete's reparent into trash, which rides the same shape) repoints the
-one moved root's row by id, a copy mints rows for its fresh ids, and the
-purge arm already deletes every edge touching a destroyed id. The mirror
-follows ``parent_id`` everywhere — trash included — so the invariant is
+the namespace: creates insert beside their segment postings, a move
+repoints the one moved root's row by id, a copy mints rows for its fresh
+ids, and the purge arm already deletes every edge touching a destroyed
+id. The mirror follows ``parent_id`` everywhere, so the invariant is
 uniform: every entry with a parent has exactly one fs in-edge naming it.
 ``parent_id`` is authoritative; on any disagreement the fs rows are
 wrong.
 
-Authored edges (every non-``fs`` row) die in exactly two ways: ``rmedge``
-removes them by triple, or an endpoint entry is deleted — soft delete
-included. Delete's cascade removes the trashed subtree's authored rows
-in both directions; restore brings entries back with authored edges
-gone, by design. ``mkedge`` resolves its endpoints under row locks, so
-a rival delete serializes behind the insert and no verb ever lands an
-edge on a trashed entry; a stray minted at the row layer is reclaimed
-by reindex, loudly.
+A delete moves nothing — the row stays at its path with a tombstone —
+so the fs mirror needs no repoint and authored edges need no cascade:
+an edge whose endpoint is tombstoned is hidden with it by the liveness
+term every edge reader carries, and it returns with ``restore`` or a
+revive. Authored edges (every non-``fs`` row) die in exactly two ways:
+``rmedge`` removes them by triple, or the purge destroys an endpoint.
+``mkedge`` resolves its endpoints among the live rows under row locks,
+so a rival delete serializes behind the insert and no verb lands an
+edge on a tombstoned entry.
 
 The reindex verb re-converges the fs rows to ``parent_id`` — the
 segment-postings discipline: :func:`collect_edge_drift` diffs from a
@@ -28,8 +28,7 @@ while the row still holds the parent the delta was computed from (the
 row is locked for the check), and every applied repair surfaces as a
 warning — drift means a namespace verb failed its maintenance, and that
 bug must surface. Edge rows naming an endpoint with no entry row at all
-are reclaimed the same pass, as are authored rows touching a trashed
-entry — each guarded so a racing restore wins. The collect pass holds the corpus's ids in
+are reclaimed the same pass. The collect pass holds the corpus's ids in
 memory — the same whole-corpus profile as the segment pass, acknowledged
 rather than capped; streamed merge passes are the future direction.
 """
@@ -44,8 +43,8 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
-from vfs.paths import is_trash_path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.storage.backends.database.descent import classify_misses
 from vfs.storage.backends.database.dialects import bulk_insert, chunked, statement_budget
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
@@ -77,7 +76,7 @@ _SCAN_YIELD_ROWS = 1024
 
 
 # ---------------------------------------------------------------------------
-# Write-path maintenance — the fs mirror and the authored-edge cascade
+# Write-path maintenance — the fs mirror
 # ---------------------------------------------------------------------------
 
 
@@ -110,25 +109,6 @@ async def repoint_fs_row(session: AsyncSession, edges: Table, entry_id: str, new
         .values(source_id=new_parent_id)
     )
     await session.execute(stmt)
-
-
-async def delete_authored_edges(
-    session: AsyncSession, edges: Table, profile: DialectProfile, membership_budget: int, ids: Iterable[str]
-) -> None:
-    """Remove every authored (non-fs) edge touching *ids*, both directions.
-
-    Delete's cascade: a trashed entry keeps its fs mirror row (it still
-    has a parent — the bucket) and loses every authored edge. Two
-    single-list deletes per chunk, like the purge arm — one OR'd
-    statement would carry the chunk's binds twice.
-    """
-    for chunk in chunked(sorted(set(ids)), membership_budget):
-        await session.execute(
-            delete(edges).where(membership(edges.c.source_id, chunk, profile), edges.c.edge_type != RESERVED_EDGE_TYPE)
-        )
-        await session.execute(
-            delete(edges).where(membership(edges.c.target_id, chunk, profile), edges.c.edge_type != RESERVED_EDGE_TYPE)
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +145,8 @@ async def mkedge_rows(
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
-    errors = [classified(ErrorKind.not_found, endpoint) for endpoint in _missing_endpoints(edges, ids)]
-    if errors:
+    if missing := _missing_endpoints(edges, ids):
+        errors = await classify_misses(session, tables.entry, missing, profile, membership_budget)
         return Result(ops=("mkedge",), errors=errors)
     existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
     creates: list[dict[str, object]] = []
@@ -270,19 +250,14 @@ class FsDelta:
 
 @dataclass
 class EdgeRebuildState:
-    """Carry-over between the reindex edge phases' separate transactions.
-
-    ``strays`` maps an authored edge row's id to the trashed endpoint
-    ids it was recorded against — the repair pass's guard facts.
-    """
+    """Carry-over between the reindex edge phases' separate transactions."""
 
     deltas: list[FsDelta] = field(default_factory=list)
     dangling: list[int] = field(default_factory=list)
-    strays: dict[int, set[str]] = field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
-        return not self.deltas and not self.dangling and not self.strays
+        return not self.deltas and not self.dangling
 
 
 async def collect_edge_drift(session: AsyncSession, tables: VFSTables, state: EdgeRebuildState) -> Result:
@@ -292,18 +267,14 @@ async def collect_edge_drift(session: AsyncSession, tables: VFSTables, state: Ed
     recorded with the parent it was computed from, which becomes the
     repair pass's guard; edge rows of any type naming an endpoint with
     no entry row are recorded as dangling (their guard is that absence,
-    permanent — an entry id never returns); authored rows touching a
-    trashed entry are recorded as strays with the trashed ids as their
-    guard — the endpoint locks make a stray a mint-site bug.
+    permanent — an entry id never returns). A tombstoned endpoint is an
+    entry like any other here: its edges wait with it for the restore.
     """
     entry, edges = tables.entry, tables.edges
     parents: dict[str, str | None] = {}
-    trashed: set[str] = set()
-    entry_scan = select(entry.c.entry_id, entry.c.parent_id, entry.c.path).execution_options(yield_per=_SCAN_YIELD_ROWS)
+    entry_scan = select(entry.c.entry_id, entry.c.parent_id).execution_options(yield_per=_SCAN_YIELD_ROWS)
     async for row in await session.stream(entry_scan):
         parents[row.entry_id] = row.parent_id
-        if is_trash_path(row.path):
-            trashed.add(row.entry_id)
     held: dict[str, list[tuple[int, str]]] = {}
     edge_scan = select(edges.c.id, edges.c.source_id, edges.c.target_id, edges.c.edge_type).execution_options(
         yield_per=_SCAN_YIELD_ROWS
@@ -313,8 +284,6 @@ async def collect_edge_drift(session: AsyncSession, tables: VFSTables, state: Ed
             state.dangling.append(row.id)
         elif row.edge_type == RESERVED_EDGE_TYPE:
             held.setdefault(row.target_id, []).append((row.id, row.source_id))
-        elif row.source_id in trashed or row.target_id in trashed:
-            state.strays[row.id] = {eid for eid in (row.source_id, row.target_id) if eid in trashed}
     for entry_id, parent_id in parents.items():
         rows = held.get(entry_id, [])
         wrong = [row_id for row_id, source_id in rows if parent_id is None or source_id != parent_id]
@@ -332,30 +301,20 @@ async def repair_edge_drift(
     The guard re-read locks the entry rows (:func:`~vfs.storage.backends.database.membership.locked_lookup`), so a rival
     topology verb serializes against this repair instead of interleaving
     with it. A delta whose row now names a different parent — or whose
-    row is gone — is skipped, and a stray whose recorded endpoints were
-    all restored is skipped too: the rival's synchronous maintenance is
-    the truth. Every applied repair surfaces as a warning: drift is a
+    row is gone — is skipped: the rival's synchronous maintenance is the
+    truth. Every applied repair surfaces as a warning: drift is a
     maintenance bug being surfaced, never silently absorbed.
     """
     entry, edges = tables.entry, tables.edges
-    current: dict[str, tuple[str | None, str]] = {}
-    guarded = {delta.entry_id for delta in state.deltas} | {eid for ids in state.strays.values() for eid in ids}
+    current: dict[str, str | None] = {}
+    guarded = {delta.entry_id for delta in state.deltas}
     for chunk in chunked(sorted(guarded), membership_budget):
-        guard = locked_lookup(
-            entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.parent_id, entry.c.path], profile
-        )
-        current.update({row.entry_id: (row.parent_id, row.path) for row in await session.execute(guard)})
+        guard = locked_lookup(entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.parent_id], profile)
+        current.update({row.entry_id: row.parent_id for row in await session.execute(guard)})
     confirmed = [
-        delta for delta in state.deltas if delta.entry_id in current and current[delta.entry_id][0] == delta.parent_id
+        delta for delta in state.deltas if delta.entry_id in current and current[delta.entry_id] == delta.parent_id
     ]
-    # A recorded endpoint that vanished entirely reads as still-dead: the
-    # purge that removed it removed the edge row too, and the id never returns.
-    strays = [
-        row_id
-        for row_id, endpoints in state.strays.items()
-        if any(eid not in current or is_trash_path(current[eid][1]) for eid in endpoints)
-    ]
-    doomed = [row_id for delta in confirmed for row_id in delta.wrong_row_ids] + state.dangling + strays
+    doomed = [row_id for delta in confirmed for row_id in delta.wrong_row_ids] + state.dangling
     for chunk in chunked(doomed, membership_budget):
         await session.execute(delete(edges).where(membership(edges.c.id, chunk, profile)))
     additions = [fs_row(delta.parent_id, delta.entry_id) for delta in confirmed if delta.missing and delta.parent_id]
@@ -364,8 +323,6 @@ async def repair_edge_drift(
     warnings = [_drift_warning(delta) for delta in confirmed]
     if state.dangling:
         warnings.append(_dangling_warning(len(state.dangling)))
-    if strays:
-        warnings.append(_stray_warning(len(strays)))
     return Result(ops=("reindex",), errors=warnings)
 
 
@@ -383,21 +340,20 @@ async def _endpoint_ids(
     *,
     lock: bool = False,
 ) -> dict[str, str]:
-    """``path → entry id`` for every distinct endpoint in the batch.
+    """``path → entry id`` for every distinct live endpoint in the batch.
 
-    Trashed rows are unaddressable through here by construction: their
-    paths are rewritten under the reserved trash scope, which the
-    ``Edge`` model already refuses as an endpoint. With *lock* the
-    resolve is also the liveness proof: the rows stay locked until the
-    caller's transaction commits, so a rival delete cannot trash an
-    endpoint inside the window — it serializes behind the commit, and
-    its cascade then sweeps whatever landed here.
+    A tombstoned row at an endpoint's path reads as absent: no verb
+    lands an edge on it, and the one it has waits for the restore. With
+    *lock* the resolve is also the liveness proof: the rows stay locked
+    until the caller's transaction commits, so a rival delete cannot
+    tombstone an endpoint inside the window — it serializes behind the
+    commit.
     """
     entry = tables.entry
     paths = sorted({str(edge.source) for edge in edges} | {str(edge.target) for edge in edges})
     found: dict[str, str] = {}
     for chunk in chunked(paths, membership_budget):
-        columns = [entry.c.path, entry.c.entry_id]
+        columns = [entry.c.path, entry.c.entry_id, entry.c.deleted_at]
         if lock:
             # Sorted paths order the locks; a deadlock against a rival's
             # claim order classifies retryable and rides the retry channel.
@@ -405,7 +361,7 @@ async def _endpoint_ids(
         else:
             stmt = select(*columns).where(membership(entry.c.path, chunk, profile))
         result = await session.execute(stmt)
-        found.update({row.path: row.entry_id for row in result})
+        found.update({row.path: row.entry_id for row in result if row.deleted_at is None})
     return found
 
 
@@ -592,14 +548,4 @@ def _dangling_warning(count: int) -> ResultError:
         detail=detail,
         severity=Severity.warning,
         data={"dangling": count},
-    )
-
-
-def _stray_warning(count: int) -> ResultError:
-    detail = f"reindex reclaimed {count} authored edge row(s) touching trashed entries"
-    return classified(
-        ErrorKind.internal,
-        detail=detail,
-        severity=Severity.warning,
-        data={"strays": count},
     )

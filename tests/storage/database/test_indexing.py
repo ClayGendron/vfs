@@ -294,10 +294,8 @@ class TestFlagAlgebra:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         assert (await storage.reindex()).success is True
         assert await _flags(storage, "/a.txt") == (True, True)
-        deleted = await storage.delete(path=Path("/a.txt"))
-        trash_path = deleted.observations[0].trash_path
-        assert trash_path is not None
-        assert await _flags(storage, str(trash_path)) == (True, False)
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
+        assert await _flags(storage, "/a.txt") == (True, False)
         await storage.close()
 
     async def test_delete_reindex_restore_stays_greppable_on_both_tiers(self, tmp_path) -> None:
@@ -306,12 +304,10 @@ class TestFlagAlgebra:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         assert (await storage.reindex()).success is True
-        deleted = await storage.delete(path=Path("/a.txt"))
-        trash_path = deleted.observations[0].trash_path
-        assert trash_path is not None
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="other stuff")])
-        assert (await storage.reindex()).success is True  # a rebuild without the trashed row
-        assert (await storage.restore(path=trash_path)).success is True
+        assert (await storage.reindex()).success is True  # a rebuild without the deleted row
+        assert (await storage.restore(path=Path("/a.txt"))).success is True
         assert await _flags(storage, "/a.txt") == (True, False)  # pending — the scan side serves
         found = await storage.grep(pattern="needle")
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
@@ -325,13 +321,11 @@ class TestFlagAlgebra:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         assert (await storage.reindex()).success is True
-        deleted = await storage.delete(path=Path("/a.txt"))
-        trash_path = deleted.observations[0].trash_path
-        assert trash_path is not None
+        assert (await storage.delete(path=Path("/a.txt"))).success is True
         assert (await storage.reindex()).success is True
-        assert (await storage.grep(pattern="needle")).observations == []  # default scope hides trash
-        found = await storage.grep(pattern="needle", globs=(str(trash_path),))
-        assert [str(o.path) for o in found.observations] == [str(trash_path)]
+        assert (await storage.grep(pattern="needle")).observations == []  # default scope hides the deleted
+        found = await storage.grep(pattern="needle", globs=("/.vfs/trash/a.txt",))
+        assert [str(o.path) for o in found.observations] == ["/a.txt"]
         await storage.close()
 
     async def test_copy_onto_an_occupant_leaves_its_coverage_intact(self, tmp_path) -> None:

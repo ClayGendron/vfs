@@ -51,15 +51,14 @@ rows' own paths do not already print. A write under a road-only
 directory is refused on the directory, before the target name is
 looked up, so the refusal never depends on what hides there.
 
-A trashed row is judged by its origin. Delete reparents a row under the
-trash root and records the path it was deleted from as ``origin_path``;
-the row keeps its label, and the caller's own pieces and owner pieces
-are matched against that origin instead of the trash address
-(:func:`judged_path`). So a row nobody but its owner could see stays
-that way in the trash, the holder of a grant on its old folder can
-still restore it, and a grant on the trash subtree itself reaches no
-trashed row. Only rows under the trash root carry an origin, so every
-read scoped elsewhere is unchanged.
+A deleted row stays at its path with a tombstone, so permissions never
+notice a delete: the row is judged at its own path by the label and the
+pieces it already has. A row nobody but its owner could see stays that
+way in the trash, the holder of a grant on its folder can still restore
+it, and nothing reaches a tombstoned row through the ``/.vfs/trash``
+view that could not reach it live. A tombstoned row the caller may see
+answers ``not_found`` with the trashed hint; one it may not see answers
+as any hidden row does — absent, with no hint.
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ from sqlalchemy import and_, delete, insert, or_, select, text, update
 
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, GROUP_NAME_PREFIX, SYSTEM_NAME
 from vfs.models.rows import MAX_PRINCIPAL_ID_LENGTH
-from vfs.paths import ROOT, Path, on_trash_chain
+from vfs.paths import ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
@@ -91,7 +90,7 @@ from vfs.storage.backends.database.labels import (
     posture_rows,
 )
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.ranges import judged_hole_free, visible_entries
+from vfs.storage.backends.database.ranges import hole_free, visible_entries
 from vfs.storage.backends.database.revision import (
     bump_revision,
     principal_revision,
@@ -136,7 +135,7 @@ entry ceiling binds first for ordinary callers and the byte budget for
 heavy ones.
 """
 
-RIGHTS_FIELDS: Final[frozenset[str]] = frozenset({"owner_id", "everyone_level", "origin_path"})
+RIGHTS_FIELDS: Final[frozenset[str]] = frozenset({"owner_id", "everyone_level"})
 """The entry columns every row a view judges must carry beside its path."""
 
 RESERVED_PRINCIPALS: Final[frozenset[str]] = frozenset({EVERYONE_NAME, SYSTEM_NAME, ANONYMOUS_NAME})
@@ -369,23 +368,18 @@ def visibility_clauses(
 # ---------------------------------------------------------------------------
 
 
-def judged_path(mapping: RowMapping) -> str:
-    """The path a row's rights are judged by: its origin when it is trashed, else its own."""
-    return mapping["origin_path"] or mapping["path"]
-
-
 def judged_columns(entry: Table) -> list[Column[Any]]:
-    """The columns a row the descent ladder judges carries: its path and kind, and the rights fields."""
-    return [entry.c.path, entry.c.kind, *(entry.c[field] for field in sorted(RIGHTS_FIELDS))]
+    """The columns a row the descent ladder judges carries: its path, kind and tombstone, and the rights fields."""
+    return [entry.c.path, entry.c.kind, entry.c.deleted_at, *(entry.c[field] for field in sorted(RIGHTS_FIELDS))]
 
 
 class Visibility:
     """What one read call may see: its rights, the road beneath them, and their pushdown.
 
     ``whole`` callers skip every filter. For the rest, :meth:`admits` is
-    the authority on each row (it needs the row's ``path``, ``owner_id``,
-    ``everyone_level`` and ``origin_path`` — :data:`RIGHTS_FIELDS`) and
-    :meth:`road` names the hidden directories that lead to a visible row.
+    the authority on each row (it needs the row's ``path``, ``owner_id``
+    and ``everyone_level`` — :data:`RIGHTS_FIELDS`) and :meth:`road`
+    names the hidden directories that lead to a visible row.
     """
 
     def __init__(
@@ -399,7 +393,7 @@ class Visibility:
         self._roots: set[str] | None = None
 
     def admits(self, mapping: RowMapping) -> bool:
-        return self.rights.admits(judged_path(mapping), mapping["owner_id"], mapping["everyone_level"])
+        return self.rights.admits(mapping["path"], mapping["owner_id"], mapping["everyone_level"])
 
     async def prepare(self, session: AsyncSession) -> None:
         """Issue the dialect's range-join settings in *session*'s transaction, before the first read."""
@@ -437,15 +431,15 @@ class Visibility:
         clauses = self.clauses()
         return [stmt] if clauses is None else [stmt.where(clause.predicate) for clause in clauses]
 
-    async def road(self, session: AsyncSession, candidates: Iterable[str]) -> set[str]:
+    async def road(self, session: AsyncSession, candidates: Iterable[str], *, trashed: bool = False) -> set[str]:
         """The *candidates* (directory paths) a visible row lies beneath; the root always.
 
-        Four sources: every existing root prefix is visible, so its
+        Three sources: every existing root prefix is visible, so its
         ancestors are on the road; a member's owned rows are visible
         wherever its owner arm reaches, so a candidate holding one is
-        too; a candidate holding a row everyone may see at this level is
-        on the road to it; and a candidate on the trash chain holding a
-        trashed row whose origin the caller's pieces cover leads to it.
+        too; and a candidate holding a row everyone may see at this
+        level is on the road to it. Live rows lead the way, or the
+        tombstoned ones under the trash view (*trashed*).
         """
         wanted = set(candidates)
         found = wanted & {ROOT}
@@ -459,29 +453,33 @@ class Visibility:
         for owner, held in self.rights.ranges().owners:
             if not rest:
                 break
-            owned = await _owned_beneath(session, entry, self._profile, budget, owner, held, rest)
+            owned = await _owned_beneath(session, entry, self._profile, budget, owner, held, rest, trashed=trashed)
             found |= owned
             rest -= owned
         if rest:
-            opened = await _open_beneath(session, entry, self._profile, budget, self.rights, rest)
-            found |= opened
-            rest -= opened
-        if chain := {candidate for candidate in rest if on_trash_chain(candidate)}:
-            found |= await _origin_beneath(session, entry, self._profile, budget, self.rights.ranges().arms, chain)
+            found |= await _open_beneath(session, entry, self._profile, budget, self.rights, rest, trashed=trashed)
         return found
 
     async def seen_kinds(self, session: AsyncSession, rows: Mapping[str, RowMapping]) -> dict[str, str]:
-        """``path → kind`` over the rows this view shows: visible ones, road directories, the root.
+        """``path → kind`` over the live rows this view shows: visible ones, road directories, the root.
 
         The descent ladder classifies against this map, so a hidden
-        ancestor reads exactly as a missing one.
+        ancestor reads exactly as a missing one, and a tombstoned
+        ancestor as an absent one.
         """
-        visible = {path: row["kind"] for path, row in rows.items() if self.admits(row)}
-        hidden = [path for path, row in rows.items() if path not in visible and row["kind"] == "directory"]
+        live = {path: row for path, row in rows.items() if row["deleted_at"] is None}
+        visible = {path: row["kind"] for path, row in live.items() if self.admits(row)}
+        hidden = [path for path, row in live.items() if path not in visible and row["kind"] == "directory"]
         for path in await self.road(session, hidden):
             visible[path] = "directory"
         visible[ROOT] = "directory"
         return visible
+
+    def tombstones(self, rows: Mapping[str, RowMapping]) -> dict[str, datetime]:
+        """``path → deleted_at`` over the tombstoned rows this view admits — the ones whose refusal may say so."""
+        return {
+            path: row["deleted_at"] for path, row in rows.items() if row["deleted_at"] is not None and self.admits(row)
+        }
 
     async def _existing_roots(self, session: AsyncSession) -> set[str]:
         if self._roots is None:
@@ -547,13 +545,19 @@ class WriteGate:
         rows = await rows_by_path(session, entry, prefixes, judged_columns(entry), profile, budget)
         self._known.update(rows)
         seen = await self.view.seen_kinds(session, rows)
+        tombstones = self.view.tombstones(rows)
+        # A hidden directory, live or deleted, is on the road when a deleted
+        # row the caller sees lies beneath it — the trash view shows it so.
+        hidden = [p for p, r in rows.items() if r["kind"] == "directory" and p not in seen and p not in tombstones]
+        for path in await self.view.road(session, hidden, trashed=True) if hidden else ():
+            seen[path] = "directory"
         road = {path for path in seen if path in rows and not self.view.admits(rows[path])}
         # A creation has no row to read the level from: the posture rows on its chain decide.
         postures = await posture_rows(session, tables, profile, budget, prefixes) if mode != "read" else {}
         batch = {str(target) for target in targets}
         errors: list[ResultError] = []
         for target in dict.fromkeys(targets):
-            refusal = self._decide(target, rows, seen, road, postures, batch, mode, parents=parents)
+            refusal = self._decide(target, rows, seen, tombstones, road, postures, batch, mode, parents=parents)
             if refusal is not None:
                 errors.append(refusal)
         return errors
@@ -578,12 +582,11 @@ class WriteGate:
         unlabelled = [entry.c.everyone_level < rights.need]
         unlabelled += [
             and_(entry.c.everyone_level >= rights.need, or_(*(unit.predicate for unit in chunk)))
-            for chunk in chunked(_judged_units(entry, rights.ranges().holes), per_chunk)
+            for chunk in chunked(_piece_units(entry.c.path, rights.ranges().holes), per_chunk)
         ]
         for root in dict.fromkeys(roots):
             known = self._known.get(str(root))
-            # A trashed row beneath the root is judged elsewhere, so cover of the root's paths proves nothing.
-            covered = rights.whole or (rights.covers_subtree(str(root)) and not on_trash_chain(str(root)))
+            covered = rights.whole or rights.covers_subtree(str(root))
             if covered or (known is not None and known["kind"] != "directory"):
                 continue
             for filtered in unlabelled:
@@ -606,7 +609,7 @@ class WriteGate:
                 .limit(_SUBTREE_PAGE)
             )
             page = (await session.execute(stmt)).mappings().all()
-            if any(not rights.admits(judged_path(row), row["owner_id"], row["everyone_level"]) for row in page):
+            if any(not rights.admits(row["path"], row["owner_id"], row["everyone_level"]) for row in page):
                 return True
             if len(page) < _SUBTREE_PAGE:
                 return False
@@ -615,13 +618,11 @@ class WriteGate:
     def row(
         self, named: Path, judged: str, owner_id: str | None, everyone_level: int, level: GrantLevel
     ) -> ResultError | None:
-        """The check for one row already in hand, judged at *judged* and refused as *named*.
+        """The check for one row the view already admits, judged at its own path *judged* and refused as *named*.
 
-        Hidden is absent, visible-but-barred is denied; the refusal names
-        *named*, the path the caller sent, never the one the row sits at.
+        Visible-but-barred is denied; the refusal names *named*, the path
+        the caller sent, never the one the row sits at.
         """
-        if not self.resolution.read.admits(judged, owner_id, everyone_level):
-            return classified(ErrorKind.not_found, named)
         if level == "read_write" and not self.resolution.write.admits(judged, owner_id, everyone_level):
             return denied(named)
         return None
@@ -631,19 +632,21 @@ class WriteGate:
 
         The descent ladder runs over what the view shows — a hidden
         ancestor is a missing one — so the payload names only a prefix
-        of the path the caller sent, and never what hides at it.
+        of the path the caller sent, and never what hides at it; a
+        tombstone the caller may see carries its hint.
         """
         entry, profile, budget = self._tables.entry, self._profile, self._membership_budget
         rows = await rows_by_path(
             session, entry, targets_with_ancestors([target]), judged_columns(entry), profile, budget
         )
-        return classify_miss(target, await self.view.seen_kinds(session, rows))
+        return classify_miss(target, await self.view.seen_kinds(session, rows), self.view.tombstones(rows))
 
     def _decide(
         self,
         target: Path,
         rows: Mapping[str, RowMapping],
         seen: Mapping[str, str],
+        tombstones: Mapping[str, datetime],
         road: set[str],
         postures: PostureRows,
         batch: set[str],
@@ -651,30 +654,39 @@ class WriteGate:
         *,
         parents: bool,
     ) -> ResultError | None:
-        """One target's verdict; a missing ancestor the batch itself supplies is judged as its own target."""
+        """One target's verdict; a missing ancestor the batch itself supplies is judged as its own target.
+
+        A tombstoned ancestor is absent — never minted, with or without
+        *parents*. A tombstoned target the caller may see is absent to a
+        read, with the trashed hint; a mutation at it is judged by the
+        row's own label and owner as any mutation of an occupied path is
+        — a revive proceeds, and the verbs that reach no tombstone answer
+        the hint themselves — so a caller who may see but not write a
+        deleted row is denied, never told it is absent.
+        """
         write = self.resolution.write
         creating = mode in ("create", "upsert")
         for ancestor in ancestor_chain(target):
             if str(ancestor) in seen:
                 continue
-            minted = creating and (parents or str(ancestor) in batch)
+            minted = creating and (parents or str(ancestor) in batch) and str(ancestor) not in tombstones
             if minted and write.reaches(str(ancestor), label_of(postures, str(ancestor))):
                 continue
             if minted:
                 return denied(ancestor, target=target)
-            return classify_miss(target, seen)
+            return classify_miss(target, seen, tombstones)
         key = str(target)
         parent = str(target.parent_dir)
         if key in road:
             # A road directory shows only its name, so no verb may act on it.
             return denied(target)
-        if key in seen:
+        if key in seen or (key in tombstones and mode != "read"):
             if mode in ("create", "read"):
                 return None
             row = rows[key]
-            return None if write.admits(judged_path(row), row["owner_id"], row["everyone_level"]) else denied(target)
-        if mode in ("modify", "read"):
-            return classify_miss(target, seen)
+            return None if write.admits(row["path"], row["owner_id"], row["everyone_level"]) else denied(target)
+        if mode in ("modify", "read") or key in tombstones:
+            return classify_miss(target, seen, tombstones)
         if parent in road or not write.reaches(key, label_of(postures, key)):
             return denied(target)
         return None
@@ -999,18 +1011,18 @@ def _units(entry: Table, rights: Rights, bind_cap: int) -> list[Clause]:
 
     The everyone unit is the level alone; with holes in the rights it is
     the level on each piece of the mount outside them, so the fan still
-    splits it across statements. Every piece is judged (:func:`_judged_units`).
+    splits it across statements. Every piece is judged on ``path``.
     """
     ranges = rights.ranges()
     everyone = entry.c.everyone_level >= rights.need
     units = [Clause(everyone, 1)]
     if rights.holes:
-        outside = _judged_units(entry, pieces(subtract(FULL, rights.holes)))
+        outside = _piece_units(entry.c.path, pieces(subtract(FULL, rights.holes)))
         units = [Clause(and_(unit.predicate, everyone), unit.binds + 1) for unit in outside]
-    units += _judged_units(entry, ranges.arms)
+    units += _piece_units(entry.c.path, ranges.arms)
     per_unit = max(1, min(_OWNER_PIECES_PER_UNIT, (bind_cap - 1) // 2))
     for owner, found in ranges.owners:
-        for group in chunked(_judged_units(entry, found), per_unit):
+        for group in chunked(_piece_units(entry.c.path, found), per_unit):
             predicate = and_(entry.c.owner_id == owner, or_(*(unit.predicate for unit in group)))
             units.append(Clause(predicate, 1 + sum(unit.binds for unit in group)))
     return units
@@ -1027,19 +1039,6 @@ def _piece_units(column: ColumnElement[Any], found: Pieces) -> list[Clause]:
     return [*points, *opens]
 
 
-def _judged_units(entry: FromClause, found: Pieces) -> list[Clause]:
-    """One clause per piece on the judged path: ``path`` for a live row, ``origin_path`` for a trashed one.
-
-    A live row carries no origin, so its units add ``origin_path IS
-    NULL`` at no bind; a trashed row's units seek the origin index alone.
-    """
-    live = [
-        Clause(and_(unit.predicate, entry.c.origin_path.is_(None)), unit.binds)
-        for unit in _piece_units(entry.c.path, found)
-    ]
-    return [*live, *_piece_units(entry.c.origin_path, found)]
-
-
 async def _owned_beneath(
     session: AsyncSession,
     entry: Table,
@@ -1048,12 +1047,14 @@ async def _owned_beneath(
     owner: str,
     found: Pieces,
     candidates: set[str],
+    *,
+    trashed: bool,
 ) -> set[str]:
-    """The *candidates* holding a row *owner* owns whose judged path lies within the pieces *found*."""
+    """The *candidates* holding a row *owner* owns whose path lies within the pieces *found*."""
     row = entry.alias("r")
     tests = [
-        and_(row.c.owner_id == owner, or_(*(unit.predicate for unit in group)))
-        for group in chunked(_judged_units(row, found), _OWNER_PIECES_PER_UNIT)
+        and_(row.c.owner_id == owner, _liveness(row, trashed), or_(*(unit.predicate for unit in group)))
+        for group in chunked(_piece_units(row.c.path, found), _OWNER_PIECES_PER_UNIT)
     ]
     per_chunk = max(1, membership_budget - 3 - 2 * _OWNER_PIECES_PER_UNIT)
     return await _beneath(session, entry, profile, per_chunk, row, tests, candidates)
@@ -1066,34 +1067,22 @@ async def _open_beneath(
     membership_budget: int,
     rights: Rights,
     candidates: set[str],
+    *,
+    trashed: bool,
 ) -> set[str]:
     """The *candidates* holding a row everyone may see at the rights' level — one composite-index seek each.
 
     A row inside a hole does not count: its label is not yet the truth.
     """
     row = entry.alias("r")
-    test = and_(row.c.everyone_level >= rights.need, judged_hole_free(row, rights.ranges().holes, profile))
+    unholed = hole_free(row.c.path, rights.ranges().holes, profile)
+    test = and_(row.c.everyone_level >= rights.need, _liveness(row, trashed), unholed)
     return await _beneath(session, entry, profile, max(1, membership_budget - 3), row, [test], candidates)
 
 
-async def _origin_beneath(
-    session: AsyncSession,
-    entry: Table,
-    profile: DialectProfile,
-    membership_budget: int,
-    found: Pieces,
-    candidates: set[str],
-) -> set[str]:
-    """The *candidates* holding a trashed row whose origin lies within the pieces *found* — the road into the trash."""
-    if not found.points and not found.opens:
-        return set()
-    row = entry.alias("r")
-    tests = [
-        or_(*(unit.predicate for unit in group))
-        for group in chunked(_piece_units(row.c.origin_path, found), _OWNER_PIECES_PER_UNIT)
-    ]
-    per_chunk = max(1, membership_budget - 2 - 2 * _OWNER_PIECES_PER_UNIT)
-    return await _beneath(session, entry, profile, per_chunk, row, tests, candidates)
+def _liveness(row: FromClause, trashed: bool) -> ColumnElement[bool]:
+    """The rows a road may run through: live ones, or the tombstoned ones under the trash view."""
+    return row.c.deleted_at.is_not(None) if trashed else row.c.deleted_at.is_(None)
 
 
 async def _beneath(

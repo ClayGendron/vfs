@@ -5,6 +5,25 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **162 built 2026-10-11, both slices, uncommitted, awaiting Clay's
+  review** — trash as a tombstone on the row. Delete sets `deleted_at`
+  and `trash_root_id` in place (one guarded root claim plus one cascade
+  statement; no path rewrite, no posting move; ≤ 10 statements at
+  N = 1,000 and 2,000, flat); `liveness_filters` carries the term and
+  flips it for the `/.vfs/trash` view, which serves `ls`, `tree`,
+  `glob`, `grep`, `glean`, `read` and `stat` at each row's own path with
+  `deleted_at` projected; `restore` clears a root's set; a `write` at a
+  tombstoned file revives it and the new `versions.py` mint keeps the
+  replaced body as a snapshot with ADR 064's attribution (every
+  overwrite mints too — spec 161's write half); sweep expires roots by
+  `WHERE`; edges survive and hide with their endpoint; the origin
+  columns, the trashed predicate forms of spec 150 §8, the hour buckets,
+  the trash names, the edge cascade and the reindex stray reclaim are
+  gone (format 21). The ADR 074 amendments in rules 4 and 5 were taken
+  as the working answers, unconfirmed. `scripts/ci.sh` green (3,938
+  tests, 100%); the engine legs not run. Deviations in the spec's
+  *Landing notes* (the liveness index decision, the gate's reading of a
+  tombstone, `add_mount` restoring a deleted mount point).
 - **163 landed and archived 2026-10-10** (`2bf0138` … `b648082`, `12a8f39`, `b446c76`) — the one-minute
   test run. Cut and landed the same day in six commits (2bf0138 …
   b648082): the whole suite runs in **54–56 s** quiet (was 253 s serial, 101 s

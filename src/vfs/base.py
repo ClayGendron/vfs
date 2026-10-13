@@ -84,6 +84,7 @@ from vfs.storage import (
     SupportsRun,
     TransportError,
 )
+from vfs.storage.backends.database.descent import TRASHED_KEY
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
@@ -483,10 +484,12 @@ class VirtualFileSystem:
         mount-point directory is created when absent (an ordinary gated
         mkdir against the owning entry — parents must exist unless
         ``parents=True``), then the binding commits over it.  An existing
-        directory is fine when empty (the rebind-after-restart shape); an
-        occupied site or a file classifies through mkdir/bind and raises.
-        A failed bind leaves the directory behind — a plain empty directory
-        is a valid future mount site, not damage to roll back.
+        directory is fine when empty (the rebind-after-restart shape),
+        and a directory an unmount deleted is restored (the
+        remount-after-unmount shape); an occupied site or a file
+        classifies through mkdir/bind and raises.  A failed bind leaves
+        the directory behind — a plain empty directory is a valid future
+        mount site, not damage to roll back.
 
         *path* is optional: when omitted, the storage's ``name`` names the
         mount point (``add_mount(InMemoryStorage(name="data"))`` lands at
@@ -501,6 +504,8 @@ class VirtualFileSystem:
         mask = self._validate_deny_ops(deny_ops)
 
         made = await self.mkdir(str(mount_path), parents=parents, exist_ok=True, authority=_ADMIN_AUTHORITY)
+        if not made.success and _is_tombstoned_site(made, mount_path):
+            made = await self.restore(str(mount_path), authority=_ADMIN_AUTHORITY)
         if not made.success:
             detail = made.error_message or "storage refused the mount-point directory"
             msg = f"Cannot mount at {mount_path}: {detail}"
@@ -1017,15 +1022,16 @@ class VirtualFileSystem:
         """Delete *path* (or each observation row) — always recoverable.
 
         Delete is reversible; sweep is not; agents only get the first.
-        Every successful delete reparents its target into the trash,
-        and each observation's ``trash_path`` reports where its row now
-        lives. A covered target's address derives from its covering
-        root: restore accepts the covering root's ``trash_path``, and
-        covered rows ride back with it. What cannot be trashed — the
-        active trash chain — refuses ``invalid``. A live
-        bind site is ``busy``: a bound path, or a region holding bound
-        paths, must be unmounted before it can be deleted — the EBUSY
-        rule.
+        A deleted row stays where it is with a tombstone: it reads as
+        absent everywhere (a refusal at its path carries the
+        ``vfs.trashed`` hint), the ``/.vfs/trash`` view lists it at its
+        own path, ``restore`` brings it back, and a ``write`` at its
+        path revives it and keeps the body it replaced as a version.
+        Each observation reports ``deleted_at``. A covered target rides
+        with its covering root: restore the root, and the covered rows
+        return with it. A live bind site is ``busy``: a bound path, or
+        a region holding bound paths, must be unmounted before it can
+        be deleted — the EBUSY rule.
         """
         refusal = self._gate_params(
             "delete", path=path, observations=observations, cascade=cascade, authority=authority
@@ -1047,15 +1053,16 @@ class VirtualFileSystem:
         *,
         authority: Authority | None = None,
     ) -> Result:
-        """Restore a trashed entry to its original site.
+        """Restore a deleted entry at its own path.
 
-        *path* is either the entry's pre-delete path (the newest matching
-        trash row wins) or its exact trash-side path — the address a
-        delete result reports. An occupied site classifies ``exists`` —
-        no verb displaces an occupant; the caller deletes it (which
-        trashes it) and restores again. A backend that keeps no trash
-        classifies ``unsupported``. Like delete, a live bind site at the
-        address is ``busy``.
+        *path* is the entry's path — the one the delete reported, since
+        a deleted row never moves. Only the row a delete named restores,
+        and everything deleted with it returns too; a row inside a
+        deleted tree classifies ``not_found`` naming the root to restore.
+        A live row at the site classifies ``exists`` — no verb displaces
+        an occupant; the caller deletes it and restores again. A backend
+        that keeps no trash classifies ``unsupported``. Like delete, a
+        live bind site at the address is ``busy``.
         """
         refusal = self._gate_params("restore", path=path, observations=observations, authority=authority)
         if refusal is not None:
@@ -1068,18 +1075,18 @@ class VirtualFileSystem:
         *,
         authority: Authority | None = None,
     ) -> Result:
-        """Destroy at *path* — retention cleanup at a trash root, purge elsewhere.
+        """Destroy at *path* — retention cleanup at a trash view, purge elsewhere.
 
         Delete is reversible; sweep is not; agents only get the first:
         sweep is a developer-plane verb, never registered on any
-        agent-facing tool surface. A trash-root address runs retention —
-        expired hour-buckets drop wholesale (foreign rows inside them
-        included); non-bucket rows are skipped and surfaced as warnings.
-        Any other address purges that subtree wholesale, immediately,
-        regardless of retention age. The default address sweeps the root
-        mount's trash; pass ``/m/.vfs/trash`` to sweep the mount at
-        ``/m``. Explicit and idempotent — storage owns no background
-        work.
+        agent-facing tool surface. The trash view's address runs
+        retention — every row deleted longer ago than the mount's
+        ``trash_days`` is destroyed with everything deleted alongside
+        it. Any other address purges that subtree wholesale,
+        immediately, regardless of retention age. The default address
+        sweeps the root mount's trash; pass ``/m/.vfs/trash`` to sweep
+        the mount at ``/m``. Explicit and idempotent — storage owns no
+        background work.
         """
         refusal = self._gate_params("sweep", path=path, authority=authority)
         if refusal is not None:
@@ -3164,3 +3171,9 @@ class VirtualFileSystem:
     def _closed_error(self, op: Op) -> Result:
         """Classified answer for a dispatch attempted after ``close()``."""
         return self._error(ErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")
+
+
+def _is_tombstoned_site(result: Result, path: Path) -> bool:
+    """Whether the refused *result* names *path* itself as a deleted row — the one refusal ``restore`` answers."""
+    error = result.errors[0]
+    return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))

@@ -252,9 +252,13 @@ async def test_meta_root_is_not_a_write_target_but_the_scope_is() -> None:
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
-    admitted = await fs.write(path="/.vfs/trash/2026-07-18-10/x.txt", content="x")
+    admitted = await fs.write(path="/.vfs/docs/x.txt", content="x")
     assert admitted.success is True
     assert fs.calls and fs.calls[0][0] == "write"
+    # The trash view is read-only grammar: nothing beneath its head is a write target.
+    refused = await fs.write(path="/.vfs/trash/x.txt", content="x")
+    assert refused.success is False and refused.errors[0].kind is ErrorKind.invalid
+    assert len(fs.calls) == 1
 
 
 # ----------------------------------------------------------------------

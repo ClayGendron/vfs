@@ -100,6 +100,8 @@ from vfs.storage.backends.database.scope import (
     entries_for_scan,
     passes_gates,
     pushdown_terms,
+    strip_trash_heads,
+    trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.signals import signal_factors
@@ -148,16 +150,17 @@ Ranking = list[tuple[ChunkId, float]]
 
 
 class _Gates(NamedTuple):
-    """The call's structural scope: compiled gates, ext sets, and the fetch pushdown."""
+    """The call's structural scope: compiled gates, ext sets, the fetch pushdown, and the tombstone side."""
 
     gates: list[GlobFilter]
     not_gates: list[GlobFilter]
     wanted: frozenset[str]
     unwanted: frozenset[str]
     pushdown: Pushdown
+    trashed: bool
 
     def admits(self, mapping: RowMapping) -> bool:
-        return passes_gates(mapping, self.gates, self.not_gates, self.wanted, self.unwanted)
+        return passes_gates(mapping, self.gates, self.not_gates, self.wanted, self.unwanted, trashed=self.trashed)
 
 
 class VectorLeg(NamedTuple):
@@ -258,8 +261,8 @@ async def glean_rows(
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
-        admissions = expand_channel("globs", globs)
-        exclusions = expand_channel("globs_not", globs_not)
+        admissions, trashed = trash_scope(expand_channel("globs", globs))
+        exclusions = strip_trash_heads(expand_channel("globs_not", globs_not))
     except PatternError as exc:
         return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     entry = tables.entry
@@ -272,8 +275,16 @@ async def glean_rows(
         normalize_ext_channel(ext),
         normalize_ext_channel(ext_not),
         pushdown_terms(
-            entry, profile, fan_arms, membership_budget, channel, normalize_ext_channel(ext), hide_meta=not gates
+            entry,
+            profile,
+            fan_arms,
+            membership_budget,
+            channel,
+            normalize_ext_channel(ext),
+            hide_meta=not gates,
+            trashed=trashed,
         ),
+        trashed,
     )
     fetched = effective_columns(columns, content=False)
     deadline = monotonic() + wall_seconds
@@ -364,6 +375,7 @@ async def glean_rows(
             fetched=fetched,
             limit=OVERLAY_BUDGET,
             deadline=deadline,
+            trashed=scope.trashed,
         )
         admitted = [m for m in nominees.rows if scope.admits(m) and (view is None or view.admits(m))]
         scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
@@ -598,8 +610,9 @@ async def _vector_leg(
     """The *depth* nearest chunks by cosine, resolved to admitted entries and MaxP'd.
 
     One statement shape on every dialect: the chunk table joined to its
-    entry, ``embedding IS NOT NULL`` and the liveness, kind and pushdown
-    predicates inside, ordered by the engine's cosine distance then
+    entry, ``embedding IS NOT NULL`` and the kind and pushdown predicates
+    (the liveness term rides in the pushdown) inside, ordered by the
+    engine's cosine distance then
     chunk id, limited. A narrow allow-list runs it once per id chunk
     and merges the lists client-side (a per-chunk top-k is not the
     union's, so every chunk's list is kept whole); a wide scope runs
@@ -625,7 +638,6 @@ async def _vector_leg(
         .where(
             chunks.c.embedding.isnot(None),
             entry.c.chunked,
-            entry.c.deleted_at.is_(None),
             kinds.predicate,
             *scope.pushdown.terms,
         )

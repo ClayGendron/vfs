@@ -31,15 +31,9 @@ before it stand again — a settled relabel changed labels, not rights.
 :func:`rebuild_labels` recomputes every row from the posture rows, for
 maintenance and for tests.
 
-A trashed row's label is the level at its origin, the path it was
-deleted from: delete keeps the label the row had, and every relabel
-statement runs twice, once over ``path`` for the live rows (those with
-no origin) and once over ``origin_path`` for the trashed ones, so a
-posture change after the delete reaches the trash row exactly as it
-reaches its old neighbours. The trashed form is bounded by the trashed
-rows whose origin lies in the chunk's pieces — a small set the chunk's
-row count does not size; walking it by keyset like the live form is
-the direction if a mount ever trashes more rows than one chunk holds.
+A deleted row stays at its path with a tombstone and keeps its label,
+so a posture change after the delete reaches it exactly as it reaches
+its live neighbours: every relabel statement runs once, over ``path``.
 
     labels = await labels_for(session, tables, profile, budget, ["/eng/new.md"])
     labels["/eng/new.md"]      # 2 under an open root
@@ -344,25 +338,21 @@ async def relabel_spans(
 
     Points travel in membership chunks; open ranges in chunks of at most
     ``in_list_budget`` pairs, one bound value per statement where the
-    dialect unpacks one. Each chunk runs as two statements, over ``path``
-    for the live rows and over ``origin_path`` for the trashed ones. No
-    statement grows with the number of rows it touches, and none carries
-    more pairs than the tightest engine cap; the rows a statement
-    touches are the caller's to bound.
+    dialect unpacks one. No statement grows with the number of rows it
+    touches, and none carries more pairs than the tightest engine cap;
+    the rows a statement touches are the caller's to bound.
     """
     found = pieces(spans)
     entry = tables.entry
     rows = statements = 0
     for chunk in chunked(found.points, membership_budget):
-        for column, live in ((entry.c.path, [entry.c.origin_path.is_(None)]), (entry.c.origin_path, [])):
-            stmt = update(entry).where(membership(column, chunk, profile), *live).values(everyone_level=rank)
-            rows += await _run(session, stmt, {})
-            statements += 1
+        stmt = update(entry).where(membership(entry.c.path, chunk, profile)).values(everyone_level=rank)
+        rows += await _run(session, stmt, {})
+        statements += 1
     for chunk in chunked(found.opens, profile.in_list_budget):
-        for trashed in (False, True):
-            stmt, params = _relabel_opens(entry, profile, rank, chunk, trashed=trashed)
-            rows += await _run(session, stmt, params)
-            statements += 1
+        stmt, params = _relabel_opens(entry, profile, rank, chunk)
+        rows += await _run(session, stmt, params)
+        statements += 1
     return Relabel(rows, statements)
 
 
@@ -472,7 +462,7 @@ async def _run(session: AsyncSession, stmt: Executable, params: dict[str, Any]) 
 
 
 def _relabel_opens(
-    entry: Table, profile: DialectProfile, rank: int, opens: Sequence[Open], *, trashed: bool = False
+    entry: Table, profile: DialectProfile, rank: int, opens: Sequence[Open]
 ) -> tuple[Update | TextClause, dict[str, Any]]:
     """One ``UPDATE`` setting *rank* inside every open range of *opens*, in the dialect's measured form.
 
@@ -484,37 +474,33 @@ def _relabel_opens(
     Oracle and the generic floor take the literal ``OR`` of ranges —
     under ``USE_CONCAT`` Oracle runs it as one concatenation of index
     range scans, where its ``MERGE … USING JSON_TABLE`` merge-joined a
-    full scan at five hundred ranges. The ranges bound ``path`` and only
-    rows with no origin for the live form; ``origin_path`` for the
-    *trashed* form.
+    full scan at five hundred ranges. The ranges bound ``path``.
     """
     source = profile.range_source
-    column = entry.c.origin_path if trashed else entry.c.path
-    live = [] if trashed else [entry.c.origin_path.is_(None)]
+    column = entry.c.path
     if source in ("json_each", "unnest"):
         _rows, lo, hi = open_rows(opens, source)
-        return update(entry).values(everyone_level=rank).where(column > lo, column < hi, *live), {}
+        return update(entry).values(everyone_level=rank).where(column > lo, column < hi), {}
     params: dict[str, Any] = {"rank": rank, "pairs": json.dumps([list(pair) for pair in opens])}
     name = column.name
-    only_live = "" if trashed else " AND e.origin_path IS NULL"
     if source == "openjson":
         utf8 = f"COLLATE {MSSQL_UTF8_COLLATION} AS varchar{_BOUND})"
         sql = (
             f"UPDATE e SET everyone_level = :rank FROM OPENJSON(:pairs) "
             f"WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS r INNER LOOP JOIN {entry.fullname} AS e "
-            f"ON e.{name} > CAST(r.lo {utf8} AND e.{name} < CAST(r.hi {utf8}{only_live}"
+            f"ON e.{name} > CAST(r.lo {utf8} AND e.{name} < CAST(r.hi {utf8}"
         )
         return text(sql), params
     if source == "json_table":
         columns = f"COLUMNS (lo VARCHAR{_BOUND} PATH '$[0]', hi VARCHAR{_BOUND} PATH '$[1]')"
         sql = (
             f"UPDATE {entry.fullname} AS e JOIN JSON_TABLE(:pairs, '$[*]' {columns}) AS r "
-            f"ON e.{name} > CAST(r.lo AS BINARY) AND e.{name} < CAST(r.hi AS BINARY){only_live} "
+            f"ON e.{name} > CAST(r.lo AS BINARY) AND e.{name} < CAST(r.hi AS BINARY) "
             f"SET e.everyone_level = :rank"
         )
         return text(sql), params
     terms = [and_(column > lo, column < hi) for lo, hi in opens]
-    stmt = update(entry).values(everyone_level=rank).where(or_(*terms), *live)
+    stmt = update(entry).values(everyone_level=rank).where(or_(*terms))
     if profile.range_hints.relabel:
         stmt = stmt.prefix_with(profile.range_hints.relabel, dialect=profile.name)
     return stmt, {}

@@ -162,9 +162,9 @@ class TestPhase:
         assert (await storage.delete(path=Path("/a.md"))).success is True
         async with storage._host.session_factory() as session:
             graph = await collect_graph(session, storage._host.tables)
-        # b and c are the live files (the trash scaffolding is live directories);
-        # a is trashed, and its edge went with it.
-        assert graph.files.count(True) == 2 and len(graph.entry_ids) > 4
+        # b and c are the live files; a is deleted where it sits, and the
+        # edge on it hides with it.
+        assert graph.files.count(True) == 2 and len(graph.entry_ids) == 4
         assert len(graph.sources) == 1
         assert graph.parents.count(phase.NO_PARENT) == 1
         await storage.close()

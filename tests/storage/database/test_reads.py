@@ -449,7 +449,7 @@ class TestExtPushdown:
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
             rows = (await session.execute(select(tables.entry.c.path, tables.entry.c.ext))).all()
-        assert len(rows) >= 7
+        assert len(rows) == 6
         for path, ext in rows:
             assert ext == extract_extension(Path(path)), (path, ext)
         await storage.close()
@@ -581,23 +581,22 @@ class TestPatternFan:
 
 
 class TestNamespaceScopes:
-    """The meta-scope liveness filter: hidden by default, served when anchored."""
+    """The liveness filter: meta hidden by default, served when anchored; deleted rows served by the view alone."""
 
     @pytest.fixture
     async def storage(self, tmp_path):
         storage = DatabaseStorage(url=_url(tmp_path))
-        await _seed(
-            storage,
-            [
-                ("/real.txt", "file", "needle in the open"),
-                ("/.vfs/docs/a.txt", "file", "meta doc text"),
-                ("/.vfs/trash/bucket/01ARZ", "file", "needle in the trash"),
-            ],
-        )
+        rows: list[tuple[str, str, str | None]] = [
+            ("/real.txt", "file", "needle in the open"),
+            ("/.vfs/docs/a.txt", "file", "meta doc text"),
+        ]
+        await _seed(storage, rows)
+        assert (await storage.write(entries=[Entry(path=Path("/gone.txt"), content="needle in the trash")])).success
+        assert (await storage.delete(path=Path("/gone.txt"))).success is True
         yield storage
         await storage.close()
 
-    async def test_enumeration_hides_the_meta_subtree(self, storage: DatabaseStorage) -> None:
+    async def test_enumeration_hides_the_meta_subtree_and_the_deleted(self, storage: DatabaseStorage) -> None:
         assert [o.path for o in (await storage.ls(path=Path("/"))).observations] == ["/real.txt"]
         assert [o.path for o in (await storage.tree(path=Path("/"))).observations] == ["/real.txt"]
         assert [o.path for o in (await storage.glob(patterns=("*",))).observations] == ["/real.txt"]
@@ -613,56 +612,60 @@ class TestNamespaceScopes:
         assert [o.path for o in listing.observations] == [str(doc)]
 
     async def test_batch_ls_keeps_liveness_scopes_apart(self, storage: DatabaseStorage) -> None:
-        # One batch, both liveness classes: the meta target serves its
-        # children while the non-meta parent's listing stays meta-free.
-        batch = [Observation(path=Path("/")), Observation(path=Path("/.vfs"))]
+        # One batch, every liveness class: the meta target serves its
+        # children (the trash view among them), the non-meta parent's
+        # listing stays meta-free, and the view lists the deleted roots.
+        batch = [Observation(path=Path("/")), Observation(path=Path("/.vfs")), Observation(path=Path("/.vfs/trash"))]
         listing = await storage.ls(observations=batch)
         assert listing.success is True
-        assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash"]
+        assert [str(o.path) for o in listing.observations] == ["/real.txt", "/.vfs/docs", "/.vfs/trash", "/gone.txt"]
 
     async def test_glob_meta_bypass_is_per_pattern_not_query_wide(self, storage: DatabaseStorage) -> None:
         # A broad arm plus a meta-prefixed arm: only the meta-prefixed
         # arm serves meta rows — sibling meta trees stay hidden.
-        result = await storage.glob(patterns=("/**/*", "/.vfs/trash/**/*"))
-        assert [str(o.path) for o in result.observations] == [
-            "/.vfs/trash/bucket",
-            "/.vfs/trash/bucket/01ARZ",
-            "/real.txt",
-        ]
+        result = await storage.glob(patterns=("/**/*", "/.vfs/docs/**/*"))
+        assert [str(o.path) for o in result.observations] == ["/.vfs/docs/a.txt", "/real.txt"]
 
-    async def test_trash_serves_beside_other_meta_children_when_anchored(self, storage: DatabaseStorage) -> None:
-        # Trash is an ordinary meta subtree: an ls of /.vfs lists it.
+    async def test_the_trash_view_sits_beside_other_meta_children(self, storage: DatabaseStorage) -> None:
+        # The view is a synthesized directory: ls of /.vfs lists it, and
+        # tree of /.vfs walks the stored meta rows alone.
         listing = await storage.ls(path=Path("/.vfs"))
-        assert [o.path for o in listing.observations] == ["/.vfs/docs", "/.vfs/trash"]
+        assert [str(o.path) for o in listing.observations] == ["/.vfs/docs", "/.vfs/trash"]
         subtree = await storage.tree(path=Path("/.vfs"))
-        assert "/.vfs/trash/bucket/01ARZ" in [str(o.path) for o in subtree.observations]
+        assert [str(o.path) for o in subtree.observations] == ["/.vfs/docs", "/.vfs/docs/a.txt"]
+        head = await storage.stat(path=Path("/.vfs/trash"))
+        assert head.success is True and head.observations[0].kind == "directory"
 
-    async def test_a_trash_side_path_serves_through_every_read_verb(self, storage: DatabaseStorage) -> None:
-        trashed = Path("/.vfs/trash/bucket/01ARZ")
-        assert (await storage.read(path=trashed)).observations[0].content == "needle in the trash"
-        assert (await storage.stat(path=trashed)).observations[0].kind == "file"
-        listing = await storage.ls(path=trashed.parent_dir)
-        assert [o.path for o in listing.observations] == [str(trashed)]
+    async def test_a_deleted_row_serves_through_every_read_verb_under_the_view(self, storage: DatabaseStorage) -> None:
+        viewed = Path("/.vfs/trash/gone.txt")
+        read = await storage.read(path=viewed)
+        assert read.observations[0].content == "needle in the trash" and str(read.observations[0].path) == "/gone.txt"
+        assert (await storage.stat(path=viewed)).observations[0].kind == "file"
+        listing = await storage.ls(path=Path("/.vfs/trash"))
+        assert [str(o.path) for o in listing.observations] == ["/gone.txt"]
+        assert all(o.deleted_at is not None for o in listing.observations)
         scoped = await storage.glob(patterns=("/.vfs/trash/**/*",))
-        assert str(trashed) in [str(o.path) for o in scoped.observations]
+        assert [str(o.path) for o in scoped.observations] == ["/gone.txt"]
+        found = await storage.grep(pattern="needle", globs=("/.vfs/trash/**",))
+        assert [str(o.path) for o in found.observations] == ["/gone.txt"]
 
-    async def test_descent_through_a_trash_side_file_takes_the_standard_ladder(self, storage: DatabaseStorage) -> None:
-        # A child under a trash-side FILE classifies wrong_kind naming the
-        # file — identical to descent anywhere else in the namespace.
-        result = await storage.read(path=Path("/.vfs/trash/bucket/01ARZ/child"))
+    async def test_descent_through_a_deleted_file_names_it_with_the_hint(self, storage: DatabaseStorage) -> None:
+        # A child under a deleted FILE classifies not_found naming the
+        # file — a deleted ancestor is absent, and the hint says why.
+        result = await storage.read(path=Path("/gone.txt/child"))
         assert result.success is False
-        assert result.errors[0].kind == ErrorKind.wrong_kind
-        assert result.errors[0].path == "/.vfs/trash/bucket/01ARZ"
+        assert result.errors[0].kind == ErrorKind.not_found
+        assert result.errors[0].path == "/gone.txt"
+        assert (result.errors[0].data or {}).get("vfs.trashed") is True
 
-    async def test_trash_misses_classify_at_their_first_failing_component(self, storage: DatabaseStorage) -> None:
-        # The standard descent ladder, not a uniform concealment shape:
-        # each miss names its own first missing ancestor.
-        under_real_bucket = await storage.stat(path=Path("/.vfs/trash/bucket/GHOST/x"))
-        assert under_real_bucket.errors[0].kind == ErrorKind.not_found
-        assert under_real_bucket.errors[0].path == "/.vfs/trash/bucket/GHOST"
-        under_no_bucket = await storage.stat(path=Path("/.vfs/trash/NOBUCKET/x"))
-        assert under_no_bucket.errors[0].kind == ErrorKind.not_found
-        assert under_no_bucket.errors[0].path == "/.vfs/trash/NOBUCKET"
+    async def test_misses_under_the_view_name_the_path_sent(self, storage: DatabaseStorage) -> None:
+        # The view names no ghosts and no live rows: a miss is the path sent.
+        ghost = await storage.stat(path=Path("/.vfs/trash/nope/x"))
+        assert ghost.errors[0].kind == ErrorKind.not_found
+        assert ghost.errors[0].path == "/.vfs/trash/nope/x"
+        live = await storage.read(path=Path("/.vfs/trash/real.txt"))
+        assert live.errors[0].kind == ErrorKind.not_found
+        assert live.errors[0].path == "/.vfs/trash/real.txt"
 
 
 class TestReadFailureHandling:

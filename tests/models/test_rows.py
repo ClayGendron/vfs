@@ -203,7 +203,7 @@ class TestBuildVFSTables:
         assert unique == {"uq_vfs_entries_parent_name"}
 
     def test_path_and_name_pin_bytewise_order_per_dialect(self, tables: VFSTables) -> None:
-        for column in (tables.entry.c.path, tables.entry.c.name, tables.entry.c.original_name):
+        for column in (tables.entry.c.path, tables.entry.c.name):
             kind = column.type
             assert isinstance(kind, BytewiseString)
             postgres = kind.load_dialect_impl(postgresql.dialect())
@@ -364,14 +364,16 @@ class TestBuildVFSTables:
         assert not any([c.name for c in index.columns] == ["everyone_level"] for index in tables.entry.indexes)
         assert tables.entry.c.everyone_level.nullable is False and tables.entry.c.everyone_level.default is None
 
-    def test_origin_path_is_nullable_bytewise_and_indexed_alone(self, tables: VFSTables) -> None:
-        # A trashed row's origin is judged as its path is: same type, its
-        # own index (NULL on every live row, so it holds the trash alone).
-        origin = tables.entry.c.origin_path
-        assert isinstance(origin.type, BytewiseString) and origin.type.length == MAX_PATH_LENGTH
-        assert origin.nullable is True and origin.default is None
+    def test_the_tombstone_is_two_nullable_columns_each_indexed_alone(self, tables: VFSTables) -> None:
+        # NULL on every live row, so each index holds the deleted rows
+        # alone: the view and the retention sweep seek deleted_at, restore
+        # and the purge seek a root's set.
+        deleted_at, root = tables.entry.c.deleted_at, tables.entry.c.trash_root_id
+        assert deleted_at.nullable is True and root.nullable is True and isinstance(root.type, ULIDKey)
         by_name = {str(index.name): index for index in tables.entry.indexes}
-        assert [c.name for c in by_name["ix_vfs_entries_origin_path"].columns] == ["origin_path"]
+        assert [c.name for c in by_name["ix_vfs_entries_deleted_at"].columns] == ["deleted_at"]
+        assert [c.name for c in by_name["ix_vfs_entries_trash_root"].columns] == ["trash_root_id"]
+        assert not any("origin" in name or "restore" in name for name in by_name)
 
     def test_the_stamps_and_the_marks_carry_a_revision(self, tables: VFSTables) -> None:
         # One stamp per principal ever named by an admin write, keyed by
@@ -424,7 +426,7 @@ def _entries_row(entry: Entry, *, entry_id: str, parent_id: str | None) -> dict[
     """
     resident = entry.model_dump(exclude=set(ENTRY_CONTENT_FIELDS) | set(Entry.model_computed_fields))
     stamped = {"entry_id": entry_id, "parent_id": parent_id, "version": 1, "everyone_level": 2}
-    return {**resident, **stamped, "original_parent_id": None, "original_name": None}
+    return {**resident, **stamped}
 
 
 class TestULIDKey:

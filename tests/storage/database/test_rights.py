@@ -225,24 +225,21 @@ def test_the_fan_spends_one_bind_per_exact_path_and_two_per_open_range() -> None
     entry = build_vfs_tables().entry
     clauses = visibility_clauses(entry, rights, SQLITE, 2_099)
     assert clauses is not None and len(clauses) == 1
-    # The everyone level, then four points and five ranges each in its live
-    # form (on path, origin null) and its trashed form (on origin), and
-    # ann's unit: her id plus /hr's point and range in both forms.
-    assert clauses[0].binds == 1 + 2 * (4 + 2 * 5) + (1 + 2 * (1 + 2))
+    # The everyone level, then four points and five ranges on path, and
+    # ann's unit: her id plus /hr's point and range.
+    assert clauses[0].binds == 1 + (4 + 2 * 5) + (1 + (1 + 2))
     sql = str(clauses[0].predicate.compile(compile_kwargs={"literal_binds": True}))
-    assert "LIKE" not in sql and "\x00" not in sql
+    assert "LIKE" not in sql and "\x00" not in sql and "origin_path" not in sql
     assert sql.startswith("vfs_entries.everyone_level >= 1 OR ")
     assert (
         sql.count("vfs_entries.path = ") == 5
         and sql.count("vfs_entries.path > ") == 6
         and sql.count("vfs_entries.path < ") == 6
     )
-    assert sql.count("vfs_entries.origin_path = ") == 5 and sql.count("vfs_entries.origin_path > ") == 6
-    assert sql.count("vfs_entries.origin_path IS NULL") == 11
     assert "vfs_entries.owner_id = 'ann'" in sql
     # Starved to one bind per clause, every term is its own statement.
     starved = visibility_clauses(entry, rights, SQLITE, 4)
-    expected = [1, *[1] * 4, *[2] * 5, *[1] * 4, *[2] * 5, 2, 3, 2, 3]
+    expected = [1, *[1] * 4, *[2] * 5, 2, 3]
     assert starved is not None and [clause.binds for clause in starved] == expected
 
 
@@ -336,7 +333,7 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
                 await _assert_labels(storage, world)
             assert (await storage.delete(path=Path("/m1"), authority=SYSTEM)).success is True
             await _assert_labels(storage, world)
-            # A posture change while /m1 sits in the trash reaches its rows at their origin.
+            # A posture change while /m1 is deleted reaches its rows where they sit.
             target = rng.choice(("/", "/m1", *layout.paths))
             level = rng.choice(tuple(POSTURE_LEVELS.values()))
             assert (await storage.posture(path=Path(target), posture=_POSTURE_OF[level], authority=SYSTEM)).success
@@ -349,11 +346,11 @@ async def test_every_row_carries_the_oracles_everyone_level_after_every_mutation
 
 
 @pytest.mark.parametrize("layout", LAYOUTS, ids=["base", "siblings"])
-async def test_the_trash_is_judged_by_its_origin_against_the_oracle(layout: Layout) -> None:
+async def test_the_trash_view_shows_each_caller_its_own_deleted_rows_against_the_oracle(layout: Layout) -> None:
     # A directory is deleted as the system actor. For every subject set the
-    # trash must name exactly the rows the oracle admits at their origins
-    # (plus the directories on the road to one), and restore and sweep must
-    # be allowed exactly when the oracle writes every row of the subtree.
+    # trash view must name exactly the rows the oracle admits at their own
+    # paths (plus the directories on the road to one), and restore and sweep
+    # must be allowed exactly when the oracle writes every row of the subtree.
     rng = random.Random(63)
     for _ in range(WORLDS // 3):
         world = random_world(rng, layout)
@@ -362,27 +359,25 @@ async def test_the_trash_is_judged_by_its_origin_against_the_oracle(layout: Layo
             root = rng.choice(layout.directories)
             subtree = [p for p in layout.paths if p == root or p.startswith(root + "/")]
             for subjects in SUBJECT_SETS:
-                deleted = await storage.delete(path=Path(root), authority=SYSTEM)
-                trashed = str(_trash_path(deleted))
-                world.origins = {trashed + p[len(root) :]: p for p in subtree}
+                assert (await storage.delete(path=Path(root), authority=SYSTEM)).success is True
                 authority = _authority(subjects)
-                globbed = await storage.glob(patterns=("/.vfs/**",), authority=authority)
+                globbed = await storage.glob(patterns=("/.vfs/trash/**",), authority=authority)
                 assert globbed.success is True, (subjects, globbed.errors)
                 named = {str(o.path) for o in globbed.observations}
-                shown = _expected_trash(world, subjects, trashed, layout)
-                assert named == shown - {"/.vfs"}, (world.grants, subjects, root)
-                writable = all(set_rank(world, subjects, t) >= LEVEL_RANK["read_write"] for t in world.origins)
+                shown = _expected_trash(world, subjects, subtree, layout)
+                assert named == shown, (world.grants, subjects, root)
+                writable = all(set_rank(world, subjects, t) >= LEVEL_RANK["read_write"] for t in subtree)
                 restored = await storage.restore(path=Path(root), authority=authority)
                 if writable:
                     assert restored.success is True, (subjects, restored.errors)
                 else:
-                    # A trashed root the caller sees, or walks through to a row it sees, is denied; else absent.
-                    kind = ErrorKind.permission_denied if trashed in shown else ErrorKind.not_found
+                    # A deleted root the caller sees, or walks through to a row it sees, is denied; else absent.
+                    kind = ErrorKind.permission_denied if root in shown else ErrorKind.not_found
                     assert _kind(restored) == kind, (world.grants, subjects, root)
-                    assert _kind(await storage.sweep(path=Path(trashed), authority=authority)) == kind
-                    assert (await storage.stat(path=Path(trashed), authority=SYSTEM)).success is True
+                    swept = await storage.sweep(path=Path(root), authority=authority)
+                    assert _kind(swept) == kind, (world.grants, subjects, root, shown, swept.errors)
+                    assert (await storage.stat(path=Path(f"/.vfs/trash{root}"), authority=SYSTEM)).success is True
                     assert (await storage.restore(path=Path(root), authority=SYSTEM)).success is True
-                world.origins = {}
                 await _assert_labels(storage, world)
         finally:
             await storage.close()
@@ -822,30 +817,22 @@ async def _locked_admin_write(host: EngineHost, op: str, authority: Authority, *
 
 
 async def _assert_labels(storage: InMemoryStorage, world: GrantWorld) -> None:
-    """Every row's stored label equals the oracle's everyone level at its judged path — a trashed row's origin."""
+    """Every row's stored label equals the oracle's everyone level at its path — deleted rows included."""
     entry = storage._host.tables.entry
     async with storage._host.session_factory() as session:
-        stmt = select(entry.c.path, entry.c.everyone_level, entry.c.origin_path)
+        stmt = select(entry.c.path, entry.c.everyone_level)
         stored = (await session.execute(stmt)).all()
     assert stored
-    wrong = {row.path: (row.everyone_level, everyone_rank(world, row.origin_path or row.path)) for row in stored}
+    wrong = {row.path: (row.everyone_level, everyone_rank(world, row.path)) for row in stored}
     assert {p: pair for p, pair in wrong.items() if pair[0] != pair[1]} == {}, world.grants
 
 
-def _expected_trash(world: GrantWorld, subjects: tuple[str, ...], trashed: str, layout: Layout) -> set[str]:
-    """What a glob of the trash should name: the admitted trash rows and the directories on the road to one."""
-    admitted = {t for t in world.origins if set_rank(world, subjects, t) >= LEVEL_RANK["read"]}
-    bucket = trashed.rsplit("/", 1)[0]
-    directories = {"/.vfs", "/.vfs/trash", bucket} | {t for t, o in world.origins.items() if o in layout.directories}
+def _expected_trash(world: GrantWorld, subjects: tuple[str, ...], subtree: list[str], layout: Layout) -> set[str]:
+    """What a glob of the trash view should name: the admitted deleted rows and the directories on the road to one."""
+    admitted = {t for t in subtree if set_rank(world, subjects, t) >= LEVEL_RANK["read"]}
+    directories = {t for t in subtree if t in layout.directories}
     road = {d for d in directories if d not in admitted and any(a.startswith(d + "/") for a in admitted)}
     return admitted | road
-
-
-def _trash_path(result: Result) -> Path:
-    assert result.success is True, result.errors
-    trashed = result.one().trash_path
-    assert trashed is not None
-    return trashed
 
 
 def _set_posture(world: GrantWorld, path: str, level: GrantLevel) -> None:

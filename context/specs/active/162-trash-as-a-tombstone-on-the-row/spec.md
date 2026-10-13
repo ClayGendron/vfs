@@ -1,11 +1,17 @@
 # 162 — Trash as a tombstone on the row: delete flags, restore clears, a write revives
 
-- **Status:** draft — cut 2026-10-08 from ADR 074 (accepted the same
-  day) and the memo it stands on; revised 2026-10-08 after a review
-  against `0760fe9` that worked the restore and revive sequences by
-  hand (two tree-tearing cases fixed; the parent gate; the view's
-  pattern semantics; the mint's real columns; the schema format bump).
-  Two items ask Clay to amend ADR 074 (see rules 4 and 5).
+- **Status:** **both slices built 2026-10-11, in the working tree,
+  uncommitted, awaiting Clay's review** (Clay: "work on 162 but do not
+  commit work until I approve"). Built as written, taking the two
+  proposed ADR 074 amendments (rules 4 and 5) as the working answers;
+  Clay has not yet confirmed them. `scripts/ci.sh` green: 3,938 tests
+  at 100% coverage. The four engine legs were **not** run (db_test
+  needs Docker). See *Landing notes* at the end for the deviations.
+  Drafted 2026-10-08 from ADR 074 (accepted the same day) and the memo
+  it stands on; revised 2026-10-08 after a review against `0760fe9`
+  that worked the restore and revive sequences by hand (two
+  tree-tearing cases fixed; the parent gate; the view's pattern
+  semantics; the mint's real columns; the schema format bump).
 - **Date:** 2026-10-08
 - **Owner:** Clay Gendron
 - **Kind:** feature and removal (database backend: `topology.py`'s
@@ -243,3 +249,56 @@ fourteen-column row. The read-side verb and retention are spec 161's.
   `collect_graph` and return on restore and on revive.
 - `scripts/ci.sh 3.13` green; the four engine legs green (the db_test
   skill); `cargo test -p vfs-core` untouched.
+
+## Landing notes (2026-10-11, both slices, uncommitted)
+
+Built as specified, with these decisions and deviations:
+
+- **The liveness index.** No column was prepended to
+  `ix_vfs_entries_everyone_path`: a leading `IS NULL` is not an access
+  predicate on Oracle, and on every engine the live read keeps its
+  seek on `(everyone_level, path)` with `deleted_at IS NULL` as a
+  residual. Two single-column indexes were added instead,
+  `ix_vfs_entries_deleted_at` (the view and the retention sweep) and
+  `ix_vfs_entries_trash_root` (restore's and the purge's root sets);
+  both hold the tombstoned rows alone on Oracle. SQLite cannot seek
+  `IS NOT NULL`, so the view's own listing is a bounded walk there;
+  `test_trash.py` pins that the live partial read seeks an index and
+  never scans, and the per-engine EXPLAIN is db_test's to pin.
+- **The write gate's reading of a tombstone.** A tombstoned row the
+  caller may see is `not_found` with the hint to a *read*; to a
+  mutation (restore, sweep, edit, move) it is judged by its label and
+  owner as an occupied path is, so a caller who may see but not write
+  it is `permission_denied`, never told it is absent. A hidden
+  directory, live or deleted, with a deleted row the caller sees
+  beneath it is on the road (the trash view already shows it so).
+- **The trash head in the path grammar.** `check_mutable_path` refuses
+  every path strictly beneath `/.vfs/trash`; the head itself passes
+  because `sweep` addresses it, and the storage's write plan refuses
+  the head and everything beneath it as `invalid`.
+- **Sweep of the view** needs write rights over the whole mount
+  (`subtrees([ROOT])`), because the retention arm may destroy a row
+  anywhere; a partial caller is `permission_denied` at the head.
+- **`mkedge`** at a tombstoned endpoint classifies through the descent
+  ladder, so it carries the hint like every other verb in rule 2.
+- **Transfers.** A move carries a tombstoned descendant with its tree;
+  a copy reproduces the live rows alone. A transfer onto a tombstoned
+  occupant refuses `exists` with the hint (one row per path).
+- **`add_mount`** restores a mount-point directory an unmount deleted
+  (the remount-after-unmount shape would otherwise refuse `not_found`).
+- **The mint** (`versions.py`) measures hash, size and lines from the
+  body it reads, never from the entry row (an arbitration clobber has
+  already overwritten that row), and numbers the row `version - 1`.
+  A row with no body row mints nothing. It runs after the entry
+  updates and before the bodies are replaced.
+- **`Observation`** loses `trash_path` and gains the `deleted_at`
+  mirror, which every row served through the view projects.
+- **Search scope.** A grep or glean channel is one side of the
+  tombstone: every admission under the head, or none; a mix refuses
+  `invalid`.
+- **Spy counts** (`test_trash.py`): delete and restore of a 1,000- and
+  2,000-file directory each issue ≤ 10 statements, flat in N, and no
+  statement touches `vfs_segments`.
+- **Not done here:** the engine legs (db_test), the archive move and
+  the status lines on 081/082/083 (task 16, on landing), spec 156's
+  rule 2 stub and spec 150 §8's note.

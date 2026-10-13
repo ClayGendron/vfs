@@ -25,15 +25,12 @@ from ulid import ULID
 from tests.support.database_helpers import _url
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
-from vfs.results import Severity
+from vfs.results import ErrorKind, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.edges import (
-    EdgeRebuildState,
     _touch_rows,
-    collect_edge_drift,
     mkedge_rows,
-    repair_edge_drift,
 )
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.replace import EditOperation
@@ -95,16 +92,6 @@ async def _entry_ids(storage: DatabaseStorage) -> dict[str, str]:
     async with storage._host.session_factory() as session:
         rows = (await session.execute(select(entry.c.path, entry.c.entry_id))).all()
     return {row.path: row.entry_id for row in rows}
-
-
-async def _plant_stray(storage: DatabaseStorage, source_id: str, target_id: str) -> None:
-    """Plant one authored edge by raw ids — the row-layer bug the reclaim heals."""
-    edges = storage._host.tables.edges
-    async with storage._host.session_factory() as session:
-        await session.execute(
-            insert(edges).values(source_id=source_id, target_id=target_id, edge_type="ref", provenance="user")
-        )
-        await session.commit()
 
 
 async def _weights(storage: DatabaseStorage) -> dict[tuple[str, str, str], float | None]:
@@ -202,11 +189,10 @@ class TestTopologyMirror:
         await _assert_mirror(storage)
         assert len(await _authored(storage)) == 1
 
-    async def test_delete_keeps_the_mirror_through_trash(self, storage: DatabaseStorage) -> None:
+    async def test_delete_keeps_the_mirror_where_it_sits(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)
         assert (await storage.delete(path=Path("/a"))).success is True
-        # The trashed root re-sourced to the bucket; descendants, the
-        # chain, and the bucket dirs all mirror parent_id uniformly.
+        # Nothing moved: every row keeps its parent and its fs row.
         await _assert_mirror(storage)
 
     async def test_restore_returns_the_mirror_home(self, storage: DatabaseStorage) -> None:
@@ -230,7 +216,7 @@ class TestTopologyMirror:
 
 
 # ---------------------------------------------------------------------------
-# Authored-edge lifetime — removed by triple or endpoint deletion, soft included
+# Authored-edge lifetime — removed by triple or the purge, never by a delete
 # ---------------------------------------------------------------------------
 
 
@@ -245,31 +231,28 @@ class TestAuthoredEdgeLifetime:
         ]
         assert (await storage.write(entries=entries, parents=True)).success is True
 
-    async def test_soft_delete_cascades_every_direction(self, storage: DatabaseStorage) -> None:
+    async def test_a_delete_cascades_nothing_in_either_direction(self, storage: DatabaseStorage) -> None:
         await self._corpus(storage)
         await _seed_edge(storage, "/proj/inner/a.md", "/proj/inner/b.md")  # internal
         await _seed_edge(storage, "/other/d.md", "/proj/inner/a.md")  # inbound
         await _seed_edge(storage, "/proj/inner/b.md", "/other/d.md")  # outbound
         await _seed_edge(storage, "/other/d.md", "/other/e.md")  # unrelated
+        before = await _authored(storage)
         assert (await storage.delete(path=Path("/proj/inner"))).success is True
         await _assert_mirror(storage)
-        survivors = await _authored(storage)
-        assert len(survivors) == 1  # only the unrelated edge lives on
-        assert next(iter(survivors))[2] == "ref"
+        assert await _authored(storage) == before  # every edge waits with its endpoint
 
-    async def test_a_file_delete_cascades_its_own_edges(self, storage: DatabaseStorage) -> None:
+    async def test_a_file_delete_keeps_its_own_edges_and_a_restore_finds_them(self, storage: DatabaseStorage) -> None:
         await self._corpus(storage)
         await _seed_edge(storage, "/proj/c.md", "/other/d.md")
         assert (await storage.delete(path=Path("/proj/c.md"))).success is True
         await _assert_mirror(storage)
-        assert await _authored(storage) == set()
-
-    async def test_restore_never_re_mints_authored_edges(self, storage: DatabaseStorage) -> None:
-        await self._corpus(storage)
-        await _seed_edge(storage, "/proj/inner/a.md", "/other/d.md")
-        assert (await storage.delete(path=Path("/proj/inner"))).success is True
-        assert (await storage.restore(path=Path("/proj/inner"))).success is True
-        await _assert_mirror(storage)
+        assert len(await _authored(storage)) == 1
+        edge = Edge(source=Path("/proj/c.md"), target=Path("/other/d.md"), edge_type="ref")
+        hidden = await storage.rmedge(edges=[edge])
+        assert hidden.observations == [] and hidden.errors[0].kind == ErrorKind.not_found
+        assert (await storage.restore(path=Path("/proj/c.md"))).success is True
+        assert [o.status for o in (await storage.rmedge(edges=[edge])).observations] == ["deleted"]
         assert await _authored(storage) == set()
 
     async def test_a_move_is_not_a_delete(self, storage: DatabaseStorage) -> None:
@@ -416,7 +399,7 @@ class TestEndpointLocks:
 
     async def test_a_rival_delete_converges_after_the_window(self, storage: DatabaseStorage, tmp_path) -> None:
         # The rival launches mid-window and must not commit inside it;
-        # after mkedge commits, its cascade sweeps the fresh edge.
+        # after mkedge commits, the fresh edge waits with the deleted endpoint.
         entries = [Entry(path=Path("/src.py"), content="x"), Entry(path=Path("/dst.py"), content="x")]
         assert (await storage.write(entries=entries)).success is True
         rival = DatabaseStorage(url=_url(tmp_path))
@@ -437,7 +420,7 @@ class TestEndpointLocks:
             assert deleted.success is True
         finally:
             await rival.close()
-        assert await _authored(storage) == set()
+        assert len(await _authored(storage)) == 1
         await _assert_mirror(storage)
 
 
@@ -514,47 +497,6 @@ class TestEdgeRebuild:
         await _assert_mirror(storage)
         # The dangling authored edge is gone with the drift.
         assert await _authored(storage) == set()
-
-    async def test_a_stray_on_a_trashed_entry_is_reclaimed_and_reported(self, storage: DatabaseStorage) -> None:
-        # Reachable only from a row-layer writer — the verbs' endpoint
-        # locks refuse the interleaving that would mint this.
-        assert (await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])).success
-        assert (await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])).success
-        ids = await _entry_ids(storage)
-        assert (await storage.delete(path=Path("/dst.py"))).success
-        await _plant_stray(storage, ids["/src.py"], ids["/dst.py"])
-        result = await storage.reindex()
-        assert result.success is True
-        messages = " | ".join(e.message for e in result.errors if e.severity == Severity.warning)
-        assert "touching trashed entries" in messages
-        assert await _authored(storage) == set()
-        await _assert_mirror(storage)
-
-    async def test_a_restore_between_collect_and_repair_wins(self, storage: DatabaseStorage) -> None:
-        # The guard: an endpoint restored mid-pass is live truth — the
-        # reclaim skips, and the now-lawful edge survives.
-        assert (await storage.write(entries=[Entry(path=Path("/src.py"), content="x")])).success
-        assert (await storage.write(entries=[Entry(path=Path("/dst.py"), content="x")])).success
-        ids = await _entry_ids(storage)
-        deleted = await storage.delete(path=Path("/dst.py"))
-        trash_path = deleted.observations[0].trash_path
-        assert trash_path is not None
-        await _plant_stray(storage, ids["/src.py"], ids["/dst.py"])
-        tables = storage._host.tables
-        state = EdgeRebuildState()
-        async with storage._host.session_factory() as session:
-            assert (await collect_edge_drift(session, tables, state)).success is True
-        assert state.strays
-        assert (await storage.restore(path=trash_path)).success is True
-        async with storage._host.session_factory() as session:
-            await session.connection(execution_options={"vfs_writer": True})
-            repaired = await repair_edge_drift(
-                session, tables, storage._host.profile, storage._host.membership_budget, state
-            )
-            await session.commit()
-        assert all("touching trashed" not in e.message for e in repaired.errors)
-        assert await _authored(storage) == {(ids["/src.py"], ids["/dst.py"], "ref")}
-        await _assert_mirror(storage)
 
     async def test_a_lease_lost_before_edge_repair_stops_the_run(self, storage: DatabaseStorage) -> None:
         # Segments are clean, edge drift is found, and the lease dies at

@@ -4,7 +4,6 @@ the busy guard, shadow filtering, decoration, and terminal resolution."""
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -375,8 +374,8 @@ async def test_remove_mount_unbinds_and_rmdirs() -> None:
 
 
 async def test_remove_mount_parks_the_directory_in_trash_restorable() -> None:
-    # Unmount never destroys: the empty mount directory is an ordinary
-    # trash row, and restore brings it back as a plain directory.
+    # Unmount never destroys: the empty mount directory is deleted where
+    # it sits, and restore brings it back as a plain directory.
     root = VirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/data")
     await root.remove_mount("/data")
@@ -386,25 +385,17 @@ async def test_remove_mount_parks_the_directory_in_trash_restorable() -> None:
     assert (await root.stat("/data")).one().kind == "directory"
 
 
-async def test_a_sweep_reclaims_the_trashed_mount_directory() -> None:
+async def test_a_sweep_reclaims_the_deleted_mount_directory() -> None:
     root = VirtualFileSystem(storage=InMemoryStorage(trash_days=0))
     await root.add_mount(RecorderStorage(), "/data")
     await root.remove_mount("/data")
-    buckets = (await root.ls("/.vfs/trash")).observations
-    assert len(buckets) == 1
-    bucket = str(buckets[0].path)
-    rows = (await root.ls(bucket)).observations
-    assert any(str(o.path).endswith("-data") for o in rows)
-    # Even at trash_days=0 the current hour has not fully aged, so the
-    # retention sweep keeps the bucket; the bucket-address arm reclaims it.
-    retained = await root.sweep()
-    if bucket != f"/.vfs/trash/{datetime.now(UTC).strftime('%Y-%m-%d-%H')}":
-        pytest.skip("hour boundary crossed between unmount and sweep")
-    assert retained.success is True
-    assert retained.observations == []
-    reclaimed = await root.sweep(bucket)
+    deleted = (await root.ls("/.vfs/trash")).observations
+    assert [str(o.path) for o in deleted] == ["/data"]
+    reclaimed = await root.sweep()
     assert reclaimed.success is True
-    assert (await root.stat(bucket)).success is False
+    assert [str(o.path) for o in reclaimed.observations] == ["/data"]
+    assert (await root.stat("/data")).success is False
+    assert (await root.ls("/.vfs/trash")).observations == []
 
 
 async def test_remove_mount_rejects_missing() -> None:

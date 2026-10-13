@@ -287,11 +287,14 @@ class TestCheckMutablePath:
     def test_non_metadata_paths_are_mutable(self):
         assert check_mutable_path(Path("/src/auth.py")) == (True, "")
 
-    def test_meta_scope_paths_are_mutable(self):
-        # Trash-side writes are ordinary writes: the meta scope hides rows
-        # from default enumeration; it does not refuse mutation.
-        assert check_mutable_path(Path("/.vfs/trash/2026-07-18-10/x.txt")) == (True, "")
+    def test_meta_scope_paths_are_mutable_but_the_trash_view_is_not(self):
+        # The meta scope hides rows from default enumeration; it does not
+        # refuse mutation. The trash view is a view: the head passes (sweep
+        # addresses it), nothing beneath it is a write target.
+        assert check_mutable_path(Path("/.vfs/docs/x.txt")) == (True, "")
         assert check_mutable_path(Path("/.vfs/trash")) == (True, "")
+        refused = check_mutable_path(Path("/.vfs/trash/x.txt"))
+        assert refused == (False, "Cannot mutate the trash view beneath '/.vfs/trash'")
 
 
 # =========================================================================

@@ -18,6 +18,15 @@ torn path cache. Every function takes the op's live ``AsyncSession`` and
 never begins or commits — the protocol method in ``backend.py`` owns its
 one transaction.
 
+A deleted row stays at its path with a tombstone. The snapshot read
+carries it, the plan (``staging.py``) reads around it, and the guarded
+update that lands a file write at a tombstoned path is the revive: the
+material columns it writes clear the tombstone, the version mint
+(``versions.py``) keeps the body it replaced, and the parent bump
+affirms the member that returned. Every parent bump also proves its
+parent is live: a parent tombstoned mid-window misses the guard and
+the batch redrives into an honest refusal.
+
 Concurrent create arbitration follows the dialect's declared mode:
 ``upsert`` rides ``ON CONFLICT`` on the ``(parent_id, name)`` index,
 ``catch_retry`` inserts each chunk under its own savepoint and re-runs
@@ -41,7 +50,7 @@ from sqlalchemy.exc import IntegrityError
 from vfs.authority import owner_for
 from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
-from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors
+from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors, tombstone_miss
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
@@ -60,6 +69,7 @@ from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
+from vfs.storage.backends.database.versions import mint_versions
 from vfs.storage.editing import edited_entry
 
 if TYPE_CHECKING:
@@ -78,7 +88,8 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 # Columns an overwrite clobbers when arbitration lands on a rival's row:
-# identity stays, version increments SQL-side, material state is ours.
+# identity stays, version increments SQL-side, material state is ours —
+# the tombstone included, so a write at a deleted path revives it.
 _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "kind",
     "content_hash",
@@ -99,6 +110,8 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "media_height",
     "owner_id",
     "updated_at",
+    "deleted_at",
+    "trash_root_id",
 )
 
 
@@ -181,6 +194,8 @@ async def mkdir_rows(
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {path})
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
+    if not plan.within_namespace(path):
+        return Result(ops=("mkdir",), errors=plan.errors)
     occupant = plan.kind_of(path)
     if occupant is not None:
         if exist_ok and occupant == "directory":
@@ -189,6 +204,9 @@ async def mkdir_rows(
                 session, tables, profile, parameter_budget, membership_budget, plan, op="mkdir", overwrite=False
             )
         return Result(ops=("mkdir",), errors=[already_exists(path)])
+    # A tombstone at the site is absent to mkdir: only restore brings a deleted directory back.
+    if (tombstone := plan.tombstone_of(path)) is not None:
+        return Result(ops=("mkdir",), errors=[tombstone_miss(path, tombstone["deleted_at"])])
     if not plan.within_budget(path) or not plan.parent_gate(path, parents=parents, target=path):
         return Result(ops=("mkdir",), errors=plan.errors)
     minted = plan.mint_chain(path)
@@ -222,10 +240,11 @@ async def edit_rows(
     clobber, so a concurrent rival surfaces as ``conflict``.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
-    missing = await miss_errors(session, tables.entry, targets, committed, profile, membership_budget)
+    live = {path: row for path, row in committed.items() if row["deleted_at"] is None}
+    missing = await miss_errors(session, tables.entry, targets, live, profile, membership_budget)
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     for target in targets:
-        row = committed.get(str(target))
+        row = live.get(str(target))
         if row is None:
             plan.errors.append(missing[target])
             continue
@@ -265,7 +284,7 @@ async def _fetch_committed(
     *,
     with_content: bool = False,
 ) -> dict[str, RowMapping]:
-    """One bounded fetch seeds the plan: targets, ancestors, the root."""
+    """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge."""
     entry = tables.entry
     columns: list[Column[object]] = [
         entry.c.entry_id,
@@ -276,6 +295,7 @@ async def _fetch_committed(
         entry.c.mime_type,
         entry.c.owner_id,
         entry.c.source,
+        entry.c.deleted_at,
     ]
     source: FromClause | None = None
     if with_content:
@@ -364,6 +384,14 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, authority=plan.authority, now=now
     ):
         return errors
+    # Every row whose body this batch replaces — a guarded update, an
+    # absorb, or a create that clobbered a rival — keeps that body as a version.
+    replaced = [
+        s
+        for s in plan.staged.values()
+        if s.kind in CONTENT_KINDS and (s.persistence in ("update", "absorb") or s.entry_id not in minted)
+    ]
+    await mint_versions(session, tables, profile, membership_budget, replaced, authority=plan.authority, now=now)
     page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
     if plan.value_cap is not None:
         page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
@@ -631,8 +659,8 @@ async def _update_materials(
     probe would lie. The absorb arm (arbitration clobbers) increments
     SQL-side, last-writer-wins between writes by design — but it still
     proves its address: the update carries the path at probe time (a
-    topology relocation always rewrites the path, so a row trashed or
-    moved mid-window misses), and application is verified from
+    topology relocation always rewrites the path, so a row moved
+    mid-window misses), and application is verified from
     RETURNING or a read-back comparing the stored path; a miss raises
     :class:`StaleSnapshot` and the whole method redrives.
     """
@@ -959,12 +987,13 @@ async def _bump_parents(
     never at staging, where arbitration (absorb, adopt) can silently
     invalidate it — so a parent acquired by adoption is affirmed like any
     committed parent, from the identity the staged entry carries.
-    ``version = version + 1`` under ``WHERE entry_id AND path-at-snapshot``
-    still composes with rival bumps, while a parent a rival relocated or
-    destroyed mid-window — delete, move, restore, and purge are one
-    failure mode here — misses the guard. The predicate is the path, not
-    ``parent_id``: a grandparent's relocation rewrites only descendant
-    paths, and must miss too. Rowcount is verified per chunk against the
+    ``version = version + 1`` under ``WHERE entry_id AND path-at-snapshot
+    AND deleted_at IS NULL`` still composes with rival bumps, while a
+    parent a rival relocated, tombstoned or destroyed mid-window — move,
+    delete, and purge are one failure mode here — misses the guard. The
+    predicate is the path and the tombstone, not ``parent_id``: a
+    grandparent's relocation rewrites only descendant paths, and a
+    delete leaves every path in place, so each must miss on its own. Rowcount is verified per chunk against the
     chunk's pair count; any shortfall raises :class:`StaleSnapshot`, so
     the whole batch — the torn creates are uncommitted inserts in this
     same transaction — rolls back and the method redrives from a fresh
@@ -1040,7 +1069,7 @@ def _bump_values_stmt(entry: Table, pairs: Sequence[tuple[str, str]]) -> Update:
     ).data(list(pairs))
     return (
         update(entry)
-        .where(entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path)
+        .where(entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path, entry.c.deleted_at.is_(None))
         .values(version=entry.c.version + 1)
         .returning(entry.c.entry_id)
     )
@@ -1057,7 +1086,7 @@ async def _bump_by_rowcount(
     """Guarded bump verified by rowcount — executemany aggregate, or the per-row floor."""
     stmt = (
         update(entry)
-        .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"))
+        .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"), entry.c.deleted_at.is_(None))
         .values(version=entry.c.version + 1)
     )
     for chunk in chunked(pairs, membership_budget):
@@ -1082,7 +1111,8 @@ def _material_values(staged: StagedEntry, authority: Authority | None, now: date
     """The clobber-column values for *staged*; ownership derives from the authority.
 
     A write clears every render stamp: a bytes row starts over as
-    pending, a text row carries no render state at all.
+    pending, a text row carries no render state at all. It clears the
+    tombstone too: a write at a deleted path is the revive.
     """
     return {
         "kind": staged.kind,
@@ -1104,6 +1134,8 @@ def _material_values(staged: StagedEntry, authority: Authority | None, now: date
         "media_height": None,
         "owner_id": owner_for(authority, staged.owner_id),
         "updated_at": now,
+        "deleted_at": None,
+        "trash_root_id": None,
     }
 
 

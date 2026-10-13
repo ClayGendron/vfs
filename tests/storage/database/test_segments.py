@@ -178,13 +178,14 @@ class TestTopologyMirror:
         assert [e.kind for e in refused.errors] == [ErrorKind.exists]
         await _assert_mirror(storage)
 
-    async def test_delete_mirrors_the_trash_side(self, storage: DatabaseStorage) -> None:
+    async def test_delete_moves_no_posting(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)
+        before, _ = await _mirror_sets(storage)
         assert (await storage.delete(path=Path("/a"))).success is True
         await _assert_mirror(storage)
         stored, _ = await _mirror_sets(storage)
-        # Trash rows carry postings too: the chain and the bucket are segments.
-        assert any(segment == "trash" for segment, _ in stored)
+        # A deleted row keeps its path, so its postings never change.
+        assert stored == before
 
     async def test_restore_returns_the_postings_home(self, storage: DatabaseStorage) -> None:
         await self._tree(storage)

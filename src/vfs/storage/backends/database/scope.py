@@ -7,7 +7,10 @@ the authoritative per-row gate (:func:`passes_gates`), the SQL terms a
 candidate fetch may ride beside its id chunk (:func:`pushdown_terms`,
 with true bind accounting), and the scan side's bounded, structurally
 prefiltered fetch of the ``NOT encoded`` overlay (:func:`entries_for_scan`).
-The gate is the law; every pushdown only narrows toward it.
+The gate is the law; every pushdown only narrows toward it. A scope
+under the ``/.vfs/trash`` head searches the tombstoned rows at the
+paths beneath it (:func:`trash_scope`): the head is stripped before
+the patterns compile, and the liveness term flips on every tier.
 """
 
 from __future__ import annotations
@@ -17,8 +20,8 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 
 from sqlalchemy import and_, or_, select
 
-from vfs.paths import _under_meta_root
-from vfs.pattern_matching import ROW_GATE_FIELDS, passes_row_filters
+from vfs.paths import TRASH_ROOT, _under_meta_root, strip_trash_head
+from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, passes_row_filters
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.reads import (
@@ -46,8 +49,9 @@ if TYPE_CHECKING:
 CHANNEL_ARM_BINDS: Final = 3
 
 # Columns every candidate fetch rides beside the caller's mask: the row-gate
-# facts, size_bytes (prices the content read), and what a view judges by.
-FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes"} | RIGHTS_FIELDS
+# facts, size_bytes (prices the content read), the tombstone, and what a
+# view judges by.
+FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "deleted_at"} | RIGHTS_FIELDS
 
 
 class ScanNominees(NamedTuple):
@@ -81,19 +85,46 @@ def passes_gates(
     not_gates: list[GlobFilter],
     wanted: frozenset[str],
     unwanted: frozenset[str],
+    *,
+    trashed: bool = False,
 ) -> bool:
     """The authoritative structural gates, per candidate, off the row's own facts.
 
     Matches raw strings — the stored ``name`` and ``ext`` columns mirror
-    the path by invariant, so no ``Path`` is minted per candidate. A
+    the path by invariant, so no ``Path`` is minted per candidate. A row
+    passes only on the side of the tombstone the scope searches: live
+    rows, or the tombstoned ones under the trash view (*trashed*). A
     meta row is admitted only by a gate whose literal prefix addresses
     the meta subtree — default enumeration hides ``/.vfs`` even when a
     wildcard gate would match it. The rest is the shared filter law.
     """
+    if (mapping["deleted_at"] is not None) != trashed:
+        return False
     path, name, ext = mapping["path"], mapping["name"], mapping["ext"]
     if _under_meta_root(path) and not any(gate.hits(path, name, ext) and meta_scoped(gate.pattern) for gate in gates):
         return False
     return passes_row_filters(path, name, ext, gates, not_gates, wanted, unwanted)
+
+
+def trash_scope(admissions: Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    """The admission patterns with the trash head stripped, and whether they address the trash view.
+
+    Every pattern under ``/.vfs/trash`` names the tombstoned rows at the
+    path beneath the head; a channel that mixes the view with live
+    patterns refuses, because one search runs on one side of the
+    tombstone. An empty channel searches the live namespace.
+    """
+    stripped = [strip_trash_head(pattern) for pattern in admissions]
+    sides = {rest is not None for rest in stripped}
+    if len(sides) > 1:
+        raise PatternError(f"a scope under {TRASH_ROOT!r} cannot mix with live paths")
+    patterns = tuple(rest if rest is not None else pattern for pattern, rest in zip(admissions, stripped, strict=True))
+    return patterns, sides == {True}
+
+
+def strip_trash_heads(patterns: Sequence[str]) -> tuple[str, ...]:
+    """Each pattern with the trash head stripped where it carries one — the exclusion channel's form."""
+    return tuple(rest if (rest := strip_trash_head(pattern)) is not None else pattern for pattern in patterns)
 
 
 # ---------------------------------------------------------------------------
@@ -110,11 +141,14 @@ def pushdown_terms(
     wanted: frozenset[str],
     *,
     hide_meta: bool,
+    trashed: bool = False,
 ) -> Pushdown:
     """The SQL terms the candidate fetch may carry beside the id chunk.
 
-    With no admission gates the meta scope moves into SQL — the string
-    gate may then be skipped entirely. The caller's wanted-ext set rides
+    The liveness term always rides — the tombstone side the scope
+    searches binds nothing — and with no admission gates the meta
+    exclusion moves into SQL with it, so the string gate may then be
+    skipped entirely. The caller's wanted-ext set rides
     under the membership rule, and the channel's compiled column facts
     ride as an OR over arms; both only ever narrow toward the authority,
     never past it. The whole ride is capped at half the membership
@@ -123,12 +157,9 @@ def pushdown_terms(
     dropped whole — narrowing is a convenience the statement may
     decline; ``passes_gates`` stays the authority.
     """
-    terms: list[ColumnElement[bool]] = []
-    binds = 0
-    if hide_meta:
-        liveness = liveness_filters(entry, profile, include_meta=False)
-        terms.extend(liveness)
-        binds += static_binds(liveness)
+    liveness = liveness_filters(entry, profile, include_meta=not hide_meta, trashed=trashed)
+    terms: list[ColumnElement[bool]] = [*liveness]
+    binds = static_binds(liveness)
     ceiling = membership_budget // 2
     ride = ext_membership(entry, wanted, membership_budget)
     if ride.predicate is not None and binds + ride.binds <= ceiling:
@@ -206,6 +237,7 @@ async def entries_for_scan(
     fetched: frozenset[str],
     limit: int,
     deadline: float,
+    trashed: bool = False,
 ) -> ScanNominees:
     """Scan-tier candidate entry rows in path order, capped at *limit*.
 
@@ -229,7 +261,7 @@ async def entries_for_scan(
     merged: dict[str, RowMapping] = {}
     overflow = False
     if gates:
-        built = (pattern_arm(entry, gate, wanted, profile, membership_budget) for gate in gates)
+        built = (pattern_arm(entry, gate, wanted, profile, membership_budget, trashed=trashed) for gate in gates)
         arms = [arm for arm in built if arm is not None]
         if not arms:
             return ScanNominees([], False)
@@ -245,7 +277,7 @@ async def entries_for_scan(
             if len(merged) > limit + 1:
                 merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
     else:
-        terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False)]
+        terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False, trashed=trashed)]
         ride = ext_membership(entry, wanted, membership_budget)
         if ride.predicate is not None:
             terms.append(ride.predicate)

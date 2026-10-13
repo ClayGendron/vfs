@@ -79,12 +79,11 @@ if TYPE_CHECKING:
     from sqlalchemy.types import TypeEngine
 
 # Entries-table columns with no counterpart field on the domain model: the id
-# backbone, the identity-based restore metadata (never paths — a trashed
-# entry restores by parent identity, immune to ancestor renames), and the
-# per-entry version — minted and guarded storage-side, reported on
-# observations, never authored on an Entry.
+# backbone, the tombstone's root (the row a delete named, which restore and
+# sweep act on as a set), and the per-entry version — minted and guarded
+# storage-side, reported on observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
-    {"id", "entry_id", "parent_id", "original_parent_id", "original_name", "origin_path", "version"}
+    {"id", "entry_id", "parent_id", "trash_root_id", "version"}
     | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"}
     | {"link_source_hash", "link_generation", "everyone_level"}
     | {"render_source_hash", "render_generation", "render_detail", "render_units", "media_width", "media_height"},
@@ -136,7 +135,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 20
+SCHEMA_FORMAT_VERSION: Final = 21
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -459,28 +458,24 @@ def build_vfs_tables(
         # the deepest covering posture row's level, stamped with the row.
         # No default on purpose — a mint site that forgets it fails loudly.
         Column("everyone_level", SmallInteger, nullable=False),
-        Column("original_parent_id", ULIDKey()),
-        Column("original_name", BytewiseString(MAX_SEGMENT_LENGTH)),
-        # A trashed row's path at the moment it was deleted: what its
-        # rights are judged by. NULL on every live row; cleared by restore.
-        Column("origin_path", BytewiseString(MAX_PATH_LENGTH)),
         Column("created_at", DateTime(timezone=True)),
         Column("updated_at", DateTime(timezone=True)),
+        # The tombstone: a deleted row stays at its path with the time it
+        # was deleted and the root the delete named (its own id for a root).
         Column("deleted_at", DateTime(timezone=True)),
+        Column("trash_root_id", ULIDKey()),
         UniqueConstraint("parent_id", "name", name="uq_vfs_entries_parent_name"),
         Index("ix_vfs_entries_ext_kind", "ext", "kind"),
         # Serves grep's overlay probe: the encoded=0 seek set is mostly
         # directories, so kind in the key rejects them without row lookups.
         Index("ix_vfs_entries_encoded_kind", "encoded", "kind"),
-        # Restore lookup by original site. Plain composite: a filtered
-        # index over the mostly-NULL restore columns is not portable.
-        Index("ix_vfs_entries_restore", "original_parent_id", "original_name"),
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.
         Index("ix_vfs_entries_everyone_path", "everyone_level", "path"),
-        # The range join for trashed rows seeks their origin as it seeks
-        # ``path`` for live ones; the index holds only the trashed rows.
-        Index("ix_vfs_entries_origin_path", "origin_path"),
+        # The trash view and the retention sweep seek the tombstoned rows
+        # alone here; restore and sweep clear or purge a root's set by it.
+        Index("ix_vfs_entries_deleted_at", "deleted_at"),
+        Index("ix_vfs_entries_trash_root", "trash_root_id"),
         # The twin lookups: a body hash shared by many rows is found by index, never a scan.
         Index("ix_vfs_entries_content_hash", "content_hash"),
         # The unrendered count and the pending probe: render state, never a scan of every row.

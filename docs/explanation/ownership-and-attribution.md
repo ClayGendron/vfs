@@ -46,7 +46,7 @@ It would be simpler to store one name per row and call it both owner and author.
 
 ## What is missing
 
-The versions table has carried this shape since the schema format moved to thirteen, and sweep clears the side table along with the versions it belongs to. But no verb writes a version row today. Store-on-write, reconstruction, and packing were designed under an older story and never built. Until a version history spec lands, the attribution columns describe what will be recorded, not what is.
+The versions table has carried this shape since the schema format moved to thirteen, and sweep clears the side table along with the versions it belongs to. The write path fills it: every overwrite of a file, and every write that revives a deleted one, keeps the body it replaced as a snapshot row with the actor, the subjects, the provenance and the grant revision of the write that replaced it. Reading that history back is a later verb's; until it lands, the rows are written but not yet served.
 
 ## Further reading
 

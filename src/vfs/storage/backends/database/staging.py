@@ -14,6 +14,17 @@ the durable ``entry_id`` (minted here for creates, copied from the committed
 row for updates), the ``base_version`` guard, and ``persistence`` — which
 execution pass writes the row's material columns. That is why it lives here
 beside the plan and not among the session-free models.
+
+A deleted row stays at its path with a tombstone, and the plan reads
+around it: a tombstoned row is absent to every gate — a tombstoned
+ancestor refuses ``not_found`` with the trashed hint, with or without
+``parents`` — except at a file write's own target, where a tombstoned
+file is the revive: the write stages an update that keeps the row's
+identity, clears its tombstone and replaces its body, and the parent
+learns a member returned. A file where a directory was deleted refuses
+``wrong_kind``; a directory anywhere a tombstone sits refuses
+``not_found`` — a tombstoned directory comes back only through
+``restore``. Nothing is written into the trash view itself.
 """
 
 from __future__ import annotations
@@ -23,9 +34,9 @@ from typing import TYPE_CHECKING, Literal
 
 from ulid import ULID
 
-from vfs.paths import byte_length
+from vfs.paths import TRASH_ROOT, byte_length, is_trash_path
 from vfs.results import ErrorKind, ResultError, already_exists, classified, wrong_kind
-from vfs.storage.backends.database.descent import ancestor_chain
+from vfs.storage.backends.database.descent import ancestor_chain, tombstone_miss, trashed_hint
 from vfs.storage.backends.database.dialects import wire_bytes
 
 if TYPE_CHECKING:
@@ -149,16 +160,23 @@ class WritePlan:
         self.budget = budget
         self.value_cap = value_cap
         self.staged: dict[Path, StagedEntry] = {}
+        self.revived: set[Path] = set()
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
         self.pending: list[tuple[Path, Status]] = []
 
     def kind_of(self, path: Path) -> str | None:
+        """The kind of the live row at *path* through the staged overlay; a tombstone is absent."""
         staged = self.staged.get(path)
         if staged is not None:
             return staged.kind
         row = self.committed.get(str(path))
-        return row["kind"] if row is not None else None
+        return row["kind"] if row is not None and row["deleted_at"] is None else None
+
+    def tombstone_of(self, path: Path) -> RowMapping | None:
+        """The tombstoned committed row at *path*; asked only where :meth:`kind_of` found no live row."""
+        row = self.committed.get(str(path))
+        return row if row is not None and row["deleted_at"] is not None else None
 
     def material_of(self, path: Path) -> tuple[str, str | None]:
         """Current kind and content through the staged overlay.
@@ -215,11 +233,28 @@ class WritePlan:
         )
         return False
 
+    def within_namespace(self, path: Path) -> bool:
+        """The trash view is an address for reading tombstoned rows, never a place a write lands."""
+        if not is_trash_path(str(path)):
+            return True
+        detail = f"{TRASH_ROOT} is a view over deleted rows; nothing is written there"
+        self.errors.append(classified(ErrorKind.invalid, path, detail=detail))
+        return False
+
     def parent_gate(self, path: Path, *, parents: bool, target: Path) -> bool:
-        """The POSIX parent rule: wrong_kind is unconditional; absence needs the flag."""
+        """The POSIX parent rule: wrong_kind is unconditional; absence needs the flag.
+
+        A tombstoned ancestor is absent whatever the flag says — the
+        flag mints missing directories, never revives deleted ones — and
+        its refusal carries the trashed hint.
+        """
         for ancestor in ancestor_chain(path):
             kind = self.kind_of(ancestor)
             if kind is None:
+                tombstone = self.tombstone_of(ancestor)
+                if tombstone is not None:
+                    self.errors.append(tombstone_miss(ancestor, tombstone["deleted_at"], target=target))
+                    return False
                 if parents:
                     return True
                 self.errors.append(classified(ErrorKind.not_found, ancestor, target=target))
@@ -245,23 +280,35 @@ class WritePlan:
         data: bytes | None = None,
         source: Source = "text",
     ) -> Status | None:
-        """Gate and stage one content-bearing row; ``None`` means an error was appended."""
-        if not self.within_budget(target):
+        """Gate and stage one content-bearing row; ``None`` means an error was appended.
+
+        A tombstoned file at the site is the revive: an update that keeps
+        the row's identity, whatever ``overwrite`` says, since no live row
+        occupies the path. A tombstoned directory refuses ``wrong_kind``
+        with the trashed hint, as a live one refuses without it.
+        """
+        if not self.within_namespace(target) or not self.within_budget(target):
             return None
         if not self.within_value_cap(target, data if data is not None else content):
             return None
         if not self.parent_gate(target, parents=parents, target=target):
             return None
         occupant = self.kind_of(target)
-        if occupant is not None:
-            if occupant == "directory":
-                self.errors.append(wrong_kind("directory", target))
-                return None
-            if not overwrite:
-                self.errors.append(already_exists(target))
-                return None
+        tombstone = self.tombstone_of(target) if occupant is None else None
+        if occupant == "directory":
+            self.errors.append(wrong_kind("directory", target))
+            return None
+        if tombstone is not None and tombstone["kind"] == "directory":
+            hint = {"kind": "directory", **trashed_hint(tombstone["deleted_at"])}
+            self.errors.append(classified(ErrorKind.wrong_kind, target, detail="directory", data=hint))
+            return None
+        if occupant is not None and not overwrite:
+            self.errors.append(already_exists(target))
+            return None
         self.mint_chain(target)
-        stage = self.stage_create if occupant is None else self.stage_update
+        if tombstone is not None:
+            self.revived.add(target)
+        stage = self.stage_create if occupant is None and tombstone is None else self.stage_update
         stage(
             target,
             kind=kind,
@@ -274,15 +321,22 @@ class WritePlan:
             data=data,
             source=source,
         )
-        return "created" if occupant is None else "updated"
+        return "created" if occupant is None and tombstone is None else "updated"
 
     def put_dir(self, target: Path, *, parents: bool) -> Status | None:
+        """Gate and stage one directory; a tombstone at the site is absent, and only ``restore`` brings it back."""
+        if not self.within_namespace(target):
+            return None
         occupant = self.kind_of(target)
         if occupant is not None:
             if occupant != "directory":
                 self.errors.append(wrong_kind(occupant, target))
                 return None
             return "unchanged"
+        tombstone = self.tombstone_of(target)
+        if tombstone is not None:
+            self.errors.append(tombstone_miss(target, tombstone["deleted_at"]))
+            return None
         if not self.within_budget(target) or not self.parent_gate(target, parents=parents, target=target):
             return None
         self.mint_chain(target)
@@ -399,11 +453,13 @@ class WritePlan:
         acquired at arbitration (adopt), whose identity the staged entry
         carries — owes a guarded bump proving it still lives at its
         address. Absorb and adopt rows attach nothing themselves: the
-        occupant they resolved to already held the address.
+        occupant they resolved to already held the address. A revive
+        attaches too: its row was hidden, and the parent's listing changes.
         """
         bumps: dict[str, str] = {}
         for staged in self.staged.values():
-            if staged.persistence != "insert":
+            # A revive returns a member to its parent's listing as a create adds one.
+            if staged.persistence != "insert" and staged.path not in self.revived:
                 continue
             parent = self.staged.get(staged.parent)
             if parent is None:

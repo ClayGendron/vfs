@@ -332,33 +332,21 @@ class TestWriteVsTopologyCoherence:
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
         await storage.close()
 
-    async def test_restore_address_race_redrives(self, tmp_path) -> None:
+    async def test_restore_guard_misses_a_rival_revive(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)
         assert (await storage.delete(path=Path("/d/f.txt"))).success is True
         host = storage._host
         entry = host.tables.entry
-        now = datetime.now(UTC)
         async with host.session_factory() as session:
             await session.connection(execution_options={"vfs_writer": True})
 
             async def rival() -> None:
-                # An unserialized write claims the destination after the ladder ran.
-                d_id = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
+                # An unserialized write revives the row after the ladder ran: the clear's guard must miss.
                 await session.execute(
-                    insert(entry).values(
-                        entry_id=str(ULID()),
-                        parent_id=d_id,
-                        path="/d/f.txt",
-                        name="f.txt",
-                        kind="file",
-                        version=1,
-                        everyone_level=2,
-                        size_bytes=0,
-                        lines=0,
-                        created_at=now,
-                        updated_at=now,
-                    )
+                    update(entry)
+                    .where(entry.c.path == "/d/f.txt")
+                    .values(deleted_at=None, trash_root_id=None, version=entry.c.version + 1)
                 )
 
             with installed("restore:post-resolve", rival), pytest.raises(StaleSnapshot):
@@ -438,35 +426,6 @@ class TestWriteVsTopologyCoherence:
             texts = {row.entry_id for row in await conn.execute(select(tables.content.c.entry_id))}
             blobs = {row.entry_id for row in await conn.execute(select(tables.blobs.c.entry_id))}
         assert (texts, blobs) == ({young_id}, {young_blob})
-        await storage.close()
-
-    async def test_a_trash_root_squatter_never_blocks_orphan_reclaim(self, tmp_path) -> None:
-        # The squatter skips the bucket walk; the reclaim pass is
-        # unconditional — sweep is the only drain for orphaned bodies.
-        storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/.vfs/trash"), content="squat")], parents=True)
-        host = storage._host
-        tables = host.tables
-        old_id = str(ULID())
-        async with host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
-            await conn.execute(
-                insert(tables.content).values(
-                    entry_id=old_id, created_at=datetime.now(UTC) - timedelta(hours=25), content="old orphan"
-                )
-            )
-            await session.commit()
-        result = await storage.sweep(path=Path("/.vfs/trash"))
-        assert result.success is True
-        assert result.observations == []
-        assert result.errors[0].path == "/.vfs/trash"  # the squatter skip still surfaces first
-        reclaims = [e for e in result.errors if e.data and "entry_id" in e.data]
-        assert [w.data["entry_id"] for w in reclaims if w.data] == [old_id]
-        async with host.session_factory() as session:
-            conn = await session.connection()
-            remaining = {row.entry_id for row in await conn.execute(select(tables.content.c.entry_id))}
-        assert old_id not in remaining
-        assert (await storage.read(path=Path("/.vfs/trash"))).observations[0].content == "squat"
         await storage.close()
 
     async def test_bump_values_arm_is_a_guarded_join_and_verifies_the_count(self) -> None:
@@ -641,43 +600,6 @@ class TestWriteVsTopologyCoherence:
                     lock_key=host.topology_key,
                 )
             await session.rollback()
-        await storage.close()
-
-    async def test_ghost_at_the_original_site_blocks_restore_with_retryable_conflict(self, tmp_path) -> None:
-        # The claim collides on (parent_id, name) with a ghost whose stored
-        # path is elsewhere: the destination probe finds nothing, and the
-        # loss classifies as a retryable conflict — never raw driver text.
-        storage = DatabaseStorage(url=_url(tmp_path))
-        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)
-        assert (await storage.delete(path=Path("/d/f.txt"))).success is True
-        host = storage._host
-        entry = host.tables.entry
-        now = datetime.now(UTC)
-        async with host.session_factory() as session:
-            conn = await session.connection(execution_options={"vfs_writer": True})
-            d_id = (await conn.execute(select(entry.c.entry_id).where(entry.c.path == "/d"))).scalar_one()
-            await conn.execute(
-                insert(entry).values(
-                    entry_id=str(ULID()),
-                    parent_id=d_id,
-                    path="/elsewhere/f.txt",
-                    name="f.txt",
-                    kind="file",
-                    version=1,
-                    everyone_level=2,
-                    size_bytes=0,
-                    lines=0,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            await session.commit()
-        result = await storage.restore(path=Path("/d/f.txt"))
-        assert result.success is False
-        [error] = result.errors
-        assert error.kind == ErrorKind.conflict
-        assert error.retryable is True
-        assert "UNIQUE" not in error.message
         await storage.close()
 
     async def test_upsert_path_index_escape_redrives(self, tmp_path) -> None:
@@ -892,7 +814,7 @@ class TestWriteVsTopologyCoherence:
         monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
         monkeypatch.setattr(dialect, "update_returning", False)
         monkeypatch.setattr(dialect, "delete_returning", False)
-        # The delete reparent claim (its trash chain pre-minted above).
+        # The delete's tombstone claim.
         result = await storage.delete(path=Path("/a.txt"))
         assert result.success is False
         assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
@@ -906,9 +828,9 @@ class TestWriteVsTopologyCoherence:
         assert [e.kind for e in result.errors] == [ErrorKind.unsupported]
         await storage.close()
 
-    async def test_delete_recollects_rewrites_after_its_claim(self, tmp_path) -> None:
+    async def test_delete_marks_a_child_landed_after_its_snapshot(self, tmp_path) -> None:
         # The depth-2 window: a rival lands under a subdirectory after the
-        # pre-claim collection; the post-claim re-collection carries it.
+        # snapshot; the cascade statement runs later and marks it too.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/d/sub/keep.txt"), content="x")], parents=True)
         host = storage._host
@@ -947,21 +869,29 @@ class TestWriteVsTopologyCoherence:
                     lock_key=host.topology_key,
                 )
             assert result.success is True, result.errors
-            stranded = (await session.execute(select(entry.c.path).where(entry.c.path.like("/d/%")))).scalars().all()
-            moved = (await session.execute(select(entry.c.path).where(entry.c.name == "new.txt"))).scalar_one()
+            live = (
+                (
+                    await session.execute(
+                        select(entry.c.path).where(entry.c.path.like("/d/%"), entry.c.deleted_at.is_(None))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            late = (await session.execute(select(entry.c.deleted_at).where(entry.c.name == "new.txt"))).scalar_one()
             await session.rollback()
-        # The late row rode the re-collection into trash with its subtree.
-        assert stranded == []
-        assert moved.startswith("/.vfs/trash/")
+        # The late row was marked with its subtree: nothing live is stranded under the tombstone.
+        assert live == []
+        assert late is not None
         await storage.close()
 
-    async def test_late_arrival_over_the_byte_budget_redrives_the_delete(self, tmp_path) -> None:
+    async def test_late_arrival_over_the_byte_budget_redrives_the_move(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/d/sub/keep.txt"), content="x")], parents=True)
         host = storage._host
         entry = host.tables.entry
         now = datetime.now(UTC)
-        # Fits as a live path; overflows once the trash prefix lands on /d.
+        # Fits as a live path; overflows once the longer destination prefix lands on /d.
         long_tail = "/d/sub/" + "x" * (MAX_PATH_LENGTH - len("/d/sub/") - 10)
         async with host.session_factory() as session:
             await session.connection(execution_options={"vfs_writer": True})
@@ -984,14 +914,15 @@ class TestWriteVsTopologyCoherence:
                     )
                 )
 
-            with installed("delete:post-collect", rival), pytest.raises(StaleSnapshot):
-                await delete_rows(
+            with installed("transfer:post-collect", rival), pytest.raises(StaleSnapshot):
+                await transfer_rows(
                     session,
                     host.tables,
                     host.profile,
+                    host.parameter_budget,
                     host.membership_budget,
-                    targets=[Path("/d")],
-                    cascade=True,
+                    op="move",
+                    operations=[ResolvedPair(src=Path("/d"), dest=Path("/" + "m" * 20))],
                     authority=None,
                     lock_key=host.topology_key,
                 )
@@ -1226,9 +1157,12 @@ class TestWriteVsTopologyCoherence:
         render = ("text", None, None, None, None, None, None, None)
         full = (
             *(str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4),
-            *(False, False, False, *render, owner, now),
+            *(False, False, False, *render, owner, now, None, None),
         )
-        sparse = (str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False, *render, None, now)
+        sparse = (
+            *(str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False),
+            *(*render, None, now, None, None),
+        )
 
         def budget(row: tuple[object, ...]) -> int:
             return statement_budget(

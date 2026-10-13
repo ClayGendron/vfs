@@ -11,7 +11,8 @@ never by a path. ``/.vfs`` is the reserved meta scope (trash, mount metadata) an
 Examples:
 
     /src/auth.py                     file
-    /.vfs/trash/2026-07-18-10/x.txt  file (trash-side, meta scope)
+    /.vfs/mounts/data.json           file (meta scope)
+    /.vfs/trash/src/auth.py          the trash view of a deleted /src/auth.py
     /.agents/tools/clone-repo        directory (a tool's unit)
     /.agents/skills/pdf-processing   directory (a skill's unit)
 """
@@ -41,8 +42,8 @@ MAX_SEGMENT_LENGTH = 255  # UTF-8 bytes (POSIX NAME_MAX)
 
 METADATA_ROOT = "/.vfs"
 
-# The conventional trash location: an ordinary meta subtree the delete
-# verb reparents into — browsable, writable, no scope of its own.
+# The trash view's address: a deleted row stays at its own path with a
+# tombstone, and this head addresses the tombstoned rows beneath ``<rest>``.
 TRASH_ROOT = f"{METADATA_ROOT}/trash"
 
 # Reserved user-space capability root. Unlike METADATA_ROOT (derived, no indexable
@@ -269,9 +270,9 @@ class Path(str):
     def is_mutable_target(self) -> bool:
         """Namespace-grammar half of writability — NOT a permission check.
 
-        ``/`` and the ``/.vfs`` root are never mutable; every other path is a
-        lawful write target. Use the function ``check_mutable_path`` when the
-        rejection *reason* is needed.
+        ``/``, the ``/.vfs`` root and the paths beneath the trash view are
+        never mutable; every other path is a lawful write target. Use the
+        function ``check_mutable_path`` when the rejection *reason* is needed.
         """
         ok, _ = check_mutable_path(self)
         return ok
@@ -761,37 +762,46 @@ def is_meta_path(path: Path) -> bool:
 
 
 def is_trash_path(value: str) -> bool:
-    """Whether a canonical path string is the trash root or lies beneath it.
+    """Whether a canonical path string is the trash view's head or lies beneath it.
 
-    The trash-side address space: every row delete reparents into it,
-    and every row that carries an origin lives in it.
+    The view's address space: nothing is stored there. A read through it
+    addresses the tombstoned rows at the path under the head; a write
+    into it is refused, because there is no trash to write into.
     """
     return value == TRASH_ROOT or value.startswith(TRASH_ROOT + "/")
 
 
-def on_trash_chain(value: str) -> bool:
-    """Whether a trashed row can lie beneath a canonical path string.
+def strip_trash_head(value: str) -> str | None:
+    """The path a trash-view address names — ``/`` for the head itself — or ``None`` outside the view.
 
-    True for the trash root, every ancestor of it (the root, ``/.vfs``)
-    and every path under it; false everywhere else, where no row carries
-    an origin.
+    ``/.vfs/trash/d/f.md`` addresses the tombstoned row at ``/d/f.md``;
+    ``/.vfs/trash`` addresses every tombstoned root.
     """
-    return value == "/" or is_trash_path(value) or TRASH_ROOT.startswith(value + "/")
+    if value == TRASH_ROOT:
+        return "/"
+    if value.startswith(TRASH_ROOT + "/"):
+        return value[len(TRASH_ROOT) :]
+    return None
 
 
 def check_mutable_path(path: Path) -> tuple[bool, str]:
     """Check that *path* is a mutable target, returning ``(ok, reason)``.
 
-    A namespace-grammar check, not a permission check: only the two roots are
-    refused — ``/`` and the ``/.vfs`` meta root itself. Everything else,
-    including paths inside the meta scope (trash-side writes are ordinary
-    writes), is a lawful write target. Whether the caller *may* mutate is the
-    principal-permission layer's concern, not this check's.
+    A namespace-grammar check, not a permission check: the two roots are
+    refused — ``/`` and the ``/.vfs`` meta root itself — and so is every
+    path beneath the trash view's head, which is a view over tombstoned
+    rows and never a place a write lands. The head itself passes, because
+    ``sweep`` addresses it; a write there is the storage's refusal. Every
+    other path, the meta scope included, is a lawful write target. Whether
+    the caller *may* mutate is the principal-permission layer's concern,
+    not this check's.
     """
     if path == "/":
         return False, "Cannot mutate root path"
     if path == METADATA_ROOT:
         return False, "Cannot mutate reserved metadata root '/.vfs'"
+    if path.startswith(TRASH_ROOT + "/"):
+        return False, f"Cannot mutate the trash view beneath '{TRASH_ROOT}'"
     return True, ""
 
 

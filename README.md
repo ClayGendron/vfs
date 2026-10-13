@@ -1,4 +1,4 @@
-# vfs — the access layer for agents
+# VFS — Governed Data Access for AI Agents
 
 <p align="center">
   <a href="https://pypi.org/project/vfs-py/"><img src="https://img.shields.io/pypi/v/vfs-py" alt="PyPI version"></a>
@@ -7,8 +7,7 @@
   <a href="https://codecov.io/gh/ClayGendron/vfs"><img src="https://codecov.io/gh/ClayGendron/vfs/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://github.com/ClayGendron/vfs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/vfs" alt="License"></a>
 </p>
-
-**One namespace of everything an agent can see, search, and change. You decide what's in it.**
+**One namespace of everything an agent can see, search, and change.**
 
 Frameworks build the agent. Control planes set the policy. Gateways check the tool call. vfs enforces it on the data itself — the files, rows, and tools the agent actually touches.
 

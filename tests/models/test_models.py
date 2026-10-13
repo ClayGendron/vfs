@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from types import UnionType
 from typing import Union, get_args, get_origin
 
@@ -283,9 +284,9 @@ class TestObservationMirrors:
 class TestEntryToObservation:
     def test_projection_covers_every_entry_owned_mirror(self) -> None:
         text = Entry(path=Path("/docs/a.md"), content="hello", mime_type="text/markdown")
-        binary = Entry(path=Path("/docs/b.pdf"), data=b"%PDF-1.4 hello")
+        binary = Entry(path=Path("/docs/b.pdf"), data=b"%PDF-1.4 hello", deleted_at=datetime.now(UTC))
         for name in ENTRY_OWNED_MIRRORS:
-            # A text entry carries no bytes and no render state; the bytes entry does.
+            # A text entry carries no bytes, no render state and no tombstone; the bytes entry does.
             entry = binary if getattr(text, name) is None else text
             obs = entry.to_observation()
             assert getattr(obs, name) == getattr(entry, name), f"mirror {name!r} not projected"
@@ -399,12 +400,6 @@ class TestMountRebasing:
         assert rebased.path == "/data/docs/a.md"
         assert rebased.score == 0.5
         assert obs.path == "/docs/a.md"
-        assert rebased.without_mount("/data") == obs
-
-    def test_observation_rebase_carries_trash_path(self) -> None:
-        obs = Observation(path=Path("/a.md"), trash_path=Path("/.vfs/trash/2026-07-24-05/01A-a.md"))
-        rebased = obs.with_mount("/data")
-        assert rebased.trash_path == "/data/.vfs/trash/2026-07-24-05/01A-a.md"
         assert rebased.without_mount("/data") == obs
 
     def test_observation_rebase_carries_edge_target(self) -> None:

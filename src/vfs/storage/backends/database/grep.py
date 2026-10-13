@@ -92,6 +92,8 @@ from vfs.storage.backends.database.scope import (
     entries_for_scan,
     passes_gates,
     pushdown_terms,
+    strip_trash_heads,
+    trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
 
@@ -185,8 +187,8 @@ async def grep_rows(
     candidates, so a partial caller can reach it sooner than a whole one.
     """
     try:
-        admissions = expand_channel("globs", globs)
-        exclusions = expand_channel("globs_not", globs_not)
+        admissions, trashed = trash_scope(expand_channel("globs", globs))
+        exclusions = strip_trash_heads(expand_channel("globs_not", globs_not))
     except PatternError as exc:
         return Result(ops=("grep",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     try:
@@ -253,10 +255,10 @@ async def grep_rows(
         if nominated_count > CANDIDATE_BUDGET and "candidate budget" not in truncations:
             truncations.append("candidate budget")
         pushdown = pushdown_terms(
-            tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates
+            tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates, trashed=trashed
         )
         for mapping in await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown):
-            if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted)) and (
+            if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
                 view is None or view.admits(mapping)
             ):
                 candidates[mapping["path"]] = mapping
@@ -293,11 +295,12 @@ async def grep_rows(
                     fetched=fetched,
                     limit=remaining,
                     deadline=deadline,
+                    trashed=trashed,
                 )
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
                 for mapping in nominated:
-                    if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted)) and (
+                    if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
                         view is None or view.admits(mapping)
                     ):
                         candidates.setdefault(mapping["path"], mapping)

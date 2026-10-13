@@ -128,12 +128,17 @@ def _kind(result: Result) -> ErrorKind | str | None:
     return result.errors[0].kind
 
 
-def _trash_path(result: Result) -> Path:
-    """The trash address a delete reported for its one target."""
+def _deleted(result: Result) -> Path:
+    """The path of the one row a delete reported, asserted deleted."""
     assert result.success is True, result.errors
-    trashed = result.one().trash_path
-    assert trashed is not None
-    return trashed
+    row = result.one()
+    assert row.status == "deleted" and row.deleted_at is not None
+    return row.path
+
+
+def _in_view(path: Path) -> Path:
+    """The trash view's address for the deleted row at *path*."""
+    return Path(f"/.vfs/trash{path}")
 
 
 class GrantsContract:
@@ -551,14 +556,14 @@ class GrantsContract:
         assert (await storage.stat(path=Path("/pub/readme.md"), authority=SYSTEM)).success is True
 
     # ------------------------------------------------------------------
-    # The trash — a trashed row is judged by its origin
+    # The trash — a deleted row is judged at its own path
     # ------------------------------------------------------------------
 
     @needs("grant", "delete", "read", "tree", "glob", "grep", "sweep", "restore", "ls")
     async def test_a_deleted_row_stays_hidden_from_everyone_who_could_not_see_it(self, storage: GrantsBackend) -> None:
         # The open mount with one private home: ann deletes her diary, and
         # nobody who could not read it live can read, list, grep, sweep or
-        # restore it from the trash — not even with a grant on the trash.
+        # restore it — not through the trash view, not with a grant on /.vfs.
         await _world(storage)
         assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.mkdir(path=Path("/ann"), authority=SYSTEM)).success is True
@@ -566,134 +571,138 @@ class GrantsContract:
         assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=SYSTEM)).success
         diary = Entry(path=Path("/ann/diary.md"), content="dear diary, the lantern")
         assert (await storage.write(entries=[diary], authority=ANN)).success is True
-        trashed = _trash_path(await storage.delete(path=Path("/ann/diary.md"), authority=ANN))
+        deleted = _deleted(await storage.delete(path=Path("/ann/diary.md"), authority=ANN))
+        viewed = _in_view(deleted)
         for who in (DAVE, ANON):
-            assert _kind(await storage.read(path=trashed, authority=who)) == ErrorKind.not_found
-            assert _kind(await storage.stat(path=trashed, authority=who)) == ErrorKind.not_found
-            assert str(trashed) not in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=who))
-            assert str(trashed) not in _paths(await storage.glob(patterns=("/.vfs/trash/**",), authority=who))
-            found = await storage.grep(pattern="lantern", globs=("/.vfs/**",), allow_scan=True, authority=who)
+            assert _kind(await storage.read(path=viewed, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.stat(path=viewed, authority=who)) == ErrorKind.not_found
+            assert str(deleted) not in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=who))
+            assert str(deleted) not in _paths(await storage.ls(path=Path("/.vfs/trash"), authority=who))
+            assert str(deleted) not in _paths(await storage.glob(patterns=("/.vfs/trash/**",), authority=who))
+            found = await storage.grep(pattern="lantern", globs=("/.vfs/trash/**",), allow_scan=True, authority=who)
             assert found.success is True and _paths(found) == set()
-            assert _kind(await storage.sweep(path=trashed, authority=who)) == ErrorKind.not_found
-            assert _kind(await storage.restore(path=trashed, authority=who)) == ErrorKind.not_found
-            assert _kind(await storage.restore(path=Path("/ann/diary.md"), authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.sweep(path=deleted, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.restore(path=deleted, authority=who)) == ErrorKind.not_found
+            refused = await storage.read(path=deleted, authority=who)
+            assert _kind(refused) == ErrorKind.not_found and "vfs.trashed" not in (refused.errors[0].data or {})
         assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.grant(path=Path("/.vfs"), principal="dave", level="read_write", authority=SYSTEM)).success
-        assert _kind(await storage.read(path=trashed, authority=DAVE)) == ErrorKind.not_found
+        assert _kind(await storage.read(path=viewed, authority=DAVE)) == ErrorKind.not_found
         assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == ErrorKind.permission_denied
-        assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
-        # Its owner sees it through the floor, and the bucket is on her road to it.
-        assert str(trashed) in _paths(await storage.ls(path=trashed.parent_dir, authority=ANN))
-        assert (await storage.read(path=trashed, authority=ANN)).one().content == diary.content
-        # A posture change after the delete reaches the row where it came from.
+        assert (await storage.stat(path=viewed, authority=SYSTEM)).success is True
+        # Its owner sees it through the floor, at its own path, with the hint.
+        assert str(deleted) in _paths(await storage.ls(path=Path("/.vfs/trash"), authority=ANN))
+        assert (await storage.read(path=viewed, authority=ANN)).one().content == diary.content
+        hinted = await storage.read(path=deleted, authority=ANN)
+        assert _kind(hinted) == ErrorKind.not_found and (hinted.errors[0].data or {}).get("vfs.trashed") is True
+        # A posture change after the delete reaches the row where it sits.
         assert (await storage.posture(path=Path("/ann"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.read(path=trashed, authority=DAVE)).success is True
+        assert (await storage.read(path=viewed, authority=DAVE)).success is True
         assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
-        assert _kind(await storage.read(path=trashed, authority=DAVE)) == ErrorKind.not_found
+        assert _kind(await storage.read(path=viewed, authority=DAVE)) == ErrorKind.not_found
         assert (await storage.restore(path=Path("/ann/diary.md"), authority=ANN)).success is True
         assert (await storage.read(path=Path("/ann/diary.md"), authority=ANN)).one().content == diary.content
 
     @needs("grant", "delete", "restore", "read", "tree", "stat")
-    async def test_a_grant_on_the_origin_reaches_a_trashed_row_its_holder_does_not_own(
+    async def test_a_grant_on_the_folder_reaches_a_deleted_row_its_holder_does_not_own(
         self, storage: GrantsBackend
     ) -> None:
         # ann holds /eng through her group, not as an owner: what she deletes
-        # there she still sees in the trash and may restore, by either address.
+        # there she still sees in the trash view and may restore.
         await _world(storage)
-        trashed = _trash_path(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
-        assert _kind(await storage.read(path=trashed, authority=BOB)) == ErrorKind.not_found
-        assert str(trashed) not in _paths(await storage.tree(path=Path("/"), authority=BOB))
-        assert (await storage.stat(path=trashed, authority=ANN)).success is True
-        assert {str(trashed), str(trashed.parent_dir)} <= _paths(await storage.tree(path=Path("/.vfs"), authority=ANN))
+        deleted = _deleted(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
+        viewed = _in_view(deleted)
+        assert _kind(await storage.read(path=viewed, authority=BOB)) == ErrorKind.not_found
+        assert str(deleted) not in _paths(await storage.tree(path=Path("/"), authority=BOB))
+        assert (await storage.stat(path=viewed, authority=ANN)).success is True
+        assert str(deleted) in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=ANN))
         assert (await storage.restore(path=Path("/eng/spec.md"), authority=ANN)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=ANN)).one().content == FILES["/eng/spec.md"]
-        again = _trash_path(await storage.delete(path=Path("/eng/spec.md"), authority=ANN))
-        assert (await storage.restore(path=again, authority=ANN)).success is True
-        assert (await storage.read(path=Path("/eng/spec.md"), authority=ANN)).success is True
 
     @needs("grant", "delete", "restore", "read")
     async def test_restore_refusals_name_only_the_path_the_caller_sent(self, storage: GrantsBackend) -> None:
-        # zed holds nothing. A trashed row, a hidden folder with nothing
-        # trashed, a folder that never existed and the trash address itself
+        # zed holds nothing. A deleted row, a hidden folder with nothing
+        # deleted, a folder that never existed and a trash-view address
         # all answer as `read` answers the same path: one not_found naming
-        # the first component he cannot see, never a trash path or a
-        # "no trashed entry" that would confirm the folder exists.
+        # the first component he cannot see, never a hint that would
+        # confirm the folder exists.
         await _world(storage)
-        trashed = _trash_path(await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM))
-        cases = {"/hr/other.md": "/hr", "/hr/nope.md": "/hr", "/nodir/x.md": "/nodir", str(trashed): "/.vfs"}
+        deleted = _deleted(await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM))
+        cases = {"/hr/other.md": "/hr", "/hr/nope.md": "/hr", "/nodir/x.md": "/nodir", str(_in_view(deleted)): None}
         for target, named in cases.items():
             refused = await storage.restore(path=Path(target), authority=ZED)
             assert _kind(refused) == ErrorKind.not_found, target
-            assert refused.errors[0].message == "Not found" and str(refused.errors[0].path) == named
-            read = await storage.read(path=Path(target), authority=ZED)
-            assert (read.errors[0].message, read.errors[0].path) == ("Not found", refused.errors[0].path), target
-        # Under an open root the bucket is visible: the hidden row is named
-        # exactly as an absent sibling, and a visible folder's miss names the
-        # path sent, not what was never trashed.
+            assert refused.errors[0].message == "Not found", target
+            assert "vfs.trashed" not in (refused.errors[0].data or {}), target
+            if named is not None:
+                assert str(refused.errors[0].path) == named
+                read = await storage.read(path=Path(target), authority=ZED)
+                assert (read.errors[0].message, read.errors[0].path) == ("Not found", refused.errors[0].path), target
+        # Under an open root the hidden row is named exactly as an absent
+        # sibling, and a visible folder's miss names the path sent.
         assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
-        hidden = await storage.restore(path=trashed, authority=ZED)
-        absent = await storage.restore(path=Path(f"{trashed}-nope"), authority=ZED)
-        assert (hidden.errors[0].message, hidden.errors[0].path) == ("Not found", trashed)
-        assert (absent.errors[0].message, absent.errors[0].path) == ("Not found", f"{trashed}-nope")
-        assert (await storage.restore(path=Path("/hr/other.md"), authority=ZED)).errors[0].path == "/hr"
+        hidden = await storage.restore(path=deleted, authority=ZED)
+        absent = await storage.restore(path=Path(f"{deleted}-nope"), authority=ZED)
+        assert (hidden.errors[0].message, hidden.errors[0].path) == ("Not found", "/hr")
+        assert (absent.errors[0].message, absent.errors[0].path) == ("Not found", "/hr")
         missed = await storage.restore(path=Path("/pub/nope.md"), authority=ZED)
         assert _kind(missed) == ErrorKind.not_found
         assert (missed.errors[0].message, missed.errors[0].path) == ("Not found", "/pub/nope.md")
         whole = await storage.restore(path=Path("/pub/nope.md"), authority=SYSTEM)
-        assert _kind(whole) == ErrorKind.not_found and "no trashed entry" in whole.errors[0].message
+        assert _kind(whole) == ErrorKind.not_found and whole.errors[0].path == "/pub/nope.md"
 
     @needs("grant", "delete", "restore", "move", "stat")
-    async def test_a_trash_side_restore_never_names_an_original_parent_the_caller_cannot_see(
-        self, storage: GrantsBackend
-    ) -> None:
+    async def test_a_restore_never_names_a_deleted_parent_the_caller_cannot_see(self, storage: GrantsBackend) -> None:
         # ann owns /hr/case.md and sees it through the floor, but /hr is
-        # private to her. Once /hr is trashed too, the ladder's "restore the
-        # parent first" would name its trash address; she is told not found.
+        # private to her. Once /hr is deleted too, the ladder's "restore
+        # the parent first" would name it; she is told not found at it.
         await _world(storage)
         assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
-        trashed = _trash_path(await storage.delete(path=Path("/hr/case.md"), authority=SYSTEM))
-        assert (await storage.stat(path=trashed, authority=ANN)).success is True
-        parent = _trash_path(await storage.delete(path=Path("/hr"), authority=SYSTEM))
-        refused = await storage.restore(path=trashed, authority=ANN)
+        deleted = _deleted(await storage.delete(path=Path("/hr/case.md"), authority=SYSTEM))
+        assert (await storage.stat(path=_in_view(deleted), authority=ANN)).success is True
+        parent = _deleted(await storage.delete(path=Path("/hr"), authority=SYSTEM))
+        refused = await storage.restore(path=deleted, authority=ANN)
         assert _kind(refused) == ErrorKind.not_found
-        assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", trashed)
-        whole = await storage.restore(path=trashed, authority=SYSTEM)
-        assert _kind(whole) == ErrorKind.invalid and str(whole.errors[0].path) == str(parent)
-        assert (whole.errors[0].data or {}).get("vfs.target") == str(trashed)
-        # Once she may see /hr — and so its trashed row, judged at that origin — the ladder's own answer stands.
+        assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", "/hr")
+        assert "vfs.trashed" not in (refused.errors[0].data or {})
+        whole = await storage.restore(path=deleted, authority=SYSTEM)
+        assert _kind(whole) == ErrorKind.not_found and str(whole.errors[0].path) == str(parent)
+        assert (whole.errors[0].data or {}).get("vfs.trashed") is True
+        assert (whole.errors[0].data or {}).get("vfs.target") == str(deleted)
+        # Once she may see /hr, the ladder's own answer stands, hint included.
         assert (await storage.grant(path=Path("/hr"), principal="ann", level="read", authority=SYSTEM)).success is True
-        seen = await storage.restore(path=trashed, authority=ANN)
-        assert _kind(seen) == ErrorKind.invalid and seen.errors[0].message == whole.errors[0].message
+        seen = await storage.restore(path=deleted, authority=ANN)
+        assert _kind(seen) == ErrorKind.not_found and seen.errors[0].data == whole.errors[0].data
         assert (await storage.revoke(path=Path("/hr"), principal="ann", authority=SYSTEM)).success is True
-        # With the parent back and moved, her row follows it: she owns it, so she may put it there.
+        # With the parent back and moved, her row moved with it: she owns it, so she may restore it there.
         assert (await storage.restore(path=parent, authority=SYSTEM)).success is True
         assert (await storage.move(operations=[ResolvedPair(Path("/hr"), Path("/people"))], authority=SYSTEM)).success
-        restored = await storage.restore(path=trashed, authority=ANN)
+        restored = await storage.restore(path=Path("/people/case.md"), authority=ANN)
         assert restored.success is True and str(restored.one().path) == "/people/case.md"
         assert (await storage.read(path=Path("/people/case.md"), authority=ANN)).success is True
 
     @needs("grant", "delete", "restore", "mkdir", "write", "move", "stat")
-    async def test_a_restore_onto_a_destination_the_caller_cannot_see_is_absent(self, storage: GrantsBackend) -> None:
+    async def test_a_restore_the_caller_may_not_write_is_denied(self, storage: GrantsBackend) -> None:
         # ann owns the folder (so she sees it wherever it moves) but not the
-        # row; once the folder sits under the private /hr the row would land
-        # where she may not read, and the destination answers not found.
+        # row; once the folder sits under the private /hr the row is one she
+        # may see through the road but not write, and the restore is denied.
         await _world(storage)
         assert (await storage.mkdir(path=Path("/eng/box"), authority=ANN)).success is True
         assert (
             await storage.write(entries=[Entry(path=Path("/eng/box/doc.md"), content="d")], authority=SYSTEM)
         ).success
-        trashed = _trash_path(await storage.delete(path=Path("/eng/box/doc.md"), authority=SYSTEM))
-        assert (await storage.stat(path=trashed, authority=ANN)).success is True
+        deleted = _deleted(await storage.delete(path=Path("/eng/box/doc.md"), authority=SYSTEM))
+        assert (await storage.stat(path=_in_view(deleted), authority=ANN)).success is True
         assert (
             await storage.move(operations=[ResolvedPair(Path("/eng/box"), Path("/hr/box"))], authority=SYSTEM)
         ).success
-        refused = await storage.restore(path=trashed, authority=ANN)
+        refused = await storage.restore(path=Path("/hr/box/doc.md"), authority=ANN)
         assert _kind(refused) == ErrorKind.not_found
         assert (refused.errors[0].message, refused.errors[0].path) == ("Not found", "/hr/box/doc.md")
-        assert (await storage.stat(path=trashed, authority=SYSTEM)).success is True
-        assert (await storage.restore(path=trashed, authority=SYSTEM)).success is True
+        assert (await storage.stat(path=Path("/.vfs/trash/hr/box/doc.md"), authority=SYSTEM)).success is True
+        assert (await storage.restore(path=Path("/hr/box/doc.md"), authority=SYSTEM)).success is True
 
     # ------------------------------------------------------------------
     # The everyone level on the row
@@ -778,8 +787,7 @@ class GrantsContract:
         assert labels["/"] == 1 and labels["/hr/readme.md"] == 1 and labels["/hr/other.md"] == 1
         assert labels["/pub"] == 2 and labels["/pub/n.md"] == 2
         assert labels["/eng"] == 0 and labels["/eng/x/y"] == 0 and labels["/eng/deep2/x.md"] == 0
-        trashed = [path for path in labels if path.endswith("-deep/x.md")]
-        assert len(trashed) == 1 and labels[trashed[0]] == 2
+        assert labels["/pub/deep/x.md"] == 2  # deleted where it sits, with the label it had
         assert (await storage.restore(path=Path("/pub/deep"), authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/pub"), posture="private", authority=SYSTEM)).success is True
         labels = await _labels(storage)

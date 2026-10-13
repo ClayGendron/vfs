@@ -93,17 +93,11 @@ def test_each_dialect_renders_its_measured_spelling(
     for fragment in fragments:
         assert fragment in sql, sql
     # The everyone branch, then two piece kinds for the arms and two for
-    # ann's owner arm, each in its live form on path and its trashed form
-    # on origin_path: nine disjoint branches.
-    assert sql.count("UNION ALL") == 8 and " UNION SELECT" not in sql
-    assert sql.count("vfs_entries.everyone_level >= ") == 1 and sql.count("vfs_entries.everyone_level < ") == 8
+    # ann's owner arm, every one on path: five disjoint branches.
+    assert sql.count("UNION ALL") == 4 and " UNION SELECT" not in sql
+    assert sql.count("vfs_entries.everyone_level >= ") == 1 and sql.count("vfs_entries.everyone_level < ") == 4
     assert "vfs_entries.path = " in sql and "vfs_entries.path > " in sql and "vfs_entries.path < " in sql
-    assert (
-        "vfs_entries.origin_path = " in sql
-        and "vfs_entries.origin_path > " in sql
-        and "vfs_entries.origin_path < " in sql
-    )
-    assert sql.count("vfs_entries.origin_path IS NULL") == 4 and sql.count("vfs_entries.owner_id = ") == 4
+    assert "origin_path" not in sql and sql.count("vfs_entries.owner_id = ") == 2
     assert "LIKE" not in sql and "NOT EXISTS" not in sql
 
 
@@ -124,16 +118,15 @@ def test_a_caller_without_pieces_is_the_everyone_branch_alone() -> None:
 
 
 def test_a_scope_narrows_every_branch_to_the_subtree() -> None:
-    # Scoped away from the trash chain no trashed row can lie in the scope,
-    # so only the live forms are sent: three branches, each in the range.
+    # Three branches, each carrying the scope's range.
     sql = _render(Ranges(BOTH, (("ann", NONE),)), SQLITE, sqlite.dialect(), scope="/a")
-    assert sql.count("vfs_entries.path > ? AND vfs_entries.path < ?") == 3 and "origin_path = " not in sql
+    assert sql.count("vfs_entries.path > ? AND vfs_entries.path < ?") == 3
     root = _render(Ranges(NONE, ()), SQLITE, sqlite.dialect(), scope="/")
     assert "vfs_entries.path > ? AND vfs_entries.path < ?" in root
-    # The trash chain — the root, /.vfs, the trash root, anything beneath — carries both forms.
-    for scope in ("/", "/.vfs", "/.vfs/trash", "/.vfs/trash/2026-10-03-12"):
-        chained = _render(Ranges(BOTH, ()), SQLITE, sqlite.dialect(), scope=scope)
-        assert chained.count("UNION ALL") == 4 and "vfs_entries.origin_path = " in chained, scope
+    # A deleted row is judged where it sits: no scope changes the branch count.
+    for scope in ("/", "/.vfs", "/.vfs/trash"):
+        scoped = _render(Ranges(BOTH, ()), SQLITE, sqlite.dialect(), scope=scope)
+        assert scoped.count("UNION ALL") == 2 and "origin_path" not in scoped, scope
 
 
 def test_the_derived_hint_is_oracles_alone() -> None:
@@ -166,11 +159,10 @@ def test_a_hole_excludes_the_everyone_leg_and_rides_the_spans_and_owner(
     ranges = Ranges(BOTH, (("ann", BOTH),), HOLE, Pieces(("/h/s",), ()), (("ann", Pieces((), (("/h/", "/h0"),))),))
     sql = _render(ranges, profile, dialect)
     assert "NOT EXISTS" in sql or "NOT (EXISTS" in sql
-    # Everyone (minus the hole, judged on path or origin), then two arm
-    # kinds, one holed-arm point, two owner kinds and one holed-owner range
-    # in each of the two forms: thirteen branches joined disjoint.
-    assert sql.count("UNION ALL") == 12 and " UNION SELECT" not in sql
-    assert "vfs_entries.origin_path IS NOT NULL" in sql and sql.count("vfs_entries.origin_path IS NULL") == 7
+    # Everyone (minus the hole), then two arm kinds, one holed-arm point,
+    # two owner kinds and one holed-owner range: seven branches joined disjoint.
+    assert sql.count("UNION ALL") == 6 and " UNION SELECT" not in sql
+    assert "origin_path" not in sql
 
 
 def test_no_hole_keeps_the_predicate_simple_and_true() -> None:

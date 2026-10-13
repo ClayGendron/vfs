@@ -698,8 +698,8 @@ class TestRetryByType:
         result = await storage.reindex()
         assert _report(result) == _counts(rendered=1)
         assert [e for e in result.errors if e.kind == ErrorKind.unavailable] == []
-        trashed = [r for r in (await storage.ls(path=Path("/.vfs/trash"))).observations if r.path.name == "gone.pdf"]
-        assert trashed == [] or trashed[0].render_status == "pending"
+        [deleted] = (await storage.ls(path=Path("/.vfs/trash"))).observations
+        assert str(deleted.path) == "/gone.pdf" and deleted.render_status == "pending"
         await storage.close()
 
 

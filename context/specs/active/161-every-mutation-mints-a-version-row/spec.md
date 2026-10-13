@@ -1,6 +1,11 @@
 # 161 — Every mutation mints a version row: the undo the README promises
 
-- **Status:** seed — cut 2026-10-08 from the SmartOwl integration memo;
+- **Status:** seed — **the write-replace mint is built by spec 162
+  slice B (2026-10-11, uncommitted, awaiting Clay's review):
+  `storage/backends/database/versions.py` keeps the replaced body as a
+  snapshot row with ADR 064's attribution on every overwrite, revive
+  and arbitration clobber. This spec keeps the read-side verb,
+  retention and the ADR.** Cut 2026-10-08 from the SmartOwl integration memo;
   revised 2026-10-08 after a review against `0760fe9` (the versions
   table's real columns, the snapshot cut ADR 017 already fixed, the
   dormant diff provider, the label semantics, the paging claim, the

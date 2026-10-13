@@ -20,13 +20,9 @@ the caller's own pieces and owner pieces that lie in it ride as two
 more branches, admitted whatever the label says. The branches stay
 disjoint, and the hole is one bound value like every other piece set.
 
-A trashed row is judged by its origin, so every piece branch comes in
-two forms: the live form joins the pieces to ``path`` and keeps only
-rows with no origin (``origin_path IS NULL``, no bind); the trashed
-form joins the same pieces to ``origin_path`` through its own index,
-which holds the trashed rows alone. The two are disjoint by that
-column, so the union stays ``UNION ALL``. A read scoped outside the
-trash chain can hold no trashed row and sends the live forms only.
+A deleted row stays at its path with a tombstone, so it is judged
+exactly as a live one: one form per piece branch, on ``path``. The
+statement that joins the visible set carries the liveness term itself.
 
 Each engine's planner misreads the extra term in its own way, so the
 join keyword between the unpacked ranges and the entry table, the
@@ -70,7 +66,7 @@ from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.visitors import InternalTraversal
 
 from vfs.models.rows import MSSQL_UTF8_COLLATION
-from vfs.paths import MAX_PATH_LENGTH, ROOT, on_trash_chain
+from vfs.paths import MAX_PATH_LENGTH, ROOT
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -104,9 +100,7 @@ def visible_entries(
 
     Branch one is the everyone leg; then one branch per piece kind of
     the caller's own pieces, and the same per owner arm under
-    ``owner_id = owner`` — each in its live form on ``path`` and, where
-    a trashed row may lie in the scope, its trashed form on
-    ``origin_path``; every branch disjoint, merged by ``UNION ALL``.
+    ``owner_id = owner`` — every branch disjoint, merged by ``UNION ALL``.
     *scope* narrows every branch to the strict descendants of that path,
     so a subtree read seeks the composite index once instead of walking
     every row everyone may see. Where the profile declares a fence, the
@@ -117,42 +111,27 @@ def visible_entries(
     source = profile.range_source
     assert source is not None, "the clause fan serves a dialect without a range source"
     within = _scoped(entry, scope)
-    unholed = judged_hole_free(entry, ranges.holes, profile)
+    unholed = hole_free(entry.c.path, ranges.holes, profile)
     everyone = select(entry.c.entry_id).where(entry.c.everyone_level >= need, unholed, *within)
     hint = profile.range_hints.everyone
     if hint:
         everyone = everyone.prefix_with(
             hint.format(entry=entry.name, index=_index_name(entry, "everyone_level", "path")), dialect=profile.name
         )
-    columns = [entry.c.path] if scope is not None and not on_trash_chain(scope) else [entry.c.path, entry.c.origin_path]
+    column = entry.c.path
+    below = [entry.c.everyone_level < need, *within]
+    holed = [entry.c.everyone_level >= need, *within]
     branches = [everyone]
-    for column in columns:
-        live = [entry.c.origin_path.is_(None)] if column is entry.c.path else []
-        below = [*live, entry.c.everyone_level < need, *within]
-        holed = [*live, entry.c.everyone_level >= need, *within]
-        branches += _branches(entry, column, ranges.arms, profile, below)
-        branches += _branches(entry, column, ranges.holed_arms, profile, holed)
-        for owner, found in ranges.owners:
-            branches += _branches(entry, column, found, profile, [entry.c.owner_id == owner, *below])
-        for owner, found in ranges.holed_owners:
-            branches += _branches(entry, column, found, profile, [entry.c.owner_id == owner, *holed])
+    branches += _branches(entry, column, ranges.arms, profile, below)
+    branches += _branches(entry, column, ranges.holed_arms, profile, holed)
+    for owner, found in ranges.owners:
+        branches += _branches(entry, column, found, profile, [entry.c.owner_id == owner, *below])
+    for owner, found in ranges.holed_owners:
+        branches += _branches(entry, column, found, profile, [entry.c.owner_id == owner, *holed])
     visible = union_all(*branches)
     if profile.range_fence is None:
         return visible.subquery(VISIBLE_ALIAS)
     return visible.cte(VISIBLE_ALIAS).prefix_with(profile.range_fence, dialect=profile.name)
-
-
-def judged_hole_free(entry: FromClause, holes: Pieces, profile: DialectProfile) -> ColumnElement[bool]:
-    """The row's judged path lies in none of *holes* — ``path`` for a live row, ``origin_path`` for a trashed one.
-
-    True outright when there are no holes, so the no-hole statement is
-    the measured one.
-    """
-    if not holes.points and not holes.opens:
-        return true()
-    live = and_(entry.c.origin_path.is_(None), hole_free(entry.c.path, holes, profile))
-    trashed = and_(entry.c.origin_path.is_not(None), hole_free(entry.c.origin_path, holes, profile))
-    return or_(live, trashed)
 
 
 def hole_free(path: ColumnElement[Any], holes: Pieces, profile: DialectProfile) -> ColumnElement[bool]:

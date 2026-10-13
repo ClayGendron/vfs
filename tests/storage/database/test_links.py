@@ -236,12 +236,14 @@ class TestLedger:
         assert ("/docs/guide.md", "/hub.md", "links") in await _edges(storage)
         await storage.close()
 
-    async def test_a_deleted_target_cascades_its_extracted_in_edges(self, tmp_path) -> None:
+    async def test_a_deleted_target_keeps_its_extracted_in_edges_for_its_return(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
         assert (await storage.reindex()).success is True
         assert (await storage.delete(path=Path("/hub.md"))).success is True
-        assert not any(target == "/hub.md" for _, target, _ in await _edges(storage))
+        assert any(target == "/hub.md" for _, target, _ in await _edges(storage))
+        assert (await storage.reindex()).success is True  # nothing reclaims them
+        assert any(target == "/hub.md" for _, target, _ in await _edges(storage))
         await storage.close()
 
     async def test_a_generation_bump_re_extracts_every_document_once(self, tmp_path, monkeypatch) -> None:

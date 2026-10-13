@@ -1171,14 +1171,14 @@ async def test_write_entries_capability_gate_blocks() -> None:
 
 
 async def test_write_entries_meta_root_rejected_but_meta_scope_admitted() -> None:
-    # Only the two roots are ingress-refused; deeper meta-scope targets
-    # (trash-side writes) flow through the ordinary grammar.
+    # The two roots and the trash view are ingress-refused; other
+    # meta-scope targets flow through the ordinary grammar.
     fs = RecorderFS()
     result = await fs.write(entries=[Entry(path=Path("/.vfs"))])
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
-    admitted = await fs.write(entries=[Entry(path=Path("/.vfs/trash/2026-07-18-10/x.txt"), kind="file", content="x")])
+    admitted = await fs.write(entries=[Entry(path=Path("/.vfs/docs/x.txt"), kind="file", content="x")])
     assert admitted.success is True
     assert fs.calls and fs.calls[0][0] == "write"
 
