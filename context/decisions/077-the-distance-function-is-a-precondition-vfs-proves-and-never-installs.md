@@ -70,6 +70,16 @@ Option 3.
   SQLite with sqlite-vec. The probe runs on every Postgres mount,
   embedder or not: the dialect's admission to the ranked verbs rests on
   the function being there.
+- **Installing is explicit, never implicit** (Clay, 2026-10-12: "we do
+  have an option for developers to do that work if they choose from
+  the code"). `DatabaseStorage.install_extensions()` is a
+  developer-plane verb that runs the profile's `vector_install`
+  statement — pgvector's `CREATE EXTENSION IF NOT EXISTS` — then runs
+  the probe, so a success means first touch will not refuse on it. It
+  is opt-in, idempotent, runs before first touch, answers
+  `permission_denied` (SQLSTATE 42501) for a role that may not install,
+  and succeeds with nothing done where the profile declares nothing.
+  First touch never calls it.
 - **Dev and CI install it once, outside vfs.** `docker/initdb/postgres/`
   creates the extension when the test container first starts; the
   compose file mounts it. On a user's own server the step is the

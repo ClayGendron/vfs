@@ -63,6 +63,7 @@ from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
     ValueCap,
+    is_insufficient_privilege,
     is_permanent_defect,
     is_retryable,
     is_value_too_large,
@@ -273,6 +274,40 @@ class EngineHost:
                 # SQLAlchemyError, not just DBAPIError: pool exhaustion
                 # (TimeoutError) is an operating condition, never a raise.
                 return self.classify_failure(exc, context="First touch")
+
+    async def install_extensions(self) -> ResultError | None:
+        """Install what the dialect requires and this role may, then prove it; ``None`` when the mount can serve.
+
+        The explicit half of the precondition: first touch only proves
+        the distance function, and this verb — never called by first
+        touch — runs the profile's install statement for a developer who
+        chooses to do that work from code. Nothing declared is a success
+        with nothing to do. The statement's own ``IF NOT EXISTS`` race
+        (a rival mount installing first) is benign and recovered via
+        savepoint; a role that may not install is answered
+        ``permission_denied`` naming the fix, and any other failure
+        classifies as first touch's would.
+        """
+        profile = self._policy().profile
+        if profile.vector_install is not None:
+            try:
+                async with self.session_factory() as session:
+                    conn = await session.connection()
+                    try:
+                        async with conn.begin_nested():
+                            await conn.exec_driver_sql(profile.vector_install)
+                    except IntegrityError:
+                        pass
+                    await session.commit()
+            except DBAPIError as exc:
+                if is_insufficient_privilege(exc):
+                    origin = getattr(exc, "orig", None) or exc
+                    detail = f"this role may not install the extension ({origin}); {profile.vector_missing}"
+                    return classified(ErrorKind.permission_denied, detail=detail)
+                return self.classify_failure(exc, context="Install extensions")
+        if profile.vector_probe is not None:
+            return await self._probe_vector_function(profile.vector_probe, profile.vector_missing)
+        return None
 
     async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
         """Run *fn*, restarting whole on a retryable outcome, with backoff.

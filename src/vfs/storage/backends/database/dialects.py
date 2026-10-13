@@ -312,7 +312,11 @@ class DialectProfile:
     connection, missing only where the interpreter cannot load
     extensions) and PostgreSQL probes the pgvector catalog row. The
     engines whose function is built into every supported server
-    version, and the generic floor, declare none.
+    version, and the generic floor, declare none. ``vector_install`` is
+    the statement the explicit ``install_extensions`` verb runs where a
+    sufficiently privileged role could install the function — pgvector's
+    ``CREATE EXTENSION`` — and ``None`` where nothing is installable;
+    first touch never runs it.
     """
 
     name: str
@@ -358,6 +362,9 @@ class DialectProfile:
     # present, and the fix a refusal names when it is not.
     vector_probe: str | None = None
     vector_missing: str = ""
+    # The statement that installs it, for the explicit developer-plane
+    # verb alone; ``None`` where there is nothing a role could install.
+    vector_install: str | None = None
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -424,8 +431,10 @@ POSTGRESQL: Final = DialectProfile(
     vector_probe=PGVECTOR_PROBE,
     vector_missing=(
         "the pgvector extension is not installed in this database; run "
-        "CREATE EXTENSION vector once as a superuser or the database owner"
+        "CREATE EXTENSION vector once as a superuser or the database owner, "
+        "or call install_extensions() under a role that may"
     ),
+    vector_install="CREATE EXTENSION IF NOT EXISTS vector",
     range_source="unnest",
     range_settings=("SET LOCAL jit = off",),
     vector_dimension_cap=16_000,
@@ -958,11 +967,25 @@ def is_permanent_defect(exc: BaseException) -> bool:
 # SQL error): the statement itself is defective, never transient.
 _SQLSTATE_DEFECT_CLASSES: Final = frozenset({"42", "07"})
 _SQLSTATE_LIMIT_CLASS: Final = "54"
+_SQLSTATE_INSUFFICIENT_PRIVILEGE: Final = "42501"
 _MYSQL_PACKET_TOO_LARGE: Final = 1153
 
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).
 _SQLSTATE_LENGTH: Final = 5
+
+
+def is_insufficient_privilege(exc: BaseException) -> bool:
+    """Whether *exc* reports that the connected role may not do what the statement asked.
+
+    SQLSTATE 42501 is the standard's insufficient-privilege code, the one
+    ``CREATE EXTENSION`` raises for a role that is neither superuser nor
+    database owner. Checked before the defect classes: 42501 sits in
+    class 42, and a privilege refusal is the caller's condition to fix,
+    never a vfs bug.
+    """
+    origin = getattr(exc, "orig", None) or exc
+    return _sqlstate_of(origin) == _SQLSTATE_INSUFFICIENT_PRIVILEGE
 
 
 def _sqlstate_of(origin: object) -> str | None:

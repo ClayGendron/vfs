@@ -1017,6 +1017,25 @@ class DatabaseStorage:
             return Result(ops=("first_touch",), errors=[refusal])
         return Result(ops=("first_touch",))
 
+    async def install_extensions(self) -> Result:
+        """Install what this dialect requires and the connected role may — pgvector on PostgreSQL, nothing elsewhere.
+
+        A developer-plane verb, opt-in and idempotent: first touch only
+        proves the distance function is present and refuses naming the
+        fix when it is not; this is the fix, from code, for a developer
+        whose role may create extensions. It runs before first touch
+        (the mount need not be provisioned) and proves the function
+        afterwards, so a success here means first touch will not refuse
+        on it. A role that may not install is answered
+        ``permission_denied``; a dialect with nothing to install (SQLite's
+        sqlite-vec ships with vfs; the other engines build the function
+        in) succeeds with nothing done.
+        """
+        refusal = await self._host.install_extensions()
+        if refusal is not None:
+            return Result(ops=("install_extensions",), errors=[refusal])
+        return Result(ops=("install_extensions",))
+
     async def reindex(self) -> Result:
         """Batch index maintenance: binaries rendered, gram epochs rebuilt, segments re-converged, vectors filled.
 

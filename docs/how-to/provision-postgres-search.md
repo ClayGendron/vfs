@@ -21,3 +21,14 @@ extension allow-list, then the same statement. Until the extension is
 present, every verb on the mount refuses `unavailable` and names this
 step. The test cluster in `docker/compose.test.yml` installs it from
 `docker/initdb/postgres/` at first start.
+
+To do the same from code, when the connected role may create
+extensions, call the developer-plane verb once; it installs, proves the
+function, and is idempotent:
+
+```python
+result = await storage.install_extensions()
+```
+
+A role that may not install gets `permission_denied` naming the step
+above. First touch itself never installs anything.
