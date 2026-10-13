@@ -15,7 +15,9 @@ nothing to a loop until first touch.
 Dialect-dependent work stays out of construction: policy resolves from
 the session bind at first use, so no dialect decision is made before
 the first session exists. First touch is idempotent and lazy, on the
-caller's loop: database-file settings, then — under the topology
+caller's loop: database-file settings, the profile's vector probe (the
+cosine distance function is a precondition vfs proves and never
+installs — sqlite-vec, pgvector), then — under the topology
 serialization point (``BEGIN IMMEDIATE`` on SQLite via the installed
 transaction control; a per-mount advisory lock on Postgres; a plain
 transaction elsewhere, where the unique-violation arbitration is the
@@ -45,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 
-from sqlalchemy import Engine, event, func, insert, inspect, select, text
+from sqlalchemy import Engine, event, func, insert, inspect, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -57,6 +59,7 @@ from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, ResultError, classified
 from vfs.storage.backends.database.dialects import (
+    SQLITE_VEC_PROBE,
     DialectProfile,
     StaleSnapshot,
     ValueCap,
@@ -82,12 +85,6 @@ if TYPE_CHECKING:
     from vfs.storage.grants import Posture
 
 T = TypeVar("T")
-
-SQLITE_VEC_PROBE = "SELECT vec_version()"
-"""The first-touch statement that proves the extension is in the connection."""
-
-PGVECTOR_VERSION_PROBE = "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-"""The first-touch read of pgvector's version on PostgreSQL — the ANN tier's iterative-scan gate."""
 
 # Some system Pythons build sqlite3 without extension loading; the hook
 # then loads nothing and first touch refuses with the reason.
@@ -160,8 +157,9 @@ class EngineHost:
         # The space the stored vectors live in, adopted at first touch and
         # moved by the embed step; ``None`` until the first embedding lands.
         self.embedding_identity: tuple[str, int] | None = None
-        # pgvector's version, read at first touch on PostgreSQL; ``None`` elsewhere.
-        self.pgvector_version: tuple[int, ...] | None = None
+        # The distance function's version where the profile's probe reports
+        # one (pgvector's, sqlite-vec's); the ANN tier's iterative-scan gate.
+        self.vector_version: tuple[int, ...] | None = None
         # The engine's single-value cap where it is a server setting (the
         # MySQL family's packet); read at first touch, ``None`` elsewhere.
         self.value_cap: ValueCap | None = None
@@ -386,8 +384,8 @@ class EngineHost:
             await self._apply_file_settings(profile)
         if profile.value_cap_query is not None and profile.value_cap_setting is not None:
             self.value_cap = await self._read_value_cap(profile.value_cap_query, profile.value_cap_setting)
-        if profile.name == "sqlite":
-            refusal = await self._probe_sqlite_vec()
+        if profile.vector_probe is not None:
+            refusal = await self._probe_vector_function(profile.vector_probe, profile.vector_missing)
             if refusal is not None:
                 return refusal
         refusal = await self._verify_or_provision()
@@ -411,26 +409,25 @@ class EngineHost:
             for statement in profile.file_settings:
                 await conn.exec_driver_sql(statement)
 
-    async def _probe_sqlite_vec(self) -> ResultError | None:
-        """Prove the connection hook loaded sqlite-vec; refuse the mount naming the fix when it did not.
+    async def _probe_vector_function(self, probe: str, missing: str) -> ResultError | None:
+        """Prove the engine's cosine distance function is present; refuse the mount naming the fix when it is not.
 
-        The load runs on every connection, but an interpreter whose
-        ``sqlite3`` was built without extension loading fails it
-        silently at the hook — so first touch asks the engine for the
-        function the vector leg needs.
+        The function is a precondition vfs never installs: sqlite-vec
+        rides every connection but an interpreter built without
+        extension loading drops it silently at the hook, and pgvector is
+        installed once by whoever owns the database. The probe fails when
+        the engine raises or answers no row; a scalar answer is the
+        function's version, kept for the tiers that gate on it.
         """
         async with self.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_no_begin": True})
             try:
-                await conn.exec_driver_sql(SQLITE_VEC_PROBE)
+                raw = (await conn.exec_driver_sql(probe)).scalar_one_or_none()
             except DBAPIError:
-                return classified(
-                    ErrorKind.unavailable,
-                    detail=(
-                        "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
-                        "(enable_load_extension is missing); use a Python built with extension loading"
-                    ),
-                )
+                raw = None
+        if raw is None:
+            return classified(ErrorKind.unavailable, detail=missing)
+        self.vector_version = _version_tuple(str(raw))
         return None
 
     async def _verify_or_provision(self) -> ResultError | None:
@@ -470,8 +467,6 @@ class EngineHost:
                 )
             else:
                 outcome = self._adopt(row)
-            if outcome is None and self.profile.name == "postgresql":  # pragma: no cover - the Postgres leg
-                self.pgvector_version = await _pgvector_version(conn)
             await session.commit()
             return outcome
 
@@ -613,12 +608,9 @@ def _install_sqlite_transaction_control(sync_engine: Engine, profile: DialectPro
         conn.exec_driver_sql(mode)
 
 
-async def _pgvector_version(conn: AsyncConnection) -> tuple[int, ...] | None:
-    """The installed pgvector extension's version as a tuple, or ``None`` when absent."""
-    raw = (await conn.execute(text(PGVECTOR_VERSION_PROBE))).scalar_one_or_none()
-    if raw is None:
-        return None
-    return tuple(int(part) for part in str(raw).split(".") if part.isdigit())
+def _version_tuple(raw: str) -> tuple[int, ...]:
+    """A version string's numeric components: ``"0.8.1"`` and sqlite-vec's ``"v0.1.6"`` both parse."""
+    return tuple(int(part) for part in raw.lstrip("v").split(".") if part.isdigit())
 
 
 def _has_sqlite_vec(cursor: Any) -> bool:

@@ -23,7 +23,14 @@ lines first; regenerate this file when the picture shifts (review the
   as the working answers, unconfirmed. `scripts/ci.sh` green (3,938
   tests, 100%); the engine legs not run. Deviations in the spec's
   *Landing notes* (the liveness index decision, the gate's reading of a
-  tombstone, `add_mount` restoring a deleted mount point).
+  tombstone, `add_mount` restoring a deleted mount point). Review of
+  the landing (2026-10-12): an identical body mints nothing; every
+  material update proves its side of the tombstone (the overwrite-
+  under-a-deleted-parent revive is closed and pinned); the module is
+  three files — `trash.py`, `topology.py`, `serialized.py`. The
+  Postgres leg is green (335 passed) after two more fixes it alone could
+  show: the clobber's all-NULL tombstone columns now cast in the VALUES
+  join, and pgvector is a probed precondition, never installed (ADR 077).
 - **163 landed and archived 2026-10-10** (`2bf0138` … `b648082`, `12a8f39`, `b446c76`) — the one-minute
   test run. Cut and landed the same day in six commits (2bf0138 …
   b648082): the whole suite runs in **54–56 s** quiet (was 253 s serial, 101 s

@@ -28,12 +28,19 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database.descent import DELETED_AT_KEY, TRASH_ROOT_KEY, TRASHED_KEY, subtree_filter
-from vfs.storage.backends.database.dialects import membership_budget, op_execution_options, rows_per_statement
+from vfs.storage.backends.database.dialects import (
+    StaleSnapshot,
+    membership_budget,
+    op_execution_options,
+    rows_per_statement,
+)
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.scope import passes_gates
 from vfs.storage.backends.database.seams import clear, installed
 from vfs.storage.backends.database.signals import collect_graph
-from vfs.storage.backends.database.topology import _purge
+from vfs.storage.backends.database.staging import WritePlan
+from vfs.storage.backends.database.trash import _purge
+from vfs.storage.backends.database.writes import _apply, _fetch_committed
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -353,6 +360,16 @@ class TestRevive:
         assert all(v["actor"] is None and v["subjects"] == [] for v in versions)
         await storage.close()
 
+    async def test_an_identical_body_mints_nothing(self, tmp_path) -> None:
+        # Nothing was lost: an agent rewriting an unchanged file leaves no history behind.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for _ in range(3):
+            assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="same")])).success is True
+        assert await _versions(storage, "/f.md") == []
+        assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="changed")])).success is True
+        assert [v["content"] for v in await _versions(storage, "/f.md")] == ["same"]
+        await storage.close()
+
     async def test_a_bytes_overwrite_snapshots_the_bytes(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/b.bin"), data=b"\x00old")])).success is True
@@ -392,9 +409,10 @@ class TestRevive:
             if "vfs_versions" in statement and statement.lstrip().upper().startswith("INSERT"):
                 statements.append(statement)
 
+        changed = [Entry(path=Path(f"/d/f{i:04}.txt"), content=f"body {i} changed") for i in range(count)]
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
         try:
-            assert (await storage.write(entries=entries)).success is True
+            assert (await storage.write(entries=changed)).success is True
         finally:
             event.remove(storage._host.engine.sync_engine, "before_cursor_execute", record)
         assert await _count(storage, "versions") == count
@@ -443,6 +461,108 @@ asyncio.run(main())
         done = subprocess.run([sys.executable, "-O", "-c", script], capture_output=True, text=True, check=False)
         assert done.returncode == 0, done.stderr
         assert done.stdout.strip() == "True True False True updated 0"
+
+
+# ---------------------------------------------------------------------------
+# The update guard — a stale snapshot never crosses the tombstone
+# ---------------------------------------------------------------------------
+
+
+async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool) -> WritePlan:
+    """A write plan staged from the committed state at call time — the victim's snapshot."""
+    host = storage._host
+    async with host.session_factory() as session:
+        committed = await _fetch_committed(session, host.tables, host.profile, host.membership_budget, {entry.path})
+    plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, value_cap=host.value_cap)
+    status = plan.put_file(
+        entry.path,
+        kind=entry.kind,
+        content=entry.content,
+        content_hash=entry.content_hash,
+        size_bytes=entry.size_bytes,
+        lines=entry.lines,
+        mime_type=entry.mime_type,
+        overwrite=overwrite,
+        parents=False,
+        owner_id=entry.owner_id,
+        data=entry.data,
+        source=entry.source,
+    )
+    assert status == "updated" and not plan.errors, plan.errors
+    return plan
+
+
+async def _apply_stale(storage: DatabaseStorage, plan: WritePlan) -> bool:
+    """Run *plan*'s statements against committed state; whether the guard refused (classified or redriven)."""
+    host = storage._host
+    async with host.session_factory() as session:
+        try:
+            errors = await _apply(
+                session, host.tables, host.profile, host.parameter_budget, host.membership_budget, plan, overwrite=True
+            )
+        except StaleSnapshot:
+            await session.rollback()
+            return True
+        if errors:
+            await session.rollback()
+            assert {e.kind for e in errors} <= {ErrorKind.conflict, ErrorKind.not_found}, errors
+            return True
+        await session.commit()
+        return False
+
+
+class TestStaleSnapshotGuards:
+    """Writes are not serialized with topology, and a delete rewrites no path and bumps no descendant.
+
+    The version-and-path guard alone would pass after a parent's delete,
+    and the clobber would clear the child's tombstone. Each test stages
+    the victim's plan from a live snapshot, lets the rival commit, then
+    runs the victim's statements against committed state.
+    """
+
+    async def test_an_overwrite_whose_snapshot_predates_the_parents_delete_refuses(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="old")], parents=True)).success
+        plan = await _stale_plan(storage, Entry(path=Path("/d/f.txt"), content="mine"), overwrite=True)
+        assert (await storage.delete(path=Path("/d"))).success is True
+        assert await _apply_stale(storage, plan) is True
+        rows = await _rows(storage)
+        assert rows["/d/f.txt"].deleted_at is not None and rows["/d/f.txt"].root == rows["/d"].id
+        assert (await storage.stat(path=Path("/d/f.txt"))).success is False
+        assert (await storage.read(path=Path("/.vfs/trash/d/f.txt"))).observations[0].content == "old"
+        assert await _count(storage, "versions") == 0
+        # Retention purges the root's whole set: no child survives its parent.
+        assert (await storage.sweep(path=Path("/.vfs/trash"))).success is True
+        assert set(await _rows(storage)) == {"/"}
+        await storage.close()
+
+    async def test_a_revive_whose_snapshot_predates_a_rival_restore_refuses(self, tmp_path) -> None:
+        # The revive's guard expects the tombstone it was staged against;
+        # the row restored mid-window is live, and a fresh ladder judges it so.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="one")])).success is True
+        assert (await storage.delete(path=Path("/f.md"))).success is True
+        plan = await _stale_plan(storage, Entry(path=Path("/f.md"), content="two"), overwrite=False)
+        assert plan.staged[Path("/f.md")].revive is True
+        assert (await storage.restore(path=Path("/f.md"))).success is True
+        assert await _apply_stale(storage, plan) is True
+        assert (await storage.read(path=Path("/f.md"))).observations[0].content == "one"
+        assert await _count(storage, "versions") == 0
+        await storage.close()
+
+    async def test_a_live_overwrite_and_a_revive_each_pass_their_own_guard(self, tmp_path) -> None:
+        # The two sides run as two groups in one batch; neither term refuses the other's rows.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        files = [Entry(path=Path("/live.md"), content="one"), Entry(path=Path("/gone.md"), content="one")]
+        assert (await storage.write(entries=files)).success is True
+        assert (await storage.delete(path=Path("/gone.md"))).success is True
+        both = [Entry(path=Path("/live.md"), content="two"), Entry(path=Path("/gone.md"), content="two")]
+        result = await storage.write(entries=both)
+        assert result.success is True and [o.status for o in result.observations] == ["updated", "updated"]
+        rows = await _rows(storage)
+        assert rows["/gone.md"].deleted_at is None and rows["/live.md"].deleted_at is None
+        assert [v["content"] for v in await _versions(storage, "/gone.md")] == ["one"]
+        await storage.close()
 
 
 # ---------------------------------------------------------------------------

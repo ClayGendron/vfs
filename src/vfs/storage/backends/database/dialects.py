@@ -302,6 +302,17 @@ class DialectProfile:
     was safe everywhere (the slowest, SQL Server at 38 µs a row, holds a
     chunk under two seconds); the value is the same on every profile
     because no engine measured a reason to differ.
+
+    ``vector_probe`` is the statement first touch runs to prove the
+    engine's cosine distance function is present — a precondition vfs
+    checks and never installs. The probe fails when the engine raises
+    or answers no row, and the mount refuses ``unavailable`` naming
+    ``vector_missing``, the fix; a scalar answer is read as the
+    function's version. SQLite probes sqlite-vec (loaded on every
+    connection, missing only where the interpreter cannot load
+    extensions) and PostgreSQL probes the pgvector catalog row. The
+    engines whose function is built into every supported server
+    version, and the generic floor, declare none.
     """
 
     name: str
@@ -343,6 +354,17 @@ class DialectProfile:
     range_settings: tuple[str, ...] = ()
     range_fence: str | None = None
     relabel_rows: int = RELABEL_ROWS
+    # The statement that proves the engine's cosine distance function is
+    # present, and the fix a refusal names when it is not.
+    vector_probe: str | None = None
+    vector_missing: str = ""
+
+
+SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
+"""Proves sqlite-vec is loaded in the connection; its answer is the extension's version."""
+
+PGVECTOR_PROBE: Final = "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
+"""Proves pgvector is installed in the database; no row means it is not, and the answer is its version."""
 
 
 SQLITE: Final = DialectProfile(
@@ -374,6 +396,11 @@ SQLITE: Final = DialectProfile(
     bulk_insert="driver",
     # vec_distance_cosine from sqlite-vec, loaded on every connection; brute force, exact.
     vector_distance="exact",
+    vector_probe=SQLITE_VEC_PROBE,
+    vector_missing=(
+        "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
+        "(enable_load_extension is missing); use a Python built with extension loading"
+    ),
     range_source="json_each",
     range_join="CROSS JOIN",
     range_fence="MATERIALIZED",
@@ -392,6 +419,13 @@ POSTGRESQL: Final = DialectProfile(
     # asyncpg pipelines one execute per row; binary COPY halves Core's pages (4.3 vs 9.1 µs).
     bulk_insert="copy",
     vector_distance="ann",
+    # pgvector is a precondition, never installed by vfs: CREATE EXTENSION
+    # needs rights an application role does not have on a managed server.
+    vector_probe=PGVECTOR_PROBE,
+    vector_missing=(
+        "the pgvector extension is not installed in this database; run "
+        "CREATE EXTENSION vector once as a superuser or the database owner"
+    ),
     range_source="unnest",
     range_settings=("SET LOCAL jit = off",),
     vector_dimension_cap=16_000,

@@ -77,6 +77,7 @@ class StagedEntry:
     owner_id: str | None = None  # the payload's declared owner; only the system actor honours it
     base_version: int | None = None  # the version the guarded arm compares against
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
+    revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
 
     def __post_init__(self) -> None:
         self.ext = self.path.ext
@@ -160,7 +161,6 @@ class WritePlan:
         self.budget = budget
         self.value_cap = value_cap
         self.staged: dict[Path, StagedEntry] = {}
-        self.revived: set[Path] = set()
         self.bump_versions: dict[str, int] = {}
         self.errors: list[ResultError] = []
         self.pending: list[tuple[Path, Status]] = []
@@ -306,8 +306,6 @@ class WritePlan:
             self.errors.append(already_exists(target))
             return None
         self.mint_chain(target)
-        if tombstone is not None:
-            self.revived.add(target)
         stage = self.stage_create if occupant is None and tombstone is None else self.stage_update
         stage(
             target,
@@ -321,6 +319,8 @@ class WritePlan:
             data=data,
             source=source,
         )
+        if tombstone is not None:
+            self.staged[target].revive = True
         return "created" if occupant is None and tombstone is None else "updated"
 
     def put_dir(self, target: Path, *, parents: bool) -> Status | None:
@@ -459,7 +459,7 @@ class WritePlan:
         bumps: dict[str, str] = {}
         for staged in self.staged.values():
             # A revive returns a member to its parent's listing as a create adds one.
-            if staged.persistence != "insert" and staged.path not in self.revived:
+            if staged.persistence != "insert" and not staged.revive:
                 continue
             parent = self.staged.get(staged.parent)
             if parent is None:

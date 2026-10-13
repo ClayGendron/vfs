@@ -4,7 +4,6 @@ that withholds ranked search from a dialect with no distance function."""
 from __future__ import annotations
 
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import text
@@ -14,7 +13,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
-from vfs.storage.backends.database.dialects import GENERIC
+from vfs.storage.backends.database.dialects import GENERIC, SQLITE
 from vfs.storage.backends.memory import InMemoryStorage
 
 
@@ -42,8 +41,10 @@ class TestSqliteVec:
     async def test_an_interpreter_without_extension_loading_refuses_at_first_touch(
         self, tmp_path: Any, monkeypatch
     ) -> None:
+        # The URL helper provisions this worker's template on first use; take it before the patch.
+        url = _url(tmp_path)
         monkeypatch.setattr(engine_module, "_EXTENSIONS_LOADABLE", False)
-        storage = DatabaseStorage(url=_url(tmp_path))
+        storage = DatabaseStorage(url=url)
         result = await storage.first_touch()
         assert result.success is False
         [refusal] = result.errors
@@ -55,19 +56,28 @@ class TestSqliteVec:
         engine_module._load_sqlite_vec(object())  # no aiosqlite inner connection: nothing to load
 
 
-class TestPgvectorVersion:
-    async def test_the_version_parses_and_absence_is_none(self) -> None:
-        class Conn:
-            def __init__(self, raw: str | None) -> None:
-                self.raw = raw
+class TestVectorProbe:
+    def test_the_version_parses_both_spellings(self) -> None:
+        assert engine_module._version_tuple("0.8.1") == (0, 8, 1)  # pgvector's catalog row
+        assert engine_module._version_tuple("v0.1.6") == (0, 1, 6)  # sqlite-vec's vec_version()
 
-            async def execute(self, statement: Any) -> Any:
-                assert str(statement) == engine_module.PGVECTOR_VERSION_PROBE
-                raw = self.raw
-                return SimpleNamespace(scalar_one_or_none=lambda: raw)
+    async def test_first_touch_keeps_the_probed_version(self, tmp_path: Any) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        assert storage._host.vector_version is not None and len(storage._host.vector_version) == 3
+        await storage.close()
 
-        assert await engine_module._pgvector_version(Conn("0.8.1")) == (0, 8, 1)  # ty: ignore[invalid-argument-type]
-        assert await engine_module._pgvector_version(Conn(None)) is None  # ty: ignore[invalid-argument-type]
+    async def test_a_probe_answering_no_row_refuses_naming_the_fix(self, tmp_path: Any, monkeypatch) -> None:
+        # The pgvector shape: the catalog query returns no row when the extension is absent.
+        url = _url(tmp_path)
+        absent = replace(SQLITE, vector_probe="SELECT NULL WHERE 1 = 0", vector_missing="install the function")
+        monkeypatch.setattr(engine_module, "profile_for", lambda name: absent)
+        storage = DatabaseStorage(url=url)
+        result = await storage.first_touch()
+        assert result.success is False
+        [refusal] = result.errors
+        assert refusal.kind == ErrorKind.unavailable and "install the function" in refusal.message
+        await storage.close()
 
 
 class TestCapabilityGate:

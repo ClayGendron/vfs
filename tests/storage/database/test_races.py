@@ -37,6 +37,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from vfs.results import Result
@@ -116,6 +117,29 @@ class TestForwardOrdering:
             assert victim.success is False
             assert {e.kind for e in victim.errors} <= _RACE_KINDS
             assert (await storage.stat(path=Path("/d/late.txt"))).success is False
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    @pytest.mark.parametrize("verb", ["write", "edit"])
+    async def test_an_overwrite_under_a_deleted_parent_never_revives_the_child(self, env_var: str, verb: str) -> None:
+        # A delete rewrites no path and bumps no descendant, so only the
+        # tombstone term in the update's guard can notice the parent went.
+        async with server_storage(env_var, trash_days=0) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="old")], parents=True)).success
+
+            handler, rival_results = _self_clearing("write:before-apply", lambda: storage.delete(path=Path("/d")))
+            with seams.installed("write:before-apply", handler):
+                if verb == "write":
+                    victim = await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="mine")], overwrite=True)
+                else:
+                    victim = await storage.edit(edits=[EditOperation(old="old", new="mine")], path=Path("/d/f.txt"))
+            assert rival_results and rival_results[0].success is True
+            assert victim.success is False
+            assert {e.kind for e in victim.errors} <= _RACE_KINDS
+            assert (await storage.stat(path=Path("/d/f.txt"))).success is False
+            assert (await storage.read(path=Path("/.vfs/trash/d/f.txt"))).observations[0].content == "old"
+            # Retention purges the root's whole set: no child survives its parent.
+            assert (await storage.sweep(path=Path("/.vfs/trash"))).success is True
             await _audit(storage)
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
@@ -377,8 +401,6 @@ class TestObservationHonesty:
 
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_edit_never_reports_success_at_a_moved_address(self, env_var: str) -> None:
-        from vfs.storage.replace import EditOperation
-
         async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="old")], parents=True)).success
 
@@ -479,8 +501,6 @@ class TestAddressRaceClassification:
 class TestPurgeWindows:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_rival_body_replace_mid_purge_leaves_no_orphan(self, env_var: str) -> None:
-        from vfs.storage.replace import EditOperation
-
         async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
 

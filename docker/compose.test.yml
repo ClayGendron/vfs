@@ -38,6 +38,9 @@ services:
     # Disposable test data; tmpfs skips disk I/O and leaves nothing behind.
     tmpfs:
       - /var/lib/postgresql/data
+    # Installs pgvector once at first start: vfs proves the extension, never creates it.
+    volumes:
+      - ./initdb/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vfs -d vfs"]
       interval: 2s

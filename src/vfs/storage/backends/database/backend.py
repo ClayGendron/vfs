@@ -7,10 +7,10 @@ projection push-down, ``parent_id`` listings, glob's batched pattern
 fan, grep's indexed pipeline (``grep.py``), and the descent-ladder
 classification chokepoint (``descent.py`` / ``reads.py``) — as are the
 mutation core (write/edit/mkdir batches planned and executed as one
-transaction each, ``writes.py``), the serialized topology verbs
-delete/restore/move/copy (``topology.py``), and the edge pair
-``mkedge``/``rmedge`` over the same table as the storage-minted fs
-mirror (``edges.py``).
+transaction each, ``writes.py``), the serialized verbs — move/copy
+(``topology.py``) and delete/restore/sweep (``trash.py``) over the
+shared kit in ``serialized.py`` — and the edge pair ``mkedge``/``rmedge``
+over the same table as the storage-minted fs mirror (``edges.py``).
 
     storage = DatabaseStorage(url="sqlite+aiosqlite:///vfs.sqlite")     # built
     storage = DatabaseStorage(session_factory=app_sessionmaker)         # borrowed
@@ -132,7 +132,8 @@ from vfs.storage.backends.database.signals import (
     publish_signal,
     sweep_undeclared_signals,
 )
-from vfs.storage.backends.database.topology import delete_rows, restore_rows, sweep_rows, transfer_rows
+from vfs.storage.backends.database.topology import transfer_rows
+from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
 from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
 from vfs.storage.protocol import storage_ops, targets_of
 from vfs.storage.ranking import Ranker
@@ -581,7 +582,7 @@ class DatabaseStorage:
         indexed = self._host.native_embedding is not None and self._ann_indexed()
         ann = profile.vector_distance == "ann" and indexed and (not scoped or profile.ann_honours_scope)
         prelude = None
-        if ann and profile.name == "postgresql" and (self._host.pgvector_version or ()) >= (0, 8):
+        if ann and profile.name == "postgresql" and (self._host.vector_version or ()) >= (0, 8):
             prelude = PGVECTOR_ITERATIVE_SCAN
         return VectorLeg(embedded, provider.model_id, "native_ann" if ann else "native_exact", prelude), []
 

@@ -12,9 +12,12 @@ creates a schema of its own (`vfs_t_<hex>`) and drops it at teardown,
 and concurrent runs against one engine never collide. On MariaDB a
 schema is a database and on Oracle it is a user, so the app user
 needs rights to create both: the init scripts under `initdb/` grant
-them when a container first starts. A crashed run's leftover `vfs_t_*`
-schemas are harmless residue — data is ephemeral, and `compose down`
-clears everything.
+them when a container first starts. The Postgres init script installs
+pgvector the same way: vfs proves the extension at first touch and
+never creates it, because `CREATE EXTENSION` needs rights an
+application role does not have on a managed server. A crashed run's
+leftover `vfs_t_*` schemas are harmless residue — data is ephemeral,
+and `compose down` clears everything.
 
 ## Quick start (macOS, Apple Silicon)
 

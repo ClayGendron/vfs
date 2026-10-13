@@ -871,15 +871,15 @@ def _attach_blob_storage_ddl(blobs: Table) -> None:
 
 
 def _attach_pgvector_ddl(metadata: MetaData, chunks: Table, config: NativeEmbeddingConfig) -> None:
-    """The extension and the ANN index behind a native pgvector column — PostgreSQL only.
+    """The ANN index behind a native pgvector column — PostgreSQL only.
 
-    Both statements are dialect-conditional DDL events: every other
-    engine provisions its own column with no index, so one table
-    definition serves the whole matrix. A space wider than pgvector's
-    index cap gets the column and an exact scan, never a failing DDL.
+    A dialect-conditional DDL event: every other engine provisions its
+    own column with no index, so one table definition serves the whole
+    matrix. A space wider than pgvector's index cap gets the column and
+    an exact scan, never a failing DDL. The extension itself is a
+    precondition first touch proves, never DDL vfs runs: creating it
+    needs rights an application role does not have on a managed server.
     """
-    extension = DDL("CREATE EXTENSION IF NOT EXISTS vector").execute_if(dialect="postgresql")
-    event.listen(metadata, "before_create", extension)
     if config.dimension > PGVECTOR_INDEX_MAX_DIMENSION:
         return
     index = DDL(

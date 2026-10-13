@@ -8,9 +8,11 @@ bytes in ``data``; ``is_snapshot`` true, no diff form), the replaced
 version as its number, the body's own hash, size and line count, and
 the attribution of the authority that replaced it — actor, provenance,
 source identity, the grant revision in force — with one
-``vfs_version_subjects`` row per subject. Creates mint nothing, and a
-row with no body (a directory, a bytes row never rendered and never
-stored) mints nothing.
+``vfs_version_subjects`` row per subject. Creates mint nothing; a row
+with no body (a directory, a bytes row never rendered and never stored)
+mints nothing; and a body replaced by an identical one mints nothing,
+because nothing was lost — an agent rewriting an unchanged file leaves
+no history behind.
 
 The mint runs after the entry rows are updated — their locks held —
 and before the bodies are replaced, so it reads the pre-image under the
@@ -68,7 +70,8 @@ async def mint_versions(
 
     Every staged row here has already taken its new version on the entry
     row, so the version it replaced is one below — the number the row
-    records. A row whose body tables hold nothing mints nothing.
+    records. A row whose body tables hold nothing mints nothing, and a
+    body whose hash equals the one replacing it mints nothing.
     """
     if not replaced:
         return 0
@@ -89,8 +92,11 @@ async def mint_versions(
         for row in await session.execute(stmt):
             if row.content is None and row.data is None:
                 continue
-            number = by_id[row.entry_id].version - 1
+            staged = by_id[row.entry_id]
+            number = staged.version - 1
             version = _version_row(row.entry_id, number, row.content, row.data, authority, revision, now)
+            if version["content_hash"] == staged.content_hash:
+                continue
             (binaries if row.data is not None else texts).append(version)
             subjects.extend(_subject_rows(row.entry_id, number, authority))
         await bulk_insert(session, tables.versions, texts)

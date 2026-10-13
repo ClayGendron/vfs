@@ -32,7 +32,7 @@ from vfs.storage.backends.database.dialects import (
 )
 from vfs.storage.backends.database.engine import EngineHost, advisory_key
 from vfs.storage.backends.database.seams import clear, install, installed, seam
-from vfs.storage.backends.database.topology import _serialize
+from vfs.storage.backends.database.serialized import serialize
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,12 +106,12 @@ class TestSerializationPoint:
 
     async def test_sqlite_needs_no_statement(self) -> None:
         recorder = _StatementRecorder()
-        await _serialize(cast("AsyncSession", recorder), SQLITE, self._meta(), lock_key=7)
+        await serialize(cast("AsyncSession", recorder), SQLITE, self._meta(), lock_key=7)
         assert recorder.statements == []
 
     async def test_postgres_takes_the_advisory_lock_on_the_key(self) -> None:
         recorder = _StatementRecorder()
-        await _serialize(cast("AsyncSession", recorder), POSTGRESQL, self._meta(), lock_key=advisory_key("vfs"))
+        await serialize(cast("AsyncSession", recorder), POSTGRESQL, self._meta(), lock_key=advisory_key("vfs"))
         assert len(recorder.statements) == 1
         assert "pg_advisory_xact_lock" in recorder.statements[0]
         assert str(advisory_key("vfs")) in recorder.statements[0]
@@ -119,7 +119,7 @@ class TestSerializationPoint:
     async def test_other_engines_x_lock_the_meta_row(self) -> None:
         for profile in (MSSQL, MARIADB, PROFILES["oracle"], GENERIC):
             recorder = _StatementRecorder()
-            await _serialize(cast("AsyncSession", recorder), profile, self._meta(), lock_key=7)
+            await serialize(cast("AsyncSession", recorder), profile, self._meta(), lock_key=7)
             assert len(recorder.statements) == 1
             statement = recorder.statements[0]
             assert statement.startswith("UPDATE")

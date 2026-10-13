@@ -267,12 +267,12 @@ class TestTiers:
     ) -> None:
         storage = await _indexed(tmp_path, embedder=HashEmbeddingProvider(8))
         monkeypatch.setattr(storage._host, "_profile", POSTGRESQL)
-        storage._host.pgvector_version = (0, 8, 1)
+        storage._host.vector_version = (0, 8, 1)
         leg, _ = await storage._vector_leg_for("alpha", scoped=False)
         assert leg is not None and (leg.tier, leg.prelude) == ("native_ann", backend_module.PGVECTOR_ITERATIVE_SCAN)
         scoped, _ = await storage._vector_leg_for("alpha", scoped=True)
         assert scoped is not None and scoped.tier == "native_ann"  # pgvector filters inside the index scan
-        storage._host.pgvector_version = (0, 7, 4)
+        storage._host.vector_version = (0, 7, 4)
         older, _ = await storage._vector_leg_for("alpha", scoped=False)
         assert older is not None and (older.tier, older.prelude) == ("native_ann", None)
         monkeypatch.setattr(storage._host, "_profile", replace(POSTGRESQL, ann_honours_scope=False))

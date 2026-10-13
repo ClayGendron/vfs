@@ -35,14 +35,10 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
 )
 from vfs.storage.backends.database.seams import clear, installed
+from vfs.storage.backends.database.serialized import claim
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
-from vfs.storage.backends.database.topology import (
-    _claim,
-    delete_rows,
-    restore_rows,
-    sweep_rows,
-    transfer_rows,
-)
+from vfs.storage.backends.database.topology import transfer_rows
+from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
     _bump_by_values,
@@ -785,19 +781,19 @@ class TestWriteVsTopologyCoherence:
 
         proven = _ReturningSession([{"entry_id": "X" * 26}])
         proven.get_bind = lambda: insane_bind(returning=True)  # ty: ignore[invalid-assignment]
-        assert await _claim(cast("AsyncSession", proven), GENERIC, stmt, entry.c.entry_id, miss="m") is None
+        assert await claim(cast("AsyncSession", proven), GENERIC, stmt, entry.c.entry_id, miss="m") is None
         missed = _ReturningSession([])
         missed.get_bind = lambda: insane_bind(returning=True)  # ty: ignore[invalid-assignment]
         with pytest.raises(StaleSnapshot):
-            await _claim(cast("AsyncSession", missed), GENERIC, stmt, entry.c.entry_id, miss="m")
+            await claim(cast("AsyncSession", missed), GENERIC, stmt, entry.c.entry_id, miss="m")
         # Nothing verifiable: the classified refusal, never a blind claim —
         # for the DELETE shape too, which consults delete_returning.
         blind = _ReturningSession([])
         blind.get_bind = lambda: insane_bind(returning=False)  # ty: ignore[invalid-assignment]
-        refused = await _claim(cast("AsyncSession", blind), GENERIC, stmt, entry.c.entry_id, miss="m")
+        refused = await claim(cast("AsyncSession", blind), GENERIC, stmt, entry.c.entry_id, miss="m")
         assert refused is not None and refused.kind == ErrorKind.unsupported
         destroy = delete(entry).where(entry.c.entry_id == "X" * 26)
-        refused = await _claim(cast("AsyncSession", blind), GENERIC, destroy, entry.c.entry_id, miss="m")
+        refused = await claim(cast("AsyncSession", blind), GENERIC, destroy, entry.c.entry_id, miss="m")
         assert refused is not None and refused.kind == ErrorKind.unsupported
 
     async def test_unverifiable_claims_refuse_the_topology_verbs(self, tmp_path, monkeypatch) -> None:

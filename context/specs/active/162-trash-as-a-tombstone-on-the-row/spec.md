@@ -5,8 +5,10 @@
   commit work until I approve"). Built as written, taking the two
   proposed ADR 074 amendments (rules 4 and 5) as the working answers;
   Clay has not yet confirmed them. `scripts/ci.sh` green: 3,938 tests
-  at 100% coverage. The four engine legs were **not** run (db_test
-  needs Docker). See *Landing notes* at the end for the deviations.
+  at 100% coverage. **Reviewed and committed 2026-10-12** (`7d0bc3c`,
+  then the review's fixes): the Postgres leg is green (335 passed);
+  MariaDB, SQL Server and Oracle have not run. See *Landing notes* at
+  the end for the deviations and the review's findings.
   Drafted 2026-10-08 from ADR 074 (accepted the same day) and the memo
   it stands on; revised 2026-10-08 after a review against `0760fe9`
   that worked the restore and revive sequences by hand (two
@@ -299,6 +301,53 @@ Built as specified, with these decisions and deviations:
 - **Spy counts** (`test_trash.py`): delete and restore of a 1,000- and
   2,000-file directory each issue ≤ 10 statements, flat in N, and no
   statement touches `vfs_segments`.
+- **An identical body mints nothing** (Clay, 2026-10-12, review of the
+  landing). The mint compares the pre-image's hash with the staged
+  `content_hash` and skips an equal one: an agent rewriting an
+  unchanged file leaves no history behind. The slice B sentence "a
+  write that replaces a body" reads "replaces it with a different
+  body".
+- **The update guard carries the tombstone side** (review of the
+  landing, 2026-10-12). The old delete rewrote every descendant's
+  path, so a guarded overwrite's `path = path-at-snapshot` term missed
+  after a parent's delete. The tombstone rewrites no path and bumps no
+  descendant, and an ordinary overwrite bumps no parent, so the
+  version-and-path guard alone passed and the clobber cleared the
+  child's tombstone: a live file under a deleted directory, and after
+  retention a row with a destroyed parent (reproduced sequentially on
+  SQLite; reachable on every server engine, where writes are not
+  serialized with topology). Every material update now proves its side
+  of the tombstone with no bind: `deleted_at IS NULL` for an overwrite
+  and an absorb, `deleted_at IS NOT NULL` for a revive, so a rival
+  restore mid-window misses too. The guarded rows run as two groups,
+  one per side. Pinned by `TestStaleSnapshotGuards` (the stale-snapshot
+  shape, on SQLite) and a new forward-ordering race in `test_races.py`
+  (overwrite and edit under a `delete` carrier, the engine legs).
+- **The clobber's VALUES join casts the tombstone columns** (the
+  Postgres leg, 2026-10-12). `_CLOBBER_COLUMNS` gained `deleted_at` and
+  `trash_root_id`, both always NULL in a clobber, and Postgres types an
+  all-NULL `VALUES` column as text, so every set-based overwrite on
+  Postgres failed with a type error until the typed-cell cast widened
+  from integers to timestamps, identities and flags. SQLite never takes
+  that path, which is why the sqlite suite was green.
+- **pgvector is a precondition, never installed** (ADR 077, the same
+  leg): three first touches on the fresh cluster raced on `CREATE
+  EXTENSION IF NOT EXISTS`. The DDL event is gone; the profile declares
+  the probe (`vector_probe`, `vector_missing`), first touch runs it on
+  every engine that declares one, and the compose init script installs
+  the extension once.
+- **`topology.py` is three files** (Clay, 2026-10-12). Delete, restore
+  and sweep rewrite no path, parent pointer or posting anymore, so they
+  no longer belong in the module whose docstring defines topology as
+  exactly that. `trash.py` owns the three tombstone verbs with the
+  cascades, the restore verdict, the purge and the orphan reclaim;
+  `topology.py` keeps move and copy; `serialized.py` is the kit both
+  share — the serialization point, the guarded claim, the bump, the
+  snapshot and point reads, the destination parent gate, and the
+  re-read observation of an executed batch. The locking discipline is
+  unchanged: every verb in both files still takes the per-mount
+  serialization point first, because delete's cascade is one `LIKE`
+  over a subtree a concurrent move could otherwise interleave with.
 - **Not done here:** the engine legs (db_test), the archive move and
   the status lines on 081/082/083 (task 16, on landing), spec 156's
   rule 2 stub and spec 150 §8's note.

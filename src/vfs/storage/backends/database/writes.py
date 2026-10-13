@@ -41,7 +41,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
-from sqlalchemy import Integer, bindparam, column, delete, insert, select, update, values
+from sqlalchemy import Boolean, DateTime, Integer, bindparam, column, delete, insert, select, update, values
 from sqlalchemy import cast as sql_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -49,6 +49,7 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.authority import owner_for
 from vfs.models import CONTENT_KINDS, Entry, Observation
+from vfs.models.rows import ULIDKey
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors, tombstone_miss
 from vfs.storage.backends.database.dialects import (
@@ -663,31 +664,51 @@ async def _update_materials(
     mid-window misses), and application is verified from
     RETURNING or a read-back comparing the stored path; a miss raises
     :class:`StaleSnapshot` and the whole method redrives.
+
+    Every arm also proves the row's side of the tombstone. A delete
+    rewrites no path and bumps no descendant, so a parent's delete
+    inside the window would pass a version-and-path guard alone and the
+    clobber would clear the child's tombstone — a live row under a
+    deleted directory. An ordinary update and an absorb require
+    ``deleted_at IS NULL``; a revive requires the tombstone it was
+    staged against, so a rival restore mid-window misses too. The
+    guarded rows run in two groups, one per side, and the term binds
+    nothing.
     """
     if not updates:
         return []
-    guarded = [s for s in updates if s.persistence == "update"]
     unguarded = [s for s in updates if s.persistence == "absorb"]
     dialect = session.get_bind().dialect
     set_based = supports_values_update(profile, dialect)
     errors: list[ResultError] = []
-    if guarded:
+    for revive in (False, True):
+        guarded = [s for s in updates if s.persistence == "update" and s.revive is revive]
+        if not guarded:
+            continue
         if set_based:
             matched = await _values_update(
-                session, entry, parameter_budget, membership_budget, guarded, authority=authority, now=now, guard=True
+                session,
+                entry,
+                parameter_budget,
+                membership_budget,
+                guarded,
+                authority=authority,
+                now=now,
+                guard=True,
+                revive=revive,
             )
             missed = [s for s in guarded if s.entry_id not in matched]
             errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed))
         elif dialect.supports_sane_multi_rowcount:
             errors.extend(
                 await _guarded_by_aggregate(
-                    session, entry, profile, membership_budget, guarded, authority=authority, now=now
+                    session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
                 )
             )
         elif dialect.supports_sane_rowcount:
             errors.extend(
                 await _guarded_by_rowcount(
-                    session, entry, profile, membership_budget, guarded, authority=authority, now=now
+                    session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
                 )
             )
         else:
@@ -714,7 +735,11 @@ async def _update_materials(
             material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
             stmt = (
                 update(entry)
-                .where(entry.c.entry_id == bindparam("b_id"), entry.c.path == bindparam("b_path"))
+                .where(
+                    entry.c.entry_id == bindparam("b_id"),
+                    entry.c.path == bindparam("b_path"),
+                    _tombstone_side(entry, revive=False),
+                )
                 .values(**material, version=entry.c.version + 1)
             )
             params = [_update_params(s, authority, now) | {"b_path": str(s.path)} for s in unguarded]
@@ -747,15 +772,16 @@ async def _values_update(
     authority: Authority | None,
     now: datetime,
     guard: bool,
+    revive: bool = False,
 ) -> dict[str, int]:
     """Set-based material update over a VALUES join, RETURNING what it matched.
 
-    One tuple per staged row joins the entry table on ``entry_id`` (and,
-    guarded, on ``version = base`` and ``path`` at snapshot); the
-    returned ``entry_id`` set is exactly the rows this statement
-    touched. Chunked by the tighter of the membership budget and the
-    per-tuple bind cost, so a 10,000-entry batch stays batch-native and
-    bounded on every engine.
+    One tuple per staged row joins the entry table on ``entry_id``, the
+    tombstone side (*revive*) and ``path`` at snapshot (and, guarded, on
+    ``version = base``); the returned ``entry_id`` set is exactly the
+    rows this statement touched. Chunked by the tighter of the
+    membership budget and the per-tuple bind cost, so a 10,000-entry
+    batch stays batch-native and bounded on every engine.
     """
     rows = []
     for entry_row in staged:
@@ -763,7 +789,7 @@ async def _values_update(
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
         rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
     per_statement = statement_budget(
-        lambda probe: _values_update_stmt(entry, probe, guard=guard),
+        lambda probe: _values_update_stmt(entry, probe, guard=guard, revive=revive),
         rows[0],
         session.get_bind().dialect,
         parameter_budget=parameter_budget,
@@ -772,17 +798,19 @@ async def _values_update(
     )
     matched: dict[str, int] = {}
     for chunk in chunked(rows, per_statement):
-        result = await session.execute(_values_update_stmt(entry, chunk, guard=guard))
+        result = await session.execute(_values_update_stmt(entry, chunk, guard=guard, revive=revive))
         matched.update({mapping["entry_id"]: mapping["version"] for mapping in result.mappings()})
     return matched
 
 
-def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, guard: bool) -> Update:
+def _values_update_stmt(
+    entry: Table, rows: Sequence[tuple[object, ...]], *, guard: bool, revive: bool = False
+) -> Update:
     """One material-update VALUES join over staged *rows*.
 
-    Both arms prove the address; only the guarded arm pins the version —
-    the unguarded arm increments SQL-side, a fixed bind the budget helper
-    measures off this construction.
+    Both arms prove the address and the tombstone side; only the guarded
+    arm pins the version — the unguarded arm increments SQL-side, a
+    fixed bind the budget helper measures off this construction.
     """
     incoming = values(
         column("v_id", entry.c.entry_id.type),
@@ -793,7 +821,11 @@ def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, gua
         name="incoming",
     ).data(list(rows))
     set_: dict[str, Any] = {name: _typed_cell(incoming.c[f"v_{name}"], entry.c[name]) for name in _CLOBBER_COLUMNS}
-    where = [entry.c.entry_id == incoming.c.v_id, entry.c.path == incoming.c.v_path]
+    where = [
+        entry.c.entry_id == incoming.c.v_id,
+        entry.c.path == incoming.c.v_path,
+        _tombstone_side(entry, revive=revive),
+    ]
     if guard:
         set_["version"] = incoming.c.v_ver
         where.append(entry.c.version == incoming.c.v_base)
@@ -803,8 +835,13 @@ def _values_update_stmt(entry: Table, rows: Sequence[tuple[object, ...]], *, gua
 
 
 def _typed_cell(cell: ColumnElement[Any], target: Column[Any]) -> ColumnElement[Any]:
-    """An all-NULL VALUES column has no type and Postgres infers text; an integer target refuses it."""
-    return sql_cast(cell, target.type) if isinstance(target.type, Integer) else cell
+    """An all-NULL VALUES column has no type and Postgres infers text; every non-text target refuses it.
+
+    The tombstone columns are always NULL in a clobber, so they are the
+    steady case, not an edge: a timestamp, an identity and a flag each
+    take the cast, and a text target never needs one.
+    """
+    return sql_cast(cell, target.type) if isinstance(target.type, (Integer, DateTime, Boolean, ULIDKey)) else cell
 
 
 async def _guarded_by_aggregate(
@@ -816,6 +853,7 @@ async def _guarded_by_aggregate(
     *,
     authority: Authority | None,
     now: datetime,
+    revive: bool,
 ) -> list[ResultError]:
     """Executemany fast path: an aggregate rowcount of N proves N guards matched.
 
@@ -827,14 +865,16 @@ async def _guarded_by_aggregate(
     """
     params = [_guarded_params(s, authority, now) for s in guarded]
     nested = await session.begin_nested()
-    result = cast("CursorResult[Any]", await session.execute(_guarded_stmt(entry), params))
+    result = cast("CursorResult[Any]", await session.execute(_guarded_stmt(entry, revive=revive), params))
     if result.rowcount == len(params):
         await nested.commit()
         return []
     await nested.rollback()
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(params) - result.rowcount} guarded update(s) missed their snapshot")
-    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, authority=authority, now=now)
+    return await _guarded_by_rowcount(
+        session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
+    )
 
 
 async def _guarded_by_rowcount(
@@ -846,13 +886,14 @@ async def _guarded_by_rowcount(
     *,
     authority: Authority | None,
     now: datetime,
+    revive: bool,
 ) -> list[ResultError]:
     """The per-row floor: each statement's own rowcount is the evidence.
 
     SQLAlchemy's own choice when a version guard must be verified without
     RETURNING — one row per statement, bounded trivially.
     """
-    stmt = _guarded_stmt(entry)
+    stmt = _guarded_stmt(entry, revive=revive)
     missed: list[StagedEntry] = []
     for staged in guarded:
         result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, authority, now)))
@@ -892,7 +933,7 @@ async def _classify_guard_misses(
     return errors
 
 
-def _guarded_stmt(entry: Table) -> Update:
+def _guarded_stmt(entry: Table, *, revive: bool) -> Update:
     material = {name: bindparam(f"b_{name}") for name in _CLOBBER_COLUMNS}
     return (
         update(entry)
@@ -900,9 +941,15 @@ def _guarded_stmt(entry: Table) -> Update:
             entry.c.entry_id == bindparam("b_id"),
             entry.c.version == bindparam("b_base"),
             entry.c.path == bindparam("b_path"),
+            _tombstone_side(entry, revive=revive),
         )
         .values(**material, version=bindparam("b_ver"))
     )
+
+
+def _tombstone_side(entry: Table, *, revive: bool) -> ColumnElement[bool]:
+    """The side of the tombstone an update expects its row on: live, or tombstoned for a revive. No bind."""
+    return entry.c.deleted_at.is_not(None) if revive else entry.c.deleted_at.is_(None)
 
 
 def _guarded_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:

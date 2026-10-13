@@ -42,7 +42,7 @@ together or in the order given; slice B follows. Task 0 gates both.
     statement-and-row counting test at N = 1,000 and 2,000; the
     private-posture listing test; one never-surfaces test per verb;
     the EXPLAIN pin; STATUS.md.
-11. [ ] Run the four engine legs (db_test skill). **Not run 2026-10-11** (needs Docker).
+11. [ ] Run the four engine legs (db_test skill). **Postgres green 2026-10-12 (335 passed, after the review's two fixes); MariaDB, SQL Server and Oracle not run.**
 
 ## Slice B
 
