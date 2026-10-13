@@ -2,9 +2,9 @@ name: Dialect tests
 
 # Real-engine conformance legs. Servers come from docker/compose.test.yml —
 # the same file used locally — so images, credentials, and health probes
-# have one source of truth. Postgres/MariaDB gate PRs that touch storage;
-# the heavyweight engines (SQL Server, Oracle) also run there but their
-# slow cold starts make nightly + manual dispatch the primary cadence.
+# have one source of truth. Every engine runs on a push to main and on
+# PRs that touch storage; there is no schedule, so a run always traces
+# back to a commit. Manual dispatch covers everything else.
 
 on:
   push:
@@ -24,8 +24,6 @@ on:
       - "docker/compose.test.yml"
       - "pyproject.toml"
       - ".github/workflows/test-dialects.yml"
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
 
 jobs:
