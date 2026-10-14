@@ -398,6 +398,52 @@ async def test_a_sweep_reclaims_the_deleted_mount_directory() -> None:
     assert (await root.ls("/.vfs/trash")).observations == []
 
 
+async def test_every_mutation_at_a_mounted_trash_view_address_is_invalid() -> None:
+    # The trash-grammar gate runs on the mount-local path: a storage never
+    # mounts at /, so only there can it see the view beneath the mount.
+    # Every mutating verb answers invalid at the path the caller sent,
+    # before any storage is asked — never not_found at a path it never sent.
+    storage = InMemoryStorage()
+    root = VirtualFileSystem()
+    await root.add_mount(storage, "/m")
+    assert (await root.write(path="/m/d/f.md", content="one", parents=True)).success is True
+    assert (await root.write(path="/m/live.md", content="live")).success is True
+    assert (await root.delete(path="/m/d")).success is True
+    view = "/m/.vfs/trash"
+    attempts = {
+        "write": root.write(path=f"{view}/x.md", content="x"),
+        "write entries": root.write(entries=[Entry(path=f"{view}/x.md", content="x")]),
+        "mkdir": root.mkdir(path=f"{view}/nd"),
+        "edit": root.edit(path=f"{view}/d/f.md", old="one", new="two"),
+        "delete": root.delete(path=f"{view}/d"),
+        "restore": root.restore(path=f"{view}/d"),
+        "sweep": root.sweep(path=f"{view}/d"),
+        "move into": root.move(src="/m/live.md", dest=f"{view}/live.md"),
+        "copy into": root.copy(src="/m/live.md", dest=f"{view}/c.md"),
+        "move out": root.move(src=f"{view}/d/f.md", dest="/m/h.md"),
+        "write at the head": root.write(path=view, content="x"),
+        "mkdir at the head": root.mkdir(path=view),
+        "delete the head": root.delete(path=view),
+        "restore the head": root.restore(path=view),
+        "move onto the head": root.move(src="/m/live.md", dest=view),
+    }
+    for label, attempt in attempts.items():
+        result = await attempt
+        assert result.success is False, label
+        [error] = result.errors
+        assert error.kind is ErrorKind.invalid, (label, error)
+        assert error.path is not None and error.path.startswith(view), (label, error)
+    # Only sweep addresses the head itself.
+    assert (await root.sweep(path=view)).success is True
+    # An edge endpoint in the view is refused by the Edge model itself, before routing.
+    edged = await root.mkedge(source=f"{view}/d/f.md", target="/m/live.md", edge_type="cites")
+    assert edged.success is False and edged.errors[0].kind is ErrorKind.invalid
+    # The mount-local meta root is reserved too, and the live row is untouched.
+    assert (await root.write(path="/m/.vfs", content="x")).errors[0].kind is ErrorKind.invalid
+    assert (await root.read(path="/m/live.md")).one().content == "live"
+    assert [str(o.path) for o in (await root.ls(path=view)).observations] == ["/m/d"]
+
+
 async def test_remove_mount_rejects_missing() -> None:
     root = VirtualFileSystem()
     with pytest.raises(ValueError, match="No mount at"):

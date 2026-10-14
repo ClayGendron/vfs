@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, NamedTuple
 from sqlalchemy import (
     BINARY,
     DDL,
+    TIMESTAMP,
     VARBINARY,
     BigInteger,
     Boolean,
@@ -135,7 +136,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 21
+SCHEMA_FORMAT_VERSION: Final = 22
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -265,6 +266,19 @@ def _body_bytes() -> LargeBinary:
     return LargeBinary().with_variant(LONGBLOB(), *_MYSQL_FAMILY).with_variant(VARBINARY(), "mssql")
 
 
+def _timestamp() -> DateTime:
+    """A zone-aware instant that keeps sub-second precision on every engine.
+
+    ``DateTime(timezone=True)`` compiles to ``DATE`` on Oracle — whole
+    seconds, no zone — so a tombstone written and compared inside one
+    second never ages, and two versions minted in one second tie. Oracle
+    is pinned to ``TIMESTAMP WITH TIME ZONE``; the other engines already
+    compile to a zoned sub-second type. The variant is Oracle's alone:
+    on MSSQL ``TIMESTAMP`` is the rowversion type, not an instant.
+    """
+    return DateTime(timezone=True).with_variant(TIMESTAMP(timezone=True), "oracle")
+
+
 def _uuid_native(dialect: Dialect) -> bool:
     """True where the engine's own uuid type keeps ULID time-order.
 
@@ -332,6 +346,7 @@ class VFSTables(NamedTuple):
     chunks: Table
     edges: Table
     meta: Table
+    lock: Table
     gram_epochs: Table
     posting_list: Table
     segments: Table
@@ -458,11 +473,11 @@ def build_vfs_tables(
         # the deepest covering posture row's level, stamped with the row.
         # No default on purpose — a mint site that forgets it fails loudly.
         Column("everyone_level", SmallInteger, nullable=False),
-        Column("created_at", DateTime(timezone=True)),
-        Column("updated_at", DateTime(timezone=True)),
+        Column("created_at", _timestamp()),
+        Column("updated_at", _timestamp()),
         # The tombstone: a deleted row stays at its path with the time it
         # was deleted and the root the delete named (its own id for a root).
-        Column("deleted_at", DateTime(timezone=True)),
+        Column("deleted_at", _timestamp()),
         Column("trash_root_id", ULIDKey()),
         UniqueConstraint("parent_id", "name", name="uq_vfs_entries_parent_name"),
         Index("ix_vfs_entries_ext_kind", "ext", "kind"),
@@ -493,7 +508,7 @@ def build_vfs_tables(
         Column("entry_id", ULIDKey(), primary_key=True),
         # Write time of this body row (every overwrite re-mints it) — the
         # age sweep's orphan-reclaim fence is measured against.
-        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("created_at", _timestamp(), nullable=False),
         Column("content", _body_text(), nullable=False),
         schema=schema,
     )
@@ -504,7 +519,7 @@ def build_vfs_tables(
         "vfs_blobs",
         metadata,
         Column("entry_id", ULIDKey(), primary_key=True),
-        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("created_at", _timestamp(), nullable=False),
         Column("data", _body_bytes(), nullable=False),
         schema=schema,
     )
@@ -532,7 +547,7 @@ def build_vfs_tables(
         # The grant revision in force when the version was written: which
         # grants allowed it, answerable without replaying history.
         Column("grant_revision", BigInteger),
-        Column("created_at", DateTime(timezone=True)),
+        Column("created_at", _timestamp()),
         Column("content", _body_text()),
         Column("version_diff", _body_text()),
         # A bytes-sourced entry's version is a full bytes snapshot; no diff form.
@@ -637,8 +652,18 @@ def build_vfs_tables(
         # The grant spine's revision: every grant, posture, or membership
         # write bumps it first, so the bump is also the admin writes' lock.
         Column("grant_revision", BigInteger, nullable=False, default=0),
-        Column("created_at", DateTime(timezone=True)),
+        Column("created_at", _timestamp()),
         CheckConstraint("id = 1", name="ck_vfs_meta_single_row"),
+        schema=schema,
+    )
+
+    # The serialized verbs' lock row: locked for the transaction, read by
+    # nothing else, so no other path ever waits behind a verb.
+    lock = Table(
+        "vfs_lock",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=False),
+        CheckConstraint("id = 1", name="ck_vfs_lock_single_row"),
         schema=schema,
     )
 
@@ -652,7 +677,7 @@ def build_vfs_tables(
         Column("epoch", Integer, primary_key=True, autoincrement=False),
         Column("format_version", Integer, nullable=False),
         Column("options_hash", String(64), nullable=False),
-        Column("created_at", DateTime(timezone=True)),
+        Column("created_at", _timestamp()),
         schema=schema,
     )
 
@@ -768,7 +793,7 @@ def build_vfs_tables(
         Column("generation", String(ULID_LENGTH), nullable=False),
         Column("options_hash", String(64), nullable=False),
         Column("row_count", Integer, nullable=False),
-        Column("created_at", DateTime(timezone=True)),
+        Column("created_at", _timestamp()),
         schema=schema,
     )
 
@@ -785,7 +810,7 @@ def build_vfs_tables(
         Column("path_prefix", BytewiseString(MAX_PATH_LENGTH), nullable=False),
         Column("level", String(16), nullable=False),
         Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
-        Column("granted_at", DateTime(timezone=True), nullable=False),
+        Column("granted_at", _timestamp(), nullable=False),
         Column("revision", BigInteger, nullable=False),
         UniqueConstraint("principal_id", "path_prefix", name="uq_vfs_grants_key"),
         schema=schema,
@@ -801,7 +826,7 @@ def build_vfs_tables(
         Column("principal_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("group_id", _string(MAX_PRINCIPAL_ID_LENGTH), primary_key=True),
         Column("granted_by", _string(MAX_PRINCIPAL_ID_LENGTH), nullable=False),
-        Column("granted_at", DateTime(timezone=True), nullable=False),
+        Column("granted_at", _timestamp(), nullable=False),
         Index("ix_vfs_memberships_group", "group_id"),
         schema=schema,
     )
@@ -837,6 +862,7 @@ def build_vfs_tables(
         chunks=chunks,
         edges=edges,
         meta=meta,
+        lock=lock,
         gram_epochs=gram_epochs,
         posting_list=posting_list,
         segments=segments,

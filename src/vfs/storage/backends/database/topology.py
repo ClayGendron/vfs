@@ -120,7 +120,6 @@ async def transfer_rows(
     op: Literal["move", "copy"],
     operations: list[ResolvedPair],
     authority: Authority | None,
-    lock_key: int,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of moves or copies, pair by pair.
@@ -141,7 +140,7 @@ async def transfer_rows(
     passed.
     """
     entry = tables.entry
-    await serialize(session, profile, tables.meta, lock_key)
+    await serialize(session, profile, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=(op,), errors=refused)
     move_srcs = Counter(pair.src for pair in operations) if op == "move" else Counter[Path]()

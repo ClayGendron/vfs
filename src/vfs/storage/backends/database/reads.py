@@ -38,8 +38,9 @@ from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
 from vfs.models.media import FAILURE_STATUSES
-from vfs.paths import METADATA_ROOT, TRASH_ROOT, Path, _under_meta_root, normalize_ext_channel, strip_trash_head
+from vfs.paths import METADATA_ROOT, TRASH_ROOT, Address, Path, _under_meta_root, address_of, normalize_ext_channel
 from vfs.pattern_matching import (
+    GLOB_CHANNEL_LABELS,
     ROW_GATE_FIELDS,
     GlobFilter,
     PatternError,
@@ -52,17 +53,16 @@ from vfs.results import ErrorKind, Result, ResultError, Severity, classified, wr
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     classify_miss,
-    classify_misses,
     descendant_filter,
     escape_like,
     liveness_filters,
     rows_by_path,
     targets_with_ancestors,
-    tombstone_miss,
+    tombstoned_roots,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.rights import RIGHTS_FIELDS, judged_columns
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import EntryId, VFSTables
-    from vfs.pattern_matching import Body
+    from vfs.pattern_matching import Body, GlobChannel
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.rights import Visibility
@@ -101,18 +101,9 @@ ROAD_FIELDS: Final[frozenset[str]] = frozenset({"path", "kind"})
 # back to a literal-prefix prefilter with the compiled glob as the filter.
 _GLOB_TRANSLATED: Final[frozenset[str]] = frozenset("*?")
 
-
-class Address(NamedTuple):
-    """Where a target's row sits, and which side of the tombstone it addresses."""
-
-    stored: str
-    trashed: bool
-
-
-def address_of(target: str) -> Address:
-    """A target under the trash head names the tombstoned row at the path beneath it; any other names a live row."""
-    rest = strip_trash_head(target)
-    return Address(target, False) if rest is None else Address(rest, True)
+# The trash view's heads as the descent ladder sees them: synthesized
+# directories, never stored rows, so neither is ever the missing component.
+_VIEW_HEADS: Final[dict[str, str]] = {METADATA_ROOT: "directory", TRASH_ROOT: "directory"}
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +198,7 @@ async def ls_rows(
     shown, road, missing = await _screen(session, tables, profile, membership_budget, targets, found, view)
     directories = [t for t in targets if t in road or ((f := shown.get(t)) is not None and f["kind"] == "directory")]
     children = await _children_by_parent(
-        session, tables.entry, profile, membership_budget, directories, found, fetched, view=view
+        session, tables.entry, profile, membership_budget, directories, found.by_target, fetched, view=view
     )
     roots: list[Observation] | None = None
     rows: list[Observation] = []
@@ -223,7 +214,7 @@ async def ls_rows(
         elif mapping is not None and mapping["kind"] != "directory":
             rows.append(_observe(mapping, fetched))
         else:
-            listed = list(children.get(found[target]["entry_id"], ()))
+            listed = list(children.get(found.by_target[target]["entry_id"], ()))
             if target == METADATA_ROOT:
                 listed = _with_trash_view(listed)
             rows.extend(listed)
@@ -264,7 +255,7 @@ async def tree_rows(
         select(*_entry_columns(entry, wanted))
         .where(
             descendant_filter(entry, address.stored, profile),
-            *liveness_filters(entry, profile, include_meta=_under_meta_root(address.stored), trashed=address.trashed),
+            *liveness_filters(entry, profile, include_meta=address.meta, trashed=address.trashed),
         )
         .order_by(entry.c.path)
     )
@@ -326,8 +317,8 @@ async def glob_rows(
     as a bare name only when it is on the road.
     """
     try:
-        live = expand_channel("pattern", patterns)
-        exclusions = expand_channel("globs_not", globs_not)
+        addresses = address_channel("pattern", patterns)
+        excluded = address_channel("globs_not", globs_not)
     except PatternError as exc:
         return Result(ops=("glob",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     fetched = effective_columns(columns, content=False)
@@ -335,14 +326,15 @@ async def glob_rows(
     wanted = normalize_ext_channel(ext)
     unwanted = normalize_ext_channel(ext_not)
     matched: dict[str, RowMapping] = {}
-    # A pattern under the trash head gates the tombstoned rows at the
-    # paths beneath it; every other pattern gates the live rows.
-    addresses = [address_of(pattern) for pattern in live]
+    # A pattern under the trash head gates the tombstoned rows at the paths
+    # beneath it, every other the live rows; exclusions side the same way.
     gates = [compile_filter(address.stored, ext) for address in addresses]
-    sided = {False: [], True: []}
+    sided: dict[bool, list[GlobFilter]] = {False: [], True: []}
     for gate, address in zip(gates, addresses, strict=True):
         sided[address.trashed].append(gate)
-    not_gates = [compile_filter(address_of(pattern).stored, ()) for pattern in exclusions]
+    not_gates: dict[bool, list[GlobFilter]] = {False: [], True: []}
+    for address in excluded:
+        not_gates[address.trashed].append(compile_filter(address.stored, ()))
     built = (
         pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=address.trashed)
         for glob, address in zip(gates, addresses, strict=True)
@@ -359,7 +351,7 @@ async def glob_rows(
         path, name, row_ext = mapping["path"], mapping["name"], mapping["ext"]
         tombstoned = mapping["deleted_at"] is not None
         side = sided[tombstoned]
-        if not side or not passes_row_filters(path, name, row_ext, side, not_gates, frozenset(), unwanted):
+        if not side or not passes_row_filters(path, name, row_ext, side, not_gates[tombstoned], frozenset(), unwanted):
             continue
         if view is None or view.admits(mapping):
             matched.setdefault(mapping["path"], mapping)
@@ -375,6 +367,26 @@ async def glob_rows(
     if max_count is not None:
         rows = rows[:max_count]
     return Result(ops=("glob",), observations=rows)
+
+
+def address_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[Address, ...]:
+    """One glob channel's arms, each addressed to the side of the tombstone it searches.
+
+    The one pattern-side resolution of the trash view, shared by glob,
+    grep and glean: the channel is admitted whole, then every arm under
+    the head is stripped to the pattern it names. The bare head is a
+    directory, not a pattern — it is refused as the bare root is, naming
+    the channel, so no verb ever compiles the stripped ``/``.
+    """
+    addresses: list[Address] = []
+    for pattern in expand_channel(channel, patterns):
+        address = address_of(pattern)
+        if address.trashed and address.stored == "/":
+            label = GLOB_CHANNEL_LABELS[channel]
+            detail = f"the view's head is a directory, not a pattern; scope beneath it with {TRASH_ROOT + '/**'!r}"
+            raise PatternError(f"{label} {pattern!r}: {detail}")
+        addresses.append(address)
+    return tuple(addresses)
 
 
 # ---------------------------------------------------------------------------
@@ -620,65 +632,84 @@ async def _screen(
     profile: DialectProfile,
     membership_budget: int,
     targets: Sequence[Path],
-    found: dict[str, RowMapping],
+    found: _Fetched,
     view: Visibility | None,
 ) -> tuple[dict[str, RowMapping], set[str], dict[Path, ResultError]]:
     """Split fetched targets into shown rows and road directories, and classify the rest.
 
     A row shows only on the side of the tombstone its target addresses:
-    a live target's tombstoned row is a miss with the trashed hint, a
-    trash-view target's live row a plain miss. With no view every row on
-    its side shows and misses classify as they always have. Under a view
-    a hidden row is a miss, and the descent ladder runs against what the
-    view shows, so a hidden ancestor reads exactly as a missing one and
-    the hint rides only when the view admits the tombstone.
+    a live target's tombstoned row is a miss, a trash-view target's live
+    row a plain one. With no view every row on its side shows; under a
+    view a hidden row is a miss too, and a hidden directory shows as a
+    bare name when it is on the road. Every miss then climbs the descent
+    ladder on its own side, so a hidden row and an absent one answer at
+    the same component and the hint rides only on a tombstone the view
+    admits. The view's head is synthesized, never fetched: the callers
+    answer it themselves.
     """
-    entry = tables.entry
-    candidates: dict[str, RowMapping] = {}
-    tombstoned: dict[Path, RowMapping] = {}
-    absent: list[Path] = []
-    off_view: list[Path] = []
+    candidates: dict[Path, RowMapping] = {}
+    unresolved: list[Path] = []
     for target in dict.fromkeys(targets):
         key = str(target)
-        address = address_of(key)
-        mapping = found.get(key)
-        if mapping is None:
-            (off_view if address.trashed else absent).append(target)
-        elif (mapping["deleted_at"] is not None) == address.trashed:
-            candidates[key] = mapping
-        elif address.trashed:
-            off_view.append(target)
+        if key == TRASH_ROOT:
+            continue
+        mapping = found.by_target.get(key)
+        if mapping is not None and (mapping["deleted_at"] is not None) == address_of(key).trashed:
+            candidates[target] = mapping
         else:
-            tombstoned[target] = mapping
-    misses: dict[Path, ResultError] = {target: classified(ErrorKind.not_found, target) for target in off_view}
-    if view is None:
-        misses |= {target: tombstone_miss(target, row["deleted_at"]) for target, row in tombstoned.items()}
-        classified_misses = await classify_misses(session, entry, absent, profile, membership_budget)
-        misses |= dict(zip(absent, classified_misses, strict=True))
-        return candidates, set(), misses
-    shown = {path: mapping for path, mapping in candidates.items() if view.admits(mapping)}
+            unresolved.append(target)
     road: set[str] = set()
-    for trashed in (False, True):
-        hidden = [
-            path
-            for path, mapping in candidates.items()
-            if path not in shown and mapping["kind"] == "directory" and address_of(path).trashed == trashed
-        ]
-        if hidden:
-            road |= await view.road(session, hidden, trashed=trashed)
-    unresolved = [
-        target
-        for target in dict.fromkeys(targets)
-        if str(target) not in shown and str(target) not in road and target not in misses
-    ]
-    if not unresolved:
-        return shown, road, misses
-    columns = judged_columns(entry)
-    chain = await rows_by_path(session, entry, targets_with_ancestors(unresolved), columns, profile, membership_budget)
-    seen = await view.seen_kinds(session, chain)
-    tombstones = view.tombstones(chain)
-    misses |= {target: classify_miss(target, seen, tombstones) for target in unresolved}
+    if view is None:
+        shown = {str(target): mapping for target, mapping in candidates.items()}
+    else:
+        shown = {str(target): mapping for target, mapping in candidates.items() if view.admits(mapping)}
+        hidden = {target: address_of(str(target)) for target in candidates if str(target) not in shown}
+        for trashed in (False, True):
+            stored = {address.stored: target for target, address in hidden.items() if address.trashed == trashed}
+            doors = [path for path, target in stored.items() if candidates[target]["kind"] == "directory"]
+            if doors:
+                road |= {str(stored[path]) for path in await view.road(session, doors, trashed=trashed)}
+        unresolved.extend(target for target in hidden if str(target) not in road)
+    misses = await _classify_unresolved(session, found.rows, unresolved, view)
     return shown, road, misses
+
+
+async def _classify_unresolved(
+    session: AsyncSession, chain: dict[str, RowMapping], targets: Sequence[Path], view: Visibility | None
+) -> dict[Path, ResultError]:
+    """The descent ladder for every target no row answered, walked on the side each addresses.
+
+    *chain* is the point fetch — the targets' stored rows and their
+    ancestors, with what a view judges by — so no second query is
+    issued. The live side climbs the live rows the view shows and hints
+    at the tombstones it admits. The trash side climbs the tombstoned
+    rows it shows — admitted, or a directory on the road to one — keyed
+    at their view addresses beneath the synthesized heads, so the first
+    missing component is named in the caller's own coordinates and a
+    hidden row reads as an absent one.
+    """
+    if not targets:
+        return {}
+    gone = {path: row for path, row in chain.items() if row["deleted_at"] is not None}
+    if view is None:
+        kinds = {path: row["kind"] for path, row in chain.items() if path not in gone}
+        tombstones = {path: row["deleted_at"] for path, row in gone.items()}
+        viewed = {path: row["kind"] for path, row in gone.items()}
+    else:
+        kinds = await view.seen_kinds(session, chain)
+        tombstones = view.tombstones(chain)
+        viewed = {path: row["kind"] for path, row in gone.items() if view.admits(row)}
+        doors = [path for path, row in gone.items() if path not in viewed and row["kind"] == "directory"]
+        if doors:
+            viewed |= dict.fromkeys(await view.road(session, doors, trashed=True), "directory")
+    trash_kinds = _VIEW_HEADS | {TRASH_ROOT + path: kind for path, kind in viewed.items()}
+    misses: dict[Path, ResultError] = {}
+    for target in targets:
+        if address_of(str(target)).trashed:
+            misses[target] = classify_miss(target, trash_kinds)
+        else:
+            misses[target] = classify_miss(target, kinds, tombstones)
+    return misses
 
 
 async def _visible_rows(
@@ -703,6 +734,13 @@ def _ancestors_below(path: str, root: str) -> list[str]:
     return out
 
 
+class _Fetched(NamedTuple):
+    """The point fetch: the row each target addresses, keyed by the target, and every row fetched, by stored path."""
+
+    by_target: dict[str, RowMapping]
+    rows: dict[str, RowMapping]
+
+
 async def _mappings_by_path(
     session: AsyncSession,
     tables: VFSTables,
@@ -713,20 +751,23 @@ async def _mappings_by_path(
     *,
     with_entry_id: bool,
     judged: bool = False,
-) -> dict[str, RowMapping]:
-    """One bounded fetch for the batch, keyed by the target's own string; *judged* rows carry the rights fields.
+) -> _Fetched:
+    """One bounded fetch for the batch and its ancestor chain; *judged* rows carry the rights fields.
 
     Every row carries its tombstone beside *fetched*, so the caller can
     tell which side of it the row sits on; a trash-view target fetches
-    the row at the path beneath the head.
+    the row at the path beneath the head. The targets' ancestors ride in
+    the same membership, so the descent ladder classifies every miss from
+    this one fetch — a tombstoned or hidden target costs no second query.
     """
     columns, source = _entry_projection(tables, fetched | {"deleted_at"}, with_entry_id=with_entry_id)
     if judged:
         columns = [*columns, *(tables.entry.c[field] for field in sorted(RIGHTS_FIELDS))]
     addresses = {str(target): address_of(str(target)) for target in targets}
-    stored = (address.stored for address in addresses.values())
-    found = await rows_by_path(session, tables.entry, stored, columns, profile, membership_budget, source=source)
-    return {key: found[address.stored] for key, address in addresses.items() if address.stored in found}
+    stored = targets_with_ancestors(Path._brand(address.stored) for address in addresses.values())
+    rows = await rows_by_path(session, tables.entry, stored, columns, profile, membership_budget, source=source)
+    by_target = {key: rows[address.stored] for key, address in addresses.items() if address.stored in rows}
+    return _Fetched(by_target, rows)
 
 
 async def _pattern_candidates(
@@ -776,8 +817,7 @@ async def _children_by_parent(
     scopes: dict[tuple[bool, bool], set[str]] = {}
     for target in directories:
         address = address_of(str(target))
-        liveness_class = (_under_meta_root(address.stored), address.trashed)
-        scopes.setdefault(liveness_class, set()).add(found[str(target)]["entry_id"])
+        scopes.setdefault((address.meta, address.trashed), set()).add(found[str(target)]["entry_id"])
     children: dict[str, list[Observation]] = {}
     for (include_meta, trashed), parents in sorted(scopes.items()):
         listed: dict[str, list[RowMapping]] = {}
@@ -849,7 +889,7 @@ async def _trash_roots(
     stmt = (
         select(*_entry_columns(entry, wanted))
         .where(
-            entry.c.trash_root_id == entry.c.entry_id,
+            tombstoned_roots(entry),
             *liveness_filters(entry, profile, include_meta=False, trashed=True),
         )
         .order_by(entry.c.path)

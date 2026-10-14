@@ -75,7 +75,7 @@ from vfs.models.lexical import (
 )
 from vfs.native import extension
 from vfs.paths import Path, normalize_ext_channel
-from vfs.pattern_matching import PatternError, compile_filter, escape_glob, expand_channel
+from vfs.pattern_matching import PatternError, compile_filter, escape_glob
 from vfs.pattern_matching.grep import split_lines
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
@@ -100,7 +100,7 @@ from vfs.storage.backends.database.scope import (
     entries_for_scan,
     passes_gates,
     pushdown_terms,
-    strip_trash_heads,
+    scope_exclusions,
     trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
@@ -261,8 +261,8 @@ async def glean_rows(
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
-        admissions, trashed = trash_scope(expand_channel("globs", globs))
-        exclusions = strip_trash_heads(expand_channel("globs_not", globs_not))
+        admissions, trashed = trash_scope(globs)
+        exclusions = scope_exclusions(globs_not, trashed=trashed)
     except PatternError as exc:
         return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     entry = tables.entry

@@ -21,7 +21,9 @@ from vfs.paths import (
     RelativePath,
     ResolvedPath,
     ResolvedRelativePath,
+    address_of,
     check_mutable_path,
+    check_reserved_path,
     compute_parent_dir,
     extract_extension,
     is_meta_path,
@@ -295,6 +297,23 @@ class TestCheckMutablePath:
         assert check_mutable_path(Path("/.vfs/trash")) == (True, "")
         refused = check_mutable_path(Path("/.vfs/trash/x.txt"))
         assert refused == (False, "Cannot mutate the trash view beneath '/.vfs/trash'")
+
+    def test_the_reserved_half_holds_in_any_mounts_coordinates(self):
+        # The router runs it on the mount-local path: the root passes
+        # (a mount's root is a lawful target there), the reserved space never does.
+        assert check_reserved_path(Path("/")) == (True, "")
+        assert check_reserved_path(Path("/.vfs/docs/x.txt")) == (True, "")
+        assert check_reserved_path(Path("/.vfs/trash")) == (True, "")
+        assert check_reserved_path(Path(METADATA_ROOT)) == check_mutable_path(Path(METADATA_ROOT))
+        assert check_reserved_path(Path("/.vfs/trash/x.txt")) == check_mutable_path(Path("/.vfs/trash/x.txt"))
+
+    def test_address_of_names_the_row_and_its_side(self):
+        assert address_of("/d/f.md") == ("/d/f.md", False)
+        assert address_of("/.vfs/trash/d/f.md") == ("/d/f.md", True)
+        assert address_of("/.vfs/trash") == ("/", True)
+        assert address_of("/.vfs/trashy/x") == ("/.vfs/trashy/x", False)
+        assert address_of("/.vfs/docs/x").meta is True and address_of("/.vfs/trash/.vfs/docs/x").meta is True
+        assert address_of("/.vfs/trash/d").meta is False
 
 
 # =========================================================================

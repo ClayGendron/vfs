@@ -7,7 +7,8 @@
   <a href="https://codecov.io/gh/ClayGendron/vfs"><img src="https://codecov.io/gh/ClayGendron/vfs/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://github.com/ClayGendron/vfs/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ClayGendron/vfs" alt="License"></a>
 </p>
-**One namespace of everything an agent can see, search, and change.**
+
+**One namespace of everything an agent can see, search, and change. You decide what's in it.**
 
 Frameworks build the agent. Control planes set the policy. Gateways check the tool call. vfs enforces it on the data itself — the files, rows, and tools the agent actually touches.
 

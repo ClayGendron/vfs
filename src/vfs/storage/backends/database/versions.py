@@ -19,22 +19,25 @@ and before the bodies are replaced, so it reads the pre-image under the
 same lock that guards the write. The pre-image's metrics are measured
 from the body it reads, never copied from the entry row: an
 arbitration clobber has already overwritten that row's columns by the
-time the mint runs. Bodies are read one membership chunk at a time and
-inserted in bulk, text rows paged by the dialect's parameter budget
-and bytes rows by the blob page, so a 10,000-file overwrite issues a
-bounded number of statements and holds one chunk of bodies in flight.
+time the mint runs. Bodies are read one page at a time — a page is
+bounded by the blob page's bytes, metered by each replaced body's size
+at snapshot, and by the membership budget — and inserted in bulk, text
+rows paged by the dialect's parameter budget and bytes rows by the blob
+page, so a 10,000-file overwrite issues a bounded number of statements
+and never holds more than one page of bodies in flight. A clobbered
+rival's body has no size at snapshot and is metered at the whole page,
+so it is read alone.
 
     minted = await mint_versions(session, tables, profile, budget, membership, replaced, authority=who, now=now)
 """
 
 from __future__ import annotations
 
-import hashlib
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from vfs.models.version import line_count
+from vfs.models.version import measure_bytes, measure_text
 from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, byte_chunked, chunked
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.revision import read_revision
@@ -75,41 +78,59 @@ async def mint_versions(
     """
     if not replaced:
         return 0
-    entry, content, blobs = tables.entry, tables.content, tables.blobs
     by_id = {staged.entry_id: staged for staged in replaced}
     revision = await read_revision(session, tables)
-    joined = tables.bodies_joined(content=True, data=True)
     minted = 0
-    for ids in chunked(sorted(by_id), membership_budget):
-        stmt = (
-            select(entry.c.entry_id, content.c.content, blobs.c.data)
-            .select_from(joined)
-            .where(membership(entry.c.entry_id, ids, profile))
-        )
-        texts: list[dict[str, object]] = []
-        binaries: list[dict[str, object]] = []
-        subjects: list[dict[str, object]] = []
-        for row in await session.execute(stmt):
-            if row.content is None and row.data is None:
-                continue
-            staged = by_id[row.entry_id]
-            number = staged.version - 1
-            version = _version_row(row.entry_id, number, row.content, row.data, authority, revision, now)
-            if version["content_hash"] == staged.content_hash:
-                continue
-            (binaries if row.data is not None else texts).append(version)
-            subjects.extend(_subject_rows(row.entry_id, number, authority))
-        await bulk_insert(session, tables.versions, texts)
-        for page in byte_chunked(binaries, _blob_size, BLOB_PAGE_BYTES):
-            await bulk_insert(session, tables.versions, page)
-        await bulk_insert(session, tables.version_subjects, subjects)
-        minted += len(texts) + len(binaries)
+    ordered = [by_id[entry_id] for entry_id in sorted(by_id)]
+    for page in byte_chunked(ordered, _pre_image_size, BLOB_PAGE_BYTES):
+        for ids in chunked([staged.entry_id for staged in page], membership_budget):
+            minted += await _mint_page(
+                session, tables, profile, ids, by_id, authority=authority, revision=revision, now=now
+            )
     return minted
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+async def _mint_page(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    ids: Sequence[str],
+    by_id: Mapping[str, StagedEntry],
+    *,
+    authority: Authority | None,
+    revision: int,
+    now: datetime,
+) -> int:
+    """Read one page of pre-image bodies and insert the version rows they earn; the count minted."""
+    entry, content, blobs = tables.entry, tables.content, tables.blobs
+    stmt = (
+        select(entry.c.entry_id, content.c.content, blobs.c.data)
+        .select_from(tables.bodies_joined(content=True, data=True))
+        .where(membership(entry.c.entry_id, ids, profile))
+    )
+    texts: list[dict[str, object]] = []
+    binaries: list[dict[str, object]] = []
+    subjects: list[dict[str, object]] = []
+    for row in await session.execute(stmt):
+        if row.content is None and row.data is None:
+            continue
+        staged = by_id[row.entry_id]
+        number = staged.version - 1
+        version = _version_row(row.entry_id, number, row.content, row.data, authority, revision, now)
+        if version["content_hash"] == staged.content_hash:
+            continue
+        (binaries if row.data is not None else texts).append(version)
+        subjects.extend(_subject_rows(row.entry_id, number, authority))
+    await bulk_insert(session, tables.versions, texts)
+    for page in byte_chunked(binaries, _blob_size, BLOB_PAGE_BYTES):
+        await bulk_insert(session, tables.versions, page)
+    await bulk_insert(session, tables.version_subjects, subjects)
+    return len(texts) + len(binaries)
 
 
 def _version_row(
@@ -121,21 +142,20 @@ def _version_row(
     revision: int,
     now: datetime,
 ) -> dict[str, object]:
-    """One snapshot row: the body as stored, measured from itself, attributed from *authority*."""
+    """One snapshot row: the body as stored, measured by the models' one law, attributed from *authority*."""
     if data is not None:
         # A bytes body's line count is its rendering's, the text beside it.
-        digest, size, lines = hashlib.sha256(data).hexdigest(), len(data), line_count(text or "")
+        metrics = measure_bytes(data, text)
     else:
         assert text is not None
-        encoded = text.encode()
-        digest, size, lines = hashlib.sha256(encoded).hexdigest(), len(encoded), line_count(text)
+        metrics = measure_text(text)
     return {
         "entry_id": entry_id,
         "version_number": number,
         "is_snapshot": True,
-        "content_hash": digest,
-        "lines": lines,
-        "size_bytes": size,
+        "content_hash": metrics.content_hash,
+        "lines": metrics.lines,
+        "size_bytes": metrics.size_bytes,
         "actor": None if authority is None else authority.actor.sub,
         "provenance": None if authority is None else authority.provenance,
         "source_identity": None if authority is None else authority.source_identity,
@@ -155,6 +175,11 @@ def _subject_rows(entry_id: str, number: int, authority: Authority | None) -> li
         {"entry_id": entry_id, "version_number": number, "principal_id": principal}
         for principal in authority.subject_names
     ]
+
+
+def _pre_image_size(staged: StagedEntry) -> int:
+    """What a replaced body costs a read page: its size at snapshot, or a whole page when the snapshot never saw it."""
+    return BLOB_PAGE_BYTES if staged.base_size_bytes is None else staged.base_size_bytes
 
 
 def _blob_size(row: Mapping[str, object]) -> int:

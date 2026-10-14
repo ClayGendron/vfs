@@ -261,7 +261,6 @@ class TestWriteVsTopologyCoherence:
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         # Nothing landed under the torn observation; the redrive copies the rival's coherent pair.
@@ -289,11 +288,11 @@ class TestWriteVsTopologyCoherence:
                     session,
                     host.tables,
                     host.profile,
+                    host.parameter_budget,
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         # The verb redrives clean once the rival is out of the window.
@@ -322,7 +321,6 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         assert (await storage.move(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
@@ -350,10 +348,10 @@ class TestWriteVsTopologyCoherence:
                     session,
                     host.tables,
                     host.profile,
+                    host.parameter_budget,
                     host.membership_budget,
                     targets=[Path("/d/f.txt")],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         await storage.close()
@@ -385,7 +383,6 @@ class TestWriteVsTopologyCoherence:
                     path=Path("/d"),
                     trash_days=90,
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             assert result.success is True
             leftovers = (await session.execute(select(tables.content.c.entry_id))).all()
@@ -520,7 +517,6 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         await storage.close()
@@ -562,7 +558,6 @@ class TestWriteVsTopologyCoherence:
                     op="copy",
                     operations=[ResolvedPair(src=Path("/src.txt"), dest=Path("/copy.txt"))],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         await storage.close()
@@ -593,7 +588,6 @@ class TestWriteVsTopologyCoherence:
                     path=Path("/d"),
                     trash_days=90,
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         await storage.close()
@@ -858,11 +852,11 @@ class TestWriteVsTopologyCoherence:
                     session,
                     host.tables,
                     host.profile,
+                    host.parameter_budget,
                     host.membership_budget,
                     targets=[Path("/d")],
                     cascade=True,
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             assert result.success is True, result.errors
             live = (
@@ -920,7 +914,6 @@ class TestWriteVsTopologyCoherence:
                     op="move",
                     operations=[ResolvedPair(src=Path("/d"), dest=Path("/" + "m" * 20))],
                     authority=None,
-                    lock_key=host.topology_key,
                 )
             await session.rollback()
         await storage.close()

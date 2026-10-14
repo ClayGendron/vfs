@@ -15,7 +15,6 @@ is the single-item convenience over the same door.
 
 from __future__ import annotations
 
-import hashlib
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -29,6 +28,7 @@ from vfs.models.chunking import (
 )
 from vfs.models.entry import ContentHash  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 from vfs.models.vector import Vector  # noqa: TC001 — Pydantic needs this at runtime for field resolution
+from vfs.models.version import measure_text
 from vfs.paths import Path  # noqa: TC001 — Pydantic needs this at runtime for field resolution
 
 if TYPE_CHECKING:
@@ -74,7 +74,7 @@ class Chunk(BaseModel):
             msg = f"invalid line range: {self.line_start}..{self.line_end}"
             raise ValueError(msg)
         if self.content_hash is None:
-            self.content_hash = hashlib.sha256(self.content.encode()).hexdigest()
+            self.content_hash = measure_text(self.content).content_hash
         return self
 
     @classmethod

@@ -1,8 +1,13 @@
-# 077. The Distance Function Is a Precondition vfs Proves and Never Installs
+# 077. The Distance Function Is a Precondition vfs Proves and Never Installs Implicitly; Installing Is an Explicit Verb
 
 - **Status:** accepted 2026-10-12 (Clay, in conversation, on the map of
   the Postgres first touch: "Do it all please, this sounds like the
-  right direction"). Refines ADR 059 (every supported dialect has a
+  right direction"). **Title and decision reconciled 2026-10-13 with
+  the landed `install_extensions` verb (`c1900be`):** "never installs"
+  means first touch never installs on its own; an operator who calls
+  the explicit verb has chosen the install, which is the opt-in the
+  decision below always allowed. The file keeps its original slug.
+  Refines ADR 059 (every supported dialect has a
   cosine distance function) and ADR 057 (sqlite-vec is a core
   dependency loaded on every connection); nothing is superseded.
 - **Date:** 2026-10-12
@@ -30,9 +35,13 @@ races: the extension is cluster-wide while mounts are per schema, so
 two mounts' first touches on one fresh cluster both run the DDL, and
 Postgres's `IF NOT EXISTS` is not atomic — the loser blocks on the
 winner's catalog row and then takes a unique violation. Second, and
-decisive, it only works where vfs is a superuser. `CREATE EXTENSION`
-needs superuser or database-owner rights; on RDS, Cloud SQL and most
-managed servers an application role cannot run it at all. The
+decisive, it only works where vfs is a superuser. pgvector is not a
+trusted extension, so `CREATE EXTENSION vector` needs a superuser —
+owning the database is not enough (verified 2026-10-13 against the
+extension's control file, which declares no `trusted`, and a fresh
+non-superuser owner refused with 42501 "Must be superuser to create
+this extension"); on RDS, Cloud SQL and most managed servers an
+application role cannot run it at all. The
 self-install was a dev-container convenience that fails in
 production, which is the posture the project's production stance
 forbids.
@@ -56,11 +65,21 @@ forbids.
 Option 3.
 
 - **The distance function is a precondition.** vfs proves it at first
-  touch and never installs it. A mount whose engine lacks it refuses
+  touch and never installs it implicitly: no first touch, no
+  `create_all` hook, no verb an agent reaches runs extension DDL. The
+  one install vfs offers is the explicit verb below, which an operator
+  calls on purpose. A mount whose engine lacks the function refuses
   `unavailable` naming the fix, before any DDL runs.
-- **The probe is a profile fact.** `DialectProfile.vector_probe` is the
-  statement; `vector_missing` is the refusal's detail. The probe fails
-  when the engine raises or answers no row; a scalar answer is the
+- **The probe is a profile fact.** `DialectProfile.vector_function`
+  groups the probe statement, the refusal's detail (`missing`) and the
+  optional install statement in one value, so a probe cannot ship
+  without a fix to name and an install cannot ship without a probe to
+  prove it (grouped 2026-10-13; the three were separate fields at
+  acceptance). The probe fails when the engine answers no row or
+  raises a permanent error — a raise the retry policy would restart,
+  or one that cost the connection, propagates to the caller's retry
+  and classifier instead of being read as a missing function (narrowed
+  2026-10-13). A scalar answer is the
   function's version, kept on the host (`vector_version`) for the
   tiers that gate on it (pgvector 0.8's iterative scans). SQLite
   declares `SELECT vec_version()`; Postgres declares the `pg_extension`
@@ -73,17 +92,20 @@ Option 3.
 - **Installing is explicit, never implicit** (Clay, 2026-10-12: "we do
   have an option for developers to do that work if they choose from
   the code"). `DatabaseStorage.install_extensions()` is a
-  developer-plane verb that runs the profile's `vector_install`
-  statement — pgvector's `CREATE EXTENSION IF NOT EXISTS` — then runs
-  the probe, so a success means first touch will not refuse on it. It
-  is opt-in, idempotent, runs before first touch, answers
-  `permission_denied` (SQLSTATE 42501) for a role that may not install,
-  and succeeds with nothing done where the profile declares nothing.
-  First touch never calls it.
+  developer-plane verb that runs the profile's install statement —
+  pgvector's `CREATE EXTENSION IF NOT EXISTS` — then runs the probe,
+  so a success means first touch will not refuse on it. It is opt-in,
+  idempotent, runs before first touch, answers `permission_denied`
+  (SQLSTATE 42501) for a role that may not install — on Postgres, any
+  role that is not a superuser — and succeeds with nothing done where
+  the profile declares nothing. First touch never calls it. This is
+  the one place vfs installs anything, and it is not the implicit
+  install the title forbids: the operator chose it.
 - **Dev and CI install it once, outside vfs.** `docker/initdb/postgres/`
   creates the extension when the test container first starts; the
   compose file mounts it. On a user's own server the step is the
-  standard pgvector install, documented in the Postgres how-to.
+  standard pgvector install as a superuser (or a managed provider's
+  privileged role), documented in the Postgres how-to.
 - **The ANN index DDL stays.** It is per schema, race-free, and needs
   only table rights.
 

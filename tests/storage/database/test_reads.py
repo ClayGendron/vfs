@@ -658,14 +658,21 @@ class TestNamespaceScopes:
         assert result.errors[0].path == "/gone.txt"
         assert (result.errors[0].data or {}).get("vfs.trashed") is True
 
-    async def test_misses_under_the_view_name_the_path_sent(self, storage: DatabaseStorage) -> None:
-        # The view names no ghosts and no live rows: a miss is the path sent.
+    async def test_misses_under_the_view_climb_the_ladder_in_view_coordinates(self, storage: DatabaseStorage) -> None:
+        # The view names no ghosts and no live rows. A miss climbs the
+        # descent ladder as a live miss does, over the tombstoned rows,
+        # and names the first missing component beneath the synthesized
+        # head — never the head itself, which is no stored row.
         ghost = await storage.stat(path=Path("/.vfs/trash/nope/x"))
         assert ghost.errors[0].kind == ErrorKind.not_found
-        assert ghost.errors[0].path == "/.vfs/trash/nope/x"
+        assert ghost.errors[0].path == "/.vfs/trash/nope"
+        assert (ghost.errors[0].data or {}).get("vfs.target") == "/.vfs/trash/nope/x"
         live = await storage.read(path=Path("/.vfs/trash/real.txt"))
         assert live.errors[0].kind == ErrorKind.not_found
-        assert live.errors[0].path == "/.vfs/trash/real.txt"
+        assert live.errors[0].path == "/.vfs/trash/real.txt" and live.errors[0].data is None
+        under_file = await storage.stat(path=Path("/.vfs/trash/gone.txt/child"))
+        assert under_file.errors[0].kind == ErrorKind.wrong_kind
+        assert under_file.errors[0].path == "/.vfs/trash/gone.txt"
 
 
 class TestReadFailureHandling:

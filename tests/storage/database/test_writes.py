@@ -176,13 +176,15 @@ class TestWriteMechanics:
     async def test_ownership_derives_from_the_authority_not_the_payload(self, tmp_path) -> None:
         # One subject owns what it makes and the payload's owner_id is
         # ignored; a set owns nothing (the container governs); the system
-        # actor stamps whatever the payload declared; edit re-derives.
+        # actor — named, or implied by a direct call naming no authority —
+        # stamps whatever the payload declared; edit re-derives.
         storage = DatabaseStorage(url=_url(tmp_path))
         alice = Authority.of(Principal("alice"))
         room = Authority.on_behalf_of({Principal("alice"), Principal("bob")}, actor=Principal("bot", kind="service"))
         await storage.write(entries=[Entry(path=Path("/mine.txt"), content="a", owner_id="mallory")], authority=alice)
         await storage.write(entries=[Entry(path=Path("/ours.txt"), content="a", owner_id="alice")], authority=room)
         await storage.write(entries=[Entry(path=Path("/etl.txt"), content="a", owner_id="carol")], authority=SYSTEM)
+        await storage.write(entries=[Entry(path=Path("/direct.txt"), content="a", owner_id="carol")])
         await storage.write(entries=[Entry(path=Path("/bare.txt"), content="a")], authority=SYSTEM)
         await storage.write(entries=[Entry(path=Path("/anon.txt"), content="a")], authority=Authority.anonymous())
         await storage.mkdir(path=Path("/shared"), authority=room)
@@ -194,6 +196,7 @@ class TestWriteMechanics:
         assert owners["/mine.txt"] == "alice"
         assert owners["/ours.txt"] is None
         assert owners["/etl.txt"] == "alice"  # the edit under alice re-derived it from carol
+        assert owners["/direct.txt"] == "carol"
         assert owners["/bare.txt"] is None
         assert owners["/anon.txt"] is None
         assert owners["/shared"] is None
@@ -590,6 +593,17 @@ class TestArbitration:
             ).all()
         assert rows == [(rival_key, 2)]
         assert (await storage.read(path=target)).observations[0].content == "mine"
+        # The clobber replaced the rival's body, so it kept that body as the one version.
+        versions = host.tables.versions
+        async with host.session_factory() as peek:
+            kept = (
+                await peek.execute(
+                    select(versions.c.version_number, versions.c.content, versions.c.is_snapshot).where(
+                        versions.c.entry_id == rival_key
+                    )
+                )
+            ).all()
+        assert kept == [(1, "rival", True)]
         await storage.close()
 
     async def test_upsert_clobber_stays_insert_through_apply(self, tmp_path) -> None:
@@ -650,6 +664,17 @@ class TestArbitration:
             ).all()
         assert rows == [(rival_key, 2)]
         assert (await storage.read(path=target)).observations[0].content == "mine"
+        # The clobber replaced the rival's body, so it kept that body as the one version.
+        versions = host.tables.versions
+        async with host.session_factory() as peek:
+            kept = (
+                await peek.execute(
+                    select(versions.c.version_number, versions.c.content, versions.c.is_snapshot).where(
+                        versions.c.entry_id == rival_key
+                    )
+                )
+            ).all()
+        assert kept == [(1, "rival", True)]
         await storage.close()
 
     async def test_upsert_layer_adopts_identity_or_classifies_per_rival(self, tmp_path) -> None:

@@ -3,10 +3,11 @@
 Each task leaves `scripts/ci.sh 3.13` green. Slice A tasks 1–10 land
 together or in the order given; slice B follows. Task 0 gates both.
 
-0. [ ] Clay confirms the two ADR 074 amendments in spec rules 4 and 5
+0. [x] Clay confirms the two ADR 074 amendments in spec rules 4 and 5
    (only a root restores; same-kind revive only; `overwrite=False`
-   admits a revive) and the ADR's status line records them. **Built
-   on these as working answers (2026-10-11); still unconfirmed.**
+   admits a revive) and the ADR's status line records them. Built on
+   these as working answers (2026-10-11); **confirmed 2026-10-13**, and
+   ADR 074's status line and item 5 record the amendment.
 
 ## Slice A
 

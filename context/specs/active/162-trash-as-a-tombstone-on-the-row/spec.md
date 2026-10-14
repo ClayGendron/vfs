@@ -127,18 +127,13 @@ Numbered as in ADR 074.
    only through `restore`, a tombstoned file through `restore` or a
    file `write`. `overwrite=False` does not refuse a revive: the path
    is not occupied by a live row.
-   `[NEEDS CLARIFICATION — amends ADR 074 item 5: the ADR allowed a
-   kind change on revive. Worked by hand on 2026-10-08, that rule
-   produces a live file with live children: `mkdir /d`, `write
-   /d/a.md`, `delete /d`, `write /d` (file, same id; `a.md` keeps root
-   = that id), `delete /d`, `restore /d` clears every row sharing the
-   id, so `/d` (a file) and `/d/a.md` are both live. And the ADR's
-   escape hatch, "descendants restore individually once the site is a
-   directory again", is unreachable: `mkdir` at a tombstoned path is
-   `not_found` (item 9) and `restore` refuses `exists` while the file
-   is live. The refusal is the alternative the ADR names. Clay to
-   confirm, and to confirm that `overwrite=False` admits a revive,
-   which the ADR does not address.]`
+   *Confirmed by Clay, 2026-10-13, and recorded as ADR 074 item 5's
+   amendment: a revive keeps the row's kind; a write of the other kind
+   at a tombstoned path refuses `wrong_kind`; `overwrite=False` admits
+   a revive. The ADR's original kind change produced a live file with
+   live children (`mkdir /d`, `write /d/a.md`, `delete /d`, `write /d`
+   as a file, `delete /d`, `restore /d` revived both), and its escape
+   hatch was unreachable under item 9.*
 6. **Edges.** The authored-edge cascade on delete and the
    "authored edges gone on restore" rule are removed. `DatabaseStorage`
    has no `graph` verb (the router answers `_backend_unsupported`);
@@ -333,7 +328,7 @@ Built as specified, with these decisions and deviations:
 - **pgvector is a precondition, never installed** (ADR 077, the same
   leg): three first touches on the fresh cluster raced on `CREATE
   EXTENSION IF NOT EXISTS`. The DDL event is gone; the profile declares
-  the probe (`vector_probe`, `vector_missing`), first touch runs it on
+  the probe and the fix it names (`vector_function`), first touch runs it on
   every engine that declares one, and the compose init script installs
   the extension once.
 - **`topology.py` is three files** (Clay, 2026-10-12). Delete, restore

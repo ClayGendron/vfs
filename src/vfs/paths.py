@@ -784,22 +784,57 @@ def strip_trash_head(value: str) -> str | None:
     return None
 
 
+class Address(NamedTuple):
+    """Where a path or pattern's row sits, and which side of the tombstone it addresses.
+
+    The one resolution of the trash view: ``/.vfs/trash/d/f.md`` addresses
+    the tombstoned row stored at ``/d/f.md``, every other value the live
+    row at itself. ``meta`` is the liveness class's other half — whether
+    the stored path lies in the reserved meta subtree.
+    """
+
+    stored: str
+    trashed: bool
+
+    @property
+    def meta(self) -> bool:
+        return _under_meta_root(self.stored)
+
+
+def address_of(value: str) -> Address:
+    """A value under the trash head names the tombstoned row at the path beneath it; any other names a live row."""
+    rest = strip_trash_head(value)
+    return Address(value, False) if rest is None else Address(rest, True)
+
+
 def check_mutable_path(path: Path) -> tuple[bool, str]:
     """Check that *path* is a mutable target, returning ``(ok, reason)``.
 
-    A namespace-grammar check, not a permission check: the two roots are
-    refused — ``/`` and the ``/.vfs`` meta root itself — and so is every
-    path beneath the trash view's head, which is a view over tombstoned
-    rows and never a place a write lands. The head itself passes, because
-    ``sweep`` addresses it; a write there is the storage's refusal. Every
-    other path, the meta scope included, is a lawful write target. Whether
-    the caller *may* mutate is the principal-permission layer's concern,
-    not this check's.
+    A namespace-grammar check, not a permission check: the root is
+    refused, then the reserved-space rules of :func:`check_reserved_path`
+    apply. Every other path, the meta scope included, is a lawful write
+    target. Whether the caller *may* mutate is the principal-permission
+    layer's concern, not this check's.
     """
     if path == "/":
         return False, "Cannot mutate root path"
+    return check_reserved_path(path)
+
+
+def check_reserved_path(path: Path, *, head_ok: bool = True) -> tuple[bool, str]:
+    """The reserved-space half of the mutation grammar, returning ``(ok, reason)``.
+
+    The ``/.vfs`` meta root itself is refused, and so is every path
+    beneath the trash view's head, which is a view over tombstoned rows
+    and never a place a write lands. The head itself passes only while
+    *head_ok* holds — ``sweep`` addresses it, nothing else may. The
+    rules hold in every mount's own coordinates, so the router runs them
+    on the mount-local path as well as the global one.
+    """
     if path == METADATA_ROOT:
         return False, "Cannot mutate reserved metadata root '/.vfs'"
+    if path == TRASH_ROOT and not head_ok:
+        return False, f"Cannot mutate the trash view's head '{TRASH_ROOT}'"
     if path.startswith(TRASH_ROOT + "/"):
         return False, f"Cannot mutate the trash view beneath '{TRASH_ROOT}'"
     return True, ""

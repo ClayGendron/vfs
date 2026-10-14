@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from typing import NamedTuple
 
 from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
@@ -52,6 +53,30 @@ def line_count(text: str) -> int:
     numbers.
     """
     return text.count("\n") + 1 if text else 0
+
+
+class BodyMetrics(NamedTuple):
+    """What a stored body measures: its digest, its byte size and its line count."""
+
+    content_hash: str
+    size_bytes: int
+    lines: int
+
+
+def measure_text(content: str) -> BodyMetrics:
+    """The one body-measurement law for text: sha256 and size of the UTF-8 form, lines by :func:`line_count`.
+
+    An entry's columns, a version row's metrics and the mint's "identical
+    body" comparison are all measured here, so two bodies that hash equal
+    under one of them hash equal under all of them.
+    """
+    encoded = content.encode()
+    return BodyMetrics(hashlib.sha256(encoded).hexdigest(), len(encoded), line_count(content))
+
+
+def measure_bytes(data: bytes, rendering: str | None = None) -> BodyMetrics:
+    """The same law for a bytes body: its own digest and size; its line count is its *rendering*'s."""
+    return BodyMetrics(hashlib.sha256(data).hexdigest(), len(data), line_count(rendering or ""))
 
 
 class Version(BaseModel):
@@ -136,16 +161,16 @@ class Version(BaseModel):
             version_number=number,
             force_snapshot=force_snapshot,
         )
-        encoded = version_content.encode()
+        metrics = measure_text(version_content)
         return cls(
             file=file,
             number=number,
             is_snapshot=record.is_snapshot,
             content=record.content,
             version_diff=record.version_diff,
-            content_hash=hashlib.sha256(encoded).hexdigest(),
-            size_bytes=len(encoded),
-            lines=line_count(version_content),
+            content_hash=metrics.content_hash,
+            size_bytes=metrics.size_bytes,
+            lines=metrics.lines,
             actor=None if authority is None else authority.actor.sub,
             subjects=() if authority is None else authority.subject_names,
             provenance=None if authority is None else authority.provenance,

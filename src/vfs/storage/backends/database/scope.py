@@ -20,12 +20,13 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 
 from sqlalchemy import and_, or_, select
 
-from vfs.paths import TRASH_ROOT, _under_meta_root, strip_trash_head
+from vfs.paths import TRASH_ROOT, _under_meta_root
 from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, passes_row_filters
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
+    address_channel,
     ext_membership,
     kind_membership,
     meta_scoped,
@@ -106,25 +107,30 @@ def passes_gates(
     return passes_row_filters(path, name, ext, gates, not_gates, wanted, unwanted)
 
 
-def trash_scope(admissions: Sequence[str]) -> tuple[tuple[str, ...], bool]:
-    """The admission patterns with the trash head stripped, and whether they address the trash view.
+def trash_scope(globs: Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    """The admitted ``globs`` channel with the trash head stripped, and whether it addresses the trash view.
 
     Every pattern under ``/.vfs/trash`` names the tombstoned rows at the
     path beneath the head; a channel that mixes the view with live
     patterns refuses, because one search runs on one side of the
     tombstone. An empty channel searches the live namespace.
     """
-    stripped = [strip_trash_head(pattern) for pattern in admissions]
-    sides = {rest is not None for rest in stripped}
+    addresses = address_channel("globs", globs)
+    sides = {address.trashed for address in addresses}
     if len(sides) > 1:
         raise PatternError(f"a scope under {TRASH_ROOT!r} cannot mix with live paths")
-    patterns = tuple(rest if rest is not None else pattern for pattern, rest in zip(admissions, stripped, strict=True))
-    return patterns, sides == {True}
+    return tuple(address.stored for address in addresses), sides == {True}
 
 
-def strip_trash_heads(patterns: Sequence[str]) -> tuple[str, ...]:
-    """Each pattern with the trash head stripped where it carries one — the exclusion channel's form."""
-    return tuple(rest if (rest := strip_trash_head(pattern)) is not None else pattern for pattern in patterns)
+def scope_exclusions(globs_not: Sequence[str], *, trashed: bool) -> tuple[str, ...]:
+    """The admitted ``globs_not`` channel's arms on the side the search runs, head stripped.
+
+    An exclusion addressed into the view excludes tombstoned rows alone,
+    one with no head live rows alone; the arms on the other side of the
+    tombstone have nothing to exclude from this search and drop.
+    """
+    addresses = address_channel("globs_not", globs_not)
+    return tuple(address.stored for address in addresses if address.trashed == trashed)
 
 
 # ---------------------------------------------------------------------------

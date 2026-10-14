@@ -9,6 +9,7 @@ tombstoned rows at their own paths, and nothing is written there.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -16,19 +17,24 @@ from math import ceil
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import pytest
-from sqlalchemy import delete, event, func, insert, select, text
+from sqlalchemy import delete, event, func, insert, select, text, update
+from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
-from tests.support.database_helpers import _url
+from tests.support.database_helpers import _ReturningSession, _url
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
+from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import trash as trash_module
+from vfs.storage.backends.database import versions as versions_module
 from vfs.storage.backends.database.descent import DELETED_AT_KEY, TRASH_ROOT_KEY, TRASHED_KEY, subtree_filter
 from vfs.storage.backends.database.dialects import (
+    POSTGRESQL,
     StaleSnapshot,
     membership_budget,
     op_execution_options,
@@ -37,14 +43,16 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.scope import passes_gates
 from vfs.storage.backends.database.seams import clear, installed
+from vfs.storage.backends.database.serialized import Claim, claim_rows
 from vfs.storage.backends.database.signals import collect_graph
 from vfs.storage.backends.database.staging import WritePlan
 from vfs.storage.backends.database.trash import _purge
-from vfs.storage.backends.database.writes import _apply, _fetch_committed
+from vfs.storage.backends.database.writes import _apply, _fetch_committed, _guarded_stmt
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 ANN = Authority.of(Principal("ann"))
 
@@ -210,6 +218,21 @@ class TestTombstone:
             assert refused.errors[0].path == "/d/a.txt" and data.get("vfs.target") == "/keep.txt"
         await storage.close()
 
+    async def test_without_cascade_occupancy_is_judged_in_request_order(self, tmp_path) -> None:
+        # A directory ahead of its last child is occupied; behind it, emptied by the batch.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.mkdir(path=Path("/d"))
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")])
+        reverse = [Observation(path=Path("/d")), Observation(path=Path("/d/f.txt"))]
+        refused = await storage.delete(observations=reverse, cascade=False)
+        assert refused.success is False
+        assert [(e.kind, e.path) for e in refused.errors] == [(ErrorKind.not_empty, "/d")]
+        assert all(r.deleted_at is None for r in (await _rows(storage)).values())
+        assert (await storage.delete(observations=list(reversed(reverse)), cascade=False)).success is True
+        assert set(await _rows(storage)) == {"/", "/d", "/d/f.txt"}
+        assert all(r.deleted_at is not None for p, r in (await _rows(storage)).items() if p != "/")
+        await storage.close()
+
     async def test_a_delete_in_a_batch_covers_its_descendants_and_classifies_the_rest(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _tree(storage)
@@ -259,6 +282,18 @@ class TestRestore:
         assert all(rows[p].deleted_at is None and rows[p].root is None for p in rows)
         assert (await storage.stat(path=Path("/"))).observations[0].version == (before or 0) + 1
         assert (await storage.read(path=Path("/d/sub/b.txt"))).observations[0].content == "beta needle"
+        await storage.close()
+
+    async def test_a_target_repeated_in_the_batch_is_exists_the_second_time(self, tmp_path) -> None:
+        # The first restore revives the set for the batch; the repeat finds the row live.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _tree(storage)
+        assert (await storage.delete(path=Path("/d"))).success is True
+        twice = [Observation(path=Path("/d")), Observation(path=Path("/d"))]
+        result = await storage.restore(observations=twice)
+        assert result.success is False
+        assert [(e.kind, e.path) for e in result.errors] == [(ErrorKind.exists, "/d")]
+        assert (await _rows(storage))["/d"].deleted_at is not None  # a failed batch never commits
         await storage.close()
 
     async def test_only_a_root_restores(self, tmp_path) -> None:
@@ -357,17 +392,31 @@ class TestRevive:
             assert (await storage.write(entries=[Entry(path=Path("/f.md"), content=body)])).success is True
         versions = await _versions(storage, "/f.md")
         assert [(v["version_number"], v["content"]) for v in versions] == [(1, "one"), (2, "two")]
-        assert all(v["actor"] is None and v["subjects"] == [] for v in versions)
+        # A direct storage write naming no authority is trusted code: the
+        # system actor, attributed as such, acting for no subject.
+        assert all(v["actor"] == "system" and v["provenance"] == "system" and v["subjects"] == [] for v in versions)
         await storage.close()
 
-    async def test_an_identical_body_mints_nothing(self, tmp_path) -> None:
-        # Nothing was lost: an agent rewriting an unchanged file leaves no history behind.
+    @pytest.mark.parametrize("body", ["same", b"\x00same"])
+    async def test_an_identical_body_mints_nothing(self, tmp_path, body: str | bytes) -> None:
+        # Nothing was lost: an agent rewriting an unchanged file leaves no
+        # history behind — for a text body and for a bytes body alike.
         storage = DatabaseStorage(url=_url(tmp_path))
+
+        def entry(value: str | bytes) -> Entry:
+            if isinstance(value, bytes):
+                return Entry(path=Path("/f"), data=value)
+            return Entry(path=Path("/f"), content=value)
+
+        column = "data" if isinstance(body, bytes) else "content"
         for _ in range(3):
-            assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="same")])).success is True
-        assert await _versions(storage, "/f.md") == []
-        assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="changed")])).success is True
-        assert [v["content"] for v in await _versions(storage, "/f.md")] == ["same"]
+            assert (await storage.write(entries=[entry(body)])).success is True
+        assert await _versions(storage, "/f") == []
+        changed = b"\x00changed" if isinstance(body, bytes) else "changed"
+        assert (await storage.write(entries=[entry(changed)])).success is True
+        [version] = await _versions(storage, "/f")
+        encoded = body if isinstance(body, bytes) else body.encode()
+        assert version[column] == body and version["content_hash"] == hashlib.sha256(encoded).hexdigest()
         await storage.close()
 
     async def test_a_bytes_overwrite_snapshots_the_bytes(self, tmp_path) -> None:
@@ -437,6 +486,30 @@ class TestRevive:
         assert len(statements) <= ceil(count / per_statement) + ceil(count / host.membership_budget)
         await storage.close()
 
+    async def test_the_mint_reads_pre_image_bodies_in_byte_bounded_pages(self, tmp_path, monkeypatch) -> None:
+        # Six-byte bodies under a ten-byte page: no two fit together, so a
+        # five-file overwrite reads its pre-images in five pages, not one.
+        monkeypatch.setattr(versions_module, "BLOB_PAGE_BYTES", 10)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        paths = [Path(f"/f{i}.txt") for i in range(5)]
+        assert (await storage.write(entries=[Entry(path=p, content="body 0") for p in paths])).success is True
+        reads: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            upper = statement.lstrip().upper()
+            if upper.startswith("SELECT") and "vfs_content" in statement and "vfs_blobs" in statement:
+                reads.append(statement)
+
+        event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
+        try:
+            assert (await storage.write(entries=[Entry(path=p, content="body 1") for p in paths])).success is True
+        finally:
+            event.remove(storage._host.engine.sync_engine, "before_cursor_execute", record)
+        assert len(reads) == len(paths)
+        assert all(statement.count("?") == 1 for statement in reads)
+        assert await _count(storage, "versions") == len(paths)
+        await storage.close()
+
     async def test_the_revive_holds_with_asserts_stripped(self, tmp_path) -> None:
         # Asserts narrow, never validate: the whole arc runs the same with them stripped.
         script = """
@@ -468,13 +541,13 @@ asyncio.run(main())
 # ---------------------------------------------------------------------------
 
 
-async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool) -> WritePlan:
+async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool, status: str = "updated") -> WritePlan:
     """A write plan staged from the committed state at call time — the victim's snapshot."""
     host = storage._host
     async with host.session_factory() as session:
         committed = await _fetch_committed(session, host.tables, host.profile, host.membership_budget, {entry.path})
     plan = WritePlan(committed, authority=None, budget=host.profile.key_byte_budget, value_cap=host.value_cap)
-    status = plan.put_file(
+    staged = plan.put_file(
         entry.path,
         kind=entry.kind,
         content=entry.content,
@@ -488,7 +561,8 @@ async def _stale_plan(storage: DatabaseStorage, entry: Entry, *, overwrite: bool
         data=entry.data,
         source=entry.source,
     )
-    assert status == "updated" and not plan.errors, plan.errors
+    assert staged is not None and staged == status and not plan.errors, plan.errors
+    plan.pending.append((entry.path, staged))
     return plan
 
 
@@ -536,9 +610,32 @@ class TestStaleSnapshotGuards:
         assert set(await _rows(storage)) == {"/"}
         await storage.close()
 
+    async def test_a_create_whose_snapshot_predates_the_parents_delete_refuses(self, tmp_path) -> None:
+        # A create's own row is new, so only the parent bump can notice the
+        # parent went: its guard requires the parent live, and tears the batch.
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        assert (await storage.mkdir(path=Path("/d"))).success is True
+        new = Entry(path=Path("/d/new.md"), content="mine")
+        plan = await _stale_plan(storage, new, overwrite=False, status="created")
+        assert (await storage.delete(path=Path("/d"))).success is True
+        assert await _apply_stale(storage, plan) is True
+        rows = await _rows(storage)
+        assert "/d/new.md" not in rows and rows["/d"].deleted_at is not None
+        assert (await storage.sweep(path=Path("/.vfs/trash"))).success is True
+        assert set(await _rows(storage)) == {"/"}
+        await storage.close()
+
+    def test_only_the_live_side_carries_a_tombstone_term(self) -> None:
+        # A revive is staged only at a set's root, and every clearing of a
+        # root's tombstone bumps its version: the version term already refuses.
+        entry = build_vfs_tables().entry
+        live, revive = (str(_guarded_stmt(entry, revive=flag)).split(" WHERE ")[1] for flag in (False, True))
+        assert "deleted_at IS NULL" in live and "deleted_at" not in revive
+        assert "version = :b_base" in live and "version = :b_base" in revive
+
     async def test_a_revive_whose_snapshot_predates_a_rival_restore_refuses(self, tmp_path) -> None:
-        # The revive's guard expects the tombstone it was staged against;
-        # the row restored mid-window is live, and a fresh ladder judges it so.
+        # The restore bumped the row's version, so the revive's version term
+        # misses; a fresh ladder judges the live row. No tombstone term is needed.
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/f.md"), content="one")])).success is True
         assert (await storage.delete(path=Path("/f.md"))).success is True
@@ -589,6 +686,22 @@ class TestSweep:
         # Idempotent and silent once nothing is tombstoned.
         again = await storage.sweep(path=Path("/.vfs/trash"))
         assert again.success is True and again.observations == [] and again.errors == []
+        await storage.close()
+
+    async def test_sweep_takes_the_version_rows_of_what_it_purges(self, tmp_path) -> None:
+        # An attributed overwrite mints a version row and its subject row; both arms destroy them.
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        await storage.mkdir(path=Path("/d"))
+        for name in ("expired", "swept"):
+            path = Path(f"/d/{name}.txt")
+            assert (await storage.write(entries=[Entry(path=path, content="one")])).success is True
+            assert (await storage.write(entries=[Entry(path=path, content="two")], authority=ANN)).success is True
+        assert await _count(storage, "versions") == 2 and await _count(storage, "version_subjects") == 2
+        assert (await storage.delete(path=Path("/d/expired.txt"))).success is True
+        assert (await storage.sweep(path=Path("/.vfs/trash"))).success is True
+        assert await _count(storage, "versions") == 1 and await _count(storage, "version_subjects") == 1
+        assert (await storage.sweep(path=Path("/d/swept.txt"))).success is True
+        assert await _count(storage, "versions") == 0 and await _count(storage, "version_subjects") == 0
         await storage.close()
 
     async def test_sweep_retains_a_young_root(self, tmp_path) -> None:
@@ -737,6 +850,126 @@ class TestTrashView:
         assert mixed.success is False and mixed.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
+    async def test_the_bare_head_is_no_search_pattern_on_any_verb(self, tmp_path) -> None:
+        # The head strips to the bare root, which the live side already
+        # refuses as a pattern; the view refuses it the same way on every
+        # verb and every channel — a Result, never a raised PatternError.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _tree(storage)
+        assert (await storage.delete(path=Path("/d"))).success is True
+        attempts = [
+            storage.glob(patterns=("/.vfs/trash",)),
+            storage.grep(pattern="needle", globs=("/.vfs/trash",)),
+            storage.glean(query="needle", globs=("/.vfs/trash",)),
+            storage.glob(patterns=("/**",), globs_not=("/.vfs/trash",)),
+            storage.grep(pattern="needle", globs_not=("/.vfs/trash",)),
+            storage.glean(query="needle", globs_not=("/.vfs/trash",)),
+        ]
+        for attempt in attempts:
+            result = await attempt
+            assert result.success is False and result.errors[0].kind == ErrorKind.invalid, result
+            assert "/.vfs/trash" in (result.errors[0].message or "")
+        live_root = await storage.grep(pattern="needle", globs=("/",))
+        assert live_root.success is False and live_root.errors[0].kind == ErrorKind.invalid
+        await storage.close()
+
+    async def test_an_exclusion_excludes_on_the_side_it_addresses(self, tmp_path) -> None:
+        # A head-addressed exclusion hides tombstoned rows alone; a bare
+        # one hides live rows alone. Neither reaches across the tombstone.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _tree(storage)
+        await storage.write(entries=[Entry(path=Path("/notes/c.txt"), content="live needle")], parents=True)
+        assert (await storage.reindex()).success is True
+        assert (await storage.delete(path=Path("/d"))).success is True
+        assert (await storage.reindex()).success is True
+        live = await storage.glob(patterns=("/**/*.txt",), globs_not=("/.vfs/trash/d/**",))
+        assert [str(o.path) for o in live.observations] == ["/keep.txt", "/notes/c.txt"]
+        trashed = await storage.glob(patterns=("/.vfs/trash/**/*.txt",), globs_not=("/d/**",))
+        assert [str(o.path) for o in trashed.observations] == ["/d/a.txt", "/d/sub/b.txt"]
+        both = await storage.glob(patterns=("/**/*.txt", "/.vfs/trash/**/*.txt"), globs_not=("/.vfs/trash/d/sub/**",))
+        assert [str(o.path) for o in both.observations] == ["/d/a.txt", "/keep.txt", "/notes/c.txt"]
+        grepped = await storage.grep(pattern="needle", globs_not=("/.vfs/trash/notes/**",))
+        assert [str(o.path) for o in grepped.observations] == ["/notes/c.txt"]
+        grepped = await storage.grep(pattern="needle", globs=("/.vfs/trash/**",), globs_not=("/d/sub/**",))
+        assert [str(o.path) for o in grepped.observations] == ["/d/a.txt", "/d/sub/b.txt"]
+        grepped = await storage.grep(pattern="needle", globs=("/.vfs/trash/**",), globs_not=("/.vfs/trash/d/sub/**",))
+        assert [str(o.path) for o in grepped.observations] == ["/d/a.txt"]
+        gleaned = await storage.glean(query="needle", globs_not=("/.vfs/trash/notes/**",))
+        assert {str(o.path) for o in gleaned.observations} == {"/notes/c.txt"}
+        gleaned = await storage.glean(query="needle", globs=("/.vfs/trash/**",), globs_not=("/.vfs/trash/d/sub/**",))
+        assert {str(o.path) for o in gleaned.observations} == {"/d/a.txt"}
+        await storage.close()
+
+    async def test_a_miss_inside_a_deleted_tree_names_the_deleted_boundary_for_every_verb(self, tmp_path) -> None:
+        # Reads climb the same ladder writes do: the first failing boundary
+        # is the tombstoned root, hinted, whoever asks and whatever the leaf.
+        for authority in (None, ANN):
+            home = tmp_path / ("anon" if authority is None else "ann")
+            home.mkdir()
+            storage = DatabaseStorage(url=_url(home))
+            await _tree(storage)
+            assert (await storage.delete(path=Path("/d"), authority=authority)).success is True
+            for target in ("/d/a.txt", "/d/missing.txt", "/d/sub/b.txt"):
+                for result in (
+                    await storage.stat(path=Path(target), authority=authority),
+                    await storage.read(path=Path(target), authority=authority),
+                    await storage.ls(path=Path(target), authority=authority),
+                    await storage.tree(path=Path(target), authority=authority),
+                    await storage.edit(path=Path(target), edits=[EditOperation(old="a", new="b")], authority=authority),
+                ):
+                    assert _hinted(result).get("vfs.target") == target, (target, result)
+                    assert result.errors[0].path == "/d", (target, result)
+            await storage.close()
+
+    async def test_the_view_tells_a_caller_without_rights_nothing_a_missing_row_would_not(self, tmp_path) -> None:
+        # ann deletes a file bob may not see. Through the view bob's answer
+        # for the deleted row is the answer for a row that never existed —
+        # the first component he cannot see, never the synthesized head.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        bob = Authority.of(Principal("bob"))
+        assert (await storage.posture(path=Path("/"), posture="private", authority=None)).success is True
+        assert (await storage.mkdir(path=Path("/ann"), authority=None)).success is True
+        assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=None)).success
+        assert (await storage.write(entries=[Entry(path=Path("/ann/secret.md"), content="s")], authority=ANN)).success
+        assert (await storage.delete(path=Path("/ann/secret.md"), authority=ANN)).success is True
+        answers = []
+        for target in ("/.vfs/trash/ann/secret.md", "/.vfs/trash/ann/nope.md"):
+            for result in (
+                await storage.stat(path=Path(target), authority=bob),
+                await storage.read(path=Path(target), authority=bob),
+                await storage.ls(path=Path(target), authority=bob),
+            ):
+                [error] = result.errors
+                # Beside the target, the refusal carries no fact at all — no hint, no time.
+                assert set(error.data or {}) <= {"vfs.target"}, (target, error)
+                answers.append((error.kind, error.path))
+        assert set(answers) == {(ErrorKind.not_found, "/.vfs/trash/ann")}, answers
+        # The owner sees her row at its own path and the same ladder for a ghost beside it.
+        shown = await storage.stat(path=Path("/.vfs/trash/ann/secret.md"), authority=ANN)
+        assert shown.success is True and str(shown.observations[0].path) == "/ann/secret.md"
+        ghost = await storage.stat(path=Path("/.vfs/trash/ann/nope.md"), authority=ANN)
+        assert ghost.errors[0].kind == ErrorKind.not_found and ghost.errors[0].path == "/.vfs/trash/ann"
+        await storage.close()
+
+    async def test_a_hidden_directory_on_the_road_through_the_view_is_a_step_not_an_answer(self, tmp_path) -> None:
+        # bob holds rights on /d/sub alone; /d is deleted over his head. Through
+        # the view /d is hidden to him, but it is the road to a row he may see,
+        # so a ghost beneath /d/sub is named at the ghost, not at /d.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        bob = Authority.of(Principal("bob"))
+        assert (await storage.posture(path=Path("/"), posture="private", authority=None)).success is True
+        assert (await storage.mkdir(path=Path("/d"), authority=None)).success is True
+        assert (await storage.mkdir(path=Path("/d/sub"), authority=None)).success is True
+        assert (await storage.grant(path=Path("/d/sub"), principal="bob", level="read_write", authority=None)).success
+        assert (await storage.write(entries=[Entry(path=Path("/d/sub/f.md"), content="f")], authority=None)).success
+        assert (await storage.delete(path=Path("/d"), authority=None)).success is True
+        shown = await storage.stat(path=Path("/.vfs/trash/d/sub/f.md"), authority=bob)
+        assert shown.success is True, shown.errors
+        ghost = await storage.stat(path=Path("/.vfs/trash/d/sub/nope.md"), authority=bob)
+        [error] = ghost.errors
+        assert error.kind == ErrorKind.not_found and error.path == "/.vfs/trash/d/sub/nope.md", error
+        await storage.close()
+
 
 # ---------------------------------------------------------------------------
 # Edges survive
@@ -810,6 +1043,70 @@ class TestScale:
         assert await _count(storage, "segments") == postings
         rows = await _rows(storage)
         assert len(rows) == count + 2 and all(r.deleted_at is None for r in rows.values())
+        await storage.close()
+
+    async def test_a_batch_of_targets_deletes_and_restores_in_a_flat_number_of_statements(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        engine = storage._host.engine.sync_engine
+
+        async def statements_for(count: int) -> tuple[int, int]:
+            paths = [Path(f"/d{count}/f{i:04}.txt") for i in range(count)]
+            assert (await storage.write(entries=[Entry(path=p, content="x") for p in paths], parents=True)).success
+            targets = [Observation(path=p) for p in paths]
+            seen: list[str] = []
+            record = _spy(storage, seen)
+            event.listen(engine, "before_cursor_execute", record)
+            try:
+                assert (await storage.delete(observations=targets)).success is True
+                deleted = len(seen)
+                seen.clear()
+                assert (await storage.restore(observations=targets)).success is True
+                restored = len(seen)
+            finally:
+                event.remove(engine, "before_cursor_execute", record)
+            return deleted, restored
+
+        # One chunk either way on this engine: the counts are identical, not merely bounded.
+        assert await statements_for(1_000) == await statements_for(10)
+        await storage.close()
+
+    async def test_a_retention_sweep_issues_a_flat_number_of_statements_in_roots(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        engine = storage._host.engine.sync_engine
+
+        async def statements_for(count: int) -> int:
+            paths = [Path(f"/d{count}/f{i:04}.txt") for i in range(count)]
+            assert (await storage.write(entries=[Entry(path=p, content="x") for p in paths], parents=True)).success
+            assert (await storage.delete(observations=[Observation(path=p) for p in paths])).success is True
+            seen: list[str] = []
+            record = _spy(storage, seen)
+            event.listen(engine, "before_cursor_execute", record)
+            try:
+                result = await storage.sweep(path=Path("/.vfs/trash"))
+            finally:
+                event.remove(engine, "before_cursor_execute", record)
+            assert result.success is True and len(result.observations) == count
+            return len(seen)
+
+        assert await statements_for(1_000) == await statements_for(10)
+        await storage.close()
+
+    async def test_the_covered_check_walks_each_target_once(self, tmp_path, monkeypatch) -> None:
+        # One ancestor-chain walk per target: linear in the batch, never a rescan of the whole set.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        count = 500
+        paths = [Path(f"/d/f{i:04}.txt") for i in range(count)]
+        assert (await storage.write(entries=[Entry(path=p, content="x") for p in paths], parents=True)).success
+        walks: list[Path] = []
+        chain = trash_module.ancestor_chain
+
+        def counting(path: Path) -> list[Path]:
+            walks.append(path)
+            return chain(path)
+
+        monkeypatch.setattr(trash_module, "ancestor_chain", counting)
+        assert (await storage.delete(observations=[Observation(path=p) for p in paths])).success is True
+        assert len(walks) == count
         await storage.close()
 
     @pytest.mark.slow
@@ -891,6 +1188,88 @@ class TestScale:
 # ---------------------------------------------------------------------------
 
 
+class TestClaimRows:
+    """The guarded claim set's evidence ladder: VALUES join, aggregate rowcount, per-row floor, refusal.
+
+    The default suite drives the aggregate arm on every delete and
+    restore; the VALUES arm runs through the session double SQLite
+    cannot execute, and the postgres and mssql legs prove it live.
+    """
+
+    @staticmethod
+    def _claim(double: _ReturningSession, claims: list[Claim]):
+        entry = build_vfs_tables().entry
+        return claim_rows(
+            cast("AsyncSession", double),
+            entry,
+            POSTGRESQL,
+            32_000,
+            900,
+            claims,
+            side=entry.c.deleted_at.is_(None),
+            assign={"version": entry.c.version + 1},
+            miss="stale",
+        )
+
+    async def test_the_values_arm_is_a_guarded_join_returning_the_ids_it_matched(self) -> None:
+        claims = [Claim(str(ULID()), 3), Claim(str(ULID()), 1)]
+        double = _ReturningSession([{"entry_id": claim.entry_id} for claim in claims])
+        assert await self._claim(double, claims) is None
+        [stmt] = double.statements  # both rows rode one chunk
+        sql = str(stmt.compile(dialect=postgresql.dialect()))
+        assert "VALUES" in sql and "RETURNING" in sql and "deleted_at IS NULL" in sql
+
+    async def test_the_values_arm_raises_on_a_shortfall(self) -> None:
+        claims = [Claim(str(ULID()), 3), Claim(str(ULID()), 1)]
+        double = _ReturningSession([{"entry_id": claims[0].entry_id}])
+        with pytest.raises(StaleSnapshot, match="stale"):
+            await self._claim(double, claims)
+
+    async def test_no_claims_issue_no_statement(self) -> None:
+        double = _ReturningSession([])
+        assert await self._claim(double, []) is None and double.statements == []
+
+    async def test_the_per_row_floor_proves_each_claim(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a"), Entry(path=Path("/b.txt"), content="b")])
+        host = storage._host
+        # No sane aggregate: the ladder must land on per-row rowcounts.
+        monkeypatch.setattr(host.engine.sync_engine.dialect, "supports_sane_multi_rowcount", False)
+        both = [Observation(path=Path("/a.txt")), Observation(path=Path("/b.txt"))]
+        assert (await storage.delete(observations=both)).success is True
+        rows = await _rows(storage)
+        assert rows["/a.txt"].deleted_at is not None and rows["/b.txt"].deleted_at is not None
+        entry = host.tables.entry
+        async with host.session_factory() as session:
+            await session.connection(execution_options=op_execution_options(host.profile, writer=True))
+            stale = [Claim(rows["/a.txt"].id, rows["/a.txt"].version + 7)]
+            with pytest.raises(StaleSnapshot, match="moved"):
+                await claim_rows(
+                    session,
+                    entry,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    stale,
+                    side=entry.c.deleted_at.is_not(None),
+                    assign={"version": entry.c.version + 1},
+                    miss="moved",
+                )
+            await session.rollback()
+        await storage.close()
+
+    async def test_an_unverifiable_claim_classifies_instead_of_guessing(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="a")])
+        dialect = storage._host.engine.sync_engine.dialect
+        monkeypatch.setattr(dialect, "supports_sane_multi_rowcount", False)
+        monkeypatch.setattr(dialect, "supports_sane_rowcount", False)
+        result = await storage.delete(path=Path("/a.txt"))
+        assert result.success is False and result.errors[0].kind == ErrorKind.unsupported
+        assert (await _rows(storage))["/a.txt"].deleted_at is None
+        await storage.close()
+
+
 class TestPurgeHardening:
     """The purge re-collects until empty and never doubles a chunk's binds."""
 
@@ -930,6 +1309,36 @@ class TestPurgeHardening:
             remaining = (await session.execute(select(entry.c.path).where(subtree))).all()
             assert remaining == []
             await session.rollback()
+        await storage.close()
+
+    async def test_a_root_revived_mid_purge_misses_the_tombstone_proof(self, tmp_path) -> None:
+        # The lost-update window: a rival write revives the root between the
+        # collect and the delete; the delete misses, the sweep redrives.
+        storage = DatabaseStorage(url=_url(tmp_path), trash_days=0)
+        await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)
+        assert (await storage.delete(path=Path("/d/f.txt"))).success is True
+        host = storage._host
+        tables = host.tables
+        entry = tables.entry
+        root_id = (await _rows(storage))["/d/f.txt"].id
+        async with host.session_factory() as session:
+            await session.connection(execution_options=op_execution_options(host.profile, writer=True))
+
+            async def revive() -> None:
+                clear("purge:post-collect")
+                stmt = (
+                    update(entry)
+                    .where(entry.c.entry_id == root_id)
+                    .values(deleted_at=None, trash_root_id=None, version=entry.c.version + 1)
+                )
+                await session.execute(stmt)
+
+            scope = entry.c.trash_root_id == root_id
+            with installed("purge:post-collect", revive), pytest.raises(StaleSnapshot):
+                await _purge(session, tables, host.profile, 1_000, scope, proof=entry.c.deleted_at.is_not(None))
+            await session.rollback()
+        assert (await _rows(storage))["/d/f.txt"].deleted_at is not None
+        assert await _count(storage, "content") == 1
         await storage.close()
 
     async def test_purge_statements_never_double_the_membership_chunk(self, tmp_path, monkeypatch) -> None:

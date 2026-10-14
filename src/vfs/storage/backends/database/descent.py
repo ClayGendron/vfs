@@ -15,6 +15,9 @@ grows with batch size on any engine. :func:`subtree_filter` and
 :func:`descendant_filter` are the one composition of the escaped
 subtree ``LIKE`` — ``escape=`` is always explicit, and the helper owns
 the ROOT branch, where naive prefix composition would produce ``//%``.
+:func:`tombstone_side` is the one spelling of the tombstone term every
+predicate carries, and :func:`tombstoned_roots` names the rows a delete
+named.
 
 :func:`liveness_filters` is the one-scope namespace filter enumeration
 verbs apply: the tombstone term first — a deleted row stays at its own
@@ -199,7 +202,22 @@ def descendant_filter(entry: Table, root: str, profile: DialectProfile) -> Colum
     """
     if root == ROOT:
         return entry.c.path != str(ROOT)
-    return entry.c.path.like(escape_like(root, profile) + "/%", escape=LIKE_ESCAPE)
+    return entry.c.path.like(descendant_pattern(root, profile), escape=LIKE_ESCAPE)
+
+
+def descendant_pattern(root: str, profile: DialectProfile) -> str:
+    """The escaped ``LIKE`` pattern of *root*'s strict descendants — the one composition, for a bound pattern too."""
+    return escape_like(root, profile) + "/%"
+
+
+def tombstone_side(entry: FromClause, *, trashed: bool) -> ColumnElement[bool]:
+    """The side of the tombstone a predicate wants its rows on: live, or tombstoned under the trash view. No bind."""
+    return entry.c.deleted_at.is_not(None) if trashed else entry.c.deleted_at.is_(None)
+
+
+def tombstoned_roots(entry: FromClause) -> ColumnElement[bool]:
+    """The rows a delete named: a tombstoned root is its own ``trash_root_id``."""
+    return entry.c.trash_root_id == entry.c.entry_id
 
 
 def liveness_filters(
@@ -210,7 +228,7 @@ def liveness_filters(
     *trashed* flips the term for the trash view, which enumerates the
     tombstoned rows alone; the meta exclusion keeps its meaning either way.
     """
-    terms: list[ColumnElement[bool]] = [entry.c.deleted_at.is_not(None) if trashed else entry.c.deleted_at.is_(None)]
+    terms: list[ColumnElement[bool]] = [tombstone_side(entry, trashed=trashed)]
     if not include_meta:
         terms += [entry.c.path != METADATA_ROOT, ~descendant_filter(entry, METADATA_ROOT, profile)]
     return terms

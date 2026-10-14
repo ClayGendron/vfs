@@ -63,6 +63,8 @@ from vfs.storage.backends.database.dialects import (
     DialectProfile,
     StaleSnapshot,
     ValueCap,
+    VectorFunction,
+    driver_origin,
     is_insufficient_privilege,
     is_permanent_defect,
     is_retryable,
@@ -246,16 +248,6 @@ class EngineHost:
             return False
         return self.embedding_identity != (self.embedder.model_id, self.embedder.dimension)
 
-    @property
-    def topology_key(self) -> int:
-        """Advisory key for topology serialization — keyed on identity, never path.
-
-        The durable mount identity once first touch has adopted it; the
-        table-name key before then, the only handle rivals share pre-touch.
-        """
-        identity = self.mount_identity
-        return advisory_key(identity) if identity is not None else self._table_key
-
     async def ensure_ready(self) -> ResultError | None:
         """Idempotent first touch; ``None`` when the mount is serving."""
         if self._ready:
@@ -285,29 +277,22 @@ class EngineHost:
         with nothing to do. The statement's own ``IF NOT EXISTS`` race
         (a rival mount installing first) is benign and recovered via
         savepoint; a role that may not install is answered
-        ``permission_denied`` naming the fix, and any other failure
-        classifies as first touch's would.
+        ``permission_denied`` naming the fix, and any other failure,
+        from the install or the probe, classifies as first touch's would.
         """
-        profile = self._policy().profile
-        if profile.vector_install is not None:
-            try:
-                async with self.session_factory() as session:
-                    conn = await session.connection()
-                    try:
-                        async with conn.begin_nested():
-                            await conn.exec_driver_sql(profile.vector_install)
-                    except IntegrityError:
-                        pass
-                    await session.commit()
-            except DBAPIError as exc:
-                if is_insufficient_privilege(exc):
-                    origin = getattr(exc, "orig", None) or exc
-                    detail = f"this role may not install the extension ({origin}); {profile.vector_missing}"
-                    return classified(ErrorKind.permission_denied, detail=detail)
-                return self.classify_failure(exc, context="Install extensions")
-        if profile.vector_probe is not None:
-            return await self._probe_vector_function(profile.vector_probe, profile.vector_missing)
-        return None
+        function = self._policy().profile.vector_function
+        if function is None:
+            return None
+        try:
+            if function.install is not None:
+                await self._install_vector_function(function.install)
+            return await self._probe_vector_function(function)
+        except DBAPIError as exc:
+            origin = driver_origin(exc)
+            if is_insufficient_privilege(origin):
+                detail = f"this role may not install the extension ({origin}); {function.missing}"
+                return classified(ErrorKind.permission_denied, detail=detail)
+            return self.classify_failure(exc, context="Install extensions")
 
     async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
         """Run *fn*, restarting whole on a retryable outcome, with backoff.
@@ -342,7 +327,7 @@ class EngineHost:
         ``internal`` and never retryable — retrying a broken statement
         forever would disguise the bug as an operating condition.
         """
-        origin = getattr(exc, "orig", None) or exc
+        origin = driver_origin(exc)
         try:
             # The runtime contract takes any driver exception; the stub's
             # `Error` type is the DBAPI module protocol, not a real class.
@@ -419,8 +404,8 @@ class EngineHost:
             await self._apply_file_settings(profile)
         if profile.value_cap_query is not None and profile.value_cap_setting is not None:
             self.value_cap = await self._read_value_cap(profile.value_cap_query, profile.value_cap_setting)
-        if profile.vector_probe is not None:
-            refusal = await self._probe_vector_function(profile.vector_probe, profile.vector_missing)
+        if profile.vector_function is not None:
+            refusal = await self._probe_vector_function(profile.vector_function)
             if refusal is not None:
                 return refusal
         refusal = await self._verify_or_provision()
@@ -444,24 +429,44 @@ class EngineHost:
             for statement in profile.file_settings:
                 await conn.exec_driver_sql(statement)
 
-    async def _probe_vector_function(self, probe: str, missing: str) -> ResultError | None:
+    async def _install_vector_function(self, install: str) -> None:
+        """Run the profile's install statement once, under a savepoint so a rival's earlier install is benign."""
+        async with self.session_factory() as session:
+            conn = await session.connection()
+            try:
+                async with conn.begin_nested():
+                    await conn.exec_driver_sql(install)
+            except IntegrityError:
+                pass
+            await session.commit()
+
+    async def _probe_vector_function(self, function: VectorFunction) -> ResultError | None:
         """Prove the engine's cosine distance function is present; refuse the mount naming the fix when it is not.
 
-        The function is a precondition vfs never installs: sqlite-vec
-        rides every connection but an interpreter built without
-        extension loading drops it silently at the hook, and pgvector is
-        installed once by whoever owns the database. The probe fails when
-        the engine raises or answers no row; a scalar answer is the
-        function's version, kept for the tiers that gate on it.
+        The function is a precondition first touch never installs:
+        sqlite-vec rides every connection but an interpreter built
+        without extension loading drops it silently at the hook, and
+        pgvector is installed once by a superuser or through the explicit
+        install verb. The probe fails when the engine answers no row or
+        raises a permanent error — SQLite's "no such function" carries
+        only the generic result code, so no engine-neutral code names
+        the missing function itself; a scalar answer is the function's
+        version, kept for the tiers that gate on it. A raise the retry
+        policy would restart, or one that cost the connection, is not a
+        verdict on the function and propagates to the caller's retry
+        and classifier, so a busy or dropped engine is never reported
+        as a missing extension.
         """
         async with self.session_factory() as session:
             conn = await session.connection(execution_options={"vfs_no_begin": True})
             try:
-                raw = (await conn.exec_driver_sql(probe)).scalar_one_or_none()
-            except DBAPIError:
+                raw = (await conn.exec_driver_sql(function.probe)).scalar_one_or_none()
+            except DBAPIError as exc:
+                if exc.connection_invalidated or is_retryable(self.profile, exc):
+                    raise
                 raw = None
         if raw is None:
-            return classified(ErrorKind.unavailable, detail=missing)
+            return classified(ErrorKind.unavailable, detail=function.missing)
         self.vector_version = _version_tuple(str(raw))
         return None
 
@@ -516,6 +521,7 @@ class EngineHost:
                 created_at=now,
             )
         )
+        await conn.execute(insert(self.tables.lock).values(id=1))
         await conn.execute(insert(self.tables.grants).values(**posture_row(self.posture, now)))
         await conn.execute(
             insert(self.tables.entry).values(

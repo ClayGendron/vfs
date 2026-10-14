@@ -76,6 +76,7 @@ class StagedEntry:
     mime_type: str | None = None
     owner_id: str | None = None  # the payload's declared owner; only the system actor honours it
     base_version: int | None = None  # the version the guarded arm compares against
+    base_size_bytes: int | None = None  # the replaced body's size at snapshot; the mint pages its reads by it
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
 
@@ -440,6 +441,7 @@ class WritePlan:
             mime_type=mime_type,
             owner_id=owner_id,
             base_version=row["version"],
+            base_size_bytes=row["size_bytes"],
             version=row["version"] + 1,
         )
 

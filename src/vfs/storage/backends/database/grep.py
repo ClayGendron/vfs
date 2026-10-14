@@ -71,7 +71,6 @@ from vfs.pattern_matching import (
     PatternError,
     compile_filter,
     compile_verifier,
-    expand_channel,
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
@@ -92,7 +91,7 @@ from vfs.storage.backends.database.scope import (
     entries_for_scan,
     passes_gates,
     pushdown_terms,
-    strip_trash_heads,
+    scope_exclusions,
     trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
@@ -187,8 +186,8 @@ async def grep_rows(
     candidates, so a partial caller can reach it sooner than a whole one.
     """
     try:
-        admissions, trashed = trash_scope(expand_channel("globs", globs))
-        exclusions = strip_trash_heads(expand_channel("globs_not", globs_not))
+        admissions, trashed = trash_scope(globs)
+        exclusions = scope_exclusions(globs_not, trashed=trashed)
     except PatternError as exc:
         return Result(ops=("grep",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     try:

@@ -1,7 +1,10 @@
 # 074. Trash Is a Tombstone on the Row: Delete Flags, Restore Clears, a Write Revives
 
 - **Status:** accepted 2026-10-08 (Clay: "those all sounds good …
-  accept the ADR and cut the spec"). Supersedes ADR 026's rejection of
+  accept the ADR and cut the spec"); **item 5 amended at spec 162's
+  review (Clay, 2026-10-13): a revive keeps the row's kind, and a
+  write of the other kind at a tombstoned path refuses `wrong_kind`.**
+  Supersedes ADR 026's rejection of
   its option (e), "flag, don't move", and amends ADR 014 (the trash is
   a view over tombstoned rows, not an ordinary subtree). It retires
   spec 150 §8's trashed predicate forms (judge trashed rows by origin
@@ -124,14 +127,21 @@ A deleted row stays where it is and is marked. Concretely:
    are version rows.
 5. **A write revives.** A `write` whose path holds a tombstoned row
    clears the flag, mints a version row of the replaced body (spec
-   161's law), lands the new body, and keeps the entry id. If the
-   incoming kind differs from the row's (a file where a directory
-   was deleted, or the reverse), the row changes kind and its
-   tombstoned descendants keep their flags; a later `restore` of the
-   directory refuses `exists` because the site is occupied, the rule
-   the July memo found unanimous across the field, and the
-   descendants restore individually once the site is a directory
-   again.
+   161's law), lands the new body, and keeps the entry id. The revive
+   keeps the row's kind: a file `write` at a tombstoned directory
+   refuses `wrong_kind` with the trashed hint, as it refuses a live
+   directory, so a tombstoned directory comes back only through
+   `restore`. `overwrite=False` does not refuse a revive, since no
+   live row occupies the path.
+   *Amended at spec 162's review (Clay, 2026-10-13):* the original
+   let the row change kind and keep its tombstoned descendants, with
+   "descendants restore individually once the site is a directory
+   again". Worked by hand, that rule left a live file with live
+   children after `delete`, `write` (file), `delete`, `restore`, and
+   its escape hatch was unreachable under item 9 (`mkdir` at a
+   tombstoned path is `not_found`; `restore` refuses `exists` while
+   the file is live). The "or the reverse" case — a directory where a
+   file was deleted — is `mkdir`, which item 9 already refuses.
 6. **Edges survive.** Nothing moves, so the fs mirror row needs no
    repoint and authored edges need no cascade; an edge whose endpoint
    is tombstoned is hidden with it by the same liveness term and

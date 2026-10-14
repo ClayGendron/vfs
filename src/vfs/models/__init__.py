@@ -20,7 +20,7 @@ from vfs.models.entry import (
     Observation,
 )
 from vfs.models.media import RENDER_STATUSES, RENDERED_STATUSES, SOURCES, RenderStatus, Source, sniff_mime
-from vfs.models.version import Version
+from vfs.models.version import BodyMetrics, Version, line_count, measure_bytes, measure_text
 
 __all__ = [
     "CONTENT_KINDS",
@@ -31,6 +31,7 @@ __all__ = [
     "RENDERED_STATUSES",
     "RENDER_STATUSES",
     "SOURCES",
+    "BodyMetrics",
     "Chunk",
     "ContentHash",
     "Edge",
@@ -40,5 +41,8 @@ __all__ = [
     "RenderStatus",
     "Source",
     "Version",
+    "line_count",
+    "measure_bytes",
+    "measure_text",
     "sniff_mime",
 ]

@@ -56,9 +56,11 @@ notice a delete: the row is judged at its own path by the label and the
 pieces it already has. A row nobody but its owner could see stays that
 way in the trash, the holder of a grant on its folder can still restore
 it, and nothing reaches a tombstoned row through the ``/.vfs/trash``
-view that could not reach it live. A tombstoned row the caller may see
-answers ``not_found`` with the trashed hint; one it may not see answers
-as any hidden row does — absent, with no hint.
+view that could not reach it live. A read of a tombstoned row the
+caller may see answers ``not_found`` with the trashed hint, and any
+other verb at it is judged as at an occupied path; a tombstoned row the
+caller may not see answers as any hidden row does — absent, with no
+hint.
 """
 
 from __future__ import annotations
@@ -80,6 +82,7 @@ from vfs.storage.backends.database.descent import (
     descendant_filter,
     rows_by_path,
     targets_with_ancestors,
+    tombstone_side,
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked, membership_budget
 from vfs.storage.backends.database.labels import (
@@ -392,7 +395,7 @@ class Visibility:
         self._parameter_budget = parameter_budget
         self._roots: set[str] | None = None
 
-    def admits(self, mapping: RowMapping) -> bool:
+    def admits(self, mapping: Mapping[Any, Any]) -> bool:
         return self.rights.admits(mapping["path"], mapping["owner_id"], mapping["everyone_level"])
 
     async def prepare(self, session: AsyncSession) -> None:
@@ -1053,7 +1056,7 @@ async def _owned_beneath(
     """The *candidates* holding a row *owner* owns whose path lies within the pieces *found*."""
     row = entry.alias("r")
     tests = [
-        and_(row.c.owner_id == owner, _liveness(row, trashed), or_(*(unit.predicate for unit in group)))
+        and_(row.c.owner_id == owner, tombstone_side(row, trashed=trashed), or_(*(unit.predicate for unit in group)))
         for group in chunked(_piece_units(row.c.path, found), _OWNER_PIECES_PER_UNIT)
     ]
     per_chunk = max(1, membership_budget - 3 - 2 * _OWNER_PIECES_PER_UNIT)
@@ -1076,13 +1079,8 @@ async def _open_beneath(
     """
     row = entry.alias("r")
     unholed = hole_free(row.c.path, rights.ranges().holes, profile)
-    test = and_(row.c.everyone_level >= rights.need, _liveness(row, trashed), unholed)
+    test = and_(row.c.everyone_level >= rights.need, tombstone_side(row, trashed=trashed), unholed)
     return await _beneath(session, entry, profile, max(1, membership_budget - 3), row, [test], candidates)
-
-
-def _liveness(row: FromClause, trashed: bool) -> ColumnElement[bool]:
-    """The rows a road may run through: live ones, or the tombstoned ones under the trash view."""
-    return row.c.deleted_at.is_not(None) if trashed else row.c.deleted_at.is_(None)
 
 
 async def _beneath(

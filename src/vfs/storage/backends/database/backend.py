@@ -31,7 +31,7 @@ import asyncio
 from collections import OrderedDict
 from contextlib import asynccontextmanager, suppress
 from functools import partial
-from typing import TYPE_CHECKING, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 from ulid import ULID
@@ -141,7 +141,6 @@ from vfs.storage.ranking import Ranker
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 
-    from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -637,7 +636,7 @@ class DatabaseStorage:
                 entries=entries,
                 overwrite=overwrite,
                 parents=parents,
-                authority=authority,
+                authority=self._named(authority),
                 value_cap=host.value_cap,
             )
 
@@ -668,7 +667,7 @@ class DatabaseStorage:
                 host.membership_budget,
                 edits=edits,
                 targets=targets,
-                authority=authority,
+                authority=self._named(authority),
             )
 
         return await self._execute_write("edit", run)
@@ -697,11 +696,11 @@ class DatabaseStorage:
                 session,
                 self._host.tables,
                 self._host.profile,
+                self._host.parameter_budget,
                 self._host.membership_budget,
                 targets=targets,
                 cascade=cascade,
                 authority=authority,
-                lock_key=self._host.topology_key,
                 gate=gate,
             ),
         )
@@ -725,7 +724,7 @@ class DatabaseStorage:
             return []
 
         async def permit(
-            session: AsyncSession, target: Path, row: RowMapping | None, verdict: ResultError | None
+            session: AsyncSession, target: Path, row: Mapping[Any, Any] | None, verdict: ResultError | None
         ) -> ResultError | None:
             """The caller's verdict on one target, worded from the path it sent.
 
@@ -762,10 +761,10 @@ class DatabaseStorage:
                 session,
                 self._host.tables,
                 self._host.profile,
+                self._host.parameter_budget,
                 self._host.membership_budget,
                 targets=targets,
                 authority=authority,
-                lock_key=self._host.topology_key,
                 gate=gate,
                 permit=permit,
             ),
@@ -800,7 +799,6 @@ class DatabaseStorage:
                 path=path,
                 trash_days=self._trash_days,
                 authority=authority,
-                lock_key=self._host.topology_key,
                 gate=gate,
             ),
         )
@@ -1592,7 +1590,6 @@ class DatabaseStorage:
                 op=op,
                 operations=operations,
                 authority=authority,
-                lock_key=self._host.topology_key,
                 gate=gate,
             ),
         )

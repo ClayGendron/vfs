@@ -8,7 +8,18 @@ from typing import Union, cast, get_args, get_origin
 from uuid import UUID
 
 import pytest
-from sqlalchemy import BigInteger, Double, Engine, LargeBinary, String, create_mock_engine, insert, inspect, select
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Double,
+    Engine,
+    LargeBinary,
+    String,
+    create_mock_engine,
+    insert,
+    inspect,
+    select,
+)
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.dialects.mssql import pymssql
 from sqlalchemy.dialects.mysql import LONGBLOB, mariadb
@@ -50,6 +61,7 @@ TABLE_ATTRS = (
     "chunks",
     "edges",
     "meta",
+    "lock",
     "gram_epochs",
     "posting_list",
     "segments",
@@ -163,6 +175,7 @@ class TestBuildVFSTables:
             "vfs_chunks",
             "vfs_edges",
             "vfs_meta",
+            "vfs_lock",
             "vfs_gram_epochs",
             "vfs_grams_posting_list",
             "vfs_segments",
@@ -538,6 +551,26 @@ class TestDDL:
         postings = tables.posting_list.c.postings
         for dialect in (mysql.dialect(), mariadb.MariaDBDialect()):
             assert postings.type.compile(dialect=dialect) == "LONGBLOB"
+
+    def test_every_instant_keeps_sub_second_precision_and_its_zone_on_every_engine(self, tables: VFSTables) -> None:
+        # A bare zoned DateTime is DATE on Oracle — whole seconds — so a
+        # trash_days=0 sweep in the deleting second purged nothing there.
+        columns = [column for table in tables.metadata.tables.values() for column in table.columns]
+        instants = [column for column in columns if isinstance(column.type, DateTime)]
+        assert {column.name for column in instants} >= {"created_at", "updated_at", "deleted_at", "granted_at"}
+        compiled = {
+            (dialect.name, column.type.compile(dialect=dialect))
+            for column in instants
+            for dialect in (oracle.dialect(), mssql.dialect(), postgresql.dialect(), sqlite.dialect(), mysql.dialect())
+        }
+        # MSSQL stays DATETIMEOFFSET: its TIMESTAMP is the rowversion type, so the variant is Oracle's alone.
+        assert compiled == {
+            ("oracle", "TIMESTAMP WITH TIME ZONE"),
+            ("mssql", "DATETIMEOFFSET"),
+            ("postgresql", "TIMESTAMP WITH TIME ZONE"),
+            ("sqlite", "DATETIME"),
+            ("mysql", "DATETIME"),
+        }
 
     def test_id_keys_declare_identity_in_ddl(self, tables: VFSTables) -> None:
         # Oracle generates nothing for a bare autoincrement PK (ORA-01400 on

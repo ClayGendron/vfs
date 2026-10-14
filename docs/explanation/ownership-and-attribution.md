@@ -46,7 +46,7 @@ It would be simpler to store one name per row and call it both owner and author.
 
 ## What is missing
 
-The versions table has carried this shape since the schema format moved to thirteen, and sweep clears the side table along with the versions it belongs to. The write path fills it: every overwrite of a file, and every write that revives a deleted one, keeps the body it replaced as a snapshot row with the actor, the subjects, the provenance and the grant revision of the write that replaced it. Reading that history back is a later verb's; until it lands, the rows are written but not yet served.
+The versions table has carried this shape since the schema format moved to thirteen, and sweep clears the side table along with the versions it belongs to. The write path fills it: every overwrite of a file with a different body, and every write that revives a deleted one with a different body, keeps the body it replaced as a snapshot row with the actor, the subjects, the provenance and the grant revision of the write that replaced it. A body whose hash equals the one replacing it mints nothing: the version counter still moves, but there is no replaced body to keep. Reading that history back is a later verb's; until it lands, the rows are written but not yet served.
 
 ## Further reading
 

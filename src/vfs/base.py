@@ -46,7 +46,15 @@ from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
 from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
 from vfs.params import param_violation
-from vfs.paths import METADATA_ROOT, ROOT, Path, extract_extension, normalize_ext_channel, resolve_path
+from vfs.paths import (
+    METADATA_ROOT,
+    ROOT,
+    Path,
+    check_reserved_path,
+    extract_extension,
+    normalize_ext_channel,
+    resolve_path,
+)
 from vfs.pattern_matching import (
     PatternError,
     compile_filter,
@@ -2792,7 +2800,7 @@ class VirtualFileSystem:
         *,
         write_rels: Sequence[Path] = (),
     ) -> Result | None:
-        """Capability → permission, in the pinned order.
+        """Capability → grammar → permission, in the pinned order.
 
         Every dispatch chokepoint runs this gate on its resolved entry
         before touching it.  The order is a contract: an incapable entry
@@ -2801,10 +2809,12 @@ class VirtualFileSystem:
         gate holds only what the router itself knows.
 
         A capability failure is an entry-level fact and reports the entry's
-        bind path.  *write_rels* are the entry-relative paths the permission
-        layers check (empty when the write target is derived later, as in
-        mkedge's pre-derivation gate); each denial reports its own
-        router-side path.
+        bind path.  *write_rels* are the entry-relative paths a mutation
+        targets (empty when the write target is derived later, as in
+        mkedge's pre-derivation gate): each passes the reserved-space
+        grammar in the mount's own coordinates — the global gate cannot
+        see a trash view beneath a mount — and then the permission
+        layers; each refusal reports its own router-side path.
         """
         if op not in binding.meta.caps:
             return self._error(
@@ -2815,6 +2825,10 @@ class VirtualFileSystem:
             )
         for rel in write_rels:
             full = rel.with_mount(binding.path)
+            if op in MUTATING_OPS:
+                ok, reason = check_reserved_path(rel, head_ok=op == "sweep")
+                if not ok:
+                    return self._error(ErrorKind.invalid, op=op, path=full, detail=reason)
             err = check_writable_composed(self._permission_layers(full), op)
             if err is not None:
                 return err

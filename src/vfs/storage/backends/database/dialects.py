@@ -127,6 +127,25 @@ def wire_bytes(data: bytes) -> int:
     return len(data) + sum(data.count(escaped) for escaped in _ESCAPED_BYTES)
 
 
+class VectorFunction(NamedTuple):
+    """An engine's cosine distance function as a precondition: proved, named, and installed only on request.
+
+    ``probe`` is the statement that proves the function is present; it
+    fails when the engine raises a permanent error or answers no row,
+    and a scalar answer is read as the function's version. ``missing``
+    is the fix the refusal names when the probe fails. ``install`` is
+    the statement the explicit ``install_extensions`` verb runs where a
+    sufficiently privileged role could install the function, and
+    ``None`` where nothing is installable. Grouping the three keeps a
+    probe from refusing with no fix named and an install from
+    succeeding with nothing proved.
+    """
+
+    probe: str
+    missing: str
+    install: str | None = None
+
+
 @dataclass(frozen=True)
 class DialectProfile:
     """One engine's declared policy.
@@ -303,20 +322,17 @@ class DialectProfile:
     chunk under two seconds); the value is the same on every profile
     because no engine measured a reason to differ.
 
-    ``vector_probe`` is the statement first touch runs to prove the
-    engine's cosine distance function is present — a precondition vfs
-    checks and never installs. The probe fails when the engine raises
-    or answers no row, and the mount refuses ``unavailable`` naming
-    ``vector_missing``, the fix; a scalar answer is read as the
-    function's version. SQLite probes sqlite-vec (loaded on every
-    connection, missing only where the interpreter cannot load
-    extensions) and PostgreSQL probes the pgvector catalog row. The
-    engines whose function is built into every supported server
-    version, and the generic floor, declare none. ``vector_install`` is
-    the statement the explicit ``install_extensions`` verb runs where a
-    sufficiently privileged role could install the function — pgvector's
-    ``CREATE EXTENSION`` — and ``None`` where nothing is installable;
-    first touch never runs it.
+    ``vector_function`` declares the engine's cosine distance function
+    as a precondition first touch proves and never installs on its own:
+    the probe statement, the fix a refusal names, and the statement the
+    explicit ``install_extensions`` verb runs where a sufficiently
+    privileged role could install it. A mount whose probe fails refuses
+    ``unavailable`` naming the fix. SQLite probes sqlite-vec (loaded on
+    every connection, missing only where the interpreter cannot load
+    extensions) and PostgreSQL probes the pgvector catalog row, with
+    pgvector's ``CREATE EXTENSION`` as the install. The engines whose
+    function is built into every supported server version, and the
+    generic floor, declare none.
     """
 
     name: str
@@ -358,13 +374,9 @@ class DialectProfile:
     range_settings: tuple[str, ...] = ()
     range_fence: str | None = None
     relabel_rows: int = RELABEL_ROWS
-    # The statement that proves the engine's cosine distance function is
-    # present, and the fix a refusal names when it is not.
-    vector_probe: str | None = None
-    vector_missing: str = ""
-    # The statement that installs it, for the explicit developer-plane
-    # verb alone; ``None`` where there is nothing a role could install.
-    vector_install: str | None = None
+    # The cosine distance function as a precondition: probe, fix, and the
+    # install statement the explicit verb alone runs; ``None`` declares none.
+    vector_function: VectorFunction | None = None
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -403,10 +415,12 @@ SQLITE: Final = DialectProfile(
     bulk_insert="driver",
     # vec_distance_cosine from sqlite-vec, loaded on every connection; brute force, exact.
     vector_distance="exact",
-    vector_probe=SQLITE_VEC_PROBE,
-    vector_missing=(
-        "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
-        "(enable_load_extension is missing); use a Python built with extension loading"
+    vector_function=VectorFunction(
+        probe=SQLITE_VEC_PROBE,
+        missing=(
+            "sqlite-vec did not load: this interpreter's sqlite3 cannot load extensions "
+            "(enable_load_extension is missing); use a Python built with extension loading"
+        ),
     ),
     range_source="json_each",
     range_join="CROSS JOIN",
@@ -426,15 +440,18 @@ POSTGRESQL: Final = DialectProfile(
     # asyncpg pipelines one execute per row; binary COPY halves Core's pages (4.3 vs 9.1 µs).
     bulk_insert="copy",
     vector_distance="ann",
-    # pgvector is a precondition, never installed by vfs: CREATE EXTENSION
-    # needs rights an application role does not have on a managed server.
-    vector_probe=PGVECTOR_PROBE,
-    vector_missing=(
-        "the pgvector extension is not installed in this database; run "
-        "CREATE EXTENSION vector once as a superuser or the database owner, "
-        "or call install_extensions() under a role that may"
+    # pgvector is a precondition first touch never installs: it is an
+    # untrusted extension, so CREATE EXTENSION takes a superuser.
+    vector_function=VectorFunction(
+        probe=PGVECTOR_PROBE,
+        missing=(
+            "the pgvector extension is not installed in this database; run "
+            "CREATE EXTENSION vector once as a superuser (pgvector is not a trusted "
+            "extension; on a managed server, the provider's privileged role, e.g. "
+            "rds_superuser or cloudsqlsuperuser), or call install_extensions() under one"
+        ),
+        install="CREATE EXTENSION IF NOT EXISTS vector",
     ),
-    vector_install="CREATE EXTENSION IF NOT EXISTS vector",
     range_source="unnest",
     range_settings=("SET LOCAL jit = off",),
     vector_dimension_cap=16_000,
@@ -885,6 +902,18 @@ _SQLSTATE_GENERAL_ERROR: Final = "HY000"
 _UNWIND_DEPTH: Final = 4
 
 
+def driver_origin(exc: BaseException) -> BaseException:
+    """The driver exception behind a SQLAlchemy wrapper, or *exc* itself when it is not wrapped.
+
+    SQLAlchemy's ``DBAPIError`` carries the driver's exception as
+    ``orig``; the codes every classifier here reads, and the message a
+    refusal shows, live on that object. Idempotent: a driver exception
+    is its own origin.
+    """
+    origin = getattr(exc, "orig", None)
+    return origin if isinstance(origin, BaseException) else exc
+
+
 def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
     """Whether *exc* is a transient outcome a whole-method restart can clear.
 
@@ -910,7 +939,7 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
 
 
 def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:
-    origin = getattr(exc, "orig", None) or exc
+    origin = driver_origin(exc)
     sqlite_code = getattr(origin, "sqlite_errorcode", None)
     if sqlite_code is not None:
         return sqlite_code in profile.retryable_sqlite_codes
@@ -928,7 +957,7 @@ def is_value_too_large(exc: BaseException) -> bool:
     ``max_allowed_packet`` as error 1153; SQLSTATE class 54 is the
     program-limit class. By code and type, never message text.
     """
-    origin = getattr(exc, "orig", None) or exc
+    origin = driver_origin(exc)
     if isinstance(origin, sqlite3.DataError):
         return True
     state = _sqlstate_of(origin)
@@ -951,11 +980,23 @@ def is_permanent_defect(exc: BaseException) -> bool:
     conditions alike, indistinguishable by code. Classification is by
     code and exception type — never message text.
     """
-    origin = getattr(exc, "orig", None) or exc
-    state = _sqlstate_of(origin)
+    state = _sqlstate_of(driver_origin(exc))
     if state is not None and state[:2] in _SQLSTATE_DEFECT_CLASSES:
         return True
     return isinstance(exc, ProgrammingError)
+
+
+def is_insufficient_privilege(exc: BaseException) -> bool:
+    """Whether *exc* reports that the connected role may not do what the statement asked.
+
+    SQLSTATE 42501 is the standard's insufficient-privilege code, the one
+    ``CREATE EXTENSION`` raises for a role that is not a superuser when
+    the extension is untrusted, as pgvector is. Checked before the defect
+    classes: 42501 sits in class 42, and a privilege refusal is the
+    caller's condition to fix, never a vfs bug. Takes the SQLAlchemy
+    wrapper or the driver exception alike.
+    """
+    return _sqlstate_of(driver_origin(exc)) == _SQLSTATE_INSUFFICIENT_PRIVILEGE
 
 
 # ---------------------------------------------------------------------------
@@ -973,19 +1014,6 @@ _MYSQL_PACKET_TOO_LARGE: Final = 1153
 
 # SQLSTATE codes are exactly five characters (ISO/IEC 9075).
 _SQLSTATE_LENGTH: Final = 5
-
-
-def is_insufficient_privilege(exc: BaseException) -> bool:
-    """Whether *exc* reports that the connected role may not do what the statement asked.
-
-    SQLSTATE 42501 is the standard's insufficient-privilege code, the one
-    ``CREATE EXTENSION`` raises for a role that is neither superuser nor
-    database owner. Checked before the defect classes: 42501 sits in
-    class 42, and a privilege refusal is the caller's condition to fix,
-    never a vfs bug.
-    """
-    origin = getattr(exc, "orig", None) or exc
-    return _sqlstate_of(origin) == _SQLSTATE_INSUFFICIENT_PRIVILEGE
 
 
 def _sqlstate_of(origin: object) -> str | None:

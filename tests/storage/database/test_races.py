@@ -500,6 +500,26 @@ class TestAddressRaceClassification:
 
 class TestPurgeWindows:
     @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_revive_mid_retention_sweep_survives(self, env_var: str) -> None:
+        # The retention arm's lost-update window: the revive lands between the
+        # collect and the entry delete; the tombstone proof misses and the redrive spares it.
+        async with server_storage(env_var, trash_days=0) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success
+            assert (await storage.delete(path=Path("/d/f.txt"))).success
+
+            handler, rival_results = _self_clearing(
+                "purge:post-collect",
+                lambda: storage.write(entries=[Entry(path=Path("/d/f.txt"), content="revived")]),
+            )
+            with seams.installed("purge:post-collect", handler):
+                victim = await storage.sweep(path=Path("/.vfs/trash"))
+            assert rival_results and rival_results[0].success is True
+            assert victim.success is True, victim.errors
+            assert victim.observations == []
+            assert (await storage.read(path=Path("/d/f.txt"))).observations[0].content == "revived"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
     async def test_a_rival_body_replace_mid_purge_leaves_no_orphan(self, env_var: str) -> None:
         async with server_storage(env_var) as storage:
             assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="x")], parents=True)).success

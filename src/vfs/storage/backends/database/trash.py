@@ -11,17 +11,22 @@ here rewrites a path, a parent pointer or a posting — that is
 ``topology.py``'s province — so permissions never notice a delete and
 the postings never move.
 
+Every verb is set-based: it judges the whole batch against one bounded
+fetch, then issues each kind of statement once per chunk of the batch,
+so a 10,000-target call costs the same handful of round trips as a
+one-target call on every engine.
+
 Delete fetches one pre-batch committed snapshot for classification,
 then walks targets in request order down the ladder the conformance
 suite pins — root refusal, covered/repeat subsumption judged against
-the snapshot, live ``not_empty`` on ``cascade=False`` — and marks each
-surviving target with a tombstone: ``deleted_at`` and ``trash_root_id``
-(the row's own id) on the row, guarded on its version, then the same
-stamp on every live descendant in one statement, each pointing at that
-root. Path, parent, name, label, owner, postings and the fs mirror row
-are untouched, and a descendant tombstoned earlier keeps its own root
-and time. A tombstoned row in the snapshot reads as absent, and its
-refusal carries the trashed hint.
+the snapshot, ``not_empty`` on ``cascade=False`` — and claims each
+surviving target: ``deleted_at`` and ``trash_root_id`` (the row's own
+id) on the row, guarded on its version, then the same stamp on every
+live descendant of each claimed directory, each pointing at that root.
+Path, parent, name, label, owner, postings and the fs mirror row are
+untouched, and a descendant tombstoned earlier keeps its own root and
+time. A tombstoned row in the snapshot reads as absent, and its refusal
+carries the trashed hint.
 
 Restore clears the tombstone. It is addressed by the row's own path:
 the row must be a tombstoned root (a row inside a tombstoned tree
@@ -45,21 +50,27 @@ classifies through the shared descent ladder.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import bindparam, delete, func, select, update
 
 from vfs.models import Observation
 from vfs.paths import ROOT, TRASH_ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
 from vfs.storage.backends.database.descent import (
+    LIKE_ESCAPE,
     TRASH_ROOT_KEY,
+    ancestor_chain,
     classify_miss,
     classify_misses,
-    descendant_filter,
+    descendant_pattern,
+    rows_by_path,
     subtree_filter,
+    targets_with_ancestors,
+    tombstone_side,
+    tombstoned_roots,
     trashed_hint,
 )
 from vfs.storage.backends.database.dialects import StaleSnapshot, chunked
@@ -67,20 +78,21 @@ from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.serialized import (
     SNAPSHOT_COLUMNS,
+    Claim,
     PendingRow,
     bump,
-    claim,
-    dest_parent_id,
+    bump_many,
+    claim_rows,
     fetch_snapshot,
     final_rows,
     observe_final,
     point_row,
     serialize,
+    snapshot_columns,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-    from typing import Any
+    from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 
     from sqlalchemy import ColumnElement, Table
     from sqlalchemy.engine import CursorResult, RowMapping
@@ -107,31 +119,37 @@ async def delete_rows(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
     *,
     targets: list[Path],
     cascade: bool,
     authority: Authority | None,
-    lock_key: int,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Adjudicate and apply a batch of deletes as a set.
 
     Misses, covered targets, and repeats are judged against the
     pre-batch committed snapshot — after an earlier target is tombstoned
-    in-transaction, a live probe would blame the wrong path — while the
-    ``cascade=False`` occupancy check reads live state, so a target
-    emptied earlier in the batch deletes cleanly. A tombstoned row in
-    the snapshot is absent, and its miss carries the trashed hint. Each
-    deleted row observes its pre-delete snapshot state plus the time of
-    the delete. *authority* is accepted for signature parity; a delete
-    changes no ownership. *gate* runs right after the serialization
-    point, so its checks judge the state the batch will act on; any
-    refusal fails the batch whole.
+    in-transaction, a live probe would blame the wrong path. The
+    ``cascade=False`` occupancy check counts each directory target's
+    live children once, in one chunked statement, and credits the
+    children this batch claims ahead of it, so a target emptied earlier
+    in the batch deletes cleanly. A tombstoned row in the snapshot is
+    absent, and its miss carries the trashed hint. Each deleted row
+    observes its pre-delete snapshot state plus the time of the delete.
+    *authority* is accepted for signature parity; a delete changes no
+    ownership. *gate* runs right after the serialization point, so its
+    checks judge the state the batch will act on; any refusal fails the
+    batch whole.
+
+    Nothing is written until every target is judged: the claims run as
+    one guarded set, the descendant stamps once per chunk of claimed
+    directories, and each distinct parent is bumped once.
     """
     del authority
     entry = tables.entry
-    await serialize(session, profile, tables.meta, lock_key)
+    await serialize(session, profile, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("delete",), errors=refused)
     snapshot = await fetch_snapshot(session, entry, profile, membership_budget, targets)
@@ -139,21 +157,24 @@ async def delete_rows(
     live = {path: row for path, row in snapshot.items() if row["deleted_at"] is None}
     kinds = {path: row["kind"] for path, row in live.items()}
     tombstones = {path: row["deleted_at"] for path, row in snapshot.items() if row["deleted_at"] is not None}
-    now = datetime.now(UTC)
     unique = set(targets)
+    occupancy = Counter[str]()
+    if not cascade:
+        directories = [row["entry_id"] for row in live.values() if row["kind"] == "directory"]
+        occupancy = await _live_child_counts(session, entry, profile, membership_budget, directories)
+    now = datetime.now(UTC)
     seen: set[Path] = set()
+    claims: list[RowMapping] = []
+    emptied = Counter[str]()
     rows: list[Observation] = []
     errors: list[ResultError] = []
-    # Bumps this batch itself issued, by entry id: a later target's claim
-    # guard expects its snapshot version plus exactly these.
-    local_bumps = Counter[str]()
     for target in targets:
         if target == ROOT:
             errors.append(classified(ErrorKind.invalid, target, detail="the root directory cannot be deleted"))
             continue
         # A target inside another target's cascade — or a repeat — is
         # subsumed: judged against committed state, order-independent.
-        covered = cascade and any(o != target and target.startswith(o + "/") for o in unique)
+        covered = cascade and any(ancestor in unique for ancestor in ancestor_chain(target))
         if covered or target in seen:
             row = live.get(str(target))
             if row is None:
@@ -166,24 +187,23 @@ async def delete_rows(
         if row is None:
             errors.append(classify_miss(target, kinds, tombstones))
             continue
-        if not cascade and await _has_live_children(session, entry, row["entry_id"]):
+        if not cascade and occupancy[row["entry_id"]] > emptied[row["entry_id"]]:
             errors.append(classified(ErrorKind.not_empty, target))
             continue
-        # The claim window: snapshot read, tombstone not yet set — a rival
-        # child committing here bumps the row and must flip the guard.
-        await seam("delete:post-collect")
-        expected = row["version"] + local_bumps[row["entry_id"]]
-        refused = await _tombstone_root(session, entry, profile, row, expected, now)
-        if refused is not None:
-            errors.append(refused)
-            continue
-        if row["kind"] == "directory":
-            await _tombstone_descendants(session, entry, profile, str(target), row["entry_id"], now)
-        await bump(session, entry, row["parent_id"])
-        local_bumps[row["parent_id"]] += 1
+        claims.append(row)
+        emptied[row["parent_id"]] += 1
         rows.append(_observe_deleted(target, row, deleted_at=now))
     if errors:
         return Result(ops=("delete",), errors=errors)
+    # The claim window: snapshot read, tombstones not yet set — a rival
+    # child committing here bumps its parent and must flip the guard.
+    await seam("delete:post-collect")
+    refused = await _tombstone_roots(session, entry, profile, parameter_budget, membership_budget, claims, now)
+    if refused is not None:
+        return Result(ops=("delete",), errors=[refused])
+    directories = [row for row in claims if row["kind"] == "directory"]
+    await _tombstone_descendants(session, entry, profile, membership_budget, directories, now)
+    await bump_many(session, entry, profile, membership_budget, [row["parent_id"] for row in claims])
     return Result(ops=("delete",), observations=rows)
 
 
@@ -192,65 +212,123 @@ async def delete_rows(
 # ---------------------------------------------------------------------------
 
 
+class _RestoreLadder:
+    """The restore ladder over one pre-batch fetch, carrying the batch's own revivals forward.
+
+    Every target is judged against the fetched rows plus what earlier
+    targets in the batch revived: a set revived earlier reads live for a
+    later target — its root is ``exists``, its directories are live
+    parents — so request order has exactly the effect a live-state
+    ladder had, from one bounded fetch. Nothing unserialized can change
+    what the ladder reads: a revive through ``write`` reaches only a
+    file, and a file is never a parent.
+    """
+
+    def __init__(self, found: Mapping[str, RowMapping]) -> None:
+        self._kinds = {path: row["kind"] for path, row in found.items() if row["deleted_at"] is None}
+        self._tombstones = {path: row["deleted_at"] for path, row in found.items() if row["deleted_at"] is not None}
+        self._sets: dict[str, list[RowMapping]] = defaultdict(list)
+        for row in found.values():
+            if row["trash_root_id"] is not None:
+                self._sets[row["trash_root_id"]].append(row)
+        self._revived: set[str] = set()
+
+    def row(self, row: RowMapping | None) -> Mapping[Any, Any] | None:
+        """*row* as the batch now sees it: live once its set was revived by an earlier target."""
+        if row is None or row["trash_root_id"] not in self._revived:
+            return row
+        return {**row, "deleted_at": None, "trash_root_id": None}
+
+    def verdict(self, target: Path, row: Mapping[Any, Any] | None) -> ResultError | None:
+        """The ladder's refusal for *target*, or ``None`` when the row at it may be revived."""
+        if row is None:
+            return classify_miss(target, self._kinds, self._tombstones)
+        if row["deleted_at"] is None:
+            return already_exists(target)
+        if row["trash_root_id"] != row["entry_id"]:
+            hint = {**trashed_hint(row["deleted_at"]), TRASH_ROOT_KEY: row["trash_root_id"]}
+            return classified(ErrorKind.not_found, target, detail="inside a deleted tree; restore its root", data=hint)
+        if any(self._kinds.get(ancestor) != "directory" for ancestor in ancestor_chain(target)):
+            return classify_miss(target, self._kinds, self._tombstones)
+        return None
+
+    def revive(self, root: Mapping[Any, Any]) -> None:
+        """Record that *root*'s set is revived: every fetched member of it now reads live."""
+        self._revived.add(root["entry_id"])
+        for member in self._sets[root["entry_id"]]:
+            self._kinds[member["path"]] = member["kind"]
+            self._tombstones.pop(member["path"], None)
+
+
 async def restore_rows(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
     *,
     targets: list[Path],
     authority: Authority | None,
-    lock_key: int,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
-    permit: Callable[[AsyncSession, Path, RowMapping | None, ResultError | None], Awaitable[ResultError | None]]
+    permit: Callable[[AsyncSession, Path, Mapping[str, Any] | None, ResultError | None], Awaitable[ResultError | None]]
     | None = None,
 ) -> Result:
-    """Adjudicate and apply a batch of restores, target by target.
+    """Adjudicate and apply a batch of restores as a set, judged in request order.
 
-    Every check reads live state inside the serialized transaction, in
-    request order — an earlier restore's effects are visible to later
-    targets. The per-target ladder: the row at the path (no row
-    classifies through the descent ladder; a live row is ``exists``; a
-    tombstone inside another root's set is ``not_found`` naming that
-    root), then the live parent gate (a tombstoned ancestor is
-    ``not_found`` at that component) — no statement runs for a target
-    until every check passes, and a refused row keeps its tombstone,
-    since a failed batch never commits. *authority* is accepted for
-    signature parity; a restore changes no ownership. *gate* runs once,
-    right after the serialization point and before any row is looked
-    up; *permit* then sees each target's row and the ladder's verdict,
-    and its refusal wins — so a caller who may not see the row is
-    answered before the ladder's wording could tell it anything.
+    One bounded fetch brings every target, its ancestors and the root,
+    tombstones included; the ladder judges each target against it and
+    against what earlier targets in the batch revived. The per-target
+    ladder: the row at the path (no row classifies through the descent
+    ladder; a live row is ``exists``; a tombstone inside another root's
+    set is ``not_found`` naming that root), then the live parent gate (a
+    tombstoned ancestor is ``not_found`` at that component) — no
+    statement runs until every target passes, and a refused row keeps
+    its tombstone, since a failed batch never commits. *authority* is
+    accepted for signature parity; a restore changes no ownership.
+    *gate* runs once, right after the serialization point and before
+    any row is looked up; *permit* then sees each target's row and the
+    ladder's verdict, and its refusal wins — so a caller who may not
+    see the row is answered before the ladder's wording could tell it
+    anything.
+
+    The claims run as one guarded set, each root's members clear once
+    per chunk of roots, and each distinct parent is bumped once.
     """
     del authority
     entry = tables.entry
-    await serialize(session, profile, tables.meta, lock_key)
+    await serialize(session, profile, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("restore",), errors=refused)
+    columns = snapshot_columns(entry, _TOMBSTONE_COLUMNS)
+    found = await rows_by_path(session, entry, targets_with_ancestors(targets), columns, profile, membership_budget)
+    ladder = _RestoreLadder(found)
     pending: list[PendingRow] = []
+    claims: list[RowMapping] = []
     errors: list[ResultError] = []
     for target in targets:
-        row = await _tombstone_row(session, entry, str(target))
-        verdict = await _restore_verdict(session, entry, profile, membership_budget, target, row)
+        fetched = found.get(str(target))
+        row = ladder.row(fetched)
+        verdict = ladder.verdict(target, row)
         if permit is not None and (refused := await permit(session, target, row, verdict)) is not None:
             errors.append(refused)
             continue
         if verdict is not None:
             errors.append(verdict)
             continue
-        assert row is not None
-        # The claim window: ladder passed, tombstone not yet cleared — a
-        # rival revive landing here bumps the row and flips the guard.
-        await seam("restore:post-resolve")
-        refused = await _revive_root(session, entry, profile, row)
-        if refused is not None:
-            errors.append(refused)
-            continue
-        await _revive_descendants(session, entry, row["entry_id"])
-        await bump(session, entry, row["parent_id"])
-        pending.append(PendingRow(target, "created", row["kind"], row["version"] + 1, row["size_bytes"]))
+        assert fetched is not None
+        ladder.revive(fetched)
+        claims.append(fetched)
+        pending.append(PendingRow(target, "created", fetched["kind"], fetched["version"] + 1, fetched["size_bytes"]))
     if errors:
         return Result(ops=("restore",), errors=errors)
+    # The claim window: ladder passed, tombstones not yet cleared — a
+    # rival revive landing here bumps the row and flips the guard.
+    await seam("restore:post-resolve")
+    refused = await _revive_roots(session, entry, profile, parameter_budget, membership_budget, claims)
+    if refused is not None:
+        return Result(ops=("restore",), errors=[refused])
+    await _revive_sets(session, entry, profile, membership_budget, [row["entry_id"] for row in claims])
+    await bump_many(session, entry, profile, membership_budget, [row["parent_id"] for row in claims])
     finals = await final_rows(session, entry, profile, membership_budget, [str(p.path) for p in pending])
     rows = [observe_final(p, finals.get(str(p.path))) for p in pending]
     return Result(ops=("restore",), observations=rows)
@@ -270,16 +348,17 @@ async def sweep_rows(
     path: Path,
     trash_days: int,
     authority: Authority | None,
-    lock_key: int,
     gate: Callable[[AsyncSession], Awaitable[list[ResultError]]] | None = None,
 ) -> Result:
     """Destroy at *path* — retention at the trash view's head, wholesale purge elsewhere.
 
     The head names the retention arm: every tombstoned root deleted
     more than *trash_days* ago purges with the rows sharing its root id,
-    in path order, each observed as deleted; nothing tombstoned leaves
-    nothing to do. Every retention-arm sweep also reclaims content rows
-    that reference no entry once they age past the orphan fence, each
+    observed as deleted in path order; nothing tombstoned leaves nothing
+    to do. The expired roots purge once per chunk of root ids and each
+    distinct parent is bumped once, so the cost is flat in the number
+    of roots. Every retention-arm sweep also reclaims content rows that
+    reference no entry once they age past the orphan fence, each
     surfacing as a warning. Any other address is the purge arm: the
     subtree purges wholesale regardless of retention age, live and
     tombstoned rows alike — the root refuses ``invalid`` and a miss
@@ -291,7 +370,7 @@ async def sweep_rows(
     if path == ROOT:
         fact = classified(ErrorKind.invalid, path, detail="the root directory cannot be swept")
         return Result(ops=("sweep",), errors=[fact])
-    await serialize(session, profile, tables.meta, lock_key)
+    await serialize(session, profile, tables.lock)
     if gate is not None and (refused := await gate(session)):
         return Result(ops=("sweep",), errors=refused)
     if path != TRASH_ROOT:
@@ -303,17 +382,20 @@ async def sweep_rows(
         await bump(session, entry, row["parent_id"])
         return Result(ops=("sweep",), observations=[_observe_deleted(path, row)])
     cutoff = datetime.now(UTC) - timedelta(days=trash_days)
-    rows: list[Observation] = []
-    columns = [entry.c[name] for name in SNAPSHOT_COLUMNS]
     expired = (
-        select(*columns)
-        .where(entry.c.deleted_at < cutoff, entry.c.trash_root_id == entry.c.entry_id)
+        select(*snapshot_columns(entry))
+        .where(entry.c.deleted_at < cutoff, tombstoned_roots(entry))
         .order_by(entry.c.path)
     )
-    for root in (await session.execute(expired)).mappings().all():
-        await _purge(session, tables, profile, membership_budget, entry.c.trash_root_id == root["entry_id"])
-        await bump(session, entry, root["parent_id"])
-        rows.append(_observe_deleted(Path._brand(root["path"]), root))
+    roots = (await session.execute(expired)).mappings().all()
+    # A root revived by a rival write mid-purge is live again: the
+    # tombstone proof misses it, and the redrive no longer finds it expired.
+    still_tombstoned = tombstone_side(entry, trashed=True)
+    for chunk in chunked([root["entry_id"] for root in roots], membership_budget):
+        scope = membership(entry.c.trash_root_id, chunk, profile)
+        await _purge(session, tables, profile, membership_budget, scope, proof=still_tombstoned)
+    await bump_many(session, entry, profile, membership_budget, [root["parent_id"] for root in roots])
+    rows = [_observe_deleted(Path._brand(root["path"]), root) for root in roots]
     notes = await _reclaim_orphan_content(session, tables, profile, membership_budget)
     return Result(ops=("sweep",), observations=rows, errors=notes)
 
@@ -323,117 +405,127 @@ async def sweep_rows(
 # ---------------------------------------------------------------------------
 
 
-async def _has_live_children(session: AsyncSession, entry: Table, entry_id: str) -> bool:
-    # A one-row probe, not SELECT EXISTS(...) — T-SQL has no bare form.
-    stmt = select(entry.c.id).where(entry.c.parent_id == entry_id, entry.c.deleted_at.is_(None)).limit(1)
-    return (await session.execute(stmt)).first() is not None
+async def _live_child_counts(
+    session: AsyncSession, entry: Table, profile: DialectProfile, membership_budget: int, parent_ids: Iterable[str]
+) -> Counter[str]:
+    """Live children per parent id, one grouped count per chunk of parents.
+
+    The ``cascade=False`` occupancy check: a count rather than an
+    existence probe, so the children this batch claims ahead of a
+    directory can be credited against it in request order.
+    """
+    counts = Counter[str]()
+    for chunk in chunked(sorted(set(parent_ids)), membership_budget):
+        stmt = (
+            select(entry.c.parent_id, func.count())
+            .where(membership(entry.c.parent_id, chunk, profile), tombstone_side(entry, trashed=False))
+            .group_by(entry.c.parent_id)
+        )
+        for parent_id, count in await session.execute(stmt):
+            counts[parent_id] = count
+    return counts
 
 
-async def _tombstone_root(
+async def _tombstone_roots(
     session: AsyncSession,
     entry: Table,
     profile: DialectProfile,
-    row: RowMapping,
-    expected_version: int,
+    parameter_budget: int,
+    membership_budget: int,
+    rows: Sequence[RowMapping],
     now: datetime,
 ) -> ResultError | None:
-    """Mark the named row deleted — its own root — guarded on the version the batch expects.
+    """Mark every claimed row deleted — each its own root — guarded on the version the snapshot judged.
 
     Writes are not serialized with this verb, and every child create or
-    update bumps this row, so a rival committing between the snapshot
-    and this claim flips the guard. *expected_version* is the snapshot
-    version plus the bumps this batch itself already issued against the
-    row. The miss raises :class:`StaleSnapshot`; the verb redrives whole
-    from a fresh snapshot, which is correctness by construction.
+    update bumps its parent, so a rival committing between the snapshot
+    and this claim flips the guard. The miss raises
+    :class:`StaleSnapshot`; the verb redrives whole from a fresh
+    snapshot, which is correctness by construction.
 
     Stamping ``deleted_at`` also demotes ``encoded``: the next index
-    build excludes this row, so leaving the flag up would make the row
+    build excludes the row, so leaving the flag up would make the row
     invisible to both grep tiers when it comes back. Demoted, it is
     served scan-side immediately — the trash view included — and a
     restore or revive finds ``chunked & ~encoded``, already pending
     re-coverage.
     """
-    stmt = (
-        update(entry)
-        .where(entry.c.entry_id == row["entry_id"], entry.c.version == expected_version, entry.c.deleted_at.is_(None))
-        .values(deleted_at=now, trash_root_id=row["entry_id"], encoded=False, version=entry.c.version + 1)
+    claims = [Claim(row["entry_id"], row["version"]) for row in rows]
+    assign = {"deleted_at": now, "trash_root_id": entry.c.entry_id, "encoded": False, "version": entry.c.version + 1}
+    miss = "a rival write moved an entry past the delete's snapshot"
+    side = tombstone_side(entry, trashed=False)
+    return await claim_rows(
+        session, entry, profile, parameter_budget, membership_budget, claims, side=side, assign=assign, miss=miss
     )
-    miss = "a rival write moved the entry past the delete's snapshot"
-    return await claim(session, profile, stmt, entry.c.entry_id, miss=miss)
 
 
 async def _tombstone_descendants(
-    session: AsyncSession, entry: Table, profile: DialectProfile, root_path: str, root_id: str, now: datetime
+    session: AsyncSession,
+    entry: Table,
+    profile: DialectProfile,
+    membership_budget: int,
+    roots: Sequence[RowMapping],
+    now: datetime,
 ) -> None:
-    """Mark every live descendant deleted under *root_id* — one statement, whatever the subtree's size.
+    """Mark every live descendant of each claimed directory deleted under it — one statement per chunk of roots.
 
-    Runs after the root claim. A descendant tombstoned earlier keeps
+    Runs after the root claims. A descendant tombstoned earlier keeps
     its own root and time, so restore and sweep act on each delete's
     set alone. The statement sees the rows committed when it runs, so
     a child a rival landed after the snapshot rides with its parent; a
     rival landing afterwards finds its parent tombstoned at its own
     bump guard and redrives into a refusal.
     """
+    if not roots:
+        return
     stmt = (
         update(entry)
-        .where(descendant_filter(entry, root_path, profile), entry.c.deleted_at.is_(None))
-        .values(deleted_at=now, trash_root_id=root_id, encoded=False)
+        .where(entry.c.path.like(bindparam("b_pattern"), escape=LIKE_ESCAPE), tombstone_side(entry, trashed=False))
+        .values(deleted_at=now, trash_root_id=bindparam("b_root"), encoded=False)
     )
-    await session.execute(stmt)
+    params = [{"b_pattern": descendant_pattern(row["path"], profile), "b_root": row["entry_id"]} for row in roots]
+    for chunk in chunked(params, membership_budget):
+        await session.execute(stmt, chunk)
 
 
-async def _tombstone_row(session: AsyncSession, entry: Table, path: str) -> RowMapping | None:
-    """The row at *path* on either side of the tombstone, with its root and what a permit judges it by."""
-    columns = [entry.c[name] for name in _TOMBSTONE_COLUMNS]
-    return (await session.execute(select(*columns).where(entry.c.path == path))).mappings().first()
-
-
-async def _restore_verdict(
+async def _revive_roots(
     session: AsyncSession,
     entry: Table,
     profile: DialectProfile,
+    parameter_budget: int,
     membership_budget: int,
-    target: Path,
-    row: RowMapping | None,
+    rows: Sequence[RowMapping],
 ) -> ResultError | None:
-    """The restore ladder's refusal for *target*, or ``None`` when the row at it may be revived."""
-    if row is None:
-        return (await classify_misses(session, entry, [target], profile, membership_budget))[0]
-    if row["deleted_at"] is None:
-        return already_exists(target)
-    if row["trash_root_id"] != row["entry_id"]:
-        hint = {**trashed_hint(row["deleted_at"]), TRASH_ROOT_KEY: row["trash_root_id"]}
-        return classified(ErrorKind.not_found, target, detail="inside a deleted tree; restore its root", data=hint)
-    parent = await dest_parent_id(session, entry, target, profile, membership_budget)
-    return parent if isinstance(parent, ResultError) else None
-
-
-async def _revive_root(
-    session: AsyncSession, entry: Table, profile: DialectProfile, row: RowMapping
-) -> ResultError | None:
-    """Clear the root's tombstone, guarded on the version the ladder judged.
+    """Clear every claimed root's tombstone, guarded on the version the ladder judged.
 
     A rival revive through ``write`` bumps the row inside the window and
     flips the guard; the miss raises :class:`StaleSnapshot`, and the
     fresh ladder answers ``exists`` for the row now live.
     """
-    stmt = (
-        update(entry)
-        .where(entry.c.entry_id == row["entry_id"], entry.c.version == row["version"], entry.c.deleted_at.is_not(None))
-        .values(deleted_at=None, trash_root_id=None, version=entry.c.version + 1)
+    claims = [Claim(row["entry_id"], row["version"]) for row in rows]
+    assign = {"deleted_at": None, "trash_root_id": None, "version": entry.c.version + 1}
+    miss = "a rival revived an entry past the restore's snapshot"
+    side = tombstone_side(entry, trashed=True)
+    return await claim_rows(
+        session, entry, profile, parameter_budget, membership_budget, claims, side=side, assign=assign, miss=miss
     )
-    miss = "a rival revived the entry past the restore's snapshot"
-    return await claim(session, profile, stmt, entry.c.entry_id, miss=miss)
 
 
-async def _revive_descendants(session: AsyncSession, entry: Table, root_id: str) -> None:
-    """Clear the tombstone on every row of the root's set but the root — one statement, no version bump."""
-    stmt = (
-        update(entry)
-        .where(entry.c.trash_root_id == root_id, entry.c.entry_id != root_id)
-        .values(deleted_at=None, trash_root_id=None)
-    )
-    await session.execute(stmt)
+async def _revive_sets(
+    session: AsyncSession, entry: Table, profile: DialectProfile, membership_budget: int, root_ids: Sequence[str]
+) -> None:
+    """Clear the tombstone on every member of the claimed roots' sets — one statement per chunk, no version bump.
+
+    Runs after the root claims, which already cleared each root's own
+    ``trash_root_id``, so only the members still match.
+    """
+    for chunk in chunked(root_ids, membership_budget):
+        stmt = (
+            update(entry)
+            .where(membership(entry.c.trash_root_id, chunk, profile))
+            .values(deleted_at=None, trash_root_id=None)
+        )
+        await session.execute(stmt)
 
 
 async def _purge(
@@ -442,6 +534,8 @@ async def _purge(
     profile: DialectProfile,
     membership_budget: int,
     scope: ColumnElement[bool],
+    *,
+    proof: ColumnElement[bool] | None = None,
 ) -> None:
     """Hard-delete the rows *scope* names across every family table, chunked.
 
@@ -449,6 +543,15 @@ async def _purge(
     are not serialized with this verb, so a rival can commit a new child
     between the collecting select and the deletes — purging from that
     stale id list alone would leave the child an orphan row.
+
+    Every entry delete re-proves *proof* beside the collected ids — a
+    bind-free predicate, never the id list again — so a row that left
+    the scope in the window is missed, not destroyed: the retention arm
+    proves each row is still tombstoned, and a root a rival write
+    revived between the collect and the delete survives. A shortfall
+    raises :class:`StaleSnapshot` and the verb redrives. The wholesale
+    arm passes no proof: nothing unserialized can move a row out of a
+    subtree.
 
     Entry rows go first in every chunk, and the side tables follow the
     same id set only once the entry delete is verified: in the old
@@ -465,10 +568,10 @@ async def _purge(
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
             await seam("purge:pre-entry-delete")
-            result = cast(
-                "CursorResult[Any]",
-                await session.execute(delete(entry).where(membership(entry.c.entry_id, chunk, profile))),
-            )
+            stmt = delete(entry).where(membership(entry.c.entry_id, chunk, profile))
+            if proof is not None:
+                stmt = stmt.where(proof)
+            result = cast("CursorResult[Any]", await session.execute(stmt))
             # Collected entries cannot vanish under the serialization
             # point; a shortfall (where rowcount is sane) is a stale list.
             if 0 <= result.rowcount != len(chunk):
@@ -498,6 +601,15 @@ async def _reclaim_orphan_content(
     are deleted and each reclaim surfaces as a warning; younger rows
     survive until a later sweep, keeping any in-flight rival's freshly
     written body out of reach.
+
+    The orphan test is an anti-join over the whole body table — a body
+    row is an orphan by the absence of its entry, which no index on the
+    body row can witness — so each retention sweep scans ``vfs_content``
+    and ``vfs_blobs`` end to end, inside the serialized transaction. On
+    a corpus of many millions of bodies that scan is the sweep's
+    dominant cost; the direction is to run the reclaim rarely, as its
+    own maintenance verb, or to reclaim at purge time and retire the
+    scan.
     """
     entry = tables.entry
     fence = datetime.now(UTC) - _ORPHAN_AGE_FENCE
@@ -520,7 +632,7 @@ async def _reclaim_orphan_content(
     return notes
 
 
-def _observe_deleted(target: Path, row: RowMapping, *, deleted_at: datetime | None = None) -> Observation:
+def _observe_deleted(target: Path, row: Mapping[Any, Any], *, deleted_at: datetime | None = None) -> Observation:
     return Observation(
         path=target,
         kind=row["kind"],

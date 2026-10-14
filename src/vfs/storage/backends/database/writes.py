@@ -51,7 +51,13 @@ from vfs.authority import owner_for
 from vfs.models import CONTENT_KINDS, Entry, Observation
 from vfs.models.rows import ULIDKey
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
-from vfs.storage.backends.database.descent import miss_errors, rows_by_path, targets_with_ancestors, tombstone_miss
+from vfs.storage.backends.database.descent import (
+    miss_errors,
+    rows_by_path,
+    targets_with_ancestors,
+    tombstone_miss,
+    tombstone_side,
+)
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
@@ -296,6 +302,7 @@ async def _fetch_committed(
         entry.c.mime_type,
         entry.c.owner_id,
         entry.c.source,
+        entry.c.size_bytes,
         entry.c.deleted_at,
     ]
     source: FromClause | None = None
@@ -665,15 +672,16 @@ async def _update_materials(
     RETURNING or a read-back comparing the stored path; a miss raises
     :class:`StaleSnapshot` and the whole method redrives.
 
-    Every arm also proves the row's side of the tombstone. A delete
-    rewrites no path and bumps no descendant, so a parent's delete
-    inside the window would pass a version-and-path guard alone and the
-    clobber would clear the child's tombstone — a live row under a
-    deleted directory. An ordinary update and an absorb require
-    ``deleted_at IS NULL``; a revive requires the tombstone it was
-    staged against, so a rival restore mid-window misses too. The
-    guarded rows run in two groups, one per side, and the term binds
-    nothing.
+    Every live-row arm also proves the row is live. A delete rewrites no
+    path and bumps no descendant, so a parent's delete inside the window
+    would pass a version-and-path guard alone and the clobber would
+    clear the child's tombstone — a live row under a deleted directory.
+    An ordinary update and an absorb require ``deleted_at IS NULL``. A
+    revive carries no tombstone term: only a set's root can be staged
+    for revive, and every clearing of a root's tombstone — a restore, a
+    rival's revive — bumps its version, so the version term already
+    refuses a stale revive. The guarded rows run in two groups, one per
+    side, and the term binds nothing.
     """
     if not updates:
         return []
@@ -738,7 +746,7 @@ async def _update_materials(
                 .where(
                     entry.c.entry_id == bindparam("b_id"),
                     entry.c.path == bindparam("b_path"),
-                    _tombstone_side(entry, revive=False),
+                    *_tombstone_terms(entry, revive=False),
                 )
                 .values(**material, version=entry.c.version + 1)
             )
@@ -776,9 +784,9 @@ async def _values_update(
 ) -> dict[str, int]:
     """Set-based material update over a VALUES join, RETURNING what it matched.
 
-    One tuple per staged row joins the entry table on ``entry_id``, the
-    tombstone side (*revive*) and ``path`` at snapshot (and, guarded, on
-    ``version = base``); the returned ``entry_id`` set is exactly the
+    One tuple per staged row joins the entry table on ``entry_id`` and
+    ``path`` at snapshot, outside a *revive* on a clear tombstone (and,
+    guarded, on ``version = base``); the returned ``entry_id`` set is exactly the
     rows this statement touched. Chunked by the tighter of the
     membership budget and the per-tuple bind cost, so a 10,000-entry
     batch stays batch-native and bounded on every engine.
@@ -808,9 +816,9 @@ def _values_update_stmt(
 ) -> Update:
     """One material-update VALUES join over staged *rows*.
 
-    Both arms prove the address and the tombstone side; only the guarded
-    arm pins the version — the unguarded arm increments SQL-side, a
-    fixed bind the budget helper measures off this construction.
+    Both arms prove the address, and outside a revive a clear tombstone;
+    only the guarded arm pins the version — the unguarded arm increments
+    SQL-side, a fixed bind the budget helper measures off this construction.
     """
     incoming = values(
         column("v_id", entry.c.entry_id.type),
@@ -824,7 +832,7 @@ def _values_update_stmt(
     where = [
         entry.c.entry_id == incoming.c.v_id,
         entry.c.path == incoming.c.v_path,
-        _tombstone_side(entry, revive=revive),
+        *_tombstone_terms(entry, revive=revive),
     ]
     if guard:
         set_["version"] = incoming.c.v_ver
@@ -941,15 +949,15 @@ def _guarded_stmt(entry: Table, *, revive: bool) -> Update:
             entry.c.entry_id == bindparam("b_id"),
             entry.c.version == bindparam("b_base"),
             entry.c.path == bindparam("b_path"),
-            _tombstone_side(entry, revive=revive),
+            *_tombstone_terms(entry, revive=revive),
         )
         .values(**material, version=bindparam("b_ver"))
     )
 
 
-def _tombstone_side(entry: Table, *, revive: bool) -> ColumnElement[bool]:
-    """The side of the tombstone an update expects its row on: live, or tombstoned for a revive. No bind."""
-    return entry.c.deleted_at.is_not(None) if revive else entry.c.deleted_at.is_(None)
+def _tombstone_terms(entry: Table, *, revive: bool) -> list[ColumnElement[bool]]:
+    """The live side's term; a revive adds none, its version guard already refusing a cleared tombstone. No bind."""
+    return [] if revive else [tombstone_side(entry, trashed=False)]
 
 
 def _guarded_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
