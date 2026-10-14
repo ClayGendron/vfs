@@ -2472,7 +2472,8 @@ class VirtualFileSystem:
             if src_terminal.binding.path != dest_terminal.binding.path:
                 return self._error(ErrorKind.cross_mount, op=op, path=src_full, target=dest_full)
             write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
-            err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels)
+            read_rels = () if op == "move" else (src_terminal.rel,)
+            err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels, read_rels=read_rels)
             if err is not None:
                 return err
 
@@ -2799,6 +2800,7 @@ class VirtualFileSystem:
         op: Op,
         *,
         write_rels: Sequence[Path] = (),
+        read_rels: Sequence[Path] = (),
     ) -> Result | None:
         """Capability → grammar → permission, in the pinned order.
 
@@ -2815,6 +2817,10 @@ class VirtualFileSystem:
         grammar in the mount's own coordinates — the global gate cannot
         see a trash view beneath a mount — and then the permission
         layers; each refusal reports its own router-side path.
+        *read_rels* are the paths a mutation reads without writing (a
+        copy's source): they pass the grammar alone, so a transfer out of
+        the trash view is ``invalid`` at the path the caller sent, never
+        the storage's ``not_found`` at a view head it holds no row for.
         """
         if op not in binding.meta.caps:
             return self._error(
@@ -2823,12 +2829,15 @@ class VirtualFileSystem:
                 path=binding.path,
                 detail=f"operation {op!r} is not declared by the storage mounted here",
             )
-        for rel in write_rels:
+        gated = [(rel, False) for rel in read_rels] + [(rel, True) for rel in write_rels]
+        for rel, written in gated:
             full = rel.with_mount(binding.path)
             if op in MUTATING_OPS:
                 ok, reason = check_reserved_path(rel, head_ok=op == "sweep")
                 if not ok:
                     return self._error(ErrorKind.invalid, op=op, path=full, detail=reason)
+            if not written:
+                continue
             err = check_writable_composed(self._permission_layers(full), op)
             if err is not None:
                 return err

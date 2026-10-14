@@ -421,6 +421,7 @@ async def test_every_mutation_at_a_mounted_trash_view_address_is_invalid() -> No
         "move into": root.move(src="/m/live.md", dest=f"{view}/live.md"),
         "copy into": root.copy(src="/m/live.md", dest=f"{view}/c.md"),
         "move out": root.move(src=f"{view}/d/f.md", dest="/m/h.md"),
+        "copy out": root.copy(src=f"{view}/d/f.md", dest="/m/h.md"),
         "write at the head": root.write(path=view, content="x"),
         "mkdir at the head": root.mkdir(path=view),
         "delete the head": root.delete(path=view),
