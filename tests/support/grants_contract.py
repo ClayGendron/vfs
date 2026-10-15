@@ -43,7 +43,7 @@ from vfs.storage import (
 from vfs.storage.backends.database import rights
 from vfs.storage.backends.database.labels import Relabeller, mark_relabel
 from vfs.storage.backends.database.revision import bump_revision
-from vfs.storage.grants import MAX_GROUP_DEPTH, GrantLevel, GrantRow, Rights
+from vfs.storage.grants import LEVEL_RANK, MAX_GROUP_DEPTH, GrantLevel, GrantRow, Rights
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ async def _world(storage: GrantsBackend) -> None:
     steps = [
         await storage.write(entries=entries, parents=True, authority=SYSTEM),
         await storage.write(entries=[Entry(path=Path("/hr/case.md"), content="case")], authority=ANN),
-        await storage.posture(path=Path("/"), posture="private", authority=SYSTEM),
+        await storage.posture(path=Path("/"), posture="none", authority=SYSTEM),
         await storage.add_member(group="group:eng", member="ann", authority=SYSTEM),
         await storage.grant(path=Path("/eng"), principal="group:eng", level="read_write", authority=SYSTEM),
         await storage.grant(path=Path("/pub"), principal="bob", level="read", authority=SYSTEM),
@@ -228,8 +228,8 @@ class GrantsContract:
         await _world(storage)
         traps = [Entry(path=Path(p), content="t") for p in ("/eng-x/a.md", "/eng0.md")]
         assert (await storage.write(entries=traps, parents=True)).success is True
-        assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/eng"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/eng"), posture="none", authority=SYSTEM)).success is True
         dave = _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert {"/eng-x/a.md", "/eng0.md", "/pub/readme.md", "/hr/other.md"} <= dave
         assert not dave & {"/eng", "/eng/spec.md", "/eng/secret/plan.md"}
@@ -321,7 +321,7 @@ class GrantsContract:
     @needs("grant", "read", "write")
     async def test_a_shared_posture_lets_anyone_read_and_nobody_unnamed_write(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/hr/other.md"), authority=ANON)).success is True
         assert (await storage.read(path=Path("/hr/other.md"), authority=DAVE)).success is True
         write = await storage.write(entries=[Entry(path=Path("/hr/new.md"), content="x")], authority=ANON)
@@ -332,26 +332,28 @@ class GrantsContract:
     @needs("grant", "read")
     async def test_a_deeper_posture_decides_beneath_it(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
         assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == ErrorKind.not_found
 
     @needs("grant", "read")
     async def test_a_posture_change_is_seen_by_a_caller_already_resolved(self, storage: GrantsBackend) -> None:
         # dave's and anonymous's rights are cached by their first read; each
-        # posture write must retire those caches — the root posture a cached
-        # resolution carries is what names anonymous's refusal.
+        # posture write must retire those caches. Anonymous is judged at the
+        # path it addresses, by the posture rows there, so a deeper posture
+        # that opens /eng serves it there as it serves dave.
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=ANON)).success is True
-        assert (await storage.posture(path=Path("/"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
         assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == ErrorKind.unauthenticated
-        assert (await storage.posture(path=Path("/eng"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/eng"), posture="read", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
-        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=ANON)) == ErrorKind.unauthenticated
+        assert (await storage.read(path=Path("/eng/spec.md"), authority=ANON)).success is True
+        assert _kind(await storage.read(path=Path("/pub/readme.md"), authority=ANON)) == ErrorKind.unauthenticated
 
     # ------------------------------------------------------------------
     # The write gate
@@ -451,8 +453,8 @@ class GrantsContract:
             entries=[Entry(path=Path("/open/closed/k.md"), content="x")], parents=True, authority=SYSTEM
         )
         assert planted.success is True
-        assert (await storage.posture(path=Path("/open"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/open/closed"), posture="private", authority=SYSTEM)).success
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open/closed"), posture="none", authority=SYSTEM)).success
         result = await storage.delete(path=Path("/open"), authority=DAVE)
         assert result.success is False
         assert (await storage.sweep(path=Path("/open"), authority=DAVE)).success is False
@@ -467,8 +469,8 @@ class GrantsContract:
             entries=[Entry(path=Path("/open/k.md"), content="x")], parents=True, authority=SYSTEM
         )
         assert planted.success is True
-        assert (await storage.posture(path=Path("/open"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/open/empty"), posture="private", authority=SYSTEM)).success
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open/empty"), posture="none", authority=SYSTEM)).success
         assert (await storage.delete(path=Path("/open"), authority=DAVE)).success is True
         assert _kind(await storage.stat(path=Path("/open/k.md"), authority=SYSTEM)) == ErrorKind.not_found
 
@@ -478,14 +480,14 @@ class GrantsContract:
         # are paged, and the unwritable one sorts after a full page that
         # dave owns under a private /open/a.
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
         assert (await storage.write(entries=[Entry(path=Path("/open/k.md"), content="x")], parents=True)).success
-        assert (await storage.posture(path=Path("/open"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
         bulk = [Entry(path=Path(f"/open/a/{n:04}.md"), content="x") for n in range(1_001)]
         assert (await storage.write(entries=bulk, parents=True, authority=DAVE)).success is True
-        assert (await storage.posture(path=Path("/open/a"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open/a"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.write(entries=[Entry(path=Path("/open/z/k.md"), content="x")], parents=True)).success
-        assert (await storage.posture(path=Path("/open/z"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open/z"), posture="none", authority=SYSTEM)).success is True
         assert _kind(await storage.delete(path=Path("/open"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.stat(path=Path("/open/a/0000.md"), authority=SYSTEM)).success is True
         assert (await storage.delete(path=Path("/open/a"), authority=DAVE)).success is True
@@ -544,7 +546,7 @@ class GrantsContract:
     @needs("grant", "delete", "restore")
     async def test_a_visible_trashed_row_the_caller_cannot_write_does_not_restore(self, storage: GrantsBackend) -> None:
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
         assert (await storage.delete(path=Path("/hr/other.md"), authority=SYSTEM)).success is True
         result = await storage.restore(path=Path("/hr/other.md"), authority=DAVE)
         assert _kind(result) == ErrorKind.permission_denied
@@ -565,26 +567,28 @@ class GrantsContract:
         # nobody who could not read it live can read, list, grep, sweep or
         # restore it — not through the trash view, not with a grant on /.vfs.
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
         assert (await storage.mkdir(path=Path("/ann"), authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/ann"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=SYSTEM)).success
         diary = Entry(path=Path("/ann/diary.md"), content="dear diary, the lantern")
         assert (await storage.write(entries=[diary], authority=ANN)).success is True
         deleted = _deleted(await storage.delete(path=Path("/ann/diary.md"), authority=ANN))
         viewed = _in_view(deleted)
-        for who in (DAVE, ANON):
-            assert _kind(await storage.read(path=viewed, authority=who)) == ErrorKind.not_found
-            assert _kind(await storage.stat(path=viewed, authority=who)) == ErrorKind.not_found
+        # A named caller sees an absent row; anonymous, judged at the deleted
+        # path under its none posture, is refused at the edge — in the view too.
+        for who, absent in ((DAVE, ErrorKind.not_found), (ANON, ErrorKind.unauthenticated)):
+            assert _kind(await storage.read(path=viewed, authority=who)) == absent
+            assert _kind(await storage.stat(path=viewed, authority=who)) == absent
             assert str(deleted) not in _paths(await storage.tree(path=Path("/.vfs/trash"), authority=who))
             assert str(deleted) not in _paths(await storage.ls(path=Path("/.vfs/trash"), authority=who))
             assert str(deleted) not in _paths(await storage.glob(patterns=("/.vfs/trash/**",), authority=who))
             found = await storage.grep(pattern="lantern", globs=("/.vfs/trash/**",), allow_scan=True, authority=who)
             assert found.success is True and _paths(found) == set()
-            assert _kind(await storage.sweep(path=deleted, authority=who)) == ErrorKind.not_found
-            assert _kind(await storage.restore(path=deleted, authority=who)) == ErrorKind.not_found
+            assert _kind(await storage.sweep(path=deleted, authority=who)) == absent
+            assert _kind(await storage.restore(path=deleted, authority=who)) == absent
             refused = await storage.read(path=deleted, authority=who)
-            assert _kind(refused) == ErrorKind.not_found and "vfs.trashed" not in (refused.errors[0].data or {})
+            assert _kind(refused) == absent and "vfs.trashed" not in (refused.errors[0].data or {})
         assert _kind(await storage.sweep(path=Path("/.vfs/trash"), authority=DAVE)) == ErrorKind.permission_denied
         assert (await storage.grant(path=Path("/.vfs"), principal="dave", level="read_write", authority=SYSTEM)).success
         assert _kind(await storage.read(path=viewed, authority=DAVE)) == ErrorKind.not_found
@@ -596,9 +600,9 @@ class GrantsContract:
         hinted = await storage.read(path=deleted, authority=ANN)
         assert _kind(hinted) == ErrorKind.not_found and (hinted.errors[0].data or {}).get("vfs.trashed") is True
         # A posture change after the delete reaches the row where it sits.
-        assert (await storage.posture(path=Path("/ann"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/ann"), posture="read_write", authority=SYSTEM)).success is True
         assert (await storage.read(path=viewed, authority=DAVE)).success is True
-        assert (await storage.posture(path=Path("/ann"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/ann"), posture="none", authority=SYSTEM)).success is True
         assert _kind(await storage.read(path=viewed, authority=DAVE)) == ErrorKind.not_found
         assert (await storage.restore(path=Path("/ann/diary.md"), authority=ANN)).success is True
         assert (await storage.read(path=Path("/ann/diary.md"), authority=ANN)).one().content == diary.content
@@ -640,8 +644,8 @@ class GrantsContract:
                 assert (read.errors[0].message, read.errors[0].path) == ("Not found", refused.errors[0].path), target
         # Under an open root the hidden row is named exactly as an absent
         # sibling, and a visible folder's miss names the path sent.
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="none", authority=SYSTEM)).success is True
         hidden = await storage.restore(path=deleted, authority=ZED)
         absent = await storage.restore(path=Path(f"{deleted}-nope"), authority=ZED)
         assert (hidden.errors[0].message, hidden.errors[0].path) == ("Not found", "/hr")
@@ -658,8 +662,8 @@ class GrantsContract:
         # private to her. Once /hr is deleted too, the ladder's "restore
         # the parent first" would name it; she is told not found at it.
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="none", authority=SYSTEM)).success is True
         deleted = _deleted(await storage.delete(path=Path("/hr/case.md"), authority=SYSTEM))
         assert (await storage.stat(path=_in_view(deleted), authority=ANN)).success is True
         parent = _deleted(await storage.delete(path=Path("/hr"), authority=SYSTEM))
@@ -715,7 +719,7 @@ class GrantsContract:
         # /pub is private to dave, but /pub/deep is open to everyone: /pub
         # shows him its name only, on the road to the rows beneath it.
         await _world(storage)
-        assert (await storage.posture(path=Path("/pub/deep"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/pub/deep"), posture="read_write", authority=SYSTEM)).success is True
         assert _paths(await storage.ls(path=Path("/"), authority=DAVE)) == {"/pub"}
         road = (await storage.stat(path=Path("/pub"), authority=DAVE)).one()
         assert road.populated == frozenset({"path", "kind"})
@@ -736,16 +740,16 @@ class GrantsContract:
         if host is None:
             pytest.skip("backend keeps no in-flight marker")
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
         assert (await storage.read(path=Path("/eng/spec.md"), authority=DAVE)).success is True
         await _hold_posture(host, "/eng", "none")
         # The label under /eng is still read_write; only the in-flight compile hides it.
-        assert (await _labels(storage))["/eng/spec.md"] == 2
+        assert (await _labels(storage))["/eng/spec.md"] == LEVEL_RANK["read_write"]
         assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
         assert (await storage.read(path=Path("/pub/readme.md"), authority=DAVE)).success is True
         await _drain_relabels(host)
         labels = await _labels(storage)
-        assert labels["/eng/spec.md"] == 0 and labels["/pub/readme.md"] == 2
+        assert labels["/eng/spec.md"] == LEVEL_RANK["none"] and labels["/pub/readme.md"] == LEVEL_RANK["read_write"]
         assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.not_found
         async with host.session_factory() as session:
             pending = (await session.execute(select(host.tables.relabels.c.path_prefix))).all()
@@ -755,12 +759,12 @@ class GrantsContract:
     async def test_an_open_mount_serves_a_caller_with_no_grants_through_the_label(self, storage: GrantsBackend) -> None:
         # No row names dave; what he holds is what every row's everyone level says.
         await _world(storage)
-        assert (await storage.posture(path=Path("/"), posture="open", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
         assert await storage.write(entries=[Entry(path=Path("/d/n.md"), content="x")], parents=True, authority=DAVE)
         assert (await storage.read(path=Path("/d/n.md"), authority=DAVE)).success is True
         walked = _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert {"/eng/spec.md", "/hr/case.md", "/d/n.md"} <= walked
-        assert (await storage.posture(path=Path("/hr"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/hr"), posture="none", authority=SYSTEM)).success is True
         assert _kind(await storage.read(path=Path("/hr/other.md"), authority=DAVE)) == ErrorKind.not_found
         assert "/hr" not in _paths(await storage.tree(path=Path("/"), authority=DAVE))
         assert (await storage.read(path=Path("/hr/case.md"), authority=ANN)).success is True
@@ -771,9 +775,9 @@ class GrantsContract:
         # deepest covering posture's level; a trashed row keeps the one it had.
         await _world(storage)
         steps = [
-            await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM),
-            await storage.posture(path=Path("/eng"), posture="private", authority=SYSTEM),
-            await storage.posture(path=Path("/pub"), posture="open", authority=SYSTEM),
+            await storage.posture(path=Path("/"), posture="read", authority=SYSTEM),
+            await storage.posture(path=Path("/eng"), posture="none", authority=SYSTEM),
+            await storage.posture(path=Path("/pub"), posture="read_write", authority=SYSTEM),
             await storage.write(entries=[Entry(path=Path("/pub/n.md"), content="x")], authority=SYSTEM),
             await storage.mkdir(path=Path("/eng/x/y"), parents=True, authority=SYSTEM),
             await storage.copy(operations=[ResolvedPair(Path("/pub/deep"), Path("/eng/deep2"))], authority=SYSTEM),
@@ -784,14 +788,15 @@ class GrantsContract:
             assert step.success is True, step.errors
         assert (steps[2].model_extra or {})["relabel"]["rows"] >= 3
         labels = await _labels(storage)
-        assert labels["/"] == 1 and labels["/hr/readme.md"] == 1 and labels["/hr/other.md"] == 1
-        assert labels["/pub"] == 2 and labels["/pub/n.md"] == 2
-        assert labels["/eng"] == 0 and labels["/eng/x/y"] == 0 and labels["/eng/deep2/x.md"] == 0
-        assert labels["/pub/deep/x.md"] == 2  # deleted where it sits, with the label it had
+        none, read, read_write = LEVEL_RANK["none"], LEVEL_RANK["read"], LEVEL_RANK["read_write"]
+        assert labels["/"] == read and labels["/hr/readme.md"] == read and labels["/hr/other.md"] == read
+        assert labels["/pub"] == read_write and labels["/pub/n.md"] == read_write
+        assert labels["/eng"] == none and labels["/eng/x/y"] == none and labels["/eng/deep2/x.md"] == none
+        assert labels["/pub/deep/x.md"] == read_write  # deleted where it sits, with the label it had
         assert (await storage.restore(path=Path("/pub/deep"), authority=SYSTEM)).success is True
-        assert (await storage.posture(path=Path("/pub"), posture="private", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/pub"), posture="none", authority=SYSTEM)).success is True
         labels = await _labels(storage)
-        assert labels["/pub/deep/x.md"] == 0 and labels["/pub/n.md"] == 0 and labels["/hr/readme.md"] == 1
+        assert labels["/pub/deep/x.md"] == none and labels["/pub/n.md"] == none and labels["/hr/readme.md"] == read
 
     # ------------------------------------------------------------------
     # The grant verbs
@@ -839,7 +844,7 @@ class GrantsContract:
         await _world(storage)
         assert _kind(await storage.revoke(path=Path("/eng"), principal="ann", authority=BOB)) == ErrorKind.not_found
         assert _kind(await storage.grants(path=Path("/eng"), authority=BOB)) == ErrorKind.not_found
-        denied = await storage.posture(path=Path("/pub"), posture="open", authority=BOB)
+        denied = await storage.posture(path=Path("/pub"), posture="read_write", authority=BOB)
         assert _kind(denied) == ErrorKind.permission_denied
         # ``none`` narrows only a posture row; storage refuses it on a principal's.
         level = await storage.grant(path=Path("/eng"), principal="bob", level="none", authority=SYSTEM)
@@ -898,7 +903,7 @@ class GrantsContract:
         assert await recompiled() == [("ann",)]
         assert (await storage.add_member(group="group:eng", member="bob", authority=SYSTEM)).success is True
         assert await recompiled() == [("bob",)]
-        assert (await storage.posture(path=Path("/pub"), posture="shared", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/pub"), posture="read", authority=SYSTEM)).success is True
         assert await recompiled() == []
         assert (await storage.revoke(path=Path("/pub"), principal="carol", authority=SYSTEM)).success is True
         assert await recompiled() == [("carol",)]
@@ -952,6 +957,116 @@ class GrantsContract:
         await _world(storage)
         result = await storage.add_member(group="eng", member="bob", authority=SYSTEM)
         assert _kind(result) == ErrorKind.invalid
+
+    # ------------------------------------------------------------------
+    # The ladder — list, add and contribute
+    # ------------------------------------------------------------------
+
+    @needs("grant", "read", "ls", "tree", "glob", "grep")
+    async def test_a_list_grant_names_rows_bare_and_refuses_their_bodies(self, storage: GrantsBackend) -> None:
+        # dave holds list on /eng: every row there is named with path and
+        # kind only, a read of one is refused rather than absent, and the
+        # search verbs never see its body.
+        await _world(storage)
+        assert (await storage.grant(path=Path("/eng"), principal="dave", level="list", authority=SYSTEM)).success
+        bare = frozenset({"path", "kind"})
+        listed = {str(o.path): o.populated for o in (await storage.ls(path=Path("/eng"), authority=DAVE)).observations}
+        assert listed == {"/eng/spec.md": bare, "/eng/secret": bare}
+        tree = {str(o.path): o.populated for o in (await storage.tree(path=Path("/"), authority=DAVE)).observations}
+        assert set(tree) == {"/eng", "/eng/spec.md", "/eng/secret", "/eng/secret/plan.md"}
+        assert set(tree.values()) == {bare}
+        globbed = await storage.glob(patterns=("/eng/**",), kind="file", authority=DAVE)
+        assert _paths(globbed) == {"/eng/spec.md", "/eng/secret/plan.md"}
+        assert _kind(await storage.read(path=Path("/eng/spec.md"), authority=DAVE)) == ErrorKind.permission_denied
+        assert _kind(await storage.stat(path=Path("/pub/readme.md"), authority=DAVE)) == ErrorKind.not_found
+        found = await storage.grep(pattern="lantern", allow_scan=True, authority=DAVE)
+        assert found.success is True and _paths(found) == set()
+        assert _kind(await storage.grants(path=Path("/eng"), authority=DAVE)) == ErrorKind.not_found
+
+    @needs("grant", "write", "edit", "delete", "restore", "mkdir")
+    async def test_add_creates_and_alters_its_own_rows_only(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        assert (await storage.grant(path=Path("/pub"), principal="dave", level="add", authority=SYSTEM)).success
+        assert (await storage.write(entries=[Entry(path=Path("/pub/dave.md"), content="x")], authority=DAVE)).success
+        assert (await storage.mkdir(path=Path("/pub/drafts"), authority=DAVE)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/pub/dave.md"), content="y")], authority=DAVE)).success
+        assert (await storage.delete(path=Path("/pub/dave.md"), authority=DAVE)).success is True
+        assert (await storage.restore(path=Path("/pub/dave.md"), authority=DAVE)).success is True
+        taken = await storage.write(entries=[Entry(path=Path("/pub/readme.md"), content="y")], authority=DAVE)
+        assert _kind(taken) == ErrorKind.permission_denied
+        edited = await storage.edit(path=Path("/pub/readme.md"), edits=[EditOperation("hello", "x")], authority=DAVE)
+        assert _kind(edited) == ErrorKind.permission_denied
+        assert _kind(await storage.delete(path=Path("/pub/readme.md"), authority=DAVE)) == ErrorKind.permission_denied
+        # An occupied name is judged at the create rung: dave holds it, so the no-op mkdir answers.
+        assert (await storage.mkdir(path=Path("/pub"), exist_ok=True, authority=DAVE)).success is True
+        # A creation is judged by coverage alone, never by what occupies the name.
+        assert (
+            _kind(await storage.mkdir(path=Path("/eng"), exist_ok=True, authority=DAVE)) == ErrorKind.permission_denied
+        )
+
+    @needs("grant", "write", "edit", "delete", "restore", "move")
+    async def test_contribute_edits_anyones_row_and_trashes_only_its_own(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        assert (await storage.grant(path=Path("/pub"), principal="dave", level="contribute", authority=SYSTEM)).success
+        assert (
+            await storage.write(entries=[Entry(path=Path("/pub/readme.md"), content="ours")], authority=DAVE)
+        ).success
+        edited = await storage.edit(
+            path=Path("/pub/readme.md"), edits=[EditOperation("ours", "theirs")], authority=DAVE
+        )
+        assert edited.success is True
+        # The row keeps its owner through the overwrite: trash, move and restore stay out of reach.
+        assert _kind(await storage.delete(path=Path("/pub/readme.md"), authority=DAVE)) == ErrorKind.permission_denied
+        moved = [ResolvedPair(Path("/pub/readme.md"), Path("/pub/moved.md"))]
+        assert _kind(await storage.move(operations=moved, authority=DAVE)) == ErrorKind.permission_denied
+        assert (await storage.delete(path=Path("/pub/readme.md"), authority=SYSTEM)).success is True
+        assert _kind(await storage.restore(path=Path("/pub/readme.md"), authority=DAVE)) == ErrorKind.permission_denied
+        revive = await storage.write(entries=[Entry(path=Path("/pub/readme.md"), content="z")], authority=DAVE)
+        assert _kind(revive) == ErrorKind.permission_denied
+        assert (await storage.write(entries=[Entry(path=Path("/pub/dave.md"), content="x")], authority=DAVE)).success
+        assert (await storage.delete(path=Path("/pub/dave.md"), authority=DAVE)).success is True
+
+    @needs("grant", "copy", "mkedge", "rmedge")
+    async def test_a_list_source_is_never_copied_and_a_list_target_takes_an_edge(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        assert (await storage.grant(path=Path("/eng"), principal="bob", level="list", authority=SYSTEM)).success
+        assert (await storage.grant(path=Path("/pub"), principal="bob", level="contribute", authority=SYSTEM)).success
+        copied = [ResolvedPair(Path("/eng/spec.md"), Path("/pub/spec.md"))]
+        assert _kind(await storage.copy(operations=copied, authority=BOB)) == ErrorKind.permission_denied
+        edge = Edge(source=Path("/pub/readme.md"), target=Path("/eng/spec.md"), edge_type="cites")
+        assert (await storage.mkedge(edges=[edge], authority=BOB)).success is True
+        hidden = Edge(source=Path("/pub/readme.md"), target=Path("/hr/other.md"), edge_type="cites")
+        assert _kind(await storage.mkedge(edges=[hidden], authority=BOB)) == ErrorKind.not_found
+        assert (await storage.mkedge(edges=[hidden], authority=SYSTEM)).success is True
+        # rmedge on a hidden target answers the absent target's own per-row record and commits the rest.
+        absent = Edge(source=Path("/pub/readme.md"), target=Path("/hr/nope.md"), edge_type="cites")
+        for_hidden = await storage.rmedge(edges=[edge, hidden], authority=BOB)
+        assert (await storage.mkedge(edges=[edge], authority=BOB)).success is True
+        for_absent = await storage.rmedge(edges=[edge, absent], authority=BOB)
+        for result in (for_hidden, for_absent):
+            assert result.success is True and [o.status for o in result.observations] == ["deleted"]
+            assert [e.kind for e in result.errors] == [ErrorKind.not_found]
+            assert result.errors[0].severity is Severity.warning and str(result.errors[0].path) == "/pub/readme.md"
+        assert (await storage.rmedge(edges=[hidden], authority=SYSTEM)).observations[0].status == "deleted"
+
+    @needs("grant", "write", "read", "ls", "glob")
+    async def test_anonymous_is_judged_at_the_path_it_addresses(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        assert (await storage.posture(path=Path("/pub"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/pub/anon.md"), content="x")], authority=ANON)).success
+        assert (await storage.read(path=Path("/pub/anon.md"), authority=ANON)).success is True
+        assert _paths(await storage.ls(path=Path("/pub"), authority=ANON)) >= {"/pub/readme.md", "/pub/anon.md"}
+        assert _paths(await storage.glob(patterns=("/pub/**",), authority=ANON)) >= {"/pub/anon.md"}
+        refused = await storage.write(entries=[Entry(path=Path("/anon.md"), content="x")], authority=ANON)
+        assert _kind(refused) == ErrorKind.unauthenticated and str(refused.errors[0].path) == "/anon.md"
+        assert _kind(await storage.ls(path=Path("/"), authority=ANON)) == ErrorKind.unauthenticated
+        assert _kind(await storage.glob(patterns=("/**",), authority=ANON)) == ErrorKind.unauthenticated
+        # Under read_write the posture, not ownership, lets anonymous trash what it made.
+        assert (await storage.delete(path=Path("/pub/anon.md"), authority=ANON)).success is True
+        assert (await storage.posture(path=Path("/pub"), posture="contribute", authority=SYSTEM)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/pub/anon2.md"), content="x")], authority=ANON)).success
+        # Anonymous owns nothing: under contribute its own creation is beyond its reach to trash.
+        assert _kind(await storage.delete(path=Path("/pub/anon2.md"), authority=ANON)) == ErrorKind.unauthenticated
 
     # ------------------------------------------------------------------
     # Ranked search — hidden rows never move a visible score
@@ -1096,7 +1211,8 @@ def _recompiles(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
     def counting(
         closures: Mapping[str, frozenset[str]], rows: Sequence[GrantRow], level: GrantLevel, **kw: Any
     ) -> Rights:
-        if level == "read":
+        # The read_write compile is never aliased, so it is the one call per miss.
+        if level == "read_write":
             compiled.append(tuple(sorted(closures)))
         return real(closures, rows, level, **kw)
 

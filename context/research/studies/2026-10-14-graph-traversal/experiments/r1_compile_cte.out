@@ -1,0 +1,211 @@
+SQLAlchemy 2.0.52
+==============================================================================
+SHAPE: UNION ALL
+------------------------------------------------------------------------------
+[postgresql] (dialect.name='postgresql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %(param_1)s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%(seeds_1)s, %(seeds_2)s, %(seeds_3)s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %(depth_1)s AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %(edge_type)s AND vfs_entries.deleted_at IS NULL AND walk.depth < %(max_depth)s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[sqlite] (dialect.name='sqlite')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, ? AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (?, ?, ?) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + ? AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = ? AND vfs_entries.deleted_at IS NULL AND walk.depth < ?)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mysql] (dialect.name='mysql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mariadb] (dialect.name='mariadb')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mssql] (dialect.name='mssql')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[oracle] (dialect.name='oracle')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk
+==============================================================================
+SHAPE: UNION
+------------------------------------------------------------------------------
+[postgresql] (dialect.name='postgresql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %(param_1)s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%(seeds_1)s, %(seeds_2)s, %(seeds_3)s) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + %(depth_1)s AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %(edge_type)s AND vfs_entries.deleted_at IS NULL AND walk.depth < %(max_depth)s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[sqlite] (dialect.name='sqlite')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, ? AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (?, ?, ?) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + ? AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = ? AND vfs_entries.deleted_at IS NULL AND walk.depth < ?)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mysql] (dialect.name='mysql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mariadb] (dialect.name='mariadb')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mssql] (dialect.name='mssql')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[oracle] (dialect.name='oracle')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk
+==============================================================================
+SHAPE: UNION ALL + join to union_all(...).subquery() derived table
+------------------------------------------------------------------------------
+[postgresql] (dialect.name='postgresql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %(param_1)s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%(seeds_1)s, %(seeds_2)s, %(seeds_3)s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %(depth_1)s AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %(need)s UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = %(point)s) AS visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = %(edge_type)s AND vfs_entries.deleted_at IS NULL AND walk.depth < %(max_depth)s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[sqlite] (dialect.name='sqlite')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, ? AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (?, ?, ?) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + ? AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= ? UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = ?) AS visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = ? AND vfs_entries.deleted_at IS NULL AND walk.depth < ?)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mysql] (dialect.name='mysql')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id INNER JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %s UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = %s) AS visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mariadb] (dialect.name='mariadb')
+WITH RECURSIVE walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, %s AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (%s, %s, %s) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + %s AS depth 
+FROM walk INNER JOIN vfs_edges ON vfs_edges.source_id = walk.id INNER JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id INNER JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %s UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = %s) AS visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = %s AND vfs_entries.deleted_at IS NULL AND walk.depth < %s)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[mssql] (dialect.name='mssql')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :need UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = :point) AS visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk
+------------------------------------------------------------------------------
+[oracle] (dialect.name='oracle')
+WITH walk(id, depth) AS 
+(SELECT vfs_entries.id AS id, :param_1 AS depth 
+FROM vfs_entries 
+WHERE vfs_entries.id IN (:seeds_1, :seeds_2, :seeds_3) AND vfs_entries.deleted_at IS NULL UNION ALL SELECT vfs_entries.id AS id, walk.depth + :depth_1 AS depth 
+FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.id JOIN vfs_entries ON vfs_entries.id = vfs_edges.target_id JOIN (SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :need UNION ALL SELECT vfs_entries.id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.path = :point) visible ON visible.entry_id = vfs_entries.id 
+WHERE vfs_edges.edge_type = :edge_type AND vfs_entries.deleted_at IS NULL AND walk.depth < :max_depth)
+ SELECT walk.id, walk.depth 
+FROM walk

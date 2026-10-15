@@ -4,7 +4,7 @@
   ratified as written; amends ADR 013/017 and resolves ADR 021's NULL-owner fork). Drafted 2026-09-05 as Phase 3 of the
   principals and permissions research programme
   (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
-  companions 062 to 067 were ratified together.
+  companions 062 to 067 were ratified together. **Rule 5 extended by ADR 080 (2026-10-14):** an overwrite or an edit keeps the row's owner too — a contribution to a row is not a taking — so the `contribute` rung can never turn an overwrite into the right to trash.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from lenses L2 (the auth

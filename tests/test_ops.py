@@ -9,6 +9,7 @@ way the three hand-copies once did.
 from __future__ import annotations
 
 import inspect
+from typing import get_args
 
 from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
 from vfs import ops, permissions
@@ -21,10 +22,14 @@ from vfs.ops import (
     GRANT_WRITE_OPS,
     MUTATING_OPS,
     READ_OPS,
+    RUNGS,
     TWO_PATH_OPS,
+    VERB_RUNGS,
     WRITE_GATED_OPS,
+    Rung,
 )
 from vfs.results import projection
+from vfs.storage.grants import LEVEL_RANK
 
 # Public router methods that manage the mount tree rather than route an op.
 # A new public coroutine on VirtualFileSystem must be a registered op or a
@@ -100,6 +105,54 @@ def test_expected_vocabulary() -> None:
         )
         == ALL_OPS
     )
+
+
+# ---------------------------------------------------------------------------
+# The verb-to-rung table
+# ---------------------------------------------------------------------------
+
+
+def test_the_ladder_is_the_declared_order_and_the_ranks_are_dense() -> None:
+    assert RUNGS == ("none", "list", "read", "add", "contribute", "read_write")
+    assert get_args(Rung) == RUNGS
+    assert [LEVEL_RANK[rung] for rung in RUNGS] == list(range(len(RUNGS)))
+
+
+def test_every_op_has_exactly_one_rung_entry() -> None:
+    assert frozenset(VERB_RUNGS) == ALL_OPS
+    for needs in VERB_RUNGS.values():
+        assert needs.primary in RUNGS and needs.primary != "none"
+        assert needs.create is None or needs.create in RUNGS
+        assert needs.traverse is None or needs.traverse in RUNGS
+
+
+def test_a_mutation_never_sits_below_add() -> None:
+    for op in MUTATING_OPS | GRANT_WRITE_OPS:
+        needs = VERB_RUNGS[op]
+        assert LEVEL_RANK[needs.primary] >= LEVEL_RANK["add"], op
+        assert needs.create is None or LEVEL_RANK[needs.create] >= LEVEL_RANK["add"], op
+
+
+def test_a_read_never_mints() -> None:
+    for op in READ_OPS | EXEC_OPS:
+        assert VERB_RUNGS[op].create is None, op
+    assert VERB_RUNGS["grants"].create is None
+
+
+def test_creating_is_never_harder_than_modifying() -> None:
+    for op, needs in VERB_RUNGS.items():
+        if needs.create is not None:
+            assert LEVEL_RANK[needs.create] <= LEVEL_RANK[needs.primary], op
+        if needs.traverse is not None:
+            assert LEVEL_RANK[needs.traverse] <= LEVEL_RANK[needs.primary], op
+
+
+def test_the_listing_verbs_name_at_list_and_the_search_verbs_read() -> None:
+    assert {op for op in READ_OPS if VERB_RUNGS[op].primary == "list"} == {"stat", "ls", "tree", "glob"}
+    assert {op for op in READ_OPS if VERB_RUNGS[op].primary == "read"} == {"read", "grep", "glean", "graph"}
+    assert VERB_RUNGS["graph"].traverse == "list"
+    assert VERB_RUNGS["mkedge"].traverse == VERB_RUNGS["rmedge"].traverse == "list"
+    assert VERB_RUNGS["copy"].traverse == "read"
 
 
 # ---------------------------------------------------------------------------

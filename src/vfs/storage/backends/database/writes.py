@@ -115,7 +115,6 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
     "render_units",
     "media_width",
     "media_height",
-    "owner_id",
     "updated_at",
     "deleted_at",
     "trash_root_id",
@@ -389,7 +388,7 @@ async def _apply(
     # rows stood down entirely — nothing left to write.
     updates = [s for s in plan.staged.values() if s.persistence in ("update", "absorb")]
     if errors := await _update_materials(
-        session, tables.entry, profile, parameter_budget, membership_budget, updates, authority=plan.authority, now=now
+        session, tables.entry, profile, parameter_budget, membership_budget, updates, now=now
     ):
         return errors
     # Every row whose body this batch replaces — a guarded update, an
@@ -641,7 +640,6 @@ async def _update_materials(
     membership_budget: int,
     updates: list[StagedEntry],
     *,
-    authority: Authority | None,
     now: datetime,
 ) -> list[ResultError]:
     """Material updates with the version-and-path guard, attributed from the statement.
@@ -700,7 +698,6 @@ async def _update_materials(
                 parameter_budget,
                 membership_budget,
                 guarded,
-                authority=authority,
                 now=now,
                 guard=True,
                 revive=revive,
@@ -709,15 +706,11 @@ async def _update_materials(
             errors.extend(await _classify_guard_misses(session, entry, profile, membership_budget, missed))
         elif dialect.supports_sane_multi_rowcount:
             errors.extend(
-                await _guarded_by_aggregate(
-                    session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
-                )
+                await _guarded_by_aggregate(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
             )
         elif dialect.supports_sane_rowcount:
             errors.extend(
-                await _guarded_by_rowcount(
-                    session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
-                )
+                await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
             )
         else:
             detail = f"guarded updates cannot be verified on {profile.name}: no UPDATE RETURNING, no sane rowcount"
@@ -730,7 +723,6 @@ async def _update_materials(
                 parameter_budget,
                 membership_budget,
                 unguarded,
-                authority=authority,
                 now=now,
                 guard=False,
             )
@@ -750,7 +742,7 @@ async def _update_materials(
                 )
                 .values(**material, version=entry.c.version + 1)
             )
-            params = [_update_params(s, authority, now) | {"b_path": str(s.path)} for s in unguarded]
+            params = [_update_params(s, now) | {"b_path": str(s.path)} for s in unguarded]
             await session.execute(stmt, params)
             # The read-back proves application: the updated row holds its
             # X-lock, so a stored path disagreeing means the guard missed.
@@ -777,7 +769,6 @@ async def _values_update(
     membership_budget: int,
     staged: list[StagedEntry],
     *,
-    authority: Authority | None,
     now: datetime,
     guard: bool,
     revive: bool = False,
@@ -793,7 +784,7 @@ async def _values_update(
     """
     rows = []
     for entry_row in staged:
-        material = _material_values(entry_row, authority, now)
+        material = _material_values(entry_row, now)
         ordered = tuple(material[name] for name in _CLOBBER_COLUMNS)
         rows.append((entry_row.entry_id, entry_row.base_version, entry_row.version, str(entry_row.path), *ordered))
     per_statement = statement_budget(
@@ -859,7 +850,6 @@ async def _guarded_by_aggregate(
     membership_budget: int,
     guarded: list[StagedEntry],
     *,
-    authority: Authority | None,
     now: datetime,
     revive: bool,
 ) -> list[ResultError]:
@@ -871,7 +861,7 @@ async def _guarded_by_aggregate(
     blame would be built on an unreliable probe); everywhere else the
     per-row floor re-drives for exact blame.
     """
-    params = [_guarded_params(s, authority, now) for s in guarded]
+    params = [_guarded_params(s, now) for s in guarded]
     nested = await session.begin_nested()
     result = cast("CursorResult[Any]", await session.execute(_guarded_stmt(entry, revive=revive), params))
     if result.rowcount == len(params):
@@ -880,9 +870,7 @@ async def _guarded_by_aggregate(
     await nested.rollback()
     if profile.guard_miss == "redrive":
         raise StaleSnapshot(f"{len(params) - result.rowcount} guarded update(s) missed their snapshot")
-    return await _guarded_by_rowcount(
-        session, entry, profile, membership_budget, guarded, authority=authority, now=now, revive=revive
-    )
+    return await _guarded_by_rowcount(session, entry, profile, membership_budget, guarded, now=now, revive=revive)
 
 
 async def _guarded_by_rowcount(
@@ -892,7 +880,6 @@ async def _guarded_by_rowcount(
     membership_budget: int,
     guarded: list[StagedEntry],
     *,
-    authority: Authority | None,
     now: datetime,
     revive: bool,
 ) -> list[ResultError]:
@@ -904,7 +891,7 @@ async def _guarded_by_rowcount(
     stmt = _guarded_stmt(entry, revive=revive)
     missed: list[StagedEntry] = []
     for staged in guarded:
-        result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, authority, now)))
+        result = cast("CursorResult[Any]", await session.execute(stmt, _guarded_params(staged, now)))
         if result.rowcount == 0:
             missed.append(staged)
     return await _classify_guard_misses(session, entry, profile, membership_budget, missed)
@@ -960,9 +947,9 @@ def _tombstone_terms(entry: Table, *, revive: bool) -> list[ColumnElement[bool]]
     return [] if revive else [tombstone_side(entry, trashed=False)]
 
 
-def _guarded_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
+def _guarded_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     guard = {"b_base": staged.base_version, "b_ver": staged.version, "b_path": str(staged.path)}
-    return _update_params(staged, authority, now) | guard
+    return _update_params(staged, now) | guard
 
 
 def _conflict(staged: StagedEntry) -> ResultError:
@@ -1162,12 +1149,15 @@ def _upsert_constructor(profile: DialectProfile) -> Callable[[Table], SQLiteInse
     return sqlite_insert if profile.name == "sqlite" else pg_insert
 
 
-def _material_values(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
-    """The clobber-column values for *staged*; ownership derives from the authority.
+def _material_values(staged: StagedEntry, now: datetime) -> dict[str, object]:
+    """The clobber-column values for *staged* — never the owner, which a row keeps from its creation.
 
     A write clears every render stamp: a bytes row starts over as
     pending, a text row carries no render state at all. It clears the
-    tombstone too: a write at a deleted path is the revive.
+    tombstone too: a write at a deleted path is the revive. The owner
+    stays: an overwrite or an edit of another's row is a contribution
+    to it, not a taking, so the floor it grants never moves to the
+    last writer.
     """
     return {
         "kind": staged.kind,
@@ -1187,7 +1177,6 @@ def _material_values(staged: StagedEntry, authority: Authority | None, now: date
         "render_units": None,
         "media_width": None,
         "media_height": None,
-        "owner_id": owner_for(authority, staged.owner_id),
         "updated_at": now,
         "deleted_at": None,
         "trash_root_id": None,
@@ -1205,9 +1194,10 @@ def _entry_values(
         "version": staged.version,
         "everyone_level": everyone_level,
         "created_at": now,
-    } | _material_values(staged, authority, now)
+        "owner_id": owner_for(authority, staged.owner_id),
+    } | _material_values(staged, now)
 
 
-def _update_params(staged: StagedEntry, authority: Authority | None, now: datetime) -> dict[str, object]:
-    material = _material_values(staged, authority, now)
+def _update_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
+    material = _material_values(staged, now)
     return {"b_id": staged.entry_id} | {f"b_{column}": material[column] for column in _CLOBBER_COLUMNS}

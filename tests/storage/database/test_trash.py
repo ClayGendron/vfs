@@ -48,6 +48,7 @@ from vfs.storage.backends.database.signals import collect_graph
 from vfs.storage.backends.database.staging import WritePlan
 from vfs.storage.backends.database.trash import _purge
 from vfs.storage.backends.database.writes import _apply, _fetch_committed, _guarded_stmt
+from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -927,7 +928,7 @@ class TestTrashView:
         # the first component he cannot see, never the synthesized head.
         storage = DatabaseStorage(url=_url(tmp_path))
         bob = Authority.of(Principal("bob"))
-        assert (await storage.posture(path=Path("/"), posture="private", authority=None)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=None)).success is True
         assert (await storage.mkdir(path=Path("/ann"), authority=None)).success is True
         assert (await storage.grant(path=Path("/ann"), principal="ann", level="read_write", authority=None)).success
         assert (await storage.write(entries=[Entry(path=Path("/ann/secret.md"), content="s")], authority=ANN)).success
@@ -957,7 +958,7 @@ class TestTrashView:
         # so a ghost beneath /d/sub is named at the ghost, not at /d.
         storage = DatabaseStorage(url=_url(tmp_path))
         bob = Authority.of(Principal("bob"))
-        assert (await storage.posture(path=Path("/"), posture="private", authority=None)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=None)).success is True
         assert (await storage.mkdir(path=Path("/d"), authority=None)).success is True
         assert (await storage.mkdir(path=Path("/d/sub"), authority=None)).success is True
         assert (await storage.grant(path=Path("/d/sub"), principal="bob", level="read_write", authority=None)).success
@@ -1143,7 +1144,7 @@ class TestScale:
         await _tree(storage)
         crowd = [Entry(path=Path(f"/crowd/f{i:04}.txt"), content="x") for i in range(500)]
         assert (await storage.write(entries=crowd, parents=True)).success is True
-        assert (await storage.posture(path=Path("/"), posture="shared", authority=Authority.system())).success is True
+        assert (await storage.posture(path=Path("/"), posture="read", authority=Authority.system())).success is True
         assert (await storage.delete(path=Path("/d"))).success is True
         async with storage._host.engine.begin() as conn:
             await conn.execute(text("ANALYZE"))
@@ -1297,7 +1298,7 @@ class TestPurgeHardening:
                         name="straggler.txt",
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         created_at=now,
                         updated_at=now,
                     )

@@ -1,0 +1,41 @@
+    [wall-clock side note] write 10000 bulk files in one call: 2.82s
+    [wall-clock side note] mkedge 20000 edges in one call: 0.57s
+graph: 12031 live entries; seeds = the 10000 /bulk files; each seed has one `imports` edge into the 2,000-file core and one `references` edge to another seed
+
+Seed chunking by membership_budget(profile, parameter_budget) = min(in_list_budget, binds - 32):
+    dialect     binds (SQLAlchemy)  in_list_budget  membership_budget  chunks for 10k
+    sqlite (live)              32700           32766              32668               1
+    postgresql               32700           65535              32668               1
+    mariadb                  32700           65535              32668               1
+    mssql                     2099            2000               2000               5
+    oracle                   32700            1000               1000              10
+
+Recursive CTE per seed chunk, out, depth 2, authored types (statements counted via before_cursor_execute):
+    budget                 chunks statements rows returned distinct nodes
+    [wall-clock side note] CTE per chunk @ sqlite 32,668: 0.15s
+    sqlite 32,668               1          1         12003          12003
+    [wall-clock side note] CTE per chunk @ mssql 2,000: 0.32s
+    mssql 2,000                 5          5         31535          12003
+    [wall-clock side note] CTE per chunk @ oracle 1,000: 0.31s
+    oracle 1,000               10         10         43557          12003
+    merged results identical across chunkings: True
+    sample statement prefixes: ['BEGIN', 'WITH RECURSIVE walk']
+
+Temp-table anchor: CREATE TEMP TABLE + INSERT seeds + ONE walk statement (SQLite, through the backend's session)
+    [wall-clock side note] temp table create+insert+walk+drop: 0.15s
+    statements=4 (BEGIN, CREATE, INSERT, WITH, DROP); rows returned=12003; == chunked CTE: True
+    [NOT RUN: other engines] Postgres/MariaDB: CREATE TEMPORARY TABLE is per-session, one DDL + bulk INSERT; SQL Server: #temp tables likewise; Oracle: DDL commits the transaction and global temporary tables must be pre-created (18c+ private temp tables ORA$PTT_ exist). The seeds still cost one bind each on the INSERT, chunked by the bind budget, so the statement count is 1 + ceil(S / budget) + 1, never fewer than the IN-list form.
+
+Frontier loop (one non-recursive statement per hop per frontier chunk), out, authored types:
+    budget                 depth statements rows returned distinct nodes  == CTE
+    sqlite 32,668              2          2         10316          12003    True
+    sqlite 32,668              4          3         10358          12003       -
+    mssql 2,000                2          6         17352          12003    True
+    mssql 2,000                4          7         17394          12003       -
+    oracle 1,000               2         12         20830          12003    True
+    oracle 1,000               4         13         20872          12003       -
+
+Recursive CTE per chunk at depth 4 for the same budgets (statement count is depth-independent):
+    sqlite 32,668          depth 4: statements=1 rows returned=12003 distinct nodes=12003
+    mssql 2,000            depth 4: statements=5 rows returned=35362 distinct nodes=12003
+    oracle 1,000           depth 4: statements=10 rows returned=53388 distinct nodes=12003

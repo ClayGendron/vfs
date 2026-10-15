@@ -136,7 +136,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 22
+SCHEMA_FORMAT_VERSION: Final = 23
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -469,8 +469,8 @@ def build_vfs_tables(
         Column("media_width", Integer),
         Column("media_height", Integer),
         Column("owner_id", _string(255), index=True),
-        # The everyone level at this path (0 none, 1 read, 2 read_write):
-        # the deepest covering posture row's level, stamped with the row.
+        # The everyone level at this path, the rank of the deepest covering
+        # posture row's rung (0 none … 5 read_write), stamped with the row.
         # No default on purpose — a mint site that forgets it fails loudly.
         Column("everyone_level", SmallInteger, nullable=False),
         Column("created_at", _timestamp()),

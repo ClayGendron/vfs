@@ -12,7 +12,7 @@
   dissolves spec 156 rule 2 (a restore-only trash prefix), binds spec
   161 (the version a revive mints), and supersedes in part the
   archived 081 (self-describing trash names), 082 (the trash-side
-  restore address) and 083 (the bucket sweep). Spec 162 builds it.
+  restore address) and 083 (the bucket sweep). Spec 162 builds it. **Rule 7 amended by ADR 080 (2026-10-14):** a tombstoned row the caller holds only `list` on answers a plain `not_found` on the live side (no trashed hint, no `deleted_at`) and shows bare in the trash view; a write at another's tombstone is judged as a restore.
 - **Date:** 2026-10-08
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-10-08). Drafted by Claude from the

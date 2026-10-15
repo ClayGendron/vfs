@@ -6,7 +6,7 @@
   compile model), ADR 071 rule 6 (every deeper `*` row as a hole) and
   ADR 072's input (the pieces a caller sends). Does not change what
   any caller may see: every rule below is a representation change,
-  held to the same pointwise answers.
+  held to the same pointwise answers. **Amended by ADR 080 (2026-10-14):** the label's domain is the six dense ranks of the ladder (`0` none … `5` read_write); a caller's resolution holds one compile per rung a verb can need, the rungs no row sits at restated on the compile above's pieces.
 - **Date:** 2026-10-02
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-10-02). Drafted by Claude from

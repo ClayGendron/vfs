@@ -33,6 +33,7 @@ from vfs.storage.backends.database.reads import (
     ext_membership,
     render_notes,
 )
+from vfs.storage.grants import LEVEL_RANK
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -75,7 +76,7 @@ async def _seed(storage: DatabaseStorage, rows: list[tuple[str, str, str | None]
                     version=version,
                     size_bytes=len(content.encode()) if content is not None else 0,
                     lines=content.count("\n") + 1 if content else 0,
-                    everyone_level=2,
+                    everyone_level=LEVEL_RANK["read_write"],
                     created_at=now,
                     updated_at=now,
                 )

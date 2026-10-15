@@ -22,7 +22,9 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **Everyone level.** The permission level held by every principal on a path, set by posture rows. Resolved by deepest prefix.
 
-**Grant.** A row stating that a principal or group holds a level, `read` or `read_write`, on a path prefix and everything beneath it. Additive: more rows only widen. Written by `grant`, removed by `revoke`, listed by `grants`.
+**Grant.** A row stating that a principal or group holds a rung of the ladder (`list`, `read`, `add`, `contribute` or `read_write`) on a path prefix and everything beneath it. Additive: more rows only widen. Written by `grant`, removed by `revoke`, listed by `grants`.
+
+**Ladder.** The total order of permission rungs, `none < list < read < add < contribute < read_write`. `list` names a row (path and kind only); `read` shows it whole; `add` creates rows beneath the prefix and alters only one's own; `contribute` also overwrites and edits anyone's rows, but trashes, moves and restores only one's own; `read_write` does everything, grants included. Every verb's rung is one entry in the table `VERB_RUNGS` in `vfs.ops`.
 
 **Group.** A principal id starting with `group:`. A member holds every grant its groups hold, directly or through nested groups up to eight levels deep. Membership is written by `add_member` and `remove_member`, by the system actor only.
 
@@ -34,7 +36,7 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **Ownership.** The `owner_id` column on an entry row, set once at creation from the authority. One subject owns what it makes; a set, the system actor without a declaration, and anonymous own nothing.
 
-**Posture.** A mount's or directory's everyone level: `open` (everyone reads and writes), `shared` (everyone reads), or `private` (nothing without a grant). Stored as a grant row under the reserved principal id `*`. The default is `open`.
+**Posture.** A mount's or directory's everyone level, named by the rung everyone holds there: `none`, `list`, `read`, `add`, `contribute` or `read_write`. Stored as a grant row under the reserved principal id `*`. The default is `read_write`.
 
 **Principal.** One verified identity: a `sub`, a kind (`user`, `service`, `system`, `anonymous`), and a set of scope strings. See [Authority and Principal](authority.md).
 
@@ -54,4 +56,4 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **System actor.** The principal named `system` with kind `system`, the actor of `Authority.system()`. It has no subjects, bypasses grants, and stamps whatever owner a write payload declares. Mount administration runs as it.
 
-**Unauthenticated.** The error kind `vfs.unauthenticated`. A mount-side refusal: a non-open posture answers it to the anonymous principal. Its hint names the fix: open a session with an authority, or configure a default.
+**Unauthenticated.** The error kind `vfs.unauthenticated`. A mount-side refusal: the anonymous principal is judged at the path it addresses, and a posture there below the verb's rung answers it. Its hint names the fix: open a session with an authority, or configure a default.

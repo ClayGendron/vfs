@@ -36,6 +36,7 @@ from vfs.storage.backends.database.engine import (
     _install_sqlite_transaction_control,
     _SerializedSession,
 )
+from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -193,6 +194,9 @@ class TestFirstTouch:
         result = await stale.first_touch()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.schema_mismatch
+        # No in-place repair: the refusal says to re-provision, as every format bump before it.
+        assert "re-provision the mount" in result.errors[0].message
+        assert result.errors[0].data == {"found": SCHEMA_FORMAT_VERSION + 1, "expected": SCHEMA_FORMAT_VERSION}
         assert stale.mount_identity is None
         await stale.close()
 
@@ -232,7 +236,7 @@ class TestFirstTouch:
                     name="/",
                     kind="directory",
                     version=0,
-                    everyone_level=2,
+                    everyone_level=LEVEL_RANK["read_write"],
                     created_at=now,
                     updated_at=now,
                 )

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 from vfs.authority import Authority
 from vfs.ops import GRAPH_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind
-from vfs.storage.grants import Posture
+from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -51,7 +51,7 @@ _MODEL_KINDS: Final[frozenset[str]] = frozenset({"observations", "entries", "edi
 CASE_MODES: Final[frozenset[str]] = frozenset(get_args(CaseMode))
 OUTPUT_MODES: Final[frozenset[str]] = frozenset(get_args(GrepOutputMode))
 OBJECT_KINDS: Final[frozenset[str]] = frozenset(get_args(ObjectKind))
-GRANTABLE_LEVELS: Final[frozenset[str]] = frozenset({"read", "read_write"})
+GRANTABLE: Final[frozenset[str]] = frozenset(GRANTABLE_LEVELS)
 POSTURES: Final[frozenset[str]] = frozenset(get_args(Posture))
 
 # The shared ceiling on every int channel: the tightest integer all of
@@ -298,7 +298,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
     "grant": (
         ParamSpec("path", "path", required=True, doc="the prefix the grant covers, itself and below"),
         _PRINCIPAL,
-        ParamSpec("level", "str", required=True, choices=GRANTABLE_LEVELS, doc="what the principal may do there"),
+        ParamSpec("level", "str", required=True, choices=GRANTABLE, doc="what the principal may do there"),
         _AUTHORITY,
     ),
     "revoke": (

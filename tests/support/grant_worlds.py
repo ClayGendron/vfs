@@ -14,7 +14,7 @@ non-ASCII — the shapes whose range bounds touch and merge.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, Final, NamedTuple, get_args
 
 from tests.support.oracles.grants import GrantWorld
 from vfs.storage.grants import GrantLevel, GrantRow
@@ -73,8 +73,8 @@ GROUPS: Final = ("group:g1", "group:g2", "group:g3")
 # The subject sets every world is asked about: each user alone, a pair, all three.
 SUBJECT_SETS: Final[tuple[tuple[str, ...], ...]] = (("u1",), ("u2",), ("u3",), ("u1", "u2"), USERS)
 
-_NAMED_LEVELS: Final[tuple[GrantLevel, ...]] = ("read", "read_write")
-_ALL_LEVELS: Final[tuple[GrantLevel, ...]] = ("none", "read", "read_write")
+_ALL_LEVELS: Final[tuple[GrantLevel, ...]] = get_args(GrantLevel)
+_NAMED_LEVELS: Final[tuple[GrantLevel, ...]] = tuple(level for level in _ALL_LEVELS if level != "none")
 
 
 def random_world(rng: random.Random, layout: Layout = BASE) -> GrantWorld:

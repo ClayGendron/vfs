@@ -1551,7 +1551,11 @@ class VirtualFileSystem:
     ) -> Result:
         """Give *principal* — a user's ``sub`` or a ``group:<name>`` id — *level* at *path* and below.
 
-        Grants only widen: there is no deny row. The caller must hold
+        *level* is a rung of the ladder: ``list`` (names and kinds),
+        ``read``, ``add`` (create, and alter one's own rows),
+        ``contribute`` (also overwrite and edit anyone's), ``read_write``
+        (also trash, move, restore and grant). Grants only widen: there
+        is no deny row. The caller must hold
         ``read_write`` at *path* for every subject it acts for, so nobody
         grants more than it holds. A grant replaces the principal's
         earlier row at the same path; the answer rides as ``grants=``.
@@ -1585,11 +1589,13 @@ class VirtualFileSystem:
         return await self._route_grant("grants", path, authority=authority)
 
     async def posture(self, path: str, posture: Posture, *, authority: Authority | None = None) -> Result:
-        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``.
+        """Set what everyone holds at *path* and below, named by the rung everyone holds.
 
-        ``open`` lets everyone read and write, ``shared`` lets everyone
-        read, ``private`` gives everyone nothing; grants still widen on
-        top. The deepest posture covering a path decides it. A
+        The posture words are the ladder's own: ``none`` gives everyone
+        nothing, ``list`` the names, ``read`` the contents, ``add`` the
+        right to create, ``contribute`` to edit anyone's rows,
+        ``read_write`` everything (a fresh mount's default); grants still
+        widen on top. The deepest posture covering a path decides it. A
         developer-plane verb: it reshapes a mount's policy.
         """
         refusal = self._gate_params("posture", path=path, posture=posture, authority=authority)

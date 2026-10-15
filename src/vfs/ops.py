@@ -24,7 +24,7 @@ same vocabulary; per-method function names are retired.
 
 from __future__ import annotations
 
-from typing import Final, Literal, NamedTuple
+from typing import Final, Literal, NamedTuple, get_args
 
 # One name per verb, typed so an op string is checkable at the seams that
 # construct dispatch calls (the router's public methods pass literals).
@@ -99,6 +99,73 @@ with the operator too."""
 
 ALL_OPS: Final[frozenset[Op]] = MUTATING_OPS | READ_OPS | EXEC_OPS | GRANT_OPS
 """Every routed op. The drift test pins the router's public surface to this."""
+
+# ---------------------------------------------------------------------------
+# The ladder — the rung each verb needs
+# ---------------------------------------------------------------------------
+
+Rung = Literal["none", "list", "read", "add", "contribute", "read_write"]
+"""A rung of the permission ladder. Each rung includes every one below it:
+``list`` names a row (path and kind), ``read`` reads it, ``add`` creates
+beneath a prefix and alters only one's own rows, ``contribute`` also
+overwrites and edits anyone's, ``read_write`` trashes, moves and grants."""
+
+RUNGS: Final[tuple[Rung, ...]] = get_args(Rung)
+"""The ladder in order, lowest first — the rank of a rung is its index here."""
+
+
+class Needs(NamedTuple):
+    """The rungs one verb needs: on its target, on a fresh name it mints, on a row it only passes or reads.
+
+    ``primary`` judges an occupied target (the owner floor riding for a
+    mutation); ``create`` judges a fresh name and an occupied name a
+    creation lands on; ``traverse`` judges a row the verb reads without
+    changing — a copy's source, an edge's target, a walk's node.
+    """
+
+    primary: Rung
+    create: Rung | None = None
+    traverse: Rung | None = None
+
+
+VERB_RUNGS: Final[dict[Op, Needs]] = {
+    "read": Needs("read"),
+    "stat": Needs("list"),
+    "ls": Needs("list"),
+    "tree": Needs("list"),
+    "glob": Needs("list"),
+    "grep": Needs("read"),
+    "glean": Needs("read"),
+    "graph": Needs("read", traverse="list"),
+    "write": Needs("contribute", create="add"),
+    "edit": Needs("contribute"),
+    "mkdir": Needs("contribute", create="add"),
+    "delete": Needs("read_write"),
+    "restore": Needs("read_write"),
+    "move": Needs("read_write", create="add"),
+    "copy": Needs("read_write", create="add", traverse="read"),
+    "mkedge": Needs("contribute", traverse="list"),
+    "rmedge": Needs("contribute", traverse="list"),
+    "grant": Needs("read_write"),
+    "revoke": Needs("read_write"),
+    "posture": Needs("read_write"),
+    "grants": Needs("read"),
+    "run": Needs("read"),
+    "sweep": Needs("read_write"),
+    "add_member": Needs("read_write"),
+    "remove_member": Needs("read_write"),
+}
+"""The one verb-to-rung table: every gate and view reads its rung here and carries no literal.
+
+The listing verbs name rows at ``list`` and show each row's fields by
+the rung the caller holds on it; ``grep`` and ``glean`` search only what
+the caller reads; a walk passes nodes at ``list`` and returns contents
+at ``read``. A mutation judges a fresh name at ``create`` and an
+occupied row at ``primary`` or by the owner floor; a tombstoned row a
+write lands on is judged as a restore. ``grants`` lists at ``read``; the
+developer-plane verbs sit at ``read_write``; ``run`` waits for its own
+axis.
+"""
 
 # Grep option vocabularies — shared by the router, the storage protocols,
 # and the CLI grammar when it lands.

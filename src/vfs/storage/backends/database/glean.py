@@ -377,7 +377,7 @@ async def glean_rows(
             deadline=deadline,
             trashed=scope.trashed,
         )
-        admitted = [m for m in nominees.rows if scope.admits(m) and (view is None or view.admits(m))]
+        admitted = [m for m in nominees.rows if scope.admits(m) and (view is None or view.holds(m, view.need))]
         scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
         hits.update(scored)
         rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in scored})
@@ -571,7 +571,9 @@ async def _entries_for_chunks(
         )
         for mapping in (await session.execute(stmt)).mappings():
             entry_id = mapping["entry_id"]
-            if entry_id not in rows and not (scope.admits(mapping) and (view is None or view.admits(mapping))):
+            if entry_id not in rows and not (
+                scope.admits(mapping) and (view is None or view.holds(mapping, view.need))
+            ):
                 continue
             owner[mapping["chunk_id"]] = entry_id
             rows.setdefault(entry_id, mapping)
@@ -648,7 +650,7 @@ async def _vector_leg(
     spend = max((clause.binds for clause in clauses or ()), default=0)
 
     def passes(mapping: RowMapping) -> bool:
-        return scope.admits(mapping) and (view is None or view.admits(mapping))
+        return scope.admits(mapping) and (view is None or view.holds(mapping, view.need))
 
     ranked: list[RowMapping] = []
     if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
@@ -791,7 +793,7 @@ async def _visible_corpus(
             .where(docs.c.epoch == epoch, clause.predicate)
         )
         for mapping in (await session.execute(stmt)).mappings():
-            if view.admits(mapping):
+            if view.holds(mapping, view.need):
                 lengths[mapping["chunk_id"]] = mapping["dl"]
     return len(lengths), sum(lengths.values())
 
@@ -831,7 +833,7 @@ async def _visible_chunks(
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
             .where(docs.c.epoch == epoch, membership(docs.c.chunk_id, chunk, profile))
         )
-        visible.update(m["chunk_id"] for m in (await session.execute(stmt)).mappings() if view.admits(m))
+        visible.update(m["chunk_id"] for m in (await session.execute(stmt)).mappings() if view.holds(m, view.need))
     return visible
 
 

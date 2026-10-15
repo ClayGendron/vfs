@@ -23,16 +23,16 @@ await fs.write(path="/eng/plan.md", content="the plan", authority=system)
 await fs.write(path="/pub/readme.md", content="hello", parents=True, authority=system)
 ```
 
-## Make the mount private
+## Close the mount
 
-A new mount is `open`: everyone reads and writes. Set the root to `private` so a caller holds only what it is granted.
+A new mount's posture is `read_write`: everyone reads and writes. Set the root to `none` so a caller holds only what it is granted.
 
 ```python
-result = await fs.posture("/", "private", authority=system)
+result = await fs.posture("/", "none", authority=system)
 assert result.success
 ```
 
-`shared` lets everyone read and nobody write without a grant. A posture on a deeper path decides everything beneath it.
+A posture is named by the rung everyone holds: `none`, `list`, `read`, `add`, `contribute` or `read_write`. `read` lets everyone read and nobody write without a grant. A posture on a deeper path decides everything beneath it.
 
 ## Grant a person a folder
 
@@ -52,7 +52,35 @@ denied = await fs.write(path="/pub/readme.md", content="edited", authority=alice
 assert denied.errors[0].kind is ErrorKind.permission_denied
 ```
 
-The levels are `read` and `read_write`. Grants only widen: there is no deny row.
+The levels are the rungs of the ladder: `list`, `read`, `add`, `contribute` and `read_write`. Grants only widen: there is no deny row.
+
+## Let a person see names without contents
+
+A `list` grant shows the names and kinds under a prefix, nothing more. The caller can ask for access to what it sees; a read is refused, not absent.
+
+```python
+await fs.grant("/eng", "alice", "list", authority=system)
+
+named = await fs.ls("/eng", authority=alice)
+assert {str(row.path) for row in named.observations} == {"/eng/spec.md", "/eng/plan.md"}
+assert named.observations[0].populated == frozenset({"path", "kind"})
+refused = await fs.read("/eng/spec.md", authority=alice)
+assert refused.errors[0].kind is ErrorKind.permission_denied
+```
+
+The renderer marks a bare row as not populated, as it does for a directory on the road to a visible row.
+
+## Let a person add files, or edit anyone's
+
+`add` lets a caller create under the prefix and alter only what it created. `contribute` also lets it overwrite and edit anyone's rows there, but never trash, move or restore another's.
+
+```python
+await fs.grant("/eng", "alice", "contribute", authority=system)
+
+assert (await fs.write(path="/eng/spec.md", content="edited by alice", authority=alice)).success
+trashed = await fs.delete("/eng/spec.md", authority=alice)
+assert trashed.errors[0].kind is ErrorKind.permission_denied
+```
 
 ## Grant a group
 
@@ -100,7 +128,7 @@ assert (await fs.read("/eng/plan.md", authority=bob)).errors[0].kind is ErrorKin
 
 ## What a caller with no name gets
 
-A call that names nobody runs as the anonymous principal. On a private mount it is refused with `unauthenticated`, and the hint says to open a session or configure a default authority.
+A call that names nobody runs as the anonymous principal. It is judged at the path it addresses: where the posture there is below what the verb needs it is refused with `unauthenticated`, and the hint says to open a session or configure a default authority.
 
 ```python
 anonymous = await fs.read("/pub/readme.md")

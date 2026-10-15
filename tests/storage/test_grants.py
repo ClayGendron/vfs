@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import random
 from itertools import pairwise
-from typing import TYPE_CHECKING
+from typing import get_args
 
 import pytest
 
@@ -21,10 +21,12 @@ from tests.support.grant_worlds import LAYOUTS, SUBJECT_SETS, Layout, random_wor
 from tests.support.oracles.grants import everyone_rank, set_rank
 from vfs.storage.grants import (
     FULL,
+    GRANTABLE_LEVELS,
     LEVEL_RANK,
     NO_SPANS,
     ROOT,
     ROOT_COVERING,
+    GrantLevel,
     GrantRow,
     Inflight,
     OwnerArm,
@@ -54,16 +56,16 @@ from vfs.storage.grants import (
     union,
 )
 
-if TYPE_CHECKING:
-    from vfs.storage.grants import GrantLevel
-
 WORLDS = 400
+
+# The labels the pointwise checks plant on a row.
+NONE, READ, READ_WRITE = LEVEL_RANK["none"], LEVEL_RANK["read"], LEVEL_RANK["read_write"]
 
 # Every (layout, level) the parity tests run over.
 CASES = [
     pytest.param(layout, level, id=f"{name}-{level}")
     for layout, name in zip(LAYOUTS, ("base", "siblings"), strict=True)
-    for level in ("read", "read_write")
+    for level in GRANTABLE_LEVELS
 ]
 
 
@@ -212,7 +214,7 @@ def test_posture_regions_partition_the_mount_by_level(layout: Layout) -> None:
 
 
 def test_posture_regions_are_empty_without_posture_rows() -> None:
-    assert posture_regions({}) == {"none": (), "read": (), "read_write": ()}
+    assert posture_regions({}) == dict.fromkeys(get_args(GrantLevel), ())
     assert level_at({}, "/a") == "none"
 
 
@@ -409,10 +411,10 @@ def test_the_whole_mount_is_semantic_not_one_row() -> None:
 def test_nothing_is_empty_and_admits_only_by_the_everyone_level() -> None:
     rights = Rights.nothing("read")
     assert rights.empty
-    assert not rights.admits("/a", None, 0)
-    assert not rights.admits("/a", "ann", 0)
-    assert rights.admits("/a", None, 1) and rights.admits("/a", None, 2)
-    assert rights.reaches("/a", 1) and not rights.reaches("/a", 0)
+    assert not rights.admits("/a", None, NONE)
+    assert not rights.admits("/a", "ann", NONE)
+    assert rights.admits("/a", None, READ) and rights.admits("/a", None, READ_WRITE)
+    assert rights.reaches("/a", READ) and not rights.reaches("/a", NONE)
     assert not rights.covers_subtree("/a")
     assert rights.roots == ()
 
@@ -424,14 +426,15 @@ def test_posture_rows_never_enter_the_compile() -> None:
     rights = resolve({"ann": frozenset()}, rows, "read")
     assert rights.spans == () and rights.roots == () and not rights.whole
     assert rights.owner_arms == (OwnerArm("ann", (ROOT,)),)
-    assert rights.admits("/a/x", None, 1) and not rights.admits("/a/b/x", None, 0)
-    assert rights.need == 1 and resolve({"ann": frozenset()}, rows, "read_write").need == 2
+    assert rights.admits("/a/x", None, READ) and not rights.admits("/a/b/x", None, NONE)
+    assert rights.need == LEVEL_RANK["read"]
+    assert resolve({"ann": frozenset()}, rows, "read_write").need == LEVEL_RANK["read_write"]
 
 
 def test_the_everyone_level_is_read_before_the_pieces() -> None:
     rights = resolve({"ann": frozenset()}, [GrantRow("ann", "/a", "read")], "read_write")
-    assert not rights.admits("/a/x", None, 1) and rights.admits("/a/x", None, 2)
-    assert not rights.admits("/z", None, 1) and rights.admits("/z", "ann", 0)
+    assert not rights.admits("/a/x", None, READ) and rights.admits("/a/x", None, READ_WRITE)
+    assert not rights.admits("/z", None, READ) and rights.admits("/z", "ann", NONE)
 
 
 def test_roots_are_the_granted_prefixes_no_other_grant_covers() -> None:
@@ -446,8 +449,8 @@ def test_owner_arms_are_per_member_and_trimmed_by_the_shared_prefixes() -> None:
     rights = resolve({"ann": frozenset(), "bob": frozenset()}, rows, "read")
     # ann's own row under /hr passes (bob reads /hr); under /pub the shared prefix already covers it.
     assert rights.owner_arms == (OwnerArm("ann", ("/hr",)),)
-    assert rights.admits("/hr/case.md", "ann", 0)
-    assert not rights.admits("/hr/case.md", "bob", 0)
+    assert rights.admits("/hr/case.md", "ann", NONE)
+    assert not rights.admits("/hr/case.md", "bob", NONE)
     assert rights.roots == ("/pub",)
 
 
@@ -463,7 +466,7 @@ def test_an_owner_arm_never_names_a_row_the_spans_do() -> None:
 def test_a_lone_member_owns_everywhere_the_shared_prefixes_do_not_reach() -> None:
     rights = resolve({"ann": frozenset()}, [GrantRow("ann", "/pub", "read")], "read")
     assert rights.owner_arms == (OwnerArm("ann", (ROOT,)),)
-    assert rights.admits("/hr/case.md", "ann", 0) and not rights.admits("/hr/case.md", None, 0)
+    assert rights.admits("/hr/case.md", "ann", NONE) and not rights.admits("/hr/case.md", None, NONE)
 
 
 def test_a_pending_narrowing_is_a_hole_the_label_cannot_fill() -> None:
@@ -473,12 +476,14 @@ def test_a_pending_narrowing_is_a_hole_the_label_cannot_fill() -> None:
     assert rights.holes == subtract(cover("/a"), cover("/a/b"))
     assert rights.spans == cover_all(("/a/c", "/z")) and rights.roots == ("/a/c", "/z")
     # A stale label inside the hole admits nothing; the grant and the owner floor still do.
-    assert not rights.admits("/a/x", None, 1) and rights.admits("/a/c/x", None, 1)
-    assert rights.admits("/a/x", "ann", 0) and not rights.admits("/a/x", "bob", 1)
+    assert not rights.admits("/a/x", None, READ) and rights.admits("/a/c/x", None, READ)
+    assert rights.admits("/a/x", "ann", NONE) and not rights.admits("/a/x", "bob", READ)
     # Beneath the deeper posture row and outside the region the label is the truth.
-    assert rights.admits("/a/b/x", None, 1) and rights.admits("/q", None, 1) and not rights.admits("/q", None, 0)
+    assert (
+        rights.admits("/a/b/x", None, READ) and rights.admits("/q", None, READ) and not rights.admits("/q", None, NONE)
+    )
     # A creation is judged by the posture rows, so ``reaches`` keeps no hole.
-    assert not rights.reaches("/a/x", 0) and rights.reaches("/a/x", 1)
+    assert not rights.reaches("/a/x", NONE) and rights.reaches("/a/x", READ)
     found = rights.ranges()
     assert found.holes == pieces(rights.holes)
     assert found.holed_arms == pieces(cover("/a/c"))
@@ -489,7 +494,11 @@ def test_a_pending_widening_joins_the_spans_and_the_roots() -> None:
     rows = [GrantRow("*", "/", "none"), GrantRow("*", "/a", "read_write"), GrantRow("*", "/a/b", "none")]
     rights = resolve({"ann": frozenset()}, rows, "read", pending={"/a"})
     assert rights.holes == () and rights.spans == subtract(cover("/a"), cover("/a/b")) and rights.roots == ("/a",)
-    assert rights.admits("/a/x", None, 0) and not rights.admits("/a/b/x", None, 0) and not rights.admits("/q", None, 0)
+    assert (
+        rights.admits("/a/x", None, NONE)
+        and not rights.admits("/a/b/x", None, NONE)
+        and not rights.admits("/q", None, NONE)
+    )
     assert rights.ranges().holed_arms == Pieces((), ()) and rights.ranges().holed_owners == ()
     # The root widening with nothing beneath it is the whole mount.
     whole = resolve({"ann": frozenset()}, [GrantRow("*", "/", "read")], "read", pending={"/"})

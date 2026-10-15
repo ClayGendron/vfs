@@ -195,6 +195,7 @@ async def rmedge_rows(
     *,
     edges: list[Edge],
     authority: Authority | None,
+    unnamed: frozenset[str] | set[str] = frozenset(),
 ) -> Result:
     """Remove edges by exact triple; what is absent is a per-row warning.
 
@@ -202,11 +203,15 @@ async def rmedge_rows(
     record, never a batch error — removing what is already gone leaves
     the same end state, so the batch commits what it found. Statuses
     come from the probe that bounds the delete; a rival removing the
-    same triple inside the window yields the identical end state.
-    *authority* is not yet used.
+    same triple inside the window yields the identical end state. A
+    target in *unnamed* — one the caller may not name — takes the
+    absent target's record exactly, so neither the row nor the batch
+    tells a hidden target from a missing one. *authority* is not yet
+    used.
     """
     table = tables.edges
     ids = await _endpoint_ids(session, tables, profile, membership_budget, edges)
+    ids = {path: entry_id for path, entry_id in ids.items() if path not in unnamed}
     existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
     rows: list[Observation] = []
     warnings: list[ResultError] = []

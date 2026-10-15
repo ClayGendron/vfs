@@ -7,7 +7,7 @@
   the same day) and ADR 021/067's additive-only rule for the
   *everyone* level; binds spec 058 (posture and the anonymous
   principal), spec 149 (the edge refuses an open mount unless told)
-  and the developer-experience story.
+  and the developer-experience story. **Amended by ADR 080 (2026-10-14):** the posture words are the ladder's rungs (`none`, `list`, `read`, `add`, `contribute`, `read_write`; `open`/`shared`/`private` retired), and rule 6's anonymous refusal is judged at the addressed path by the posture rows on its chain, never at the mount root alone; anonymous derives no road.
 - **Date:** 2026-09-06
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-09-06), from Claude's assessment of

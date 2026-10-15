@@ -46,8 +46,8 @@ exact for any number of grants, and the authority every row passes.
     rows = [GrantRow("group:eng", "/eng", "read_write")]
     rights = resolve({"ann": frozenset({"group:eng"})}, rows, "read")
     rights.admits("/eng/spec.md", owner_id=None, everyone_level=0)   # True — a grant
-    rights.admits("/pub/faq.md", owner_id=None, everyone_level=1)    # True — everyone reads there
-    rights.admits("/hr/case.md", owner_id=None, everyone_level=0)   # False
+    rights.admits("/pub/faq.md", owner_id=None, everyone_level=2)    # True — everyone reads there
+    rights.admits("/hr/case.md", owner_id=None, everyone_level=1)   # False — everyone only lists there
     rights.admits("/hr/case.md", owner_id="ann", everyone_level=0)   # True — the owner floor
 """
 
@@ -56,9 +56,10 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, NewType, get_args
+from typing import TYPE_CHECKING, Final, NamedTuple, NewType, get_args
 
 from vfs.authority import EVERYONE_NAME
+from vfs.ops import RUNGS, Rung
 from vfs.paths import ROOT
 
 if TYPE_CHECKING:
@@ -68,22 +69,24 @@ if TYPE_CHECKING:
 # Module constants and shared types
 # ---------------------------------------------------------------------------
 
-GrantLevel = Literal["none", "read", "read_write"]
-"""A rung on the ladder. ``none`` is stored only on everyone rows, where it
-narrows a posture; a principal's row states a positive level."""
+GrantLevel = Rung
+"""A rung on the ladder, as a grant row stores it. ``none`` is stored only on
+everyone rows, where it narrows a posture; a principal's row states a
+positive level."""
 
 GRANT_LEVELS: Final[frozenset[str]] = frozenset(get_args(GrantLevel))
+
+GRANTABLE_LEVELS: Final[tuple[GrantLevel, ...]] = tuple(rung for rung in RUNGS if rung != "none")
+"""The levels a principal's row may state, lowest first: every rung but ``none``."""
 
 Rank = NewType("Rank", int)
 """A level's position on the ladder — what an entry row stores as its everyone level."""
 
-LEVEL_RANK: Final[dict[GrantLevel, Rank]] = {"none": Rank(0), "read": Rank(1), "read_write": Rank(2)}
-"""The ladder's order: ``none < read < read_write``."""
+LEVEL_RANK: Final[dict[GrantLevel, Rank]] = {rung: Rank(rank) for rank, rung in enumerate(RUNGS)}
+"""The ladder's order, dense from zero: ``none < list < read < add < contribute < read_write``."""
 
-Posture = Literal["open", "shared", "private"]
-"""What a mount gives everyone at a path: read and write, read, or nothing."""
-
-POSTURE_LEVELS: Final[dict[str, GrantLevel]] = {"open": "read_write", "shared": "read", "private": "none"}
+Posture = GrantLevel
+"""What a mount gives everyone at a path, named by the rung everyone holds there."""
 
 MAX_GROUP_DEPTH: Final = 8
 """The deepest group nesting a membership write may create; the read-side
@@ -439,6 +442,20 @@ class Rights:
     def nothing(cls, level: GrantLevel) -> Rights:
         """No row at all."""
         return cls(level)
+
+    def at_level(self, level: GrantLevel) -> Rights:
+        """These rights restated at *level*, every compiled piece shared.
+
+        Lawful where no row sits at exactly this level between the two:
+        the rows at or above *level* are then the rows at or above the
+        level compiled, so the spans, arms, roots, holes, the owned sets
+        and the pieces are the same objects — only the rank a row's label
+        is compared with moves.
+        """
+        twin = Rights(level, self.spans, self.owner_arms, self.roots, self.holes)
+        object.__setattr__(twin, "_owned", self._owned)
+        object.__setattr__(twin, "_ranges", self.ranges())
+        return twin
 
     @property
     def need(self) -> Rank:

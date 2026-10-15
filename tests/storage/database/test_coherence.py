@@ -54,6 +54,7 @@ from vfs.storage.backends.database.writes import (
     edit_rows,
     write_rows,
 )
+from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -211,7 +212,7 @@ class TestWriteVsTopologyCoherence:
                     name="late.txt",
                     kind="file",
                     version=5,
-                    everyone_level=2,
+                    everyone_level=LEVEL_RANK["read_write"],
                     size_bytes=4,
                     lines=1,
                     created_at=now,
@@ -474,7 +475,6 @@ class TestWriteVsTopologyCoherence:
                     host.parameter_budget,
                     host.membership_budget,
                     [stale],
-                    authority=None,
                     now=datetime.now(UTC),
                 )
             await session.rollback()
@@ -499,7 +499,7 @@ class TestWriteVsTopologyCoherence:
                         name="e",
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -540,7 +540,7 @@ class TestWriteVsTopologyCoherence:
                         name="copy.txt",
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -615,7 +615,7 @@ class TestWriteVsTopologyCoherence:
                         name="squatter",
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -657,7 +657,7 @@ class TestWriteVsTopologyCoherence:
                     name="late.txt",
                     kind="file",
                     version=1,
-                    everyone_level=2,
+                    everyone_level=LEVEL_RANK["read_write"],
                     size_bytes=0,
                     lines=0,
                     created_at=now,
@@ -839,7 +839,7 @@ class TestWriteVsTopologyCoherence:
                         name="new.txt",
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -896,7 +896,7 @@ class TestWriteVsTopologyCoherence:
                         name=long_tail.rsplit("/", 1)[-1],
                         kind="file",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -940,7 +940,7 @@ class TestWriteVsTopologyCoherence:
                         name="x",
                         kind="directory",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -998,7 +998,7 @@ class TestWriteVsTopologyCoherence:
                         name="x",
                         kind="directory",
                         version=1,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=0,
                         lines=0,
                         created_at=now,
@@ -1141,16 +1141,15 @@ class TestWriteVsTopologyCoherence:
         dialect = mssql.dialect()
         width = len(_CLOBBER_COLUMNS) + 4
         now = datetime.now(UTC)
-        owner = "O" * 26
-        # The eight render-state columns ride between the flags and the owner.
+        # The eight render-state columns ride between the flags and the stamps.
         render = ("text", None, None, None, None, None, None, None)
         full = (
             *(str(ULID()), 1, 2, "/full.txt", "file", "h" * 64, "text/plain", "txt", 1, 4),
-            *(False, False, False, *render, owner, now, None, None),
+            *(False, False, False, *render, now, None, None),
         )
         sparse = (
             *(str(ULID()), 1, 2, "/sparse", "file", None, None, None, 0, 0, False, False, False),
-            *(*render, None, now, None, None),
+            *(*render, now, None, None),
         )
 
         def budget(row: tuple[object, ...]) -> int:

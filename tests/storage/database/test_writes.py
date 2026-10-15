@@ -68,7 +68,7 @@ class TestWriteMechanics:
         staged = StagedEntry(
             path=Path("/f.txt"), parent=Path("/"), kind="file", persistence="insert", entry_id=str(ULID()), content="x"
         )
-        material = _material_values(staged, Authority.of(Principal("someone")), datetime.now(UTC))
+        material = _material_values(staged, datetime.now(UTC))
         assert set(material) == set(_CLOBBER_COLUMNS)
 
     async def test_failed_batch_commits_nothing(self, tmp_path) -> None:
@@ -162,7 +162,9 @@ class TestWriteMechanics:
         assert by_path["/docs"].version == stat.version
         await storage.close()
 
-    async def test_overwrite_restamps_the_owner(self, tmp_path) -> None:
+    async def test_overwrite_keeps_the_owner(self, tmp_path) -> None:
+        # A later writer contributes to the row; the floor stays with its
+        # creator, so a contributor never turns an overwrite into a trash.
         storage = DatabaseStorage(url=_url(tmp_path))
         alice, bob = Authority.of(Principal("alice")), Authority.of(Principal("bob"))
         await storage.write(entries=[Entry(path=Path("/f.txt"), content="a")], authority=alice)
@@ -170,14 +172,14 @@ class TestWriteMechanics:
         entry = storage._host.tables.entry
         async with storage._host.engine.connect() as conn:
             owner = (await conn.execute(select(entry.c.owner_id).where(entry.c.path == "/f.txt"))).scalar_one()
-        assert owner == "bob"
+        assert owner == "alice"
         await storage.close()
 
     async def test_ownership_derives_from_the_authority_not_the_payload(self, tmp_path) -> None:
         # One subject owns what it makes and the payload's owner_id is
         # ignored; a set owns nothing (the container governs); the system
         # actor — named, or implied by a direct call naming no authority —
-        # stamps whatever the payload declared; edit re-derives.
+        # stamps whatever the payload declared; an edit keeps the owner.
         storage = DatabaseStorage(url=_url(tmp_path))
         alice = Authority.of(Principal("alice"))
         room = Authority.on_behalf_of({Principal("alice"), Principal("bob")}, actor=Principal("bot", kind="service"))
@@ -195,7 +197,7 @@ class TestWriteMechanics:
         owners = {row.path: row.owner_id for row in rows}
         assert owners["/mine.txt"] == "alice"
         assert owners["/ours.txt"] is None
-        assert owners["/etl.txt"] == "alice"  # the edit under alice re-derived it from carol
+        assert owners["/etl.txt"] == "carol"  # alice's edit left carol's row carol's
         assert owners["/direct.txt"] == "carol"
         assert owners["/bare.txt"] is None
         assert owners["/anon.txt"] is None
@@ -772,7 +774,6 @@ class TestArbitration:
                 host.parameter_budget,
                 host.membership_budget,
                 [stale],
-                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
@@ -808,7 +809,6 @@ class TestArbitration:
                     host.parameter_budget,
                     host.membership_budget,
                     [relocated],
-                    authority=None,
                     now=datetime.now(UTC),
                 )
             await session.rollback()
@@ -839,7 +839,6 @@ class TestArbitration:
                     host.parameter_budget,
                     host.membership_budget,
                     [vanished],
-                    authority=None,
                     now=datetime.now(UTC),
                 )
         await storage.close()
@@ -970,7 +969,6 @@ class TestGuardedAttribution:
             32_000,
             900,
             [won, lost],
-            authority=None,
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
@@ -989,7 +987,6 @@ class TestGuardedAttribution:
             32_000,
             900,
             [gone],
-            authority=None,
             now=datetime.now(UTC),
         )
         assert [e.kind for e in errors] == [ErrorKind.not_found]
@@ -1006,7 +1003,6 @@ class TestGuardedAttribution:
             32_000,
             900,
             [staged],
-            authority=None,
             now=datetime.now(UTC),
         )
         sql = str(double.statements[0].compile(dialect=postgresql.dialect()))
@@ -1027,7 +1023,6 @@ class TestGuardedAttribution:
                 32_000,
                 900,
                 [absorbed, vanished],
-                authority=None,
                 now=datetime.now(UTC),
             )
         assert absorbed.version == 7  # the statement reported the version it assigned
@@ -1051,7 +1046,6 @@ class TestGuardedAttribution:
             2 * width - 1,
             900,
             staged,
-            authority=None,
             now=datetime.now(UTC),
         )
         assert errors == []
@@ -1096,7 +1090,6 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [fresh, stale],
-                authority=None,
                 now=datetime.now(UTC),
             )
             after = await session.execute(select(entry.c.path, entry.c.version))
@@ -1146,7 +1139,6 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [fresh, stale],
-                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [ErrorKind.conflict]
@@ -1170,7 +1162,6 @@ class TestGuardedAttribution:
                 host.parameter_budget,
                 host.membership_budget,
                 [staged],
-                authority=None,
                 now=datetime.now(UTC),
             )
         assert [e.kind for e in errors] == [ErrorKind.unsupported]

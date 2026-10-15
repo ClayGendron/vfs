@@ -1,0 +1,114 @@
+#### A. the road as bob sees it (read on /priv/deep/d.md only) ####
+
+== stat /priv (road) ==  success=True
+  /priv                        kind=directory 
+
+== stat /priv/deep (road) ==  success=True
+  /priv/deep                   kind=directory 
+
+== stat /priv/secret.md (hidden sibling) ==  success=False
+  ERROR vfs.not_found      path=/priv/secret.md  data={}
+
+== stat /priv/nope (absent) ==  success=False
+  ERROR vfs.not_found      path=/priv/nope  data={}
+
+== ls / ==  success=True
+  /priv                        kind=directory 
+
+== ls /priv (road: trimmed) ==  success=True
+  /priv/deep                   kind=directory 
+
+== tree / ==  success=True
+  /priv                        kind=directory 
+  /priv/deep                   kind=directory 
+  /priv/deep/d.md              kind=file        {'content_hash': 'cbf334f05a196949d79e54c6d9e107dcd289c8e9840768e099fdf43bc4e3586b', 'created_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 23, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'version': 1}
+
+== glob /** ==  success=True
+  /priv                        kind=directory 
+  /priv/deep                   kind=directory 
+  /priv/deep/d.md              kind=file        {'content_hash': 'cbf334f05a196949d79e54c6d9e107dcd289c8e9840768e099fdf43bc4e3586b', 'created_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 23, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'version': 1}
+
+== read /priv/deep/d.md ==  success=True
+  /priv/deep/d.md              kind=file        {'content': 'body of /priv/deep/d.md', 'content_hash': 'cbf334f05a196949d79e54c6d9e107dcd289c8e9840768e099fdf43bc4e3586b', 'created_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 23, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'version': 1}
+
+#### B. edge verbs touching the road, bob at read ####
+
+== mkedge d.md -> /priv (read-only source) ==  success=False
+  ERROR vfs.permission_denied path=/priv/deep/d.md  data={}
+  ERROR vfs.permission_denied path=/priv  data={}
+
+#### C. same, bob raised to read_write on the file, to isolate the target answer ####
+
+== mkedge d.md -> /priv (road target) ==  success=False
+  ERROR vfs.permission_denied path=/priv  data={}
+
+== mkedge d.md -> /priv/secret.md (hidden target) ==  success=False
+  ERROR vfs.not_found      path=/priv/secret.md  data={}
+
+== mkedge d.md -> /priv/nope.md (absent target) ==  success=False
+  ERROR vfs.not_found      path=/priv/nope.md  data={}
+
+== rmedge d.md -> secret.md (system-authored, bob writes source) ==  success=True
+  /priv/deep/d.md              kind=None        {'edge_target': '/priv/secret.md', 'edge_type': 'cites', 'status': 'deleted'}
+
+== rmedge d.md -> /priv/nope.md (no such edge) ==  success=True
+  ERROR vfs.not_found      path=/priv/deep/d.md  data={'edge_type': 'cites', 'vfs.target': '/priv/nope.md'}
+
+== rmedge d.md -> secret.md again (now gone) ==  success=True
+  ERROR vfs.not_found      path=/priv/deep/d.md  data={'edge_type': 'cites', 'vfs.target': '/priv/secret.md'}
+
+== mkdir /priv/new (under the road) ==  success=False
+  ERROR vfs.permission_denied path=/priv/new  data={}
+
+#### D. the stored edge rows as the system sees them ####
+
+== stat /priv/secret.md (system) ==  success=True
+  /priv/secret.md              kind=file        {'content_hash': 'b6e1b6ecaac89251451fd7ee72291be37775788a41b13c3e17fd973bca44bbd5', 'created_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 23, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 405754), 'version': 1}
+
+#### E. anonymous under posture private ####
+
+== ls / (anonymous) ==  success=False
+  ERROR vfs.unauthenticated path=None  data={}
+
+#### F. 'alter only your own rows' already rides on the owner floor ####
+
+== bob writes /inbox/bob.md under open ==  success=True
+  /inbox/bob.md                kind=file        {'size_bytes': 5, 'status': 'created', 'version': 1}
+
+== stat /inbox/bob.md (owner_id) ==  success=True
+  /inbox/bob.md                kind=file        {'version': 1}
+
+== bob overwrites own row under shared (floor) ==  success=True
+  /inbox/bob.md                kind=file        {'size_bytes': 8, 'status': 'updated', 'version': 2}
+
+== bob overwrites system's row under shared ==  success=False
+  ERROR vfs.permission_denied path=/inbox/sys.md  data={}
+
+== bob creates /inbox/new.md under shared ==  success=False
+  ERROR vfs.permission_denied path=/inbox/new.md  data={}
+
+== bob deletes own row under shared ==  success=True
+  /inbox/bob.md                kind=file        {'deleted_at': datetime.datetime(2026, 10, 14, 23, 7, 58, 535450, tzinfo=datetime.timezone.utc), 'size_bytes': 8, 'status': 'deleted', 'version': 2}
+
+== bob restores own row under shared ==  success=True
+  /inbox/bob.md                kind=file        {'size_bytes': 8, 'status': 'created', 'version': 4}
+
+== bob mkedge own -> sys.md under shared ==  success=True
+  /inbox/bob.md                kind=None        {'edge_target': '/inbox/sys.md', 'edge_type': 'replies_to', 'status': 'created'}
+
+== bob mkedge sys.md -> own under shared ==  success=False
+  ERROR vfs.permission_denied path=/inbox/sys.md  data={}
+
+#### G. anonymous under posture shared / open ####
+
+== ls /inbox (anonymous, shared) ==  success=False
+  ERROR vfs.unauthenticated path=None  data={}
+
+== anonymous writes /inbox/anon.md (shared) ==  success=False
+  ERROR vfs.unauthenticated path=None  data={}
+
+== anonymous writes /inbox/anon.md (open) ==  success=False
+  ERROR vfs.unauthenticated path=None  data={}
+
+== stat /inbox/anon.md owner (system) ==  success=False
+  ERROR vfs.not_found      path=/inbox/anon.md  data={}

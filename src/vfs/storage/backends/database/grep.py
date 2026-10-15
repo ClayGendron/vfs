@@ -258,7 +258,7 @@ async def grep_rows(
         )
         for mapping in await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown):
             if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
-                view is None or view.admits(mapping)
+                view is None or view.holds(mapping, view.need)
             ):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and "wall-time budget" not in truncations:
@@ -300,7 +300,7 @@ async def grep_rows(
                     truncations.append("candidate budget")
                 for mapping in nominated:
                     if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
-                        view is None or view.admits(mapping)
+                        view is None or view.holds(mapping, view.need)
                     ):
                         candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and "wall-time budget" not in truncations:

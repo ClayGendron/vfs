@@ -1,0 +1,25 @@
+
+edges CROSS JOIN far (the profile's range_join keyword), DISTINCT:
+    IN-list of   100:    198 rows in 0.009s
+    IN-list of  1000:   1734 rows in 0.013s
+    IN-list of  3000:   4169 rows in 0.033s
+    IN-list of 10000:   8346 rows in 0.088s
+        plan: SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=?)
+        plan: SEARCH far USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+        plan: USE TEMP B-TREE FOR DISTINCT
+
+edges table directly, DISTINCT:
+    IN-list of   100:    198 rows in 0.812s
+    IN-list of  1000:   1734 rows in 8.181s
+    IN-list of  3000:   4169 rows in 24.609s
+        plan: SEARCH far USING INDEX ix_vfs_entries_deleted_at (deleted_at=?)
+        plan: SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=? AND target_id=? AND edge_type=?)
+        plan: USE TEMP B-TREE FOR DISTINCT
+
+after ANALYZE (planner statistics), plain JOIN form, DISTINCT:
+    IN-list of   100:    198 rows in 0.003s
+    IN-list of  1000:   1734 rows in 0.011s
+    IN-list of  3000:   4169 rows in 0.029s
+        plan: SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=?)
+        plan: SEARCH far USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+        plan: USE TEMP B-TREE FOR DISTINCT

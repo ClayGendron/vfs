@@ -1,0 +1,29 @@
+ranks: {'none': 0, 'list': 1, 'read': 2, 'add': 3, 'contribute': 4, 'read_write': 5}
+(a) unknown level word: KeyError 'bogus' — the Literal is not enforced; LEVEL_RANK is the only check
+
+(b) no row at exactly list/add/contribute:
+   Rights(list) == Rights(read): False;  spans equal: True;  owner_arms equal: True;  need 1 vs 2
+   Rights(add) == Rights(contribute): False;  spans equal: True;  owner_arms equal: True;  need 3 vs 4
+   Rights(contribute) == Rights(read_write): False;  spans equal: True;  owner_arms equal: True;  need 4 vs 5
+
+(c) admits on a row labelled `list` (everyone_level=1) outside the spans, no owner:
+   Rights(list).admits('/other.md', None, 1) = True
+   Rights(read).admits('/other.md', None, 1) = False
+   -> an `at('list')` that hands back the read object would answer False on a list-labelled row.
+
+(d) a pending posture at exactly `list` under /eng/sub:
+   Rights(list).spans == Rights(read).spans: True; holes list=() read=(('/eng/sub', '/eng/sub\x00'), ('/eng/sub/', '/eng/sub0'))
+   pending at read_write instead: spans equal True, holes equal True
+
+(e) the meet over a set {ann: contribute on /inbox, bob: add on /inbox}:
+   level=list        spans=(('/inbox', '/inbox\x00'), ('/inbox/', '/inbox0')) owner_arms=[]
+   level=read        spans=(('/inbox', '/inbox\x00'), ('/inbox/', '/inbox0')) owner_arms=[]
+   level=add         spans=(('/inbox', '/inbox\x00'), ('/inbox/', '/inbox0')) owner_arms=[]
+   level=contribute  spans=() owner_arms=[('bob', ('/inbox',))]
+   level=read_write  spans=() owner_arms=[]
+   (a set never holds the floor on a shared row: owner arms name each member's *exclusive* reach only)
+
+(f) single named caller at `add` on /inbox — the floor rides every compile:
+   Rights(read_write).spans=() owner_arms=[('bob', ('/',))]
+   admits own row /inbox/b.md: True; another's: False
+   admits own row OUTSIDE the prefix, /elsewhere/b.md: True

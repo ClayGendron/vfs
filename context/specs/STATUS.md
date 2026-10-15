@@ -5,6 +5,83 @@ snapshot, not a live index** — trust the per-story `spec.md` status
 lines first; regenerate this file when the picture shifts (review the
 `active/` specs against `src/vfs/` and update both).
 
+- **165 landed 2026-10-14 (ADR 080 accepted the same day; the three
+  slices built in one landing, green at 100 % coverage)** — the
+  permission ladder: `list`, `add` and `contribute` rungs, the
+  verb-to-rung table, the walk's rung. Clay ruled the same day that the ladder lands
+  before the graph verb and that traversal needs a rung on both
+  endpoints. Three parallel studies (an impact map measured on the live
+  tree, a fourteen-system survey with Plan 9's full model first, the
+  rules with worked examples and executed baselines) are the memo
+  `research/2026-10-14-the-permission-ladder-list-and-contribute.md`
+  (studies under `research/studies/2026-10-14-permission-ladder/`).
+  Findings: the pure resolver is rank-generic but the storage half
+  assumes two rungs in six places and the gates carry eleven literals;
+  the label is a dense integer so the landing bumps the format and
+  rebuilds labels; extra compiles alias when unused; "own only" already
+  exists as the owner floor, so `contribute` is `read` plus create;
+  `list` is the road's shape, granted; `rmedge` leaks a hidden target
+  today. ADR 080 (proposed) pins `none < list < read < contribute <
+  read_write`, the three rules (both endpoints at `list`; a verb's rung
+  is the field it reads; the road is derived `list`), one `VERB_RUNGS`
+  table in `ops.py`, `admits` answering a rung, and the `rmedge` fix.
+  Clay's decisions the same day: postures are named by the rung
+  everyone holds (`none`, `list`, `read`, `add`, `contribute`,
+  `read_write`; `open`/`shared`/`private` retire); `add` is the
+  own-only rung and `contribute` edits any row but trashes only its
+  own, the SharePoint/Drive meaning verified the same day; edges at
+  `list` carry type only; `mkedge`'s target at `list`;
+  dense ranks; anonymous is judged at the addressed path. **Reviewed
+  before the build the same day** (study `04-spec-165-review-before-build.md`:
+  fifteen findings, three executed probes); the spec was rewritten on
+  it — the gate's read leg compares rungs (a `copy` from a `list` file
+  leaked its body), the anonymous check moves to the gate per target
+  with the posture rows as its source, aliasing shares pieces not
+  `Rights` objects, slice A carries the test constants so it lands
+  green, old mounts are re-provisioned, the full `VERB_RUNGS` table is
+  in the spec, every criterion names its test — and Clay answered the
+  review's three questions (a revive is a restore; no road for
+  anonymous; `rmedge`'s hidden target takes the absent target's
+  record). No clarification left. Built the same day: `Rung`, `Needs`
+  and `VERB_RUNGS` in `ops.py`; the six-rung `grants.py`; `Resolution`
+  as a mapping with aliased compiles; `Visibility` at the verb's rung
+  with `admits → Rung`; the gate's legs comparing rungs; the anonymous
+  check per addressed path; the listing verbs projecting bare at
+  `list`; `rmedge`'s per-row record; the format bump to 23 (old mounts
+  re-provisioned). One rule added at the build and flagged to Clay: an
+  overwrite or edit keeps the row's owner (else `contribute` reached
+  trash in two writes). Engine legs: see the landing notes. Spec 164
+  is unblocked.
+- **164 drafted 2026-10-14, revised the same day with Clay's decisions; 165 seeded** — graph
+  traversal as a frontier walk. Clay opened the graph work on
+  2026-10-13 with four directions (SQL native as much as possible;
+  rights enforced through the traversal; direction plus `depth` in
+  place of four methods; every dialect serves `graph`). Six parallel
+  studies, three executed on the live schema, are the memo
+  `research/2026-10-14-graph-traversal-prior-art-and-experiments.md`
+  (studies and scripts under `research/studies/2026-10-14-graph-traversal/`).
+  Findings: no shipping system compiles hops into recursive SQL; a
+  recursive CTE has no visited set and is exponential on SQL Server
+  and Oracle (7.9 M rows at depth 3 on a 200-clique); rights applied
+  after a walk leak a node behind a hidden one; the archived directed
+  pruning of the meeting subgraph deletes the shared dependency in
+  `a → x ← b`; `in_degree`/`out_degree` are counts. ADR 079
+  (proposed) pins the frontier walk — one chunked statement per hop,
+  the view narrowing every hop, `admits` on every row, no engine fact
+  so `GENERIC` serves it. Clay's decisions of 2026-10-14: the
+  application controls the recursion; methods `inbound` (what points
+  at this), `outbound` (what this points to), `neighborhood`, `meet`
+  with `minimal=True`; seeds at depth 0; `depth=None` lawful; the
+  hierarchy mirror (`fs`) is followed only when named; traversal
+  rights are "the walk's rung on both endpoints", today `read`, to be
+  flipped to a `list` rung by the expanded permission ladder, seeded as
+  spec 165 (needs research and an ADR) — **and 165 lands first**
+  (Clay, 2026-10-14). Also decided: `limit` defaults to 128 with edge
+  rows following the nodes; a walk returns every edge among its
+  returned nodes, rendered with `tree`'s glyphs and the edge type on
+  every line, no diagram arrangement. No clarification is left in
+  164. 164 is blocked on 165; four slices; nothing built. Next step:
+  the ladder's research pass (three studies running 2026-10-14).
 - **162 built 2026-10-11, both slices, uncommitted, awaiting Clay's
   review** — trash as a tombstone on the row. Delete sets `deleted_at`
   and `trash_root_id` in place (one guarded root claim plus one cascade

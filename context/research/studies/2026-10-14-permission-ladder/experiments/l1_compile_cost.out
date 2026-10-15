@@ -1,0 +1,3 @@
+n=   10 rows=   20  weight read=    6680 B  read_write=    2570 B  two compiles 0.2 ms; list==read when no list row: True; contribute==read_write when no contribute row: True
+n=  200 rows=  400  weight read=  110800 B  read_write=   28600 B  two compiles 1.4 ms; list==read when no list row: True; contribute==read_write when no contribute row: True
+n= 2000 rows= 4000  weight read= 1097200 B  read_write=  275200 B  two compiles 14.3 ms; list==read when no list row: True; contribute==read_write when no contribute row: True

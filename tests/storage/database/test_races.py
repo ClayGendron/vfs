@@ -37,6 +37,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -446,7 +447,7 @@ class TestGhostRefusal:
                         name="late.txt",
                         kind="file",
                         version=5,
-                        everyone_level=2,
+                        everyone_level=LEVEL_RANK["read_write"],
                         size_bytes=4,
                         lines=1,
                         created_at=now,

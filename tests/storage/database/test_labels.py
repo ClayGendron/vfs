@@ -38,7 +38,7 @@ from vfs.storage.backends.database.labels import (
 )
 from vfs.storage.backends.database.revision import bump_revision, hold_revision, read_revision
 from vfs.storage.backends.memory import InMemoryStorage
-from vfs.storage.grants import GrantLevel, GrantRow, Posture, normalise
+from vfs.storage.grants import LEVEL_RANK, GrantRow, Posture, normalise
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -69,7 +69,7 @@ SPELLINGS: list[tuple[DialectProfile, Dialect, tuple[str, ...]]] = [
 @pytest.fixture
 async def storage() -> AsyncIterator[InMemoryStorage]:
     storage = InMemoryStorage()
-    assert (await storage.posture(path=Path("/"), posture="shared", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/"), posture="read", authority=SYSTEM)).success is True
     yield storage
     await storage.close()
 
@@ -91,15 +91,16 @@ def test_the_relabel_renders_each_dialects_measured_form(
 
 async def test_a_batch_takes_its_labels_from_the_deepest_covering_posture(storage: InMemoryStorage) -> None:
     await storage.mkdir(path=Path("/a/b"), parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/a"), posture="private", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/a/b"), posture="open", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/a"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/a/b"), posture="read_write", authority=SYSTEM)).success is True
     host = storage._host
     async with host.session_factory() as session:
         labels = await labels_for(
             session, host.tables, host.profile, host.membership_budget, ["/x.md", "/a/x.md", "/a/b/x.md", "/a/b"]
         )
         postures = await posture_beneath(session, host.tables, host.profile, host.membership_budget, "/a")
-    assert labels == {"/x.md": 1, "/a/x.md": 0, "/a/b/x.md": 2, "/a/b": 2}
+    read, none, read_write = LEVEL_RANK["read"], LEVEL_RANK["none"], LEVEL_RANK["read_write"]
+    assert labels == {"/x.md": read, "/a/x.md": none, "/a/b/x.md": read_write, "/a/b": read_write}
     assert postures == {"/a": "none", "/a/b": "read_write"}
 
 
@@ -107,8 +108,8 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
     entries = [Entry(path=Path(f"/d/{n}.md"), content="x") for n in range(5)]
     entries.append(Entry(path=Path("/d/sub/k.md"), content="x"))
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/d/sub"), posture="private", authority=SYSTEM)).success is True
-    result = await storage.posture(path=Path("/d"), posture="open", authority=SYSTEM)
+    assert (await storage.posture(path=Path("/d/sub"), posture="none", authority=SYSTEM)).success is True
+    result = await storage.posture(path=Path("/d"), posture="read_write", authority=SYSTEM)
     assert result.success is True
     # /d itself, its five files, and nothing under the deeper posture: one
     # point, one range, one chunk after the transaction that wrote the row.
@@ -122,17 +123,16 @@ async def test_a_posture_change_reports_what_it_relabelled(storage: InMemoryStor
 async def test_the_rebuild_repairs_every_label_from_the_posture_rows(storage: InMemoryStorage) -> None:
     paths = ["/a/x.md", "/a/b/y.md", "/a-b/z.md", "/a0/w.md", "/c/v.md"]
     assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
-    postures: list[tuple[str, Posture]] = [("/a", "private"), ("/a/b", "open"), ("/c", "private")]
+    postures: list[tuple[str, Posture]] = [("/a", "none"), ("/a/b", "read_write"), ("/c", "none")]
     for path, posture in postures:
         assert (await storage.posture(path=Path(path), posture=posture, authority=SYSTEM)).success is True
     host = storage._host
     entry = host.tables.entry
     async with host.session_factory() as session, session.begin():
-        await session.execute(update(entry).values(everyone_level=2))
+        await session.execute(update(entry).values(everyone_level=LEVEL_RANK["read_write"]))
         done = await rebuild_labels(session, host.tables, host.profile, host.membership_budget)
     assert done.rows >= len(paths) and done.statements >= 3
-    levels: dict[str, GrantLevel] = {"private": "none", "open": "read_write"}
-    world = GrantWorld([GrantRow("*", "/", "read"), *(GrantRow("*", p, levels[posture]) for p, posture in postures)])
+    world = GrantWorld([GrantRow("*", "/", "read"), *(GrantRow("*", p, posture) for p, posture in postures)])
     async with host.session_factory() as session:
         stored = (await session.execute(select(entry.c.path, entry.c.everyone_level))).all()
     assert {row.path: row.everyone_level for row in stored} == {
@@ -200,7 +200,11 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
         postures = await inflight_postures(session, host.tables, host.profile, host.membership_budget, marks)
     # A chunk ran, so some labels are stale and some already rewritten; the
     # mark still stands, so the in-flight compile covers the whole subtree.
-    assert stale == {0, 1} and marks == (Mark("/", revision),) and postures == {"/": "none"}
+    assert (
+        stale == {LEVEL_RANK["none"], LEVEL_RANK["read"]}
+        and marks == (Mark("/", revision),)
+        and postures == {"/": "none"}
+    )
     # A fresh driver resumes from the cursor and clears the mark.
     resumed = Relabeller(host.tables, host.profile, host.membership_budget)
     while True:
@@ -217,8 +221,8 @@ async def test_a_dead_relabel_resumes_and_reads_stay_exact_meanwhile(storage: In
 
 async def test_the_marks_and_the_pending_postures_follow_the_table(storage: InMemoryStorage) -> None:
     await storage.mkdir(path=Path("/a/b"), parents=True, authority=SYSTEM)
-    assert (await storage.posture(path=Path("/a"), posture="shared", authority=SYSTEM)).success is True
-    assert (await storage.posture(path=Path("/a/b"), posture="private", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/a"), posture="read", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/a/b"), posture="none", authority=SYSTEM)).success is True
     host = storage._host
     async with host.session_factory() as session:
         none = await inflight_marks(session, host.tables)
@@ -263,7 +267,7 @@ async def test_the_generic_floor_relabels_with_literal_ranges_and_counts_one_at_
     # carves the region into points and open ranges, so both legs run.
     paths = [f"/d/{n}.md" for n in range(4)] + ["/d/sub/k.md", "/e.md"]
     assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
-    assert (await storage.posture(path=Path("/d/sub"), posture="open", authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/d/sub"), posture="read_write", authority=SYSTEM)).success is True
     host = storage._host
     profile = replace(host.profile, range_source=None)
     async with host.session_factory() as session, session.begin():

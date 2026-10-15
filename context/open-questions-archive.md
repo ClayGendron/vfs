@@ -428,3 +428,91 @@ resolve to this file.
 - **Options considered:** judge a trash row by its original path's grants; add a trash-side grant rule; leave it to the owner and the operator.
 - **Corrected 2026-10-01 (the 058 code review, finding 1):** the statement above was false as written. A trashed row was judged by its *trash* path, which the root posture covers — so under the default open root a row deleted from a private folder became readable, greppable and sweepable by everyone, anonymous included; under a shared root it became readable by everyone. The "owner-only" picture held only under a private root, and by accident.
 - **Status:** resolved 2026-10-02 (Clay; spec 150 §8, decided with ADR 073) → **a trashed row is judged by its origin.** Delete records the path the row was deleted from (`entries.origin_path`, slice F of spec 150); the row keeps the everyone level it had, a later posture change reaches it at its origin, and the caller's own grants and owner floor are matched against the origin instead of the trash address. So a granted non-owner sees and restores what it deleted, a row nobody but its owner could see stays that way in the trash on every verb (`tree /.vfs/trash`, `grep`, `glean`, `sweep`, `restore`), a grant on the trash subtree reaches no trashed row, and restore's refusals name only the path the caller sent (review finding 14). `context/specs/active/150-rights-at-scale/spec.md` §8 and its "Implementation progress — slice F" hold the rule and the record.
+
+## Graph verb: the method names
+
+- **Asked:** 2026-10-14 by the assistant (ADR 079 proposed; spec 164 drafted)
+- **Context:** Clay asked for names that make the direction unmistakable and suggested `in_degree`/`out_degree`; the naming study found those are counts everywhere and already count fields on `Observation`. The memo recommends `forward`/`reverse`/`both` (relative to the `mkedge` arrow) and `connect`/`connect_min` for the meeting subgraph.
+- **Blocking:** spec 164 slice A (a rename across `ops.py`, `params.py`, the tests and the docs; nothing else moves).
+- **Options considered:** `forward`/`reverse`/`both` (recommended: defined by the arrow `mkedge` already names); `outbound`/`inbound`/`around` (point of view, needs a sentence); `out`/`in`/`both` (`in` is a Python keyword and reads as "inside"); `upstream`/`downstream` (flips meaning by domain); `connect`/`connect_min` vs `meet`/`meet_min`.
+- **Status:** resolved 2026-10-14 by Clay: `inbound` (what points at this), `outbound` (what this points to), `neighborhood`, `meet` with a `minimal` flag; `forward`/`reverse` rejected because a reference points at an older document; `in`/`out`, `both`/`around` rejected. Recorded in ADR 079 pin 5 and spec 164 §1.1.
+
+## Graph verb: `limit`'s default, and whether it cuts `meet`'s edge rows
+
+- **Asked:** 2026-10-14 by the assistant (spec 164 §2.4); Clay asked for plainer words on 2026-10-14.
+- **Context:** `limit` is the most node rows one `graph` call returns, so an agent's answer stays small; a pipeline passes `limit=None` for everything. The cut keeps the nearest nodes and reports a truncation warning with counts. Two sub-questions: the default (`glean` defaults to 10, `tree` has no cap; 100 proposed), and on `meet`, whether the cut also drops the surviving edge rows that touch cut nodes, or leaves the edge set whole because the edges are the answer.
+- **Blocking:** spec 164 slice A (the default) and slice C (the `meet` rule).
+- **Options considered:** default 100 and cut edge rows to survivors on every method (drafted); default `None` (no cap) with the warning never firing; leave `meet`'s edge rows whole.
+- **Status:** resolved 2026-10-14 by Clay: the default is 128; edge rows follow the nodes on every method (no edge row touches a cut node). ADR 079 pin 8; spec 164 §2.4.
+
+## Graph verb: which edges a walk returns
+
+- **Asked:** 2026-10-14 by the assistant (spec 164 §2.4); Clay asked for plainer words on 2026-10-14.
+- **Context:** Besides the node rows, a walk's answer carries edge rows. (a) One edge per reached node — the edge the walk used to reach it — so the answer is a tree and edge rows never outnumber node rows. (b) Every edge among the reached nodes — the full induced subgraph — richer and possibly much larger. `meet` always returns its surviving edges; this question is about `inbound`, `outbound` and `neighborhood`.
+- **Blocking:** spec 164 slice B's answer shape.
+- **Options considered:** (a) discovering edges (drafted); (b) all induced edges; (c) (a) by default with a flag for (b).
+- **Status:** resolved 2026-10-14 by Clay: every edge among the returned nodes, presented with their edge types in a hierarchical rendering (a Mermaid arrangement on request). ADR 079 pin 8; spec 164 §1.4, §2.4.
+
+## Ladder: an edge touching a `list` node — type only, or the whole edge?
+
+- **Asked:** 2026-10-14 by the assistant (ADR 080 pin 6; study 03 §1)
+- **Context:** A walk returns edges among the nodes it returns, and a node may be at `list`. The edge's type is a name-class fact; its weight and distance are measures computed from two bodies, one of which the caller may not read, so returning them lets a `list`-level caller rank hidden bodies by similarity to a known one (the class ADR 065 rule 4 closed).
+- **Blocking:** spec 165 slice B task 13; spec 164's edge rows.
+- **Options considered:** type only unless both endpoints are at `read` (recommended); the whole edge as its own visible row (simpler).
+- **Status:** resolved 2026-10-14 by Clay: type only; weight and distance only when both endpoints are at `read` or above. ADR 080 pin 6.
+
+## Ladder: delete-own under `contribute`, and the directory owner's reach
+
+- **Asked:** 2026-10-14 by the assistant (ADR 080 pin 3; studies 02 §5, 03 §4)
+- **Context:** The sticky bit lets a contributor delete its own file and lets the directory's owner delete anyone's; afs, Drive and Oak let a contributor delete nothing. vfs's owner floor is per row, so a directory's owner holds no floor over rows others created beneath it. Trash is a tombstone, so delete is reversible.
+- **Blocking:** spec 165's `contribute` matrix.
+- **Options considered:** delete-own yes, directory owner no reach (recommended: the floor stays per row); delete-own yes and the directory owner may remove contributors' rows beneath (needs a subtree floor); delete-own no.
+- **Status:** resolved 2026-10-14 by Clay: a contributor may trash and restore its own rows (the sticky-bit answer); the directory owner gets no extra reach. ADR 080 pin 3.
+
+## Ladder: the posture word for "everyone holds `list`"
+
+- **Asked:** 2026-10-14 by the assistant (ADR 080 pin 12; study 02 §6)
+- **Context:** No system uses a level word for the state; the field's words are about seeing (SharePoint "Limited Access", Nuxeo "Browse", afs `meta`, GitLab "Guest"). `inbox` for "everyone holds `contribute`" is the field's word for the shape and is taken.
+- **Blocking:** spec 165 slice A.
+- **Options considered:** `listed` (reads beside `open`/`shared`/`private`; recommended); `browsable` (Nuxeo's verb).
+- **Status:** resolved 2026-10-14 by Clay: postures are named by the rung everyone holds — `none`, `list`, `read`, `contribute`, `read_write`; `open`/`shared`/`private`/`listed`/`inbox` are not words. ADR 080 pin 12.
+
+## Ladder: dense or sparse ranks
+
+- **Asked:** 2026-10-14 by the assistant (ADR 080 pin 1; study 01 §2)
+- **Context:** `LEVEL_RANK` is dense and `everyone_level` stores it, so inserting `list` renumbers every stored label (format bump, `rebuild_labels`). Sparse ranks (0, 10, 20, 30, 40) would spare the next rung a renumber but renumber this time anyway.
+- **Blocking:** nothing; a constant.
+- **Options considered:** dense now (recommended: `manage` would append, not insert); sparse.
+- **Status:** resolved 2026-10-14: dense; `manage` would append. ADR 080 pin 1.
+
+## Ladder: does `contribute` mean "edit files"?
+
+- **Asked:** 2026-10-14 by Clay: "I feel like contribute should mean you can edit files, can you verify that is the precedent?"
+- **Context:** The memo's draft named the own-only rung `contribute`. Verified the same day: SharePoint's Contribute is "Read permissions, plus: Add Items, Edit Items, Delete Items …" with own-only as a list setting, and Drive's Contributor "edit[s] the file" (any file) but cannot trash. The own-only shape (sticky bit, Postgres row policies, GitLab authored-only) is never called contribute.
+- **Blocking:** ADR 080 pin 3.
+- **Options considered:** `contribute` = the Drive shape (edit any, no trash); keep own-only and rename it `add`; both rungs.
+- **Status:** resolved 2026-10-14 by Clay: both rungs — `none < list < read < add < contribute < read_write`. ADR 080 pins 1, 3, 9, 12.
+
+## Ladder: anonymous under a `contribute` posture beneath a `none` root
+
+- **Asked:** 2026-10-14 by the assistant (ADR 080 pin 12; study 03 §6, executed)
+- **Context:** `posture_refusal` admits an anonymous caller by the mount root's posture only, so `posture("/inbox", "contribute")` under a `none` root is unreachable for anonymous. Either the gate reads the addressed path's chain (the same deepest-wins rule every named caller already gets), or the docs say an anonymous drop-in folder must be the root posture. Executed 2026-10-14: anonymous owns nothing (`owner_id` NULL on what it creates) and holds no floor, so under a `contribute` posture it can create and never alter or trash, its own creations included. Clay's own case — public reads, authenticated users contribute via cards on the root — works under both options.
+- **Blocking:** spec 165 slice B; ADR 068's amendment.
+- **Options considered:** change the gate to the addressed chain (recommended; one read of the posture rows the resolver already fetches); document root-only.
+- **Status:** resolved 2026-10-14 by Clay: anonymous is judged at the addressed path. `posture("/", "none")` + `posture("/scratch", "read_write")` → an anonymous `write("/scratch/hello.txt")` is created. ADR 080 pin 12; spec 165 §2 and acceptance criterion 8.
+
+## Graph verb: traversal rights on the expanded permission ladder (spec 165)
+
+- **Asked:** 2026-10-14 by Clay, reviewing ADR 079: "if you have access to a file, then you can already see its parent directories ... expand that permission set ... and we just make a rule that to traverse nodes, you need to have X level of permission on both nodes."
+- **Context:** The walk enforces "the caller holds the walk's rung on both endpoints of every edge". Today the only visibility rung is `read`, so a road-only directory (ADR 070) is absent in a walk and an `fs` walk differs from `tree` there. The 2026-10-07 addendum above proposes `none < list < read < contribute < read_write < manage`; with a `list` rung the walk can pass intermediate nodes at `list` and return contents at `read`, and the road counts as `list`. The ladder is not specified anywhere yet; spec 165 is its seed and needs research and an ADR first (the rights ADRs are 062–073).
+- **Blocking:** spec 164 — Clay ruled on 2026-10-14 that 165 lands first. The research pass ran the same day (three studies, Plan 9 first); ADR 080 is proposed and spec 165 is a draft. Five clarifications below are what remain.
+- **Options considered:** `read` on both endpoints now, `list` for intermediate nodes once the ladder lands (the drafted path); route `fs`-only walks to the subtree scan meanwhile; teach the hop statement the road (a per-hop range probe, rejected as a second predicate).
+- **Status:** resolved 2026-10-14: the ladder is researched (memo `research/2026-10-14-the-permission-ladder-list-and-contribute.md`), ADR 080 is proposed with every clarification answered by Clay, spec 165 is a draft that lands before 164; the walk passes at `list` on both endpoints and returns contents at `read`.
+
+## Ladder review: the revive rung, anonymous and the road, `rmedge`'s shape
+
+- **Asked:** 2026-10-14 by the pre-build review of spec 165 (`research/studies/2026-10-14-permission-ladder/04-spec-165-review-before-build.md`, questions 1–3)
+- **Context:** A `write` at a tombstoned row revives it (ADR 074); at `contribute` that would un-trash another principal's row. Anonymous judged at the addressed path leaves `ls("/")` refused under a `none` root while a named nobody sees the road. `rmedge`'s hidden-target fix had two candidate shapes, one of which re-opened the leak at the batch level.
+- **Blocking:** spec 165 slice B.
+- **Options considered:** revive as overwrite vs as restore; road for anonymous vs none; per-row warning with the batch committing vs failing the batch.
+- **Status:** resolved 2026-10-14 by Clay: a revive is a restore (a deleted row keeps its name and owner until permanently deleted); no road for anonymous (the Unix/Plan 9 answer for the `other` class); hidden and absent `rmedge` targets take the same per-row warning and the batch commits. ADR 080 pins 3, 10, 12.

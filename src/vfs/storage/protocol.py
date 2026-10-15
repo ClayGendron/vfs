@@ -355,8 +355,10 @@ class SupportsGrants(Protocol):
     """The grant family: the rows that decide who sees and writes what.
 
     A grant names a principal (a ``sub`` or a ``group:`` id), a path
-    prefix, and a level; ``posture`` writes the everyone row that sets
-    what a caller with no grant holds. Membership is mount-wide, so the
+    prefix, and a level — a rung of the ladder ``list < read < add <
+    contribute < read_write``; ``posture`` writes the everyone row that
+    sets what a caller with no grant holds, named by the same rungs
+    (``none`` included). Membership is mount-wide, so the
     membership verbs take no path. Answers ride as ``grants=`` and
     ``members=`` extras, never as observations: a grant is not a row of
     the namespace.

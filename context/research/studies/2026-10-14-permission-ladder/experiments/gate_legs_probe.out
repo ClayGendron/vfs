@@ -1,0 +1,72 @@
+#### A. the create leg on an occupied visible target (bob holds read on /team) ####
+
+== mkdir /team exist_ok=True as bob ==  success=True
+  OBS  /team kind=directory {'status': 'unchanged', 'version': 1}
+
+== mkdir /team as bob ==  success=False
+  ERR  kind=vfs.exists severity=error path=/team message='Already exists'
+
+== mkdir /team/plan.md (a file) as bob ==  success=False
+  ERR  kind=vfs.exists severity=error path=/team/plan.md message='Already exists'
+
+== mkdir /team/sub/x.md (tombstoned, visible) as bob ==  success=False
+  ERR  kind=vfs.not_found severity=error path=/team/sub/x.md message='Not found'
+
+== write /team/sub/x.md (revive) as bob ==  success=False
+  ERR  kind=vfs.permission_denied severity=error path=/team/sub/x.md message='Permission denied'
+
+#### B. the read leg: copy from a source the caller may only read into a prefix it may create in ####
+
+== copy /team/plan.md -> /mine/plan.md as bob ==  success=True
+  OBS  /mine/plan.md kind=file {'size_bytes': 18, 'status': 'created', 'version': 1}
+
+== read /mine/plan.md as bob ==  success=True
+  OBS  /mine/plan.md kind=file {'content': 'body /team/plan.md', 'content_hash': '58d82a34415d93070e2f58bcf0842e0192e724cded4565d8a54927a912f77eac', 'created_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 121491), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 18, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 121491), 'version': 1}
+   (today lawful: read >= read. Under the ladder the same leg passes a `list` source: no compile is consulted.)
+
+#### C. anonymous under a `none` root with an `open` posture at /scratch (today) ####
+
+== anon write /scratch/hello.txt ==  success=False
+  ERR  kind=vfs.unauthenticated severity=error path=None message='Unauthenticated'
+
+== anon ls /scratch ==  success=False
+  ERR  kind=vfs.unauthenticated severity=error path=None message='Unauthenticated'
+
+== anon ls / ==  success=False
+  ERR  kind=vfs.unauthenticated severity=error path=None message='Unauthenticated'
+
+== anon glob /** ==  success=False
+  ERR  kind=vfs.unauthenticated severity=error path=None message='Unauthenticated'
+
+-- the same calls as a named nobody (no grants) --
+
+== zed ls / ==  success=True
+  OBS  /scratch kind=directory {'content_hash': None, 'created_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': None, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'version': 1}
+
+== zed glob /** ==  success=True
+  OBS  /scratch kind=directory {'content_hash': None, 'created_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': None, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'version': 1}
+  OBS  /scratch/old.md kind=file {'content_hash': '2be5889de0b5cb1bf52c14d7b4927ba32d7949b719cf9b7d851bd80eb3a229e7', 'created_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'deleted_at': None, 'mime_type': None, 'render_status': None, 'size_bytes': 20, 'source': 'text', 'updated_at': datetime.datetime(2026, 10, 15, 0, 8, 10, 76210), 'version': 1}
+
+== zed write /scratch/hello.txt ==  success=True
+  OBS  /scratch/hello.txt kind=file {'size_bytes': 2, 'status': 'created', 'version': 1}
+
+== zed grants /scratch ==  success=True
+
+#### D. rmedge from a source the caller owns but holds no grant on (the floor on edges) ####
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/a136c8c8-23d9-4b10-9f84-232c5006e995/scratchpad/review165/gate_legs_probe.py", line 74, in <module>
+    asyncio.run(main())
+    ~~~~~~~~~~~^^^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/a136c8c8-23d9-4b10-9f84-232c5006e995/scratchpad/review165/gate_legs_probe.py", line 69, in main
+    assert (await storage.write(entries=[Entry(path=Path("/inbox/bob.md"), content="mine")], parents=True, authority=BOB)).success
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

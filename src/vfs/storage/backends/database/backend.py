@@ -38,7 +38,8 @@ from ulid import ULID
 
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.paths import TRASH_ROOT, Path
+from vfs.ops import VERB_RUNGS
+from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -92,7 +93,7 @@ from vfs.storage.backends.database.indexing import (
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller
 from vfs.storage.backends.database.offload import call_offloaded
-from vfs.storage.backends.database.reads import glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.reads import addressed_by, glob_rows, ls_rows, read_rows, stat_rows, tree_rows
 from vfs.storage.backends.database.render import (
     RENDER_PAGE_ROWS,
     Rendered,
@@ -114,11 +115,11 @@ from vfs.storage.backends.database.rights import (
     denied,
     grant_rows,
     list_grants,
-    posture_refusal,
     remove_member_rows,
     resolve_authority,
     revoke_rows,
     set_posture,
+    unauthenticated_refusals,
 )
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import (
@@ -139,7 +140,7 @@ from vfs.storage.protocol import storage_ops, targets_of
 from vfs.storage.ranking import Ranker
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,7 +148,7 @@ if TYPE_CHECKING:
     from vfs.models import Edge, Entry, Observation
     from vfs.models.rows import VFSTables
     from vfs.models.vector import NativeEmbeddingConfig
-    from vfs.ops import CaseMode, GrepOutputMode, Op
+    from vfs.ops import CaseMode, GrepOutputMode, Needs, Op, Rung
     from vfs.paths import ObjectKind
     from vfs.storage import ResolvedPair
     from vfs.storage.backends.database.rights import Resolution
@@ -192,7 +193,7 @@ class DatabaseStorage:
         ranker: Ranker | None = None,
         renderers: RendererRegistry | None = None,
         render_limits: RenderLimits | None = None,
-        posture: Posture = "open",
+        posture: Posture = "read_write",
     ) -> None:
         if trash_days < 0:
             msg = f"trash_days must be non-negative, got {trash_days}"
@@ -309,6 +310,7 @@ class DatabaseStorage:
             self._viewed(
                 "read",
                 authority,
+                [str(target) for target in targets],
                 lambda session, view: read_rows(
                     session, host.tables, host.profile, host.membership_budget, targets, columns, view
                 ),
@@ -330,6 +332,7 @@ class DatabaseStorage:
             self._viewed(
                 "stat",
                 authority,
+                [str(target) for target in targets],
                 lambda session, view: stat_rows(
                     session, host.tables, host.profile, host.membership_budget, targets, columns, view
                 ),
@@ -351,6 +354,7 @@ class DatabaseStorage:
             self._viewed(
                 "ls",
                 authority,
+                [str(target) for target in targets],
                 lambda session, view: ls_rows(
                     session, host.tables, host.profile, host.membership_budget, targets, columns, view
                 ),
@@ -376,6 +380,7 @@ class DatabaseStorage:
             self._viewed(
                 "tree",
                 authority,
+                [str(path)],
                 lambda session, view: tree_rows(
                     session, host.tables, host.profile, host.membership_budget, path, max_depth, columns, view
                 ),
@@ -404,6 +409,7 @@ class DatabaseStorage:
             self._viewed(
                 "glob",
                 authority,
+                addressed_by(patterns),
                 lambda session, view: glob_rows(
                     session,
                     host.tables,
@@ -448,6 +454,7 @@ class DatabaseStorage:
             self._viewed(
                 "grep",
                 authority,
+                addressed_by(globs),
                 lambda session, view: grep_rows(
                     session,
                     host.tables,
@@ -504,6 +511,7 @@ class DatabaseStorage:
             self._viewed(
                 "glean",
                 authority,
+                [*addressed_by(globs), *(str(row.path) for row in observations or ())],
                 lambda session, view: glean_rows(
                     session,
                     host.tables,
@@ -622,7 +630,7 @@ class DatabaseStorage:
         host = self._host
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority)
+            gate = await self._gate(session, authority, VERB_RUNGS["write"])
             if isinstance(gate, ResultError):
                 return Result(ops=("write",), errors=[gate])
             if refused := await gate.targets(session, [e.path for e in entries], "upsert", parents=parents):
@@ -654,7 +662,7 @@ class DatabaseStorage:
         host = self._host
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority)
+            gate = await self._gate(session, authority, VERB_RUNGS["edit"])
             if isinstance(gate, ResultError):
                 return Result(ops=("edit",), errors=[gate])
             if refused := await gate.targets(session, targets, "modify"):
@@ -683,12 +691,12 @@ class DatabaseStorage:
         targets = targets_of(path, observations)
 
         async def gate(session: AsyncSession) -> list[ResultError]:
-            checks = await self._gate(session, authority)
+            checks = await self._gate(session, authority, VERB_RUNGS["delete"])
             if isinstance(checks, ResultError):
                 return [checks]
             if refused := await checks.targets(session, targets, "modify"):
                 return refused
-            return await checks.subtrees(session, targets, "read_write") if cascade else []
+            return await checks.subtrees(session, targets, checks.needs.primary) if cascade else []
 
         return await self._execute_topology(
             "delete",
@@ -717,11 +725,11 @@ class DatabaseStorage:
 
         async def gate(session: AsyncSession) -> list[ResultError]:
             nonlocal checks
-            resolved = await self._gate(session, authority)
+            resolved = await self._gate(session, authority, VERB_RUNGS["restore"])
             if isinstance(resolved, ResultError):
                 return [resolved]
             checks = resolved
-            return []
+            return await checks.anonymous(session, targets)
 
         async def permit(
             session: AsyncSession, target: Path, row: Mapping[Any, Any] | None, verdict: ResultError | None
@@ -739,16 +747,16 @@ class DatabaseStorage:
             assert checks is not None
             if checks.whole:
                 return None
-            if row is None or not checks.view.admits(row):
+            if row is None or not checks.view.shows(row):
                 road = (
                     row is not None
                     and row["kind"] == "directory"
                     and await checks.view.road(session, [row["path"]], trashed=row["deleted_at"] is not None)
                 )
                 return denied(target) if road else await checks.missing(session, target)
-            refused = checks.row(target, row["path"], row["owner_id"], row["everyone_level"], "read_write")
+            refused = checks.row(target, row["path"], row["owner_id"], row["everyone_level"], checks.needs.primary)
             if refused is None and row["kind"] == "directory":
-                beneath = await checks.subtrees(session, [Path._brand(row["path"])], "read_write")
+                beneath = await checks.subtrees(session, [Path._brand(row["path"])], checks.needs.primary)
                 refused = denied(target) if beneath else None
             if refused is None and verdict is not None and verdict.path != target:
                 # The ladder named an ancestor: it is worded over what the caller may see.
@@ -777,17 +785,17 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         async def gate(session: AsyncSession) -> list[ResultError]:
-            checks = await self._gate(session, authority)
+            checks = await self._gate(session, authority, VERB_RUNGS["sweep"])
             if isinstance(checks, ResultError):
                 return [checks]
             if checks.whole:
                 return []
             if path == TRASH_ROOT:
                 # The retention arm may destroy a deleted row anywhere: it needs write over the whole mount.
-                return [denied(path)] if await checks.subtrees(session, [ROOT], "read_write") else []
+                return [denied(path)] if await checks.subtrees(session, [ROOT], checks.needs.primary) else []
             if refused := await checks.targets(session, [path], "modify"):
                 return refused
-            return await checks.subtrees(session, [path], "read_write")
+            return await checks.subtrees(session, [path], checks.needs.primary)
 
         return await self._execute_topology(
             "sweep",
@@ -814,7 +822,7 @@ class DatabaseStorage:
         host = self._host
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority)
+            gate = await self._gate(session, authority, VERB_RUNGS["mkdir"])
             if isinstance(gate, ResultError):
                 return Result(ops=("mkdir",), errors=[gate])
             if refused := await gate.targets(session, [path], "create", parents=parents):
@@ -859,7 +867,7 @@ class DatabaseStorage:
         host = self._host
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority)
+            gate = await self._gate(session, authority, VERB_RUNGS["mkedge"])
             if isinstance(gate, ResultError):
                 return Result(ops=("mkedge",), errors=[gate])
             refused = await gate.targets(session, [edge.source for edge in edges], "modify")
@@ -888,13 +896,22 @@ class DatabaseStorage:
         host = self._host
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, authority)
+            gate = await self._gate(session, authority, VERB_RUNGS["rmedge"])
             if isinstance(gate, ResultError):
                 return Result(ops=("rmedge",), errors=[gate])
             if refused := await gate.targets(session, [edge.source for edge in edges], "modify"):
                 return Result(ops=("rmedge",), errors=refused)
+            # A target the caller cannot name is folded into the per-row record an absent one gets.
+            targets = [edge.target for edge in edges]
+            unnamed = {str(target) for target in targets} - await gate.named(session, targets)
             return await rmedge_rows(
-                session, host.tables, host.profile, host.membership_budget, edges=edges, authority=authority
+                session,
+                host.tables,
+                host.profile,
+                host.membership_budget,
+                edges=edges,
+                authority=authority,
+                unnamed=unnamed,
             )
 
         return await self._execute_write("rmedge", run)
@@ -943,7 +960,7 @@ class DatabaseStorage:
         )
 
     async def posture(self, *, path: Path, posture: Posture, authority: Authority | None = None) -> Result:
-        """Set what everyone holds at *path* and below: ``open``, ``shared``, or ``private``.
+        """Set what everyone holds at *path* and below, named by the rung: ``none`` up to ``read_write``.
 
         The posture row commits first and is in force from then on; the
         verb then waits while the labels beneath it are rewritten, one
@@ -976,7 +993,7 @@ class DatabaseStorage:
         who = self._named(authority)
 
         async def run(session: AsyncSession) -> Result:
-            gate = await self._gate(session, who, level="read")
+            gate = await self._gate(session, who, VERB_RUNGS["grants"])
             if isinstance(gate, ResultError):
                 return Result(ops=("grants",), errors=[gate])
             return await list_grants(
@@ -1414,58 +1431,84 @@ class DatabaseStorage:
         return _SYSTEM if authority is None else authority
 
     async def _resolution(
-        self, session: AsyncSession, authority: Authority | None, level: GrantLevel, *, cached: bool = True
+        self, session: AsyncSession, authority: Authority | None, *, cached: bool = True
     ) -> Resolution | ResultError:
-        """The call's rights, resolved in its own transaction; ``unauthenticated`` when posture wants a name."""
-        who = self._named(authority)
+        """The call's rights, resolved in its own transaction."""
         host = self._host
-        resolution = await resolve_authority(
-            session, host.tables, host.profile, host.membership_budget, who, self._rights if cached else None
+        return await resolve_authority(
+            session,
+            host.tables,
+            host.profile,
+            host.membership_budget,
+            self._named(authority),
+            self._rights if cached else None,
         )
-        if isinstance(resolution, ResultError):
-            return resolution
-        refusal = posture_refusal(who, resolution, level)
-        return resolution if refusal is None else refusal
 
     def _viewed(
         self,
-        op: str,
+        op: Op,
         authority: Authority | None,
+        addressed: Iterable[str],
         build: Callable[[AsyncSession, Visibility | None], Awaitable[Result]],
     ) -> Callable[[AsyncSession], Awaitable[Result]]:
-        """A read body run under the call's view — ``None`` when the view is the whole mount."""
+        """A read body run under the call's view — ``None`` when the view is the whole mount.
+
+        *addressed* is every path the call names — its targets, or each
+        pattern's literal prefix — where an anonymous caller is judged
+        against the posture rows at the verb's rung before any row is
+        read; a trash-view path is judged where its row sits.
+        """
         host = self._host
+        who = self._named(authority)
+        needs = VERB_RUNGS[op]
+        judged = [address_of(path).stored for path in addressed]
 
         async def run(session: AsyncSession) -> Result:
-            resolution = await self._resolution(session, authority, "read")
+            resolution = await self._resolution(session, who)
             if isinstance(resolution, ResultError):
                 return Result(ops=(op,), errors=[resolution])
-            if resolution.read.whole:
+            refused = await unauthenticated_refusals(
+                session, host.tables, host.profile, host.membership_budget, who, judged, needs.primary
+            )
+            if refused:
+                return Result(ops=(op,), errors=refused)
+            if resolution.at("read").whole:
                 return await build(session, None)
-            view = Visibility(resolution.read, host.tables, host.profile, host.membership_budget, host.parameter_budget)
+            view = Visibility(
+                resolution,
+                needs.primary,
+                host.tables,
+                host.profile,
+                host.membership_budget,
+                host.parameter_budget,
+                road=not who.is_anonymous,
+            )
             await view.prepare(session)
             return await build(session, view)
 
         return run
 
     async def _gate(
-        self,
-        session: AsyncSession,
-        authority: Authority | None,
-        *,
-        level: GrantLevel = "read_write",
-        cached: bool = True,
+        self, session: AsyncSession, authority: Authority | None, needs: Needs, *, cached: bool = True
     ) -> WriteGate | ResultError:
-        """The call's write gate; ``unauthenticated`` when posture wants a name for *level*."""
-        resolution = await self._resolution(session, authority, level, cached=cached)
+        """The call's write gate, reading *needs* — the verb's entry in the rung table."""
+        resolution = await self._resolution(session, authority, cached=cached)
         if isinstance(resolution, ResultError):
             return resolution
         host = self._host
-        return WriteGate(resolution, host.tables, host.profile, host.membership_budget, host.parameter_budget)
+        return WriteGate(
+            resolution,
+            needs,
+            host.tables,
+            host.profile,
+            host.membership_budget,
+            host.parameter_budget,
+            authority=self._named(authority),
+        )
 
     async def _grant_write(
         self,
-        op: str,
+        op: Op,
         authority: Authority | None,
         body: Callable[[AsyncSession, WriteGate, Authority, int], Awaitable[Result]],
     ) -> Result:
@@ -1481,7 +1524,7 @@ class DatabaseStorage:
         async def run(session: AsyncSession) -> Result:
             await seam("grants:before-lock")
             revision = await bump_revision(session, tables)
-            gate = await self._gate(session, who, cached=False)
+            gate = await self._gate(session, who, VERB_RUNGS[op], cached=False)
             if isinstance(gate, ResultError):
                 return Result(ops=(op,), errors=[gate])
             await seam("grants:before-write")
@@ -1566,10 +1609,11 @@ class DatabaseStorage:
     ) -> Result:
         """Move or copy under the gate: a moved source is modified and a copied one read, whole
         subtrees included; every destination is a creation."""
-        need: GrantLevel = "read_write" if op == "move" else "read"
+        needs = VERB_RUNGS[op]
+        passing: Rung = needs.primary if op == "move" else needs.traverse or needs.primary
 
         async def gate(session: AsyncSession) -> list[ResultError]:
-            checks = await self._gate(session, authority)
+            checks = await self._gate(session, authority, needs)
             if isinstance(checks, ResultError):
                 return [checks]
             sources = [pair.src for pair in operations]
@@ -1577,7 +1621,7 @@ class DatabaseStorage:
             refused += await checks.targets(
                 session, [pair.dest for pair in operations if pair.dest != pair.src], "create"
             )
-            return refused or await checks.subtrees(session, sources, need)
+            return refused or await checks.subtrees(session, sources, passing)
 
         return await self._execute_topology(
             op,

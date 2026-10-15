@@ -1,0 +1,26 @@
+
+== stat /priv/secret.md as bob (hidden) ==  success=False
+  ERR  kind=vfs.not_found severity=error path=/priv/secret.md message='Not found' data={}
+
+== rmedge d.md -> /priv/nope.md as bob (ABSENT target) ==  success=True
+  ERR  kind=vfs.not_found severity=warning path=/priv/deep/d.md message='Not found: no cites edge to the target' data={'edge_type': 'cites', 'vfs.target': '/priv/nope.md'}
+
+== rmedge d.md -> /priv/secret.md as bob (HIDDEN target, edge exists) ==  success=True
+  OBS  path=/priv/deep/d.md target=/priv/secret.md type=cites status=deleted
+
+== rmedge d.md -> /priv/secret.md as bob again ==  success=True
+  ERR  kind=vfs.not_found severity=warning path=/priv/deep/d.md message='Not found: no cites edge to the target' data={'edge_type': 'cites', 'vfs.target': '/priv/secret.md'}
+
+-- the gate's own miss shape, for comparison: mkedge to the hidden and to the absent target --
+
+== mkedge d.md -> /priv/secret.md as bob (gate 'read' leg on a hidden target) ==  success=False
+  ERR  kind=vfs.not_found severity=error path=/priv/secret.md message='Not found' data={}
+
+== mkedge d.md -> /priv/nope.md as bob (gate 'read' leg on an absent target) ==  success=False
+  ERR  kind=vfs.not_found severity=error path=/priv/nope.md message='Not found' data={}
+
+-- a batch: one absent target beside one good edge --
+
+== rmedge batch [d.md->/pub/readme.md (exists), d.md->/priv/nope.md (absent)] as bob ==  success=True
+  OBS  path=/priv/deep/d.md target=/pub/readme.md type=cites status=deleted
+  ERR  kind=vfs.not_found severity=warning path=/priv/deep/d.md message='Not found: no cites edge to the target' data={'edge_type': 'cites', 'vfs.target': '/priv/nope.md'}

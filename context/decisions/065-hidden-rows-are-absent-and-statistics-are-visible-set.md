@@ -4,7 +4,7 @@
   ratified as written; binds spec 058's `invisible` rung, `glean`, the merge and `grep`). Drafted 2026-09-05 as Phase 3 of the
   principals and permissions research programme
   (`../research/2026-09-05-principals-and-permissions-research-plan.md`);
-  companions 062 to 067 were ratified together.
+  companions 062 to 067 were ratified together. **Amended by ADR 080 (2026-10-14):** rule 5's "visible set" is the *readable* set — a row the caller holds only `list` on is named by the listing verbs and never searched, counted or ranked.
 - **Date:** 2026-09-05
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-09-06). Originally drafted by Claude from study S2

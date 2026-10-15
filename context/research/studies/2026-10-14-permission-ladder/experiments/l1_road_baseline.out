@@ -1,0 +1,44 @@
+
+== ls / as ann: success=True
+   /projects                        kind=directory  populated=['kind', 'path']
+
+== ls /projects as ann: success=True
+   /projects/alpha                  kind=directory  populated=['kind', 'path']
+
+== ls /projects/alpha as ann: success=True
+   /projects/alpha/notes.md         kind=file       populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+
+== tree / as ann: success=True
+   /projects                        kind=directory  populated=['kind', 'path']
+   /projects/alpha                  kind=directory  populated=['kind', 'path']
+   /projects/alpha/notes.md         kind=file       populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+
+== stat /projects (road dir) as ann: success=True
+   /projects                        kind=directory  populated=['kind', 'path']
+
+== stat /projects/beta (hidden dir) as ann: success=False
+   error kind=vfs.not_found path=/projects/beta message='Not found' data=None
+
+== stat /projects/alpha/other.md (hidden file) as ann: success=False
+   error kind=vfs.not_found path=/projects/alpha/other.md message='Not found' data=None
+
+== read /projects (road dir) as ann: success=False
+   error kind=vfs.wrong_kind path=/projects message='Wrong kind: directory' data={'kind': 'directory'}
+
+== glob ** as ann: success=True
+   /projects                        kind=directory  populated=['kind', 'path']
+   /projects/alpha                  kind=directory  populated=['kind', 'path']
+   /projects/alpha/notes.md         kind=file       populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+
+== grep 'alpha' as ann: success=True
+   /projects/alpha/notes.md         kind=file       populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'matches', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+
+== mkdir /projects/gamma as ann (road parent): success=False
+   error kind=vfs.permission_denied path=/projects/gamma message='Permission denied' data=None
+
+== write /projects/alpha/notes.md as ann (read-only grant): success=False
+   error kind=vfs.permission_denied path=/projects/alpha/notes.md message='Permission denied' data=None
+
+== ls / as system (for contrast): success=True
+   /projects                        kind=directory  populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+   /pub                             kind=directory  populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']

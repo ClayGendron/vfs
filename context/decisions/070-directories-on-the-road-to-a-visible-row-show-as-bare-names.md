@@ -3,7 +3,7 @@
 - **Status:** accepted 2026-09-28 (Clay, ruling on spec 058's open
   question Q1: "if there is a clear precedent we should follow it";
   the memo found the precedent split on this one point, and Clay took
-  the recommendation). Refines ADR 065 rule 1 for directories.
+  the recommendation). Refines ADR 065 rule 1 for directories. **Amended by ADR 080 (2026-10-14):** the road is a derived `list` — a bare row is what any caller holding `list` on a row sees, granted or derived, through one projection; the edge verbs and the graph walk pass a road directory as a `list` node.
 - **Date:** 2026-09-28
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay, 2026-09-28). Drafted by Claude from the

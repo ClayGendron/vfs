@@ -1,0 +1,32 @@
+    [wall-clock side note] mkedge 42250 clique edges in one call: 0.80s
+
+200-node cluster, fully connected both ways (39800 edges), one seed, direction out:
+    depth  UNION ALL rows  (predicted) UNION rows UNION join work frontier rows frontier stmts
+    [wall-clock side note] UNION ALL depth 1: 0.00s
+    [wall-clock side note] UNION depth 1: 0.00s
+        1             200          200        200             199           199              1
+    [wall-clock side note] UNION ALL depth 2: 0.03s
+    [wall-clock side note] UNION depth 2: 0.02s
+        2           39801        39801        400           39800           399              2
+    [wall-clock side note] UNION ALL depth 3: 4.77s
+    [wall-clock side note] UNION depth 3: 0.04s
+        3         7920400      7920400        600           79600           399              2
+    [wall-clock side note] UNION depth 4: 0.06s
+        4         not run   1576159601        800          119400           399              2
+    distinct nodes reachable: 200 (the whole cluster from depth 1 on)
+
+50-node cluster, fully connected both ways (2450 edges), one seed, direction out:
+    depth  UNION ALL rows  (predicted) UNION rows UNION join work frontier rows frontier stmts
+    [wall-clock side note] UNION ALL depth 1: 0.00s
+    [wall-clock side note] UNION depth 1: 0.00s
+        1              50           50         50              49            49              1
+    [wall-clock side note] UNION ALL depth 2: 0.00s
+    [wall-clock side note] UNION depth 2: 0.00s
+        2            2451         2451        100            2450            99              2
+    [wall-clock side note] UNION ALL depth 3: 0.08s
+    [wall-clock side note] UNION depth 3: 0.00s
+        3          120100       120100        150            4900            99              2
+    [wall-clock side note] UNION ALL depth 4: 3.64s
+    [wall-clock side note] UNION depth 4: 0.01s
+        4         5884901      5884901        200            7350            99              2
+    distinct nodes reachable: 50 (the whole cluster from depth 1 on)

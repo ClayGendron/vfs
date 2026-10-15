@@ -75,7 +75,7 @@ from vfs.storage.backends.database.dialects import (
 )
 from vfs.storage.backends.database.offload import OFFLOAD_WORKERS
 from vfs.storage.backends.database.rights import posture_row
-from vfs.storage.grants import LEVEL_RANK, POSTURE_LEVELS
+from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -133,7 +133,7 @@ class EngineHost:
         schema: str | None = None,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
-        posture: Posture = "open",
+        posture: Posture = "read_write",
         retry_attempts: int = 4,
         retry_base_delay: float = 0.05,
     ) -> None:
@@ -533,7 +533,7 @@ class EngineHost:
                 name="/",
                 kind="directory",
                 version=1,
-                everyone_level=LEVEL_RANK[POSTURE_LEVELS[self.posture]],
+                everyone_level=LEVEL_RANK[self.posture],
                 created_at=now,
                 updated_at=now,
             )
@@ -564,7 +564,7 @@ class EngineHost:
                 ErrorKind.schema_mismatch,
                 detail=(
                     f"the database schema format is {row.schema_format_version}; this build expects "
-                    f"{SCHEMA_FORMAT_VERSION}; upgrade or re-provision the mount"
+                    f"{SCHEMA_FORMAT_VERSION}; re-provision the mount"
                 ),
                 data={"found": row.schema_format_version, "expected": SCHEMA_FORMAT_VERSION},
             )

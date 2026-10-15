@@ -1,8 +1,9 @@
 """The everyone level on the row — stamped at every mint, rewritten when a posture changes.
 
 ``entries.everyone_level`` holds, for each row, the level the deepest
-covering posture row (principal ``*``) gives everyone at the row's path:
-``0`` none, ``1`` read, ``2`` read_write. It is derived, never
+covering posture row (principal ``*``) gives everyone at the row's path,
+as its rank on the ladder: ``0`` none, ``1`` list, ``2`` read, ``3``
+add, ``4`` contribute, ``5`` read_write. It is derived, never
 authoritative: the posture rows stay the truth, and every function here
 computes from them. A partial caller's read seeks it through the
 ``(everyone_level, path)`` index instead of carrying every other
@@ -36,7 +37,7 @@ so a posture change after the delete reaches it exactly as it reaches
 its live neighbours: every relabel statement runs once, over ``path``.
 
     labels = await labels_for(session, tables, profile, budget, ["/eng/new.md"])
-    labels["/eng/new.md"]      # 2 under an open root
+    labels["/eng/new.md"]      # 5 under a read_write root
 """
 
 from __future__ import annotations

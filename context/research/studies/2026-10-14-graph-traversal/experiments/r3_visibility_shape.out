@@ -1,0 +1,136 @@
+=== (a) tree('/') for bob ===
+  /priv                  kind=directory  BARE (road)
+  /priv/deep             kind=directory  visible row
+  /priv/deep/d.md        kind=file       visible row
+  /priv/deep/e.md        kind=file       visible row
+
+=== bob's compiled read rights ===
+  level=read need=1 whole=False empty=False
+  spans=(('/priv/deep', '/priv/deep\x00'), ('/priv/deep/', '/priv/deep0')) roots=('/priv/deep',) holes=()
+  owner_arms=(OwnerArm(owner='bob', prefixes=('/',)),)
+  ranges=Ranges(arms=Pieces(points=('/priv/deep',), opens=(('/priv/deep/', '/priv/deep0'),)), owners=(('bob', Pieces(points=('/', '/priv/deep0'), opens=(('/', '/priv/deep'), ('/priv/deep', '/priv/deep/'), ('/priv/deep0', '0')))),), holes=Pieces(points=(), opens=()), holed_arms=Pieces(points=(), opens=()), holed_owners=())
+
+=== (b1) three-seek UNION ALL join, SQLite (range_source=json_each, fence MATERIALIZED) ===
+WITH visible AS MATERIALIZED 
+(SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each('["/priv/deep"]') AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each('[["/priv/deep/", "/priv/deep0"]]') AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, '$[0]') AND vfs_entries.path < json_extract(rng.value, '$[1]') AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each('["/", "/priv/deep0"]') AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each('[["/", "/priv/deep"], ["/priv/deep", "/priv/deep/"], ["/priv/deep0", "0"]]') AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, '$[0]') AND vfs_entries.path < json_extract(rng.value, '$[1]') AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1)
+ SELECT vfs_entries.path 
+FROM vfs_entries JOIN visible ON visible.entry_id = vfs_entries.entry_id
+  -> rows the join admits: ['/priv/deep', '/priv/deep/d.md', '/priv/deep/e.md']
+
+=== (b1) three-seek join as postgresql would receive it (range_source=unnest) ===
+SELECT vfs_entries.path 
+FROM vfs_entries JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(ARRAY['/priv/deep']) AS anon_1(value) JOIN vfs_entries ON vfs_entries.path = (anon_1.value COLLATE "C") AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(ARRAY['/priv/deep/'], ARRAY['/priv/deep0']) AS anon_2(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_2.lo COLLATE "C") AND vfs_entries.path < (anon_2.hi COLLATE "C") AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(ARRAY['/', '/priv/deep0']) AS anon_3(value) JOIN vfs_entries ON vfs_entries.path = (anon_3.value COLLATE "C") AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(ARRAY['/', '/priv/deep', '/priv/deep0'], ARRAY['/priv/deep', '/priv/deep/', '0']) AS anon_4(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_4.lo COLLATE "C") AND vfs_entries.path < (anon_4.hi COLLATE "C") AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1) AS visible ON visible.entry_id = vfs_entries.entry_id
+
+=== (b1) three-seek join as mssql would receive it (range_source=openjson) ===
+SELECT vfs_entries.path 
+FROM vfs_entries JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson('["/priv/deep"]') AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON('[["/priv/deep/", "/priv/deep0"]]') WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson('["/", "/priv/deep0"]') AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON('[["/", "/priv/deep"], ["/priv/deep", "/priv/deep/"], ["/priv/deep0", "0"]]') WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1) AS visible ON visible.entry_id = vfs_entries.entry_id
+
+=== (b1) three-seek join as mariadb would receive it (range_source=json_table) ===
+SELECT vfs_entries.path 
+FROM vfs_entries INNER JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('["/priv/deep"]', '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('[["/priv/deep/", "/priv/deep0"]]', '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('["/", "/priv/deep0"]', '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('[["/", "/priv/deep"], ["/priv/deep", "/priv/deep/"], ["/priv/deep0", "0"]]', '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1) AS visible ON visible.entry_id = vfs_entries.entry_id
+
+=== (b1) three-seek join as oracle would receive it (range_source=json_table_clob) ===
+SELECT vfs_entries.path 
+FROM vfs_entries JOIN (SELECT /*+ INDEX(vfs_entries ix_vfs_entries_everyone_path) */ vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= 1 UNION ALL SELECT /*+ CARDINALITY(pts 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('["/priv/deep"]', '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < 1 UNION ALL SELECT /*+ CARDINALITY(rng 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('[["/priv/deep/", "/priv/deep0"]]', '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.everyone_level < 1 UNION ALL SELECT /*+ CARDINALITY(pts 2) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('["/", "/priv/deep0"]', '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1 UNION ALL SELECT /*+ CARDINALITY(rng 3) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE('[["/", "/priv/deep"], ["/priv/deep", "/priv/deep/"], ["/priv/deep0", "0"]]', '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.owner_id = 'bob' AND vfs_entries.everyone_level < 1) visible ON visible.entry_id = vfs_entries.entry_id
+
+=== (b2) literal OR clauses — the generic floor (no range source) ===
+  clause 0 (13 binds): vfs_entries.everyone_level >= 1 OR vfs_entries.path = '/priv/deep' OR vfs_entries.path > '/priv/deep/' AND vfs_entries.path < '/priv/deep0' OR vfs_entries.owner_id = 'bob' AND (vfs_entries.path = '/' OR vfs_entries.path = '/priv/deep0' OR vfs_entries.path > '/' AND vfs_entries.path < '/priv/deep' OR vfs_entries.path > '/priv/deep' AND vfs_entries.path < '/priv/deep/' OR vfs_entries.path > '/priv/deep0' AND vfs_entries.path < '0')
+
+=== stored edges (path form) ===
+  / -[fs]-> /pub
+  / -[fs]-> /priv
+  /pub -[fs]-> /pub/a.md
+  /pub -[fs]-> /pub/b.md
+  /priv -[fs]-> /priv/c.md
+  /priv -[fs]-> /priv/deep
+  /priv/c.md -[cites]-> /priv/deep/e.md
+  /priv/deep -[fs]-> /priv/deep/d.md
+  /priv/deep -[fs]-> /priv/deep/e.md
+  /priv/deep/d.md -[cites]-> /pub/b.md
+  /priv/deep/d.md -[cites]-> /priv/c.md
+
+=== (c) WITH RECURSIVE successors(/priv/deep/d.md, depth 3) over cites edges, on SQLite ===
+  bob may see only /priv/deep/*. Chain d -> c(hidden) -> e; d -> b(hidden).
+  no rights at all                                 reached=[('/priv/c.md', 1), ('/priv/deep/e.md', 2), ('/pub/b.md', 1)]
+  post-filter only (Python admits after the walk)  reached=['/priv/deep/e.md']  <- e leaks through hidden c
+
+  -- placement 1: MATERIALIZED visible CTE joined inside the recursive member
+  WITH RECURSIVE visible AS MATERIALIZED 
+  (SELECT vfs_entries.entry_id AS entry_id 
+  FROM vfs_entries 
+  WHERE vfs_entries.everyone_level >= ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+  FROM json_each(?) AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+  FROM json_each(?) AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, ?) AND vfs_entries.path < json_extract(rng.value, ?) AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+  FROM json_each(?) AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = ? AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+  FROM json_each(?) AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, ?) AND vfs_entries.path < json_extract(rng.value, ?) AND vfs_entries.owner_id = ? AND vfs_entries.everyone_level < ?), 
+  walk(entry_id, depth) AS 
+  (SELECT ? AS entry_id, ? AS depth UNION ALL SELECT t.entry_id AS entry_id, walk.depth + ? AS depth 
+  FROM walk JOIN vfs_edges ON vfs_edges.source_id = walk.entry_id AND vfs_edges.edge_type = ? JOIN vfs_entries AS t ON t.entry_id = vfs_edges.target_id AND t.deleted_at IS NULL JOIN visible ON visible.entry_id = t.entry_id 
+  WHERE walk.depth < ?)
+   SELECT walk.entry_id, walk.depth 
+  FROM walk 
+  WHERE walk.depth > ?
+  -- params: {'param_1': '01M4X18X9AAW1ZB5CT5R561Z1Y', 'param_2': 0, 'depth_1': 1, 'edge_type_1': 'cites', 'everyone_level_1': 1, 'json_each_1': '["/priv/deep"]', 'everyone_level_2': 1, 'json_each_2': '[["/priv/deep/", "/priv/deep0"]]', 'json_extract_1': '$[0]', 'json_extract_2': '$[1]', 'json_each_3': '["/", "/priv/deep0"]', 'owner_id_1': 'bob', 'json_each_4': '[["/", "/priv/deep"], ["/priv/deep", "/priv/deep/"], ["/priv/deep0", "0"]]', 'json_extract_3': '$[0]', 'json_extract_4': '$[1]', 'depth_2': 3, 'depth_3': 0}  (literal_binds refused: CompileError)
+  placement 1 (materialised CTE)                   reached=[]
+  placement 2 (inline UNION ALL derived table)     reached=[]
+  placement 3 (literal clauses on the target)      reached=[]
+
+  placements agree: True ; the walk is cut at c, so e is NOT reached: True
+
+=== EXPLAIN QUERY PLAN, placement 1 ===
+  CO-ROUTINE walk
+  SETUP
+  SCAN CONSTANT ROW
+  RECURSIVE STEP
+  MATERIALIZE visible
+  COMPOUND QUERY
+  LEFT-MOST SUBQUERY
+  SEARCH vfs_entries USING INDEX ix_vfs_entries_everyone_path (everyone_level>?)
+  UNION ALL
+  SCAN pts VIRTUAL TABLE INDEX 1:
+  SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)
+  UNION ALL
+  SCAN rng VIRTUAL TABLE INDEX 1:
+  SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+  UNION ALL
+  SCAN pts VIRTUAL TABLE INDEX 1:
+  SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path=?)
+  UNION ALL
+  SCAN rng VIRTUAL TABLE INDEX 1:
+  SEARCH vfs_entries USING INDEX ix_vfs_entries_owner_id (owner_id=?)
+  SCAN walk
+  SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=?)
+  SEARCH t USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  BLOOM FILTER ON visible (entry_id=?)
+  SEARCH visible USING AUTOMATIC COVERING INDEX (entry_id=?)
+  SCAN walk

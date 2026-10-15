@@ -12,8 +12,9 @@ a grant retires its grantee's compile, a membership write its member's,
 and a posture change nobody's — the labels decide — except for the span
 of its relabel, which every reader compiles as a cover or a hole. The
 pure resolver (:mod:`vfs.storage.grants`) turns the caller's own
-rows into :class:`~vfs.storage.grants.Rights` at the two levels a verb
-can need: caller-sized, never a word about other principals. What
+rows into :class:`~vfs.storage.grants.Rights` at every rung a verb can
+need — one compile per rung a row sits at, the rungs between restated
+on the same pieces — caller-sized, never a word about other principals. What
 everyone holds is not compiled at all — it sits on every entry row as
 ``everyone_level``, written with the row
 (:mod:`~vfs.storage.backends.database.labels`) — except inside a region
@@ -27,9 +28,14 @@ it, uncached, and only then is the write gated — so a right revoked a
 moment earlier is gone by the time the verb looks.
 
 Reads filter through a :class:`Visibility`; mutations are checked by a
-:class:`WriteGate`. Both treat :meth:`Rights.admits` — Python, exact for
-any number of grants, reading the row's label and bisecting the caller's
-pieces — as the authority every row passes; SQL predicates are pushdowns
+:class:`WriteGate`. Both read the verb's rungs from the one table in
+:mod:`vfs.ops` and treat :meth:`Rights.admits` — Python, exact for any
+number of grants, reading the row's label and bisecting the caller's
+pieces — as the authority every row passes: a row the caller holds
+``list`` on is named, one it holds ``read`` on is shown whole, and a
+mutation compares the rung it holds with the slot the verb's entry
+names. An anonymous caller is judged at the path it addresses, by the
+posture rows on that path's chain. SQL predicates are pushdowns
 that narrow toward it where a statement's shape needs one (a ``LIMIT``,
 an aggregate, a subtree scan). Where the dialect declares a range
 source, the pushdown is the three-seek join to the visible entries: the
@@ -74,6 +80,7 @@ from sqlalchemy import and_, delete, insert, or_, select, text, update
 
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, GROUP_NAME_PREFIX, SYSTEM_NAME
 from vfs.models.rows import MAX_PRINCIPAL_ID_LENGTH
+from vfs.ops import VERB_RUNGS, Needs
 from vfs.paths import ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.descent import (
@@ -102,10 +109,11 @@ from vfs.storage.backends.database.revision import (
 )
 from vfs.storage.grants import (
     FULL,
+    GRANTABLE_LEVELS,
     LEVEL_RANK,
     MAX_GROUP_DEPTH,
-    POSTURE_LEVELS,
     GrantRow,
+    GroupClosures,
     Rights,
     ancestors_and_self,
     pieces,
@@ -123,6 +131,7 @@ if TYPE_CHECKING:
 
     from vfs.authority import Authority
     from vfs.models.rows import VFSTables
+    from vfs.ops import Rung
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.labels import Mark
     from vfs.storage.grants import GrantLevel, Pieces, Posture, PostureRows
@@ -133,9 +142,9 @@ RIGHTS_CACHE: Final = 1_024
 RIGHTS_CACHE_BYTES: Final = 64 * 2**20
 """The bytes the remembered authorities may hold together, by :func:`weight`.
 
-An ordinary caller at a hundred thousand users weighs some 56 KB, so the
-entry ceiling binds first for ordinary callers and the byte budget for
-heavy ones.
+An ordinary caller holds rows at one or two rungs, so its compiles at the
+other rungs share pieces and weigh nothing extra: the entry ceiling binds
+first for ordinary callers and the byte budget for heavy ones.
 """
 
 RIGHTS_FIELDS: Final[frozenset[str]] = frozenset({"owner_id", "everyone_level"})
@@ -154,15 +163,59 @@ _SUBTREE_PAGE: Final = 1_000
 GateMode = Literal["modify", "upsert", "create", "read"]
 """What a mutation needs at a target: an existing row to change (``modify``),
 change-or-create (``upsert``), a new row (``create``), or an existing row
-it only reads (``read`` — an edge's target)."""
+it only reads (``read`` — an edge's target, a copy's source)."""
 
 
-class Resolution(NamedTuple):
-    """One authority's rights at both levels and the root's posture."""
+class Resolution:
+    """One authority's rights at every rung a verb can need.
 
-    read: Rights
-    write: Rights
-    root_level: GrantLevel
+    One :class:`Rights` per grantable rung. Where no row of the caller's
+    and no pending posture row sits at exactly a rung, the rows at or
+    above it are the rows at or above the rung over it, so that compile
+    is the one above restated at the lower rank on the same pieces
+    (:meth:`Rights.at_level`): the object differs, because a ``Rights``
+    admits by its own level, and the pieces are shared, so the cache
+    weighs them once.
+    """
+
+    __slots__ = ("_by_rung",)
+
+    def __init__(self, by_rung: Mapping[GrantLevel, Rights]) -> None:
+        self._by_rung: dict[GrantLevel, Rights] = dict(by_rung)
+
+    @classmethod
+    def compile(
+        cls, closures: GroupClosures, rows: Sequence[GrantRow], *, owner_floor: bool, pending: Sequence[str]
+    ) -> Resolution:
+        """The rungs compiled from ``read_write`` down, each lower rung aliased unless a row sits at it."""
+        present = {row.level for row in rows if row.principal_id != EVERYONE_NAME or row.path_prefix in pending}
+        by_rung: dict[GrantLevel, Rights] = {}
+        above: Rights | None = None
+        for level in reversed(GRANTABLE_LEVELS):
+            if above is None or level in present:
+                above = resolve(closures, rows, level, owner_floor=owner_floor, pending=pending)
+            else:
+                above = above.at_level(level)
+            by_rung[level] = above
+        return cls(by_rung)
+
+    @classmethod
+    def everything(cls) -> Resolution:
+        """Every row at every rung — the system actor."""
+        return cls({level: Rights.everything(level) for level in GRANTABLE_LEVELS})
+
+    def at(self, rung: GrantLevel) -> Rights:
+        """The rights at *rung*."""
+        return self._by_rung[rung]
+
+    @property
+    def whole(self) -> bool:
+        """Whether the grants alone admit every row at every rung, so no row needs judging."""
+        return self._by_rung["read_write"].whole
+
+    def compiled(self) -> tuple[Rights, ...]:
+        """Every compile, highest rung first."""
+        return tuple(self._by_rung[level] for level in reversed(GRANTABLE_LEVELS))
 
 
 class RightsKey(NamedTuple):
@@ -252,12 +305,17 @@ def weight(resolution: Resolution) -> int:
     """A byte estimate of *resolution*: its rights' spans, roots, holes, owner arms and pieces, strings included.
 
     The pieces are computed here if they were not yet, so the estimate
-    counts what a view will hold, not only what the compile made.
+    counts what a view will hold, not only what the compile made. A
+    tuple two compiles share — an aliased rung's spans or pieces — is
+    counted once.
     """
     held = 0
-    for rights in (resolution.read, resolution.write):
-        arms = tuple((arm.owner, arm.prefixes) for arm in rights.owner_arms)
-        held += _size((rights.spans, rights.roots, rights.holes, arms, rights.ranges()))
+    seen: set[int] = set()
+    # The arm tuples are built here; holding them keeps their ids from being reused mid-count.
+    kept = [tuple((arm.owner, arm.prefixes) for arm in rights.owner_arms) for rights in resolution.compiled()]
+    for rights, arms in zip(resolution.compiled(), kept, strict=True):
+        for part in (rights.spans, rights.roots, rights.holes, arms, rights.ranges()):
+            held += _size(part, seen)
     return held
 
 
@@ -290,7 +348,7 @@ async def resolve_authority(
     that never held.
     """
     if authority.is_system:
-        return Resolution(Rights.everything("read"), Rights.everything("read_write"), "read_write")
+        return Resolution.everything()
     subjects = authority.subject_names
     known = cache.ids(subjects) if cache is not None else None
     if cache is not None and known is not None:
@@ -314,22 +372,42 @@ async def resolve_authority(
     postures = await inflight_postures(session, tables, profile, membership_budget, marks)
     rows += [GrantRow(EVERYONE_NAME, prefix, level) for prefix, level in postures.items()]
     pending = [mark.path for mark in marks]
-    floor = not authority.is_anonymous
-    resolution = Resolution(
-        resolve(closures, rows, "read", owner_floor=floor, pending=pending),
-        resolve(closures, rows, "read_write", owner_floor=floor, pending=pending),
-        await _root_level(session, tables),
-    )
+    resolution = Resolution.compile(closures, rows, owner_floor=not authority.is_anonymous, pending=pending)
     if cache is not None and await read_revision(session, tables) == opened:
         cache.put(RightsKey(subjects, stamp, marks), stamped, resolution)
     return resolution
 
 
-def posture_refusal(authority: Authority, resolution: Resolution, level: GrantLevel) -> ResultError | None:
-    """``unauthenticated`` when an anonymous call needs more than the mount root gives everyone."""
-    if not authority.is_anonymous or LEVEL_RANK[resolution.root_level] >= LEVEL_RANK[level]:
+def unauthenticated_at(authority: Authority, postures: PostureRows, path: str, rung: Rung) -> ResultError | None:
+    """``unauthenticated`` when an anonymous call needs *rung* at *path* and the posture rows give everyone less.
+
+    Judged at the addressed path: the deepest posture row on its chain,
+    read from the posture rows (*postures* holds the chain's) and never
+    from a stored label, which lags while a relabel runs. A named caller
+    is never refused here; its rows decide.
+    """
+    if not authority.is_anonymous or label_of(postures, path) >= LEVEL_RANK[rung]:
         return None
-    return classified(ErrorKind.unauthenticated)
+    return classified(ErrorKind.unauthenticated, Path._brand(path))
+
+
+async def unauthenticated_refusals(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    authority: Authority,
+    paths: Iterable[str],
+    rung: Rung,
+) -> list[ResultError]:
+    """The anonymous refusals for a read addressing *paths* at *rung* — one chunked read of the posture rows."""
+    wanted = list(dict.fromkeys(paths))
+    if not authority.is_anonymous or not wanted:
+        return []
+    chain = {ancestor for path in wanted for ancestor in ancestors_and_self(path)}
+    postures = await posture_rows(session, tables, profile, membership_budget, chain)
+    found = (unauthenticated_at(authority, postures, path, rung) for path in wanted)
+    return [refusal for refusal in found if refusal is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -377,26 +455,59 @@ def judged_columns(entry: Table) -> list[Column[Any]]:
 
 
 class Visibility:
-    """What one read call may see: its rights, the road beneath them, and their pushdown.
+    """What one read call may see: its rights at the verb's rung, the road beneath them, and their pushdown.
 
-    ``whole`` callers skip every filter. For the rest, :meth:`admits` is
-    the authority on each row (it needs the row's ``path``, ``owner_id``
-    and ``everyone_level`` — :data:`RIGHTS_FIELDS`) and :meth:`road`
-    names the hidden directories that lead to a visible row.
+    *need* is the rung the verb's statements fetch at — ``list`` for the
+    listing verbs, ``read`` for the ones that carry bodies — and
+    :attr:`rights` is that compile. :meth:`holds` is the authority on
+    each row (it needs the row's ``path``, ``owner_id`` and
+    ``everyone_level`` — :data:`RIGHTS_FIELDS`): a row the caller
+    :meth:`shows` is named, one it :meth:`reads` is shown whole, and
+    :meth:`admits` answers the rung it holds. :meth:`road` names the
+    hidden directories that lead to a row the caller may name; it runs
+    at the ``list`` compile and is never derived for anonymous.
     """
 
     def __init__(
-        self, rights: Rights, tables: VFSTables, profile: DialectProfile, membership_budget: int, parameter_budget: int
+        self,
+        resolution: Resolution,
+        need: Rung,
+        tables: VFSTables,
+        profile: DialectProfile,
+        membership_budget: int,
+        parameter_budget: int,
+        *,
+        road: bool = True,
     ) -> None:
-        self.rights = rights
+        self.resolution = resolution
+        self.need: Rung = need
+        self.rights = resolution.at(need)
+        self._listing = resolution.at("list")
         self._tables = tables
         self._profile = profile
         self._membership_budget = membership_budget
         self._parameter_budget = parameter_budget
+        self._road = road
         self._roots: set[str] | None = None
 
-    def admits(self, mapping: Mapping[Any, Any]) -> bool:
-        return self.rights.admits(mapping["path"], mapping["owner_id"], mapping["everyone_level"])
+    def admits(self, mapping: Mapping[Any, Any]) -> Rung:
+        """The highest rung the caller holds on the row — ``none`` when it may not even name it."""
+        for rights in self.resolution.compiled():
+            if rights.admits(mapping["path"], mapping["owner_id"], mapping["everyone_level"]):
+                return rights.level
+        return "none"
+
+    def holds(self, mapping: Mapping[Any, Any], rung: Rung) -> bool:
+        """Whether the caller holds *rung* on the row — one compile's verdict."""
+        return self.resolution.at(rung).admits(mapping["path"], mapping["owner_id"], mapping["everyone_level"])
+
+    def shows(self, mapping: Mapping[Any, Any]) -> bool:
+        """Whether the row may be named: its path and kind shown."""
+        return self.holds(mapping, "list")
+
+    def reads(self, mapping: Mapping[Any, Any]) -> bool:
+        """Whether the row may be shown whole: every field, its body included."""
+        return self.holds(mapping, "read")
 
     async def prepare(self, session: AsyncSession) -> None:
         """Issue the dialect's range-join settings in *session*'s transaction, before the first read."""
@@ -404,7 +515,7 @@ class Visibility:
             await session.execute(text(statement))
 
     def clauses(self, entry: Table | None = None) -> list[Clause] | None:
-        """This view's predicate on *entry* (the entries table by default)."""
+        """This view's predicate on *entry* (the entries table by default), at the view's rung."""
         target = self._tables.entry if entry is None else entry
         return visibility_clauses(target, self.rights, self._profile, self._parameter_budget)
 
@@ -426,7 +537,7 @@ class Visibility:
 
         One statement joined to :meth:`entries` where the dialect can;
         otherwise one per clause, to be merged; ``[stmt]`` when every row
-        passes. Fetched rows still pass :meth:`admits`.
+        passes. Fetched rows still pass :meth:`holds` at the view's rung.
         """
         visible = self.entries(scope)
         if visible is not None:
@@ -435,59 +546,67 @@ class Visibility:
         return [stmt] if clauses is None else [stmt.where(clause.predicate) for clause in clauses]
 
     async def road(self, session: AsyncSession, candidates: Iterable[str], *, trashed: bool = False) -> set[str]:
-        """The *candidates* (directory paths) a visible row lies beneath; the root always.
+        """The *candidates* (directory paths) a row the caller may name lies beneath; the root always.
 
-        Three sources: every existing root prefix is visible, so its
-        ancestors are on the road; a member's owned rows are visible
-        wherever its owner arm reaches, so a candidate holding one is
-        too; and a candidate holding a row everyone may see at this
-        level is on the road to it. Live rows lead the way, or the
-        tombstoned ones under the trash view (*trashed*).
+        Three sources, each at the ``list`` compile: every existing root
+        prefix is named, so its ancestors are on the road; a member's
+        owned rows are named wherever its owner arm reaches, so a
+        candidate holding one is too; and a candidate holding a row
+        everyone may name is on the road to it. Live rows lead the way,
+        or the tombstoned ones under the trash view (*trashed*). An
+        anonymous caller derives no road: only the root.
         """
         wanted = set(candidates)
         found = wanted & {ROOT}
         wanted -= found
-        if not wanted:
+        if not wanted or not self._road:
             return found
-        entry, budget = self._tables.entry, self._membership_budget
+        entry, budget, listing = self._tables.entry, self._membership_budget, self._listing
         for root in await self._existing_roots(session):
             found.update(ancestor for ancestor in ancestors_and_self(root)[1:] if ancestor in wanted)
         rest = wanted - found
-        for owner, held in self.rights.ranges().owners:
+        for owner, held in listing.ranges().owners:
             if not rest:
                 break
             owned = await _owned_beneath(session, entry, self._profile, budget, owner, held, rest, trashed=trashed)
             found |= owned
             rest -= owned
         if rest:
-            found |= await _open_beneath(session, entry, self._profile, budget, self.rights, rest, trashed=trashed)
+            found |= await _open_beneath(session, entry, self._profile, budget, listing, rest, trashed=trashed)
         return found
 
     async def seen_kinds(self, session: AsyncSession, rows: Mapping[str, RowMapping]) -> dict[str, str]:
-        """``path → kind`` over the live rows this view shows: visible ones, road directories, the root.
+        """``path → kind`` over the live rows this view names: shown ones, road directories, the root.
 
         The descent ladder classifies against this map, so a hidden
         ancestor reads exactly as a missing one, and a tombstoned
         ancestor as an absent one.
         """
         live = {path: row for path, row in rows.items() if row["deleted_at"] is None}
-        visible = {path: row["kind"] for path, row in live.items() if self.admits(row)}
+        visible = {path: row["kind"] for path, row in live.items() if self.shows(row)}
         hidden = [path for path, row in live.items() if path not in visible and row["kind"] == "directory"]
         for path in await self.road(session, hidden):
             visible[path] = "directory"
         visible[ROOT] = "directory"
         return visible
 
-    def tombstones(self, rows: Mapping[str, RowMapping]) -> dict[str, datetime]:
-        """``path → deleted_at`` over the tombstoned rows this view admits — the ones whose refusal may say so."""
+    def tombstones(self, rows: Mapping[str, RowMapping], need: Rung) -> dict[str, datetime]:
+        """``path → deleted_at`` over the tombstoned rows the caller holds *need* on.
+
+        The gate asks at ``list``: an occupied path is judged. The
+        descent ladder asks at ``read``: the trashed hint and its time
+        ride only on a tombstone the caller may read.
+        """
         return {
-            path: row["deleted_at"] for path, row in rows.items() if row["deleted_at"] is not None and self.admits(row)
+            path: row["deleted_at"]
+            for path, row in rows.items()
+            if row["deleted_at"] is not None and self.holds(row, need)
         }
 
     async def _existing_roots(self, session: AsyncSession) -> set[str]:
         if self._roots is None:
             entry = self._tables.entry
-            roots = [prefix for prefix in self.rights.roots if prefix != ROOT]
+            roots = [prefix for prefix in self._listing.roots if prefix != ROOT]
             found = await rows_by_path(session, entry, roots, [entry.c.path], self._profile, self._membership_budget)
             self._roots = set(found)
         return self._roots
@@ -510,75 +629,113 @@ class WriteGate:
     code: a batch of any size is one resolver call and a handful of
     chunked reads, never a statement per path. Any refusal fails the
     batch whole. The kinds keep hidden and missing indistinguishable: a
-    target or ancestor the caller cannot see answers ``not_found``
+    target or ancestor the caller cannot name answers ``not_found``
     exactly as an absent one does, and a creation is judged by coverage
-    alone, never by what occupies the name.
+    alone, never by what occupies the name. *needs* is the verb's entry
+    in the table: every leg that passes a row it has seen compares the
+    rung the caller holds on it with the leg's slot.
     """
 
     def __init__(
         self,
         resolution: Resolution,
+        needs: Needs,
         tables: VFSTables,
         profile: DialectProfile,
         membership_budget: int,
         parameter_budget: int,
+        *,
+        authority: Authority,
     ) -> None:
         self.resolution = resolution
+        self.needs = needs
+        self.authority = authority
         self._tables = tables
         self._profile = profile
         self._membership_budget = membership_budget
         self._parameter_budget = parameter_budget
-        self.view = Visibility(resolution.read, tables, profile, membership_budget, parameter_budget)
+        self.view = Visibility(
+            resolution, "list", tables, profile, membership_budget, parameter_budget, road=not authority.is_anonymous
+        )
         # Rows the target checks fetched, so a subtree check skips known files.
         self._known: dict[str, RowMapping] = {}
 
     @property
     def whole(self) -> bool:
-        return self.resolution.write.whole
+        return self.resolution.whole
 
     async def targets(
         self, session: AsyncSession, targets: Sequence[Path], mode: GateMode, *, parents: bool = False
     ) -> list[ResultError]:
         """Refusals for *targets* under *mode*; empty when every target may proceed."""
-        rights = self.resolution.read if mode == "read" else self.resolution.write
-        if rights.whole or not targets:
+        if self.whole or not targets:
             return []
         entry, tables, profile, budget = self._tables.entry, self._tables, self._profile, self._membership_budget
         prefixes = targets_with_ancestors(targets)
         rows = await rows_by_path(session, entry, prefixes, judged_columns(entry), profile, budget)
         self._known.update(rows)
         seen = await self.view.seen_kinds(session, rows)
-        tombstones = self.view.tombstones(rows)
+        judged = self.view.tombstones(rows, "list")
+        hinted = self.view.tombstones(rows, "read")
         # A hidden directory, live or deleted, is on the road when a deleted
-        # row the caller sees lies beneath it — the trash view shows it so.
-        hidden = [p for p, r in rows.items() if r["kind"] == "directory" and p not in seen and p not in tombstones]
+        # row the caller names lies beneath it — the trash view shows it so.
+        hidden = [p for p, r in rows.items() if r["kind"] == "directory" and p not in seen and p not in judged]
         for path in await self.view.road(session, hidden, trashed=True) if hidden else ():
             seen[path] = "directory"
-        road = {path for path in seen if path in rows and not self.view.admits(rows[path])}
-        # A creation has no row to read the level from: the posture rows on its chain decide.
-        postures = await posture_rows(session, tables, profile, budget, prefixes) if mode != "read" else {}
+        road = {path for path in seen if path in rows and not self.view.shows(rows[path])}
+        # A creation has no row to read the level from, and anonymous is
+        # judged at the path it addresses: the posture rows on its chain decide.
+        wants_postures = mode != "read" or self.authority.is_anonymous
+        postures = await posture_rows(session, tables, profile, budget, prefixes) if wants_postures else {}
         batch = {str(target) for target in targets}
         errors: list[ResultError] = []
         for target in dict.fromkeys(targets):
-            refusal = self._decide(target, rows, seen, tombstones, road, postures, batch, mode, parents=parents)
+            refusal = self._decide(target, rows, seen, judged, hinted, road, postures, batch, mode, parents=parents)
             if refusal is not None:
                 errors.append(refusal)
         return errors
 
-    async def subtrees(self, session: AsyncSession, roots: Sequence[Path], level: GrantLevel) -> list[ResultError]:
-        """``permission_denied`` for each root with a row beneath it this authority may not act on.
+    async def anonymous(self, session: AsyncSession, targets: Sequence[Path]) -> list[ResultError]:
+        """The anonymous refusals for *targets* at the verb's primary rung — for a verb with a ladder of its own."""
+        tables, profile, budget = self._tables, self._profile, self._membership_budget
+        paths = [str(target) for target in targets]
+        return await unauthenticated_refusals(
+            session, tables, profile, budget, self.authority, paths, self.needs.primary
+        )
+
+    async def named(self, session: AsyncSession, targets: Sequence[Path]) -> set[str]:
+        """The *targets* the caller may name — a row it holds ``list`` on, or a road directory — with no ladder.
+
+        One point fetch of the targets alone: an ancestor's name never
+        surfaces, so a target the caller cannot name answers exactly as
+        an absent one wherever this set is consulted.
+        """
+        entry, profile, budget = self._tables.entry, self._profile, self._membership_budget
+        wanted = {str(target) for target in targets}
+        if self.whole:
+            return wanted
+        rows = await rows_by_path(session, entry, wanted, judged_columns(entry), profile, budget)
+        live = {path: row for path, row in rows.items() if row["deleted_at"] is None}
+        found = {path for path, row in live.items() if self.view.shows(row)}
+        doors = [path for path, row in live.items() if path not in found and row["kind"] == "directory"]
+        if doors:
+            found |= await self.view.road(session, doors)
+        return found
+
+    async def subtrees(self, session: AsyncSession, roots: Sequence[Path], rung: Rung) -> list[ResultError]:
+        """``permission_denied`` for each root with a row beneath it this authority does not hold *rung* on.
 
         A root the caller's own pieces cover whole passes without a
         read; otherwise the rows beneath it that everyone does not hold
-        at *level* are read in pages — one seek of the composite index,
+        at *rung* are read in pages — one seek of the composite index,
         empty under an open posture — and each is checked, stopping at
         the first refusal. The read is proportional to the rows below
-        the level, and only a caller whose rights are partial there pays
+        the rung, and only a caller whose rights are partial there pays
         it. Inside a hole the label decides nothing, so the rows there
         the label would have passed are paged too, a chunk of the hole's
         pieces at a time.
         """
-        rights = self.resolution.read if level == "read" else self.resolution.write
+        rights = self.resolution.at(rung)
         errors: list[ResultError] = []
         entry = self._tables.entry
         per_chunk = arm_budget(self._profile, self._parameter_budget, 2)
@@ -619,37 +776,56 @@ class WriteGate:
             last = page[-1]["path"]
 
     def row(
-        self, named: Path, judged: str, owner_id: str | None, everyone_level: int, level: GrantLevel
+        self, named: Path, judged: str, owner_id: str | None, everyone_level: int, rung: Rung
     ) -> ResultError | None:
-        """The check for one row the view already admits, judged at its own path *judged* and refused as *named*.
+        """The check for one row the view already names, judged at its own path *judged* and refused as *named*.
 
         Visible-but-barred is denied; the refusal names *named*, the path
         the caller sent, never the one the row sits at.
         """
-        if level == "read_write" and not self.resolution.write.admits(judged, owner_id, everyone_level):
+        if not self.resolution.at(rung).admits(judged, owner_id, everyone_level):
             return denied(named)
         return None
 
     async def missing(self, session: AsyncSession, target: Path) -> ResultError:
         """The refusal for a *target* this call cannot act on: hidden reads exactly as absent.
 
-        The descent ladder runs over what the view shows — a hidden
+        The descent ladder runs over what the view names — a hidden
         ancestor is a missing one — so the payload names only a prefix
         of the path the caller sent, and never what hides at it; a
-        tombstone the caller may see carries its hint.
+        tombstone the caller may read carries its hint.
         """
         entry, profile, budget = self._tables.entry, self._profile, self._membership_budget
         rows = await rows_by_path(
             session, entry, targets_with_ancestors([target]), judged_columns(entry), profile, budget
         )
-        return classify_miss(target, await self.view.seen_kinds(session, rows), self.view.tombstones(rows))
+        return classify_miss(target, await self.view.seen_kinds(session, rows), self.view.tombstones(rows, "read"))
+
+    def _slot(self, mode: GateMode) -> Rung:
+        """The rung this leg needs on a row it has seen: the verb's slot for *mode*."""
+        if mode == "read":
+            assert self.needs.traverse is not None, "a read leg belongs to a verb with a traverse slot"
+            return self.needs.traverse
+        if mode == "modify":
+            return self.needs.primary
+        assert self.needs.create is not None, "a creation belongs to a verb with a create slot"
+        return self.needs.create
+
+    def _lowest(self, key: str, rows: Mapping[str, RowMapping], mode: GateMode) -> Rung:
+        """The lowest rung the verb can need at *key* — what anonymous is judged against there."""
+        if mode == "read":
+            return self._slot(mode)
+        if mode in ("create", "upsert") and key not in rows:
+            return self._slot(mode)
+        return self.needs.primary
 
     def _decide(
         self,
         target: Path,
         rows: Mapping[str, RowMapping],
         seen: Mapping[str, str],
-        tombstones: Mapping[str, datetime],
+        judged: Mapping[str, datetime],
+        hinted: Mapping[str, datetime],
         road: set[str],
         postures: PostureRows,
         batch: set[str],
@@ -660,37 +836,47 @@ class WriteGate:
         """One target's verdict; a missing ancestor the batch itself supplies is judged as its own target.
 
         A tombstoned ancestor is absent — never minted, with or without
-        *parents*. A tombstoned target the caller may see is absent to a
-        read, with the trashed hint; a mutation at it is judged by the
-        row's own label and owner as any mutation of an occupied path is
-        — a revive proceeds, and the verbs that reach no tombstone answer
-        the hint themselves — so a caller who may see but not write a
-        deleted row is denied, never told it is absent.
+        *parents*. A tombstoned target the caller may name is absent to a
+        read, with the trashed hint when it may read it; a mutation at it
+        is judged as a restore of the row — ``read_write`` or own — so a
+        caller who may name but not revive a deleted row is denied, never
+        told it is absent; a creation at it answers as the verb's own
+        ladder does. An occupied, named target is judged at the leg's
+        slot: a read leg at the traverse rung, a creation at the create
+        rung, a change at the primary rung with the owner floor riding.
+        A road directory passes only a leg whose slot is ``list``.
         """
-        write = self.resolution.write
+        key = str(target)
+        refusal = unauthenticated_at(self.authority, postures, key, self._lowest(key, rows, mode))
+        if refusal is not None:
+            return refusal
         creating = mode in ("create", "upsert")
+        minting = self.resolution.at(self._slot(mode)) if creating else None
         for ancestor in ancestor_chain(target):
             if str(ancestor) in seen:
                 continue
-            minted = creating and (parents or str(ancestor) in batch) and str(ancestor) not in tombstones
-            if minted and write.reaches(str(ancestor), label_of(postures, str(ancestor))):
+            minted = minting is not None and (parents or str(ancestor) in batch) and str(ancestor) not in judged
+            if minted and minting is not None and minting.reaches(str(ancestor), label_of(postures, str(ancestor))):
                 continue
             if minted:
                 return denied(ancestor, target=target)
-            return classify_miss(target, seen, tombstones)
-        key = str(target)
-        parent = str(target.parent_dir)
+            return classify_miss(target, seen, hinted)
+        slot = self._slot(mode)
         if key in road:
-            # A road directory shows only its name, so no verb may act on it.
-            return denied(target)
-        if key in seen or (key in tombstones and mode != "read"):
-            if mode in ("create", "read"):
-                return None
-            row = rows[key]
-            return None if write.admits(row["path"], row["owner_id"], row["everyone_level"]) else denied(target)
-        if mode in ("modify", "read") or key in tombstones:
-            return classify_miss(target, seen, tombstones)
-        if parent in road or not write.reaches(key, label_of(postures, key)):
+            # A road directory shows only its name: a leg wanting more may not act on it.
+            return None if slot == "list" else denied(target)
+        if key in seen:
+            held = self.needs.primary if mode in ("modify", "upsert") else slot
+            return None if self.view.holds(rows[key], held) else denied(target)
+        if key in judged and mode != "read":
+            if mode == "create":
+                return None if key in hinted else classify_miss(target, seen, hinted)
+            revive = VERB_RUNGS["restore"].primary
+            return None if self.view.holds(rows[key], revive) else denied(target)
+        if mode in ("modify", "read") or key in judged:
+            return classify_miss(target, seen, hinted)
+        assert minting is not None
+        if str(target.parent_dir) in road or not minting.reaches(key, label_of(postures, key)):
             return denied(target)
         return None
 
@@ -784,11 +970,11 @@ async def list_grants(
     """The rows on *path* and its ancestors this authority may see.
 
     Every row when it holds ``read_write`` on *path*; otherwise its own,
-    its groups', and the everyone rows. A path it cannot see answers
-    ``not_found``, as any hidden path does. "See" here is what the
-    everyone level and the caller's own pieces reach, not rows: a path
-    reached only through the owner floor or as a road directory answers
-    ``not_found`` too.
+    its groups', and the everyone rows. A path it cannot read answers
+    ``not_found``, as any hidden path does — a path it holds only
+    ``list`` on included. "Read" here is what the everyone level and the
+    caller's own pieces reach, not rows: a path reached only through the
+    owner floor or as a road directory answers ``not_found`` too.
     """
     grants = tables.grants
     prefixes = [str(p) for p in reversed(ancestors_and_self(str(path)))]
@@ -798,9 +984,12 @@ async def list_grants(
     rows = (await session.execute(stmt)).mappings().all()
     postures = postures_of(GrantRow(r["principal_id"], r["path_prefix"], r["level"]) for r in rows)
     label = label_of(postures, str(path))
-    if not gate.resolution.read.reaches(str(path), label):
+    refusal = unauthenticated_at(authority, postures, str(path), gate.needs.primary)
+    if refusal is not None:
+        return Result(ops=("grants",), errors=[refusal])
+    if not gate.resolution.at(gate.needs.primary).reaches(str(path), label):
         return Result(ops=("grants",), errors=[classified(ErrorKind.not_found, path)])
-    if not gate.resolution.write.reaches(str(path), label):
+    if not gate.resolution.at("read_write").reaches(str(path), label):
         own = await _own_ids(session, tables, profile, membership_budget, authority)
         rows = [row for row in rows if row["principal_id"] in own]
     listed = [dict(row) for row in sorted(rows, key=lambda r: (r["path_prefix"], r["principal_id"]))]
@@ -819,7 +1008,7 @@ async def set_posture(
     authority: Authority,
     revision: int,
 ) -> Result:
-    """Write the everyone row at *path*: ``open``, ``shared``, or ``private`` from here down.
+    """Write the everyone row at *path*: the rung everyone holds from here down.
 
     The deepest everyone row covering a path decides what everyone holds
     there; principal and group rows still widen on top. The row lands
@@ -835,9 +1024,8 @@ async def set_posture(
     )
     if refusal is not None:
         return Result(ops=("posture",), errors=[refusal])
-    level = POSTURE_LEVELS[posture]
     await stamp_principals(session, tables, [EVERYONE_NAME], revision)
-    written = await _upsert_grant(session, tables, path, EVERYONE_NAME, level, authority, revision)
+    written = await _upsert_grant(session, tables, path, EVERYONE_NAME, posture, authority, revision)
     await mark_relabel(session, tables, str(path), revision)
     return Result(ops=("posture",), grants=[written])
 
@@ -924,7 +1112,7 @@ def posture_row(posture: Posture, now: datetime) -> dict[str, object]:
     return {
         "principal_id": EVERYONE_NAME,
         "path_prefix": ROOT,
-        "level": POSTURE_LEVELS[posture],
+        "level": posture,
         "granted_by": "system",
         "granted_at": now,
         "revision": 0,
@@ -993,20 +1181,18 @@ async def _grant_rows(
     return rows
 
 
-async def _root_level(session: AsyncSession, tables: VFSTables) -> GrantLevel:
-    """What the mount root gives everyone — one row, read beside the caller's own."""
-    grants = tables.grants
-    stmt = select(grants.c.level).where(grants.c.principal_id == EVERYONE_NAME, grants.c.path_prefix == ROOT)
-    found = (await session.execute(stmt)).scalar_one_or_none()
-    return cast("GrantLevel", found) if found is not None else "none"
+def _size(value: object, seen: set[int]) -> int:
+    """*value*'s own bytes plus, through every tuple, its items' — strings and ints are the leaves.
 
-
-def _size(value: object) -> int:
-    """*value*'s own bytes plus, through every tuple, its items' — strings and ints are the leaves."""
-    size = sys.getsizeof(value)
+    A tuple already in *seen* counts nothing: the compiles at aliased
+    rungs share their tuples, and the cache weighs a shared one once.
+    """
     if isinstance(value, tuple):
-        size += sum(_size(item) for item in value)
-    return size
+        if id(value) in seen:
+            return 0
+        seen.add(id(value))
+        return sys.getsizeof(value) + sum(_size(item, seen) for item in value)
+    return sys.getsizeof(value)
 
 
 def _units(entry: Table, rights: Rights, bind_cap: int) -> list[Clause]:
@@ -1125,17 +1311,22 @@ async def _grant_refusal(
     """The shared gate of the grant verbs: a lawful principal and level, and ``read_write`` on *path*.
 
     *path* need not hold a row, so its everyone level comes from the
-    posture rows on its chain, as a creation's does.
+    posture rows on its chain, as a creation's does; anonymous is judged
+    there too.
     """
     if principal is not None and not _lawful_principal(principal):
         return classified(ErrorKind.invalid, detail=f"{op}: {principal!r} is not a grantable principal id")
-    if level not in ("read", "read_write") and principal is not None:
-        return classified(ErrorKind.invalid, detail=f"{op}: level must be 'read' or 'read_write'")
+    if level not in GRANTABLE_LEVELS and principal is not None:
+        lawful = ", ".join(repr(rung) for rung in GRANTABLE_LEVELS)
+        return classified(ErrorKind.invalid, detail=f"{op}: level must be one of {lawful}")
     postures = await posture_rows(session, tables, profile, membership_budget, ancestors_and_self(str(path)))
     label = label_of(postures, str(path))
-    if gate.resolution.write.reaches(str(path), label):
+    refusal = unauthenticated_at(gate.authority, postures, str(path), gate.needs.primary)
+    if refusal is not None:
+        return refusal
+    if gate.resolution.at(gate.needs.primary).reaches(str(path), label):
         return None
-    if gate.resolution.read.reaches(str(path), label):
+    if gate.resolution.at("list").reaches(str(path), label):
         return denied(path)
     return classified(ErrorKind.not_found, path)
 

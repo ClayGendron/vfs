@@ -1,0 +1,140 @@
+mount posture: private (everyone holds nothing); ann granted read on /src/a
+planted chain: /src/a/r6_x.py -> /src/b/r6_hidden.py -> /src/a/r6_y.py; control: /src/a/r6_x.py -> /src/a/r6_z.py
+ann's read rights: level=read spans=(('/src/a', '/src/a\x00'), ('/src/a/', '/src/a0')) roots=('/src/a',) whole=False empty=False need=1
+view.entries() -> CTE named 'visible' (profile range_source=json_each, range_fence=MATERIALIZED)
+view.clauses() -> 1 clause(s), binds=[13]
+visible_entries rows=504 == rows Rights.admits passes=504: True
+
+Placement A: predicate inside the recursive member (and the anchor) — the walk cannot pass a hidden node
+    reached: {'/src/a/r6_x.py': 0, '/src/a/r6_z.py': 1}
+Placement B: no predicate in the walk; the final result joined to the visible set
+    reached: {'/src/a/r6_x.py': 0, '/src/a/r6_z.py': 1, '/src/a/r6_y.py': 2}
+    visible nodes B reports that A does not: ['/src/a/r6_y.py']  <- reachable only THROUGH the hidden /src/b/r6_hidden.py
+    ADR 065 pin 1 ('a hidden row is absent ... edge traversals') and Clay's 'rights enforced through the traversal' require A: nothing is reached through a hidden node.
+
+Placement A with the literal-OR form (visibility_clauses on the far alias), one statement, all clauses OR-ed
+    reached: {'/src/a/r6_x.py': 0, '/src/a/r6_z.py': 1}  == A: True
+
+SQLite executes the three-seek join (json_each, MATERIALIZED CTE) inside the recursive member: yes, above.
+Rendered SQL, placement A, sqlite:
+WITH RECURSIVE visible AS MATERIALIZED 
+(SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each(?) AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each(?) AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, ?) AND vfs_entries.path < json_extract(rng.value, ?) AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each(?) AS pts CROSS JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = ? AND vfs_entries.everyone_level < ? UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM json_each(?) AS rng CROSS JOIN vfs_entries ON vfs_entries.path > json_extract(rng.value, ?) AND vfs_entries.path < json_extract(rng.value, ?) AND vfs_entries.owner_id = ? AND vfs_entries.everyone_level < ?), 
+walk(node, depth) AS 
+(SELECT seed.entry_id AS node, ? AS depth 
+FROM vfs_entries AS seed 
+WHERE seed.deleted_at IS NULL AND seed.path != ? AND seed.path NOT LIKE ? ESCAPE '\' AND seed.entry_id IN (__[POSTCOMPILE_entry_id_1]) AND seed.entry_id IN (SELECT visible.entry_id 
+FROM visible) UNION SELECT adj."to" AS node, w.depth + ? AS depth 
+FROM walk AS w JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS "to", vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN (__[POSTCOMPILE_edge_type_1])) AS adj ON adj.frm = w.node JOIN vfs_entries AS far ON far.entry_id = adj."to" JOIN visible ON visible.entry_id = far.entry_id 
+WHERE w.depth < ? AND far.deleted_at IS NULL AND far.path != ? AND far.path NOT LIKE ? ESCAPE '\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node
+
+Compile-only for the other dialects (placement A, out, depth 3):
+--- postgresql: parameter_budget=32700 membership_budget=32668 visible=Subquery first line: 'WITH RECURSIVE walk(node, depth) AS '
+WITH RECURSIVE walk(node, depth) AS 
+(SELECT seed.entry_id AS node, %(param_1)s AS depth 
+FROM vfs_entries AS seed 
+WHERE seed.deleted_at IS NULL AND seed.path != %(path_1)s AND seed.path NOT LIKE %(path_2)s ESCAPE '\\' AND seed.entry_id IN (__[POSTCOMPILE_entry_id_1]) AND seed.entry_id IN (SELECT visible.entry_id 
+FROM (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %(everyone_level_1)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_2)s::TEXT[]) AS anon_1(value) JOIN vfs_entries ON vfs_entries.path = (anon_1.value COLLATE "C") AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_3)s::TEXT[], %(param_4)s::TEXT[]) AS anon_2(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_2.lo COLLATE "C") AND vfs_entries.path < (anon_2.hi COLLATE "C") AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_5)s::TEXT[]) AS anon_3(value) JOIN vfs_entries ON vfs_entries.path = (anon_3.value COLLATE "C") AND vfs_entries.owner_id = %(owner_id_1)s AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_6)s::TEXT[], %(param_7)s::TEXT[]) AS anon_4(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_4.lo COLLATE "C") AND vfs_entries.path < (anon_4.hi COLLATE "C") AND vfs_entries.owner_id = %(owner_id_1)s AND vfs_entries.everyone_level < %(everyone_level_2)s) AS visible) UNION SELECT adj."to" AS node, w.depth + %(depth_1)s AS depth 
+FROM walk AS w JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS "to", vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN (__[POSTCOMPILE_edge_type_1])) AS adj ON adj.frm = w.node JOIN vfs_entries AS far ON far.entry_id = adj."to" JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %(everyone_level_1)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_2)s::TEXT[]) AS anon_1(value) JOIN vfs_entries ON vfs_entries.path = (anon_1.value COLLATE "C") AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_3)s::TEXT[], %(param_4)s::TEXT[]) AS anon_2(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_2.lo COLLATE "C") AND vfs_entries.path < (anon_2.hi COLLATE "C") AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_5)s::TEXT[]) AS anon_3(value) JOIN vfs_entries ON vfs_entries.path = (anon_3.value COLLATE "C") AND vfs_entries.owner_id = %(owner_id_1)s AND vfs_entries.everyone_level < %(everyone_level_2)s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM unnest(%(param_6)s::TEXT[], %(param_7)s::TEXT[]) AS anon_4(lo, hi) JOIN vfs_entries ON vfs_entries.path > (anon_4.lo COLLATE "C") AND vfs_entries.path < (anon_4.hi COLLATE "C") AND vfs_entries.owner_id = %(owner_id_1)s AND vfs_entries.everyone_level < %(everyone_level_2)s) AS visible ON visible.entry_id = far.entry_id 
+WHERE w.depth < %(depth_2)s AND far.deleted_at IS NULL AND far.path != %(path_3)s AND far.path NOT LIKE %(path_4)s ESCAPE '\\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node
+
+--- mariadb: parameter_budget=32700 membership_budget=32668 visible=Subquery first line: 'WITH RECURSIVE walk(node, depth) AS '
+WITH RECURSIVE walk(node, depth) AS 
+(SELECT seed.entry_id AS node, %s AS depth 
+FROM vfs_entries AS seed 
+WHERE seed.deleted_at IS NULL AND seed.path != %s AND seed.path NOT LIKE %s ESCAPE '\\' AND seed.entry_id IN (__[POSTCOMPILE_entry_id_1]) AND seed.entry_id IN (SELECT visible.entry_id 
+FROM (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.owner_id = %s AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.owner_id = %s AND vfs_entries.everyone_level < %s) AS visible) UNION SELECT adj.`to` AS node, w.depth + %s AS depth 
+FROM walk AS w INNER JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS `to`, vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN (__[POSTCOMPILE_edge_type_1])) AS adj ON adj.frm = w.node INNER JOIN vfs_entries AS far ON far.entry_id = adj.`to` INNER JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (value VARCHAR(1024) PATH '$')) AS pts STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path = CAST(pts.value AS BINARY) AND vfs_entries.owner_id = %s AND vfs_entries.everyone_level < %s UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(%s, '$[*]' COLUMNS (lo VARCHAR(1024) PATH '$[0]', hi VARCHAR(1024) PATH '$[1]')) AS rng STRAIGHT_JOIN vfs_entries FORCE INDEX (ix_vfs_entries_path) ON vfs_entries.path > CAST(rng.lo AS BINARY) AND vfs_entries.path < CAST(rng.hi AS BINARY) AND vfs_entries.owner_id = %s AND vfs_entries.everyone_level < %s) AS visible ON visible.entry_id = far.entry_id 
+WHERE w.depth < %s AND far.deleted_at IS NULL AND far.path != %s AND far.path NOT LIKE %s ESCAPE '\\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node
+
+--- mssql: parameter_budget=2099 membership_budget=2000 visible=Subquery first line: 'WITH walk(node, depth) AS '
+WITH walk(node, depth) AS 
+(SELECT seed.entry_id AS node, :param_1 AS depth 
+FROM vfs_entries AS seed 
+WHERE seed.deleted_at IS NULL AND seed.path != :path_1 AND seed.path NOT LIKE :path_2 ESCAPE '\' AND seed.entry_id IN (__[POSTCOMPILE_entry_id_1]) AND seed.entry_id IN (SELECT visible.entry_id 
+FROM (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :everyone_level_1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson(:openjson_1) AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON(:openjson_pairs_1) WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson(:openjson_2) AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON(:openjson_pairs_2) WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2) AS visible) UNION SELECT adj.[to] AS node, w.depth + :depth_1 AS depth 
+FROM walk AS w JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS [to], vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN (__[POSTCOMPILE_edge_type_1])) AS adj ON adj.frm = w.node JOIN vfs_entries AS far ON far.entry_id = adj.[to] JOIN (SELECT vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :everyone_level_1 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson(:openjson_1) AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON(:openjson_pairs_1) WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM openjson(:openjson_2) AS pts INNER LOOP JOIN vfs_entries ON vfs_entries.path = CAST(pts.value COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT vfs_entries.entry_id AS entry_id 
+FROM OPENJSON(:openjson_pairs_2) WITH (lo nvarchar(max) '$[0]', hi nvarchar(max) '$[1]') AS rng INNER LOOP JOIN vfs_entries ON vfs_entries.path > CAST(rng.lo COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.path < CAST(rng.hi COLLATE Latin1_General_100_BIN2_UTF8 AS VARCHAR(1024)) AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2) AS visible ON visible.entry_id = far.entry_id 
+WHERE w.depth < :depth_2 AND far.deleted_at IS NULL AND far.path != :path_3 AND far.path NOT LIKE :path_4 ESCAPE '\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node
+
+--- oracle: parameter_budget=32700 membership_budget=1000 visible=Subquery first line: 'WITH walk(node, depth) AS '
+WITH walk(node, depth) AS 
+(SELECT seed.entry_id AS node, :param_1 AS depth 
+FROM vfs_entries seed 
+WHERE seed.deleted_at IS NULL AND seed.path != :path_1 AND seed.path NOT LIKE :path_2 ESCAPE '\' AND seed.entry_id IN (__[POSTCOMPILE_entry_id_1]) AND seed.entry_id IN (SELECT visible.entry_id 
+FROM (SELECT /*+ INDEX(vfs_entries ix_vfs_entries_everyone_path) */ vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :everyone_level_1 UNION ALL SELECT /*+ CARDINALITY(pts 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_2, '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(rng 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_3, '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(pts 2) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_4, '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(rng 3) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_5, '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2) visible) UNION SELECT adj."to" AS node, w.depth + :depth_1 AS depth 
+FROM walk w JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS "to", vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN (__[POSTCOMPILE_edge_type_1])) adj ON adj.frm = w.node JOIN vfs_entries far ON far.entry_id = adj."to" JOIN (SELECT /*+ INDEX(vfs_entries ix_vfs_entries_everyone_path) */ vfs_entries.entry_id AS entry_id 
+FROM vfs_entries 
+WHERE vfs_entries.everyone_level >= :everyone_level_1 UNION ALL SELECT /*+ CARDINALITY(pts 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_2, '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(rng 1) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_3, '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(pts 2) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_4, '$[*]' COLUMNS (value VARCHAR2(1024) PATH '$')) pts JOIN vfs_entries ON vfs_entries.path = pts.value AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2 UNION ALL SELECT /*+ CARDINALITY(rng 3) */ vfs_entries.entry_id AS entry_id 
+FROM JSON_TABLE(:param_5, '$[*]' COLUMNS (lo VARCHAR2(1024) PATH '$[0]', hi VARCHAR2(1024) PATH '$[1]')) rng JOIN vfs_entries ON vfs_entries.path > rng.lo AND vfs_entries.path < rng.hi AND vfs_entries.owner_id = :owner_id_1 AND vfs_entries.everyone_level < :everyone_level_2) visible ON visible.entry_id = far.entry_id 
+WHERE w.depth < :depth_2 AND far.deleted_at IS NULL AND far.path != :path_3 AND far.path NOT LIKE :path_4 ESCAPE '\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node
+

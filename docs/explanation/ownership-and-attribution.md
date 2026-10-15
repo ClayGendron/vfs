@@ -30,7 +30,7 @@ When the anonymous principal writes, nobody owns the row. If anonymous owned wha
 
 ## Why ownership does not transfer
 
-A common alternative is to let ownership follow the most recent writer, or to let an administrator reassign it. VFS does neither. The floor exists so that a person can never be locked out of their own work by a later change in policy. A floor that moves is not a floor. The one exception is overwrite: writing a new version of a file restamps the owner, because the new content is a new thing the writer made.
+A common alternative is to let ownership follow the most recent writer, or to let an administrator reassign it. VFS does neither. The floor exists so that a person can never be locked out of their own work by a later change in policy. A floor that moves is not a floor. An overwrite or an edit of another's row is a contribution to it, not a taking: the row keeps its creator as owner, every version is kept, and the writer who holds `contribute` on the folder never turns an overwrite into the right to trash the row.
 
 ## Attribution is a record
 

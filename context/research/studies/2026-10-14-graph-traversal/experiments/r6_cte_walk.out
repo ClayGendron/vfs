@@ -1,0 +1,81 @@
+live entries=2006 files=2000 authored edges=8000 all edges=10005
+seeds: ['/docs/f0400.py', '/lib/f0178.py', '/src/a/f0354.py', '/src/a/f0133.py', '/docs/f0487.py']
+
+(a) rows per depth, max_depth=4, authored types, 5 seeds, cyclic graph
+    direction form         d0     d1      d2       d3       d4  CTE rows distinct nodes
+    out       UNION         5     22     100      378     1078      1583           1253
+    out       UNION ALL     5     22     100      414     1645      2186           1253
+    in        UNION         5     19      72      278      837      1211            970
+    in        UNION ALL     5     19      74      299     1196      1593            970
+    both      UNION         5     41     311     1421     1996      3774           1997
+    both      UNION ALL     5     41     376     3339    30778     34539           1997
+
+(b) UNION dedups (node, depth) pairs, not nodes: nodes appearing at more than one depth, out/4/UNION
+    CTE rows=1583 distinct nodes=1253 nodes with >1 depth row=310
+    e.g. /src/a/f0468.py: 4 rows at depths [1, 2, 3, 4] (min 1, max 4)
+    e.g. /src/a/f0143.py: 3 rows at depths [2, 3, 4] (min 2, max 4)
+    e.g. /src/a/f0164.py: 3 rows at depths [2, 3, 4] (min 2, max 4)
+    under UNION ALL, (node, depth) pairs that occur more than once: 435 (UNION removes exactly these and nothing else)
+
+(c) BFS distance = GROUP BY node, MIN(depth) over the CTE; the CTE's materialised row count beside it
+    UNION     CTE rows=  1583 min-depth rows= 1253 == python BFS: True
+    UNION ALL CTE rows=  2186 min-depth rows= 1253 == python BFS: True
+
+Validation vs pure-Python BFS: 20 random seed sets x depths 1..4 x 3 directions x (authored, all types)
+    UNION form: 480 agree / 0 disagree; UNION ALL form (subset): 108 agree
+
+`both` as a UNION ALL adjacency derived table vs an OR-join on vfs_edges: same answer, SQLite plans
+    adjacency form == BFS: True; OR-join form == BFS: True
+    plan, out direction (adjacency subquery flattened onto the fwd index):
+       CO-ROUTINE walk
+       SETUP
+       SEARCH seed USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       RECURSIVE STEP
+       SCAN w
+       SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=?)
+       SEARCH far USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       SCAN walk
+       USE TEMP B-TREE FOR GROUP BY
+    plan, both via UNION ALL adjacency:
+       CO-ROUTINE walk
+       SETUP
+       SEARCH seed USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       RECURSIVE STEP
+       CO-ROUTINE adj
+       COMPOUND QUERY
+       LEFT-MOST SUBQUERY
+       SCAN vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1
+       UNION ALL
+       SCAN vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1
+       SCAN w
+       BLOOM FILTER ON adj (frm=?)
+       SEARCH adj USING AUTOMATIC COVERING INDEX (frm=?)
+       SEARCH far USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       SCAN walk
+       USE TEMP B-TREE FOR GROUP BY
+    plan, both via OR-join:
+       CO-ROUTINE walk_or
+       SETUP
+       SEARCH seed USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       RECURSIVE STEP
+       SCAN w
+       MULTI-INDEX OR
+       INDEX 1
+       SEARCH vfs_edges USING COVERING INDEX sqlite_autoindex_vfs_edges_1 (source_id=?)
+       INDEX 2
+       SEARCH vfs_edges USING INDEX ix_vfs_edges_rev (target_id=? AND edge_type=?)
+       SEARCH far USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+       SCAN walk_or
+       USE TEMP B-TREE FOR GROUP BY
+
+Rendered statement (out, depth 3, UNION, sqlite):
+WITH RECURSIVE walk(node, depth) AS 
+(SELECT seed.entry_id AS node, 0 AS depth 
+FROM vfs_entries AS seed 
+WHERE seed.deleted_at IS NULL AND seed.path != '/.vfs' AND seed.path NOT LIKE '/.vfs/%' ESCAPE '\' AND seed.entry_id IN ('01M4X1D2P9S24XE5PT4NN6D5ZH', '01M4X1D2NVMXT9WXSKKJNS092G') UNION SELECT adj."to" AS node, w.depth + 1 AS depth 
+FROM walk AS w JOIN (SELECT vfs_edges.source_id AS frm, vfs_edges.target_id AS "to", vfs_edges.edge_type AS edge_type 
+FROM vfs_edges 
+WHERE vfs_edges.edge_type IN ('imports', 'references', 'calls')) AS adj ON adj.frm = w.node JOIN vfs_entries AS far ON far.entry_id = adj."to" 
+WHERE w.depth < 3 AND far.deleted_at IS NULL AND far.path != '/.vfs' AND far.path NOT LIKE '/.vfs/%' ESCAPE '\')
+ SELECT walk.node, min(walk.depth) AS depth 
+FROM walk GROUP BY walk.node

@@ -4,14 +4,16 @@ matrix (invalid, parameter named, zero dispatch), and the precedence pins."""
 from __future__ import annotations
 
 import inspect
+from typing import get_args
 
 import pytest
 
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.base import VirtualFileSystem
-from vfs.ops import ALL_OPS
-from vfs.params import INT_CEILING, PARAMS, RULES, param_violation
+from vfs.ops import ALL_OPS, RUNGS
+from vfs.params import GRANTABLE, INT_CEILING, PARAMS, POSTURES, RULES, param_violation
 from vfs.results import ErrorKind
+from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 # ----------------------------------------------------------------------
 # drift — the table and the public surface may never diverge
@@ -29,6 +31,17 @@ def test_every_verb_signature_matches_the_table() -> None:
         sig_names = {name for name in inspect.signature(verb).parameters if name != "self"}
         table_names = {spec.name for spec in specs}
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
+
+
+def test_the_grant_choices_derive_from_the_ladder() -> None:
+    # A posture takes every rung; a grant every rung but none.
+    assert POSTURES == frozenset(get_args(Posture)) == frozenset(RUNGS)
+    assert GRANTABLE == frozenset(GRANTABLE_LEVELS) == POSTURES - {"none"}
+    assert {"open", "shared", "private"}.isdisjoint(POSTURES)
+    assert param_violation("posture", {"path": "/", "posture": "private"}) is not None
+    assert param_violation("posture", {"path": "/", "posture": "list"}) is None
+    assert param_violation("grant", {"path": "/", "principal": "bob", "level": "none"}) is not None
+    assert param_violation("grant", {"path": "/", "principal": "bob", "level": "contribute"}) is None
 
 
 def test_every_int_channel_enforces_the_shared_ceiling() -> None:
