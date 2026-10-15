@@ -402,8 +402,8 @@ class Observation(BaseModel):
     a stat's ``version`` is the entry's current value, a version row's is its
     label) and the ``edge_*`` fields mirror :class:`~vfs.models.edge.Edge`
     (see ``OBSERVATION_MIRROR_OWNERS``). Query fields are facts about
-    *(entry, operation)* — a score, the matched regions, a write status —
-    and are never persisted. ``name`` / ``ext`` / ``parent_dir`` need no
+    *(entry, operation)* — a score, the matched regions, a walk's depth,
+    a write status — and are never persisted. ``name`` / ``ext`` / ``parent_dir`` need no
     mirrors:
     ``path`` is a :class:`Path`, so they come free (``obs.path.name``).
 
@@ -445,6 +445,7 @@ class Observation(BaseModel):
     matches: list[Match] | None = None
     in_degree: int | None = None
     out_degree: int | None = None
+    depth: int | None = None
     status: Literal["created", "updated", "unchanged", "deleted"] | None = None
 
     # --- Populated-field mask ------------------------------------------------
@@ -501,7 +502,7 @@ class Observation(BaseModel):
 # Mirror/query partition of Observation's fields. The drift test pins every
 # mirror to its owning model's field type; query fields exist on no model.
 OBSERVATION_QUERY_FIELDS: Final[frozenset[str]] = frozenset(
-    {"score", "matches", "in_degree", "out_degree", "status", "populated"},
+    {"score", "matches", "in_degree", "out_degree", "depth", "status", "populated"},
 )
 OBSERVATION_MIRROR_FIELDS: Final[frozenset[str]] = frozenset(Observation.model_fields) - OBSERVATION_QUERY_FIELDS
 

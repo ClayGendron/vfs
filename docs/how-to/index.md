@@ -14,3 +14,4 @@ Task-focused recipes for users who already know what VFS is.
 - How to run calls as a principal
 - How to bulk load as the system actor
 - How to share a folder with grants
+- How to walk the edges around a file

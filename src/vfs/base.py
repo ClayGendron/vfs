@@ -44,7 +44,15 @@ from pydantic import ValidationError
 from vfs.authority import Authority
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
-from vfs.ops import MUTATING_OPS, READ_OPS, CaseMode, GrepOutputMode, TwoPathOperation
+from vfs.ops import (
+    GRAPH_DEPTH_DEFAULT,
+    GRAPH_LIMIT_DEFAULT,
+    MUTATING_OPS,
+    READ_OPS,
+    CaseMode,
+    GrepOutputMode,
+    TwoPathOperation,
+)
 from vfs.params import param_violation
 from vfs.paths import (
     METADATA_ROOT,
@@ -1496,24 +1504,42 @@ class VirtualFileSystem:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = None,
+        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        edge_types: tuple[str, ...] = (),
+        edge_types_not: tuple[str, ...] = (),
+        minimal: bool = False,
+        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        """Run the graph traversal *method* — each entry answers over its own subgraph.
+        """Walk the edges from the seeds — ``inbound``, ``outbound``, ``neighborhood`` — or ``meet`` them.
 
         A path routes to one entry; observations group by entry and each
-        backend runs the algorithm on its own graph, so a walk can never
-        follow an edge out of its storage.  *method* is validated against
-        the traversal vocabulary before any dispatch; the envelope reports
-        the one ``graph`` op — traversal is the whole verb, and analytics
-        are index-time data, not queries.
+        backend walks its own graph, so a walk can never follow an edge
+        out of its storage. *depth* is the hops from the nearest seed
+        (``None`` walks until nothing new is reached); *edge_types* selects
+        the types followed (empty: every authored type, never ``fs`` unless
+        named); *limit* bounds the node rows per storage, nearest first,
+        and a cut is a ``truncated`` warning; *minimal* prunes a ``meet``
+        to the nodes that keep the seeds connected. The answer carries the
+        nodes with their ``depth`` and every selected edge among them.
+        *method* is validated against the traversal vocabulary before any
+        dispatch; the envelope reports the one ``graph`` op — traversal is
+        the whole verb, and analytics are index-time data, not queries.
         """
-        refusal = self._gate_params(
-            "graph", method=method, path=path, observations=observations, depth=depth, authority=authority
-        )
+        kwargs: dict[str, Any] = {
+            "method": method,
+            "depth": depth,
+            "edge_types": edge_types,
+            "edge_types_not": edge_types_not,
+            "minimal": minimal,
+            "limit": limit,
+            "columns": columns,
+        }
+        refusal = self._gate_params("graph", path=path, observations=observations, authority=authority, **kwargs)
         if refusal is not None:
             return refusal
-        return await self._route_single("graph", path, observations, method=method, depth=depth, authority=authority)
+        return await self._route_single("graph", path, observations, authority=authority, **kwargs)
 
     # -------------------------------------------------------------------
     # public methods — execution

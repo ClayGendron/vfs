@@ -31,13 +31,14 @@ from typing import Any, Protocol, cast
 import pytest
 
 from tests.support.documents import docx_bytes, pdf_bytes, pptx_bytes, xlsx_bytes
+from tests.support.oracles import graph_walk, meeting_subgraph
 from vfs import _native
 from vfs.authority import Authority, Principal
 from vfs.embedding import EmbeddingProvider
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
-from vfs.results import ErrorKind, Severity
+from vfs.results import ErrorKind, Result, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
     TRAIT_KEYS,
@@ -46,6 +47,7 @@ from vfs.storage import (
     StorageBackend,
     SupportsClose,
     SupportsGlean,
+    SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
     SupportsReindex,
@@ -58,7 +60,7 @@ needs = pytest.mark.needs
 
 
 class ConformanceBackend(
-    StorageBackend, SupportsPatternSearch, SupportsGlean, SupportsMutation, SupportsClose, Protocol
+    StorageBackend, SupportsPatternSearch, SupportsGlean, SupportsGraph, SupportsMutation, SupportsClose, Protocol
 ):
     """The full verb surface the suite may call; capability gating trims per test."""
 
@@ -116,6 +118,75 @@ async def _mint_metachar_tree(storage: ConformanceBackend) -> None:
     for name in (*METACHAR_DIRS, *DECOY_DIRS):
         result = await storage.write(entries=[Entry(path=Path(f"/{name}/inner.txt"), content=name)], parents=True)
         assert result.success is True
+
+
+# The graph world every graph row builds: six files under /g and nine
+# authored edges, with a cycle (d → a), a cross-link (c → b) and a spur.
+GRAPH_FILES: tuple[str, ...] = tuple(f"/g/{name}.md" for name in "abcdef")
+GRAPH_EDGES: list[tuple[str, str, str]] = [
+    ("/g/a.md", "/g/b.md", "imports"),
+    ("/g/a.md", "/g/c.md", "imports"),
+    ("/g/b.md", "/g/d.md", "imports"),
+    ("/g/c.md", "/g/d.md", "imports"),
+    ("/g/c.md", "/g/b.md", "imports"),
+    ("/g/d.md", "/g/a.md", "imports"),
+    ("/g/d.md", "/g/e.md", "imports"),
+    ("/g/e.md", "/g/f.md", "imports"),
+    ("/g/b.md", "/g/f.md", "refs"),
+]
+
+
+# The meeting world: a shared dependency (a → x ← b), a chain with a spur
+# (c → d → e → f ← g), two routes between p and q with a third seed s on
+# one of them, and a node with no edges.
+MEET_FILES: tuple[str, ...] = tuple(
+    f"/m/{name}.md" for name in ("a", "b", "x", "c", "d", "e", "f", "g", "p", "q", "s", "u", "v", "lone")
+)
+MEET_EDGES: list[tuple[str, str, str]] = [
+    ("/m/a.md", "/m/x.md", "uses"),
+    ("/m/b.md", "/m/x.md", "uses"),
+    ("/m/c.md", "/m/d.md", "r"),
+    ("/m/d.md", "/m/e.md", "r"),
+    ("/m/e.md", "/m/f.md", "r"),
+    ("/m/g.md", "/m/f.md", "r"),
+    ("/m/p.md", "/m/u.md", "r"),
+    ("/m/u.md", "/m/q.md", "r"),
+    ("/m/p.md", "/m/v.md", "r"),
+    ("/m/v.md", "/m/q.md", "r"),
+    ("/m/s.md", "/m/v.md", "r"),
+]
+
+
+async def _meet_world(storage: ConformanceBackend) -> None:
+    entries = [Entry(path=Path(path), content="m") for path in MEET_FILES]
+    assert (await storage.write(entries=entries, parents=True)).success is True
+    edges = [Edge(source=Path(source), target=Path(target), edge_type=kind) for source, target, kind in MEET_EDGES]
+    assert (await storage.mkedge(edges=edges)).success is True
+
+
+def _seeds(*paths: str) -> list[Observation]:
+    return [Observation(path=Path(path)) for path in paths]
+
+
+async def _graph_world(storage: ConformanceBackend) -> None:
+    entries = [Entry(path=Path(path), content=f"body {path}") for path in GRAPH_FILES]
+    assert (await storage.write(entries=entries, parents=True)).success is True
+    edges = [
+        Edge(source=Path(source), target=Path(target), edge_type=edge_type, weight=0.5 if target == "/g/b.md" else None)
+        for source, target, edge_type in GRAPH_EDGES
+    ]
+    assert (await storage.mkedge(edges=edges)).success is True
+
+
+def _nodes(result: Result) -> dict[str, int]:
+    """``path → depth`` over the node rows (an edge row has a target)."""
+    return {str(o.path): o.depth or 0 for o in result.observations if o.edge_target is None}
+
+
+def _edges(result: Result) -> set[tuple[str, str, str]]:
+    return {
+        (str(o.path), str(o.edge_target), str(o.edge_type)) for o in result.observations if o.edge_target is not None
+    }
 
 
 class StorageContract:
@@ -1807,6 +1878,166 @@ class StorageContract:
         assert (await storage.restore(path=Path("/src.py"))).success is True
         gone = await storage.rmedge(edges=[edge])
         assert [o.status for o in gone.observations] == ["deleted"] and gone.errors == []
+
+    # ------------------------------------------------------------------
+    # graph — the frontier walk and the meeting subgraph
+    # ------------------------------------------------------------------
+
+    @needs("write", "mkedge", "graph")
+    @pytest.mark.parametrize("method", ["outbound", "inbound", "neighborhood"])
+    @pytest.mark.parametrize("depth", [1, 2, 3, None])
+    async def test_a_walk_equals_the_breadth_first_oracle(
+        self, storage: ConformanceBackend, method: str, depth: int | None
+    ) -> None:
+        # Mutant: swap the membership column (near for far) in the hop.
+        await _graph_world(storage)
+        result = await storage.graph(method=method, path=Path("/g/a.md"), depth=depth, limit=None)
+        assert result.success is True, result.errors
+        expected = graph_walk.walk(GRAPH_EDGES, ["/g/a.md"], method, depth)
+        assert _nodes(result) == expected
+        assert _edges(result) == graph_walk.induced(GRAPH_EDGES, expected)
+
+    @needs("write", "mkedge", "graph")
+    async def test_a_joint_walk_is_the_union_of_its_seeds_at_the_minimum_depth(
+        self, storage: ConformanceBackend
+    ) -> None:
+        # Mutant: let a later hop overwrite a visited node's depth.
+        await _graph_world(storage)
+        seeds = [Observation(path=Path("/g/a.md")), Observation(path=Path("/g/d.md"))]
+        joint = await storage.graph(method="outbound", observations=seeds, depth=2, limit=None)
+        assert joint.success is True, joint.errors
+        expected = graph_walk.walk(GRAPH_EDGES, ["/g/a.md", "/g/d.md"], "outbound", 2)
+        assert _nodes(joint) == expected
+        assert _nodes(joint)["/g/d.md"] == 0  # a seed reached from another seed stays a seed
+
+    @needs("write", "mkedge", "graph")
+    async def test_seeds_that_do_not_resolve_start_no_hop(self, storage: ConformanceBackend) -> None:
+        # An unknown seed, a tombstoned seed and a seed under /.vfs: the
+        # first two yield nothing, the third is invalid at the backend.
+        await _graph_world(storage)
+        assert (await storage.graph(method="outbound", path=Path("/g/nope.md"))).observations == []
+        assert (await storage.delete(path=Path("/g/a.md"))).success is True
+        assert (await storage.graph(method="outbound", path=Path("/g/a.md"))).observations == []
+        meta = await storage.graph(method="outbound", path=Path("/.vfs/trash/g/a.md"))
+        assert meta.success is False and meta.errors[0].kind == ErrorKind.invalid
+
+    @needs("write", "mkedge", "graph", "delete", "restore")
+    async def test_a_tombstoned_node_cuts_the_walk_until_it_is_restored(self, storage: ConformanceBackend) -> None:
+        # Mutant: drop the liveness term from the hop statement.
+        await _graph_world(storage)
+        assert (await storage.delete(path=Path("/g/b.md"))).success is True
+        cut = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        live = [edge for edge in GRAPH_EDGES if "/g/b.md" not in edge[:2]]
+        assert _nodes(cut) == graph_walk.walk(live, ["/g/a.md"], "outbound", None)
+        assert (await storage.restore(path=Path("/g/b.md"))).success is True
+        back = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        assert _nodes(back) == graph_walk.walk(GRAPH_EDGES, ["/g/a.md"], "outbound", None)
+
+    @needs("write", "mkedge", "graph")
+    async def test_the_type_filters_select_the_edges_a_walk_follows(self, storage: ConformanceBackend) -> None:
+        # The default follows every authored type and never fs; naming fs
+        # walks the tree; naming one type follows and returns nothing else.
+        await _graph_world(storage)
+        authored = await storage.graph(method="outbound", path=Path("/g"), depth=None, limit=None)
+        assert _nodes(authored) == {"/g": 0}
+        tree = await storage.graph(method="outbound", path=Path("/g"), edge_types=("fs",), depth=None, limit=None)
+        assert set(_nodes(tree)) == {"/g", *GRAPH_FILES}
+        assert {edge[2] for edge in _edges(tree)} == {"fs"}
+        refs = await storage.graph(method="outbound", path=Path("/g/b.md"), edge_types=("refs",), limit=None)
+        assert _nodes(refs) == {"/g/b.md": 0, "/g/f.md": 1}
+        assert _edges(refs) == {("/g/b.md", "/g/f.md", "refs")}
+        skipped = await storage.graph(method="outbound", path=Path("/g/b.md"), edge_types_not=("refs",), limit=None)
+        assert _nodes(skipped) == {"/g/b.md": 0, "/g/d.md": 1}
+
+    @needs("write", "mkedge", "graph")
+    async def test_every_selected_edge_among_the_returned_nodes_is_a_row(self, storage: ConformanceBackend) -> None:
+        # Mutant: restrict the induced fetch's far endpoint to the last level.
+        # At depth 2 from a: the cross-link c→b, the last level's d→e, and
+        # the back-edge d→a all appear although no hop from d ever ran.
+        await _graph_world(storage)
+        result = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=2, limit=None)
+        edges = _edges(result)
+        assert {("/g/c.md", "/g/b.md", "imports"), ("/g/d.md", "/g/a.md", "imports")} <= edges
+        assert ("/g/d.md", "/g/e.md", "imports") not in edges  # e is beyond depth 2
+        row = next(o for o in result.observations if o.edge_target == "/g/b.md" and o.path == "/g/a.md")
+        assert row.edge_type == "imports" and row.edge_weight == 0.5 and row.status is None
+        assert row.populated == {"path", "edge_target", "edge_type", "edge_weight"}
+        nodes = [o for o in result.observations if o.edge_target is None]
+        assert [o.depth for o in nodes] == sorted(o.depth or 0 for o in nodes)
+        assert all(o.populated >= {"path", "kind", "depth"} for o in nodes)
+
+    @needs("write", "mkedge", "graph")
+    async def test_limit_keeps_the_nearest_nodes_and_no_dangling_edge(self, storage: ConformanceBackend) -> None:
+        # Mutant: drop the early stop — the walk would still cut, but the
+        # warning's nodes_found would count the whole reach.
+        await _graph_world(storage)
+        result = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=2)
+        assert result.success is True
+        assert _nodes(result) == {"/g/a.md": 0, "/g/b.md": 1}
+        shown = set(_nodes(result))
+        assert all(edge[0] in shown and edge[1] in shown for edge in _edges(result))
+        (warning,) = result.errors
+        assert warning.kind == ErrorKind.truncated and warning.severity == Severity.warning
+        assert warning.data == {"limit": 2, "nodes_found": 3, "depth_reached": 1}
+        whole = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        assert whole.errors == [] and len(_nodes(whole)) == len(GRAPH_FILES)
+
+    @needs("write", "mkedge", "graph")
+    async def test_meet_keeps_the_shared_dependency(self, storage: ConformanceBackend) -> None:
+        # Mutant: directed stripping — it deletes x in a → x ← b.
+        await _meet_world(storage)
+        met = await storage.graph(method="meet", observations=_seeds("/m/a.md", "/m/b.md"), depth=None, limit=None)
+        assert met.success is True and met.errors == []
+        assert _nodes(met) == {"/m/a.md": 0, "/m/b.md": 0, "/m/x.md": 1}
+        assert _edges(met) == {("/m/a.md", "/m/x.md", "uses"), ("/m/b.md", "/m/x.md", "uses")}
+        chain = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=None, limit=None)
+        assert _nodes(chain) == {"/m/c.md": 0, "/m/d.md": 1, "/m/e.md": 1, "/m/f.md": 0}
+        assert len(_edges(chain)) == 3
+        for seeds in (("/m/a.md", "/m/b.md"), ("/m/c.md", "/m/f.md")):
+            found = await storage.graph(method="meet", observations=_seeds(*seeds), depth=None, limit=None)
+            assert _nodes(found) == meeting_subgraph.meet(MEET_EDGES, list(seeds)).depths
+
+    @needs("write", "mkedge", "graph")
+    async def test_meet_reports_the_components_when_the_seeds_do_not_join(self, storage: ConformanceBackend) -> None:
+        # One resolved seed is itself; two seeds with no route stay apart
+        # and the info record says so; a spent radius names its depth.
+        # Mutant: skip the boundary hop — c and f, three edges apart, would
+        # no longer meet at depth 1.
+        await _meet_world(storage)
+        alone = await storage.graph(method="meet", path=Path("/m/a.md"), depth=None)
+        assert _nodes(alone) == {"/m/a.md": 0} and alone.errors == []
+        apart = await storage.graph(method="meet", observations=_seeds("/m/a.md", "/m/lone.md"), depth=None)
+        (record,) = apart.errors
+        assert record.kind == ErrorKind.not_found and record.severity == Severity.info
+        assert record.data == {"seeds": 2, "components": 2}
+        assert _nodes(apart) == {"/m/a.md": 0, "/m/lone.md": 0} and _edges(apart) == set()
+        spent = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=1)
+        (record,) = spent.errors
+        assert record.data == {"seeds": 2, "components": 2, "depth": 1}
+        boundary = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=1)
+        assert boundary.errors == [] and _nodes(boundary) == {"/m/c.md": 0, "/m/d.md": 1, "/m/e.md": 1, "/m/f.md": 0}
+        joined = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=2)
+        assert joined.errors == [] and set(_nodes(joined)) == {"/m/c.md", "/m/d.md", "/m/e.md", "/m/f.md", "/m/g.md"}
+
+    @needs("write", "mkedge", "graph")
+    async def test_minimal_meet_drops_a_route_the_seeds_do_not_need(self, storage: ConformanceBackend) -> None:
+        # p→u→q and p→v→q both join p and q; s→v makes v a bridge too, so
+        # both routes are kept and u is a non-articulation node: minimal
+        # drops it. Mutant: skip the articulation check.
+        await _meet_world(storage)
+        seeds = _seeds("/m/p.md", "/m/q.md", "/m/s.md")
+        both = await storage.graph(method="meet", observations=seeds, depth=None, limit=None)
+        minimal = await storage.graph(method="meet", observations=seeds, depth=None, limit=None, minimal=True)
+        assert set(_nodes(both)) == {"/m/p.md", "/m/q.md", "/m/s.md", "/m/u.md", "/m/v.md"}
+        assert set(_nodes(minimal)) == {"/m/p.md", "/m/q.md", "/m/s.md", "/m/v.md"}
+        assert _edges(minimal) == {
+            ("/m/p.md", "/m/v.md", "r"),
+            ("/m/v.md", "/m/q.md", "r"),
+            ("/m/s.md", "/m/v.md", "r"),
+        }
+        names = ["/m/p.md", "/m/q.md", "/m/s.md"]
+        assert _nodes(both) == meeting_subgraph.meet(MEET_EDGES, names).depths
+        assert _nodes(minimal) == meeting_subgraph.meet(MEET_EDGES, names, minimal=True).depths
 
     # ------------------------------------------------------------------
     # Per-row classification for batched reads

@@ -344,6 +344,17 @@ def _branches(
     ]
 
 
+def pinned_join(left: FromClause, right: FromClause, on: ColumnElement[bool], profile: DialectProfile) -> Join:
+    """*left* joined to *right* on *on* in the profile's declared keyword — the plan pin every seek join carries.
+
+    The ranges join and the graph walk's hop share it: both drive a seek
+    of an index from a small left side, and a plain ``JOIN`` let SQLite
+    plan the probe from the wrong table. No hint rides it; the callers
+    that need one add it to the statement.
+    """
+    return _RangeJoin(left, right, on, profile.range_join)
+
+
 def _range_select(
     entry: Table,
     rows: FromClause,
@@ -359,8 +370,7 @@ def _range_select(
     *index* names the entry column whose index the join seeks, for the
     dialects told which one to use.
     """
-    joined = _RangeJoin(rows, entry, on, profile.range_join)
-    stmt = select(*columns).select_from(joined)
+    stmt = select(*columns).select_from(pinned_join(rows, entry, on, profile))
     if profile.range_entry_hint is not None:
         hint = profile.range_entry_hint.format(index=_index_name(entry, index))
         stmt = stmt.with_hint(entry, hint, dialect_name=profile.name)

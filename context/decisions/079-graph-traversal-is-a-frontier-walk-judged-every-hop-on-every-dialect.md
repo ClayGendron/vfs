@@ -1,6 +1,14 @@
 # 079. Graph traversal is a frontier walk — one chunked statement per hop, rights judged on every row, served on every dialect
 
-- **Status:** proposed (2026-10-14; revised the same day after Clay's
+- **Status:** **accepted 2026-10-14** — spec 164 landed the same day
+  after a pre-build review that folded nine amendments into the spec
+  (the hop narrowed at `list` and projected at `read`, a road probe per
+  frontier chunk under a partial named view, a one-list induced-edge
+  fetch over the unexpanded nodes, the early stop at `limit`, every
+  statement in the count formula, the hierarchy re-derived by the
+  renderer with no meeting-point glyph, two declared gate rule types,
+  an oracle written fresh to the declared tie-breaks). Proposed earlier
+  the same day; revised after Clay's
   review of the first cut — the names, the `minimal` flag, the hierarchy
   mirror off by default, the traversal-rights rule on the permission
   ladder, `limit` 128, induced edges rendered with `tree`'s glyphs

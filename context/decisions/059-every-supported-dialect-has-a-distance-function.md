@@ -11,7 +11,11 @@
   CLAUDE.md line "unknown dialects are served, not refused" (they are
   served the core verbs, never the ranked ones), and refines ADR 057
   (the Rust cosine kernel built for the floor becomes the vector leg's
-  referee).
+  referee). **Pin 4 amended by ADR 079 (accepted 2026-10-14, spec 164
+  landed):** the graph half of the withholding rule is void — the
+  frontier walk needs no engine fact, so every dialect including the
+  generic floor serves `graph`; only `glean` is withheld from a profile
+  with no distance function.
 - **Date:** 2026-08-27
 - **Deciders:** Clay Gendron
 - **Decided by:** human

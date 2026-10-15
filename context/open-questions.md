@@ -33,6 +33,14 @@
 - **Options considered:** a dialect-declared arm for the three engines; a hybrid that walks k levels per statement; never.
 - **Status:** parked
 
+## Graph verb: `limit` on `meet` can cut a bridge node
+
+- **Asked:** 2026-10-14 by the assistant (spec 164's pre-build review, decision taken at the build and flagged to Clay)
+- **Context:** `limit` cuts node rows nearest first on every method, `meet` included, and drops the edge rows touching a cut node, so the answer is always a consistent subgraph. On `meet` a cut can remove a bridge node, so the returned subgraph no longer joins the seeds although the walk found a join; the `components` count is taken before the cut and reports that the seeds connected. The default of 128 makes this ordinary for a `meet` over more than 128 seeds.
+- **Blocking:** nothing. The behaviour is documented in `graph.py` and `docs/reference/api.md`.
+- **Options considered:** keep (one `limit` law for every method, chosen at the build); exempt `meet` from `limit` after pruning (the kept set is already small); cut only non-bridge nodes first.
+- **Status:** open — Clay's call
+
 ## MySQL-family batch UPDATEs are per-row driver round trips
 
 - **Asked:** 2026-07-23 (multi-agent review of the spec 079 landing; scale lens, CONFIRMED 3/3)

@@ -16,8 +16,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
 from vfs.authority import Authority
-from vfs.ops import GRAPH_METHODS, CaseMode, GrepOutputMode
-from vfs.paths import ObjectKind
+from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, GRAPH_METHODS, CaseMode, GrepOutputMode
+from vfs.paths import ObjectKind, validate_segment
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
 if TYPE_CHECKING:
@@ -90,6 +90,33 @@ class ShapeRule(NamedTuple):
     exactly_one: bool
     msg_both: str
     msg_missing: str = ""
+
+
+class OnlyWith(NamedTuple):
+    """A value lawful only beside another: ``param == value`` demands ``other == allowed``."""
+
+    param: str
+    value: object
+    other: str
+    allowed: object
+    msg: str
+
+
+class Disjoint(NamedTuple):
+    """Two sequence parameters that may share no item."""
+
+    left: str
+    right: str
+    msg: str
+
+
+class Segments(NamedTuple):
+    """A sequence parameter whose every item is one lawful path segment."""
+
+    param: str
+
+
+ValueRule = OnlyWith | Disjoint | Segments
 
 
 _AUTHORITY: Final = ParamSpec("authority", "authority", doc="the verified authority behind the call; never on the wire")
@@ -284,10 +311,47 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _AUTHORITY,
     ),
     "graph": (
-        ParamSpec("method", "str", required=True, choices=GRAPH_METHODS, doc="traversal to run"),
-        ParamSpec("path", "path", doc="the node to start from"),
+        ParamSpec(
+            "method",
+            "str",
+            required=True,
+            choices=GRAPH_METHODS,
+            doc="inbound, outbound or neighborhood from the seeds; meet joins them",
+        ),
+        ParamSpec("path", "path", doc="the seed node"),
         _OBSERVATIONS,
-        ParamSpec("depth", "int", minimum=1, maximum=INT_CEILING, doc="traversal depth budget"),
+        ParamSpec(
+            "depth",
+            "int",
+            minimum=1,
+            maximum=INT_CEILING,
+            default=GRAPH_DEPTH_DEFAULT,
+            doc="hops from the nearest seed; None walks until nothing new is reached",
+        ),
+        ParamSpec(
+            "edge_types",
+            "str_seq",
+            nullable=False,
+            default=(),
+            doc="follow only these edge types; empty follows every authored type; name fs to follow the tree",
+        ),
+        ParamSpec("edge_types_not", "str_seq", nullable=False, default=(), doc="never follow these edge types"),
+        ParamSpec(
+            "minimal",
+            "bool",
+            nullable=False,
+            default=False,
+            doc="meet only: prune to the nodes needed to keep the seeds connected",
+        ),
+        ParamSpec(
+            "limit",
+            "int",
+            minimum=1,
+            maximum=INT_CEILING,
+            default=GRAPH_LIMIT_DEFAULT,
+            doc="node rows to return, nearest first; None returns every row",
+        ),
+        _COLUMNS,
         _AUTHORITY,
     ),
     "run": (
@@ -419,6 +483,16 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     ),
 }
 
+VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
+    "graph": (
+        OnlyWith("minimal", True, "method", "meet", "graph minimal=True is lawful only with method='meet'"),
+        Disjoint("edge_types", "edge_types_not", "graph edge_types and edge_types_not must not share a type"),
+        Segments("edge_types"),
+        Segments("edge_types_not"),
+    ),
+}
+"""Cross-parameter value rules, checked after the shape rules on typed values."""
+
 
 # ---------------------------------------------------------------------------
 # The check — types first, then input shape
@@ -443,6 +517,10 @@ def param_violation(op: Op, params: Mapping[str, object]) -> str | None:
     by_name = {spec.name: spec for spec in specs}
     for rule in RULES.get(op, ()):
         problem = _check_shape(rule, by_name, params)
+        if problem is not None:
+            return problem
+    for value_rule in VALUE_RULES.get(op, ()):
+        problem = _check_value_rule(op, value_rule, params)
         if problem is not None:
             return problem
     return None
@@ -537,6 +615,27 @@ def _check_shape(
     chosen = first if first_present else second
     if not all(_present(by_name[name], params) for name in chosen):
         return rule.msg_missing
+    return None
+
+
+def _check_value_rule(op: Op, rule: ValueRule, params: Mapping[str, object]) -> str | None:
+    """Evaluate one cross-parameter value rule; values are already type-checked."""
+    if isinstance(rule, OnlyWith):
+        if params.get(rule.param) == rule.value and params.get(rule.other) != rule.allowed:
+            return rule.msg
+        return None
+    if isinstance(rule, Disjoint):
+        left = params.get(rule.left) or ()
+        right = params.get(rule.right) or ()
+        if isinstance(left, (tuple, list)) and isinstance(right, (tuple, list)) and set(left) & set(right):
+            return rule.msg
+        return None
+    items = params.get(rule.param) or ()
+    for item in items if isinstance(items, (tuple, list)) else ():
+        try:
+            validate_segment(str(item), f"{op} {rule.param} item")
+        except ValueError as exc:
+            return str(exc)
     return None
 
 

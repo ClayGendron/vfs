@@ -38,7 +38,7 @@ from ulid import ULID
 
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.ops import VERB_RUNGS
+from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
@@ -75,6 +75,7 @@ from vfs.storage.backends.database.embed import (
 )
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.glean import VectorLeg, glean_rows
+from vfs.storage.backends.database.graph import GraphRequest, Site, graph_rows
 from vfs.storage.backends.database.grep import WALL_TIME_BUDGET, grep_rows
 from vfs.storage.backends.database.indexing import (
     REINDEX_HEARTBEAT_SECONDS,
@@ -93,7 +94,15 @@ from vfs.storage.backends.database.indexing import (
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller
 from vfs.storage.backends.database.offload import call_offloaded
-from vfs.storage.backends.database.reads import addressed_by, glob_rows, ls_rows, read_rows, stat_rows, tree_rows
+from vfs.storage.backends.database.reads import (
+    addressed_by,
+    effective_columns,
+    glob_rows,
+    ls_rows,
+    read_rows,
+    stat_rows,
+    tree_rows,
+)
 from vfs.storage.backends.database.render import (
     RENDER_PAGE_ROWS,
     Rendered,
@@ -384,6 +393,61 @@ class DatabaseStorage:
                 lambda session, view: tree_rows(
                     session, host.tables, host.profile, host.membership_budget, path, max_depth, columns, view
                 ),
+            ),
+        )
+
+    # -------------------------------------------------------------------
+    # Graph family
+    # -------------------------------------------------------------------
+
+    async def graph(
+        self,
+        *,
+        method: str,
+        path: Path | None = None,
+        observations: list[Observation] | None = None,
+        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        edge_types: tuple[str, ...] = (),
+        edge_types_not: tuple[str, ...] = (),
+        minimal: bool = False,
+        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        columns: frozenset[str] | None = None,
+        authority: Authority | None = None,
+    ) -> Result:
+        """The frontier walk from the seeds under the caller's view; see ``graph.py``.
+
+        The type lists are bound beside the frontier in every hop statement,
+        so together they may not exceed half the membership budget.
+        """
+        for name, value in (("depth", depth), ("limit", limit)):
+            if value is not None and value < 1:
+                return Result(
+                    ops=("graph",), errors=[classified(ErrorKind.invalid, detail=f"{name} must be >= 1, got {value}")]
+                )
+        host = self._host
+        if len(edge_types) + len(edge_types_not) > host.membership_budget // 2:
+            detail = (
+                f"graph names {len(edge_types) + len(edge_types_not)} edge types; at most {host.membership_budget // 2}"
+            )
+            return Result(ops=("graph",), errors=[classified(ErrorKind.invalid, detail=detail)])
+        seeds = [path] if path is not None else [row.path for row in observations or []]
+        request = GraphRequest(
+            method,
+            depth,
+            tuple(edge_types),
+            tuple(edge_types_not),
+            minimal,
+            limit,
+            effective_columns(columns, content=False),
+        )
+        site = Site(host.tables, host.profile, host.membership_budget)
+        return await self._execute(
+            "graph",
+            self._viewed(
+                "graph",
+                authority,
+                [str(seed) for seed in seeds],
+                lambda session, view: graph_rows(session, site, request, seeds, view),
             ),
         )
 
@@ -1456,11 +1520,15 @@ class DatabaseStorage:
         *addressed* is every path the call names — its targets, or each
         pattern's literal prefix — where an anonymous caller is judged
         against the posture rows at the verb's rung before any row is
-        read; a trash-view path is judged where its row sits.
+        read; a trash-view path is judged where its row sits. A verb that
+        declares a ``traverse`` rung (the graph walk) reads at that rung:
+        the view narrows at it, the anonymous check judges at it, and the
+        body projects a row whole only where the caller holds the primary.
         """
         host = self._host
         who = self._named(authority)
         needs = VERB_RUNGS[op]
+        rung = needs.traverse or needs.primary
         judged = [address_of(path).stored for path in addressed]
 
         async def run(session: AsyncSession) -> Result:
@@ -1468,7 +1536,7 @@ class DatabaseStorage:
             if isinstance(resolution, ResultError):
                 return Result(ops=(op,), errors=[resolution])
             refused = await unauthenticated_refusals(
-                session, host.tables, host.profile, host.membership_budget, who, judged, needs.primary
+                session, host.tables, host.profile, host.membership_budget, who, judged, rung
             )
             if refused:
                 return Result(ops=(op,), errors=refused)
@@ -1476,7 +1544,7 @@ class DatabaseStorage:
                 return await build(session, None)
             view = Visibility(
                 resolution,
-                needs.primary,
+                rung,
                 host.tables,
                 host.profile,
                 host.membership_budget,

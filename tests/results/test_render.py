@@ -418,6 +418,69 @@ class TestReadStatTree:
 # ---------------------------------------------------------------------------
 
 
+def node(path: str, depth: int, **kwargs: Any) -> Observation:
+    return Observation(path=Path(path), kind="file", depth=depth, **kwargs)
+
+
+def edge(source: str, target: str, edge_type: str = "imports", **kwargs: Any) -> Observation:
+    return Observation(path=Path(source), edge_target=Path(target), edge_type=edge_type, **kwargs)
+
+
+class TestGraphRendering:
+    def test_the_hierarchy_marks_cross_links_and_cycles(self) -> None:
+        # Each node sits under the node one level up that reached it, the
+        # least by (edge type, path); every further edge prints at its source.
+        result = Result(
+            ops=("graph",),
+            observations=[
+                node("/src/app.py", 0),
+                node("/src/db.py", 1),
+                node("/src/config.py", 1),
+                edge("/src/app.py", "/src/db.py", edge_weight=0.5),
+                edge("/src/app.py", "/src/config.py"),
+                edge("/src/db.py", "/src/config.py"),
+                edge("/src/db.py", "/src/app.py", "references"),
+            ],
+        )
+        assert result.to_str() == "\n".join(
+            [
+                "/src/app.py  (seed)",
+                "├── imports → /src/config.py  [1]",
+                "└── imports → /src/db.py  [1]  (weight 0.5000)",
+                "    ├── imports → /src/config.py  ↑ shown",
+                "    └── references → /src/app.py  ↑ cycle",
+                "edges: 4 among 3 nodes",
+            ]
+        )
+
+    def test_an_inbound_child_points_at_its_parent(self) -> None:
+        result = Result(
+            ops=("graph",), observations=[node("/a.md", 0), node("/b.md", 1), edge("/b.md", "/a.md", "links")]
+        )
+        assert result.to_str() == "/a.md  (seed)\n└── links ← /b.md  [1]\nedges: 1 among 2 nodes"
+
+    def test_a_node_without_a_shallower_neighbour_is_a_root(self) -> None:
+        # Two seeds, one node reached by neither through a returned edge.
+        result = Result(ops=("graph",), observations=[node("/a.md", 0), node("/b.md", 0), node("/c.md", 2)])
+        assert result.to_str() == "/a.md  (seed)\n/b.md  (seed)\n/c.md  [2]\nedges: 0 among 3 nodes"
+
+    def test_an_edge_row_is_never_a_node_and_the_warning_follows(self) -> None:
+        warning = ResultError(kind=ErrorKind.truncated, message="cut", severity=Severity.warning)
+        result = Result(ops=("graph",), observations=[node("/a.md", 0), edge("/a.md", "/b.md")], errors=[warning])
+        text = result.to_str()
+        assert text.startswith("/a.md  (seed)\n└── imports → /b.md  ↑ shown\nedges: 1 among 1 node")
+        assert "\n\nWARNING: cut — " in text
+        assert "NOTE:" not in result.to_str(projection=("path", "score"))
+
+    def test_an_empty_graph_renders_nothing(self) -> None:
+        assert Result(ops=("graph",)).to_str() == ""
+
+    def test_depth_right_aligns_in_a_projected_table(self) -> None:
+        rows = [node("/a.md", 0), node("/bb.md", 10)]
+        table = Result(ops=("ls",), observations=rows).to_str(projection=("path", "depth"))
+        assert "| ----:" in table or "| -----: |" in table or "---:" in table
+
+
 class TestActionRendering:
     def test_single_path_action(self) -> None:
         result = Result(ops=("delete",), observations=[obs("/a.md")])

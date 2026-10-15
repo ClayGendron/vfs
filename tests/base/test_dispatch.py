@@ -1075,8 +1075,22 @@ async def test_graph_path_routes_to_one_terminal() -> None:
     root = VirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.graph("descendants", path="/m/a.py")
-    assert child.calls == [("graph", {"path": "/a.py", "method": "descendants", "depth": None})]
+    await root.graph("outbound", path="/m/a.py", depth=None)
+    assert child.calls == [
+        (
+            "graph",
+            {
+                "path": "/a.py",
+                "method": "outbound",
+                "depth": None,
+                "edge_types": (),
+                "edge_types_not": (),
+                "minimal": False,
+                "limit": 128,
+                "columns": None,
+            },
+        )
+    ]
 
 
 async def test_graph_observations_group_per_mount() -> None:
@@ -1639,7 +1653,7 @@ async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
         ("mkedge", lambda fs: fs.mkedge(source="/a.txt", target="/b.txt", edge_type="ref")),
         ("move", lambda fs: fs.move("/a", "/b")),
         ("copy", lambda fs: fs.copy("/a", "/b")),
-        ("graph", lambda fs: fs.graph("descendants", "/nope")),
+        ("graph", lambda fs: fs.graph("outbound", "/nope")),
         ("run", lambda fs: fs.run("/nope")),
         ("glob", lambda fs: fs.glob("*", paths=("/nope",))),
         ("grep", lambda fs: fs.grep("x", paths=("/nope",))),

@@ -1,6 +1,6 @@
 # 016. Chunks, Versions, and Edges Leave the Namespace — Entry-Scoped Metadata, Not Paths
 
-- **Status:** accepted
+- **Status:** accepted; pin 4's deferred `edges(path, direction, type)` read verb is folded into a depth-one `graph` walk read through its edge rows by ADR 079 (accepted 2026-10-14, spec 164 landed) — no separate verb
 - **Date:** 2026-07-18
 - **Deciders:** Clay Gendron
 - **Decided by:** human (direction and approval by Clay in the 2026-07-18

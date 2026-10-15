@@ -749,8 +749,8 @@ class TestReadFailureHandling:
 class TestUnlandedVerbStubs:
     """The backend has no classified stubs; the derived surface is whole.
 
-    The capability pin is a drift alarm in both directions ("graph" and
-    "run" are the unlanded families, off the set by derivation).
+    The capability pin is a drift alarm in both directions ("run" is the
+    unlanded family, off the set by derivation).
     """
 
     async def test_the_derived_capability_set_is_whole(self, tmp_path) -> None:
@@ -763,6 +763,7 @@ class TestUnlandedVerbStubs:
             "glob",
             "grep",
             "glean",
+            "graph",
             "write",
             "edit",
             "mkdir",

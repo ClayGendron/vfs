@@ -53,7 +53,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, get_args, runtime_checkable
 
-from vfs.ops import GRANT_OPS, MUTATING_OPS
+from vfs.ops import GRANT_OPS, GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, MUTATING_OPS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -332,7 +332,12 @@ class SupportsGraph(Protocol):
         method: str,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        depth: int | None = None,
+        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        edge_types: tuple[str, ...] = (),
+        edge_types_not: tuple[str, ...] = (),
+        minimal: bool = False,
+        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 

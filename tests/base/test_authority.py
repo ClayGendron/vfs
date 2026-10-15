@@ -43,7 +43,7 @@ CALLS: dict[Op, dict[str, Any]] = {
     "glob": {"pattern": "*"},
     "grep": {"pattern": "x"},
     "glean": {"query": "x"},
-    "graph": {"method": "successors", "path": "/f.txt"},
+    "graph": {"method": "outbound", "path": "/f.txt"},
     "run": {"path": "/t"},
     "grant": {"path": "/d", "principal": "bob", "level": "read"},
     "revoke": {"path": "/d", "principal": "bob"},

@@ -2,8 +2,9 @@
 
 One entry point, :func:`render_result`, dispatches on the result's ``op``
 into a per-arrangement renderer: ripgrep-style lines for grep, an ASCII
-tree, verbatim content for read, Markdown tables for everything tabular,
-one-liners for actions, and a dedicated write formatter. Errors render one
+tree, the walk's hierarchy with its edge types for graph, verbatim content
+for read, Markdown tables for everything tabular, one-liners for actions,
+and a dedicated write formatter. Errors render one
 agent-facing line each — severity, locus, cause, contract hint, retry
 directive — grouped errors, then warnings, then info. Rendering is pure —
 it reads what is on the envelope and never performs I/O.
@@ -123,7 +124,7 @@ def _error_line(error: ResultError) -> str:
 
 # Functions whose body ignores per-field projection columns — a
 # "not populated" note about columns is meaningless under them.
-_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree"}) | ACTION_FUNCTIONS | GRANT_FUNCTIONS
+_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree", "graph"}) | ACTION_FUNCTIONS | GRANT_FUNCTIONS
 
 
 def _render_unpopulated_projection_note(result: Result, projection: tuple[str, ...] | None) -> str:
@@ -187,6 +188,8 @@ def _render_body(result: Result, projection: tuple[str, ...]) -> str:
         return _render_glean(result, projection)
     if fn == "tree":
         return _render_tree(result)
+    if fn == "graph":
+        return _render_graph(result)
     if fn == "read":
         return _render_read(result, projection)
     if fn == "stat":
@@ -210,7 +213,7 @@ def _format_field(name: str, value: Any) -> str:
 
 
 _RIGHT_ALIGN_FIELDS: frozenset[str] = frozenset(
-    {"size_bytes", "score", "in_degree", "out_degree", "version"},
+    {"size_bytes", "score", "in_degree", "out_degree", "depth", "version"},
 )
 """Projection fields that render right-aligned in Markdown tables — numeric values."""
 
@@ -493,6 +496,82 @@ def _render_tree(result: Result) -> str:
 
     walk(tree)
     return "\n".join(lines)
+
+
+def _render_graph(result: Result) -> str:
+    """The walk as a hierarchy: seeds as roots, every node under the node one level up that reached it.
+
+    A node row's parent is the returned node one level shallower that an
+    edge row joins it to, the least by ``(edge_type, path)`` when several
+    qualify; a seed, and any node with no such neighbour, is a root. The
+    line names the edge type and the arrow's direction (``→`` when the
+    parent is the source, ``←`` when the child points at the parent) and
+    the depth in brackets. Every further edge prints where its source
+    sits, marked ``↑ cycle`` when its target is an ancestor in the rendered
+    tree and ``↑ shown`` otherwise. Measures append only when populated.
+    """
+    nodes = [o for o in result.observations if o.edge_target is None]
+    edges = [o for o in result.observations if o.edge_target is not None]
+    if not nodes:
+        return ""
+    depth: dict[str, int] = {str(o.path): o.depth if o.depth is not None else 0 for o in nodes}
+    touching: dict[str, list[tuple[str, Observation]]] = {}
+    for edge in edges:
+        source, target = str(edge.path), str(edge.edge_target)
+        touching.setdefault(source, []).append((target, edge))
+        touching.setdefault(target, []).append((source, edge))
+    parent: dict[str, tuple[str, Observation]] = {}
+    for path, level in depth.items():
+        candidates = [
+            (str(edge.edge_type), other, edge)
+            for other, edge in touching.get(path, ())
+            if depth.get(other) == level - 1
+        ]
+        if candidates:
+            _type, other, edge = min(candidates, key=lambda c: (c[0], c[1]))
+            parent[path] = (other, edge)
+    children: dict[str, list[tuple[str, Observation]]] = {}
+    for path, (above, edge) in parent.items():
+        children.setdefault(above, []).append((path, edge))
+    tree_edges = {id(edge) for _above, edge in parent.values()}
+    extras: dict[str, list[Observation]] = {}
+    for edge in edges:
+        if id(edge) not in tree_edges:
+            extras.setdefault(str(edge.path), []).append(edge)
+
+    lines: list[str] = []
+
+    def walk(path: str, prefix: str, ancestors: frozenset[str]) -> None:
+        below = sorted(children.get(path, ()), key=lambda item: (str(item[1].edge_type), item[0]))
+        further = sorted(extras.get(path, ()), key=lambda e: (str(e.edge_type), str(e.edge_target)))
+        items: list[tuple[str, Observation]] = [*below, *((str(e.edge_target), e) for e in further)]
+        for index, (target, edge) in enumerate(items):
+            last = index == len(items) - 1
+            connector = "└── " if last else "├── "
+            if index < len(below):
+                arrow = "→" if str(edge.path) == path else "←"
+                line = f"{edge.edge_type} {arrow} {target}  [{depth[target]}]{_measures(edge)}"
+                lines.append(f"{prefix}{connector}{line}")
+                walk(target, prefix + ("    " if last else "│   "), ancestors | {path})
+            else:
+                mark = "↑ cycle" if target in ancestors or target == path else "↑ shown"
+                lines.append(f"{prefix}{connector}{edge.edge_type} → {target}  {mark}{_measures(edge)}")
+
+    for root in sorted(path for path in depth if path not in parent):
+        lines.append(f"{root}  (seed)" if depth[root] == 0 else f"{root}  [{depth[root]}]")
+        walk(root, "", frozenset())
+    lines.append(f"edges: {len(edges)} among {_pluralize('node', len(nodes))}")
+    return "\n".join(lines)
+
+
+def _measures(edge: Observation) -> str:
+    """The populated measures of an edge row as a parenthesised suffix, or nothing."""
+    parts = [
+        f"{name} {_format_field(name, value)}"
+        for name, value in (("weight", edge.edge_weight), ("distance", edge.edge_distance))
+        if value is not None
+    ]
+    return f"  ({', '.join(parts)})" if parts else ""
 
 
 def _render_action(result: Result) -> str:

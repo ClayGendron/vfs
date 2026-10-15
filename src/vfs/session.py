@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
@@ -355,11 +356,27 @@ class Session:
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = None,
+        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        edge_types: tuple[str, ...] = (),
+        edge_types_not: tuple[str, ...] = (),
+        minimal: bool = False,
+        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        columns: frozenset[str] | None = None,
     ) -> Result:
         if (refusal := self._refuse_closed("graph")) is not None:
             return refusal
-        return await self._fs.graph(method, path, observations, depth=depth, authority=self._authority)
+        return await self._fs.graph(
+            method,
+            path,
+            observations,
+            depth=depth,
+            edge_types=edge_types,
+            edge_types_not=edge_types_not,
+            minimal=minimal,
+            limit=limit,
+            columns=columns,
+            authority=self._authority,
+        )
 
     async def run(self, path: str, *, arguments: dict[str, Any] | None = None) -> Result:
         if (refusal := self._refuse_closed("run")) is not None:

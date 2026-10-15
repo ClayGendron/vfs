@@ -55,7 +55,7 @@ _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "read": ("content",),
     "stat": ("path", "kind", "size_bytes", "updated_at"),
     "run": ("path",),
-    "graph": ("path", "kind"),
+    "graph": ("path", "kind", "depth"),
 }
 for _fn in ACTION_FUNCTIONS | GRANT_FUNCTIONS:
     _DEFAULT_PROJECTION[_fn] = ("path",)

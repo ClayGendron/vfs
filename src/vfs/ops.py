@@ -16,10 +16,13 @@ its own copy. A verb's class decides how it is routed and gated:
 string into these ops and re-enters through their public methods, so every
 gate fires on the real verb. It is a front door, not an op.
 
-The ``graph`` op routes and reports as one verb: traversal only, with the
-standard result projection — centrality is an index-time background
-process, not a query-time verb. The envelope's ``Result.ops`` speaks this
-same vocabulary; per-method function names are retired.
+The ``graph`` op routes and reports as one verb: traversal only —
+``outbound`` follows each edge from its source to its target, ``inbound``
+follows it back, ``neighborhood`` ignores the arrow, and ``meet`` returns
+the subgraph that joins the seeds — with its own hierarchical rendering.
+Centrality is an index-time background process, not a query-time verb.
+The envelope's ``Result.ops`` speaks this same vocabulary; per-method
+function names are retired.
 """
 
 from __future__ import annotations
@@ -172,8 +175,16 @@ axis.
 CaseMode = Literal["sensitive", "insensitive", "smart"]
 GrepOutputMode = Literal["lines", "files", "count"]
 
-GRAPH_METHODS: Final[frozenset[str]] = frozenset(
-    {"predecessors", "successors", "ancestors", "descendants", "neighborhood"}
-    | {"meeting_subgraph", "min_meeting_subgraph"},
-)
-"""Graph traversal vocabulary — the only methods the ``graph`` verb accepts."""
+# The graph walk's defaults, carried by the verb's signature and by the
+# params table alike: the gate never substitutes a schema default.
+GRAPH_DEPTH_DEFAULT: Final = 1
+GRAPH_LIMIT_DEFAULT: Final = 128
+
+GRAPH_METHODS: Final[frozenset[str]] = frozenset({"inbound", "outbound", "neighborhood", "meet"})
+"""Graph traversal vocabulary — the only methods the ``graph`` verb accepts.
+
+``outbound`` follows each edge from its ``source`` to its ``target`` (the
+direction ``mkedge`` was given), ``inbound`` follows it from ``target``
+back to ``source``, ``neighborhood`` follows both, and ``meet`` returns the
+subgraph that joins the seeds.
+"""

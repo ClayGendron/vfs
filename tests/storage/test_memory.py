@@ -17,7 +17,7 @@ from vfs.storage.backends.memory import InMemoryStorage
 
 def test_capabilities_pin_the_landed_set() -> None:
     # A drift alarm in both directions: this pin must move together
-    # with the backend's declaration ("graph" and "run" are unlanded).
+    # with the backend's declaration ("run" is the unlanded family).
     assert InMemoryStorage().capabilities() == frozenset(
         {
             "read",
@@ -27,6 +27,7 @@ def test_capabilities_pin_the_landed_set() -> None:
             "glob",
             "grep",
             "glean",
+            "graph",
             "write",
             "edit",
             "mkdir",

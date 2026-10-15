@@ -52,36 +52,36 @@ lines first; regenerate this file when the picture shifts (review the
   overwrite or edit keeps the row's owner (else `contribute` reached
   trash in two writes). Engine legs: see the landing notes. Spec 164
   is unblocked.
-- **164 drafted 2026-10-14, revised the same day with Clay's decisions; 165 seeded** — graph
-  traversal as a frontier walk. Clay opened the graph work on
-  2026-10-13 with four directions (SQL native as much as possible;
-  rights enforced through the traversal; direction plus `depth` in
-  place of four methods; every dialect serves `graph`). Six parallel
-  studies, three executed on the live schema, are the memo
+- **164 landed 2026-10-14 (ADR 079 accepted the same day; four slices
+  in one landing, green at 100 % coverage)** — graph traversal as a
+  frontier walk: `inbound`, `outbound`, `neighborhood` and `meet`
+  (`minimal=True`) over `vfs_edges`, one chunked statement per hop, the
+  caller's view narrowing every hop at `list` and every row judged, a
+  node returned whole at `read` or bare at `list`, a road directory
+  passed through a directories-only probe, the induced edges fetched
+  once over the nodes the walk never expanded (one membership list per
+  statement), the early stop at `limit` (128), `Observation.depth`, the
+  tree-glyph rendering with edge types, two gate rule types (`OnlyWith`,
+  `Disjoint`, `Segments`), and `graph` served on every dialect
+  including the generic floor. Drafted 2026-10-14 from the memo
   `research/2026-10-14-graph-traversal-prior-art-and-experiments.md`
-  (studies and scripts under `research/studies/2026-10-14-graph-traversal/`).
-  Findings: no shipping system compiles hops into recursive SQL; a
-  recursive CTE has no visited set and is exponential on SQL Server
-  and Oracle (7.9 M rows at depth 3 on a 200-clique); rights applied
-  after a walk leak a node behind a hidden one; the archived directed
-  pruning of the meeting subgraph deletes the shared dependency in
-  `a → x ← b`; `in_degree`/`out_degree` are counts. ADR 079
-  (proposed) pins the frontier walk — one chunked statement per hop,
-  the view narrowing every hop, `admits` on every row, no engine fact
-  so `GENERIC` serves it. Clay's decisions of 2026-10-14: the
-  application controls the recursion; methods `inbound` (what points
-  at this), `outbound` (what this points to), `neighborhood`, `meet`
-  with `minimal=True`; seeds at depth 0; `depth=None` lawful; the
-  hierarchy mirror (`fs`) is followed only when named; traversal
-  rights are "the walk's rung on both endpoints", today `read`, to be
-  flipped to a `list` rung by the expanded permission ladder, seeded as
-  spec 165 (needs research and an ADR) — **and 165 lands first**
-  (Clay, 2026-10-14). Also decided: `limit` defaults to 128 with edge
-  rows following the nodes; a walk returns every edge among its
-  returned nodes, rendered with `tree`'s glyphs and the edge type on
-  every line, no diagram arrangement. No clarification is left in
-  164. 164 is blocked on 165; four slices; nothing built. Next step:
-  the ladder's research pass (three studies running 2026-10-14).
+  (six studies under `research/studies/2026-10-14-graph-traversal/`),
+  revised the same day with Clay's decisions (names, `minimal` as a
+  flag, seeds at depth 0, `fs` off by default, `limit` 128, every edge
+  among the returned nodes), sequenced after 165, then **reviewed
+  before the build the same day** on an eight-dimension readiness
+  rubric (scored 48/100 as drafted; nine amendments folded in — the
+  draft described the pre-165 tree, named no mechanism for the `list`
+  pass or the road, missed back-edges in its induced fetch, and its
+  two-list induced statement overran SQL Server's bind cap). Pinned:
+  the BFS and meeting oracles on 200 random digraphs, the leak test
+  under both predicate forms, the `list` pass, the road probe, 10,000
+  seeds at the declared statement count under the SQLite and a
+  1,000-budget profile, the cycle bomb (two hop statements), `meet`'s
+  early stop. Flagged to Clay: `limit` on `meet` cuts nearest-first and
+  can drop a bridge node (components are counted before the cut); the
+  meeting-point glyph was dropped rather than add a row field for it.
+  Engine legs: see the landing notes.
 - **162 built 2026-10-11, both slices, uncommitted, awaiting Clay's
   review** — trash as a tombstone on the row. Delete sets `deleted_at`
   and `trash_root_id` in place (one guarded root claim plus one cascade

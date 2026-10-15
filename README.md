@@ -16,7 +16,7 @@ Frameworks build the agent. Control planes set the policy. Gateways check the to
 pip install vfs-py
 ```
 
-> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now; the current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change. **What is built:** the search half — `glob`, `grep`, and `glean` over the database you already run — the router's mount-level and per-prefix permissions, enforced before anything dispatches, and the first layer of the governed half: agent identity (`Authority`, `Principal`) and row-level grants (`grant`, `revoke`, `posture`, `grants`), built and under review. **What is not:** tools at paths. The `run` verb exists and routes to a storage that declares `SupportsRun`; no shipped storage does. The same holds for `graph`: the verb routes, and no shipped storage answers it yet. The positioning above says where vfs is going; this banner says what is real today, and [Known limits](#known-limits) lists the edges.
+> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now; the current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change. **What is built:** the search half — `glob`, `grep`, and `glean` over the database you already run — the router's mount-level and per-prefix permissions, enforced before anything dispatches, and the first layer of the governed half: agent identity (`Authority`, `Principal`) and row-level grants (`grant`, `revoke`, `posture`, `grants`), built and under review. The `graph` verb walks the typed edges between files — `inbound`, `outbound`, `neighborhood` and `meet` — on every database the backend runs on, with the same row-level rights judged on every hop. **What is not:** tools at paths. The `run` verb exists and routes to a storage that declares `SupportsRun`; no shipped storage does. The positioning above says where vfs is going; this banner says what is real today, and [Known limits](#known-limits) lists the edges.
 
 ## Why a file system?
 
@@ -70,13 +70,13 @@ A file carries information four ways — where it sits, what it says, what it me
 await root.glob("**/*.md", paths=("/enterprise",))             # where it sits — match names and structure
 await root.grep("logins", ext=(".md",), before_context=2)      # what it says — match content, ripgrep-style
 await root.glean("do logins need a second factor?", limit=10)  # what it means — one fused, ranked list
-await root.graph("neighborhood", "/enterprise/policies/mfa.md")  # how it connects — walk typed edges
+await root.graph("inbound", "/enterprise/policies/mfa.md")       # how it connects — what points at this policy
 ```
 
 - **`glob`** answers by *location*: names and structure, the shape of the tree.
 - **`grep`** answers by *content*: literal or regex matching with the options agents already know — case modes, context lines, include/exclude globs.
 - **`glean`** answers by *meaning*: text in, one ranked list out. The caller never picks a retrieval strategy — the backend fuses whatever signals it has (lexical, vector, graph) and owns the ranking. With no embedding provider configured, the lexical leg answers alone and the result says so.
-- **`graph`** answers by *connection*: typed edges between files are first-class, and traversals (`predecessors`, `successors`, `ancestors`, `descendants`, `neighborhood`, `meeting_subgraph`) walk them like any other query. Today the verb routes and comes back `unsupported`: no shipped storage declares the graph family yet.
+- **`graph`** answers by *connection*: typed edges between files are first-class, and four methods walk them like any other query — `inbound` (what points at this), `outbound` (what this points to), `neighborhood` (both), and `meet` (the subgraph that joins a set of files). A walk is one chunked SQL statement per hop, bounded by the nodes it reaches on every engine; the caller's rights are judged on every hop, so nothing is ever reached through a file the caller may not name. The answer carries the nodes with their distance and every edge among them, drawn as a tree with the edge types on the lines.
 
 Searches scope naturally: pass `paths=` to search a region, or nothing to search the whole namespace — the query fans out to every mount that can answer it, and mounts that can't are skipped rather than failing the sweep.
 

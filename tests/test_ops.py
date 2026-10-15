@@ -212,7 +212,7 @@ async def test_no_agent_surface_op_ever_dispatches_sweep() -> None:
         "glob": lambda: fs.glob("*.py"),
         "grep": lambda: fs.grep("needle"),
         "glean": lambda: fs.glean("how does auth work"),
-        "graph": lambda: fs.graph("ancestors", "/a.py"),
+        "graph": lambda: fs.graph("outbound", "/a.py"),
         "write": lambda: fs.write(path="/f.txt", content="x"),
         "edit": lambda: fs.edit("/f.txt", old="a", new="b"),
         "delete": lambda: fs.delete("/f.txt"),

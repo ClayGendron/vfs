@@ -33,6 +33,17 @@ def test_every_verb_signature_matches_the_table() -> None:
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
 
 
+def test_the_graph_signature_defaults_equal_the_table_defaults() -> None:
+    # The gate never substitutes a ParamSpec default; the verb's own
+    # signature carries it, so the two must agree or the wire and the
+    # in-process caller see different walks.
+    signature = inspect.signature(VirtualFileSystem.graph).parameters
+    for spec in PARAMS["graph"]:
+        if spec.default is not None and spec.name in signature:
+            assert signature[spec.name].default == spec.default, spec.name
+    assert signature["depth"].default == 1 and signature["limit"].default == 128
+
+
 def test_the_grant_choices_derive_from_the_ladder() -> None:
     # A posture takes every rung; a grant every rung but none.
     assert POSTURES == frozenset(get_args(Posture)) == frozenset(RUNGS)
@@ -58,7 +69,7 @@ def test_every_int_channel_enforces_the_shared_ceiling() -> None:
             assert at_max is None or spec.name not in at_max, (op, spec.name, at_max)
             over = param_violation(op, {spec.name: INT_CEILING + 1})
             assert over is not None and spec.name in over and str(INT_CEILING) in over
-    assert swept == 7
+    assert swept == 8
 
 
 def test_violation_messages_name_the_parameter() -> None:
@@ -135,7 +146,14 @@ GARBAGE = [
     ("glean-non-str-query", lambda fs: fs.glean(123)),
     ("glean-bool-limit", lambda fs: fs.glean("q", limit=True)),
     ("graph-bogus-method", lambda fs: fs.graph("bogus", "/a.py")),
-    ("graph-zero-depth", lambda fs: fs.graph("ancestors", "/a.py", depth=0)),
+    ("graph-zero-depth", lambda fs: fs.graph("outbound", "/a.py", depth=0)),
+    ("graph-zero-limit", lambda fs: fs.graph("outbound", "/a.py", limit=0)),
+    ("graph-retired-method", lambda fs: fs.graph("ancestors", "/a.py")),
+    ("graph-minimal-off-meet", lambda fs: fs.graph("outbound", "/a.py", minimal=True)),
+    ("graph-type-in-both-lists", lambda fs: fs.graph("outbound", "/a.py", edge_types=("a",), edge_types_not=("a",))),
+    ("graph-bad-type-segment", lambda fs: fs.graph("outbound", "/a.py", edge_types=("a/b",))),
+    ("graph-str-edge-types", lambda fs: fs.graph("outbound", "/a.py", edge_types="imports")),
+    ("graph-truthy-minimal", lambda fs: fs.graph("meet", "/a.py", minimal=1)),
     ("run-non-dict-arguments", lambda fs: fs.run("/t", arguments=123)),
 ]
 

@@ -490,6 +490,11 @@ class Visibility:
         self._road = road
         self._roots: set[str] | None = None
 
+    @property
+    def derives_road(self) -> bool:
+        """Whether this view names hidden directories on the road to a nameable row — never for anonymous."""
+        return self._road
+
     def admits(self, mapping: Mapping[Any, Any]) -> Rung:
         """The highest rung the caller holds on the row — ``none`` when it may not even name it."""
         for rights in self.resolution.compiled():
