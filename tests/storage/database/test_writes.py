@@ -104,8 +104,8 @@ class TestWriteMechanics:
         assert result.success is True
         assert len(result.observations) == 100
         # BEGIN + session PRAGMAs + plan select + one insert chunk +
-        # content delete/insert + parent bump — O(tables), never O(entries).
-        assert len(statements) <= 12, statements
+        # content insert + parent bump — O(tables), never O(entries).
+        assert len(statements) <= 10, statements
         await storage.close()
 
     async def test_write_statement_counts_are_pinned(self, tmp_path) -> None:
@@ -124,9 +124,10 @@ class TestWriteMechanics:
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
         # The round-trip budget is a contract: fetch, the posture rows
-        # read for the label, insert, fs mirror insert, content delete +
-        # blob delete + content insert, parent bump.
-        assert len(mutations()) == 8, mutations()
+        # read for the label, insert, fs mirror insert, content insert,
+        # parent bump. A fresh row has no body to clear, so no delete runs.
+        assert len(mutations()) == 6, mutations()
+        assert not [s for s in mutations() if s.startswith("DELETE")], mutations()
         statements.clear()
         overwritten = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="b")])
         assert overwritten.success is True
@@ -397,10 +398,10 @@ class TestArbitration:
         assert len(created) == 50
         # "Nothing read back" is a pin: one plan-fetch SELECT, the posture
         # rows SELECT that labels the creates, three depth-layer inserts, the
-        # segment-posting and fs-mirror inserts riding the creates, the two
-        # body-table deletes + content insert, parent bump.
+        # segment-posting and fs-mirror inserts riding the creates, the
+        # content insert (fresh rows clear no bodies), parent bump.
         shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
-        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "DELETE", "DELETE", "INSERT"]
+        expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT"]
         expected.append("UPDATE")
         assert shapes == expected, statements
         assert (await storage.read(path=Path("/bulk/d0/f007.txt"))).observations[0].content == "v7"

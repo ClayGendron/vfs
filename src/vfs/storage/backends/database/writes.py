@@ -405,7 +405,8 @@ async def _apply(
     page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
     if plan.value_cap is not None:
         page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
-    await _replace_bodies(session, tables, profile, membership_budget, ordered, now, page)
+    fresh_ids = frozenset(staged.entry_id for staged in fresh)
+    await _replace_bodies(session, tables, profile, membership_budget, ordered, now, page, fresh_ids=fresh_ids)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 
@@ -969,13 +970,16 @@ async def _replace_bodies(
     staged: list[StagedEntry],
     now: datetime,
     page: _BlobPage,
+    *,
+    fresh_ids: frozenset[str],
 ) -> None:
     """Delete-then-insert the batch's body rows — portable, idempotent.
 
-    Both body tables are cleared for every bearing row: a write that
-    switches a row's source leaves no body in the other table, and a
-    bytes write drops the rendering its stamp no longer vouches for.
-    Text inserts page under the dialect's parameter budget inside
+    Both body tables are cleared for every bearing row that existed
+    before this batch: a write that switches a row's source leaves no
+    body in the other table, and a bytes write drops the rendering its
+    stamp no longer vouches for. A row minted by this batch (*fresh_ids*)
+    has no body to clear, so it skips both deletes. Text inserts page under the dialect's parameter budget inside
     ``bulk_insert``; blob inserts page by bytes in flight first, under
     *page* — the declared page metered raw, or the engine's packet
     metered as the driver sends it when that is tighter.
@@ -983,8 +987,9 @@ async def _replace_bodies(
     bearing = [s for s in staged if s.kind in CONTENT_KINDS and (s.content is not None or s.data is not None)]
     if not bearing:
         return
+    preexisting = [s.entry_id for s in bearing if s.entry_id not in fresh_ids]
     for body in (tables.content, tables.blobs):
-        for chunk in chunked([s.entry_id for s in bearing], membership_budget):
+        for chunk in chunked(preexisting, membership_budget):
             await session.execute(delete(body).where(membership(body.c.entry_id, chunk, profile)))
     texts = [{"entry_id": s.entry_id, "created_at": now, "content": s.content} for s in bearing if s.data is None]
     await bulk_insert(session, tables.content, texts)
