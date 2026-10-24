@@ -10,6 +10,7 @@ write target with no trash-specific arm.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -153,11 +154,19 @@ class TestWriteMechanics:
         control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE")
         mutations = [(s, p) for s, p in statements if not s.startswith(control)]
         # Snapshot with content, guarded update, the version mint (revision
-        # read, body read, version insert), two body deletes, content insert.
-        # When every target is found, no miss probe runs: the root-only
-        # select that classified an empty miss list is gone.
-        assert len(mutations) == 8, [s for s, _ in mutations]
+        # read, version insert), two body deletes, content insert. When
+        # every target is found no miss probe runs, and the mint keeps the
+        # snapshot's body instead of reading it again: two SELECTs in all.
+        assert len(mutations) == 7, [s for s, _ in mutations]
+        assert len([s for s, _ in mutations if s.startswith("SELECT")]) == 2, [s for s, _ in mutations]
         assert not [p for s, p in mutations if s.startswith("SELECT") and p == ("/",)], mutations
+        # The version row is the body the snapshot saw, measured by the one law.
+        versions = storage._host.tables.versions
+        async with storage._host.session_factory() as peek:
+            kept = (
+                await peek.execute(select(versions.c.version_number, versions.c.content, versions.c.content_hash))
+            ).all()
+        assert kept == [(1, "xyz", hashlib.sha256(b"xyz").hexdigest())]
         await storage.close()
 
     async def test_entry_rows_are_addressed_in_path_order(self, tmp_path) -> None:

@@ -17,9 +17,12 @@ no history behind.
 The mint runs after the entry rows are updated — their locks held —
 and before the bodies are replaced, so it reads the pre-image under the
 same lock that guards the write. The pre-image's metrics are measured
-from the body it reads, never copied from the entry row: an
-arbitration clobber has already overwritten that row's columns by the
-time the mint runs. Bodies are read one page at a time — a page is
+from the body itself, never copied from the entry row: an arbitration
+clobber has already overwritten that row's columns by the time the mint
+runs. A row whose snapshot already joined its text body (an edit's)
+mints from that copy: the guarded update proved the row unchanged since
+the snapshot, so the copy is the pre-image and a second read would
+fetch the same bytes. The rest are read one page at a time — a page is
 bounded by the blob page's bytes, metered by each replaced body's size
 at snapshot, and by the membership budget — and inserted in bulk, text
 rows paged by the dialect's parameter budget and bytes rows by the blob
@@ -80,9 +83,11 @@ async def mint_versions(
         return 0
     by_id = {staged.entry_id: staged for staged in replaced}
     revision = await read_revision(session, tables)
-    minted = 0
     ordered = [by_id[entry_id] for entry_id in sorted(by_id)]
-    for page in byte_chunked(ordered, _pre_image_size, BLOB_PAGE_BYTES):
+    held = [(s.entry_id, s.base_content, None) for s in ordered if s.base_content is not None]
+    minted = await _mint_rows(session, tables, held, by_id, authority=authority, revision=revision, now=now)
+    unread = [s for s in ordered if s.base_content is None]
+    for page in byte_chunked(unread, _pre_image_size, BLOB_PAGE_BYTES):
         for ids in chunked([staged.entry_id for staged in page], membership_budget):
             minted += await _mint_page(
                 session, tables, profile, ids, by_id, authority=authority, revision=revision, now=now
@@ -113,19 +118,36 @@ async def _mint_page(
         .select_from(tables.bodies_joined(content=True, data=True))
         .where(membership(entry.c.entry_id, ids, profile))
     )
+    bodies = [(row.entry_id, row.content, row.data) for row in await session.execute(stmt)]
+    return await _mint_rows(session, tables, bodies, by_id, authority=authority, revision=revision, now=now)
+
+
+async def _mint_rows(
+    session: AsyncSession,
+    tables: VFSTables,
+    bodies: Sequence[tuple[str, str | None, bytes | None]],
+    by_id: Mapping[str, StagedEntry],
+    *,
+    authority: Authority | None,
+    revision: int,
+    now: datetime,
+) -> int:
+    """Insert the version rows the pre-image *bodies* (entry_id, text, data) earn; the count minted."""
     texts: list[dict[str, object]] = []
     binaries: list[dict[str, object]] = []
     subjects: list[dict[str, object]] = []
-    for row in await session.execute(stmt):
-        if row.content is None and row.data is None:
+    for entry_id, text, data in bodies:
+        if text is None and data is None:
             continue
-        staged = by_id[row.entry_id]
+        staged = by_id[entry_id]
         number = staged.version - 1
-        version = _version_row(row.entry_id, number, row.content, row.data, authority, revision, now)
+        version = _version_row(entry_id, number, text, data, authority, revision, now)
         if version["content_hash"] == staged.content_hash:
             continue
-        (binaries if row.data is not None else texts).append(version)
-        subjects.extend(_subject_rows(row.entry_id, number, authority))
+        (binaries if data is not None else texts).append(version)
+        subjects.extend(_subject_rows(entry_id, number, authority))
+    if not texts and not binaries:
+        return 0
     await bulk_insert(session, tables.versions, texts)
     for page in byte_chunked(binaries, _blob_size, BLOB_PAGE_BYTES):
         await bulk_insert(session, tables.versions, page)

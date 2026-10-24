@@ -77,6 +77,7 @@ class StagedEntry:
     owner_id: str | None = None  # the payload's declared owner; only the system actor honours it
     base_version: int | None = None  # the version the guarded arm compares against
     base_size_bytes: int | None = None  # the replaced body's size at snapshot; the mint pages its reads by it
+    base_content: str | None = None  # the replaced text body, when the snapshot joined it; the mint keeps it unread
     version: int = 1  # "insert" mints 1; "update" stages base + 1; "absorb"/bumped "adopt" learn post-execution
     revive: bool = False  # the update lands on a tombstoned row: its guard expects the tombstone, and its parent bumps
 
@@ -442,6 +443,7 @@ class WritePlan:
             owner_id=owner_id,
             base_version=row["version"],
             base_size_bytes=row["size_bytes"],
+            base_content=row["content"] if "content" in row and row["source"] == "text" else None,
             version=row["version"] + 1,
         )
 
