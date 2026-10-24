@@ -138,6 +138,28 @@ class TestWriteMechanics:
         assert len(mutations()) == 8, mutations()
         await storage.close()
 
+    async def test_edit_statement_count_is_pinned_and_probes_no_misses(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        assert (await storage.write(entries=[Entry(path=Path("/docs/b.md"), content="xyz")], parents=True)).success
+        statements: list[tuple[str, object]] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            statements.append((statement, parameters))
+
+        edited = await storage.edit(path=Path("/docs/b.md"), edits=[EditOperation(old="y", new="z")])
+        assert edited.success is True
+        control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE")
+        mutations = [(s, p) for s, p in statements if not s.startswith(control)]
+        # Snapshot with content, guarded update, the version mint (revision
+        # read, body read, version insert), two body deletes, content insert.
+        # When every target is found, no miss probe runs: the root-only
+        # select that classified an empty miss list is gone.
+        assert len(mutations) == 8, [s for s, _ in mutations]
+        assert not [p for s, p in mutations if s.startswith("SELECT") and p == ("/",)], mutations
+        await storage.close()
+
     async def test_entry_rows_are_addressed_in_path_order(self, tmp_path) -> None:
         # One lock order for every pass: a batch given its rows in any
         # order inserts and updates them sorted by path, so two batches

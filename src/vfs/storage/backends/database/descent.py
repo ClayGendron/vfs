@@ -132,6 +132,8 @@ async def miss_errors(
 ) -> dict[Path, ResultError]:
     """Descent-classified errors for each *target* absent from *found* — the live rows — keyed by target."""
     misses = [target for target in dict.fromkeys(targets) if str(target) not in found]
+    if not misses:
+        return {}
     return dict(zip(misses, await classify_misses(session, entry, misses, profile, membership_budget), strict=True))
 
 
