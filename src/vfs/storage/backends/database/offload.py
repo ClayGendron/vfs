@@ -10,9 +10,9 @@ hop (submit, await, and the close-window inline fallback), and
 :class:`~vfs.pattern_matching.ContentMatcher` over it so each
 per-batch ``count_lines``/``hit_lines`` call runs on a worker thread
 while the loop keeps ticking. Engines stay synchronous and
-thread-ignorant: this seam is the only threaded code, and these are
-the tree's only deliberate threads — a declared exception, owned
-here.
+thread-ignorant: this seam and the router's body-measure hop (a large
+write's sha256 on the loop's default executor, ``vfs.base``) are the
+tree's only deliberate threads — declared exceptions, owned there.
 
 Four laws govern the hop:
 

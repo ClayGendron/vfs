@@ -43,7 +43,7 @@ from pydantic import ValidationError
 
 from vfs.authority import Authority
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.models import CONTENT_KINDS, Edge, Entry, Observation
+from vfs.models import CONTENT_KINDS, MEASURED_BODY, Edge, Entry, Observation, measure_bytes, measure_text
 from vfs.ops import (
     GRAPH_DEPTH_DEFAULT,
     GRAPH_LIMIT_DEFAULT,
@@ -131,6 +131,10 @@ _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 # A call that names nobody runs as the named nobody: it holds only what a
 # mount's posture gives everyone, and the audit still has an actor.
 _ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
+
+# A body this large is measured (sha256, size, lines) on a worker thread:
+# below it the thread hop costs more than the hash; above it the hash would hold the loop.
+MEASURE_OFFLOAD_BYTES: Final = 100_000
 
 
 @dataclass(slots=True)
@@ -305,6 +309,25 @@ class _PathFilters(NamedTuple):
     exclusions: tuple[str, ...]
     ext: tuple[str, ...]
     ext_not: tuple[str, ...]
+
+
+async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
+    """The entry a path write authors; a body past the offload threshold is measured off the loop.
+
+    The hash of a small body costs less than a thread hop, so it is taken
+    inline by the model's own validator. A large body is measured on the
+    loop's default executor first and handed to the validator through its
+    measured-body door, so one caller's 16 MB write never stalls every
+    other coroutine on the host for the length of a sha256.
+    """
+    body: str | bytes | None = data if data is not None else content
+    if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
+        return Entry(path=str(path), content=content, data=data)
+    if isinstance(body, bytes):
+        metrics = await asyncio.to_thread(measure_bytes, body)
+    else:
+        metrics = await asyncio.to_thread(measure_text, body)
+    return Entry.model_validate({"path": str(path), "content": content, "data": data}, context={MEASURED_BODY: metrics})
 
 
 def _path_covers(ancestor: Path, descendant: Path) -> bool:
@@ -979,7 +1002,7 @@ class VirtualFileSystem:
         if resolved.path is None:
             return self._invalid_path(resolved, path, "write")
         try:
-            entry = Entry(path=str(resolved.path), content=content, data=data)
+            entry = await _authored_entry(resolved.path, content, data)
         except ValidationError as exc:
             return self._error(ErrorKind.invalid, op="write", detail=validation_message(exc))
         return await self._route_entry_batch([entry], overwrite=overwrite, parents=parents, authority=authority)

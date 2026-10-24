@@ -11,6 +11,7 @@ from vfs.models.edge import Edge
 from vfs.models.entry import (
     CONTENT_KINDS,
     ENTRY_OWNED_MIRRORS,
+    MEASURED_BODY,
     OBSERVATION_MIRROR_FIELDS,
     OBSERVATION_MIRROR_OWNERS,
     OBSERVATION_QUERY_FIELDS,
@@ -25,6 +26,7 @@ from vfs.models.version import BodyMetrics, Version, line_count, measure_bytes, 
 __all__ = [
     "CONTENT_KINDS",
     "ENTRY_OWNED_MIRRORS",
+    "MEASURED_BODY",
     "OBSERVATION_MIRROR_FIELDS",
     "OBSERVATION_MIRROR_OWNERS",
     "OBSERVATION_QUERY_FIELDS",

@@ -35,7 +35,7 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, computed_field, fiel
 
 from vfs.models.edge import Edge
 from vfs.models.media import SNIFF_LENGTH, RenderStatus, Source, sniff_mime
-from vfs.models.version import Version, measure_bytes, measure_text
+from vfs.models.version import BodyMetrics, Version, measure_bytes, measure_text
 from vfs.paths import ObjectKind, Path, is_reserved_directory
 
 # Stored kinds whose rows carry text content; everything else refuses
@@ -48,6 +48,11 @@ ContentHash = Annotated[str, "sha-256 hex of the body, 64 lowercase chars"]
 # ---------------------------------------------------------------------------
 # The namespace object model
 # ---------------------------------------------------------------------------
+
+
+# Validation-context key: a caller that already measured the body (sha256,
+# size, lines) off the event loop hands the result here and vouches for it.
+MEASURED_BODY: Final = "measured_body"
 
 
 class Entry(BaseModel):
@@ -191,7 +196,7 @@ class Entry(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _derive_and_measure(self) -> Entry:
+    def _derive_and_measure(self, info: ValidationInfo) -> Entry:
         """Derive ``ext``, enforce content invariants, measure, stamp times.
 
         Reads the already-canonical ``self.path`` (gated by the ``Path`` field
@@ -199,7 +204,13 @@ class Entry(BaseModel):
         a directory named ``foo.bar/`` carries ``ext = "bar"`` (POSIX parity),
         and an explicit caller value is normalized away so the stored column
         always agrees with the path-derived read gates.
+
+        The body is measured here unless the validation context carries
+        ``MEASURED_BODY``: a :class:`BodyMetrics` a caller computed off the
+        event loop for a large body, which is taken as the measurement. Only
+        ``model_validate(..., context=...)`` can open that door.
         """
+        measured = _measured_body(info)
         if not self.name and self.path != "/":
             msg = f"name must not be empty (path={self.path!r})"
             raise ValueError(msg)
@@ -221,7 +232,7 @@ class Entry(BaseModel):
         elif self.data is not None:
             self.source = "bytes"
             self.content = None
-            self.content_hash, self.size_bytes, self.lines = measure_bytes(self.data)
+            self.content_hash, self.size_bytes, self.lines = measured or measure_bytes(self.data)
             self.mime_type = sniff_mime(self.data[:SNIFF_LENGTH], declared=self.mime_type, ext=self.ext)
             if self.render_status is None:
                 self.render_status = "pending"
@@ -229,7 +240,7 @@ class Entry(BaseModel):
             self.content = ""
 
         if self.source == "text" and isinstance(self.content, str):
-            self.content_hash, self.size_bytes, self.lines = measure_text(self.content)
+            self.content_hash, self.size_bytes, self.lines = measured or measure_text(self.content)
 
         now = datetime.now(UTC)
         if self.created_at is None:
@@ -521,3 +532,17 @@ OBSERVATION_MIRROR_OWNERS: Final[dict[str, tuple[type[BaseModel], str]]] = {
 ENTRY_OWNED_MIRRORS: Final[frozenset[str]] = frozenset(
     field for field, (owner, _) in OBSERVATION_MIRROR_OWNERS.items() if owner is Entry
 )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _measured_body(info: ValidationInfo) -> BodyMetrics | None:
+    """The pre-measured body a caller vouched for through the validation context, if any."""
+    context = info.context
+    if not context:
+        return None
+    measured = context.get(MEASURED_BODY)
+    return measured if isinstance(measured, BodyMetrics) else None

@@ -14,9 +14,11 @@ from pydantic import BaseModel, ValidationError
 from vfs.authority import Authority, Principal
 from vfs.models import (
     ENTRY_OWNED_MIRRORS,
+    MEASURED_BODY,
     OBSERVATION_MIRROR_FIELDS,
     OBSERVATION_MIRROR_OWNERS,
     OBSERVATION_QUERY_FIELDS,
+    BodyMetrics,
     Chunk,
     Edge,
     Entry,
@@ -82,6 +84,23 @@ class TestConstructionValidation:
     def test_name_default_does_not_leak_empty(self) -> None:
         assert Entry(path=Path("/src/auth.py")).name == "auth.py"
         assert Entry(path=Path("/")).name == ""
+
+    def test_a_measured_body_in_the_validation_context_is_taken_as_given(self) -> None:
+        # The door for a caller that hashed a large body off the event loop:
+        # the metrics it vouches for replace the validator's own measurement.
+        vouched = BodyMetrics("f" * 64, 999, 7)
+        entry = Entry.model_validate({"path": "/a.md", "content": "abc"}, context={MEASURED_BODY: vouched})
+        assert (entry.content_hash, entry.size_bytes, entry.lines) == ("f" * 64, 999, 7)
+        blob = Entry.model_validate({"path": "/a.bin", "data": b"\x00\x01"}, context={MEASURED_BODY: vouched})
+        assert (blob.content_hash, blob.size_bytes, blob.lines, blob.source) == ("f" * 64, 999, 7, "bytes")
+
+    def test_without_the_context_the_validator_measures_the_body(self) -> None:
+        measured = Entry(path=Path("/a.md"), content="abc")
+        assert measured.content_hash == hashlib.sha256(b"abc").hexdigest()
+        assert (measured.size_bytes, measured.lines) == (3, 1)
+        # A context carrying something that is not a BodyMetrics is ignored.
+        ignored = Entry.model_validate({"path": "/a.md", "content": "abc"}, context={MEASURED_BODY: ("x", 1, 1)})
+        assert ignored.content_hash == measured.content_hash
 
     def test_non_mapping_input_rejected(self) -> None:
         with pytest.raises(ValidationError):

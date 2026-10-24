@@ -5,6 +5,7 @@ hardening, and settled sibling semantics."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import pytest
@@ -24,8 +25,9 @@ from tests.support.base_doubles import (
     TransportFailStorage,
     _fan,
 )
+from vfs import base as base_module
 from vfs.authority import Authority
-from vfs.base import VirtualFileSystem
+from vfs.base import MEASURE_OFFLOAD_BYTES, VirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
@@ -55,6 +57,41 @@ async def test_write_localizes_path_and_passes_kwargs() -> None:
     assert entry.kind == "file"
     assert kwargs["overwrite"] is False
     assert kwargs["parents"] is False
+
+
+async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
+    # A small body is hashed inline: the thread hop would cost more than
+    # the hash. A body at the threshold hops once, and the entry storage
+    # receives carries the same metrics the validator would have measured.
+    hops: list[str] = []
+    real_to_thread = asyncio.to_thread
+
+    async def counted(fn: Any, *args: Any) -> Any:
+        hops.append(fn.__name__)
+        return await real_to_thread(fn, *args)
+
+    monkeypatch.setattr(base_module.asyncio, "to_thread", counted)
+    root = VirtualFileSystem()
+    child = RecorderStorage()
+    await root.add_mount(child, "/m")
+
+    small = "x" * (MEASURE_OFFLOAD_BYTES - 1)
+    assert (await root.write(path="/m/small.txt", content=small)).success
+    assert hops == []
+
+    big = "line\n" * (MEASURE_OFFLOAD_BYTES // 5)
+    assert (await root.write(path="/m/big.txt", content=big)).success
+    assert hops == ["measure_text"]
+    [entry] = child.calls[1][1]["entries"]
+    assert entry.content_hash == hashlib.sha256(big.encode()).hexdigest()
+    assert (entry.size_bytes, entry.lines) == (len(big), big.count("\n") + 1)
+
+    blob = bytes(range(256)) * (MEASURE_OFFLOAD_BYTES // 256 + 1)
+    assert (await root.write(path="/m/big.bin", data=blob)).success
+    assert hops == ["measure_text", "measure_bytes"]
+    [entry] = child.calls[2][1]["entries"]
+    assert entry.content_hash == hashlib.sha256(blob).hexdigest()
+    assert (entry.size_bytes, entry.source) == (len(blob), "bytes")
 
 
 async def test_edit_wraps_old_new_into_edits_list() -> None:
