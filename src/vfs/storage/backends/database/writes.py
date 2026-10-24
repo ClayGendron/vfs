@@ -371,7 +371,10 @@ async def _apply(
     if not plan.staged:
         return []
     now = datetime.now(UTC)
-    creates = [s for s in plan.staged.values() if s.persistence == "insert"]
+    # Every pass walks the rows in path order, so two batches that touch
+    # the same rows take their locks in the same order and cannot deadlock.
+    ordered = sorted(plan.staged.values(), key=lambda s: str(s.path))
+    creates = [s for s in ordered if s.persistence == "insert"]
     minted = frozenset(staged.entry_id for staged in creates)
     labels = await labels_for(session, tables, profile, membership_budget, [str(s.path) for s in creates])
     if errors := await _insert_creates(
@@ -386,7 +389,7 @@ async def _apply(
     # After the insert pass on purpose: arbitration may re-route a losing
     # create to "absorb", which must be picked up by this pass. "adopt"
     # rows stood down entirely — nothing left to write.
-    updates = [s for s in plan.staged.values() if s.persistence in ("update", "absorb")]
+    updates = [s for s in ordered if s.persistence in ("update", "absorb")]
     if errors := await _update_materials(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, now=now
     ):
@@ -395,14 +398,14 @@ async def _apply(
     # absorb, or a create that clobbered a rival — keeps that body as a version.
     replaced = [
         s
-        for s in plan.staged.values()
+        for s in ordered
         if s.kind in CONTENT_KINDS and (s.persistence in ("update", "absorb") or s.entry_id not in minted)
     ]
     await mint_versions(session, tables, profile, membership_budget, replaced, authority=plan.authority, now=now)
     page = _BlobPage(BLOB_PAGE_BYTES, _blob_row_size)
     if plan.value_cap is not None:
         page = _BlobPage(min(BLOB_PAGE_BYTES, plan.value_cap.limit), _blob_wire_size)
-    await _replace_bodies(session, tables, profile, membership_budget, list(plan.staged.values()), now, page)
+    await _replace_bodies(session, tables, profile, membership_budget, ordered, now, page)
     return await _bump_parents(session, tables.entry, profile, parameter_budget, membership_budget, plan)
 
 

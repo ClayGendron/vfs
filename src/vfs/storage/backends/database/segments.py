@@ -208,7 +208,8 @@ async def repair_segment_drift(
     silently absorbed.
     """
     entry, segments = tables.entry, tables.segments
-    ids = [delta.entry_id for delta in state.deltas] + list(state.orphans)
+    # Sorted, so this repair and every other locker take entry rows in one order.
+    ids = sorted([delta.entry_id for delta in state.deltas] + list(state.orphans))
     current: dict[str, str] = {}
     for chunk in chunked(ids, membership_budget):
         guard = locked_lookup(entry, entry.c.entry_id, chunk, [entry.c.entry_id, entry.c.path], profile)

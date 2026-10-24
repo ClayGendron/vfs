@@ -137,6 +137,38 @@ class TestWriteMechanics:
         assert len(mutations()) == 8, mutations()
         await storage.close()
 
+    async def test_entry_rows_are_addressed_in_path_order(self, tmp_path) -> None:
+        # One lock order for every pass: a batch given its rows in any
+        # order inserts and updates them sorted by path, so two batches
+        # that meet on the same rows cannot each hold what the other wants.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await storage.first_touch()
+        await storage.mkdir(path=Path("/d"))
+        await storage.mkdir(path=Path("/e"))
+        addressed: list[list[str]] = []
+
+        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+        def record(conn, cursor, statement, parameters, context, executemany) -> None:
+            head = " ".join(statement.split())[:24]
+            if not head.startswith(("INSERT INTO vfs_entries", "UPDATE vfs_entries")):
+                return
+            rows = parameters if executemany else [parameters]
+            paths = [v for row in rows for v in row if isinstance(v, str) and v.startswith("/") and v.count("/") > 1]
+            if paths:
+                addressed.append(paths)
+
+        scrambled = ["/d/c.txt", "/e/z.txt", "/d/a.txt", "/e/y.txt", "/d/b.txt"]
+        created = await storage.write(entries=[Entry(path=Path(p), content="v1") for p in scrambled])
+        assert created.success is True
+        assert addressed, "no entry insert was observed"
+        assert all(paths == sorted(paths) for paths in addressed), addressed
+        addressed.clear()
+        overwritten = await storage.write(entries=[Entry(path=Path(p), content="v2") for p in scrambled])
+        assert overwritten.success is True
+        assert addressed, "no guarded update was observed"
+        assert all(paths == sorted(paths) for paths in addressed), addressed
+        await storage.close()
+
     async def test_revisions_are_per_entry_and_survive_restart(self, tmp_path) -> None:
         first = DatabaseStorage(url=_url(tmp_path))
         created = await first.write(entries=[Entry(path=Path("/docs/a.txt"), content="1")], parents=True)

@@ -25,6 +25,7 @@ from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import segments as segments_module
 from vfs.storage.backends.database.segments import (
     EntryDelta,
     SegmentRebuildState,
@@ -337,6 +338,39 @@ class TestSegmentRebuild:
         assert result.success is True
         assert result.errors == []
         await _assert_mirror(storage)
+
+    async def test_repair_locks_entry_rows_in_sorted_order(self, storage: DatabaseStorage, monkeypatch) -> None:
+        # The guard re-read locks rows; it must take them in one order, the
+        # same sorted order every other locker uses, whatever order the
+        # deltas and orphans arrived in.
+        paths = ["/a/b/f.txt", "/a/b/e.txt", "/a/b/d.txt"]
+        assert (await storage.write(entries=[Entry(path=Path(p), content="x") for p in paths], parents=True)).success
+        tables = storage._host.tables
+        seen: list[list[str]] = []
+        real = segments_module.locked_lookup
+
+        def spy(table, column, chunk, columns, profile):
+            seen.append(list(chunk))
+            return real(table, column, chunk, columns, profile)
+
+        monkeypatch.setattr(segments_module, "locked_lookup", spy)
+        async with storage._host.session_factory() as session:
+            entry = tables.entry
+            rows = (await session.execute(select(entry.c.entry_id, entry.c.path).where(entry.c.path.in_(paths)))).all()
+            by_id = {row.entry_id: row.path for row in rows}
+            ids = sorted(by_id)
+            scrambled = [ids[2], ids[0], ids[1]]
+            state = SegmentRebuildState(
+                deltas=[EntryDelta(entry_id=i, path=by_id[i], missing=[], excess=[]) for i in scrambled[:2]],
+                orphans={scrambled[2]: ["zzz"]},
+            )
+            result = await repair_segment_drift(
+                session, tables, storage._host.profile, storage._host.membership_budget, state
+            )
+            await session.commit()
+        assert result.success is True
+        assert seen, "the guard re-read never ran"
+        assert all(chunk == sorted(chunk) for chunk in seen), seen
 
     async def test_a_matching_guard_applies_the_delta(self, storage: DatabaseStorage) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
