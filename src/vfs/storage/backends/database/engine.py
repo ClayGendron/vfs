@@ -42,6 +42,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
+import random
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -295,7 +296,7 @@ class EngineHost:
             return self.classify_failure(exc, context="Install extensions")
 
     async def with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
-        """Run *fn*, restarting whole on a retryable outcome, with backoff.
+        """Run *fn*, restarting whole on a retryable outcome, with jittered backoff.
 
         A :class:`StaleSnapshot` is always retryable: a guard proved the
         snapshot stale, and a fresh attempt re-derives everything from
@@ -304,8 +305,13 @@ class EngineHost:
         serialization error wrapped as the cause — so every caller
         classifies both identically. Only non-retryable failures escape
         raw to the caller's classifier.
+
+        Each wait is drawn uniformly between half the step and the whole
+        step, the step doubling per attempt, so two rivals that collided
+        do not retry in lockstep and collide again; the base delay bounds
+        the longest wait the same as an unjittered schedule would.
         """
-        delay = self._retry_base_delay
+        step = self._retry_base_delay
         for attempt in range(1, self._retry_attempts + 1):
             try:
                 return await fn()
@@ -316,8 +322,8 @@ class EngineHost:
                     if isinstance(exc, StaleSnapshot):
                         raise
                     raise StaleSnapshot(f"a retryable engine conflict outlived {attempt} attempts") from exc
-                await asyncio.sleep(delay)
-                delay *= 2
+                await asyncio.sleep(random.uniform(step / 2, step))
+                step *= 2
         raise AssertionError("unreachable")  # pragma: no cover
 
     def classify_failure(self, exc: BaseException, *, context: str) -> ResultError:

@@ -29,7 +29,7 @@ from vfs.results import ErrorKind
 from vfs.storage import TRAIT_KEYS, TRAIT_VALUES, StorageBackend, SupportsClose, SupportsTraits
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import engine as engine_module
-from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, ValueCap, profile_for
+from vfs.storage.backends.database.dialects import POSTGRESQL, PROFILES, SQLITE, StaleSnapshot, ValueCap, profile_for
 from vfs.storage.backends.database.engine import (
     EngineHost,
     _engine_kwargs,
@@ -384,6 +384,40 @@ class TestLifecycle:
         assert pool.checkedin() >= 1
         await storage.close()
         assert pool.checkedin() == 0
+
+    async def test_retry_waits_are_jittered_within_a_doubling_step(self, tmp_path, monkeypatch) -> None:
+        # Two rivals that collided must not sleep the same schedule and
+        # collide again: each wait is a draw in [step / 2, step], the step
+        # doubling per attempt, so the longest possible wait is unchanged.
+        storage = DatabaseStorage(url=_fresh_url(tmp_path))
+        host = storage._host
+        monkeypatch.setattr(host, "_retry_attempts", 4)
+        monkeypatch.setattr(host, "_retry_base_delay", 0.05)
+        slept: list[float] = []
+        draws: list[tuple[float, float]] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        def fake_uniform(low: float, high: float) -> float:
+            draws.append((low, high))
+            return high  # the longest wait the draw allows
+
+        monkeypatch.setattr(engine_module.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(engine_module.random, "uniform", fake_uniform)
+        calls = 0
+
+        async def always_stale() -> None:
+            nonlocal calls
+            calls += 1
+            raise StaleSnapshot("rival")
+
+        with pytest.raises(StaleSnapshot):
+            await host.with_retry(always_stale)
+        assert calls == 4
+        assert draws == [(0.025, 0.05), (0.05, 0.1), (0.1, 0.2)]
+        assert slept == [0.05, 0.1, 0.2]
+        await storage.close()
 
     async def test_a_cancelled_close_retry_finishes_the_job(self, tmp_path) -> None:
         # A close cancelled mid-dispose records nothing as torn down:
