@@ -1,0 +1,88 @@
+
+## write batch (overwrite, create, create+parent): 10 mutating statements; tables changed: ['content', 'edges', 'entry', 'segments', 'versions']
+    1 INSERT INTO vfs_entries
+    2 INSERT INTO vfs_entries
+    3 INSERT INTO vfs_segments
+    4 INSERT INTO vfs_edges
+    5 UPDATE vfs_entries SET
+    6 INSERT INTO vfs_versions
+    7 DELETE FROM vfs_content
+    8 DELETE FROM vfs_blobs
+    9 INSERT INTO vfs_content
+   10 UPDATE vfs_entries SET
+   verdicts: {'all-old': 10, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## write batch as alice: 10 mutating statements; tables changed: ['content', 'edges', 'entry', 'segments', 'version_subjects', 'versions']
+    1 INSERT INTO vfs_entries
+    2 INSERT INTO vfs_segments
+    3 INSERT INTO vfs_edges
+    4 UPDATE vfs_entries SET
+    5 INSERT INTO vfs_versions
+    6 INSERT INTO vfs_version_subjects
+    7 DELETE FROM vfs_content
+    8 DELETE FROM vfs_blobs
+    9 INSERT INTO vfs_content
+   10 UPDATE vfs_entries SET
+   verdicts: {'all-old': 10, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## edit: 5 mutating statements; tables changed: ['content', 'entry', 'versions']
+    1 UPDATE vfs_entries SET
+    2 INSERT INTO vfs_versions
+    3 DELETE FROM vfs_content
+    4 DELETE FROM vfs_blobs
+    5 INSERT INTO vfs_content
+   verdicts: {'all-old': 5, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## mkdir parents: 6 mutating statements; tables changed: ['edges', 'entry', 'segments']
+    1 INSERT INTO vfs_entries
+    2 INSERT INTO vfs_entries
+    3 INSERT INTO vfs_entries
+    4 INSERT INTO vfs_segments
+    5 INSERT INTO vfs_edges
+    6 UPDATE vfs_entries SET
+   verdicts: {'all-old': 6, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## move: 6 mutating statements; tables changed: ['entry', 'segments']
+    1 UPDATE vfs_entries SET
+    2 UPDATE vfs_edges SET
+    3 UPDATE vfs_entries SET
+    4 UPDATE vfs_segments SET
+    5 UPDATE vfs_entries SET
+    6 UPDATE vfs_entries SET
+   verdicts: {'all-old': 6, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## copy: 5 mutating statements; tables changed: ['content', 'edges', 'entry', 'segments']
+    1 INSERT INTO vfs_entries
+    2 INSERT INTO vfs_segments
+    3 INSERT INTO vfs_edges
+    4 INSERT INTO vfs_content
+    5 UPDATE vfs_entries SET
+   verdicts: {'all-old': 5, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## delete cascade: 3 mutating statements; tables changed: ['entry']
+    1 UPDATE vfs_entries SET
+    2 UPDATE vfs_entries SET
+    3 UPDATE vfs_entries SET
+   verdicts: {'all-old': 3, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## restore: 3 mutating statements; tables changed: ['entry']
+    1 UPDATE vfs_entries SET
+    2 UPDATE vfs_entries SET
+    3 UPDATE vfs_entries SET
+   verdicts: {'all-old': 3, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## mkedge: 1 mutating statements; tables changed: ['edges']
+    1 INSERT INTO vfs_edges
+   verdicts: {'all-old': 1, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## rmedge: 1 mutating statements; tables changed: ['edges']
+    1 DELETE FROM vfs_edges
+   verdicts: {'all-old': 1, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']
+
+## grant: 5 mutating statements; tables changed: ['grants', 'meta', 'principal_revisions']
+    1 UPDATE vfs_meta SET
+    2 UPDATE vfs_principal_revisions SET
+    3 INSERT INTO vfs_principal_revisions
+    4 UPDATE vfs_grants SET
+    5 INSERT INTO vfs_grants
+   verdicts: {'all-old': 5, 'all-new': 0, 'TORN': 0}; outcomes: ['RAISED OperationalError']

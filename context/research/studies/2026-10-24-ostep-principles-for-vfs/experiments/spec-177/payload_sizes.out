@@ -1,0 +1,8 @@
+write 10k created            ok=True  rows= 10000 errors=     0 payload_bytes=  1480046 bytes_per_row=148
+write 10k replay (updated)   ok=True  rows= 10000 errors=     0 payload_bytes=  1480046 bytes_per_row=148
+copy 10k                     ok=True  rows= 10000 errors=     0 payload_bytes=  1480045 bytes_per_row=148
+move 10k                     ok=True  rows= 10000 errors=     0 payload_bytes=  1480045 bytes_per_row=148
+move 10k replay (failure)    ok=False rows=     0 errors= 10000 payload_bytes=  1230045 bytes_per_row=123
+mkedge 10k                   ok=True  rows= 10000 errors=     0 payload_bytes=  1560047 bytes_per_row=156
+delete 10k by rows           ok=True  rows= 10000 errors=     0 payload_bytes=  2040047 bytes_per_row=204
+edit foo->foo! twice leaves: 'foo!!'

@@ -1,0 +1,6 @@
+system ls /big          rows=10000 statements=3 {'BEGIN': 1, 'SELECT': 2}
+system tree /big        rows=10000 statements=3 {'BEGIN': 1, 'SELECT': 2}
+system glob /big/*.txt  rows=10000 statements=2 {'BEGIN': 1, 'SELECT': 1}
+alice  ls /big          rows=10000 statements=5 {'BEGIN': 1, 'SELECT': 4}
+alice  tree /big        rows=10000 statements=5 {'BEGIN': 1, 'SELECT': 3, 'WITH': 1}
+alice  glob /big/*.txt  rows=10000 statements=4 {'BEGIN': 1, 'SELECT': 3}

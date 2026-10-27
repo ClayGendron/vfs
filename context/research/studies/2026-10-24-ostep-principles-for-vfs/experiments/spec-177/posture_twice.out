@@ -1,0 +1,2 @@
+posture #1: ok=True relabel={'rows': 6, 'statements': 2, 'transactions': 1}
+posture #2: ok=True relabel={'rows': 6, 'statements': 2, 'transactions': 1}

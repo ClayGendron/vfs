@@ -1,0 +1,42 @@
+live children via fs.ls: {'/big': 10000, '/d': 100, '/s': 100}
+rows in each (parent_id, name) range, live and tombstoned: {'/big': 10000, '/d': 1000, '/s': 1000}
+--- today's indexes ---
+ls /big limit=1000: pages=10 statements_per_page=1 rows=10000 distinct=10000 in_order=True returned_per_page=[1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000] visited_per_page=[1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1000]
+  plan, first page: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=? AND name>?)
+  union equals the 10,000 written: True
+ls /d (first 900 of 1,000 deleted) limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[911, 11, 11, 11, 11, 11, 11, 11, 11, 10]
+  plan, first page: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=? AND name>?)
+ls /s (9 of every 10 deleted) limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[101, 110, 110, 110, 110, 110, 110, 110, 110, 109]
+  plan, first page: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX sqlite_autoindex_vfs_entries_1 (parent_id=? AND name>?)
+tree /s limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[101, 110, 110, 110, 110, 110, 110, 110, 110, 109]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+tree /big limit=1000: pages=10 statements_per_page=1 rows=10000 distinct=10000 in_order=True returned_per_page=[1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000] visited_per_page=[1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1000]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+tree /n max_depth=1 (10 dirs x 100 files) limit=5: pages=2 statements_per_page=1 rows=10 distinct=10 in_order=True returned_per_page=[5, 5] visited_per_page=[506, 605]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_vfs_entries_path (path>? AND path<?)
+--- with (parent_id, deleted_at, name) added and (deleted_at) widened to (deleted_at, path) ---
+ls /big limit=1000: pages=10 statements_per_page=1 rows=10000 distinct=10000 in_order=True returned_per_page=[1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000] visited_per_page=[1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1000]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=? AND name>?)
+  union equals the 10,000 written: True
+ls /d (first 900 of 1,000 deleted) limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[11, 11, 11, 11, 11, 11, 11, 11, 11, 10]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=? AND name>?)
+ls /s (9 of every 10 deleted) limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[11, 11, 11, 11, 11, 11, 11, 11, 11, 10]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_parent_live_name (parent_id=? AND deleted_at=? AND name>?)
+tree /s limit=10: pages=10 statements_per_page=1 rows=100 distinct=100 in_order=True returned_per_page=[10, 10, 10, 10, 10, 10, 10, 10, 10, 10] visited_per_page=[11, 11, 11, 11, 11, 11, 11, 11, 11, 10]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)
+tree /big limit=1000: pages=10 statements_per_page=1 rows=10000 distinct=10000 in_order=True returned_per_page=[1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000] visited_per_page=[1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1001, 1000]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)
+tree /n max_depth=1 (10 dirs x 100 files) limit=5: pages=2 statements_per_page=1 rows=10 distinct=10 in_order=True returned_per_page=[5, 5] visited_per_page=[506, 605]
+  plan, first page: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)
+  plan, later pages: SEARCH vfs_entries USING INDEX ix_probe_deleted_path (deleted_at=? AND path>? AND path<?)

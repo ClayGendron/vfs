@@ -191,7 +191,8 @@
 - **Context:** The 2026-07-28 revision makes MCP stateless: a broken response stream *is* cancellation, the client re-issues the request fresh, and the protocol ships **no idempotency mechanism** — so a re-issued 10k-file `write` batch is a double-execution question the verb surface has never had to answer as a whole. The spec's designated durability answer is the optional tasks extension (`io.modelcontextprotocol/tasks`: poll-based, `completed` includes `isError: true` results — evidence-in/verdict-derived, matching ADR 010), which today only FastMCP 4 implements (Redis-backed) while python-sdk v2 has reserved seams but no implementation. The memo's §8.1 `[NEEDS CLARIFICATION]`: is task-backed execution in scope for the first serve() landing, or is the first landing synchronous-only with documented re-issue semantics? Entangled with it (§8.6): the stack choice — python-sdk v2 (official, disciplined wire pins, AEAD requestState, no tasks) vs FastMCP 4 (tasks today, heavier and faster-moving) vs implementing the tasks extension ourselves on python-sdk's open seams, backed by vfs's own storage.
 - **Blocking:** the serve() spec (056 Pass C's successor); also feeds spec 045's schema pinning (JSON Schema 2020-12, `inputResponses`/`requestState` as protocol-owned params) and the read-family cursor question, whose wire shape SEP-2567's handle etiquette now settles (memo §8.2).
 - **Options considered:** memo §8.1 and §8.6; ADR 022's refresh notes in §8.4 (stale fastmcp citation, "session state" wording).
-- **Status:** open
+- **Evidence since:** 2026-10-24, the OSTEP distribution study replayed every mutating verb: five of eleven are safe to send twice, six are not, and a replayed `move` is unrecognisable (`research/studies/2026-10-24-ostep-principles-for-vfs/06-distribution-nfs-afs.md` §2.1). ADR 087 pin 10 decides the replay contract and an optional request key stored as a row in the mount; `specs/active/177-replay-the-contract-and-the-request-key/` carries the idempotency half of this question. The tasks-extension half (a pollable handle for a long batch) stays open here.
+- **Status:** open — the idempotency half is owned by spec 177 and the read-family cursor half by spec 176 (`specs/active/176-the-listing-cursor/`); the tasks half still blocks nothing until a batch outlives a client timeout in practice
 
 ## vfs-js and vfs-rs sibling implementations
 
@@ -266,8 +267,8 @@
 - **Blocking:** the `serve()` re-spec (the existing "MCP 2026-07-28: long-batch execution model and serving-stack choice" entry); ADR 022's topology-off-the-wire rule rides on it.
 - **Options considered:** (a) one tool per agent-facing verb, `sweep` and topology admin withheld, capabilities advertised so a consumer's allow-list can be derived; (b) one `vfs` tool with a `verb` argument and the `Result` envelope as structured content; (c) both, with (b) as the compact surface for code-mode and tool-search clients.
 - **Status:** open
-
 - **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §11 and study `09-agent-shell-peers.md` fork 1 — bash-tool ships three tools but its own example passes one; bashkit's contract is one; deepagents is verbs only. Answer (spec 171): the agent-facing verbs as tools plus one `cli(command | argv)` tool that re-enters them; hosts may expose only `cli` by listing; never a second `readFile` around `read`'s ladder. Ready to move to the archive when 171 lands.
+
 ## Reference adapters for host frameworks: publish them, or document the wire and let hosts write them?
 
 - **Asked:** 2026-09-15 by Claude (eve memo §7.1 seam 2, §9)
@@ -283,15 +284,16 @@
 - **Blocking:** nothing today; the skills/memory how-to and any per-agent posture rule in spec 058 would take a position.
 - **Options considered:** (a) plain user directories, no reserved family; (b) a reserved `/.agents/<agent>/` family with grammar for instructions, skills and memory; (c) defer until a real consumer asks for per-agent isolation.
 - **Status:** parked
-
 - **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §9 and ADR 082 — the `/.agents` families are retired; programs and skills live anywhere and a host-set index feeds the `/.vfs/bin` and `/.vfs/skills` views (Plan 9's union); eve keeps the agent's own definition outside the namespace the shell sees; a per-agent home is a mount-table and grants question (`add_mount` at `/home/<agent>`, the session's `cwd` there), not a reserved family. Option (a), plain directories, stands.
+
 ## Write preconditions on the wire: expected version, content hash, or both?
 
 - **Asked:** 2026-09-15 by Claude (`research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §4.3, §8.4, §10)
 - **Context:** The emerging write-safety idiom across peers is a precondition on `write`/`edit`: Anthropic Managed Agents memory takes a `content_sha256`, memgres a `base_hash` (409 on mismatch), MongoDB's VFS an S3 `IfMatch` on `edit` only, eve a read-before-write hash stamp. It is also what a replayed durable-execution step needs from a store. vfs already carries a per-entry `version` stamp on every observation but no verb accepts one as a condition. An expected version is vfs's own coordinate and cheap to check; a content hash is what a client can compute without a prior read and what peers speak.
 - **Blocking:** the `serve()` re-spec (the served `write`/`edit` contract); the version-row design (a refused write should not mint a row).
 - **Options considered:** (a) expected `version` only; (b) `content_sha256` only; (c) both, either sufficient, mismatch classified as a child of `invalid` (or a new `conflict` kind); (d) neither, keep last-write-wins and rely on reversibility.
-- **Status:** open
+- **Evidence since:** 2026-10-24, the OSTEP concurrency study executed the lost update: twenty concurrent read-append-write tasks on one file all reported success and one line survived (`research/studies/2026-10-24-ostep-principles-for-vfs/07-concurrency-locks-structures-events.md`, principle 1). ADR 087 pin 3 decides `write(if_version=, if_absent=, append=)`; `vfs.conflict` is the refusal.
+- **Status:** open — owned by `specs/active/174-write-preconditions-and-the-guarded-append/` (whether a content-hash precondition is accepted beside the version is decided there)
 
 ## A "when not to use vfs" statement
 

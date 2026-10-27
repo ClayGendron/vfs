@@ -1,0 +1,68 @@
+# 178 — tasks
+
+Eight tasks, landing in order. Each lands green through
+`scripts/ci.sh` (lint, format, types, the suite at 100% coverage).
+Tasks 1 and 4 also run the four real-engine legs (the `db_test`
+skill) before they land. No task asserts on time.
+
+1. **The slice spellings, proved on every engine.** Add
+   `src/vfs/storage/backends/database/slices.py`: the `BodySlice`
+   literal, the `Window` named tuple, one `FunctionElement` per
+   spelling with its `@compiles` (spec §4.2), `body_window(...)`, and
+   the Oracle `Select` wrapper that prepends the inline `WITH FUNCTION`
+   declarations (§4.4). Add `body_slice` to `DialectProfile` and set it
+   on the five tuned profiles; `GENERIC` stays `None`. Tests in
+   `tests/storage/database/test_slices.py` run each spelling straight
+   on the engine against a 4 MiB text body (1- to 4-byte characters)
+   and a 4 MiB bytes body: exact bytes at offset 1,000,003, past the
+   end, `length == 0`, and on Oracle a 100,000-byte slice of both
+   (criterion 6). If the Oracle leg refuses inline PL/SQL, switch to
+   the schema-function form of §4.4 in this task and write which one
+   landed into the spec's landing notes. Nothing calls the module yet.
+2. **The argument and the row.** Add `ByteRange` to `vfs/ops.py`; the
+   `"range"` `ParamKind`, its check, the `PARAMS["read"]` row and the
+   `OneBody` value rule in `params.py`; `range_start` and
+   `range_length` on `Observation` and in `OBSERVATION_QUERY_FIELDS`;
+   the `builtins-ignorelist = ["range"]` line in `pyproject.toml`.
+   Update the signature, params and mirror drift tests. Gate tests for
+   criterion 7's invalid shapes, with zero statements counted. The
+   router accepts `range` and, until task 4, refuses it as
+   `unsupported` so no half-built path is reachable.
+3. **The snap and the slicer.** Add `src/vfs/storage/slicing.py`:
+   `snap_text` (§2.3), `served_window` (the one function every body
+   window passes through, §9) and `slice_rows` (the kernel's whole-body
+   slicer, §6). Add the exhaustive oracle test of criterion 3's SQLite
+   half (6,561 cases) and the paging rebuild on a small body. Add
+   `tests/support/access.py` with the body-bytes counter and the
+   statement counter (§9).
+4. **The engine path.** `read_rows` and `_point_rows` take the window;
+   `_entry_projection` selects `body_window(...)` in place of the body
+   column when a range is given; every window goes through
+   `served_window` and `snap_text`; the empty-slice and end rules of
+   §3; the missing-body classification of §7. `DatabaseStorage.read`
+   and `SupportsRead.read` take `range`; `traits()` declares
+   `read_range: "engine"` when `body_slice` is set; `read_range` joins
+   `TraitKey` and `TRAIT_VALUES`. Lift task 2's `unsupported` refusal.
+   Criteria 1, 2, 3 (engine half), 4, 5, 8, 9 and 12 on every engine
+   leg. Run the `scale_review` skill on this task's diff.
+5. **The kernel fallback.** `MountMeta.declared_traits` from
+   `storage.traits()` at bind; the router calls `read` without `range`
+   and applies `slice_rows` when the binding does not declare
+   `read_range`; `DatabaseStorage` on a `body_slice=None` profile uses
+   `slice_rows` directly. `Session.read` takes `range`. Criterion 10
+   with a test-double backend and a generic-floor profile.
+6. **Integrity, at §7's lean.** Wire the whole-body slice and the
+   kernel-cut slice into spec 175's verification, and leave a partial
+   slice unverified. Criterion 11. If Clay has answered §7 the other
+   way by now, this task builds the in-engine hash instead and the
+   criterion is rewritten first. If spec 175 has not landed, this task
+   waits for it and tasks 7 and 8 go first.
+7. **The marker.** `_render_read` appends §8's marker line to a sliced
+   row in the verb-tool rendering. Criterion 13 against the current
+   render fixtures.
+8. **Docs and the conformance family.** Add the ranged-read family to
+   `tests/support/storage_contract.py` (criteria 2–5 and 9 as battery
+   rows, so every backend the battery runs proves them). Add `range`
+   to the `read` row of the README verb table and to the `read`
+   reference page, with the unit, the snap rule, the end rule and the
+   unverified-slice note. Fill in the landing notes.

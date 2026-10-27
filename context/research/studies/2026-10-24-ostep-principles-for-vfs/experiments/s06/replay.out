@@ -1,0 +1,58 @@
+== 1. write replay: identical body re-sent
+write /a.md 'one'                            ok=True  errs=[] rows=[('/a.md', 'created', 1)]
+write /a.md 'one' (replay)                   ok=True  errs=[] rows=[('/a.md', 'updated', 2)]
+   stat /a.md (version, hash): [(2, '7692c3ad')]  version rows: 0
+write /a.md 'two'                            ok=True  errs=[] rows=[('/a.md', 'updated', 3)]
+   stat: [(3, '3fc4ccfe')]  version rows: 1
+write /a.md 'two' (replay)                   ok=True  errs=[] rows=[('/a.md', 'updated', 4)]
+   stat: [(4, '3fc4ccfe')]  version rows: 1
+
+== 2. delayed replay after a rival writer (NFS Case 3 + a second client)
+agent A writes 'A'                           ok=True  errs=[] rows=[('/b.md', 'updated', 2)]
+agent B writes 'B'                           ok=True  errs=[] rows=[('/b.md', 'updated', 3)]
+agent A's lost-reply retry of 'A'            ok=True  errs=[] rows=[('/b.md', 'updated', 4)]
+   body now: 'A'  stat: [(4, '559aead0')]  version rows: 3
+
+== 3. edit replay (server-side find-and-replace)
+edit world->there                            ok=True  errs=[] rows=[('/e.md', 'updated', 2)]
+edit world->there (replay)                   ok=False errs=[('vfs.invalid', False)] rows=[]
+   stat: [(2, '12998c01')]
+
+== 4. mkdir, delete, restore, move, copy replays
+mkdir /d                                     ok=True  errs=[] rows=[('/d', 'created', 1)]
+mkdir /d (replay)                            ok=False errs=[('vfs.exists', False)] rows=[]
+mkdir /d exist_ok (replay)                   ok=True  errs=[] rows=[('/d', 'unchanged', 1)]
+delete /x.md                                 ok=True  errs=[] rows=[('/x.md', 'deleted', 1)]
+delete /x.md (replay)                        ok=False errs=[('vfs.not_found', False)] rows=[]
+restore /x.md                                ok=True  errs=[] rows=[('/x.md', 'created', 3)]
+restore /x.md (replay)                       ok=False errs=[('vfs.exists', False)] rows=[]
+copy /x.md /y.md                             ok=True  errs=[] rows=[('/y.md', 'created', 1)]
+copy /x.md /y.md (replay)                    ok=False errs=[('vfs.exists', False)] rows=[]
+move /y.md /z.md                             ok=True  errs=[] rows=[('/z.md', 'created', 2)]
+move /y.md /z.md (replay)                    ok=False errs=[('vfs.not_found', False)] rows=[]
+
+== 5. edge and grant replays
+mkedge a->x cites                            ok=True  errs=[] rows=[('/a.md', 'created', None)]
+mkedge (replay)                              ok=True  errs=[] rows=[('/a.md', 'updated', None)]
+rmedge                                       ok=True  errs=[] rows=[('/a.md', 'deleted', None)]
+rmedge (replay)                              ok=True  errs=[('vfs.not_found', False)] rows=[]
+grant /d alice read                          ok=True  errs=[] rows=[]
+grant (replay)                               ok=True  errs=[] rows=[]
+revoke                                       ok=True  errs=[] rows=[]
+revoke (replay)                              ok=True  errs=[('vfs.not_found', False)] rows=[]
+
+== 6. batch atomicity: one bad entry in a batch of three
+write batch [ok, missing parent, ok]         ok=False errs=[('vfs.not_found', False)] rows=[]
+   /p/1.md after: ['vfs.not_found']
+
+== 7. the generation question: is (path, version) a stable name?
+   life 1: [(2, '31356d60')]  entry_id: 01M5PV1V3CVXDC7TC6F35QYTP0
+delete /g.md                                 ok=True  errs=[] rows=[('/g.md', 'deleted', 2)]
+write /g.md (revive)                         ok=True  errs=[] rows=[('/g.md', 'updated', 4)]
+   revived: [(4, '5f0ade17')]  same entry_id: True
+sweep /g.md (purge)                          ok=True  errs=[] rows=[('/g.md', 'deleted', 5)]
+write /g.md 'third life'                     ok=True  errs=[] rows=[('/g.md', 'created', 1)]
+   after sweep+create: [(1, '1de93280')]  same entry_id: False
+   rename then create at old path: /h.md [(1, 'd9298a10')]  /h2.md [(2, '3bfc2695')]
+
+== total version rows: 5

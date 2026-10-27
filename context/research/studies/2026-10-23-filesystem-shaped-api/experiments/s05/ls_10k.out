@@ -1,0 +1,12 @@
+write(entries=10000, parents=True): success=True rows=10000 statements=40
+  heads: BEGIN=1, DELETE=2, INSERT=14, RELEASE=10, SAVEPOINT=10, SELECT=2, UPDATE=1
+ls(/big): success=True rows=10000 observations=10000 statements=3 errors=0 extras=[]
+  heads: BEGIN=1, SELECT=2
+  first row populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  any limit/cursor field on the envelope: []
+ls(/big, columns={kind}): success=True rows=10000 observations=10000 statements=3 errors=0 extras=[]
+  heads: BEGIN=1, SELECT=2
+  first row populated=['kind', 'path', 'version']
+  any limit/cursor field on the envelope: []
+ls(/big) as alice (read grant on /big, posture none at /): rows=10000 statements=5 errors=[]
+  heads: BEGIN=1, SELECT=4

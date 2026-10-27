@@ -1,0 +1,108 @@
+# 177 — tasks
+
+Ten tasks, landing in order. Each lands green through `scripts/ci.sh`
+(lint, format, types, tests at 100% coverage, docs fences, wheel
+budget). Tasks 3, 4, 5, 6 and 9 also run the four server legs
+(Postgres, MariaDB, SQL Server, Oracle) before landing, because each
+issues new SQL. Task 9's `write` rows wait for spec 174.
+
+1. **The replay table as data** (spec §0.1, §0.2). In `ops.py`: the
+   `ReplayShape` literal, the `Replay` row, `REPLAY` with one row per
+   `WRITE_GATED_OPS` verb (text as §0.1; `write`'s row as today until
+   174 lands, then 174's), `KEYED_OPS`, and the derived
+   `IDEMPOTENT_OPS`. Drift tests: `REPLAY.keys() == WRITE_GATED_OPS`,
+   `KEYED_OPS <= WRITE_GATED_OPS`, the derivation (criterion 1). No
+   behaviour changes.
+
+2. **Two kinds** (§3.6, §5.2). `ErrorKind.replayed`
+   (`vfs.replayed`) and `ErrorKind.in_doubt`
+   (`vfs.unavailable.in_doubt`) with their `KIND_CONTRACTS` rows; the
+   `ErrorKind` docstring gains the per-kind `data` records of the ADR
+   010 amendment and the producer rules (only the replay store emits
+   `replayed`; only the mutation runner emits `in_doubt`). Tests: the
+   contracts table is complete; `kind_family("vfs.unavailable.in_doubt")`
+   is itself and an unknown sibling degrades to `vfs.unavailable`; an
+   `info` `replayed` entry leaves `success` true and renders its hint.
+
+3. **The in-doubt commit** (§5). Extract `EngineHost.is_disconnect`
+   from `classify_failure` and call it from both. Add `CommitInDoubt`
+   beside `StaleSnapshot` in `dialects.py`. Guard the commit in
+   `_mutate`'s `attempt()` with the two seams
+   `mutate:before-commit` and `mutate:after-commit`; catch
+   `CommitInDoubt` and classify `in_doubt`, `retryable=False` (no keys
+   yet). Tests: criterion 16's keyless half (after-commit: the change
+   is there; before-commit: it is not; inside `fn`: still
+   `vfs.unavailable.backend`; one `with_retry` attempt each, counted).
+   Server legs.
+
+4. **Recognisable replays** (§1). `occupant_facts` and
+   `OCCUPANT_FIELDS` in `descent.py`; the `shown` mask built in
+   `backend.py` from the resolved `WriteGate` and passed to
+   `transfer_rows`, `restore_rows` and `mkdir_rows`; the widened
+   snapshot columns. The four sites: `copy`'s `exists` (with
+   `matches_source`), `restore`'s `exists`, strict `mkdir`'s `exists`,
+   and `move`'s missed-source probe, batched after the pair loop with
+   `chunked()` and `membership()`. `apply_edits` reports the failing
+   index; `edit`'s `invalid` gains `new_present`. Tests: criteria 3
+   (with the entries table read directly for the id), 4, 5 and 6, each
+   with the before/after statement count. Update the existing tests
+   that pin the exact `data` of these refusals. Server legs.
+
+5. **The schema** (§3.1, §2.3). `vfs_replays` and `vfs_replay_pages`
+   in `build_vfs_tables`; `VFSTables` gains both; the schema format
+   version bumps by one from its value at landing (24 if spec 180 has
+   not landed, else 25); the rows drift tests cover the two tables. The
+   `replay` trait key and value in `protocol.py`; `DatabaseStorage`
+   declares `replay: keyed`; `replay_hours` on `DatabaseStorage` and
+   `InMemoryStorage`, validated `>= 0`. Tests: first touch provisions
+   both tables on every leg; a format-23 meta row refuses
+   `vfs.unavailable.schema`; the trait (criterion 18's storage half).
+   Server legs (the DDL is new on every engine).
+
+6. **The replay store** (§3.2–§3.7). `replays.py`: `ReplayRequest`,
+   `replay_request`, the frame, the fingerprint walk, `answered`,
+   `claim`, `record`, the pack and unpack through `call_offloaded`
+   above `REPLAY_OFFLOAD_BYTES`. `_mutate` takes `request` and runs
+   look-up, replace, claim, `fn`, record. Every storage method in
+   `KEYED_OPS` takes `request_key` and builds its request;
+   `_grant_write` carries it; `posture` runs `_settled` on a hit and
+   `_settled` keeps the stored errors; `CommitInDoubt` now sets
+   `retryable` from the request. Tests at the storage seam: criteria
+   7, 8, 10, 11, 12, 14, 15, 19, and 16's keyed half. Server legs
+   (the claim's wait and the `REPEATABLE READ` redrive are engine
+   behaviour; criterion 11 must pass on all four).
+
+7. **The parameter, the router and the session** (§2). The `token`
+   `ParamKind`, `MAX_REQUEST_KEY_LENGTH`, `_REQUEST_KEY` on the twelve
+   `KEYED_OPS` rows of `PARAMS`; `_check_value`'s `token` branch.
+   `request_key` on the twelve router verbs; the routing helpers pass
+   it only when it is not `None`; `MountMeta.keyed` from the trait at
+   bind and remount; `_gate_entry(keyed=)` refuses `unsupported`.
+   `session.py` forwards it. `tests/support/base_doubles.py` gains an
+   undeclared-trait double. Tests: criteria 17 and 18; a cross-mount
+   keyed batch stores one slice per mount and a replay answers both.
+
+8. **`sweep` reclaims the store** (§4). `reclaim_expired` in the
+   retention arm of `sweep_rows`; the `replays_swept` extra. Tests:
+   criterion 13 (3 live rows kept, 10,000 bulk-inserted expired rows
+   reclaimed, 2 statements at both sizes; the purge arm leaves the
+   store alone). If spec 180 has landed first, this task instead adds
+   the `replays` phase to its `SweepMark` and gauge, and criterion 13
+   counts per slice.
+
+9. **The replay-table conformance family** (§0.3).
+   `tests/support/replay_contract.py` (`ReplayContract`), mixed into
+   the six storage legs in `tests/storage/test_conformance.py`; the
+   membership rows in `GrantsContract`'s world. The 10,000-row keyed
+   no-op (criterion 9), marked `slow`. Criterion 2. Needs spec 174
+   landed for the `write` rows (`unchanged`, `if_absent`, `append`);
+   until then this task waits. Server legs.
+
+10. **Landing.** The README's verb reference (if it lists arguments)
+    gains `request_key` and one paragraph, "Sending a call twice",
+    whose code fence the docs-fence gate runs. Hand the ADR amendments
+    (spec, *ADR amendments this spec needs*) and the rebase notes for
+    167, 171, 174, 179, 180 and 181 to the session lead. Update the
+    open question's status line: the idempotency half resolved by this
+    spec. Record the answers to the two markers and the measured
+    keyed-miss and hit counts in *Landing notes*.

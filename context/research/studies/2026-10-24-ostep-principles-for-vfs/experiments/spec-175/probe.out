@@ -1,0 +1,17 @@
+write observation fields: ['kind', 'path', 'size_bytes', 'status', 'version'] content_hash: None
+entries (path, kind, source, hash set): [('/', 'directory', 'text', False), ('/a.txt', 'file', 'text', True), ('/b.txt', 'file', 'text', True), ('/e.txt', 'file', 'text', True), ('/big.txt', 'file', 'text', True), ('/bin.dat', 'file', 'bytes', True), ('/d', 'directory', 'text', False), ('/v.txt', 'file', 'text', True)]
+paths with a vfs_content row: ['/a.txt', '/b.txt', '/big.txt', '/e.txt', '/v.txt']
+paths with a vfs_blobs row: ['/bin.dat']
+version rows ok: [(1, True)]
+read small: success=True statements=4 ['SELECT vfs_principal_revisions', 'SELECT vfs_relabels', 'SELECT vfs_grants', 'SELECT vfs_entries vfs_content']
+read 1MB: success=True statements=4 ['SELECT vfs_principal_revisions', 'SELECT vfs_relabels', 'SELECT vfs_grants', 'SELECT vfs_entries vfs_content']
+stat 1MB: success=True statements=4 ['SELECT vfs_principal_revisions', 'SELECT vfs_relabels', 'SELECT vfs_grants', 'SELECT vfs_entries']
+ls /: success=True statements=5 ['SELECT vfs_principal_revisions', 'SELECT vfs_relabels', 'SELECT vfs_grants', 'SELECT vfs_entries', 'SELECT vfs_entries']
+read columns path,content: success=True statements=4 ['SELECT vfs_principal_revisions', 'SELECT vfs_relabels', 'SELECT vfs_grants', 'SELECT vfs_entries vfs_content']
+offload hops on a 1MB read today: 0
+rotten read success: True content: neeXle in a haystacK
+missing-body read success: True content: None size: 11 errors: []
+missing-blob read success: True data: None errors: []
+edit on missing body: False [(<ErrorKind.wrong_kind: 'vfs.wrong_kind'>, 'Wrong kind: no editable content')]
+edit on rotten body: True []
+versions of /a.txt after overwrite: [(1, 'neeXle in a haystacK', True), (2, 'neeXle in a haystack!', True)]

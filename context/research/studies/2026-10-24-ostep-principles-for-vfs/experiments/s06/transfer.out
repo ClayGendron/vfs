@@ -1,0 +1,5 @@
+move replay: False [('vfs.not_found', 'error', 'Not found', None)]
+copy replay: False [('vfs.exists', 'error', 'Already exists', {'vfs.target': '/z.md'})]
+agent A stale edit alpha->ALPHA: True []
+agent A stale edit beta->gamma: False [('vfs.invalid', 'error', 'Invalid: old_string not found in file content.', None)]
+after stale whole-body write: 'ALPHA2\nbeta\n'

@@ -1,0 +1,3 @@
+raised: OperationalError | orig: OperationalError | connection_invalidated: True
+classified today: vfs.unavailable.backend retryable: True
+rows after: 0

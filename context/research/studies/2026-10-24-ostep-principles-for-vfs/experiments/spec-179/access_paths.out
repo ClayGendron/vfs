@@ -1,0 +1,262 @@
+
+# authority = system
+stat /docs/a.md                              ok=True  stmts= 1 rows=  3 sent=   16B fetched=  270B
+      1. SELECT vfs_entries                   rows=3    sent=   16B fetched=  270B
+stat depth 20                                ok=True  stmts= 1 rows= 21 sent=  698B fetched= 2122B
+read /docs/a.md                              ok=True  stmts= 1 rows=  3 sent=   16B fetched=  330B
+      1. SELECT vfs_entries                   rows=3    sent=   16B fetched=  330B
+ls /docs                                     ok=True  stmts= 2 rows=  4 sent=   34B fetched=  468B
+tree /docs                                   ok=True  stmts= 2 rows=  4 sent=   25B fetched=  404B
+glob **/*.md                                 ok=True  stmts= 1 rows=  3 sent=   24B fetched=  482B
+grep hello (scan side)                       ok=True  stmts= 4 rows=  8 sent=   93B fetched=  700B
+write create /docs/c1.md                     ok=True  stmts= 7 rows=  4 sent=  342B fetched=  102B
+      1. SELECT vfs_entries                   rows=2    sent=   17B fetched=   64B
+      2. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      3. INSERT vfs_entries                   rows=1    sent=  183B fetched=   27B
+      4. INSERT vfs_segments                  rows=0    sent=   20B fetched=    0B
+      5. INSERT vfs_edges                     rows=0    sent=   40B fetched=    0B
+      6. INSERT vfs_content                   rows=0    sent=   43B fetched=    0B
+      7. UPDATE vfs_entries                   rows=0    sent=   21B fetched=    0B
+write create depth 20                        ok=True  stmts= 7 rows= 22 sent= 2162B fetched= 1306B
+write overwrite /docs/c1.md                  ok=True  stmts= 8 rows=  5 sent=  355B fetched=  118B
+      1. SELECT vfs_entries                   rows=3    sent=   17B fetched=  101B
+      2. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      3. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      4. SELECT vfs_entries                   rows=1    sent=   16B fetched=   17B
+      5. INSERT vfs_versions                  rows=0    sent=  119B fetched=    0B
+      6. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+      7. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+      8. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+edit /docs/c1.md                             ok=True  stmts= 7 rows=  4 sent=  340B fetched=  103B
+      1. SELECT vfs_entries                   rows=3    sent=   17B fetched=  103B
+      2. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      3. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      4. INSERT vfs_versions                  rows=0    sent=  120B fetched=    0B
+      5. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+      6. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+      7. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+mkdir /m1                                    ok=True  stmts= 5 rows=  3 sent=  168B fetched=   60B
+move /m1 -> /mv1                             ok=True  stmts=14 rows=  7 sent=  173B fetched=  219B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_entries                   rows=2    sent=    4B fetched=   73B
+      3. SELECT vfs_entries                   rows=1    sent=    3B fetched=   46B
+      4. SELECT vfs_entries                   rows=1    sent=    1B fetched=   26B
+      5. SELECT vfs_entries                   rows=0    sent=    4B fetched=    0B
+      6. SELECT vfs_entries                   rows=1    sent=    8B fetched=   50B
+      7. SELECT vfs_grants                    rows=1    sent=    6B fetched=   11B
+      8. SELECT vfs_grants                    rows=0    sent=    7B fetched=    0B
+      9. UPDATE vfs_entries                   rows=0    sent=   65B fetched=    0B
+     10. UPDATE vfs_edges                     rows=0    sent=   34B fetched=    0B
+     11. SELECT vfs_entries                   rows=0    sent=    5B fetched=    0B
+     12. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     13. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     14. SELECT vfs_entries                   rows=1    sent=    4B fetched=   13B
+copy /docs/c1.md -> /cp1.md                  ok=True  stmts=13 rows=  6 sent=  356B fetched=  304B
+delete /cp1.md                               ok=True  stmts= 4 rows=  2 sent=   66B fetched=   76B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_entries                   rows=2    sent=    8B fetched=   76B
+      3. UPDATE vfs_entries                   rows=0    sent=   42B fetched=    0B
+      4. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+restore /cp1.md                              ok=True  stmts= 6 rows=  3 sent=   63B fetched=  129B
+mkedge                                       ok=True  stmts= 3 rows=  2 sent=   99B fetched=   53B
+rmedge                                       ok=True  stmts= 3 rows=  3 sent=   57B fetched=   89B
+grants /docs                                 ok=True  stmts= 1 rows=  2 sent=    6B fetched=   92B
+
+# authority = alice
+stat /docs/a.md                              ok=True  stmts= 3 rows=  4 sent=   21B fetched=  270B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   16B fetched=  270B
+stat depth 20                                ok=True  stmts= 3 rows= 22 sent=  703B fetched= 2122B
+read /docs/a.md                              ok=True  stmts= 3 rows=  4 sent=   21B fetched=  330B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   16B fetched=  330B
+ls /docs                                     ok=True  stmts= 4 rows=  6 sent=   39B fetched=  619B
+tree /docs                                   ok=True  stmts= 4 rows=  6 sent=   30B fetched=  539B
+glob **/*.md                                 ok=True  stmts= 3 rows=  7 sent=   29B fetched=  967B
+grep hello (scan side)                       ok=True  stmts= 6 rows= 15 sent=  146B fetched= 1286B
+write create /docs/c2.md                     ok=True  stmts= 9 rows=  5 sent=  352B fetched=  102B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=2    sent=   17B fetched=   64B
+      4. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      5. INSERT vfs_entries                   rows=1    sent=  188B fetched=   27B
+      6. INSERT vfs_segments                  rows=0    sent=   20B fetched=    0B
+      7. INSERT vfs_edges                     rows=0    sent=   40B fetched=    0B
+      8. INSERT vfs_content                   rows=0    sent=   43B fetched=    0B
+      9. UPDATE vfs_entries                   rows=0    sent=   21B fetched=    0B
+write create depth 20                        ok=True  stmts= 9 rows= 23 sent= 2172B fetched= 1306B
+write overwrite /docs/c2.md                  ok=True  stmts=11 rows=  6 sent=  385B fetched=  123B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   17B fetched=  106B
+      4. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      5. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      6. SELECT vfs_entries                   rows=1    sent=   16B fetched=   17B
+      7. INSERT vfs_versions                  rows=0    sent=  123B fetched=    0B
+      8. INSERT vfs_version_subjects          rows=0    sent=   21B fetched=    0B
+      9. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+     10. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+     11. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+edit /docs/c2.md                             ok=True  stmts=10 rows=  5 sent=  370B fetched=  108B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   17B fetched=  108B
+      4. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      5. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      6. INSERT vfs_versions                  rows=0    sent=  124B fetched=    0B
+      7. INSERT vfs_version_subjects          rows=0    sent=   21B fetched=    0B
+      8. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+      9. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+     10. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+mkdir /m2                                    ok=True  stmts= 7 rows=  4 sent=  178B fetched=   60B
+move /m2 -> /mv2                             ok=True  stmts=16 rows=  8 sent=  178B fetched=  219B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      3. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      4. SELECT vfs_entries                   rows=2    sent=    4B fetched=   73B
+      5. SELECT vfs_entries                   rows=1    sent=    3B fetched=   46B
+      6. SELECT vfs_entries                   rows=1    sent=    1B fetched=   26B
+      7. SELECT vfs_entries                   rows=0    sent=    4B fetched=    0B
+      8. SELECT vfs_entries                   rows=1    sent=    8B fetched=   50B
+      9. SELECT vfs_grants                    rows=1    sent=    6B fetched=   11B
+     10. SELECT vfs_grants                    rows=0    sent=    7B fetched=    0B
+     11. UPDATE vfs_entries                   rows=0    sent=   65B fetched=    0B
+     12. UPDATE vfs_edges                     rows=0    sent=   34B fetched=    0B
+     13. SELECT vfs_entries                   rows=0    sent=    5B fetched=    0B
+     14. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     15. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     16. SELECT vfs_entries                   rows=1    sent=    4B fetched=   13B
+copy /docs/c2.md -> /cp2.md                  ok=True  stmts=15 rows=  7 sent=  366B fetched=  304B
+delete /cp2.md                               ok=True  stmts= 6 rows=  3 sent=   71B fetched=   76B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      3. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      4. SELECT vfs_entries                   rows=2    sent=    8B fetched=   76B
+      5. UPDATE vfs_entries                   rows=0    sent=   42B fetched=    0B
+      6. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+restore /cp2.md                              ok=True  stmts= 8 rows=  4 sent=   68B fetched=  134B
+mkedge                                       ok=True  stmts= 5 rows=  3 sent=  104B fetched=   53B
+rmedge                                       ok=True  stmts= 5 rows=  4 sent=   62B fetched=   89B
+grants /docs                                 ok=True  stmts= 3 rows=  3 sent=   11B fetched=   92B
+
+# authority = anon
+stat /docs/a.md                              ok=True  stmts= 4 rows=  5 sent=   38B fetched=  281B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_grants                    rows=1    sent=   17B fetched=   11B
+      4. SELECT vfs_entries                   rows=3    sent=   16B fetched=  270B
+stat depth 20                                ok=True  stmts= 4 rows= 23 sent= 1402B fetched= 2133B
+read /docs/a.md                              ok=True  stmts= 4 rows=  5 sent=   38B fetched=  341B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_grants                    rows=1    sent=   17B fetched=   11B
+      4. SELECT vfs_entries                   rows=3    sent=   16B fetched=  330B
+ls /docs                                     ok=True  stmts= 5 rows=  8 sent=   46B fetched=  786B
+tree /docs                                   ok=True  stmts= 5 rows=  8 sent=   37B fetched=  690B
+glob **/*.md                                 ok=True  stmts= 4 rows= 11 sent=   31B fetched= 1478B
+grep hello (scan side)                       ok=True  stmts= 7 rows= 22 sent=  196B fetched= 1898B
+write create /docs/c3.md                     ok=True  stmts=11 rows=  8 sent=  382B fetched=  137B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=2    sent=   17B fetched=   24B
+      4. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      5. SELECT vfs_entries                   rows=2    sent=   17B fetched=   64B
+      6. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      7. INSERT vfs_entries                   rows=1    sent=  183B fetched=   27B
+      8. INSERT vfs_segments                  rows=0    sent=   20B fetched=    0B
+      9. INSERT vfs_edges                     rows=0    sent=   40B fetched=    0B
+     10. INSERT vfs_content                   rows=0    sent=   43B fetched=    0B
+     11. UPDATE vfs_entries                   rows=0    sent=   21B fetched=    0B
+write create depth 20                        ok=True  stmts=11 rows= 44 sent= 3566B fetched= 2123B
+write overwrite /docs/c3.md                  ok=True  stmts=13 rows= 10 sent=  418B fetched=  168B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   17B fetched=   39B
+      4. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      5. SELECT vfs_entries                   rows=3    sent=   17B fetched=  101B
+      6. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      7. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      8. SELECT vfs_entries                   rows=1    sent=   16B fetched=   17B
+      9. INSERT vfs_versions                  rows=0    sent=  122B fetched=    0B
+     10. INSERT vfs_version_subjects          rows=0    sent=   20B fetched=    0B
+     11. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+     12. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+     13. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+edit /docs/c3.md                             ok=True  stmts=12 rows=  9 sent=  403B fetched=  153B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   17B fetched=   39B
+      4. SELECT vfs_grants                    rows=1    sent=   18B fetched=   11B
+      5. SELECT vfs_entries                   rows=3    sent=   17B fetched=  103B
+      6. UPDATE vfs_entries                   rows=0    sent=  127B fetched=    0B
+      7. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      8. INSERT vfs_versions                  rows=0    sent=  123B fetched=    0B
+      9. INSERT vfs_version_subjects          rows=0    sent=   20B fetched=    0B
+     10. DELETE vfs_content                   rows=0    sent=   16B fetched=    0B
+     11. DELETE vfs_blobs                     rows=0    sent=   16B fetched=    0B
+     12. INSERT vfs_content                   rows=0    sent=   44B fetched=    0B
+mkdir /m3                                    ok=True  stmts= 9 rows=  6 sent=  182B fetched=   81B
+move /m3 -> /mv3                             ok=True  stmts=21 rows= 13 sent=  206B fetched=  273B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      3. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      4. SELECT vfs_entries                   rows=2    sent=    4B fetched=   22B
+      5. SELECT vfs_grants                    rows=1    sent=    5B fetched=   11B
+      6. SELECT vfs_entries                   rows=1    sent=    5B fetched=   10B
+      7. SELECT vfs_grants                    rows=1    sent=    6B fetched=   11B
+      8. SELECT vfs_entries                   rows=0    sent=    8B fetched=    0B
+      9. SELECT vfs_entries                   rows=2    sent=    4B fetched=   73B
+     10. SELECT vfs_entries                   rows=1    sent=    3B fetched=   46B
+     11. SELECT vfs_entries                   rows=1    sent=    1B fetched=   26B
+     12. SELECT vfs_entries                   rows=0    sent=    4B fetched=    0B
+     13. SELECT vfs_entries                   rows=1    sent=    8B fetched=   50B
+     14. SELECT vfs_grants                    rows=1    sent=    6B fetched=   11B
+     15. SELECT vfs_grants                    rows=0    sent=    7B fetched=    0B
+     16. UPDATE vfs_entries                   rows=0    sent=   65B fetched=    0B
+     17. UPDATE vfs_edges                     rows=0    sent=   34B fetched=    0B
+     18. SELECT vfs_entries                   rows=0    sent=    5B fetched=    0B
+     19. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     20. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+     21. SELECT vfs_entries                   rows=1    sent=    4B fetched=   13B
+copy /docs/c3.md -> /cp3.md                  ok=True  stmts=19 rows= 13 sent=  413B fetched=  375B
+delete /cp3.md                               ok=True  stmts= 8 rows=  6 sent=   88B fetched=  108B
+      1. SELECT vfs_lock                      rows=0    sent=    0B fetched=    0B
+      2. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      3. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      4. SELECT vfs_entries                   rows=2    sent=    8B fetched=   21B
+      5. SELECT vfs_grants                    rows=1    sent=    9B fetched=   11B
+      6. SELECT vfs_entries                   rows=2    sent=    8B fetched=   76B
+      7. UPDATE vfs_entries                   rows=0    sent=   42B fetched=    0B
+      8. UPDATE vfs_entries                   rows=0    sent=   16B fetched=    0B
+restore /cp3.md                              ok=True  stmts= 9 rows=  5 sent=   77B fetched=  140B
+mkedge                                       ok=True  stmts= 9 rows= 11 sent=  172B fetched=  152B
+rmedge                                       ok=True  stmts= 8 rows=  9 sent=  107B fetched=  153B
+grants /docs                                 ok=True  stmts= 3 rows=  3 sent=   11B fetched=   92B
+
+# rights cache, alice
+read cold cache                              ok=True  stmts= 7 rows=  7 sent=   31B fetched=  346B
+      1. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      2. SELECT vfs_memberships               rows=0    sent=    5B fetched=    0B
+      3. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      4. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      5. SELECT vfs_grants                    rows=1    sent=    5B fetched=   16B
+      6. SELECT vfs_meta                      rows=1    sent=    0B fetched=    0B
+      7. SELECT vfs_entries                   rows=3    sent=   16B fetched=  330B
+read warm cache                              ok=True  stmts= 3 rows=  4 sent=   21B fetched=  330B
+      1. SELECT vfs_principal_revisions       rows=1    sent=    5B fetched=    0B
+      2. SELECT vfs_relabels                  rows=0    sent=    0B fetched=    0B
+      3. SELECT vfs_entries                   rows=3    sent=   16B fetched=  330B
+
+# body size dimension, system
+write create 4 MiB                           ok=True  stmts= 6 rows=  3 sent=4194605B fetched=   65B
+read 4 MiB                                   ok=True  stmts= 1 rows=  2 sent=    9B fetched=4194502B
+stat 4 MiB                                   ok=True  stmts= 1 rows=  2 sent=    9B fetched=  198B
+overwrite 4 MiB (1 byte differs)             ok=True  stmts= 8 rows=  4 sent=8388950B fetched=4194385B
+edit 4 MiB (1 byte)                          ok=True  stmts= 7 rows=  3 sent=8388934B fetched=4194369B
+
+# batch dimension, system
+write create 10,000                          ok=True  stmts=16 rows=10003 sent=2970112B fetched=270074B
+write overwrite 10,000                       ok=True  stmts=12 rows=20003 sent=3460005B fetched=520063B
+ls 10,000                                    ok=True  stmts= 2 rows=10002 sent=   33B fetched=1510167B

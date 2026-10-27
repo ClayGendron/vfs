@@ -1,0 +1,231 @@
+
+== authority: system ==
+system read(/docs/a.md): success=True rows=1 statements=2 (non-control=1)
+     1  SELECT:vfs_entries
+     1  control:BEGIN
+system stat(/docs/a.md): success=True rows=1 statements=2 (non-control=1)
+     1  SELECT:vfs_entries
+     1  control:BEGIN
+system ls(/docs): success=True rows=1 statements=3 (non-control=2)
+     2  SELECT:vfs_entries
+     1  control:BEGIN
+system write create (/docs/new-system.md): success=True rows=1 statements=12 (non-control=9)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+system write overwrite (/docs/new-system.md): success=True rows=1 statements=11 (non-control=8)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_versions
+     2  SELECT:vfs_entries
+     1  SELECT:vfs_meta
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+system mkdir (/docs/d-system): success=True rows=1 statements=9 (non-control=6)
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+system move (/docs/new-system.md -> /docs/moved-system.md): success=True rows=1 statements=17 (non-control=14)
+     7  SELECT:vfs_entries
+     2  SELECT:vfs_grants
+     1  SELECT:vfs_lock
+     1  UPDATE:vfs_edges
+     3  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+system delete (/docs/moved-system.md): success=True rows=1 statements=5 (non-control=4)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_lock
+     2  UPDATE:vfs_entries
+     1  control:BEGIN
+
+== authority: alice(named) ==
+alice(named) read(/docs/a.md): success=True rows=1 statements=4 (non-control=3)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+alice(named) stat(/docs/a.md): success=True rows=1 statements=4 (non-control=3)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+alice(named) ls(/docs): success=True rows=2 statements=5 (non-control=4)
+     2  SELECT:vfs_entries
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+alice(named) write create (/docs/new-alice(named).md): success=True rows=1 statements=14 (non-control=11)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+alice(named) write overwrite (/docs/new-alice(named).md): success=True rows=1 statements=14 (non-control=11)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_version_subjects
+     1  INSERT:vfs_versions
+     2  SELECT:vfs_entries
+     1  SELECT:vfs_meta
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+alice(named) mkdir (/docs/d-alice(named)): success=True rows=1 statements=11 (non-control=8)
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+alice(named) move (/docs/new-alice(named).md -> /docs/moved-alice(named).md): success=True rows=1 statements=19 (non-control=16)
+     7  SELECT:vfs_entries
+     2  SELECT:vfs_grants
+     1  SELECT:vfs_lock
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_edges
+     3  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+alice(named) delete (/docs/moved-alice(named).md): success=True rows=1 statements=7 (non-control=6)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_lock
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     2  UPDATE:vfs_entries
+     1  control:BEGIN
+
+== authority: anonymous ==
+anonymous read(/docs/a.md): success=True rows=1 statements=5 (non-control=4)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+anonymous stat(/docs/a.md): success=True rows=1 statements=5 (non-control=4)
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+anonymous ls(/docs): success=True rows=3 statements=6 (non-control=5)
+     2  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  control:BEGIN
+anonymous write create (/docs/new-anonymous.md): success=True rows=1 statements=16 (non-control=13)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     2  SELECT:vfs_entries
+     2  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+anonymous write overwrite (/docs/new-anonymous.md): success=True rows=1 statements=16 (non-control=13)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_version_subjects
+     1  INSERT:vfs_versions
+     3  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_meta
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+anonymous mkdir (/docs/d-anonymous): success=True rows=1 statements=13 (non-control=10)
+     1  INSERT:vfs_edges
+     1  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     2  SELECT:vfs_entries
+     2  SELECT:vfs_grants
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+anonymous move (/docs/new-anonymous.md -> /docs/moved-anonymous.md): success=True rows=1 statements=23 (non-control=20)
+     9  SELECT:vfs_entries
+     4  SELECT:vfs_grants
+     1  SELECT:vfs_lock
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     1  UPDATE:vfs_edges
+     3  UPDATE:vfs_entries
+     1  control:BEGIN
+     1  control:RELEASE
+     1  control:SAVEPOINT
+anonymous delete (/docs/moved-anonymous.md): success=True rows=1 statements=9 (non-control=8)
+     2  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  SELECT:vfs_lock
+     1  SELECT:vfs_principal_revisions
+     1  SELECT:vfs_relabels
+     2  UPDATE:vfs_entries
+     1  control:BEGIN
+
+first_touch on a fresh InMemoryStorage: 100 statements
+system write(entries=100, parents=True): success=True rows=100 statements=15 (non-control=10)
+     1  DELETE:vfs_blobs
+     1  DELETE:vfs_content
+     1  INSERT:vfs_content
+     1  INSERT:vfs_edges
+     2  INSERT:vfs_entries
+     1  INSERT:vfs_segments
+     1  SELECT:vfs_entries
+     1  SELECT:vfs_grants
+     1  UPDATE:vfs_entries
+     1  control:BEGIN
+     2  control:RELEASE
+     2  control:SAVEPOINT

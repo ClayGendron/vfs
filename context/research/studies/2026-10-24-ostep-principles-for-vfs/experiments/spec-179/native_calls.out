@@ -1,0 +1,7 @@
+write 50 files               ok=True hops=0 calls={}
+read                         ok=True hops=0 calls={}
+grep before reindex          ok=True hops=1 calls={('ContentMatcher()', 'loop'): 1, ('ContentMatcher.hit_lines', 'worker'): 1}
+reindex                      ok=True hops=10 calls={('LexicalBuilder()', 'loop'): 1, ('LexicalBuilder.add_docs', 'worker'): 1, ('LexicalBuilder.finish', 'worker'): 1, ('LexicalBuilder.next_batch', 'worker'): 2, ('LexicalBuilder.next_df_batch', 'worker'): 2, ('PostingsBuilder()', 'loop'): 1, ('PostingsBuilder.add_docs', 'worker'): 1, ('PostingsBuilder.next_batch', 'worker'): 2, ('distinct_gram_count', 'worker'): 50, ('markdown_refs', 'worker'): 1}
+grep indexed                 ok=True hops=1 calls={('ContentMatcher()', 'loop'): 1, ('ContentMatcher.hit_lines', 'worker'): 1, ('candidate_ids', 'loop'): 1}
+glob                         ok=True hops=0 calls={}
+glean                        ok=True hops=0 calls={('decode_summary', 'loop'): 2, ('lexical_score', 'loop'): 2, ('select_blocks', 'loop'): 1, ('tokenize', 'loop'): 1}

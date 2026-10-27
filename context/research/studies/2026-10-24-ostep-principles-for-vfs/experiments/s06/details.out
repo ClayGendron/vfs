@@ -1,0 +1,3 @@
+edit replay    success=False kind=vfs.invalid severity=error message='Invalid: old_string not found in file content.' data=None
+delete replay  success=False kind=vfs.not_found severity=error message='Not found' data={'vfs.trashed': True, 'vfs.deleted_at': '2026-10-24T11:34:55.317740'}
+rmedge absent  success=True kind=vfs.not_found severity=warning message='Not found: no cites edge to the target' data={'edge_type': 'cites'}

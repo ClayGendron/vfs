@@ -1,0 +1,175 @@
+# A. The five access paths, system actor, depth-2 file, 60-byte body
+
+## read /docs/a.md: success=True rows_out=1 statements=2 non_control=1 sent=16B fetched=330B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries JOIN content        rows_back=3     sent=        16B fetched=       330B
+
+## stat /docs/a.md: success=True rows_out=1 statements=2 non_control=1 sent=16B fetched=270B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=3     sent=        16B fetched=       270B
+
+## ls /docs: success=True rows_out=1 statements=3 non_control=2 sent=34B fetched=318B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=2     sent=         6B fetched=       168B
+   3. SELECT vfs_entries                     rows_back=1     sent=        28B fetched=       150B
+
+## write-create /docs/b.md: success=True rows_out=1 statements=12 non_control=9 sent=371B fetched=101B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=2     sent=        16B fetched=        64B
+   3. SELECT vfs_grants                      rows_back=1     sent=        17B fetched=        11B
+   4. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   5. INSERT vfs_entries                     rows_back=1     sent=       181B fetched=        26B
+   6. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   7. INSERT vfs_segments                    rows_back=0     sent=        20B fetched=         0B
+   8. INSERT vfs_edges                       rows_back=0     sent=        40B fetched=         0B
+   9. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  10. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  11. INSERT vfs_content                     rows_back=0     sent=        44B fetched=         0B
+  12. UPDATE vfs_entries                     rows_back=0     sent=        21B fetched=         0B
+
+## write-update /docs/b.md: success=True rows_out=1 statements=11 non_control=8 sent=354B fetched=118B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=3     sent=        16B fetched=       100B
+   3. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   4. UPDATE vfs_entries                     rows_back=0     sent=       126B fetched=         0B
+   5. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   6. SELECT vfs_meta                        rows_back=1     sent=         0B fetched=         0B
+   7. SELECT vfs_entries JOIN content        rows_back=1     sent=        16B fetched=        18B
+   8. INSERT vfs_versions                    rows_back=0     sent=       120B fetched=         0B
+   9. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  10. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  11. INSERT vfs_content                     rows_back=0     sent=        44B fetched=         0B
+
+## edit /docs/b.md: success=True rows_out=1 statements=12 non_control=9 sent=355B fetched=130B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries JOIN content        rows_back=3     sent=        16B fetched=       102B
+   3. SELECT vfs_entries                     rows_back=1     sent=         1B fetched=        10B
+   4. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   5. UPDATE vfs_entries                     rows_back=0     sent=       126B fetched=         0B
+   6. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   7. SELECT vfs_meta                        rows_back=1     sent=         0B fetched=         0B
+   8. SELECT vfs_entries JOIN content        rows_back=1     sent=        16B fetched=        18B
+   9. INSERT vfs_versions                    rows_back=0     sent=       120B fetched=         0B
+  10. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  11. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  12. INSERT vfs_content                     rows_back=0     sent=        44B fetched=         0B
+
+# B. Same paths as a named principal (rights stamps on the path)
+
+## alice read /docs/a.md: success=True rows_out=1 statements=4 non_control=3 sent=21B fetched=330B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_principal_revisions         rows_back=1     sent=         5B fetched=         0B
+   3. SELECT vfs_relabels                    rows_back=0     sent=         0B fetched=         0B
+   4. SELECT vfs_entries JOIN content        rows_back=3     sent=        16B fetched=       330B
+
+## alice write-update /docs/b.md: success=True rows_out=1 statements=14 non_control=11 sent=384B fetched=118B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_principal_revisions         rows_back=1     sent=         5B fetched=         0B
+   3. SELECT vfs_relabels                    rows_back=0     sent=         0B fetched=         0B
+   4. SELECT vfs_entries                     rows_back=3     sent=        16B fetched=       100B
+   5. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   6. UPDATE vfs_entries                     rows_back=0     sent=       126B fetched=         0B
+   7. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   8. SELECT vfs_meta                        rows_back=1     sent=         0B fetched=         0B
+   9. SELECT vfs_entries JOIN content        rows_back=1     sent=        16B fetched=        18B
+  10. INSERT vfs_versions                    rows_back=0     sent=       124B fetched=         0B
+  11. INSERT vfs_version_subjects            rows_back=0     sent=        21B fetched=         0B
+  12. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  13. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  14. INSERT vfs_content                     rows_back=0     sent=        44B fetched=         0B
+
+# C. Path depth: depth 2 vs depth 20 (the vsfs walk is 2 I/Os per level)
+
+## stat depth-20 file: success=True rows_out=1 statements=2 non_control=1 sent=698B fetched=2,122B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=21    sent=       698B fetched=     2,122B
+
+## read depth-20 file: success=True rows_out=1 statements=2 non_control=1 sent=698B fetched=2,182B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries JOIN content        rows_back=21    sent=       698B fetched=     2,182B
+
+## write-create depth-20 sibling: success=True rows_out=1 statements=12 non_control=9 sent=2,190B fetched=1,305B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=20    sent=       698B fetched=     1,206B
+   3. SELECT vfs_grants                      rows_back=1     sent=       699B fetched=        11B
+   4. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   5. INSERT vfs_entries                     rows_back=1     sent=       243B fetched=        88B
+   6. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   7. INSERT vfs_segments                    rows_back=0     sent=       352B fetched=         0B
+   8. INSERT vfs_edges                       rows_back=0     sent=        40B fetched=         0B
+   9. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  10. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  11. INSERT vfs_content                     rows_back=0     sent=        43B fetched=         0B
+  12. UPDATE vfs_entries                     rows_back=0     sent=        83B fetched=         0B
+
+# D. Body size: 4 MiB text body
+
+## write-create /docs/big.txt (4 MiB): success=True rows_out=1 statements=12 non_control=9 sent=4,194,693B fetched=104B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=2     sent=        19B fetched=        64B
+   3. SELECT vfs_grants                      rows_back=1     sent=        20B fetched=        11B
+   4. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   5. INSERT vfs_entries                     rows_back=1     sent=       188B fetched=        29B
+   6. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   7. INSERT vfs_segments                    rows_back=0     sent=        20B fetched=         0B
+   8. INSERT vfs_edges                       rows_back=0     sent=        40B fetched=         0B
+   9. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  10. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  11. INSERT vfs_content                     rows_back=0     sent= 4,194,353B fetched=         0B
+  12. UPDATE vfs_entries                     rows_back=0     sent=        21B fetched=         0B
+
+## stat /docs/big.txt: success=True rows_out=1 statements=2 non_control=1 sent=19B fetched=273B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=3     sent=        19B fetched=       273B
+
+## read /docs/big.txt: success=True rows_out=1 statements=2 non_control=1 sent=19B fetched=4,194,584B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries JOIN content        rows_back=3     sent=        19B fetched= 4,194,584B
+
+## ls /docs (big.txt is a child): success=True rows_out=3 statements=3 non_control=2 sent=34B fetched=621B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=2     sent=         6B fetched=       168B
+   3. SELECT vfs_entries                     rows_back=3     sent=        28B fetched=       453B
+
+## edit one byte of /docs/big.txt: success=True rows_out=1 statements=12 non_control=9 sent=8,388,980B fetched=8,388,752B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries JOIN content        rows_back=3     sent=        19B fetched= 4,194,415B
+   3. SELECT vfs_entries                     rows_back=1     sent=         1B fetched=        10B
+   4. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   5. UPDATE vfs_entries                     rows_back=0     sent=       130B fetched=         0B
+   6. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   7. SELECT vfs_meta                        rows_back=1     sent=         0B fetched=         0B
+   8. SELECT vfs_entries JOIN content        rows_back=1     sent=        16B fetched= 4,194,327B
+   9. INSERT vfs_versions                    rows_back=0     sent= 4,194,429B fetched=         0B
+  10. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  11. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  12. INSERT vfs_content                     rows_back=0     sent= 4,194,353B fetched=         0B
+
+## write-update /docs/big.txt (one byte differs): success=True rows_out=1 statements=11 non_control=8 sent=8,388,979B fetched=4,194,431B
+   1. BEGIN                                  rows_back=0     sent=         0B fetched=         0B
+   2. SELECT vfs_entries                     rows_back=3     sent=        19B fetched=       104B
+   3. SAVEPOINT                              rows_back=0     sent=         0B fetched=         0B
+   4. UPDATE vfs_entries                     rows_back=0     sent=       130B fetched=         0B
+   5. RELEASE                                rows_back=0     sent=         0B fetched=         0B
+   6. SELECT vfs_meta                        rows_back=1     sent=         0B fetched=         0B
+   7. SELECT vfs_entries JOIN content        rows_back=1     sent=        16B fetched= 4,194,327B
+   8. INSERT vfs_versions                    rows_back=0     sent= 4,194,429B fetched=         0B
+   9. DELETE vfs_content                     rows_back=0     sent=        16B fetched=         0B
+  10. DELETE vfs_blobs                       rows_back=0     sent=        16B fetched=         0B
+  11. INSERT vfs_content                     rows_back=0     sent= 4,194,353B fetched=         0B
+
+# E. Write buffering by the caller: 10,000 overwrites in one call vs 200 one-file calls
+
+## write 10,000 overwrites, one call: success=True rows_out=10000 statements=15 non_control=12 sent=3,697,786B fetched=648,954B
+    BEGIN=1, DELETE vfs_blobs=1, DELETE vfs_content=1, INSERT vfs_content=1, INSERT vfs_versions=5, RELEASE=1, SAVEPOINT=1, SELECT vfs_entries=1, SELECT vfs_entries JOIN content=1, SELECT vfs_meta=1, UPDATE vfs_entries=1
+
+## 200 one-file overwrites, 200 calls: statements=2200 (11.0 per file)
+
+# F. Create then delete: what a delayed write would have avoided
+
+## write-create /docs/tmp.md: success=True rows_out=1 statements=12 non_control=9 sent=385B fetched=103B
+    BEGIN=1, DELETE vfs_blobs=1, DELETE vfs_content=1, INSERT vfs_content=1, INSERT vfs_edges=1, INSERT vfs_entries=1, INSERT vfs_segments=1, RELEASE=1, SAVEPOINT=1, SELECT vfs_entries=1, SELECT vfs_grants=1, UPDATE vfs_entries=1
+
+## delete /docs/tmp.md: success=True rows_out=1 statements=5 non_control=4 sent=76B fetched=131B
+    BEGIN=1, SELECT vfs_entries=1, SELECT vfs_lock=1, UPDATE vfs_entries=2
+  rows left behind by create+delete: {'entry': 1, 'content': 1, 'segments': 1, 'edges': 1, 'versions': 0}
