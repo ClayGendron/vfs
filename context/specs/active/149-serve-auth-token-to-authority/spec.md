@@ -59,6 +59,7 @@ as data.
    opens the session server-side; MCP's own session id is bound to the
    verified `(client_id, issuer, sub)` triple; a refresh mints a new
    authority and a new session.
+   *Amended 2026-10-15 (spec 171): the 2026-07-28 MCP revision has no sessions, so nothing binds to a session id; the `Authority` is derived per request from the access token over HTTP and from `serve(authority=…)` over stdio, and a handler never passes `authority=None`.*
 4. **Outbound.** A remote-mount backend never forwards the inbound
    token. Two shapes per trust relationship: trusted subsystem (the
    backend authenticates as itself and sends the verified names as
@@ -74,6 +75,7 @@ as data.
    `permission_denied` (403) or `not_found` for a hidden target (ADR
    065). Unknown principal and wrong proof are indistinguishable at
    the edge (Plan 9's enumeration defence).
+   *Amended 2026-10-15 (spec 171, Clay): no token is anonymous, judged by the ladder at the addressed path; only an invalid token is 401 `vfs.unauthenticated`.*
 
 - **The edge is loud about open mounts (ADR 068 rule 7).** `serve()`
   refuses to start while any bound mount's posture is `open` unless

@@ -1,0 +1,10 @@
+mount_only     msgs {'Tstat': 3, 'Tclunk': 1} | verbs {'stat': 4} | sql 16
+cat            msgs {'Tstat': 6, 'Twalk': 3, 'Topen': 1, 'Tread': 3, 'Tclunk': 4} | verbs {'stat': 9, 'read': 1} | sql 40
+ls             msgs {'Tstat': 7, 'Twalk': 3, 'Tclunk': 4, 'Topen': 1, 'Tread': 1} | verbs {'stat': 10, 'ls': 1} | sql 45
+stat           msgs {'Tstat': 6, 'Twalk': 2, 'Tclunk': 3} | verbs {'stat': 9} | sql 36
+write_new      msgs {'Tstat': 5, 'Twalk': 4, 'Tcreate': 1, 'Twrite': 1, 'Tclunk': 4} | verbs {'stat': 7, 'write': 1} | sql 44
+mkdir          msgs {'Tstat': 5, 'Twalk': 4, 'Tcreate': 1, 'Tclunk': 4} | verbs {'stat': 10, 'mkdir': 1} | sql 53
+rm             msgs {'Tstat': 8, 'Twalk': 5, 'Tclunk': 5, 'Tremove': 1} | verbs {'stat': 13, 'delete': 1} | sql 62
+mv             msgs {'Tstat': 8, 'Twalk': 10, 'Tclunk': 8, 'Twstat': 1} | verbs {'stat': 17, 'move': 1} | sql 91
+py_read        msgs {'Tstat': 11, 'Twalk': 4, 'Topen': 2, 'Tread': 7, 'Tclunk': 5} | verbs {'stat': 14, 'ls': 1, 'read': 1} | sql 65
+py_write       msgs {'Tstat': 10, 'Twalk': 5, 'Topen': 1, 'Tread': 4, 'Tclunk': 5, 'Tcreate': 1, 'Twrite': 1} | verbs {'stat': 11, 'ls': 1, 'write': 1} | sql 65

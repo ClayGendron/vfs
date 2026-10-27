@@ -1,0 +1,96 @@
+Installed 5 packages in 16ms
+=== A. Result.model_json_schema() ===
+validation: ok, 14105 chars, $defs=['ErrorKind', 'Match', 'Observation', 'ResultError', 'Severity']
+  root additionalProperties=True required=None 'success' declared=False
+  Observation.additionalProperties=None
+  Observation.data={"anyOf": [{"format": "base64url", "type": "string"}, {"type": "null"}], "default": null, "title": "Data"}
+  Observation.path={"title": "Path", "type": "string"}
+  Observation.populated={"default": [], "items": {"type": "string"}, "title": "Populated", "type": "array", "uniqueItems": true}
+  Observation.content_hash={"anyOf": [{"type": "string"}, {"type": "null"}], "default": null, "title": "Content Hash"}
+  Observation.created_at={"anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}], "default": null, "title": "Created At"}
+serialization: ok, 14105 chars, $defs=['ErrorKind', 'Match', 'Observation', 'ResultError', 'Severity']
+  root additionalProperties=True required=None 'success' declared=False
+  Observation.additionalProperties=None
+  Observation.data={"anyOf": [{"format": "base64url", "type": "string"}, {"type": "null"}], "default": null, "title": "Data"}
+  Observation.path={"title": "Path", "type": "string"}
+  Observation.populated={"default": [], "items": {"type": "string"}, "title": "Populated", "type": "array", "uniqueItems": true}
+  Observation.content_hash={"anyOf": [{"type": "string"}, {"type": "null"}], "default": null, "title": "Content Hash"}
+  Observation.created_at={"anyOf": [{"format": "date-time", "type": "string"}, {"type": "null"}], "default": null, "title": "Created At"}
+
+=== B. live payloads against the serialization-mode schema ===
+- read text: success=True rows=1 errors=[] extras=[]
+    row keys=['content', 'content_hash', 'created_at', 'kind', 'path', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '# hello\n'
+- read png default: success=True rows=1 errors=['vfs.unavailable'] extras=[]
+    row keys=['content_hash', 'created_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: 'WARNING /photos/pixel.png: Unavailable: the binary awaits a rendering; run reindex — Retry shortly; the resource is temporarily unavailable.'
+- read png columns={data}: success=True rows=1 errors=[] extras=[]
+    row keys=['data', 'kind', 'path', 'version'] populated=['data', 'kind', 'path', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: ''
+- read png columns={data,mime_type}: success=True rows=1 errors=[] extras=[]
+    row keys=['data', 'kind', 'mime_type', 'path', 'version'] populated=['data', 'kind', 'mime_type', 'path', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: ''
+- ls /: success=True rows=2 errors=[] extras=[]
+    row keys=['created_at', 'kind', 'path', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row keys=['created_at', 'kind', 'path', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '/notes\n/photos'
+- stat png: success=True rows=1 errors=[] extras=[]
+    row keys=['content_hash', 'created_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '/photos/pixel.png\n  kind: file\n  size_bytes: 70\n  updated_at: 2026-10-16 01:02:08.366355'
+- glob **: success=True rows=4 errors=[] extras=[]
+    row keys=['created_at', 'kind', 'path', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row keys=['content_hash', 'created_at', 'kind', 'path', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '/notes\n/notes/a.md\n/photos\n/photos/pixel.png'
+- graph outbound: success=True rows=3 errors=[] extras=[]
+    row keys=['content_hash', 'created_at', 'depth', 'kind', 'path', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'depth', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row keys=['content_hash', 'created_at', 'depth', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content_hash', 'created_at', 'deleted_at', 'depth', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '/notes/a.md  (seed)\n└── cites → /photos/pixel.png  [1]\nedges: 1 among 2 nodes'
+- grants /notes: success=True rows=0 errors=[] extras=['grants']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '| path_prefix | principal_id | level      | granted_by | granted_at                 |\n| ----------- | ------------ | ---------- | ----------'
+- grant (write): success=True rows=0 errors=[] extras=['grants']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: '| path_prefix | principal_id | level | granted_by | granted_at                       |\n| ----------- | ------------ | ----- | ---------- | -'
+- read missing (error): success=False rows=0 errors=['vfs.not_found'] extras=[]
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: 'ERROR /nope.md: Not found — Check the path with ls or glob, or create the entry first. (retry: never)'
+- alice read hidden: success=True rows=1 errors=['vfs.unavailable'] extras=[]
+    row keys=['content_hash', 'created_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: 'WARNING /photos/pixel.png: Unavailable: the binary awaits a rendering; run reindex — Retry shortly; the resource is temporarily unavailable.'
+- write two: success=True rows=1 errors=[] extras=[]
+    row keys=['kind', 'path', 'size_bytes', 'status', 'version'] populated=['kind', 'path', 'size_bytes', 'status', 'version']
+  raw to_payload: VALID
+  stripped: VALID
+    rendered: 'write success: 1 file\n\n  created /notes/b.md'
+
+=== C. from_payload after the wire strips bytes ===
+in-process row populated: ['data', 'kind', 'mime_type', 'path', 'version'] data len: 70
+honest strip -> populated: ['kind', 'mime_type', 'path', 'version'] data: None errors: []
+data dropped but mask kept -> populated: ['data', 'kind', 'mime_type', 'path', 'version'] data: None ('data' in populated claims fetched-and-null)
+row with no populated key -> populated: ['mime_type', 'path']
+success key ignored inbound; payload success=False with no error -> ['vfs.internal']
+
+=== D. size: 10,000 rows ===
+ls of 10,000 rows: to_payload JSON = 1,790,064 chars; rendered text = 169,999 chars
+read of 10,000 images (no bytes): to_payload JSON = 2,080,066 chars

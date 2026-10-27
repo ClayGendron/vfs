@@ -1,0 +1,12 @@
+entry: /data/users.json -> 61 bytes (body was text)
+  jaq .users[].name            exit=0 trap=None stdin=61B stdout=b'"ada"\n"grace"\n"\xc3\xa9dith"\n' stderr=b''
+  echo-stdin                   exit=0 trap=None stdin=23B stdout=b'"ada"\n"grace"\n"\xc3\xa9dith"\n' stderr=b'echo-stdin: 23 bytes\n'
+  jaq -R -r ascii_upcase       exit=0 trap=None stdin=23B stdout=b'"ADA"\n"GRACE"\n"\xc3\xa9DITH"\n' stderr=b''
+exit: write /data/names.txt v1 status=created
+verb calls for the whole pipeline: {'ls': 3, 'read': 2, 'write': 1}
+/data/names.txt = '"ADA"\n"GRACE"\n"éDITH"\n'
+
+### a bytes-only stage in the middle: echo-stdin on a 1 MiB binary payload, no vfs involvement
+  exit=0 out==in: True (1048576 B) fd_read calls=17 fd_write calls=5 run=4.2 ms
+
+STEP 8 OK

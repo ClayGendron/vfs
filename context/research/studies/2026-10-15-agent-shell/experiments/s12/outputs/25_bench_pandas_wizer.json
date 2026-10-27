@@ -1,0 +1,47 @@
+[
+  {
+    "label": "pandas-wizer",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-pandas-wizer.wasm",
+    "wasm_bytes": 94501599,
+    "cwasm_bytes": 110614640,
+    "module_load": "compile",
+    "module_load_seconds": 2.3215,
+    "entry": "vfs_run",
+    "programs": {
+      "pass": {
+        "median_s": 0.0048,
+        "min_s": 0.0045,
+        "runs": 10,
+        "memory_mib": 61.5,
+        "verbs": {},
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.0048,
+        "min_s": 0.0046,
+        "runs": 10,
+        "memory_mib": 61.5,
+        "verbs": {},
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 0.0047,
+        "min_s": 0.0045,
+        "runs": 10,
+        "memory_mib": 61.5,
+        "verbs": {},
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 0.0049,
+        "min_s": 0.0047,
+        "runs": 10,
+        "memory_mib": 61.5,
+        "verbs": {},
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 1474.3,
+    "host_maxrss_mib_before": 1427.9
+  }
+]

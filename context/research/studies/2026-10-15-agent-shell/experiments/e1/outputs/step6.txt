@@ -1,0 +1,24 @@
+wasmtime 49.0.0; config fingerprint 'epoch=1;cranelift=default;wasmtime=49.0.0'
+  jaq    v1 cold : compiled        411.2 ms  wasm=3726466 B  cwasm=8913912 B  key=31b1974f3990
+  jaq    v1 warm : deserialized      1.7 ms  wasm=3726466 B  cwasm=8913912 B  key=31b1974f3990
+  jaq    v1 warm2: deserialized      1.2 ms  wasm=3726466 B  cwasm=8913912 B  key=31b1974f3990
+  upper  v1 cold : compiled         13.6 ms  wasm=82980 B  cwasm=274376 B  key=ea210b029dec
+  upper  v1 warm : deserialized      0.2 ms  wasm=82980 B  cwasm=274376 B  key=ea210b029dec
+  upper  v1 warm2: deserialized      0.1 ms  wasm=82980 B  cwasm=274376 B  key=ea210b029dec
+
+### rewrite /bin/upper.wasm (same bytes, overwrite=True) -> does the version advance?
+  write: status=updated version=2
+  load after same-bytes rewrite: version=2 compiled 15.9 ms key=acea2980f7e8
+
+### rewrite /bin/upper.wasm with different bytes (the fsops binary) -> new version, new key, recompile
+  write status=updated version=3; load: compiled 15.7 ms key=3ab67654b32c
+
+### deserialize(bytes) vs deserialize_file (mmap) vs compile, jaq, 5 reps each
+  compile              min=   284.7 ms  max=   352.0 ms
+  deserialize(bytes)   min=    16.6 ms  max=    17.3 ms
+  deserialize_file     min=    15.4 ms  max=    15.7 ms
+
+### cache poisoning check: a cwasm from a different engine config is refused
+  refused: 'Module was compiled with epoch interruption but it is not enabled for the host'
+
+STEP 6 OK

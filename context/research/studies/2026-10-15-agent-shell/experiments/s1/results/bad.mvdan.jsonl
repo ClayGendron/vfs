@@ -1,0 +1,20 @@
+{"id":1,"dialect":"bash","ok":false,"error":"cmd:1:6: reached EOF without closing quote `\"`"}
+{"id":1,"dialect":"posix","ok":false,"error":"cmd:1:6: reached EOF without closing quote `\"`"}
+{"id":2,"dialect":"bash","ok":false,"error":"cmd:1:1: `if` statement must end with `fi`"}
+{"id":2,"dialect":"posix","ok":false,"error":"cmd:1:1: `if` statement must end with `fi`"}
+{"id":3,"dialect":"bash","ok":false,"error":"cmd:1:9: a command can only contain words and redirects; encountered `)`"}
+{"id":3,"dialect":"posix","ok":false,"error":"cmd:1:9: a command can only contain words and redirects; encountered `)`"}
+{"id":4,"dialect":"bash","ok":false,"error":"cmd:1:22: `|` must be followed by a statement"}
+{"id":4,"dialect":"posix","ok":false,"error":"cmd:1:22: `|` must be followed by a statement"}
+{"id":5,"dialect":"bash","ok":true,"nodes":20}
+{"id":5,"dialect":"posix","ok":true,"nodes":20}
+{"id":6,"dialect":"bash","ok":false,"error":"cmd:1:1: `for` statement must end with `done`"}
+{"id":6,"dialect":"posix","ok":false,"error":"cmd:1:1: `for` statement must end with `done`"}
+{"id":7,"dialect":"bash","ok":false,"error":"cmd:1:4: `\u0026\u0026` must be followed by a statement"}
+{"id":7,"dialect":"posix","ok":false,"error":"cmd:1:4: `\u0026\u0026` must be followed by a statement"}
+{"id":8,"dialect":"bash","ok":false,"error":"cmd:1:11: `+` must be followed by an expression"}
+{"id":8,"dialect":"posix","ok":false,"error":"cmd:1:11: `+` must be followed by an expression"}
+{"id":9,"dialect":"bash","ok":true,"nodes":16}
+{"id":9,"dialect":"posix","ok":true,"nodes":16}
+{"id":10,"dialect":"bash","ok":false,"error":"cmd:2:1: `}` can only be used to close a block"}
+{"id":10,"dialect":"posix","ok":false,"error":"cmd:2:1: `}` can only be used to close a block"}

@@ -1,0 +1,79 @@
+{
+  "exit": 0,
+  "error": null,
+  "wall_s": 4.718,
+  "timings_ms": {
+    "loadPyodide_ms": 976,
+    "loadPackages_ms": 863,
+    "run_ms": 2816,
+    "bridge_calls": 20,
+    "bridge_wait_ms": 62,
+    "rss_MB": 505
+  },
+  "guest_stdout": "rows: 48 regions: ['east', 'north', 'south', 'west']\n        sum       mean  max\nregion                     \neast    818  68.166667  109\nnorth   662  55.166667  106\nsouth   690  57.500000  102\nwest    646  53.833333  101\npng magic ok: True size: 51795\nlisting /out: ['plot.png', 'summary.csv']\nplatform: emscripten numpy 2.2.5 pandas 2.3.1 mpl 3.8.4\n",
+  "guest_stderr": "",
+  "node_stderr_tail": "",
+  "bridge_round_trips": 20,
+  "ops": {
+    "stat": 13,
+    "read": 3,
+    "readdir": 2,
+    "write": 2
+  },
+  "verbs": {
+    "stat": 13,
+    "read": 3,
+    "ls": 2,
+    "write": 2
+  },
+  "sql_total": 106,
+  "sql_per_op": {
+    "stat": 52,
+    "read": 12,
+    "readdir": 10,
+    "write": 32
+  },
+  "trace": [
+    "write /out/plot.png 51795B -> version 1 mime None",
+    "write /out/summary.csv 135B -> version 1 mime None"
+  ],
+  "ops_by_path": {
+    "stat /out/plot.png": 4,
+    "stat /out": 2,
+    "stat /out/summary.csv": 2,
+    "stat /scripts": 1,
+    "stat /scripts/job.py": 1,
+    "read /scripts/job.py": 1,
+    "readdir /": 1,
+    "stat /data": 1,
+    "stat /matplotlibrc": 1,
+    "stat /data/sales.csv": 1,
+    "read /data/sales.csv": 1,
+    "write /out/plot.png": 1,
+    "write /out/summary.csv": 1,
+    "read /out/plot.png": 1,
+    "readdir /out": 1
+  },
+  "png_row": {
+    "path": "/out/plot.png",
+    "kind": "file",
+    "mime_type": "image/png",
+    "size_bytes": 51795,
+    "version": 1,
+    "data_is_png": true,
+    "content_is_none": true
+  },
+  "mcp_image_block": {
+    "type": "image",
+    "mimeType": "image/png",
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAfQAAAEsCAYAAAA1...",
+    "_data_b64_len": 69060
+  },
+  "summary_row": {
+    "path": "/out/summary.csv",
+    "kind": "file",
+    "mime_type": null,
+    "content_head": "region,sum,mean,max\neast,818,68.16666666666667,109\nnorth,662,55.166666666666664,106\nsouth,690,57.5,102\nwest,646,53.83333"
+  },
+  "trash": []
+}

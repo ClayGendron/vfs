@@ -1,0 +1,31 @@
+{
+  "mode": "version",
+  "packages": [
+    "numpy"
+  ],
+  "rss_mb_start": 116.1,
+  "env_detect": "function function function function",
+  "eval_asm_js_ms": 30,
+  "eval_loader_ms": 2,
+  "loadPyodide_type": "function",
+  "loadPyodide_ms": 1153,
+  "rss_mb_after_load": 492.4,
+  "python_version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489",
+  "loadPackage_ms": 231,
+  "rss_mb_after_packages": 537.2,
+  "loader_reads": {
+    "pyodide-lock.json": 1,
+    "python_stdlib.zip": 1,
+    "pyodide.asm.wasm": 1,
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": 1
+  },
+  "loader_bytes_mb": 13.5,
+  "numpy_version": "2.2.5",
+  "imports": "numpy=2.2.5 pandas=FAIL:ModuleNotFoundError scipy=FAIL:ModuleNotFoundError matplotlib=FAIL:ModuleNotFoundError PIL=FAIL:ModuleNotFoundError yaml=FAIL:ModuleNotFoundError bs4=FAIL:ModuleNotFoundError dateutil=FAIL:ModuleNotFoundError pydantic=FAIL:ModuleNotFoundError sqlite3=FAIL:ModuleNotFoundError lxml=FAIL:ModuleNotFoundError openpyxl=FAIL:ModuleNotFoundError docx=FAIL:ModuleNotFoundError",
+  "js_door": "process=False Deno=False Bun=False require=False fetch=False read=True readbuffer=True load=True __host=True python=True",
+  "python_global_from_guest": "[object Object]",
+  "wall_s": 1.72,
+  "rss_mb_end": 585.0,
+  "guest_stdout": "Loading numpy\nLoaded numpy\n",
+  "guest_stderr": ""
+}

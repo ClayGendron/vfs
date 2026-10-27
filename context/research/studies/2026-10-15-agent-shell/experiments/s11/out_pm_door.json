@@ -1,0 +1,31 @@
+{
+  "mode": "door",
+  "packages": [
+    "numpy"
+  ],
+  "rss_mb_start": 116.5,
+  "env_detect": "function function function function",
+  "eval_asm_js_ms": 31,
+  "eval_loader_ms": 1,
+  "loadPyodide_type": "function",
+  "loadPyodide_ms": 1196,
+  "rss_mb_after_load": 492.9,
+  "python_version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489",
+  "loadPackage_ms": 256,
+  "rss_mb_after_packages": 530.7,
+  "loader_reads": {
+    "pyodide-lock.json": 1,
+    "python_stdlib.zip": 1,
+    "pyodide.asm.wasm": 1,
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": 1
+  },
+  "loader_bytes_mb": 13.5,
+  "door_open": "js.python.eval(getpid) -> 56266\njs.python.eval(open /etc/hosts) -> '##\\n# Host Database\\n#'\njs.python.exec(import vfs) -> 'exec ok'\njs.__host.readText -> '{\\n  \"name\": \"pyodide\",\\n  \"vers'\njs.read -> '{\\n  \"name\": \"pyodide\",\\n  \"vers'\njs.load -> (path) => (0, eval)(globalThis.read(path))\njs.os.system -> 'C8tABA=='\njs.eval -> 2\njs.WebAssembly -> 'JsProxy'",
+  "delete_results": "python:true:undefined __host:true:undefined read:true:undefined readbuffer:true:undefined load:true:undefined os:true:undefined print:true:undefined printErr:true:undefined",
+  "door_closed": "js.python.eval(getpid) -> AttributeError: python\njs.python.eval(open /etc/hosts) -> AttributeError: python\njs.python.exec(import vfs) -> AttributeError: python\njs.__host.readText -> AttributeError: __host\njs.read -> AttributeError: read\njs.load -> AttributeError: load\njs.os.system -> AttributeError: os\njs.eval -> 2\njs.WebAssembly -> 'JsProxy'",
+  "pm_require_from_guest": "AttributeError",
+  "wall_s": 1.49,
+  "rss_mb_end": 530.8,
+  "guest_stdout": "Loading numpy\nLoaded numpy\n",
+  "guest_stderr": ""
+}

@@ -1,0 +1,3 @@
+wasm-ld: warning: function signature mismatch: get_datetime_metadata_from_dtype
+>>> defined as (i32, i32) -> void in /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-archives/pandas_pandas_datetime.a(src_vendored_numpy_datetime_np_datetime.c.o)
+>>> defined as (i32) -> i32 in /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-archives/numpy__multiarray_umath.a(src_multiarray_datetime.c.o)

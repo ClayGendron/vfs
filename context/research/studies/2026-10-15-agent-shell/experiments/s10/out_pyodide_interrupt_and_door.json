@@ -1,0 +1,32 @@
+{
+  "interrupt": {
+    "type": "result",
+    "outcome": "KeyboardInterrupt | ",
+    "loop_ms": 305,
+    "elapsed_ms": 1319
+  },
+  "terminate": {
+    "type": "exit",
+    "code": 1,
+    "elapsed_ms": 1323
+  },
+  "door": {
+    "type": "result",
+    "door": {
+      "process_pid": 46442,
+      "env_HOME": "/Users/claygendron",
+      "cwd": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s10",
+      "argv0": "/Users/claygendron/.nvm/versions/node/v22.14.0/bin/node",
+      "has_process_binding": true,
+      "globalThis_keys_sample": [
+        "Buffer",
+        "WebAssembly",
+        "fetch",
+        "globalThis",
+        "process"
+      ],
+      "os_environ_HOME": "/home/pyodide"
+    },
+    "elapsed_ms": 1022
+  }
+}

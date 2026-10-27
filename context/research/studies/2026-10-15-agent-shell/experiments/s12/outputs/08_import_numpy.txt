@@ -1,0 +1,15 @@
+exit=0 trapped=None load=compile 1.1153s run=2.1024s
+verbs: {'read': 276, 'stat': 55} sql: 1655 preview1 calls: 2026
+unimplemented called: {'path_readlink': 1} pings: [21]
+--- stdout ---
+ping: 43
+numpy builtin? True 93
+numpy 2.5.2 /usr/local/lib/python314.zip/numpy/__init__.py
+45 int32
+7.999999999999998 [1.0, 1.0, 1.0, 1.0] [4, 5, 7]
+0.3333333333333333333333333333333333 128
+built-in None
+
+--- stderr ---
+Could not find platform dependent libraries <exec_prefix>
+

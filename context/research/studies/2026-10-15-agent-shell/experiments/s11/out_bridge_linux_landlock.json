@@ -1,0 +1,75 @@
+{
+  "spawn": "docker",
+  "sandbox": "landlock",
+  "wall_s": 0.95,
+  "child_exit": 0,
+  "guest": {
+    "exit": 0,
+    "error": null,
+    "timing": {
+      "connect_ms": 8,
+      "preimport_ms": 504,
+      "sandbox_ms": 1.02,
+      "run_ms": 107
+    },
+    "sandbox": {
+      "landlock_abi": 8,
+      "landlock": "ok",
+      "seccomp": "ok",
+      "probes": {
+        "c_fopen /etc/hosts": "denied errno 13",
+        "c_fopen /.ssh/config": "denied errno 2",
+        "c_fopen /.zshrc": "denied errno 2",
+        "py_open /etc/passwd": "denied errno 13",
+        "socket+connect": "socket denied errno 1 (EPERM)",
+        "execve": "denied errno 1 (EPERM)",
+        "write /tmp": "ALLOWED",
+        "thread": "ok"
+      }
+    },
+    "bridge_calls": 9,
+    "bridge_wait_ms": 57,
+    "rss_mb": 104.85546875,
+    "platform": "linux",
+    "python": "3.13.15"
+  },
+  "ops": {
+    "read": 3,
+    "stat": 3,
+    "write": 2,
+    "readdir": 1,
+    "done": 1
+  },
+  "verbs": {
+    "read": 3,
+    "stat": 3,
+    "write": 2,
+    "ls": 1
+  },
+  "sql_total": 69,
+  "sql_per_op": {
+    "read": 12,
+    "stat": 12,
+    "write": 32,
+    "readdir": 5
+  },
+  "trace": [
+    "write /out/plot.png 52520B -> version 1 mime None",
+    "write /out/summary.csv 135B -> version 1 mime None"
+  ],
+  "png_row": {
+    "path": "/out/plot.png",
+    "kind": "file",
+    "mime_type": "image/png",
+    "size_bytes": 52520,
+    "version": 1,
+    "data_is_png": true,
+    "content_is_none": true
+  },
+  "summary_row": {
+    "mime_type": null,
+    "content_head": "region,sum,mean,max\neast,818,68.16666666666667,109\nnorth,662,55.166666666666664,106\nsouth,690,57.5,1"
+  },
+  "guest_stdout": "rows: 48 regions: ['east', 'north', 'south', 'west']\n        sum       mean  max\nregion                     \neast    818  68.166667  109\nnorth   662  55.166667  106\nsouth   690  57.500000  102\nwest    646  53.833333  101\npng magic ok: True size: 52520\nlisting /out: ['plot.png', 'summary.csv']\nplatform: linux numpy 2.5.4 pandas 3.0.6 mpl 3.11.2\n",
+  "guest_stderr": ""
+}

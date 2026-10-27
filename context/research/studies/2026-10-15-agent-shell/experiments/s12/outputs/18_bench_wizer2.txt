@@ -1,0 +1,5 @@
+== wizer: wasm 50635154 B, cwasm 55388896 B, load compile 1.0958s, host maxrss 904.9 MiB
+   pass          median      3.8 ms  min      3.5 ms  mem   40.0 MiB  verbs {}  -> ''
+   print         median      3.2 ms  min      2.8 ms  mem   40.0 MiB  verbs {}  -> 'hello'
+   import_numpy  median      3.0 ms  min      2.8 ms  mem   40.0 MiB  verbs {}  -> '2.5.2'
+   arange_sum    median      3.3 ms  min      2.9 ms  mem   40.0 MiB  verbs {}  -> '45'

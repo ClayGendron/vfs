@@ -1,0 +1,21 @@
+pydantic-monty 1.1.0 (worker binary: pydantic-monty-runtime 1.1.0)
+new pool (spawn worker + handshake): 5.0 ms
+first checkout + feed_run('1 + 1'): 19.97 ms
+warm checkout + feed_run after 50 ms idle (median of 20): 0.80 ms
+print('hello') via CollectString (median of 20): 0.099 ms
+1e6-iteration loop (median of 5): 41.9 ms
+1000 host round trips via external_lookup (median of 5): 96.4 ms -> 96.4 us/call
+mid-feed snapshot: dump=2619 bytes in 1.17 ms; load_snapshot into fresh session 2.16 ms; resumed OK
+interrupt of `while True` with max_feed_duration_secs=0.2: MontyRuntimeError: TimeoutError: feed time limit exceeded: 200.086334ms > 200ms after 201 ms
+worker RSS: idle=9 MB after loop+roundtrips=10 MB; host RSS before=28 MB after=30 MB
+subset probes:
+  class with base    MontyRuntimeError: NotImplementedError: The monty syntax parser does not yet support clas
+  generator          MontyRuntimeError: NotImplementedError: The monty syntax parser does not yet support yiel
+  match              MontyRuntimeError: NotImplementedError: The monty syntax parser does not yet support patt
+  import csv         MontyRuntimeError: ModuleNotFoundError: No module named 'csv'
+  import enum        MontyRuntimeError: ModuleNotFoundError: No module named 'enum'
+  dataclass          ok
+  property           MontyRuntimeError: NotImplementedError: The monty syntax parser does not yet support meth
+  del                MontyRuntimeError: NotImplementedError: The monty syntax parser does not yet support the 
+  walrus             ok
+  with open          MontyRuntimeError: PermissionError: Permission denied: '/tmp/x'

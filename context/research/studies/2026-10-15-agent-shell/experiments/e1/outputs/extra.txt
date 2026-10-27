@@ -1,0 +1,41 @@
+### what the step-7 'other: WasmtimeError' outcomes say
+    444  WasmtimeError: error while executing at wasm backtrace:
+
+### the SQL statements of one warm `upper /data/in.txt /data/out.txt` run, grouped by verb
+  verbs={'ls': 1, 'read': 1, 'stat': 2, 'write': 1} statements=35
+      5  BEGIN 
+      5  SELECT AS
+      5  SELECT vfs_relabels.revision
+      5  SELECT vfs_grants.level
+      2  SELECT vfs_entries.content_hash,
+      2  SELECT vfs_entries.created_at,
+      2  SELECT vfs_entries.kind,
+      1  SELECT vfs_entries.path,
+      1  SAVEPOINT 
+      1  UPDATE SET
+      1  RELEASE sa_savepoint_1
+      1  SELECT 
+      1  SELECT vfs_content.content,
+      1  DELETE vfs_content
+      1  DELETE vfs_blobs
+      1  INSERT vfs_content
+  first 12 statements verbatim (truncated):
+    BEGIN
+    SELECT max(vfs_principal_revisions.revision) AS max_1 
+    SELECT vfs_relabels.path_prefix, vfs_relabels.revision 
+    SELECT vfs_grants.path_prefix, vfs_grants.level 
+    SELECT vfs_entries.entry_id, vfs_entries.content_hash, vfs_entries.created_at, v
+    SELECT vfs_entries.parent_id, vfs_entries.content_hash, vfs_entries.created_at, 
+    BEGIN
+    SELECT max(vfs_principal_revisions.revision) AS max_1 
+    SELECT vfs_relabels.path_prefix, vfs_relabels.revision 
+    SELECT vfs_grants.path_prefix, vfs_grants.level 
+    SELECT vfs_entries.content_hash, vfs_entries.created_at, vfs_entries.deleted_at,
+    BEGIN
+
+### alloc with no memory limit: how far does it get before wasm32's own ceiling?
+  trap=TrapCode.UNREACHABLE last progress line=['alloc: 1024 MiB'] abort=[]
+
+### jaq decides colour from fd_fdstat_get on stdout: tty vs pipe
+  stdout_is_tty=False: stdout=b'{\n  "a": 1\n}\n'
+  stdout_is_tty=True: stdout=b'{\n  "a": 1\n}\n'

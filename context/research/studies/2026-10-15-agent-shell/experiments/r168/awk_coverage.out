@@ -1,0 +1,4 @@
+awk programs	364
+served by spec 168's listed forms (exact shapes)	95	26%
+served by the proposed measured subset	349	96%
+programs using the !seen[$0]++ idiom	0

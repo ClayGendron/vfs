@@ -1,0 +1,15 @@
+== floor: wasm 39551987 B, cwasm 34321544 B, load compile 1.1077s, host maxrss 735.0 MiB
+   pass          median    119.2 ms  min    117.3 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> ''
+   print         median    118.5 ms  min    117.3 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> 'hello'
+   import_numpy  median   1889.9 ms  min   1878.3 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '2.5.2'
+   arange_sum    median   1883.7 ms  min   1876.2 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '45'
+== numpy: wasm 39551987 B, cwasm 34321544 B, load compile 1.0573s, host maxrss 765.4 MiB
+   pass          median    118.6 ms  min    117.1 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> ''
+   print         median    117.7 ms  min    117.1 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> 'hello'
+   import_numpy  median   1889.6 ms  min   1884.1 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '2.5.2'
+   arange_sum    median   1885.4 ms  min   1881.6 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '45'
+== wizer: wasm 50768696 B, cwasm 55388896 B, load compile 1.0527s, host maxrss 1008.0 MiB
+   pass          median      3.2 ms  min      2.9 ms  mem   40.0 MiB  verbs {}  -> ''
+   print         median      2.7 ms  min      2.6 ms  mem   40.0 MiB  verbs {}  -> 'hello'
+   import_numpy  median      2.6 ms  min      2.6 ms  mem   40.0 MiB  verbs {}  -> '2.5.2'
+   arange_sum    median      2.7 ms  min      2.6 ms  mem   40.0 MiB  verbs {}  -> '45'

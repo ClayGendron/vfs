@@ -1,0 +1,17 @@
+### Part A: LAST_EXCEPTION is a module global (wasmtime/_func.py); 4 threads x 2000 proc_exit guests
+    6931/8000  own code
+     805/8000  other: WasmtimeError
+      53/8000  WRONG code 11 (wanted 13)
+      47/8000  WRONG code 13 (wanted 11)
+      43/8000  WRONG code 13 (wanted 10)
+      41/8000  WRONG code 10 (wanted 13)
+      39/8000  WRONG code 11 (wanted 10)
+      38/8000  WRONG code 10 (wanted 11)
+       2/8000  WRONG code 11 (wanted 12)
+       1/8000  WRONG code 13 (wanted 12)
+
+### Part B: two real guests concurrently on the vfs loop (upper on two files)
+  20 concurrent rounds, 0 mismatches; /a/out.txt v20='ONE\nTWO\n'; /b/out.txt v20='X\nY\nZ\nW\n'
+  (the default executor has >1 worker, so both guests were on worker threads at once; vfs verbs serialize on the loop)
+
+STEP 7 DONE

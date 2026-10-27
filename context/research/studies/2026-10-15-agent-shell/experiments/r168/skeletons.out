@@ -1,0 +1,58 @@
+# awk skeletons (count, skeleton)
+70	NR>=N && NR<=N {print NR"S"$N}
+61	/R/,/R/
+22	{print $N}
+15	NR>=N && NR<=N {printf "S", NR, $N}
+11	/R/{v=N} /R/{v=N} v
+8	{sub(/R/, $N+N); print}
+7	NR>=N && NR<=N
+6	NR>=N && NR<=N && /R/ {print NR"S"$N}
+6	/R/,N
+6	/R/{v=N} v
+6	{printf "S", $N+N; $N="S"; print}
+4	{print $N, $N}
+4	$N != N
+4	/R/{v=N} v{print; v++} v>N{exit}
+4	{print $N, $N, $N, $N, $N, $N}
+4	$N>N && $N<N
+3	NR>=N && NR<=N && /R/
+3	$N>N
+3	{printf "S", $N}
+3	{v+=$N} END {print "S", v}
+3	/R/,/R/{print NR"S"$N}
+(90 skeletons seen fewer than 3 times omitted)
+
+(distinct awk skeletons: 111; programs: 362)
+
+# sed skeletons (count, [flags] skeleton)
+7831	[-n] N,Np
+253	(-i followed by an empty-string argument: the BSD in-place form)
+246	[-i] 
+92	[-] s/R/S/
+88	[-n] /R/,/R/p
+75	[-] s/R/S/g
+65	[-n] N,Np;N,Np
+49	[-n] $(C),+Np
+39	[-n] $v,$(C)p
+34	[-n] /R/,$p
+28	[-n] /R/R/R/p
+20	[-n] Np
+19	[-n] $(C),$(C)p
+18	[-E] s/R/S/
+17	[-e] s/R/S/
+11	[-n] N,Np;N,Np;N,Np
+10	[-n] N,Np;N,Np;N,Np;N,Np
+9	[-n] $v
+7	[-ei] s/R/S/
+6	[-n] /R/,+Np
+6	[-ei] s/R/S/g
+5	[-n] N,Np;N,Np;N,Np;N,Np;N,Np
+5	[-E] s/R/S/R/R/R/g
+4	[-n] /R/,/R/R/R/s/p
+4	[-] s/R/S/R/R/R/
+4	[-e] s/R/S/g
+3	[-n] $(C)
+3	[-n] N,Np;/R/,/R/p
+(50 skeletons seen fewer than 3 times omitted)
+
+(distinct sed skeletons: 78; scripts: 9006)

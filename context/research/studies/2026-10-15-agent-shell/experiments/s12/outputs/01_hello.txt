@@ -1,0 +1,1 @@
+hello from wasm32-wasip1, argc=2, sizeof(long double)=16

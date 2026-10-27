@@ -1,0 +1,37 @@
+== sniff_mime on wasm magic
+  core module   -> application/octet-stream
+  component     -> application/octet-stream
+[write /opt/bin/upper.wasm data=] success=True
+    row path=/opt/bin/upper.wasm kind=file mime=None source=None hash= v=1 populated=['kind', 'path', 'size_bytes', 'status', 'version']
+[stat /opt/bin/upper.wasm] success=True
+    row path=/opt/bin/upper.wasm kind=file mime=application/octet-stream source=bytes hash=f47e71368119 v=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[write /opt/bin/fake.wasm content=] success=True
+    row path=/opt/bin/fake.wasm kind=file mime=None source=None hash= v=1 populated=['kind', 'path', 'size_bytes', 'status', 'version']
+[stat /opt/bin/fake.wasm] success=True
+    row path=/opt/bin/fake.wasm kind=file mime=None source=text hash=56a79f3b1154 v=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[same-bytes reinstall] success=True
+    row path=/opt/bin/upper.wasm kind=file mime=None source=None hash= v=2 populated=['kind', 'path', 'size_bytes', 'status', 'version']
+
+== the gates a resolver relies on (posture none at /, bob list on upper, zed nothing)
+[posture / none] success=True
+[grant bob list /opt/bin] success=True
+[bob stat upper.wasm] success=True
+    row path=/opt/bin/upper.wasm kind=file mime=None source=None hash= v=None populated=['kind', 'path']
+[bob ls /opt/bin] success=True
+    row path=/opt/bin/fake.wasm kind=file mime=None source=None hash= v=None populated=['kind', 'path']
+    row path=/opt/bin/upper.wasm kind=file mime=None source=None hash= v=None populated=['kind', 'path']
+[bob read columns={content_hash,version}] success=False
+    error kind=vfs.permission_denied sev=error path=/opt/bin/upper.wasm msg='Permission denied'
+[bob read columns={data}] success=False
+    error kind=vfs.permission_denied sev=error path=/opt/bin/upper.wasm msg='Permission denied'
+[zed stat upper.wasm] success=False
+    error kind=vfs.not_found sev=error path=/opt msg='Not found'
+[grant bob read upper.wasm] success=True
+[bob read columns={content_hash,version} (now read)] success=True
+    row path=/opt/bin/upper.wasm kind=file mime=None source=None hash=f47e71368119 v=2 populated=['content_hash', 'kind', 'path', 'version']
+
+== who owns /opt/bin when an agent mints it (open posture, default)
+[stat /opt/bin columns owner?] success=True
+    row path=/opt/bin kind=directory mime=None source=text hash= v=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[bob overwrites ann's x.wasm (open default)] success=True
+    row path=/opt/bin/x.wasm kind=file mime=None source=None hash= v=2 populated=['kind', 'path', 'size_bytes', 'status', 'version']

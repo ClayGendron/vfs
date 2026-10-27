@@ -1,0 +1,7 @@
+wasmtime-py 49.0.0  CPython 3.14.8 Wizer snapshot (bashkit)  size=18.7 MB (+3.2 MB stdlib zip)  epoch=True
+Module.from_file (Cranelift compile): 1696 ms; cwasm=40.6 MB
+instantiate+bashkit_run print('hello'): first=13.0 ms, median of 5=6.0 ms
+1e6-iteration loop, whole run (median of 3): 528 ms -> loop alone ~522 ms
+import csv,json,re,dataclasses,enum + print (median of 3): 3.3 ms
+epoch interrupt of `while True`: Trap TrapCode.INTERRUPT after 201 ms
+host RSS: before=29 MB after compile=415 MB end=518 MB

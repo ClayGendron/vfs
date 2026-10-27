@@ -1,0 +1,8 @@
+python 3.13.11
+import py_mini_racer 52 ms version ?
+MiniRacer() ms 28
+v8 14.4.258.23
+globals: WebAssembly=object SharedArrayBuffer=function Atomics=object TextDecoder=undefined TextEncoder=undefined setTimeout=function fetch=undefined crypto=undefined process=undefined require=undefined read=undefined load=undefined console=object performance=undefined queueMicrotask=undefined
+wasm add(2,3) = 5
+wasm memory 4 GiB max ok: 65536
+attrs: ['call', 'close', 'eval', 'eval_cancelable', 'execute', 'heap_snapshot', 'heap_stats', 'json_impl', 'low_memory_notification', 'set_hard_memory_limit', 'set_soft_memory_limit', 'v8_version', 'was_hard_memory_limit_reached', 'was_soft_memory_limit_reached', 'wrap_py_function']

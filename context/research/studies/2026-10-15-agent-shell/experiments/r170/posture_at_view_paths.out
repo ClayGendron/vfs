@@ -1,0 +1,11 @@
+A posture / none: success=True rows=[] errors=[]
+B posture /.vfs/tools read: success=True rows=[] errors=[]
+C grant alice read /.vfs/tools/search (no row): success=True rows=[] errors=[]
+D grants /.vfs/tools/search: success=True rows=[] errors=[]
+   D extras: {'ops': ('grants',), 'grants': [{'principal_id': '*', 'path_prefix': '/', 'level': 'none', 'granted_by': 'system', 'granted_at': datetime.datetime(2026, 10, 16, 1, 0, 42, 530451)}, {'principal_id': '*', 'path_prefix': '/.vfs/tools', 'level': 'read', 'granted_by': 'system', 'granted_at': datetime.datetime(2026, 10, 16, 1, 0, 42, 540887)}, {'principal_id': 'alice', 'path_prefix': '/.vfs/tools/search', 'level': 'read', 'granted_by': 'system', 'granted_at': datetime.datetime(2026, 10, 16, 1, 0, 42, 549219)}]}
+E alice stat /.vfs/tools/search (no row): success=False rows=[] errors=[(<ErrorKind.not_found: 'vfs.not_found'>, 'Not found')]
+F system write /.vfs/tools/search (today: lawful?): success=True rows=[('/.vfs/tools/search', 'file')] errors=[]
+G alice read /.vfs/tools/search: success=True rows=[('/.vfs/tools/search', 'file')] errors=[]
+H bob read /.vfs/tools/search: success=True rows=[('/.vfs/tools/search', 'file')] errors=[]
+I bob ls /.vfs/tools: success=True rows=[('/.vfs/tools/search', 'file')] errors=[]
+J alice ls /.vfs (unscoped meta?): success=True rows=[('/.vfs/tools', 'directory'), ('/.vfs/trash', 'directory')] errors=[]

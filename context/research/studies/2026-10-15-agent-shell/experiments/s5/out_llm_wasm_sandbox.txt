@@ -1,0 +1,11 @@
+llm-wasm-sandbox 0.4.4 / wasmtime 38.0.0
+[python.wasm (CPython 3.12.0, WLR build, 26.3 MB)]
+  cold start (create_sandbox + first execute print): 1319 ms
+  warm execute print('hello') (median of 5): 1202 ms  fuel=249614961
+  1e6-iteration loop, whole execute (median of 3): 1954 ms  fuel=5613677721
+  host RSS: before=43 MB after cold=386 MB end=482 MB
+[quickjs.wasm (quickjs-ng qjs CLI, 1.4 MB)]
+  cold start (create_sandbox + first execute print): 166 ms
+  warm execute print('hello') (median of 5): 140 ms  fuel=6879890
+  1e6-iteration loop, whole execute (median of 3): 874 ms  fuel=1072502587
+  host RSS: before=482 MB after cold=483 MB end=481 MB

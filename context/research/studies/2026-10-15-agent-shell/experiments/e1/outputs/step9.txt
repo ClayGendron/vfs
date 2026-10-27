@@ -1,0 +1,6 @@
+200000 host calls each:
+  python fd_write (decode iovec + copy)              2932.6 ms total    14.66 us/call
+  python no-op host call                             1239.9 ms total     6.20 us/call
+  wasmtime built-in Rust fd_write (to a host file)    404.6 ms total     2.02 us/call
+
+  Python trampoline floor ~6.20 us/call vs Rust host ~2.02 us/call -> 3x

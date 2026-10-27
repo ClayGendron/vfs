@@ -1,0 +1,48 @@
+#
+Generated
+by
+spike
+s12
+scripts/04_link_python_numpy.sh:
+numpy
+2.5.2
+and
+the
+vfs
+verb
+door
+as
+builtins.
+*static*
+vfs
+vfsmodule.c
+vfs_cxa_stubs.c
+-DVFS_WITH_NUMPY
+
+build/numpy-archives/_multiarray_umath.a
+build/numpy-archives/_pocketfft_umath.a
+build/numpy-archives/_umath_linalg.a
+build/numpy-archives/lapack_lite.a
+build/numpy-archives/_bounded_integers.a
+build/numpy-archives/_common.a
+build/numpy-archives/_generator.a
+build/numpy-archives/_mt19937.a
+build/numpy-archives/_pcg64.a
+build/numpy-archives/_philox.a
+build/numpy-archives/_sfc64.a
+build/numpy-archives/bit_generator.a
+build/numpy-archives/mtrand.a
+build/numpy-2.5.2/build-wasi/numpy/_core/lib_multiarray_umath_mtargets.a
+build/numpy-2.5.2/build-wasi/numpy/_core/libnpymath.a
+build/numpy-2.5.2/build-wasi/numpy/_core/libunique_hash.a
+build/numpy-2.5.2/build-wasi/numpy/random/libnpyrandom.a
+
+-lc++
+-lc++abi
+-lc-printscan-long-double
+16:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang  -DVFS_WITH_NUMPY -fno-strict-overflow -Wsign-compar
+609:_PYTHON_HOSTRUNNER='/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasmtime-v49.0.3-aarch64-macos/wasmtime run --wasm max-wasm-stack=1
+616:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/llvm-ar rcs libpython3.14.a Modules/getbuildinfo.o Parser
+617:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang   -z stack-size=16777216 -Wl,--stack-first -Wl,--in
+-rwxr-xr-x@ 1 claygendron  staff  39551987 Oct 16 09:17 python.wasm
+b81992cfdfaafb631a5517a046068fe467ba2b07375fbee597b25e332ef2933f  python.wasm

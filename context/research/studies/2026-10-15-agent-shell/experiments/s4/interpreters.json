@@ -1,0 +1,194 @@
+{
+  "cpython": {
+    "argv": [
+      "python",
+      "-I",
+      "-X",
+      "utf8",
+      "-c",
+      "import os, sys, json\nprint('python', sys.version.split()[0], sys.platform)\nprint(open('/data/hello.txt').read(), end='')\nwith open('/data/py.out', 'w') as f: f.write('written by cpython\\n')\nprint(sorted(os.listdir('/data')))\nprint(os.stat('/data/hello.txt').st_size, oct(os.stat('/data/hello.txt').st_mode))\nos.mkdir('/data/pydir'); os.rename('/data/py.out', '/data/pydir/moved.out'); os.remove('/data/pydir/moved.out'); os.rmdir('/data/pydir')\nprint(json.dumps({'ok': True}))\n"
+    ],
+    "exit_code": 0,
+    "trapped": null,
+    "stdout": "python 3.12.0 wasi\nhello from vfs\nsecond line\n['hello.txt', 'main.mjs', 'py.out']\n27 0o100000\n{\"ok\": true}\n",
+    "stderr": "",
+    "syscalls": {
+      "args_get": 1,
+      "args_sizes_get": 1,
+      "clock_time_get": 2,
+      "environ_get": 445,
+      "environ_sizes_get": 445,
+      "fd_close": 3,
+      "fd_fdstat_get": 14,
+      "fd_filestat_get": 7,
+      "fd_prestat_dir_name": 1,
+      "fd_prestat_get": 3,
+      "fd_read": 2,
+      "fd_readdir": 1,
+      "fd_seek": 6,
+      "fd_tell": 1,
+      "fd_write": 6,
+      "path_create_directory": 1,
+      "path_filestat_get": 9,
+      "path_open": 6,
+      "path_remove_directory": 1,
+      "path_rename": 1,
+      "path_unlink_file": 1,
+      "random_get": 1
+    },
+    "unimplemented_called": {
+      "path_readlink": 1
+    },
+    "imports_stubbed": [
+      "clock_res_get",
+      "fd_allocate",
+      "fd_filestat_set_times",
+      "fd_pread",
+      "fd_pwrite",
+      "path_filestat_set_times",
+      "path_link",
+      "path_readlink",
+      "path_symlink",
+      "poll_oneoff",
+      "sock_accept",
+      "sock_recv",
+      "sock_send",
+      "sock_shutdown"
+    ],
+    "verbs": {
+      "read": 4,
+      "stat": 11,
+      "write": 1,
+      "ls": 1,
+      "mkdir": 1,
+      "move": 1,
+      "delete": 2
+    },
+    "sql_statements": 154,
+    "sql_statements_per_verb": {
+      "read": 20,
+      "stat": 55,
+      "write": 16,
+      "ls": 6,
+      "mkdir": 13,
+      "move": 24,
+      "delete": 20
+    },
+    "bytes_to_guest": 27,
+    "bytes_from_guest": 126,
+    "compile_seconds": 0.8364,
+    "run_seconds": 0.1749,
+    "trace": [
+      "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+      "path_open(dirfd=3, 'pyvenv.cfg', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/pyvenv.cfg'",
+      "path_open(dirfd=3, 'pyvenv.cfg', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/pyvenv.cfg'",
+      "path_open(dirfd=3, 'pybuilddir.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/pybuilddir.txt'",
+      "path_filestat_get(fd=3, 'Modules/Setup.local') -> '/Modules/Setup.local'",
+      "path_filestat_get(fd=3, 'lib/python312.zip') -> '/lib/python312.zip'",
+      "path_filestat_get(fd=3, 'lib/python3.12/os.py') -> '/lib/python3.12/os.py'",
+      "path_filestat_get(fd=3, 'lib/python3.12/os.pyc') -> '/lib/python3.12/os.pyc'",
+      "path_filestat_get(fd=3, 'lib/python3.12/lib-dynload') -> '/lib/python3.12/lib-dynload'",
+      "path_filestat_get(fd=3, 'pyvenv.cfg') -> '/pyvenv.cfg'",
+      "path_filestat_get(fd=3, 'pyvenv.cfg') -> '/pyvenv.cfg'",
+      "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'",
+      "path_open(dirfd=3, 'data/py.out', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/py.out'",
+      "fd_close -> write('/data/py.out', 19 bytes) errors=[]",
+      "path_open(dirfd=3, 'data', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/data'",
+      "fd_readdir(fd=6, cookie=0, buf_len=4096)",
+      "path_filestat_get(fd=3, 'data/hello.txt') -> '/data/hello.txt'",
+      "path_filestat_get(fd=3, 'data/hello.txt') -> '/data/hello.txt'"
+    ],
+    "ls_after": [
+      [
+        "/data/hello.txt",
+        "file"
+      ],
+      [
+        "/data/main.mjs",
+        "file"
+      ]
+    ],
+    "js_out": [],
+    "trash": [
+      "/data/pydir",
+      "/data/pydir/moved.out"
+    ]
+  },
+  "quickjs": {
+    "argv": [
+      "qjs",
+      "--std",
+      "-m",
+      "/data/main.mjs"
+    ],
+    "exit_code": 0,
+    "trapped": null,
+    "stdout": "hello from vfs\nsecond line\n[\".\",\"..\",\"hello.txt\",\"js.out\",\"main.mjs\"]\nsize 27 mode 100000\n",
+    "stderr": "",
+    "syscalls": {
+      "args_get": 1,
+      "args_sizes_get": 1,
+      "clock_time_get": 3,
+      "environ_sizes_get": 1,
+      "fd_close": 4,
+      "fd_fdstat_get": 6,
+      "fd_prestat_dir_name": 1,
+      "fd_prestat_get": 2,
+      "fd_read": 4,
+      "fd_readdir": 1,
+      "fd_write": 4,
+      "path_filestat_get": 1,
+      "path_open": 4
+    },
+    "unimplemented_called": {},
+    "imports_stubbed": [
+      "path_filestat_set_times",
+      "poll_oneoff"
+    ],
+    "verbs": {
+      "read": 2,
+      "write": 1,
+      "ls": 1,
+      "stat": 1
+    },
+    "sql_statements": 37,
+    "sql_statements_per_verb": {
+      "read": 10,
+      "write": 16,
+      "ls": 6,
+      "stat": 5
+    },
+    "bytes_to_guest": 444,
+    "bytes_from_guest": 109,
+    "compile_seconds": 0.1284,
+    "run_seconds": 0.0393,
+    "trace": [
+      "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+      "path_open(dirfd=3, 'data/main.mjs', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/main.mjs'",
+      "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'",
+      "path_open(dirfd=3, 'data/js.out', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/js.out'",
+      "fd_close -> write('/data/js.out', 19 bytes) errors=[]",
+      "path_open(dirfd=3, 'data', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/data'",
+      "fd_readdir(fd=7, cookie=0, buf_len=4096)",
+      "path_filestat_get(fd=3, 'data/hello.txt') -> '/data/hello.txt'"
+    ],
+    "ls_after": [
+      [
+        "/data/hello.txt",
+        "file"
+      ],
+      [
+        "/data/js.out",
+        "file"
+      ],
+      [
+        "/data/main.mjs",
+        "file"
+      ]
+    ],
+    "js_out": [
+      "written by quickjs\n"
+    ],
+    "trash": []
+  }
+}

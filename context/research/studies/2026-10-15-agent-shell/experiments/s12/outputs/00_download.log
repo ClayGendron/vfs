@@ -1,0 +1,26 @@
+wizer-v11.0.3-aarch64-macos.tar.xz
+pandas-3.0.6.tar.gz
+wasmtime-v49.0.3-aarch64-macos.tar.xz
+python-3.14.7-wasi_sdk-24.zip
+Python-3.14.8.tar.xz
+numpy-2.5.2.tar.gz
+wasi-sdk-24.0-arm64-macos.tar.gz
+d482d171c406ae88c5b19cad3b6a1c4c5209f886ab74bc44c2c865c23f52d860  numpy-2.5.2.tar.gz
+66b07ef7315a31bfe1089cd3d71a7de781c9dca986762d0b4fe7c0ef17465d10  pandas-3.0.6.tar.gz
+aeae999396d5f5caa5ce419f52e83c35869d5fd21d40af80acba2c80f51b0b3a  wasi-sdk-24.0-arm64-macos.tar.gz
+c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73  Python-3.14.8.tar.xz
+d7708ba1cc2da171db2c8273d8602f3e0684935dc7cab40148cdcca1da83c0f8  wasmtime-v49.0.3-aarch64-macos.tar.xz
+7c54896b456b6ca024af6005ebc5538282dee7cd9f0c9c1155855d29b9c461b1  wizer-v11.0.3-aarch64-macos.tar.xz
+2e064d3fb8172471d39d741348efa722349c40b96301f69968dff714999c584b  python-3.14.7-wasi_sdk-24.zip
+total 387632
+drwxr-xr-x@ 11 claygendron  staff        352 Oct 16 08:48 .
+drwxr-xr-x@ 11 claygendron  staff        352 Oct 16 08:46 ..
+-rw-r--r--@  1 claygendron  staff          0 Oct 16 08:46 .gitkeep
+-rw-r--r--@  1 claygendron  staff   20773161 Oct 16 08:47 numpy-2.5.2.tar.gz
+-rw-r--r--@  1 claygendron  staff    4667686 Oct 16 08:46 pandas-3.0.6.tar.gz
+-rw-r--r--@  1 claygendron  staff   14291017 Oct 16 08:47 python-3.14.7-wasi_sdk-24.zip
+-rw-r--r--@  1 claygendron  staff   24130644 Oct 16 08:47 Python-3.14.8.tar.xz
+-rw-r--r--@  1 claygendron  staff        658 Oct 16 08:48 SHA256SUMS
+-rw-r--r--@  1 claygendron  staff  108199177 Oct 16 08:48 wasi-sdk-24.0-arm64-macos.tar.gz
+-rw-r--r--@  1 claygendron  staff    9550256 Oct 16 08:47 wasmtime-v49.0.3-aarch64-macos.tar.xz
+-rw-r--r--@  1 claygendron  staff    4268844 Oct 16 08:46 wizer-v11.0.3-aarch64-macos.tar.xz

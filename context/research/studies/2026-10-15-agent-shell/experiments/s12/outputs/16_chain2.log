@@ -1,0 +1,34 @@
+03 ok: 198 compile steps
+-rw-r--r--@ 1 claygendron  staff    14476 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/lib_multiarray_umath_mtargets.a
+-rw-r--r--@ 1 claygendron  staff      286 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/lib_simd_mtargets.a
+-rw-r--r--@ 1 claygendron  staff      286 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/lib_simd.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      364 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/lib_umath_tests_mtargets.a
+-rw-r--r--@ 1 claygendron  staff      364 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/lib_umath_tests.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      742 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libargfunc.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      984 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_arithm_fp.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      710 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_arithmetic.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff     4996 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_autovec.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff     1784 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_comparison.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      412 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_exponent_log.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      566 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_half.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      318 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_hyperbolic.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      542 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_logical.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff     1708 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_minmax.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      806 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_modulo.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      344 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_trigonometric.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      850 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_umath_fp.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      332 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_unary_complex.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      428 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_unary_fp_le.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      556 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_unary_fp.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff      530 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libloops_unary.dispatch.h_baseline.a
+-rw-r--r--@ 1 claygendron  staff    56554 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libnpymath.a
+-rw-r--r--@ 1 claygendron  staff     3042 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/_core/libunique_hash.a
+-rw-r--r--@ 1 claygendron  staff    50334 Oct 16 09:17 build/numpy-2.5.2/build-wasi/numpy/random/libnpyrandom.a
+04 ok
+616:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/llvm-ar rcs libpython3.14.a Modules/getbuildinfo.o Parser
+617:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang   -z stack-size=16777216 -Wl,--stack-first -Wl,--in
+-rwxr-xr-x@ 1 claygendron  staff  39551987 Oct 16 09:17 python.wasm
+b81992cfdfaafb631a5517a046068fe467ba2b07375fbee597b25e332ef2933f  python.wasm
+05 ok
+installed numpy at: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/numpy-install/usr/local/lib/python3.14/site-packages/numpy
+/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python314-numpy.zip: 701 python files (py), 13 other files, 13494391 bytes, stored

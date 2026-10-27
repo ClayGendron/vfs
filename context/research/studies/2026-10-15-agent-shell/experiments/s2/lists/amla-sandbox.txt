@@ -1,0 +1,13 @@
+cat
+cut
+echo
+grep
+head
+jq
+ls
+sort
+tail
+tool
+tr
+uniq
+wc

@@ -1,0 +1,40 @@
+{
+  "messages": {
+    "Tversion": 10,
+    "Tauth": 9,
+    "Tattach": 10,
+    "Twalk": 47,
+    "Tstat": 47,
+    "Tclunk": 42,
+    "Topen": 10,
+    "Tread": 24,
+    "Tcreate": 1,
+    "Tremove": 1
+  },
+  "verbs": {
+    "stat": 97,
+    "ls": 8,
+    "read": 2,
+    "write": 1,
+    "delete": 1
+  },
+  "sql_total": 470,
+  "sql_per_message": {
+    "Tattach": 44,
+    "Tstat": 188,
+    "Topen": 48,
+    "Twalk": 160,
+    "Tclunk": 16,
+    "Tremove": 10
+  },
+  "bytes_in": 0,
+  "bytes_out": 1080,
+  "trace": [
+    "clunk -> write /out/hello.txt 0B version 1"
+  ],
+  "png_row": null,
+  "out_listing": [],
+  "trash": [
+    "hello.txt"
+  ]
+}

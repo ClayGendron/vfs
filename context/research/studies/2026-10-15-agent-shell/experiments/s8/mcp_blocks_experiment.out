@@ -1,0 +1,361 @@
+mcp 2.3.0 | mcp-types 2.3.0 | jsonschema 4.26.0 | python 3.13.11
+
+=== session mode='2026-07-28' negotiated='2026-07-28' wire log=wire_2026-07-28.jsonl ===
+SDK-side CallToolResult.is_error: False | blocks: ['text', 'image', 'resource_link']
+SDK-side ReadResourceResult contents: ['BlobResourceContents']
+6 wire lines; methods:  ['tools/call', 'tools/list', 'resources/read']
+
+WIRE C>S tools/call request:
+{
+ "jsonrpc": "2.0",
+ "id": 1,
+ "method": "tools/call",
+ "params": {
+  "name": "read",
+  "arguments": {
+   "path": "/photos/pixel.png"
+  },
+  "_meta": {
+   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+   "io.modelcontextprotocol/clientInfo": {
+    "name": "mcp",
+    "version": "0.1.0"
+   },
+   "io.modelcontextprotocol/clientCapabilities": {}
+  }
+ }
+}
+
+WIRE S>C tools/call response:
+{
+ "jsonrpc": "2.0",
+ "id": 1,
+ "result": {
+  "content": [
+   {
+    "text": "| path | mime_type | size_bytes |\n| /photos/pixel.png | image/png | 67 |\n[image/png 67 B /photos/pixel.png v3]",
+    "type": "text"
+   },
+   {
+    "_meta": {
+     "dev.vfs/path": "/photos/pixel.png",
+     "dev.vfs/version": 3
+    },
+    "annotations": {
+     "audience": [
+      "user",
+      "assistant"
+     ],
+     "priority": 0.5
+    },
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    "mimeType": "image/png",
+    "type": "image"
+   },
+   {
+    "description": "video/mp4, 10 MiB, version 1",
+    "mimeType": "video/mp4",
+    "name": "intro.mp4",
+    "size": 10485760,
+    "type": "resource_link",
+    "uri": "vfs:///clips/intro.mp4"
+   }
+  ],
+  "isError": false,
+  "resultType": "complete",
+  "structuredContent": {
+   "success": true,
+   "ops": [
+    "read"
+   ],
+   "observations": [
+    {
+     "path": "/photos/pixel.png",
+     "kind": "file",
+     "mime_type": "image/png",
+     "size_bytes": 67,
+     "version": 3
+    },
+    {
+     "path": "/clips/intro.mp4",
+     "kind": "file",
+     "mime_type": "video/mp4",
+     "size_bytes": 10485760,
+     "version": 1
+    }
+   ],
+   "errors": []
+  },
+  "_meta": {
+   "io.modelcontextprotocol/serverInfo": {
+    "name": "vfs-s8",
+    "version": "0.0.0"
+   }
+  }
+ }
+}
+VALID   2026-07-28 $defs/CallToolResult
+VALID   2025-11-25 $defs/CallToolResult
+VALID   2025-06-18 $defs/CallToolResult
+VALID   2026-07-28 $defs/JSONRPCResponse
+VALID   2026-07-28 $defs/JSONRPCResultResponse
+
+WIRE S>C resources/read response (blob elided):
+{
+ "cacheScope": "private",
+ "contents": [
+  {
+   "blob": "iVBORw0KGgoAAAAN...",
+   "mimeType": "image/png",
+   "uri": "vfs:///photos/pixel.png"
+  }
+ ],
+ "resultType": "complete",
+ "ttlMs": 0,
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "vfs-s8",
+   "version": "0.0.0"
+  }
+ }
+}
+VALID   2026-07-28 $defs/ReadResourceResult
+VALID   2025-11-25 $defs/ReadResourceResult
+VALID   2025-06-18 $defs/ReadResourceResult
+
+=== session mode='auto' negotiated='2026-07-28' wire log=wire_auto.jsonl ===
+SDK-side CallToolResult.is_error: False | blocks: ['text', 'image', 'resource_link']
+SDK-side ReadResourceResult contents: ['BlobResourceContents']
+8 wire lines; methods:  ['server/discover', 'tools/call', 'tools/list', 'resources/read']
+
+WIRE C>S tools/call request:
+{
+ "jsonrpc": "2.0",
+ "id": 2,
+ "method": "tools/call",
+ "params": {
+  "name": "read",
+  "arguments": {
+   "path": "/photos/pixel.png"
+  },
+  "_meta": {
+   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+   "io.modelcontextprotocol/clientInfo": {
+    "name": "mcp",
+    "version": "0.1.0"
+   },
+   "io.modelcontextprotocol/clientCapabilities": {}
+  }
+ }
+}
+
+WIRE S>C tools/call response:
+{
+ "jsonrpc": "2.0",
+ "id": 2,
+ "result": {
+  "content": [
+   {
+    "text": "| path | mime_type | size_bytes |\n| /photos/pixel.png | image/png | 67 |\n[image/png 67 B /photos/pixel.png v3]",
+    "type": "text"
+   },
+   {
+    "_meta": {
+     "dev.vfs/path": "/photos/pixel.png",
+     "dev.vfs/version": 3
+    },
+    "annotations": {
+     "audience": [
+      "user",
+      "assistant"
+     ],
+     "priority": 0.5
+    },
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    "mimeType": "image/png",
+    "type": "image"
+   },
+   {
+    "description": "video/mp4, 10 MiB, version 1",
+    "mimeType": "video/mp4",
+    "name": "intro.mp4",
+    "size": 10485760,
+    "type": "resource_link",
+    "uri": "vfs:///clips/intro.mp4"
+   }
+  ],
+  "isError": false,
+  "resultType": "complete",
+  "structuredContent": {
+   "success": true,
+   "ops": [
+    "read"
+   ],
+   "observations": [
+    {
+     "path": "/photos/pixel.png",
+     "kind": "file",
+     "mime_type": "image/png",
+     "size_bytes": 67,
+     "version": 3
+    },
+    {
+     "path": "/clips/intro.mp4",
+     "kind": "file",
+     "mime_type": "video/mp4",
+     "size_bytes": 10485760,
+     "version": 1
+    }
+   ],
+   "errors": []
+  },
+  "_meta": {
+   "io.modelcontextprotocol/serverInfo": {
+    "name": "vfs-s8",
+    "version": "0.0.0"
+   }
+  }
+ }
+}
+VALID   2026-07-28 $defs/CallToolResult
+VALID   2025-11-25 $defs/CallToolResult
+VALID   2025-06-18 $defs/CallToolResult
+VALID   2026-07-28 $defs/JSONRPCResponse
+VALID   2026-07-28 $defs/JSONRPCResultResponse
+
+WIRE S>C resources/read response (blob elided):
+{
+ "cacheScope": "private",
+ "contents": [
+  {
+   "blob": "iVBORw0KGgoAAAAN...",
+   "mimeType": "image/png",
+   "uri": "vfs:///photos/pixel.png"
+  }
+ ],
+ "resultType": "complete",
+ "ttlMs": 0,
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "vfs-s8",
+   "version": "0.0.0"
+  }
+ }
+}
+VALID   2026-07-28 $defs/ReadResourceResult
+VALID   2025-11-25 $defs/ReadResourceResult
+VALID   2025-06-18 $defs/ReadResourceResult
+
+=== session mode='legacy' negotiated='2025-11-25' wire log=wire_legacy.jsonl ===
+SDK-side CallToolResult.is_error: False | blocks: ['text', 'image', 'resource_link']
+SDK-side ReadResourceResult contents: ['BlobResourceContents']
+9 wire lines; methods:  ['initialize', 'notifications/initialized', 'tools/call', 'tools/list', 'resources/read']
+
+WIRE C>S tools/call request:
+{
+ "jsonrpc": "2.0",
+ "id": 2,
+ "method": "tools/call",
+ "params": {
+  "name": "read",
+  "arguments": {
+   "path": "/photos/pixel.png"
+  }
+ }
+}
+
+WIRE S>C tools/call response:
+{
+ "jsonrpc": "2.0",
+ "id": 2,
+ "result": {
+  "content": [
+   {
+    "text": "| path | mime_type | size_bytes |\n| /photos/pixel.png | image/png | 67 |\n[image/png 67 B /photos/pixel.png v3]",
+    "type": "text"
+   },
+   {
+    "_meta": {
+     "dev.vfs/path": "/photos/pixel.png",
+     "dev.vfs/version": 3
+    },
+    "annotations": {
+     "audience": [
+      "user",
+      "assistant"
+     ],
+     "priority": 0.5
+    },
+    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+    "mimeType": "image/png",
+    "type": "image"
+   },
+   {
+    "description": "video/mp4, 10 MiB, version 1",
+    "mimeType": "video/mp4",
+    "name": "intro.mp4",
+    "size": 10485760,
+    "type": "resource_link",
+    "uri": "vfs:///clips/intro.mp4"
+   }
+  ],
+  "isError": false,
+  "structuredContent": {
+   "success": true,
+   "ops": [
+    "read"
+   ],
+   "observations": [
+    {
+     "path": "/photos/pixel.png",
+     "kind": "file",
+     "mime_type": "image/png",
+     "size_bytes": 67,
+     "version": 3
+    },
+    {
+     "path": "/clips/intro.mp4",
+     "kind": "file",
+     "mime_type": "video/mp4",
+     "size_bytes": 10485760,
+     "version": 1
+    }
+   ],
+   "errors": []
+  }
+ }
+}
+INVALID 2026-07-28 $defs/CallToolResult: <root>: 'resultType' is a required property
+VALID   2025-11-25 $defs/CallToolResult
+VALID   2025-06-18 $defs/CallToolResult
+VALID   2025-11-25 $defs/JSONRPCResponse
+VALID   2025-11-25 $defs/JSONRPCResultResponse
+
+WIRE S>C resources/read response (blob elided):
+{
+ "contents": [
+  {
+   "blob": "iVBORw0KGgoAAAAN...",
+   "mimeType": "image/png",
+   "uri": "vfs:///photos/pixel.png"
+  }
+ ]
+}
+INVALID 2026-07-28 $defs/ReadResourceResult: <root>: 'cacheScope' is a required property; <root>: 'resultType' is a required property; <root>: 'ttlMs' is a required property
+VALID   2025-11-25 $defs/ReadResourceResult
+VALID   2025-06-18 $defs/ReadResourceResult
+
+=== hand-built instances against the schema ===
+video block (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: content/0: {'type': 'video', 'data': 'AAAA', 'mimeType': 'video/mp4'} is not valid under any of the given schemas
+missing resultType (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: <root>: 'resultType' is a required property
+missing resultType (2025-11-25): VALID   2025-11-25 $defs/CallToolResult
+reserved _meta prefix, schema cannot police it (2026-07-28): VALID   2026-07-28 $defs/CallToolResult
+resource_link without name (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: content/0: {'type': 'resource_link', 'uri': 'vfs:///a'} is not valid under any of the given schemas
+image without mimeType (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: content/0: {'type': 'image', 'data': 'AAAA'} is not valid under any of the given schemas
+embedded blob resource, no mimeType (2026-07-28): VALID   2026-07-28 $defs/CallToolResult
+scalar structuredContent (2026-07-28): VALID   2026-07-28 $defs/CallToolResult
+scalar structuredContent (2025-06-18): INVALID 2025-06-18 $defs/CallToolResult: structuredContent: 42 is not of type 'object'
+array structuredContent (2025-06-18): INVALID 2025-06-18 $defs/CallToolResult: structuredContent: [1] is not of type 'object'
+annotations.priority 1.5 (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: content/0: {'type': 'text', 'text': 'x', 'annotations': {'priority': 1.5}} is not valid under any of the given schemas
+annotations.audience ['system'] (2026-07-28): INVALID 2026-07-28 $defs/CallToolResult: content/0: {'type': 'text', 'text': 'x', 'annotations': {'audience': ['system']}} is not valid under any of the given sch
+isError true with image block (2026-07-28): VALID   2026-07-28 $defs/CallToolResult

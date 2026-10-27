@@ -1,0 +1,9 @@
+mcp 2.3.0
+(1) protocol: 2026-07-28
+(1) concurrent calls ok: 20 distinct: 20
+(2) call from a different task than the opener: after-open-in-other-task
+(2) close from a different task RAISED: RuntimeError Attempted to exit cancel scope in a different task than it was entered in
+(3) call that kills the server RAISED: mcp.shared.exceptions MCPError Connection closed
+(3) next call after death RAISED: mcp.shared.exceptions MCPError Connection closed
+(4) elicitation with no callback RAISED: mcp.shared.exceptions MCPError Cannot send 'elicitation/create': this transport context has no back-channel for server-initiated requests.
+(5) tools/list ttlMs: 0 cacheScope: private | same object served twice: False

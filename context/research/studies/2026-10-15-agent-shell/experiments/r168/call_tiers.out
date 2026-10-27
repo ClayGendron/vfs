@@ -1,0 +1,16 @@
+calls	13746
+T1 only	8833	64.3%
+needs T2 or a guest	2371	17.2%
+needs something else (never class, guest, artefact)	2046	14.9%
+needs T2 (168) and nothing else	357	2.6%
+  of which the amended 168 kernels alone serve	139	1.0%
+
+T2 heads in the calls 168 alone unlocks
+awk	213
+sort	103
+tr	67
+uniq	46
+diff	9
+fold	3
+paste	2
+strings	1

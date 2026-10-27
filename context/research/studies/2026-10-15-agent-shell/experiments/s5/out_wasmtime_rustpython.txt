@@ -1,0 +1,6 @@
+RustPython 0.6.1 @88f5189, wasm32-wasip1 --features freeze-stdlib,stdlib; size=49.8 MB; Cranelift compile 1481 ms
+('rustpython', '-S', '-c', "print('hello')") () rc 1 42 ms out '' err ''
+('rustpython', '-I', '-c', "print('hello')") () rc 1 33 ms out '' err ''
+('rustpython', '-c', "print('hello')") (('RUSTPYTHONPATH', '/work'),) rc 1 33 ms out '' err ''
+('rustpython', '/work/hello.py') () rc 1 36 ms out '' err ''
+('rustpython', '-S', '/work/hello.py') () rc 1 33 ms out '' err ''

@@ -1,0 +1,42 @@
+argv: ['wc', '-l', '-w', '-c']
+stdin bytes: 37
+stdout:       4       6      37
+stderr: 
+fuel used: 1106519
+status: trap/exit: error while executing at wasm backtrace:
+    0:  0x99417 - wc-8750333d3fc3d04f.wasm!__wasi_proc_exit
+    1:  0x998c1 - wc-8750333d3fc3d04f.wasm!_Exit
+    2:  0x99ee1 - wc-8750333d3fc3d04f.w
+argv: ['wc', '-l']
+stdin bytes: 37
+stdout: 4
+stderr: 
+fuel used: 1152541
+status: trap/exit: error while executing at wasm backtrace:
+    0:  0x99417 - wc-8750333d3fc3d04f.wasm!__wasi_proc_exit
+    1:  0x998c1 - wc-8750333d3fc3d04f.wasm!_Exit
+    2:  0x99ee1 - wc-8750333d3fc3d04f.w
+argv: ['wc', '--words']
+stdin bytes: 37
+stdout: 6
+stderr: 
+fuel used: 1088733
+status: trap/exit: error while executing at wasm backtrace:
+    0:  0x99417 - wc-8750333d3fc3d04f.wasm!__wasi_proc_exit
+    1:  0x998c1 - wc-8750333d3fc3d04f.wasm!_Exit
+    2:  0x99ee1 - wc-8750333d3fc3d04f.w
+argv: ['wc', '--bogus']
+stdin bytes: 37
+stdout: 
+stderr: error: unexpected argument '--bogus' found
+
+  tip: to pass '--bogus' as a value, use '-- --bogus'
+
+Usage: wc [OPTION]... [FILE]...
+
+For more information, try '--help'.
+fuel used: 1122424
+status: trap/exit: error while executing at wasm backtrace:
+    0:  0x99417 - wc-8750333d3fc3d04f.wasm!__wasi_proc_exit
+    1:  0x998c1 - wc-8750333d3fc3d04f.wasm!_Exit
+    2:  0x99ee1 - wc-8750333d3fc3d04f.w

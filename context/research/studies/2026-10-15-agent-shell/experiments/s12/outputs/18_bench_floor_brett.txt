@@ -1,0 +1,5 @@
+== floor-brett: wasm 30522756 B, cwasm 16452384 B, load compile 0.4746s, host maxrss 480.1 MiB
+   pass          median    113.0 ms  min    111.6 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> ''
+   print         median    111.9 ms  min    111.4 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> 'hello'
+   import_numpy  median    688.3 ms  min    688.3 ms  mem   40.0 MiB  verbs {'read': 83, 'stat': 23}  -> 'rc=1 trapped=None stderr=not find platform dependent librari'
+   arange_sum    median    679.9 ms  min    679.9 ms  mem   40.0 MiB  verbs {'read': 83, 'stat': 23}  -> 'rc=1 trapped=None stderr=ind platform dependent libraries <e'

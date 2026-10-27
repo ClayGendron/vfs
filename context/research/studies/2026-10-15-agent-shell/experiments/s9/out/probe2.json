@@ -1,0 +1,253 @@
+{
+  "just-bash-py": {
+    "attrs": [
+      "env",
+      "exit_code",
+      "stderr",
+      "stdout"
+    ],
+    "overflow_seq_400000": {
+      "env": {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/user",
+        "USER": "user",
+        "SHELL": "/bin/bash",
+        "PWD": "/home/user",
+        "?": "0",
+        "SHLVL": "1",
+        "BASH_VERSION": "5.0.0(1)-release",
+        "OPTIND": "1",
+        "PIPESTATUS_0": "0",
+        "PIPESTATUS__length": "1"
+      },
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "<str len=588895 head='1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\n20\\n21\\n22\\n23\\n' tail='9991\\n99992\\n99993\\n99994\\n99995\\n99996\\n99997\\n99998\\n99999\\n100000\\n'>"
+    },
+    "infinite_loop": {
+      "exception": "ExecutionLimitError: while loop: too many iterations (10000)"
+    },
+    "cat_png_via_fs_api": {
+      "exception": "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x89 in position 0: invalid start byte"
+    },
+    "state_env": {
+      "env": {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/user",
+        "USER": "user",
+        "SHELL": "/bin/bash",
+        "PWD": "/home/user",
+        "?": "0",
+        "SHLVL": "1",
+        "BASH_VERSION": "5.0.0(1)-release",
+        "OPTIND": "1",
+        "X": "1",
+        "PIPESTATUS_0": "0",
+        "PIPESTATUS__length": "1"
+      },
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "1\n"
+    },
+    "state_env_next_call": {
+      "env": {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/user",
+        "USER": "user",
+        "SHELL": "/bin/bash",
+        "PWD": "/home/user",
+        "?": "0",
+        "SHLVL": "1",
+        "BASH_VERSION": "5.0.0(1)-release",
+        "OPTIND": "1",
+        "X": "1",
+        "PIPESTATUS_0": "0",
+        "PIPESTATUS__length": "1"
+      },
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "X=1\n"
+    },
+    "state_cwd": {
+      "env": {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/user",
+        "USER": "user",
+        "SHELL": "/bin/bash",
+        "PWD": "/tmp",
+        "?": "0",
+        "SHLVL": "1",
+        "BASH_VERSION": "5.0.0(1)-release",
+        "OPTIND": "1",
+        "X": "1",
+        "OLDPWD": "/home/user",
+        "PIPESTATUS_0": "0",
+        "PIPESTATUS__length": "1"
+      },
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp\n"
+    },
+    "state_cwd_next_call": {
+      "env": {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": "/home/user",
+        "USER": "user",
+        "SHELL": "/bin/bash",
+        "PWD": "/tmp",
+        "?": "0",
+        "SHLVL": "1",
+        "BASH_VERSION": "5.0.0(1)-release",
+        "OPTIND": "1",
+        "X": "1",
+        "OLDPWD": "/home/user",
+        "PIPESTATUS_0": "0",
+        "PIPESTATUS__length": "1"
+      },
+      "exit_code": 0,
+      "stderr": "",
+      "stdout": "/tmp\n"
+    }
+  },
+  "bashkit": {
+    "attrs": [
+      "error",
+      "exit_code",
+      "final_env",
+      "stderr",
+      "stderr_bytes",
+      "stderr_truncated",
+      "stdout",
+      "stdout_bytes",
+      "stdout_truncated",
+      "success",
+      "to_dict"
+    ],
+    "overflow_seq_400000": {
+      "error": null,
+      "exit_code": 1,
+      "final_env": null,
+      "stderr": "seq: line limit (100000) exceeded; output truncated\n",
+      "stderr_bytes": "<bytes len=52 head=b'seq: line li'>",
+      "stderr_truncated": false,
+      "stdout": "<str len=588895 head='1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\n20\\n21\\n22\\n23\\n' tail='9991\\n99992\\n99993\\n99994\\n99995\\n99996\\n99997\\n99998\\n99999\\n100000\\n'>",
+      "stdout_bytes": "<bytes len=588895 head=b'1\\n2\\n3\\n4\\n5\\n6\\n'>",
+      "stdout_truncated": false,
+      "success": false
+    },
+    "infinite_loop": {
+      "error": "resource limit exceeded: maximum command count exceeded (10000)",
+      "exit_code": 1,
+      "final_env": null,
+      "stderr": "resource limit exceeded: maximum command count exceeded (10000)",
+      "stderr_bytes": "<bytes len=63 head=b'resource lim'>",
+      "stderr_truncated": false,
+      "stdout": "",
+      "stdout_bytes": "<bytes len=0 head=b''>",
+      "stdout_truncated": false,
+      "success": false
+    },
+    "cat_png_via_fs_api": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "�PNG\r\n\u001a\n\u0000\u0000\u0000\rIHDR",
+      "stdout_bytes": "<bytes len=16 head=b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\r'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "read_file_api": "b'\\x89PNG\\r\\n\\x1a\\n\\x00\\x00\\x00\\rIHDR'",
+    "state_env": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "1\n",
+      "stdout_bytes": "<bytes len=2 head=b'1\\n'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "state_env_next_call": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "X=1\n",
+      "stdout_bytes": "<bytes len=4 head=b'X=1\\n'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "state_cwd": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "/tmp\n",
+      "stdout_bytes": "<bytes len=5 head=b'/tmp\\n'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "state_cwd_next_call": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "/tmp\n",
+      "stdout_bytes": "<bytes len=5 head=b'/tmp\\n'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "unavailable_hint_docker": {
+      "error": null,
+      "exit_code": 127,
+      "final_env": null,
+      "stderr": "bash: line 1: docker: command not found. Container and service management is not available in the sandbox.\n",
+      "stderr_bytes": "<bytes len=107 head=b'bash: line 1'>",
+      "stderr_truncated": false,
+      "stdout": "",
+      "stdout_bytes": "<bytes len=0 head=b''>",
+      "stdout_truncated": false,
+      "success": false
+    },
+    "did_you_mean": {
+      "error": null,
+      "exit_code": 127,
+      "final_env": null,
+      "stderr": "bash: line 1: grpe: command not found. Did you mean: free, grep, tree?\n",
+      "stderr_bytes": "<bytes len=71 head=b'bash: line 1'>",
+      "stderr_truncated": false,
+      "stdout": "",
+      "stdout_bytes": "<bytes len=0 head=b''>",
+      "stdout_truncated": false,
+      "success": false
+    },
+    "tool_description": "Run bash commands in an isolated virtual filesystem",
+    "tool_system_prompt": "bashkit: run bash commands in an isolated virtual filesystem. Returns JSON with stdout, stderr, exit_code. Use bash syntax; do not assume /bin/sh portability ($RANDOM, arrays, [[ ]] require bash). Use `source` only when current-shell state must persist; otherwise run scripts directly. For large multi-file writes, prefer incremental batches over one giant script. Limits: max_commands=10000, max_loop_iterations=10000. perl, python/python3 not available.",
+    "tool_input_schema": "{\n  \"properties\": {\n    \"commands\": {\n      \"description\": \"Bash commands to execute\",\n      \"type\": \"string\"\n    },\n    \"timeout_ms\": {\n      \"description\": \"Optional per-call timeout in milliseconds\",\n      \"format\": \"uint64\",\n      \"minimum\": 0,\n      \"type\": [\n        \"integer\",\n        \"null\"\n      ]\n    }\n  },\n  \"required\": [\n    \"commands\"\n  ],\n  \"type\": \"object\"\n}",
+    "tool_help_head": "# Bash\n\nRun bash commands in an isolated virtual filesystem.\n\n**Version:** 0.19.0\n**Name:** `bashkit`\n**Locale:** `en-US`\n\n## Parameters\n\n| Name | Type | Required | Default | Description |\n|------|------|----------|---------|-------------|\n| `commands` | string | yes | — | Bash commands to execute |\n| `timeout_ms` | integer | no | — | Per-call timeout in milliseconds |\n\n## Result\n\n| Field | Type | Description |\n|------|------|-------------|\n| `stdout` | string | Standard output |\n| `stderr` | string | Standard error |\n| `exit_code` | integer | Shell exit code |\n| `error` | string | Error category when execution fails |\n\n## Examples\n\n```json\n{\"commands\":\"echo hello\"}\n```\n\n```json\n{\"commands\":\"echo data > /tmp/f.txt && cat /tmp/f.txt\",\"timeout_ms\":5000}\n```\n\n## Behavior\n\n- Filesystem is virtual and isolated per execution.\n- Standard bash syntax is supported, including pipes, redirects, loops, functions, and arrays.\n- Builtins available by default: `echo printf cat read grep sed awk jq head tail sort uniq cut tr wc nl paste column comm diff strings tac rev cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln file stat less tar gzip gunzip bzip2 bunzip2 bzcat du df test [ true false exit return break continue export set unset local shift source eval declare typeset readonly shopt getopts sleep date seq expr yes wait timeout xargs tee watch basename dirname realpath pushd popd dirs whoami hostname uname id env printenv history curl wget od xxd hexdump base64 kill`\n- Lim",
+    "tool_state_next_call": {
+      "error": null,
+      "exit_code": 0,
+      "final_env": null,
+      "stderr": "",
+      "stderr_bytes": "<bytes len=0 head=b''>",
+      "stderr_truncated": false,
+      "stdout": "persisted\n",
+      "stdout_bytes": "<bytes len=10 head=b'persisted\\n'>",
+      "stdout_truncated": false,
+      "success": true
+    },
+    "tool_result_attrs": "dict_keys"
+  }
+}

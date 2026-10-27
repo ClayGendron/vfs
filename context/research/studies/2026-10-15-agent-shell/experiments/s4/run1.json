@@ -1,0 +1,61 @@
+{
+  "argv": [
+    "catfile",
+    "/data/hello.txt"
+  ],
+  "exit_code": 0,
+  "trapped": null,
+  "stdout": "hello from vfs\nsecond line\n",
+  "stderr": "stat: len=27 is_file=true\nreaddir /data: hello.txt,hello.txt.out,other.md\n",
+  "syscalls": {
+    "args_get": 1,
+    "args_sizes_get": 1,
+    "fd_close": 3,
+    "fd_fdstat_get": 3,
+    "fd_filestat_get": 1,
+    "fd_prestat_dir_name": 1,
+    "fd_prestat_get": 2,
+    "fd_read": 2,
+    "fd_readdir": 1,
+    "fd_seek": 1,
+    "fd_write": 10,
+    "path_filestat_get": 1,
+    "path_open": 3,
+    "proc_exit": 1
+  },
+  "unimplemented_called": {},
+  "imports_stubbed": [],
+  "verbs": {
+    "read": 1,
+    "stat": 1,
+    "write": 1,
+    "ls": 1
+  },
+  "sql_statements": 32,
+  "sql_statements_per_verb": {
+    "read": 5,
+    "stat": 5,
+    "write": 16,
+    "ls": 6
+  },
+  "bytes_to_guest": 27,
+  "bytes_from_guest": 117,
+  "compile_seconds": 0.0185,
+  "run_seconds": 0.0265,
+  "trace": [
+    "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+    "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'",
+    "path_filestat_get(fd=3, 'data/hello.txt') -> '/data/hello.txt'",
+    "path_open(dirfd=3, 'data/hello.txt.out', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/hello.txt.out'",
+    "fd_close -> write('/data/hello.txt.out', 16 bytes) errors=[]",
+    "path_open(dirfd=3, 'data', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/data'",
+    "fd_readdir(fd=6, cookie=0, buf_len=4096)"
+  ],
+  "written_back": {
+    "/data/hello.txt.out": [
+      "copied 27 bytes\n",
+      1
+    ]
+  },
+  "wasm_bytes": 118919
+}

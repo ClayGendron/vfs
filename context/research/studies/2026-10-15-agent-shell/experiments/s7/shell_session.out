@@ -1,0 +1,68 @@
+=== session A (alice, read_write on /a) ===
+A$ cd /a
+A$ ls
+   file      /a/open.md
+A$ export X=1
+A$ echo $X
+   1
+A$ write /a/secret.md alice wrote this
+   file      /a/secret.md
+A$ ls
+   file      /a/open.md
+   file      /a/secret.md
+A$ cd ..
+A$ pwd
+   /
+A$ status
+   0
+A$ cd /nowhere
+   vfs.not_found: Not found
+A$ status
+   1
+A$ history
+   1  [0] cd /a
+   2  [0] ls
+   3  [0] export X=1
+   4  [0] echo $X
+   5  [0] write /a/secret.md alice wrote this
+   6  [0] ls
+   7  [0] cd ..
+   8  [0] pwd
+   9  [0] status
+   10  [1] cd /nowhere
+   11  [0] status
+A$ env
+   X=1
+A$ grep foo
+   grep: no verb maps to this builtin
+
+=== session B (bob, list on /a, read on /a/open.md), same tree ===
+B$ pwd
+   /
+B$ echo $X
+B$ ls /a
+   file      /a/open.md
+   file      /a/secret.md
+B$ cat /a/secret.md
+   vfs.permission_denied: Permission denied
+B$ cat /a/open.md
+   file      /a/open.md  :: 'public note'
+B$ write /a/mine.md bob tries
+   vfs.permission_denied: Permission denied
+B$ status
+   1
+B$ history
+   1  [0] pwd
+   2  [0] echo $X
+   3  [0] ls /a
+   4  [1] cat /a/secret.md
+   5  [0] cat /a/open.md
+   6  [1] write /a/mine.md bob tries
+   7  [0] status
+
+=== what the live Session holds vs what the ShellSession had to add ===
+Session slots: ('_authority', '_closed', '_fs')
+ShellSession fields: ['cwd', 'env', 'last_status', 'history', 'missing']
+A.cwd = / | B.cwd = / | A.env = {'X': '1'} | B.env = {}
+builtins with no verb in this reference: ['grep']
+mount table rows: [('/', 'InMemoryStorage', ('add_member', 'copy', 'delete'))]

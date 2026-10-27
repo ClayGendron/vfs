@@ -1,0 +1,7 @@
+write same True [] ['updated']
+mkedge True [] ['created']
+mkedge again True [] ['updated']
+move True [] ['created']
+move again False ['vfs.not_found'] []
+delete True [] ['deleted']
+delete again False ['vfs.not_found'] []

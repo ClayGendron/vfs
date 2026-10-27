@@ -1,0 +1,7 @@
+pyodide 0.28.3 under node v22.14.0
+loadPyodide cold: 1045 ms
+print('hello') (median of 20): 0.171 ms
+1e6-iteration loop (median of 5): 166.3 ms
+1000 host round trips via globals.set (median of 5): 1.84 ms -> 1.8 us/call
+node RSS: before=40 MB after load=183 MB end=185 MB
+interruptibility: no mechanism in this mode (needs a Worker + SharedArrayBuffer interrupt buffer)

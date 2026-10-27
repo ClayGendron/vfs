@@ -1,0 +1,7 @@
+wasmtime-py 49.0.0  binary=/Users/claygendron/Git/Repos/llm-wasm-sandbox/bin/python.wasm  size=26.3 MB  epoch=True
+Module.from_file (Cranelift compile): 738 ms;  serialize: 7 ms (26.2 MB cwasm);  deserialize_file: 5.6 ms
+instantiate+_start print('hello'): first=36 ms, median of 5=29 ms
+1e6-iteration loop, whole run incl. start (median of 3): 506 ms  -> loop alone ~477 ms
+1000 fd_write syscalls, whole run incl. start (median of 3): 31 ms -> ~2.2 ms over hello
+epoch interrupt of `while True`: Trap TrapCode.INTERRUPT after 206 ms
+host RSS: before=28 MB after compile=431 MB end=448 MB

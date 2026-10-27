@@ -1,0 +1,9 @@
+posture / read: True
+bob runs upper: exit=0 trap=None stdout=b'2\n' stderr=b''
+  verbs={'stat': 2, 'read': 1, 'write': 1} per_path={'/data/in.txt': ['stat', 'read'], '/data/out.txt': ['stat', 'write']}
+  preview1 fd_close calls=2
+  /data/out.txt after: 'untouched\n' v=1
+  the same write called directly as bob: success=False kind=vfs.permission_denied
+
+cache-hit run as a caller with no read on the program (zed, posture none on /bin):
+  zed: RuntimeError: Permission denied

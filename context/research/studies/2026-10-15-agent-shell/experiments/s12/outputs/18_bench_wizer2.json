@@ -1,0 +1,47 @@
+[
+  {
+    "label": "wizer",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-wizer.wasm",
+    "wasm_bytes": 50635154,
+    "cwasm_bytes": 55388896,
+    "module_load": "compile",
+    "module_load_seconds": 1.0958,
+    "entry": "vfs_run",
+    "programs": {
+      "pass": {
+        "median_s": 0.0038,
+        "min_s": 0.0035,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.0032,
+        "min_s": 0.0028,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 0.003,
+        "min_s": 0.0028,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 0.0033,
+        "min_s": 0.0029,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 904.9,
+    "host_maxrss_mib_before": 880.1
+  }
+]

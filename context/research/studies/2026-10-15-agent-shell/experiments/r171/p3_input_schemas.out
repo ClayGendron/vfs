@@ -1,0 +1,47 @@
+=== A. params table over 20 agent-facing verbs (ALL_OPS - DEVELOPER_OPS - run) ===
+verbs: ['copy', 'delete', 'edit', 'glean', 'glob', 'grant', 'grants', 'graph', 'grep', 'ls', 'mkdir', 'mkedge', 'move', 'read', 'restore', 'revoke', 'rmedge', 'stat', 'tree', 'write']
+  copy     params= 4 shape/value rules=1 awkward=['copies:pairs', 'authority:authority']
+  delete   params= 4 shape/value rules=1 awkward=['observations:observations', 'authority:authority']
+  edit     params= 7 shape/value rules=2 awkward=['edits:edits', 'observations:observations', 'authority:authority']
+  glean    params=10 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  glob     params=10 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  grant    params= 4 shape/value rules=0 awkward=['authority:authority']
+  grants   params= 2 shape/value rules=0 awkward=['authority:authority']
+  graph    params=10 shape/value rules=5 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  grep     params=18 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  ls       params= 4 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  mkdir    params= 4 shape/value rules=0 awkward=['authority:authority']
+  mkedge   params= 6 shape/value rules=1 awkward=['edges:edges', 'authority:authority']
+  move     params= 4 shape/value rules=1 awkward=['moves:pairs', 'authority:authority']
+  read     params= 4 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  restore  params= 3 shape/value rules=1 awkward=['observations:observations', 'authority:authority']
+  revoke   params= 3 shape/value rules=0 awkward=['authority:authority']
+  rmedge   params= 5 shape/value rules=1 awkward=['edges:edges', 'authority:authority']
+  stat     params= 4 shape/value rules=1 awkward=['observations:observations', 'columns:str_set', 'authority:authority']
+  tree     params= 4 shape/value rules=0 awkward=['columns:str_set', 'authority:authority']
+  write    params= 7 shape/value rules=2 awkward=['entries:entries', 'data:bytes', 'authority:authority']
+kind counts: {'authority': 20, 'bool': 11, 'bytes': 1, 'edges': 2, 'edits': 1, 'entries': 1, 'int': 8, 'observations': 10, 'pairs': 2, 'path': 21, 'str': 16, 'str_seq': 16, 'str_set': 8}
+mkedge provenance default: ['system']
+
+=== B. SDK func_metadata over the router's signatures ===
+  copy     FAILED InvalidSignature: Unable to evaluate type annotations for callable 'copy'
+  delete     7657 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal
+  edit       8255 chars; authority exposed; observations->$defs Authority,EditOperation,Match,Narrowing,Observation,Principal; edits->$defs Authority,EditOperation,Match,Narrowing,Observation,Principal
+  glean      8233 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  glob     FAILED InvalidSignature: Unable to evaluate type annotations for callable 'glob'
+  grant    FAILED InvalidSignature: Unable to evaluate type annotations for callable 'grant'
+  grants     1294 chars; authority exposed
+  graph      8274 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  grep       8995 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  ls         7732 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  mkdir      1435 chars; authority exposed
+  mkedge   FAILED InvalidSignature: Unable to evaluate type annotations for callable 'mkedge'
+  move     FAILED InvalidSignature: Unable to evaluate type annotations for callable 'move'
+  read       7734 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  restore    7589 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal
+  revoke     1362 chars; authority exposed
+  rmedge   FAILED InvalidSignature: Unable to evaluate type annotations for callable 'rmedge'
+  stat       7734 chars; authority exposed; observations->$defs Authority,Match,Narrowing,Observation,Principal; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  tree       1544 chars; authority exposed; columns={"anyOf": [{"items": {"type": "string"}, "type": "array", "uniqueItems": true}, {"type": "
+  write    FAILED InvalidSignature: Unable to evaluate type annotations for callable 'write'
+total input-schema chars across verbs: 77,838

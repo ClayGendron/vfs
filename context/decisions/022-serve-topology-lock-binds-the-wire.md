@@ -38,8 +38,9 @@ spec 054's own 2026-07-07 re-read already observed about 056's shape.
 ### 2. A served node additionally refuses topology mutation via any indirect wire path, for the serve lifetime
 
 Construction handles the direct surface; this covers anything that could
-reach topology through a registered verb. The refusal is serve-lifetime
-session state, not persistent node state, and lifts on un-serving —
+reach topology through a registered verb. The refusal is host-process
+lifetime state (the 2026-07-28 MCP revision has no sessions), not
+persistent node state, and lifts on un-serving —
 054's un-serving criterion stands.
 
 ### 3. The lock binds wire-originated calls only; the host handle keeps mount admin
@@ -75,7 +76,8 @@ buy little: the host is in-process and can stop the server anyway.
 
 ### 4. No persistent `topology_locked` state
 
-The lock is session state for the serve lifetime. The opt-in
+The lock is host-process state for the serve lifetime (amended
+2026-10-15: the stateless MCP revision has no sessions). The opt-in
 (`allow_topology_mutation=True`) stays loud in advertised capabilities
 as 054 drafted it.
 

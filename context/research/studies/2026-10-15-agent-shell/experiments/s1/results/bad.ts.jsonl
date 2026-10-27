@@ -1,0 +1,20 @@
+{"id":1,"dialect":"just-bash","ok":false,"error":"line 1: unexpected EOF while looking for matching `\"'"}
+{"id":1,"dialect":"lifo","ok":true}
+{"id":2,"dialect":"just-bash","ok":false,"error":"Parse error at 1:27: Expected FI, got EOF"}
+{"id":2,"dialect":"lifo","ok":false,"error":"Expected 'fi' but got ''"}
+{"id":3,"dialect":"just-bash","ok":true}
+{"id":3,"dialect":"lifo","ok":false,"error":"unexpected token ')'"}
+{"id":4,"dialect":"just-bash","ok":true}
+{"id":4,"dialect":"lifo","ok":true}
+{"id":5,"dialect":"just-bash","ok":true}
+{"id":5,"dialect":"lifo","ok":false,"error":"Expected Word but got RedirectIn ('<')"}
+{"id":6,"dialect":"just-bash","ok":false,"error":"Parse error at 1:26: Expected DONE, got EOF"}
+{"id":6,"dialect":"lifo","ok":false,"error":"Expected 'done' but got ''"}
+{"id":7,"dialect":"just-bash","ok":true}
+{"id":7,"dialect":"lifo","ok":true}
+{"id":8,"dialect":"just-bash","ok":true}
+{"id":8,"dialect":"lifo","ok":true}
+{"id":9,"dialect":"just-bash","ok":true}
+{"id":9,"dialect":"lifo","ok":true}
+{"id":10,"dialect":"just-bash","ok":true}
+{"id":10,"dialect":"lifo","ok":true}

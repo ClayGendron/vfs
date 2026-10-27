@@ -1,0 +1,100 @@
+{"id": 1, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run pytest -q 2>&1 | tail -5"}
+{"id": 2, "cmd": "grep -n \"def route(\" src/vfs/base.py | head -20"}
+{"id": 3, "cmd": "sed -n '880,940p' src/vfs/base.py | head -60"}
+{"id": 4, "cmd": "cd /Users/claygendron/Git/Repos/vfs && grep -rn \"ErrorKind\" src/ --include=*.py | head -40"}
+{"id": 5, "cmd": "echo ---; git status --short | head -30; echo ----; git diff --stat | tail -3"}
+{"id": 6, "cmd": "cat -n src/vfs/results/kinds.py | sed -n '1,80p'"}
+{"id": 7, "cmd": "grep -n \"cli\" src/vfs/ops.py | head -20 && echo ---- && grep -n \"VERB_RUNGS\" -A 30 src/vfs/ops.py | head -60"}
+{"id": 8, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run ruff check src tests 2>&1 | tail -20"}
+{"id": 9, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run ruff format --check src tests 2>&1 | tail -5 && uv run ty check src tests 2>&1 | tail -5"}
+{"id": 10, "cmd": "ls -la context/research/studies/2026-10-15-agent-shell/experiments/*/ | head -30"}
+{"id": 11, "cmd": "cd /Users/claygendron/Git/Repos/vfs && find src -name '*.py' | xargs grep -ln \"SupportsRun\" | head"}
+{"id": 12, "cmd": "grep -rn \"def grep(\" src/vfs/storage/*.py | head -20"}
+{"id": 13, "cmd": "git log --oneline -10; echo \"head=`git rev-parse --short HEAD`\""}
+{"id": 14, "cmd": "git log -1 --format='%H %s' > /tmp/x/head.txt; cat /tmp/x/head.txt; echo \"pwd=$PWD\""}
+{"id": 15, "cmd": "git show --stat HEAD | head -40"}
+{"id": 16, "cmd": "cd /Users/claygendron/Git/Repos/vfs && git diff -- src/vfs/base.py > /tmp/x/base.patch && wc -l /tmp/x/base.patch"}
+{"id": 17, "cmd": "cat > /tmp/x/notes.md <<'EOF'\n# Notes\n- one\n- two\nEOF"}
+{"id": 18, "cmd": "cd /Users/claygendron/Git/Repos/vfs && cat > context/decisions/081-the-shell-surface.md <<'EOF'\n# 081 The shell surface at v1\n\nStatus: proposed\nEOF"}
+{"id": 19, "cmd": "uv run python - <<'EOF' > /tmp/x/rungs.txt\nfrom vfs.ops import VERB_RUNGS\nfor k, v in VERB_RUNGS.items():\n    print(k, v)\nEOF\ncat /tmp/x/rungs.txt"}
+{"id": 20, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run python - <<'EOF' 2>&1 | head -40\nimport vfs\nprint(vfs.__file__)\nEOF"}
+{"id": 21, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run pytest tests/test_results.py -x -q --no-header 2>&1 | tail -20"}
+{"id": 22, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run pytest tests/storage -q -k \"grep and not slow\" 2>&1 | tail -15"}
+{"id": 23, "cmd": "cd /Users/claygendron/Git/Repos/vfs && scripts/ci.sh 2>&1 | tail -30; echo \"ci exit=${PIPESTATUS[0]}\""}
+{"id": 24, "cmd": "cd /Users/claygendron/Git/Repos/vfs && time uv run pytest -q -m \"not slow\" 2>&1 | tail -3"}
+{"id": 25, "cmd": "grep -c \"def \" src/vfs/*.py | sort -t: -k2 -n"}
+{"id": 26, "cmd": "wc -l src/vfs/*.py | sort -n | tail -10"}
+{"id": 27, "cmd": "grep -rn \"TODO\\|FIXME\" src/ tests/ --include=*.py | wc -l"}
+{"id": 28, "cmd": "cd /Users/claygendron/Git/Repos/vfs && rg -n \"chunked\\(\" src --type py | head -20"}
+{"id": 29, "cmd": "rg -l \"in_list_budget\" src tests > /tmp/x/files.txt; wc -l < /tmp/x/files.txt"}
+{"id": 30, "cmd": "for f in src/vfs/storage/backends/database/*.py; do echo \"== $f\"; grep -c \"def \" \"$f\"; done"}
+{"id": 31, "cmd": "for f in tests/test_*.py; do printf '%s ' \"$f\"; grep -c '^def test_' \"$f\"; done | sort -k2 -rn | head -10"}
+{"id": 32, "cmd": "ls \"$HOME/Git/Repos\" | head -80; echo \"n=`ls ~/Git/Repos | wc -l`\""}
+{"id": 33, "cmd": "cat <<'EOF' > /tmp/x/probe.py\nimport json, sys\nprint(json.dumps({\"argv\": sys.argv}))\nEOF\nuv run python -I /tmp/x/probe.py a b | head"}
+{"id": 34, "cmd": "cd ~/Git/Repos/oils && git log -1 --format='%h %cs' && grep -c \"^#### \" spec/*.test.sh | tail -3"}
+{"id": 35, "cmd": "cd ~/Git/Repos/brush && grep -rn \"non_posix_extensions_enabled()\" brush-parser/src/parser/peg.rs | head -20"}
+{"id": 36, "cmd": "psql \"$VFS_TEST_POSTGRES_URL\" <<'EOF' | head -20\nSELECT count(*) FROM vfs_entries;\nEOF"}
+{"id": 37, "cmd": "cat context/open-questions.md | grep -n \"Shell pipe payload\" -A 20 | head -40"}
+{"id": 38, "cmd": "cat >> /tmp/x/journal.log <<'EOF'\n## 2026-10-15 parser experiment\nmvdan built; bashkit building\nEOF"}
+{"id": 39, "cmd": "sed -i '' 's/membership_budget(profile)/membership_budget(profile, parameter_budget)/g' src/vfs/storage/backends/database/*.py && git diff --stat | tail -3"}
+{"id": 40, "cmd": "sed -i '' 's/^Status: proposed$/Status: accepted/' context/decisions/080-*.md && grep -n \"^Status\" context/decisions/080-*.md | head"}
+{"id": 41, "cmd": "perl -0pi -e 's/def _route_single\\(self, op\\)/def _route_single(self, op, *, path)/' src/vfs/base.py && uv run ruff check src/vfs/base.py | tail -3"}
+{"id": 42, "cmd": "S=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s1; mkdir -p \"$S\" && ls \"$S\""}
+{"id": 43, "cmd": "cp context/specs/active/152-*/spec.md /tmp/x/spec-152.md && head -20 /tmp/x/spec-152.md | cut -c1-120"}
+{"id": 44, "cmd": "for d in scratch out logs; do rm -rf \"/tmp/x/$d\" && mkdir -p \"/tmp/x/$d\"; done; rm -f /tmp/x/*.log"}
+{"id": 45, "cmd": "mv context/specs/active/165-* context/specs/done/ && git status --short | head"}
+{"id": 46, "cmd": "git status --short | head -5 && git add -A && git commit -q -m \"feat(storage): the permission ladder gains list, add and contribute\" && git log --oneline -1"}
+{"id": 47, "cmd": "git add context/ && git commit -F /tmp/x/msg.txt | tail -3"}
+{"id": 48, "cmd": "git commit -q -m \"$(cat <<'EOF'\nfix(base): a copy out of the trash view is invalid at the path the caller sent\n\nThe trash view rejects copies out of it.\nEOF\n)\" && git log -1 --stat | head"}
+{"id": 49, "cmd": "git rev-parse --abbrev-ref HEAD && git status --porcelain | wc -l"}
+{"id": 50, "cmd": "cat <<'EOF' | uv run python -\nimport vfs\nprint(vfs.__version__)\nEOF"}
+{"id": 51, "cmd": "docker compose --profile db up -d --wait | tail -5 && docker ps --format '{{.Names}} {{.Status}}'"}
+{"id": 52, "cmd": "cd /Users/claygendron/Git/Repos/vfs && VFS_TEST_POSTGRES_URL=postgresql://vfs:vfs@localhost:5432/vfs uv run pytest tests/storage -q -m \"not slow\" 2>&1 | tail -5"}
+{"id": 53, "cmd": "export VFS_TEST_MSSQL_URL=\"mssql+pyodbc://sa:Pass@localhost:1433/vfs\" && uv run pytest tests/storage/test_conformance.py -q 2>&1 | tail -3"}
+{"id": 54, "cmd": "unset VFS_TEST_POSTGRES_URL VFS_TEST_MSSQL_URL; echo \"pg=${VFS_TEST_POSTGRES_URL:-unset}\"; uv run pytest -q | tail -2"}
+{"id": 55, "cmd": "ps aux | grep -i docker | grep -v grep | head"}
+{"id": 56, "cmd": "pgrep -fl \"pytest\" | head; echo \"exit=$?\""}
+{"id": 57, "cmd": "pkill -f \"uv run pytest\" || true"}
+{"id": 58, "cmd": "sleep 30; echo `date`; docker ps --format '{{.Names}}' | head"}
+{"id": 59, "cmd": "cd /Users/claygendron/Git/Repos/vfs && (uv run pytest tests/storage -q | tail -3) && echo PASSED"}
+{"id": 60, "cmd": "(cd crates/vfs-core && cargo test | tail -5); echo \"exit=$?\""}
+{"id": 61, "cmd": "cd crates/vfs-core && cargo test -p vfs-core 2>&1 | grep -E \"test result|error(\\[|:)\" | head"}
+{"id": 62, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv sync --all-extras --group dev --reinstall-package vfs-py 2>&1 | tail -3"}
+{"id": 63, "cmd": "uv run python - <<'EOF' | head -c 300\nimport vfs._native as n\nprint([x for x in dir(n) if not x.startswith('_')])\nEOF"}
+{"id": 64, "cmd": "uv run python -c \"from vfs.results.kinds import ErrorKind; print(len(ErrorKind))\""}
+{"id": 65, "cmd": "grep -n \"class .*Error\\|def kind_family(\" src/vfs/results/*.py > /tmp/x/kinds-defs.txt; cat /tmp/x/kinds-defs.txt | head"}
+{"id": 66, "cmd": "cd /Users/claygendron/Git/Repos/vfs && grep -rn \"unsupported\" src/vfs/ --include=*.py | grep -v \"test\" | cut -c1-200 | head -30"}
+{"id": 67, "cmd": "grep -rn \"def test_.*(\" tests/storage/test_grep*.py | cut -d: -f2 | head -3"}
+{"id": 68, "cmd": "awk -F: '{print $1}' /tmp/x/paths.txt | sort | uniq -c | sort -rn | head"}
+{"id": 69, "cmd": "cd /Users/claygendron/Git/Repos/vfs && nl -ba src/vfs/results/render.py | sed -n '40,120p'"}
+{"id": 70, "cmd": "uv run python - <<'EOF'\nimport json\nrows = [json.loads(l) for l in open('/tmp/x/out.jsonl')]\nprint(len(rows), sum(r['ok'] for r in rows))\nEOF"}
+{"id": 71, "cmd": "tail -n 40 /tmp/x/ci.log | grep -E \"(passed|failed|error)\""}
+{"id": 72, "cmd": "cat /tmp/x/ci.log | tr -d '\\r' | tail -20"}
+{"id": 73, "cmd": "diff <(sort /tmp/x/a.txt) <(sort /tmp/x/b.txt) | head"}
+{"id": 74, "cmd": "curl -sL https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html | head -c 500"}
+{"id": 75, "cmd": "curl -s 'https://api.github.com/repos/mvdan/sh/commits?per_page=1' > /tmp/x/commit.json; python3 -c \"import json; print(json.load(open('/tmp/x/commit.json'))[0]['sha'])\""}
+{"id": 76, "cmd": "uv run python - <<'EOF' | head\nfrom pathlib import Path\nfor p in sorted(Path('context/decisions').glob('08*.md')):\n    print(p.name)\nEOF"}
+{"id": 77, "cmd": "gh api repos/claygendron/vfs/actions/runs --jq '.workflow_runs[0].conclusion' > /tmp/x/runs.txt; cat /tmp/x/runs.txt"}
+{"id": 78, "cmd": "cat ~/.claude/projects/*/memory/* 2>/dev/null | head; ls ~/.claude/projects | wc -l"}
+{"id": 79, "cmd": "ls context/decisions/ | tail -5 && cat context/decisions/080-*.md | head -60"}
+{"id": 80, "cmd": "ls context/specs/active/*/spec.md | while read f; do echo \"$f $(wc -l < \"$f\")\"; done"}
+{"id": 81, "cmd": "if [ -f /tmp/x/ci.log ]; then tail -5 /tmp/x/ci.log | cut -c1-200; else echo \"no log\"; fi"}
+{"id": 82, "cmd": "[[ -d .venv ]] && echo venv || echo none"}
+{"id": 83, "cmd": "case \"$(uname -s)\" in Darwin) echo mac;; Linux) echo linux;; esac"}
+{"id": 84, "cmd": "n=$(grep -c \"^def test_\" tests/test_base.py); echo \"tests=$n\"; echo $((n * 2))"}
+{"id": 85, "cmd": "echo {src,tests}/vfs/*.py | tr ' ' '\\n' | head"}
+{"id": 86, "cmd": "rc() { uv run ruff check \"$@\" 2>&1 | tail -3; }; rc src tests"}
+{"id": 87, "cmd": "uv run pytest -q tests/storage > /tmp/x/pytest.log 2>&1; tail -5 /tmp/x/pytest.log"}
+{"id": 88, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run pytest -q 2>&1 | tee /tmp/x/pytest.log | tail -5"}
+{"id": 89, "cmd": "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) ran ci\" >> /tmp/x/journal.log"}
+{"id": 90, "cmd": "git log --format='%h %cs %s' -5 >> /tmp/x/journal.log && tail -8 /tmp/x/journal.log"}
+{"id": 91, "cmd": "grep -rn \"import numpy\\|np\\.\\(array\\|asarray\\)\" src/ pyproject.toml | head; echo \"exit=$?\""}
+{"id": 92, "cmd": "cut -c1-160 < /tmp/x/long.txt | head -40"}
+{"id": 93, "cmd": "base64 -i /tmp/x/img.png > /tmp/x/img.b64; head -c 100 /tmp/x/img.b64"}
+{"id": 94, "cmd": "for d in .venv target crates/vfs-core/target; do du -sh \"$d\" 2>/dev/null; done | sort -h"}
+{"id": 95, "cmd": "cd ~/Git/Repos && for r in oils mvdan-sh brush; do printf \"%-10s \" \"$r\"; (cd $r && git log -1 --format='%h %cs'); done"}
+{"id": 96, "cmd": "cd /Users/claygendron/Git/Repos/vfs && uv run pytest tests/test_paths.py -q 2>&1 | tail -3 && uv run ruff check src/vfs/paths.py && echo OK"}
+{"id": 97, "cmd": "cd /Users/claygendron/Git/Repos/vfs\necho \"== ruff\"; uv run ruff check src tests 2>&1 | tail -3\necho \"== format\"; uv run ruff format --check src tests 2>&1 | tail -3\necho \"== ty\"; uv run ty check src tests 2>&1 | tail -3\necho \"== pytest\"; uv run pytest -q 2>&1 | tail -3\necho \"== cargo\"; (cd crates/vfs-core && cargo test 2>&1 | tail -3)"}
+{"id": 98, "cmd": "grep -n \"set -o \\(pipefail\\|errexit\\)\" ~/Git/Repos/oils/spec/errexit*.test.sh | head -20"}
+{"id": 99, "cmd": "tail -f /tmp/x/server.log &"}
+{"id": 100, "cmd": "echo \"done at `date`\" && ls -d ~/Git/Repos/*/ | wc -l && head -3 src/vfs/*.py | head -40"}

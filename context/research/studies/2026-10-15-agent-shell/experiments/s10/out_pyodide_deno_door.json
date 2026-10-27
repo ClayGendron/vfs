@@ -1,0 +1,13 @@
+{
+  "deno": "2.5.2",
+  "load_ms": 1106,
+  "door": {
+    "has_Deno": true,
+    "has_process": true,
+    "Deno_env_HOME": "JsException: NotCapable: Requires env access to \"HOME\", run again with the --allow-env flag",
+    "Deno_readTextFileSync_etc_hosts": "JsException: NotCapable: Requires read access to \"/etc/hosts\", run again with the --allow-read flag",
+    "Deno_cwd": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s10",
+    "Deno_Command": "JsException: NotCapable: Requires run access to \"id\", run again with the --allow-run flag",
+    "Deno_readTextFileSync_pyodide_dir": "JsException: NotCapable: Requires read access to \"/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s10/pyodid"
+  }
+}

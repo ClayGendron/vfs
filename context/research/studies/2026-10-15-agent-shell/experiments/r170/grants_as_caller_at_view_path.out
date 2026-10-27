@@ -1,0 +1,5 @@
+alice: success=True errors=[] rows=[('*', '/', 'none'), ('*', '/.vfs/tools', 'list'), ('alice', '/.vfs/tools/search', 'read')]
+bob: success=False errors=['vfs.not_found'] rows=[]
+anonymous: success=False errors=['vfs.unauthenticated'] rows=[]
+fresh node, anonymous: True [] [{'principal_id': '*', 'path_prefix': '/', 'level': 'read_write', 'granted_by': 'system', 'granted_at': datetime.datetime(2026, 10, 16, 1, 1, 2, 940368)}]
+fresh node, bob: True [] [{'principal_id': '*', 'path_prefix': '/', 'level': 'read_write', 'granted_by': 'system', 'granted_at': datetime.datetime(2026, 10, 16, 1, 1, 2, 940368)}]

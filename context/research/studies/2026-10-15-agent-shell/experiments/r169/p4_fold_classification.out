@@ -1,0 +1,6 @@
+read /data/in.txt           success=True kind=None err.path=None data=None
+read /data/sub              success=False kind=vfs.wrong_kind err.path=/data/sub data={'kind': 'directory'}
+read /data/nope.txt         success=False kind=vfs.not_found err.path=/data/nope.txt data=None
+read /data/in.txt/child     success=False kind=vfs.wrong_kind err.path=/data/in.txt data={'kind': 'file', 'vfs.target': '/data/in.txt/child'}
+read /nodir/x.txt           success=False kind=vfs.not_found err.path=/nodir data={'vfs.target': '/nodir/x.txt'}
+read with '..': success=True rows=['/data/in.txt']

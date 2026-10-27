@@ -1,0 +1,958 @@
+The Meson build system
+Version: 1.12.1
+Source dir: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6
+Build dir: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi
+Build type: cross build
+Project name: pandas
+Project version: 3.0.6
+Cross compiler sanity tests disabled via the cross file.
+C compiler for the host machine: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/scripts/wasi-cc (clang 18.1.2 "clang version 18.1.2-wasi-sdk (https://github.com/llvm/llvm-project 26a1d6601d727a96f4301d0d8647b5a42760ae0c)")
+C linker for the host machine: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/scripts/wasi-cc ld.lld 18.1.2
+C++ compiler for the host machine: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/scripts/wasi-cxx (clang 18.1.2 "clang version 18.1.2-wasi-sdk (https://github.com/llvm/llvm-project 26a1d6601d727a96f4301d0d8647b5a42760ae0c)")
+C++ linker for the host machine: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/scripts/wasi-cxx ld.lld 18.1.2
+Cython compiler for the host machine: cython (cython 3.3.0)
+C compiler for the build machine: cc (clang 21.0.0 "Apple clang version 21.0.0 (clang-2100.1.1.101)")
+C linker for the build machine: cc ld64 1267
+C++ compiler for the build machine: c++ (clang 21.0.0 "Apple clang version 21.0.0 (clang-2100.1.1.101)")
+C++ linker for the build machine: c++ ld64 1267
+Cython compiler for the build machine: cython (cython 3.3.0)
+Build machine cpu family: aarch64
+Build machine cpu: aarch64
+Host machine cpu family: wasm32
+Host machine cpu: wasm32
+Target machine cpu family: wasm32
+Target machine cpu: wasm32
+Program python found: YES (/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/scripts/python-wasi-cross)
+Compiler for C++ supports arguments -Wunused-template: YES 
+Program cython found: YES
+WARNING: Found pkg-config '/usr/bin/false' but it failed when ran
+Found pkg-config: NO
+Run-time dependency python found: YES 3.14
+Library m found: YES
+Configuring free_threading_config.pxi using configuration
+Build targets in project: 55
+
+pandas 3.0.6
+
+  User defined options
+    Cross files: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/wasi-pandas.cross
+    buildtype  : release
+
+Found ninja-1.13.2.git.kitware.jobserver-pipe-1 at /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/.venv-build/bin/ninja
+ninja: Entering directory `/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi'
+[1/154] Generating pandas/_libs/index_class_helper_pxi with a custom command
+[2/154] Generating pandas/_libs/intervaltree_helper_pxi with a custom command
+[3/154] Generating pandas/_libs/algos_take_helper_pxi with a custom command
+[4/154] Generating pandas/_libs/algos_common_helper_pxi with a custom command
+[5/154] Generating pandas/_libs/hashtable_class_helper_pxi with a custom command
+[6/154] Generating pandas/_libs/hashtable_func_helper_pxi with a custom command
+[7/154] Generating pandas/_libs/khash_primitive_helper_pxi with a custom command
+[8/154] Generating pandas/_libs/sparse_op_helper_pxi with a custom command
+[9/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/base.pyx
+[10/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/ccalendar.pyx
+[11/154] Generating _cyutility.c with a custom command
+[12/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/dtypes.pyx
+[13/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/fields.pyx
+[14/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/np_datetime.pyx
+[15/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/parsing.pyx
+[16/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/nattype.pyx
+[17/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/conversion.pyx
+[18/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/strptime.pyx
+[19/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/offsets.pyx
+[20/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/timezones.pyx
+[21/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/vectorized.pyx
+[22/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/tzconversion.pyx
+[23/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/timedeltas.pyx
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/timedeltas.pyx:1546:12: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/timedeltas.pyx:1547:12: Python attribute access is not usefully protected by critical_section
+[24/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/period.pyx
+[25/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/arrays.pyx
+[26/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslibs/timestamps.pyx
+[27/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/indexing.pyx
+[28/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/hashing.pyx
+[29/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:31:0: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:944:8: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:949:12: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:983:8: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:1001:8: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:1022:8: The 'IF' statement is deprecated and will be removed in a future Cython version. Consider using runtime conditions or C macros instead. See https://github.com/cython/cython/issues/4310
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:794:38: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:1003:20: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/internals.pyx:1024:27: Python attribute access is not usefully protected by critical_section
+[30/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/index.pyx
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/index.pyx:280:16: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/index.pyx:351:19: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/index.pyx:354:19: Python attribute access is not usefully protected by critical_section
+warning: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/index.pyx:358:19: Python attribute access is not usefully protected by critical_section
+[31/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/missing.pyx
+[32/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/lib.pyx
+[33/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/ops.pyx
+[34/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/interval.pyx
+[35/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/parsers.pyx
+[36/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/join.pyx
+[37/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/ops_dispatch.pyx
+[38/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/algos.pyx
+[39/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/properties.pyx
+[40/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/reshape.pyx
+[41/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/sas.pyx
+[42/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/byteswap.pyx
+[43/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/hashtable.pyx
+[44/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/testing.pyx
+[45/154] Compiling C object pandas/_libs/tslibs/base.cpython-314-wasm32-wasi.so.p/meson-generated_base.pyx.c.o
+[46/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/tslib.pyx
+[47/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/writers.pyx
+[48/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/groupby.pyx
+[49/154] Compiling C object pandas/_libs/tslibs/ccalendar.cpython-314-wasm32-wasi.so.p/meson-generated_ccalendar.pyx.c.o
+In file included from pandas/_libs/tslibs/ccalendar.cpython-314-wasm32-wasi.so.p/ccalendar.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/ccalendar.cpython-314-wasm32-wasi.so.p/ccalendar.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[50/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/window/indexers.pyx
+[51/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/window/aggregations.pyx
+[52/154] Compiling Cython source /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/pandas/_libs/sparse.pyx
+[53/154] Compiling C object pandas/_libs/tslibs/np_datetime.cpython-314-wasm32-wasi.so.p/meson-generated_np_datetime.pyx.c.o
+In file included from pandas/_libs/tslibs/np_datetime.cpython-314-wasm32-wasi.so.p/np_datetime.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/np_datetime.cpython-314-wasm32-wasi.so.p/np_datetime.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[54/154] Compiling C object pandas/_libs/tslibs/conversion.cpython-314-wasm32-wasi.so.p/meson-generated_conversion.pyx.c.o
+In file included from pandas/_libs/tslibs/conversion.cpython-314-wasm32-wasi.so.p/conversion.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/conversion.cpython-314-wasm32-wasi.so.p/conversion.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[55/154] Compiling C object pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so.p/.._src_parser_tokenizer.c.o
+[56/154] Compiling C object _cyutility.cpython-314-wasm32-wasi.so.p/meson-generated_..__cyutility.c.o
+[57/154] Compiling C object pandas/_libs/tslibs/dtypes.cpython-314-wasm32-wasi.so.p/meson-generated_dtypes.pyx.c.o
+In file included from pandas/_libs/tslibs/dtypes.cpython-314-wasm32-wasi.so.p/dtypes.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/dtypes.cpython-314-wasm32-wasi.so.p/dtypes.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[58/154] Compiling C object pandas/_libs/tslibs/fields.cpython-314-wasm32-wasi.so.p/meson-generated_fields.pyx.c.o
+In file included from pandas/_libs/tslibs/fields.cpython-314-wasm32-wasi.so.p/fields.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/fields.cpython-314-wasm32-wasi.so.p/fields.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[59/154] Compiling C object pandas/_libs/tslibs/nattype.cpython-314-wasm32-wasi.so.p/meson-generated_nattype.pyx.c.o
+In file included from pandas/_libs/tslibs/nattype.cpython-314-wasm32-wasi.so.p/nattype.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/nattype.cpython-314-wasm32-wasi.so.p/nattype.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[60/154] Compiling C object pandas/_libs/tslibs/vectorized.cpython-314-wasm32-wasi.so.p/meson-generated_vectorized.pyx.c.o
+In file included from pandas/_libs/tslibs/vectorized.cpython-314-wasm32-wasi.so.p/vectorized.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/vectorized.cpython-314-wasm32-wasi.so.p/vectorized.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[61/154] Compiling C object pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so.p/meson-generated_parsing.pyx.c.o
+In file included from pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so.p/parsing.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so.p/parsing.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[62/154] Compiling C object pandas/_libs/tslibs/tzconversion.cpython-314-wasm32-wasi.so.p/meson-generated_tzconversion.pyx.c.o
+In file included from pandas/_libs/tslibs/tzconversion.cpython-314-wasm32-wasi.so.p/tzconversion.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/tzconversion.cpython-314-wasm32-wasi.so.p/tzconversion.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[63/154] Compiling C object pandas/_libs/tslibs/timezones.cpython-314-wasm32-wasi.so.p/meson-generated_timezones.pyx.c.o
+In file included from pandas/_libs/tslibs/timezones.cpython-314-wasm32-wasi.so.p/timezones.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/timezones.cpython-314-wasm32-wasi.so.p/timezones.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[64/154] Compiling C object pandas/_libs/arrays.cpython-314-wasm32-wasi.so.p/meson-generated_arrays.pyx.c.o
+In file included from pandas/_libs/arrays.cpython-314-wasm32-wasi.so.p/arrays.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/arrays.cpython-314-wasm32-wasi.so.p/arrays.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[65/154] Compiling C object pandas/_libs/tslibs/strptime.cpython-314-wasm32-wasi.so.p/meson-generated_strptime.pyx.c.o
+In file included from pandas/_libs/tslibs/strptime.cpython-314-wasm32-wasi.so.p/strptime.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/strptime.cpython-314-wasm32-wasi.so.p/strptime.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[66/154] Compiling C object pandas/_libs/hashing.cpython-314-wasm32-wasi.so.p/meson-generated_hashing.pyx.c.o
+In file included from pandas/_libs/hashing.cpython-314-wasm32-wasi.so.p/hashing.pyx.c:1255:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/hashing.cpython-314-wasm32-wasi.so.p/hashing.pyx.c:1255:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[67/154] Compiling C object pandas/_libs/tslibs/period.cpython-314-wasm32-wasi.so.p/meson-generated_period.pyx.c.o
+In file included from pandas/_libs/tslibs/period.cpython-314-wasm32-wasi.so.p/period.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/period.cpython-314-wasm32-wasi.so.p/period.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[68/154] Compiling C object pandas/_libs/indexing.cpython-314-wasm32-wasi.so.p/meson-generated_indexing.pyx.c.o
+[69/154] Compiling C object pandas/_libs/tslibs/timestamps.cpython-314-wasm32-wasi.so.p/meson-generated_timestamps.pyx.c.o
+In file included from pandas/_libs/tslibs/timestamps.cpython-314-wasm32-wasi.so.p/timestamps.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/timestamps.cpython-314-wasm32-wasi.so.p/timestamps.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[70/154] Compiling C object pandas/_libs/tslibs/timedeltas.cpython-314-wasm32-wasi.so.p/meson-generated_timedeltas.pyx.c.o
+In file included from pandas/_libs/tslibs/timedeltas.cpython-314-wasm32-wasi.so.p/timedeltas.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/timedeltas.cpython-314-wasm32-wasi.so.p/timedeltas.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[71/154] Compiling C object pandas/_libs/internals.cpython-314-wasm32-wasi.so.p/meson-generated_internals.pyx.c.o
+In file included from pandas/_libs/internals.cpython-314-wasm32-wasi.so.p/internals.pyx.c:1276:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/internals.cpython-314-wasm32-wasi.so.p/internals.pyx.c:1276:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[72/154] Compiling C object pandas/_libs/lib.cpython-314-wasm32-wasi.so.p/src_parser_tokenizer.c.o
+[73/154] Compiling C object pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so.p/src_vendored_numpy_datetime_np_datetime.c.o
+In file included from ../pandas/_libs/src/vendored/numpy/datetime/np_datetime.c:30:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from ../pandas/_libs/src/vendored/numpy/datetime/np_datetime.c:30:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[74/154] Compiling C object pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so.p/src_vendored_numpy_datetime_np_datetime_strings.c.o
+[75/154] Compiling C object pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so.p/src_datetime_date_conversions.c.o
+[76/154] Compiling C object pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so.p/src_datetime_pd_datetime.c.o
+In file included from ../pandas/_libs/src/datetime/pd_datetime.c:25:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from ../pandas/_libs/src/datetime/pd_datetime.c:25:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[77/154] Compiling C object pandas/_libs/pandas_parser.cpython-314-wasm32-wasi.so.p/src_parser_tokenizer.c.o
+[78/154] Compiling C object pandas/_libs/pandas_parser.cpython-314-wasm32-wasi.so.p/src_parser_io.c.o
+[79/154] Compiling C object pandas/_libs/pandas_parser.cpython-314-wasm32-wasi.so.p/src_parser_pd_parser.c.o
+[80/154] Compiling C object pandas/_libs/missing.cpython-314-wasm32-wasi.so.p/meson-generated_missing.pyx.c.o
+In file included from pandas/_libs/missing.cpython-314-wasm32-wasi.so.p/missing.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/missing.cpython-314-wasm32-wasi.so.p/missing.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[81/154] Compiling C object pandas/_libs/parsers.cpython-314-wasm32-wasi.so.p/src_parser_tokenizer.c.o
+[82/154] Compiling C object pandas/_libs/parsers.cpython-314-wasm32-wasi.so.p/src_parser_io.c.o
+[83/154] Compiling C object pandas/_libs/json.cpython-314-wasm32-wasi.so.p/src_vendored_ujson_python_ujson.c.o
+In file included from ../pandas/_libs/src/vendored/ujson/python/ujson.c:45:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from ../pandas/_libs/src/vendored/ujson/python/ujson.c:45:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[84/154] Compiling C object pandas/_libs/json.cpython-314-wasm32-wasi.so.p/src_vendored_ujson_python_objToJSON.c.o
+In file included from ../pandas/_libs/src/vendored/ujson/python/objToJSON.c:49:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from ../pandas/_libs/src/vendored/ujson/python/objToJSON.c:49:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[85/154] Compiling C object pandas/_libs/json.cpython-314-wasm32-wasi.so.p/src_vendored_ujson_python_JSONtoObj.c.o
+[86/154] Compiling C object pandas/_libs/json.cpython-314-wasm32-wasi.so.p/src_vendored_ujson_lib_ultrajsonenc.c.o
+[87/154] Compiling C object pandas/_libs/json.cpython-314-wasm32-wasi.so.p/src_vendored_ujson_lib_ultrajsondec.c.o
+[88/154] Compiling C object pandas/_libs/ops.cpython-314-wasm32-wasi.so.p/meson-generated_ops.pyx.c.o
+In file included from pandas/_libs/ops.cpython-314-wasm32-wasi.so.p/ops.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/ops.cpython-314-wasm32-wasi.so.p/ops.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[89/154] Compiling C object pandas/_libs/ops_dispatch.cpython-314-wasm32-wasi.so.p/meson-generated_ops_dispatch.pyx.c.o
+[90/154] Compiling C object pandas/_libs/properties.cpython-314-wasm32-wasi.so.p/meson-generated_properties.pyx.c.o
+[91/154] Compiling C object pandas/_libs/index.cpython-314-wasm32-wasi.so.p/meson-generated_index.pyx.c.o
+In file included from pandas/_libs/index.cpython-314-wasm32-wasi.so.p/index.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/index.cpython-314-wasm32-wasi.so.p/index.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[92/154] Compiling C object pandas/_libs/tslibs/offsets.cpython-314-wasm32-wasi.so.p/meson-generated_offsets.pyx.c.o
+In file included from pandas/_libs/tslibs/offsets.cpython-314-wasm32-wasi.so.p/offsets.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslibs/offsets.cpython-314-wasm32-wasi.so.p/offsets.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[93/154] Compiling C object pandas/_libs/lib.cpython-314-wasm32-wasi.so.p/meson-generated_lib.pyx.c.o
+In file included from pandas/_libs/lib.cpython-314-wasm32-wasi.so.p/lib.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/lib.cpython-314-wasm32-wasi.so.p/lib.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[94/154] Compiling C object pandas/_libs/byteswap.cpython-314-wasm32-wasi.so.p/meson-generated_byteswap.pyx.c.o
+[95/154] Compiling C object pandas/_libs/sas.cpython-314-wasm32-wasi.so.p/meson-generated_sas.pyx.c.o
+[96/154] Compiling C object pandas/_libs/parsers.cpython-314-wasm32-wasi.so.p/meson-generated_parsers.pyx.c.o
+In file included from pandas/_libs/parsers.cpython-314-wasm32-wasi.so.p/parsers.pyx.c:1257:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/parsers.cpython-314-wasm32-wasi.so.p/parsers.pyx.c:1257:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[97/154] Compiling C object pandas/_libs/reshape.cpython-314-wasm32-wasi.so.p/meson-generated_reshape.pyx.c.o
+In file included from pandas/_libs/reshape.cpython-314-wasm32-wasi.so.p/reshape.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/reshape.cpython-314-wasm32-wasi.so.p/reshape.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[98/154] Compiling C object pandas/_libs/testing.cpython-314-wasm32-wasi.so.p/meson-generated_testing.pyx.c.o
+In file included from pandas/_libs/testing.cpython-314-wasm32-wasi.so.p/testing.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/testing.cpython-314-wasm32-wasi.so.p/testing.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[99/154] Compiling C object pandas/_libs/tslib.cpython-314-wasm32-wasi.so.p/meson-generated_tslib.pyx.c.o
+In file included from pandas/_libs/tslib.cpython-314-wasm32-wasi.so.p/tslib.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/tslib.cpython-314-wasm32-wasi.so.p/tslib.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[100/154] Compiling C object pandas/_libs/interval.cpython-314-wasm32-wasi.so.p/meson-generated_interval.pyx.c.o
+In file included from pandas/_libs/interval.cpython-314-wasm32-wasi.so.p/interval.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/interval.cpython-314-wasm32-wasi.so.p/interval.pyx.c:1281:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[101/154] Linking target _cyutility.cpython-314-wasm32-wasi.so
+[102/154] Compiling C object pandas/_libs/writers.cpython-314-wasm32-wasi.so.p/meson-generated_writers.pyx.c.o
+In file included from pandas/_libs/writers.cpython-314-wasm32-wasi.so.p/writers.pyx.c:1374:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/writers.cpython-314-wasm32-wasi.so.p/writers.pyx.c:1374:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[103/154] Linking target pandas/_libs/tslibs/base.cpython-314-wasm32-wasi.so
+[104/154] Linking target pandas/_libs/tslibs/ccalendar.cpython-314-wasm32-wasi.so
+[105/154] Copying file pandas/__init__.py
+[106/154] Linking target pandas/_libs/tslibs/dtypes.cpython-314-wasm32-wasi.so
+[107/154] Linking target pandas/_libs/tslibs/fields.cpython-314-wasm32-wasi.so
+[108/154] Linking target pandas/_libs/tslibs/conversion.cpython-314-wasm32-wasi.so
+[109/154] Linking target pandas/_libs/tslibs/nattype.cpython-314-wasm32-wasi.so
+[110/154] Linking target pandas/_libs/tslibs/np_datetime.cpython-314-wasm32-wasi.so
+[111/154] Linking target pandas/_libs/tslibs/offsets.cpython-314-wasm32-wasi.so
+[112/154] Linking target pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so
+[113/154] Linking target pandas/_libs/tslibs/period.cpython-314-wasm32-wasi.so
+[114/154] Linking target pandas/_libs/tslibs/strptime.cpython-314-wasm32-wasi.so
+[115/154] Linking target pandas/_libs/tslibs/timedeltas.cpython-314-wasm32-wasi.so
+[116/154] Linking target pandas/_libs/tslibs/timestamps.cpython-314-wasm32-wasi.so
+[117/154] Linking target pandas/_libs/tslibs/timezones.cpython-314-wasm32-wasi.so
+[118/154] Linking target pandas/_libs/tslibs/tzconversion.cpython-314-wasm32-wasi.so
+[119/154] Linking target pandas/_libs/tslibs/vectorized.cpython-314-wasm32-wasi.so
+[120/154] Linking target pandas/_libs/hashing.cpython-314-wasm32-wasi.so
+[121/154] Linking target pandas/_libs/arrays.cpython-314-wasm32-wasi.so
+[122/154] Linking target pandas/_libs/internals.cpython-314-wasm32-wasi.so
+[123/154] Linking target pandas/_libs/index.cpython-314-wasm32-wasi.so
+[124/154] Linking target pandas/_libs/indexing.cpython-314-wasm32-wasi.so
+[125/154] Linking target pandas/_libs/missing.cpython-314-wasm32-wasi.so
+[126/154] Linking target pandas/_libs/lib.cpython-314-wasm32-wasi.so
+[127/154] Linking target pandas/_libs/interval.cpython-314-wasm32-wasi.so
+[128/154] Linking target pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so
+[129/154] Linking target pandas/_libs/pandas_parser.cpython-314-wasm32-wasi.so
+[130/154] Linking target pandas/_libs/parsers.cpython-314-wasm32-wasi.so
+[131/154] Linking target pandas/_libs/json.cpython-314-wasm32-wasi.so
+[132/154] Linking target pandas/_libs/ops.cpython-314-wasm32-wasi.so
+[133/154] Linking target pandas/_libs/ops_dispatch.cpython-314-wasm32-wasi.so
+[134/154] Linking target pandas/_libs/properties.cpython-314-wasm32-wasi.so
+[135/154] Linking target pandas/_libs/reshape.cpython-314-wasm32-wasi.so
+[136/154] Linking target pandas/_libs/byteswap.cpython-314-wasm32-wasi.so
+[137/154] Linking target pandas/_libs/sas.cpython-314-wasm32-wasi.so
+[138/154] Linking target pandas/_libs/tslib.cpython-314-wasm32-wasi.so
+[139/154] Linking target pandas/_libs/testing.cpython-314-wasm32-wasi.so
+[140/154] Linking target pandas/_libs/writers.cpython-314-wasm32-wasi.so
+[141/154] Compiling C object pandas/_libs/window/indexers.cpython-314-wasm32-wasi.so.p/meson-generated_indexers.pyx.c.o
+In file included from pandas/_libs/window/indexers.cpython-314-wasm32-wasi.so.p/indexers.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/window/indexers.cpython-314-wasm32-wasi.so.p/indexers.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[142/154] Linking target pandas/_libs/window/indexers.cpython-314-wasm32-wasi.so
+[143/154] Compiling C object pandas/_libs/join.cpython-314-wasm32-wasi.so.p/meson-generated_join.pyx.c.o
+In file included from pandas/_libs/join.cpython-314-wasm32-wasi.so.p/join.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/join.cpython-314-wasm32-wasi.so.p/join.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[144/154] Linking target pandas/_libs/join.cpython-314-wasm32-wasi.so
+[145/154] Compiling C++ object pandas/_libs/window/aggregations.cpython-314-wasm32-wasi.so.p/meson-generated_aggregations.pyx.cpp.o
+In file included from pandas/_libs/window/aggregations.cpython-314-wasm32-wasi.so.p/aggregations.pyx.cpp:1287:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/window/aggregations.cpython-314-wasm32-wasi.so.p/aggregations.pyx.cpp:1287:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[146/154] Linking target pandas/_libs/window/aggregations.cpython-314-wasm32-wasi.so
+[147/154] Compiling C object pandas/_libs/algos.cpython-314-wasm32-wasi.so.p/meson-generated_algos.pyx.c.o
+In file included from pandas/_libs/algos.cpython-314-wasm32-wasi.so.p/algos.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/algos.cpython-314-wasm32-wasi.so.p/algos.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[148/154] Linking target pandas/_libs/algos.cpython-314-wasm32-wasi.so
+[149/154] Compiling C object pandas/_libs/sparse.cpython-314-wasm32-wasi.so.p/meson-generated_sparse.pyx.c.o
+In file included from pandas/_libs/sparse.cpython-314-wasm32-wasi.so.p/sparse.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/sparse.cpython-314-wasm32-wasi.so.p/sparse.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[150/154] Linking target pandas/_libs/sparse.cpython-314-wasm32-wasi.so
+[151/154] Compiling C object pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/meson-generated_hashtable.pyx.c.o
+In file included from pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:1254:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:138183:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 138183 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:140204:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 140204 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:142225:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 142225 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:144246:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 144246 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:146267:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 146267 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:148288:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 148288 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:150309:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 150309 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:152330:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 152330 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:154292:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 154292 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_18; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:156245:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 156245 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:158266:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 158266 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:160287:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 160287 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+pandas/_libs/hashtable.cpython-314-wasm32-wasi.so.p/hashtable.pyx.c:162308:33: warning: comparison of integers of different signs: 'Py_ssize_t' (aka 'long') and 'khuint_t' (aka 'unsigned int') [-Wsign-compare]
+ 162308 |   for (__pyx_t_1 = 0; __pyx_t_1 < __pyx_t_17; __pyx_t_1+=1) {
+        |                       ~~~~~~~~~ ^ ~~~~~~~~~~
+15 warnings generated.
+[152/154] Linking target pandas/_libs/hashtable.cpython-314-wasm32-wasi.so
+[153/154] Compiling C object pandas/_libs/groupby.cpython-314-wasm32-wasi.so.p/meson-generated_groupby.pyx.c.o
+In file included from pandas/_libs/groupby.cpython-314-wasm32-wasi.so.p/groupby.pyx.c:1256:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:250:9: warning: 'NPY_BEGIN_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  250 | #define NPY_BEGIN_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1110:9: note: previous definition is here
+ 1110 | #define NPY_BEGIN_THREADS_DESCR(dtype)
+      |         ^
+In file included from pandas/_libs/groupby.cpython-314-wasm32-wasi.so.p/groupby.pyx.c:1256:
+In file included from ../../numpy-host-shim/numpy/_core/include/numpy/arrayobject.h:5:
+../../numpy-host-shim/numpy/_core/include/numpy/ndarrayobject.h:254:9: warning: 'NPY_END_THREADS_DESCR' macro redefined [-Wmacro-redefined]
+  254 | #define NPY_END_THREADS_DESCR(dtype) \
+      |         ^
+../../numpy-host-shim/numpy/_core/include/numpy/ndarraytypes.h:1111:9: note: previous definition is here
+ 1111 | #define NPY_END_THREADS_DESCR(dtype)
+      |         ^
+2 warnings generated.
+[154/154] Linking target pandas/_libs/groupby.cpython-314-wasm32-wasi.so
+
+real	0m31.157s
+user	3m18.562s
+sys	0m10.035s
+235318 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/_cyutility.cpython-314-wasm32-wasi.so
+2230176 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/algos.cpython-314-wasm32-wasi.so
+115332 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/arrays.cpython-314-wasm32-wasi.so
+34782 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/byteswap.cpython-314-wasm32-wasi.so
+2816052 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/groupby.cpython-314-wasm32-wasi.so
+64360 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/hashing.cpython-314-wasm32-wasi.so
+2468152 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/hashtable.cpython-314-wasm32-wasi.so
+1247044 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/index.cpython-314-wasm32-wasi.so
+52542 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/indexing.cpython-314-wasm32-wasi.so
+331034 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/internals.cpython-314-wasm32-wasi.so
+1409924 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/interval.cpython-314-wasm32-wasi.so
+1271128 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/join.cpython-314-wasm32-wasi.so
+65280 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/json.cpython-314-wasm32-wasi.so
+767682 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/lib.cpython-314-wasm32-wasi.so
+221440 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/missing.cpython-314-wasm32-wasi.so
+38764 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/ops_dispatch.cpython-314-wasm32-wasi.so
+112370 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/ops.cpython-314-wasm32-wasi.so
+34932 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/pandas_datetime.cpython-314-wasm32-wasi.so
+33636 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/pandas_parser.cpython-314-wasm32-wasi.so
+519406 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/parsers.cpython-314-wasm32-wasi.so
+76512 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/properties.cpython-314-wasm32-wasi.so
+176032 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/reshape.cpython-314-wasm32-wasi.so
+128562 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/sas.cpython-314-wasm32-wasi.so
+915004 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/sparse.cpython-314-wasm32-wasi.so
+100214 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/testing.cpython-314-wasm32-wasi.so
+159622 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslib.cpython-314-wasm32-wasi.so
+37380 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/base.cpython-314-wasm32-wasi.so
+71718 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/ccalendar.cpython-314-wasm32-wasi.so
+184650 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/conversion.cpython-314-wasm32-wasi.so
+185784 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/dtypes.cpython-314-wasm32-wasi.so
+223650 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/fields.cpython-314-wasm32-wasi.so
+249828 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/nattype.cpython-314-wasm32-wasi.so
+129884 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/np_datetime.cpython-314-wasm32-wasi.so
+1463390 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/offsets.cpython-314-wasm32-wasi.so
+287814 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/parsing.cpython-314-wasm32-wasi.so
+445530 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/period.cpython-314-wasm32-wasi.so
+243838 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/strptime.cpython-314-wasm32-wasi.so
+615590 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/timedeltas.cpython-314-wasm32-wasi.so
+630528 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/timestamps.cpython-314-wasm32-wasi.so
+193026 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/timezones.cpython-314-wasm32-wasi.so
+177866 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/tzconversion.cpython-314-wasm32-wasi.so
+103690 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/tslibs/vectorized.cpython-314-wasm32-wasi.so
+471992 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/window/aggregations.cpython-314-wasm32-wasi.so
+226490 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/window/indexers.cpython-314-wasm32-wasi.so
+99156 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/pandas-3.0.6/build-wasi/pandas/_libs/writers.cpython-314-wasm32-wasi.so

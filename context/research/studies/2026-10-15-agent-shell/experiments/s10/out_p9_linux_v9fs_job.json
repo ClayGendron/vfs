@@ -1,0 +1,46 @@
+{
+  "messages": {
+    "Tversion": 1,
+    "Tattach": 1,
+    "Tstat": 354,
+    "Twalk": 196,
+    "Tclunk": 194,
+    "Topen": 7,
+    "Tread": 26,
+    "Tcreate": 2,
+    "Twrite": 2
+  },
+  "verbs": {
+    "stat": 536,
+    "read": 4,
+    "ls": 3,
+    "write": 2
+  },
+  "sql_total": 2211,
+  "sql_per_message": {
+    "Tattach": 4,
+    "Tstat": 1400,
+    "Twalk": 740,
+    "Topen": 31,
+    "Tclunk": 32
+  },
+  "bytes_in": 52655,
+  "bytes_out": 56588,
+  "trace": [
+    "clunk -> write /out/plot.png 52520B version 1",
+    "clunk -> write /out/summary.csv 135B version 1"
+  ],
+  "png_row": {
+    "path": "/out/plot.png",
+    "mime_type": "image/png",
+    "size_bytes": 52520,
+    "version": 1,
+    "data_is_png": true,
+    "content_is_none": true
+  },
+  "out_listing": [
+    "plot.png",
+    "summary.csv"
+  ],
+  "trash": []
+}

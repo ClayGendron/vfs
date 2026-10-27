@@ -1,0 +1,805 @@
+configure: loading site script /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Tools/wasm/wasi/config.site-wasm32-wasi
+checking build system type... aarch64-apple-darwin
+checking host system type... wasm32-unknown-wasip1
+checking for --with-build-python... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe
+checking for Python interpreter freezing... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe
+checking for python3.14... (cached) /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe
+checking Python for regen version... Python 3.14.8
+checking for wasm32-wasip1-pkg-config... no
+checking for pkg-config... /opt/homebrew/bin/pkg-config
+configure: WARNING: using cross tools not prefixed with host triplet
+checking pkg-config is at least version 0.9.0... yes
+checking MACHDEP... "wasi"
+checking for --enable-universalsdk... no
+checking for --with-universal-archs... no
+checking for --with-app-store-compliance... not patching for app store compliance
+checking for wasm32-wasip1-gcc... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... yes
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang accepts -g... yes
+checking for /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang option to enable C11 features... none needed
+checking how to run the C preprocessor... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang-cpp
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for egrep... /usr/bin/grep -E
+checking for CC compiler name... clang
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for wchar.h... yes
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking whether _XOPEN_SOURCE should be defined... no
+checking for GCC compatible compiler... yes
+checking for the platform triplet based on compiler characteristics... wasm32-wasi
+checking for multiarch... wasm32-wasi
+checking for PEP 11 support tier... wasm32-unknown-wasip1/clang has tier 2 (supported)
+checking for -Wl,--no-as-needed... no
+checking for the Android API level... not Android
+checking for --enable-wasm-dynamic-linking... missing
+checking for --enable-wasm-pthreads... missing
+checking for --with-suffix... .wasm
+checking for case-insensitive build directory... no
+checking LIBRARY... libpython$(VERSION)$(ABIFLAGS).a
+checking LINKCC... $(PURIFY) $(CC)
+checking EXPORTSYMS... 
+checking for GNU ld... no
+checking for --enable-shared... no
+checking for --with-static-libpython... yes
+checking for --enable-profiling... no
+checking LDLIBRARY... libpython$(VERSION)$(ABIFLAGS).a
+checking HOSTRUNNER... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasmtime-v49.0.3-aarch64-macos/wasmtime run --wasm max-wasm-stack=16777216 --argv0 cross-build/wasm32-wasip1/python.wasm --dir /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8::/ --env PYTHONPATH=/cross-build/wasm32-wasip1/build/lib.wasi-wasm32-3.14
+checking for wasm32-wasip1-ar... /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/llvm-ar
+checking for a BSD-compatible install... /usr/bin/install -c
+checking for a race-free mkdir -p... mkdir -p
+checking for --disable-gil... no
+checking for --with-pydebug... no
+checking for --with-trace-refs... no
+checking for --enable-pystats... no
+checking for --with-assertions... no
+checking for --enable-optimizations... no
+checking PROFILE_TASK... -m test --pgo --timeout=$(TESTTIMEOUT)
+checking for --with-lto... no
+checking for wasm32-wasip1-llvm-profdata... no
+checking for llvm-profdata... no
+checking for --enable-bolt... no
+checking BOLT_COMMON_FLAGS... checking BOLT_INSTRUMENT_FLAGS...  -update-debug-sections -skip-funcs=_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1 
+checking BOLT_APPLY_FLAGS...   -update-debug-sections -skip-funcs=_PyEval_EvalFrameDefault,sre_ucs1_match/1,sre_ucs2_match/1,sre_ucs4_match/1  -reorder-blocks=ext-tsp -reorder-functions=cdsort -split-functions -icf=1 -inline-all -split-eh -reorder-functions-use-hot-size -peepholes=none -jump-tables=aggressive -inline-ap -indirect-call-promotion=all -dyno-stats -use-gnu-stack -frame-opt=hot 
+checking if /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang supports -fstrict-overflow and -fno-strict-overflow... yes
+checking for --with-strict-overflow... no
+checking if /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang supports -Og optimization level... yes
+checking for --enable-safety... no
+checking for --enable-slower-safety... no
+checking if we can add -Wextra... yes
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang -fno-strict-aliasing accepts and needs -fno-strict-aliasing... no
+checking if we can disable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang unused-parameter warning... yes
+checking if we can disable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang int-conversion warning... yes
+checking if we can disable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang missing-field-initializers warning... yes
+checking if we can enable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang sign-compare warning... yes
+checking if we can enable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang unreachable-code warning... yes
+checking if we can enable /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang strict-prototypes warning... yes
+checking if we can make implicit function declaration an error in /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang -Werror=implicit-function-declaration... yes
+checking if we can use visibility in /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang -fvisibility=hidden... yes
+checking for --enable-experimental-jit...  
+checking whether pthreads are available without options... no
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang accepts -Kpthread... no
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang accepts -Kthread... no
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang accepts -pthread... no
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang++ also accepts flags for thread support... no
+checking for alloca.h... yes
+checking for asm/types.h... no
+checking for bluetooth.h... no
+checking for conio.h... no
+checking for direct.h... no
+checking for dlfcn.h... yes
+checking for endian.h... yes
+checking for errno.h... yes
+checking for fcntl.h... yes
+checking for grp.h... no
+checking for io.h... no
+checking for langinfo.h... yes
+checking for libintl.h... no
+checking for libutil.h... no
+checking for linux/auxvec.h... no
+checking for sys/auxv.h... no
+checking for linux/fs.h... no
+checking for linux/limits.h... no
+checking for linux/memfd.h... no
+checking for linux/netfilter_ipv4.h... no
+checking for linux/random.h... no
+checking for linux/soundcard.h... no
+checking for linux/sched.h... no
+checking for linux/tipc.h... no
+checking for linux/wait.h... no
+checking for netdb.h... no
+checking for net/ethernet.h... no
+checking for netinet/in.h... yes
+checking for netpacket/packet.h... (cached) no
+checking for poll.h... yes
+checking for process.h... no
+checking for pthread.h... yes
+checking for pty.h... no
+checking for sched.h... yes
+checking for setjmp.h... no
+checking for shadow.h... no
+checking for signal.h... yes
+checking for spawn.h... no
+checking for stropts.h... yes
+checking for sys/audioio.h... no
+checking for sys/bsdtty.h... no
+checking for sys/devpoll.h... no
+checking for sys/endian.h... no
+checking for sys/epoll.h... no
+checking for sys/event.h... no
+checking for sys/eventfd.h... yes
+checking for sys/file.h... yes
+checking for sys/ioctl.h... yes
+checking for sys/kern_control.h... no
+checking for sys/loadavg.h... no
+checking for sys/lock.h... no
+checking for sys/memfd.h... no
+checking for sys/mkdev.h... no
+checking for sys/mman.h... no
+checking for sys/modem.h... no
+checking for sys/param.h... yes
+checking for sys/pidfd.h... no
+checking for sys/poll.h... yes
+checking for sys/random.h... yes
+checking for sys/resource.h... (cached) no
+checking for sys/select.h... yes
+checking for sys/sendfile.h... no
+checking for sys/socket.h... yes
+checking for sys/soundcard.h... no
+checking for sys/stat.h... (cached) yes
+checking for sys/statvfs.h... yes
+checking for sys/sys_domain.h... no
+checking for sys/syscall.h... yes
+checking for sys/sysctl.h... no
+checking for sys/sysmacros.h... no
+checking for sys/termio.h... no
+checking for sys/time.h... yes
+checking for sys/times.h... yes
+checking for sys/timerfd.h... no
+checking for sys/types.h... (cached) yes
+checking for sys/uio.h... yes
+checking for sys/un.h... (cached) no
+checking for sys/utsname.h... yes
+checking for sys/wait.h... no
+checking for sys/xattr.h... no
+checking for sysexits.h... yes
+checking for syslog.h... no
+checking for termios.h... no
+checking for util.h... no
+checking for utime.h... yes
+checking for utmp.h... no
+checking for dirent.h that defines DIR... yes
+checking for library containing opendir... none required
+checking for sys/mkdev.h... (cached) no
+checking for sys/sysmacros.h... (cached) no
+checking for bluetooth/bluetooth.h... no
+checking for net/if.h... no
+checking for linux/netlink.h... no
+checking for netlink/netlink.h... no
+checking for linux/qrtr.h... no
+checking for linux/vm_sockets.h... no
+checking for linux/can.h... no
+checking for linux/can/bcm.h... no
+checking for linux/can/j1939.h... no
+checking for linux/can/raw.h... no
+checking for netcan/can.h... no
+checking for clock_t... yes
+checking for makedev... (cached) no
+checking for le64toh... yes
+checking for mode_t... yes
+checking for off_t... yes
+checking for pid_t... yes
+checking for size_t... yes
+checking for uid_t... yes
+checking for gid_t... yes
+checking for ssize_t... yes
+checking for __uint128_t... yes
+checking size of int... 4
+checking size of long... 4
+checking alignment of long... 4
+checking size of long long... 8
+checking size of void *... 4
+checking size of short... 2
+checking size of float... 4
+checking size of double... 8
+checking size of fpos_t... 16
+checking size of size_t... 4
+checking alignment of size_t... 4
+checking size of pid_t... 4
+checking size of uintptr_t... 4
+checking alignment of max_align_t... 16
+checking for long double... yes
+checking size of long double... 16
+checking size of _Bool... 1
+checking size of off_t... 8
+checking whether to enable large file support... yes
+checking size of time_t... 8
+checking for pthread_t... yes
+checking size of pthread_t... 4
+checking size of pthread_key_t... 4
+checking whether pthread_key_t is compatible with int... yes
+checking for --enable-framework... no
+checking for --with-dsymutil... no
+checking for dyld... no
+checking for --with-address-sanitizer... no
+checking for --with-memory-sanitizer... no
+checking for --with-undefined-behavior-sanitizer... no
+checking for --with-thread-sanitizer... no
+checking the extension of shared libraries... .so
+checking LDSHARED... $(CC) -shared
+checking BLDSHARED flags... $(CC) -shared
+checking CCSHARED... 
+checking LINKFORSHARED... 
+checking CFLAGSFORSHARED... 
+checking SHLIBS... $(LIBS)
+checking perf trampoline... no
+checking for sendfile in -lsendfile... no
+checking for dlopen in -ldl... yes
+checking for shl_load in -ldld... no
+checking for execinfo.h... no
+checking for link.h... no
+checking for dlfcn.h... (cached) yes
+checking for backtrace... no
+checking for dladdr1... no
+checking for uuid.h... no
+checking for uuid >= 2.20... no
+checking for uuid/uuid.h... no
+checking for uuid/uuid.h... (cached) no
+checking for library containing sem_init... no
+checking for textdomain in -lintl... no
+checking aligned memory access is required... yes
+checking for --with-hash-algorithm... default
+checking for --with-tzpath... "/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo"
+checking for t_open in -lnsl... no
+checking for socket in -lsocket... no
+checking for --with-libs... no
+checking for --with-system-expat... no
+checking for libffi... no
+checking for ffi.h... no
+checking libffi has complex type support... no
+checking for --with-system-libmpdec... yes
+checking for libmpdec >= 2.5.0... no
+configure: WARNING: no system libmpdec found; falling back to bundled libmpdec (deprecated and scheduled for removal in Python 3.16)
+checking for --with-decimal-contextvar... yes
+checking for decimal libmpdec machine... ansi32
+checking for sqlite3 >= 3.15.2... no
+checking for sqlite3.h... no
+checking for --enable-loadable-sqlite-extensions... no
+checking for gdbm.h... no
+checking for ndbm.h... no
+checking for ndbm presence and linker args...  ()
+checking for gdbm/ndbm.h... no
+checking for gdbm-ndbm.h... no
+checking for db.h... no
+checking for --with-dbmliborder... gdbm:ndbm:bdb
+checking for _dbm module CFLAGS and LIBS...  
+checking for _POSIX_THREADS in unistd.h... checking for _POSIX_THREADS defined in unistd.h... no
+no
+checking for pthread_create in -lpthread... checking for pthread_detach... no
+checking for pthread_create in -lpthreads... no
+checking for pthread_create in -lc_r... no
+checking for __pthread_create_system in -lpthread... no
+checking for pthread_create in -lcma... no
+checking for usconfig in -lmpc... no
+checking if --enable-ipv6 is specified... no
+checking CAN_RAW_FD_FRAMES... no
+checking for CAN_RAW_JOIN_FILTERS... no
+checking for --with-doc-strings... yes
+checking for stdatomic.h... yes
+checking for builtin __atomic_load_n and __atomic_store_n functions... yes
+checking for --with-mimalloc... yes
+checking for --with-pymalloc... no
+checking for --with-c-locale-coercion... yes
+checking for --with-valgrind... no
+checking for --with-dtrace... no
+checking for dlopen... yes
+checking for dl_iterate_phdr... no
+checking DYNLOADFILE... dynload_shlib.o
+checking MACHDEP_OBJS... none
+checking for accept4... yes
+checking for alarm... no
+checking for bind_textdomain_codeset... no
+checking for chmod... (cached) no
+checking for chown... no
+checking for clock... yes
+checking for closefrom... no
+checking for close_range... no
+checking for confstr... yes
+checking for copy_file_range... no
+checking for ctermid... no
+checking for dladdr... no
+checking for dup... no
+checking for execv... no
+checking for explicit_bzero... yes
+checking for explicit_memset... no
+checking for faccessat... yes
+checking for fchmod... (cached) no
+checking for fchmodat... (cached) no
+checking for fchown... no
+checking for fchownat... no
+checking for fdopendir... (cached) no
+checking for fdwalk... no
+checking for fexecve... no
+checking for fork... no
+checking for fork1... no
+checking for fpathconf... yes
+checking for fstatat... yes
+checking for ftime... yes
+checking for ftruncate... yes
+checking for futimens... yes
+checking for futimes... no
+checking for futimesat... yes
+checking for gai_strerror... no
+checking for getegid... no
+checking for geteuid... no
+checking for getgid... no
+checking for getgrent... no
+checking for getgrgid... no
+checking for getgrgid_r... no
+checking for getgrnam_r... no
+checking for getgrouplist... no
+checking for gethostname... no
+checking for getitimer... no
+checking for getloadavg... no
+checking for getlogin... no
+checking for getlogin_r... no
+checking for getpeername... no
+checking for getpgid... no
+checking for getpid... yes
+checking for getppid... no
+checking for getpriority... no
+checking for _getpty... no
+checking for getpwent... no
+checking for getpwnam_r... no
+checking for getpwuid... no
+checking for getpwuid_r... no
+checking for getresgid... no
+checking for getresuid... no
+checking for getrusage... yes
+checking for getsid... no
+checking for getspent... no
+checking for getspnam... no
+checking for getuid... no
+checking for getwd... no
+checking for grantpt... no
+checking for if_nameindex... no
+checking for initgroups... no
+checking for kill... no
+checking for killpg... no
+checking for lchown... no
+checking for linkat... yes
+checking for lockf... no
+checking for lstat... yes
+checking for lutimes... no
+checking for madvise... no
+checking for mbrtowc... yes
+checking for memrchr... yes
+checking for mkdirat... yes
+checking for mkfifo... (cached) no
+checking for mkfifoat... (cached) no
+checking for mknod... (cached) no
+checking for mknodat... (cached) no
+checking for mktime... yes
+checking for mmap... no
+checking for mremap... no
+checking for nice... no
+checking for openat... yes
+checking for opendir... yes
+checking for pathconf... yes
+checking for pause... no
+checking for pipe... (cached) no
+checking for plock... no
+checking for poll... yes
+checking for posix_fadvise... yes
+checking for posix_fallocate... yes
+checking for posix_openpt... no
+checking for posix_spawn... no
+checking for posix_spawnp... no
+checking for posix_spawn_file_actions_addclosefrom_np... no
+checking for pread... yes
+checking for preadv... (cached) no
+checking for preadv2... no
+checking for process_vm_readv... no
+checking for pthread_cond_timedwait_relative_np... no
+checking for pthread_condattr_setclock... no
+checking for pthread_init... no
+checking for pthread_kill... no
+checking for pthread_get_name_np... no
+checking for pthread_getname_np... no
+checking for pthread_set_name_np... no
+checking for pthread_setname_np... no
+checking for pthread_getattr_np... no
+checking for ptsname... no
+checking for ptsname_r... no
+checking for pwrite... yes
+checking for pwritev... (cached) no
+checking for pwritev2... no
+checking for readlink... yes
+checking for readlinkat... yes
+checking for readv... (cached) no
+checking for realpath... yes
+checking for renameat... yes
+checking for rtpSpawn... no
+checking for sched_get_priority_max... no
+checking for sched_rr_get_interval... no
+checking for sched_setaffinity... no
+checking for sched_setparam... no
+checking for sched_setscheduler... no
+checking for sem_clockwait... no
+checking for sem_getvalue... no
+checking for sem_open... no
+checking for sem_timedwait... no
+checking for sem_unlink... no
+checking for sendfile... no
+checking for setegid... no
+checking for seteuid... no
+checking for setgid... no
+checking for sethostname... no
+checking for setitimer... no
+checking for setlocale... yes
+checking for setpgid... no
+checking for setpgrp... no
+checking for setpriority... no
+checking for setregid... no
+checking for setresgid... no
+checking for setresuid... no
+checking for setreuid... no
+checking for setsid... no
+checking for setuid... no
+checking for setvbuf... yes
+checking for shutdown... yes
+checking for sigaction... no
+checking for sigaltstack... no
+checking for sigfillset... no
+checking for siginterrupt... no
+checking for sigpending... no
+checking for sigrelse... no
+checking for sigtimedwait... no
+checking for sigwait... no
+checking for sigwaitinfo... no
+checking for snprintf... yes
+checking for splice... no
+checking for strftime... yes
+checking for strlcpy... yes
+checking for strsignal... yes
+checking for symlinkat... yes
+checking for sync... no
+checking for sysconf... yes
+checking for sysctlbyname... no
+checking for tcgetpgrp... no
+checking for tcsetpgrp... no
+checking for tempnam... no
+checking for timegm... yes
+checking for times... yes
+checking for tmpfile... no
+checking for tmpnam... no
+checking for tmpnam_r... no
+checking for truncate... yes
+checking for ttyname_r... no
+checking for umask... no
+checking for uname... yes
+checking for unlinkat... yes
+checking for unlockpt... no
+checking for utimensat... yes
+checking for utimes... yes
+checking for vfork... no
+checking for wait... no
+checking for wait3... no
+checking for wait4... no
+checking for waitid... no
+checking for waitpid... no
+checking for wcscoll... yes
+checking for wcsftime... yes
+checking for wcsxfrm... yes
+checking for wmemcmp... yes
+checking for writev... (cached) no
+checking for lchmod... no
+checking for getentropy... yes
+checking for getgroups... no
+checking for system... no
+checking for dup3... no
+checking for pipe2... no
+checking for /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang options needed to detect all undeclared functions... none needed
+checking whether dirfd is declared... yes
+checking for chroot... no
+checking for link... yes
+checking for symlink... yes
+checking for fchdir... no
+checking for fsync... yes
+checking for fdatasync... yes
+checking for epoll_create... no
+checking for epoll_create1... no
+checking for kqueue... no
+checking for prlimit... no
+checking for _dyld_shared_cache_contains_path... no
+checking for memfd_create... no
+checking for eventfd... (cached) no
+checking for timerfd_create... no
+checking for ctermid_r... no
+checking for flock declaration... yes
+checking for flock... no
+checking for flock in -lbsd... no
+checking for getpagesize... yes
+checking for broken unsetenv... no
+checking for true... true
+checking for inet_aton in -lc... yes
+checking for hstrerror in -lc... no
+checking for hstrerror in -lresolv... no
+checking for chflags... cross
+checking for chflags... no
+checking for lchflags... cross
+checking for lchflags... no
+checking for zlib >= 1.2.0... no
+checking for zlib.h... no
+checking for bzip2... no
+checking for bzlib.h... no
+checking for liblzma... no
+checking for lzma.h... no
+checking for libzstd >= 1.4.5... no
+checking for library containing ZDICT_finalizeDictionary... no
+checking for hstrerror... no
+checking for getservbyname... no
+checking for getservbyport... no
+checking for gethostbyname... no
+checking for gethostbyaddr... no
+checking for getprotobyname... no
+checking for inet_aton... yes
+checking for inet_ntoa... no
+checking for inet_pton... yes
+checking for getpeername... (cached) no
+checking for getsockname... no
+checking for accept... yes
+checking for bind... no
+checking for connect... no
+checking for listen... no
+checking for recvfrom... no
+checking for sendto... no
+checking for setsockopt... no
+checking for socket... no
+checking for setgroups... no
+checking whether MAXLOGNAME is declared... no
+checking whether UT_NAMESIZE is declared... no
+checking for openpty... no
+checking for openpty in -lutil... no
+checking for openpty in -lbsd... no
+checking for library containing login_tty... no
+checking for forkpty... no
+checking for forkpty in -lutil... no
+checking for forkpty in -lbsd... no
+checking for fseek64... no
+checking for fseeko... yes
+checking for fstatvfs... (cached) no
+checking for ftell64... no
+checking for ftello... yes
+checking for statvfs... (cached) no
+checking for dup2... no
+checking for getpgrp... no
+checking for setpgrp... (cached) no
+checking for setns... no
+checking for unshare... no
+checking for clock_gettime... yes
+checking for clock_getres... yes
+checking for clock_settime... no
+checking for clock_settime in -lrt... no
+checking for clock_nanosleep... yes
+checking for nanosleep... yes
+checking for major, minor, and makedev... no
+checking for getaddrinfo... no
+checking for getnameinfo... no
+checking whether struct tm is in sys/time.h or time.h... time.h
+checking for struct tm.tm_zone... yes
+checking for struct stat.st_rdev... yes
+checking for struct stat.st_blksize... yes
+checking for struct stat.st_flags... no
+checking for struct stat.st_gen... no
+checking for struct stat.st_birthtime... no
+checking for struct stat.st_blocks... yes
+checking for struct passwd.pw_gecos... no
+checking for struct passwd.pw_passwd... no
+checking for siginfo_t.si_band... no
+checking for time.h that defines altzone... no
+checking for addrinfo... no
+checking for sockaddr_storage... yes
+checking for sockaddr_alg... no
+checking for an ANSI C-conforming const... yes
+checking for working signed char... yes
+checking for prototypes... yes
+checking for socketpair... no
+checking if sockaddr has sa_len member... no
+checking for gethostbyname_r... no
+checking for gethostbyname... (cached) no
+checking for __fpu_control... no
+checking for __fpu_control in -lieee... no
+checking for --with-libm=STRING... default LIBM="-lm"
+checking for --with-libc=STRING... default LIBC=""
+checking for x64 gcc inline assembler... no
+checking whether float word ordering is bigendian... no
+checking whether we can use gcc inline assembler to get and set x87 control word... no
+checking whether we can use gcc inline assembler to get and set mc68881 fpcr... no
+checking for x87-style double rounding... no
+checking for acosh... yes
+checking for asinh... yes
+checking for atanh... yes
+checking for erf... yes
+checking for erfc... yes
+checking for expm1... yes
+checking for log1p... yes
+checking for log2... yes
+checking whether POSIX semaphores are enabled... yes
+checking for broken sem_getvalue... yes
+checking whether RTLD_LAZY is declared... yes
+checking whether RTLD_NOW is declared... yes
+checking whether RTLD_GLOBAL is declared... yes
+checking whether RTLD_LOCAL is declared... yes
+checking whether RTLD_NODELETE is declared... yes
+checking whether RTLD_NOLOAD is declared... yes
+checking whether RTLD_DEEPBIND is declared... no
+checking whether RTLD_MEMBER is declared... no
+checking digit size for Python's longs... no value specified
+checking for wchar.h... (cached) yes
+checking size of wchar_t... 4
+checking whether wchar_t is signed... yes
+checking whether wchar_t is usable... no
+checking whether byte ordering is bigendian... no
+checking ABIFLAGS... 
+checking SOABI... cpython-314-wasm32-wasi
+checking LDVERSION... $(VERSION)$(ABIFLAGS)
+checking for --with-platlibdir... no
+checking for --with-wheel-pkg-dir... no
+checking whether right shift extends the sign bit... yes
+checking for getc_unlocked() and friends... no
+checking for readline... no
+checking for readline/readline.h... no
+checking how to link readline... no
+checking for broken nice()... no
+checking for broken poll()... no
+checking for working tzset()... no
+checking for tv_nsec in struct stat... yes
+checking for tv_nsec2 in struct stat... no
+checking for ncursesw... no
+checking for ncurses... no
+checking for ncursesw/curses.h... no
+checking for ncursesw/ncurses.h... no
+checking for ncursesw/panel.h... no
+checking for ncurses/curses.h... no
+checking for ncurses/ncurses.h... no
+checking for ncurses/panel.h... no
+checking for curses.h... no
+checking for ncurses.h... no
+checking for panel.h... no
+checking for library containing initscr... no
+checking for library containing update_panels... no
+checking for term.h... no
+checking whether mvwdelch is an expression... no
+checking whether WINDOW has _flags... no
+checking for curses function is_pad... no
+checking for curses function is_term_resized... no
+checking for curses function resize_term... no
+checking for curses function resizeterm... no
+checking for curses function immedok... no
+checking for curses function syncok... no
+checking for curses function wchgat... no
+checking for curses function filter... no
+checking for curses function has_key... no
+checking for curses function typeahead... no
+checking for curses function use_env... no
+checking for curses function set_escdelay... no
+checking for curses function set_tabsize... no
+checking for curses variable ESCDELAY... no
+checking for curses variable TABSIZE... no
+checking for ncurses-style curses function getmouse... no
+configure: checking for device files
+checking for /dev/ptmx... (cached) no
+checking for /dev/ptc... (cached) no
+checking for socklen_t... yes
+checking for broken mbstowcs... no
+checking for --with-computed-gotos... no value specified
+checking whether /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang supports computed gotos... no
+checking for --with-tail-call-interp... no value specified
+checking for --with-remote-debug... yes
+checking for build directories... done
+checking for -O2... yes
+checking for glibc _FORTIFY_SOURCE/memmove bug... undefined
+checking if we need to manually block large inlining in ceval.c... undefined
+checking for ensurepip... no
+checking if the dirent structure of a d_type field... yes
+checking for the Linux getrandom() syscall... no
+checking for the getrandom() function... no
+checking for library containing shm_open... no
+checking for shm_open... no
+checking for shm_unlink... no
+checking for wasm32-wasip1-pkg-config... /opt/homebrew/bin/pkg-config
+checking for include/openssl/ssl.h in /usr/local/ssl... no
+checking for include/openssl/ssl.h in /usr/lib/ssl... no
+checking for include/openssl/ssl.h in /usr/ssl... no
+checking for include/openssl/ssl.h in /usr/pkg... no
+checking for include/openssl/ssl.h in /usr/local... no
+checking for include/openssl/ssl.h in /usr... no
+checking whether compiling and linking against OpenSSL works... no
+checking for --with-openssl-rpath... 
+checking whether OpenSSL provides required ssl module APIs... no
+checking whether OpenSSL provides required hashlib module APIs... no
+checking for --with-ssl-default-suites... python
+checking for --with-builtin-hashlib-hashes... md5,sha1,sha2,sha3,blake2
+checking for --disable-test-modules... yes
+checking whether libatomic is needed by <pyatomic.h>... no
+checking for stdlib extension module _multiprocessing... n/a
+checking for stdlib extension module _posixshmem... n/a
+checking for stdlib extension module fcntl... n/a
+checking for stdlib extension module mmap... n/a
+checking for stdlib extension module _socket... yes
+checking for stdlib extension module grp... n/a
+checking for stdlib extension module pwd... n/a
+checking for stdlib extension module resource... n/a
+checking for stdlib extension module _scproxy... n/a
+checking for stdlib extension module syslog... n/a
+checking for stdlib extension module termios... n/a
+checking for stdlib extension module pyexpat... yes
+checking for stdlib extension module _elementtree... yes
+checking for HACL* library linking type... static
+checking for stdlib extension module _md5... yes
+checking for stdlib extension module _sha1... yes
+checking for stdlib extension module _sha2... yes
+checking for stdlib extension module _sha3... yes
+checking for stdlib extension module _blake2... yes
+checking for stdlib extension module _hmac... yes
+checking for stdlib extension module _ctypes... missing
+checking for stdlib extension module _curses... n/a
+checking for stdlib extension module _curses_panel... n/a
+checking for stdlib extension module _decimal... yes
+checking for stdlib extension module _dbm... n/a
+checking for stdlib extension module _gdbm... n/a
+checking for stdlib extension module readline... missing
+checking for stdlib extension module _sqlite3... disabled
+checking for stdlib extension module _tkinter... n/a
+checking for stdlib extension module _uuid... missing
+checking for stdlib extension module zlib... missing
+checking for stdlib extension module _bz2... missing
+checking for stdlib extension module _lzma... missing
+checking for stdlib extension module _zstd... missing
+checking for stdlib extension module _ssl... missing
+checking for stdlib extension module _hashlib... missing
+checking for stdlib extension module _testcapi... yes
+checking for stdlib extension module _testclinic... yes
+checking for stdlib extension module _testclinic_limited... yes
+checking for stdlib extension module _testlimitedcapi... yes
+checking for stdlib extension module _testinternalcapi... yes
+checking for stdlib extension module _testbuffer... yes
+checking for stdlib extension module _testimportmultiple... n/a
+checking for stdlib extension module _testmultiphase... n/a
+checking for stdlib extension module _testsinglephase... n/a
+checking for stdlib extension module xxsubtype... yes
+checking for stdlib extension module _xxtestfuzz... yes
+checking for stdlib extension module _ctypes_test... n/a
+checking for stdlib extension module xxlimited... n/a
+checking for stdlib extension module xxlimited_35... n/a
+configure: creating ./config.status
+config.status: creating Makefile.pre
+config.status: creating Misc/python.pc
+config.status: creating Misc/python-embed.pc
+config.status: creating Misc/python-config.sh
+config.status: creating Modules/Setup.bootstrap
+config.status: creating Modules/Setup.stdlib
+config.status: creating Modules/ld_so_aix
+config.status: creating pyconfig.h
+configure: creating Modules/Setup.local
+configure: creating Makefile
+configure:
+
+If you want a release build with all stable optimizations active (PGO, etc),
+please run ./configure --enable-optimizations
+

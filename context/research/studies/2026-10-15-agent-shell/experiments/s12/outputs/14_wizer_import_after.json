@@ -1,0 +1,67 @@
+{
+  "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-wizer.wasm",
+  "wasm_bytes": 50635154,
+  "zip_bytes": 13494391,
+  "module_load": "deserialize",
+  "module_load_seconds": 0.0052,
+  "argv": [
+    "/usr/local/bin/python.wasm",
+    "-I",
+    "-X",
+    "utf8",
+    "-c",
+    "import csv, decimal, os, sys; print('post-snapshot import ok', decimal.Decimal('1.1')+1, sorted(os.environ)[:4], sys.argv)"
+  ],
+  "exit_code": 0,
+  "trapped": null,
+  "stdout": "post-snapshot import ok 2.1 [] ['']\n",
+  "stderr": "",
+  "run_seconds": 0.0155,
+  "preview1_calls": {
+    "args_get": 1,
+    "args_sizes_get": 1,
+    "fd_close": 2,
+    "fd_fdstat_get": 2,
+    "fd_filestat_get": 2,
+    "fd_read": 2,
+    "fd_seek": 2,
+    "fd_tell": 2,
+    "fd_write": 1,
+    "path_open": 2
+  },
+  "preview1_calls_total": 17,
+  "unimplemented_called": {},
+  "imports_stubbed": [
+    "clock_res_get",
+    "fd_filestat_set_times",
+    "fd_pread",
+    "fd_pwrite",
+    "path_filestat_set_times",
+    "path_link",
+    "path_readlink",
+    "path_symlink",
+    "poll_oneoff",
+    "sock_accept",
+    "sock_recv",
+    "sock_send",
+    "sock_shutdown"
+  ],
+  "verbs": {
+    "read": 2
+  },
+  "verbs_total": 2,
+  "sql_statements": 10,
+  "sql_statements_per_verb": {
+    "read": 10
+  },
+  "bytes_to_guest": 262144,
+  "bytes_from_guest": 36,
+  "vfs_ping_calls": [],
+  "read_back": {},
+  "trace": [
+    "path_open(dirfd=3, 'usr/local/lib/python314.zip', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/usr/local/lib/python314.zip'",
+    "path_open(dirfd=3, 'usr/local/lib/python314.zip', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/usr/local/lib/python314.zip'"
+  ],
+  "memory_pages": 640,
+  "memory_mib": 40.0
+}

@@ -1,0 +1,55 @@
+== locate: which binding owns each view path
+  /.vfs -> mount=/ storage_path=/.vfs
+  /.vfs/bin/jq -> mount=/ storage_path=/.vfs/bin/jq
+  /.vfs/trash -> mount=/ storage_path=/.vfs/trash
+  /data/.vfs/trash -> mount=/data storage_path=/.vfs/trash
+  /data/.vfs/bin -> mount=/data storage_path=/.vfs/bin
+
+== reads at view paths
+[ls /.vfs] success=False
+    error kind=vfs.not_found sev=error path=/.vfs msg='Not found' data=None
+[stat /.vfs] success=False
+    error kind=vfs.not_found sev=error path=/.vfs msg='Not found' data=None
+[ls /.vfs/trash] success=True
+    row path=/notes.txt kind=file mime=None source=text populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[ls /data/.vfs] success=False
+    error kind=vfs.not_found sev=error path=/data/.vfs msg='Not found' data=None
+[ls /data/.vfs/trash] success=True
+    row path=/data/a.txt kind=file mime=None source=text populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[stat /.vfs/bin] success=False
+    error kind=vfs.not_found sev=error path=/.vfs msg='Not found' data={'vfs.target': '/.vfs/bin'}
+[ls /.vfs/bin] success=False
+    error kind=vfs.not_found sev=error path=/.vfs msg='Not found' data={'vfs.target': '/.vfs/bin'}
+[stat /.vfs/bin/jq] success=False
+    error kind=vfs.not_found sev=error path=/.vfs msg='Not found' data={'vfs.target': '/.vfs/bin/jq'}
+
+== writes into would-be views
+[write /.vfs/bin/x.wasm data] success=True
+    row path=/.vfs/bin/x.wasm kind=file mime=None source=None populated=['kind', 'path', 'size_bytes', 'status', 'version']
+[ls /.vfs (after)] success=True
+    row path=/.vfs/bin kind=directory mime=None source=text populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row path=/.vfs/trash kind=directory mime=None source=None populated=['kind', 'path']
+[ls /.vfs/bin (after)] success=True
+    row path=/.vfs/bin/x.wasm kind=file mime=application/octet-stream source=bytes populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+[write /.vfs/trash/y.txt] success=False
+    error kind=vfs.invalid sev=error path=None msg="Invalid: Cannot mutate the trash view beneath '/.vfs/trash'" data={'raw': '/.vfs/trash/y.txt'}
+[write /.vfs] success=False
+    error kind=vfs.invalid sev=error path=None msg="Invalid: Cannot mutate reserved metadata root '/.vfs'" data={'raw': '/.vfs'}
+[mkdir /.vfs/skills] success=True
+    row path=/.vfs/skills kind=directory mime=None source=None populated=['kind', 'path', 'status', 'version']
+[write /data/.vfs/bin/z.wasm] success=True
+    row path=/data/.vfs/bin/z.wasm kind=file mime=None source=None populated=['kind', 'path', 'size_bytes', 'status', 'version']
+
+== the meta-scoped search rule
+[glob **/*.wasm (unscoped)] success=True
+[glob /.vfs/**] success=True
+    row path=/.vfs/bin kind=directory mime=None source=text populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row path=/.vfs/bin/x.wasm kind=file mime=application/octet-stream source=bytes populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+    row path=/.vfs/skills kind=directory mime=None source=text populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+
+== a mount at /.vfs/bin (the ViewStorage alternative)
+  bind /.vfs/bin -> ValueError: Mount path may not use the reserved metadata segment '.vfs': '/.vfs/bin'
+
+== deny_ops with a program name
+  VirtualFileSystem(deny_ops=['jq']) accepted (mask stored, no effect)
+  deny_ops=['grep'] -> ValueError: deny_ops may not mask read-family ops: grep

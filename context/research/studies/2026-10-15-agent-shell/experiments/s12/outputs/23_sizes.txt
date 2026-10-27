@@ -1,0 +1,25 @@
+# artifact sizes and sha256 (spike s12, 2026-10-16T13:40Z)
+    30522756  d24bd98d3071af6b  build/brett-3.14.7/python.wasm
+    39551987  b81992cfdfaafb63  build/python-numpy.wasm
+    39546426  4b9a5bc30c1d710d  build/python-vfsmain.wasm
+    50635154  24842851dbeb665a  build/python-wizer.wasm
+    55218012  e614524b6d16ab7b  build/python-pandas.wasm
+    16472344  9529c44be8d5c9de  build/floor.cwasm
+    16452384  5e722798e88ff7d9  build/brett.cwasm
+    34321544  28b285e5a605dd7a  build/numpy.cwasm
+    55388896  4e22a7f89dbafde6  build/wizer.cwasm
+    67894744  46f225fe1f7a2cf6  build/pandas.cwasm
+     9771926  0f49d69c3d4850dc  build/python314-src.zip
+     9471478  595d09ff8e8b5b88  build/python314-brett-src.zip
+    13494391  200616f15a06e9fb  build/python314-numpy.zip
+    14553786  731ef413d627794b  build/python314-numpy-pyc.zip
+    23056094  02d99c24cc9fe5f6  build/python314-pandas.zip
+      143087  d156a6fe083699c1  build/hello/hello.wasm
+      375640  f3a4b3b4ce588625  build/hello/throw_probe_eh33.wasm
+
+# numpy module archives (bytes): 13501368 total over       19 files; pandas: total 21667082
+# floor build wall: real	2m19.750s; numpy ninja wall: [241/331] Compiling C++ object numpy/_core/_multiarray_umath.cpython-314-wasm32-wasi.so.p/src_umath_real_imag_ufuncs.cpp.o; pandas ninja wall: real	0m31.157s
+# xz of the pandas binary (what a release download would weigh):
+ 9849184
+ 11204068
+ 8449348

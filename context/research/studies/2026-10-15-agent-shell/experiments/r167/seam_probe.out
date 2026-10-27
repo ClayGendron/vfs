@@ -1,0 +1,11 @@
+=== A. one text read row across a byte seam (pin 4: render + trailing newline) ===
+   /t/two.txt: crossed 19 bytes, bash `cat` gives 18; repr=b'line one\nline two\n\n'
+   /t/nonl.txt: crossed 11 bytes, bash `cat` gives 10; repr=b'no newline\n'
+   /t/empty.txt: crossed 0 bytes, bash `cat` gives 0; repr=b''
+=== B. cat f | wc (the s3 runner) against the bash numbers ===
+   s3 runner: '3 4 19\n'   bash: '2 4 18\n'
+=== C. a cap of 32,768 characters applied inside render_result would land in the pipe ===
+   big.log renders to 78000 characters; bash `cat big.log | tail -1` -> 'row 002999 of the big log'
+   if render_result capped at 32,768, tail -1 would print the truncation marker instead
+=== D. empty listing across a seam: the empty marker would count as a line ===
+   ls /void crosses b'' today (wc -l = 0); with '(empty directory)' in render_result it would cross 1 line

@@ -1,0 +1,11 @@
+quickjs-rs 0.2.5 / wasmtime 49.0.0
+cold start (Runtime + Context, first in process): 150.4 ms
+warm new_context (median of 10): 0.270 ms
+warm Runtime+Context (median of 5): 0.28 ms
+print('hello') via host fn (median of 20): 0.234 ms
+1e6-iteration loop (median of 5): 72.3 ms
+1000 host round trips (median of 5): 283.17 ms  -> 283.2 us/call
+snapshot bytes (small context): 1310772
+interrupt of for(;;) with 0.2 s timeout: TimeoutError: interrupted after 201 ms
+guest memory counters: malloc_size=None memory_used_size=None
+host RSS: before=33 MB after cold=91 MB end=93 MB

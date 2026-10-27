@@ -1,0 +1,46 @@
+#!/bin/sh
+# Compiler/linker wrapper for the numpy cross build (spike s12).
+# Compile steps: run wasi-sdk clang for wasm32-wasip1 with -fPIC dropped (the objects are linked statically into python.wasm).
+# Link steps that meson emits for an extension module (`-shared -o X.so`): instead of a shared object (wasi-libc has no
+# dlopen), write X.so as a static archive of the module's own objects and X.so.deps listing the archives it links with.
+# Nothing in numpy's source or meson.build changes; this file and the cross file are the whole adaptation.
+set -eu
+: "${WASI_SDK_PATH:?}"
+tool=${WASI_CC_TOOL:-clang}
+shared=0; out=""; objs=""; deps=""; prev=""
+for a in "$@"; do
+  case "$a" in
+    -shared) shared=1;;
+  esac
+  if [ "$prev" = "-o" ]; then out=$a; fi
+  prev=$a
+done
+if [ "$shared" = 1 ] && [ -n "$out" ]; then
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "-o" ]; then prev=$a; continue; fi
+    case "$a" in
+      *.o|*.obj) objs="$objs $a";;
+      *.a|*.so) deps="$deps $a";;
+      -l*) deps="$deps $a";;
+      -L*) deps="$deps $a";;
+    esac
+    prev=$a
+  done
+  rm -f "$out"
+  "$WASI_SDK_PATH/bin/llvm-ar" rcs "$out" $objs
+  printf '%s\n' $deps > "$out.deps"
+  exit 0
+fi
+args=""
+for a in "$@"; do
+  case "$a" in
+    -fPIC|-fpic|-fPIE|-fpie) ;;
+    -Wl,--start-group|-Wl,--end-group) ;;  # wasm-ld has no archive groups; it resolves archives in any order
+    *) args="$args
+$a";;
+  esac
+done
+oldifs=$IFS; IFS='
+'; set -- $args; IFS=$oldifs
+exec "$WASI_SDK_PATH/bin/$tool" --target=wasm32-wasip1 "$@"

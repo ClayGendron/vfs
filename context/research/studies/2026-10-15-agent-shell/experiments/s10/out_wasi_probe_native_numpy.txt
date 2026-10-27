@@ -1,0 +1,68 @@
+compile 0.116s  instantiate 0.001s  run 0.173s  exit 0
+version: 3.14.7 (tags/v3.14.7-dirty:823f032, Aug  5 2026, 10:29:49) [Clang 18.1.2-wasi-sdk (https://github.com/llvm/llvm-project 26a1d6601d727a96f43 platform: wasi
+extension_suffixes: ['.cpython-314-wasm32-wasi.so', '.abi3.so', '.so']
+thread_start: RuntimeError: can't start new thread
+cpu_count: 1 has fork: False
+_imp.create_dynamic present: True
+numpy core direct import: ['ImportError: \n\nIMPORTANT: PLEASE READ THIS FOR ADVICE ON HOW TO SOLVE THIS ISSUE!\n\nImporting the numpy C-extensions failed. This error can happen for\nmany reasons, often due to issues with your setup or how NumPy was\ninstalled.\nThe following compiled module files exist, but seem incompatible\nwith with either pyt', "ModuleNotFoundError: No module named 'numpy._core._multiarray_umath'"]
+  json                         ok
+  csv                          ok
+  re                           ok
+  decimal                      ok
+  dataclasses                  ok
+  enum                         ok
+  sqlite3                      ModuleNotFoundError: No module named '_sqlite3'
+  _sqlite3                     ModuleNotFoundError: No module named '_sqlite3'
+  zlib                         ModuleNotFoundError: No module named 'zlib'
+  bz2                          ModuleNotFoundError: No module named '_bz2'
+  lzma                         ModuleNotFoundError: No module named '_lzma'
+  hashlib                      ok
+  _hashlib                     ModuleNotFoundError: No module named '_hashlib'
+  ssl                          ModuleNotFoundError: No module named '_ssl'
+  ctypes                       ModuleNotFoundError: No module named '_ctypes'
+  socket                       ok
+  select                       ok
+  selectors                    ok
+  threading                    ok
+  _thread                      ok
+  multiprocessing              ModuleNotFoundError: No module named 'multiprocessing'
+  subprocess                   ok
+  signal                       ok
+  mmap                         ModuleNotFoundError: No module named 'mmap'
+  asyncio                      ok
+  uuid                         ok
+  datetime                     ok
+  zoneinfo                     ok
+  pyexpat                      ok
+  xml.etree.ElementTree        ok
+  array                        ok
+  struct                       ok
+  math                         ok
+  statistics                   ok
+  fractions                    ok
+  tomllib                      ok
+  tarfile                      ok
+  zipfile                      ok
+  gzip                         ModuleNotFoundError: No module named 'zlib'
+  io                           ok
+  tempfile                     ok
+  shutil                       ok
+  glob                         ok
+  fnmatch                      ok
+  argparse                     ok
+  numpy                        ImportError: 
+
+IMPORTANT: PLEASE READ THIS FOR ADVICE ON HOW TO SOLVE THIS ISSUE!
+
+Importing the numpy C-extensions failed. This error can happen for
+many reasons, often due
+  pandas                       ModuleNotFoundError: No module named 'pandas'
+  scipy                        ModuleNotFoundError: No module named 'scipy'
+  matplotlib                   ModuleNotFoundError: No module named 'matplotlib'
+  PIL                          ModuleNotFoundError: No module named 'PIL'
+  yaml                         ModuleNotFoundError: No module named 'yaml'
+  openpyxl                     ModuleNotFoundError: No module named 'openpyxl'
+  docx                         ModuleNotFoundError: No module named 'docx'
+  bs4                          ModuleNotFoundError: No module named 'bs4'
+  dateutil                     ModuleNotFoundError: No module named 'dateutil'
+  pydantic                     ModuleNotFoundError: No module named 'pydantic'

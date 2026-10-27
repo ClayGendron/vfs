@@ -1,0 +1,31 @@
+mkdir -p failed for path /.config/matplotlib: [Errno 13] Permission denied: '/.config'
+Matplotlib created a temporary cache directory at /tmp/matplotlib-g35piz48 because there was an issue with the default path (/.config/matplotlib); it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+{
+  "machine": "aarch64",
+  "kernel": "7.0.12-linuxkit",
+  "uid": 1000,
+  "python": "3.13.15",
+  "before": {
+    "open_etc_passwd": "allowed",
+    "c_fopen_etc_hosts": "allowed"
+  },
+  "landlock_abi": 8,
+  "landlock_restrict": "ok",
+  "landlock_restrict_ms": 0.03,
+  "seccomp": "ok",
+  "seccomp_ms": 0.13,
+  "after": {
+    "open_etc_passwd": "denied errno 13 (EACCES)",
+    "c_fopen_etc_hosts": "denied errno 13 (EACCES)",
+    "open_allowed_ro": "denied errno 21 (EISDIR)",
+    "listdir_root": "denied errno 13",
+    "listdir_etc": "denied errno 13",
+    "write_rw_dir": "allowed",
+    "write_tmp": "allowed",
+    "socket": "denied errno 1 (EPERM)",
+    "execve": "denied errno 1 (EPERM)",
+    "thread": "allowed",
+    "import_numpy_pandas": "ok numpy 2.5.4 pandas 3.0.6 in 398 ms",
+    "matplotlib_png": "ok 23053 bytes in 395 ms"
+  }
+}

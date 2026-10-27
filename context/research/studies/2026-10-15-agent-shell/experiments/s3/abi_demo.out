@@ -1,0 +1,74 @@
+
+=== A. ls /src | wc -l  (rows -> bytes at the ls|wc seam; bytes -> rows at the terminal) ===
+stdout (rows rendered at the terminal boundary):
+  /.vfs/run/2/stdout
+stderr: <none>
+PIPESTATUS=[0, 0]  $?=0  pipefail=0
+ops=('run',) rows=1 success=True
+stats={'ls@0.chunks_emitted': 1, 'wc@1.chunks_emitted': 1, 'ls@0.max_queue_depth': 1, 'wc@1.max_queue_depth': 1}
+same rows, projection=('content',):
+  | content |
+  | ------- |
+  | 3       |
+the row itself: path=/.vfs/run/2/stdout mime=text/plain content='3\n'
+
+=== B. cat /src/auth.py | wc  (a text read row crosses as its body, not as a table) ===
+stdout (rows rendered at the terminal boundary):
+  | content |
+  | ------- |
+  | 3 5 35  |
+stderr: <none>
+PIPESTATUS=[0, 0]  $?=0  pipefail=0
+ops=('run',) rows=1 success=True
+stats={'cat@0.chunks_emitted': 1, 'wc@1.chunks_emitted': 1, 'cat@0.max_queue_depth': 1, 'wc@1.max_queue_depth': 1}
+
+=== C. cat /img/logo.png | id.wasm  (one bytes-bodied read row crosses RAW; stdout sniffs back to a media row) ===
+stdout (rows rendered at the terminal boundary):
+  /.vfs/run/2/stdout
+stderr: <none>
+PIPESTATUS=[0, 0]  $?=0  pipefail=0
+ops=('run',) rows=1 success=True
+stats={'cat@0.chunks_emitted': 1, 'id.wasm@1.chunks_emitted': 1, 'cat@0.max_queue_depth': 1, 'id.wasm@1.max_queue_depth': 1}
+the row itself: path=/.vfs/run/2/stdout mime=image/png data_len=32 content=None populated=['data', 'kind', 'mime_type', 'path', 'size_bytes']
+
+=== D. glob '**/*.py' | grep auth  (rows -> rows: grep scopes to upstream rows, no text re-parse) ===
+stdout (rows rendered at the terminal boundary):
+  /src/auth.py:2:    return 'auth ok'
+stderr: <none>
+PIPESTATUS=[0, 0]  $?=0  pipefail=0
+ops=('grep',) rows=1 success=True
+stats={'glob@0.chunks_emitted': 1, 'grep@1.chunks_emitted': 1, 'glob@0.max_queue_depth': 1, 'grep@1.max_queue_depth': 1}
+
+=== E. ls /nope | wc -l  (a failed verb: classified error -> stderr line + exit code; wc still runs) ===
+stdout (rows rendered at the terminal boundary):
+  | content |
+  | ------- |
+  | 0       |
+stderr: ['ls: ERROR /nope: Not found — Check the path with ls or glob, or create the entry first. (retry: never)']
+PIPESTATUS=[1, 0]  $?=0  pipefail=1
+ops=('run',) rows=1 success=True
+stats={'ls@0.chunks_emitted': 1, 'wc@1.chunks_emitted': 1, 'ls@0.max_queue_depth': 1, 'wc@1.max_queue_depth': 1}
+
+=== F. cat /src/db.py | id.wasm --exit 3 --stderr 'boom'  (a program's own exit code and stderr) ===
+stdout (rows rendered at the terminal boundary):
+  | content                   |
+  | ------------------------- |
+  | def connect():     pass   |
+stderr: ['id.wasm: boom']
+PIPESTATUS=[0, 3]  $?=3  pipefail=3
+ops=('run',) rows=1 success=True
+stats={'cat@0.chunks_emitted': 1, 'id.wasm@1.chunks_emitted': 1, 'cat@0.max_queue_depth': 1, 'id.wasm@1.max_queue_depth': 1}
+
+=== G. 10,000 files: ls /big | wc -l  (chunked rows, bounded queue, wc counts chunks not time) ===
+stdout (rows rendered at the terminal boundary):
+  | content |
+  | ------- |
+  | 10000   |
+stderr: <none>
+PIPESTATUS=[0, 0]  $?=0  pipefail=0
+ops=('run',) rows=1 success=True
+stats={'ls@0.chunks_emitted': 10, 'wc@1.chunks_emitted': 1, 'ls@0.max_queue_depth': 2, 'wc@1.max_queue_depth': 1}
+wc saw 10 byte chunks (one per 1000-row slice); queue depth never exceeded 2
+
+=== H. what a byte program would see for `ls /src` (the rendered bytes, verbatim) ===
+'/src/README.md\n/src/auth.py\n/src/db.py\n'

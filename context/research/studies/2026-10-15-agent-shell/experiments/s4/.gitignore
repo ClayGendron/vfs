@@ -1,0 +1,4 @@
+catfile/target/
+fsops/target/
+__pycache__/
+bin/*.wasm

@@ -1,0 +1,15 @@
+exit=0 trapped=None load=deserialize 0.0157s run=0.4595s
+verbs: {'read': 49, 'stat': 31, 'write': 1, 'ls': 1, 'mkdir': 1, 'move': 1, 'delete': 2} sql: 479 preview1 calls: 414
+unimplemented called: {'path_readlink': 1} pings: []
+--- stdout ---
+python 3.14.8 wasi /usr/local ['/usr/local/lib/python314.zip', '/usr/local/lib/python3.14', '/usr/local/lib/python3.14/lib-dynload']
+hello from vfs
+second line
+['hello.txt', 'py.out', 'study04_script.py']
+27 0o100000
+['_abc', '_ast', '_asyncio', '_bisect', '_blake2', '_codecs', '_codecs_cn', '_codecs_hk'] 79
+{"ok": true}
+
+--- stderr ---
+Could not find platform dependent libraries <exec_prefix>
+

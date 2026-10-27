@@ -1,0 +1,20 @@
+### timeout: spin with timeout_s=0.5
+  wall=0.66s exit=None trap_code=TrapCode.INTERRUPT timed_out=True
+  message='error while executing at wasm backtrace:'
+
+### memory limit: alloc with memory_bytes=32 MiB (Rust aborts when memory.grow fails)
+  exit=None trap_code=TrapCode.UNREACHABLE timed_out=False
+  message='error while executing at wasm backtrace:'
+  stderr=b'memory allocation of 16777216 bytes failed\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n'
+
+### memory limit: alloc with no limit but a 1s timeout (what happens without set_limits)
+  exit=None trap_code=TrapCode.UNREACHABLE timed_out=False message='error while executing at wasm backtrace:'
+  stderr tail=b'ST_BACKTRACE=1` environment variable to display a backtrace\n'
+
+### raw guest bug: a WAT module storing out of bounds
+  trap_code=TrapCode.MEMORY_OUT_OF_BOUNDS message='error while executing at wasm backtrace:'
+
+### the engine epoch is global: a second store on the same engine, run after the kill, still works
+  second spin: trap_code=TrapCode.INTERRUPT timed_out=True
+
+STEP 5 OK

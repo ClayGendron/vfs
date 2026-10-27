@@ -1,0 +1,52 @@
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin
+📝 Creating /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Modules/Setup.local ...
+❯  ../../configure
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-xw2r5swq.log (--quiet)...
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin
+❯  make --jobs 10 all
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-lxrfxh78.log (--quiet)...
+🎉 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe 3.14
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin
+❯  make pythoninfo
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-5pj373mu.log (--quiet)...
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1
+🌎 Environment changes:
+     AR=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/llvm-ar
+     CC=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang
+     CONFIG_SITE=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Tools/wasm/wasi/config.site-wasm32-wasi
+     CPP=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang-cpp
+     CXX=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang++
+     HOSTRUNNER=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasmtime-v49.0.3-aarch64-macos/wasmtime run --wasm max-wasm-stack=16777216 --argv0 cross-build/wasm32-wasip1/python.wasm --dir /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8::/ --env PYTHONPATH=/cross-build/wasm32-wasip1/build/lib.wasi-wasm32-3.14
+     PATH=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasmtime-v49.0.3-aarch64-macos:/Users/claygendron/.bun/bin:/Users/claygendron/.nvm/versions/node/v22.14.0/bin:/Users/claygendron/miniconda3/bin:/Library/Frameworks/Python.framework/Versions/3.10/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/share/dotnet:~/.dotnet/tools:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/Users/claygendron/.cargo/bin:/Users/claygendron/.local/bin:/usr/local/bin:/Users/claygendron/Library/Application Support/Coursier/bin:/Users/claygendron/.lmstudio/bin
+     PKG_CONFIG_LIBDIR=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/share/wasi-sysroot/lib/pkgconfig:/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/share/wasi-sysroot/share/pkgconfig
+     PKG_CONFIG_PATH=
+     PKG_CONFIG_SYSROOT_DIR=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/share/wasi-sysroot
+     RANLIB=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/ranlib
+     SOURCE_DATE_EPOCH=1792034199
+     WASI_SYSROOT=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/share/wasi-sysroot
+❯  ../../configure --host=wasm32-wasip1 --build=aarch64-apple-darwin --with-build-python=/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-mp61fkxa.log (--quiet)...
+🏃 Created /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1/python.sh (--host-runner)... 
+Python 3.14.8
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1
+🌎 Environment changes:
+     SOURCE_DATE_EPOCH=1792034199
+❯  make --jobs 10 all
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-pxc74_vj.log (--quiet)...
+❯  /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1/python.sh --version
+🎉 Use `cross-build/wasm32-wasip1/python.sh` to run CPython w/ the WASI host specified by --host-runner
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+📁 /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1
+❯  make pythoninfo
+📝 Logging output to /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/outputs/cpython-floor-logs/cpython-wasi-1j5p5nnv.log (--quiet)...
+
+real	2m19.750s
+user	3m44.937s
+sys	1m5.067s
+-rwxr-xr-x@ 1 claygendron  staff  30654510 Oct 16 08:52 cross-build/wasm32-wasip1/python.wasm
+44f97ec06b6a6def114a1bc4f3fc9ac426ba422fa60d9143a353324b229611a5  cross-build/wasm32-wasip1/python.wasm

@@ -1,0 +1,34 @@
+populated on bytes row: ['data', 'kind', 'mime_type', 'path', 'size_bytes', 'version']
+
+--- to_str() default projection ---
+'==> /notes/a.md <==\n# hello\n\n\n==> /photos/pixel.png <==\n'
+
+--- to_str(projection=('path','mime_type','size_bytes')) ---
+/notes/a.md
+  mime_type: text/markdown
+  size_bytes: 8
+
+/photos/pixel.png
+  mime_type: image/png
+  size_bytes: 70
+
+--- to_payload() bytes row ---
+{
+ "path": "/photos/pixel.png",
+ "kind": "file",
+ "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+ "mime_type": "image/png",
+ "size_bytes": 70,
+ "version": 3,
+ "populated": [
+  "mime_type",
+  "kind",
+  "path",
+  "size_bytes",
+  "data",
+  "version"
+ ]
+}
+
+round trip equal: True
+payload bytes for a 1 MiB image would be about 1398104 chars of base64

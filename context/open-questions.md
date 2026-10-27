@@ -78,6 +78,7 @@
 - **The two halves have different owners** — route incoming demand accordingly: **per-path** execute (uniform across principals) reopens `specs/active/039-execute-permission-tier/`, whose rights-set is already drafted and whose implicit-grant fork is signed off, so nothing needs re-deciding first. **Per-principal** execute is a grant-ladder extension in spec 058 (an `execute` level beyond `read_write`), not a 039 question. Treating them as one thing sends the demand to the wrong spec.
 - **Options considered:** permission-map tier (039's original shape) vs. mount-level `deny_ops` (landed)
 - **Status:** parked — unblocked only by a real consumer asking for "runnable except these paths" (→ 039) or "runnable by these principals" (→ 058)
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §8 and study `06-execution-policy.md` — every string-judging harness says its match is not a security boundary; in vfs the gate order is the policy. Lean: `run` is `read` on the program row (ADR 080's "a verb's rung is the field it reads"; Plan 9's exec is read plus a bit, and vfs has no bits), so per-principal is a `read` grant on the bin row and per-path is a `list` posture on the bin prefix. Both halves dissolve; 039 stays archived; no `execute` level. Awaiting the execution-policy ADR.
 
 ## Full dirent model: name-on-edge, parent_id dropped, hard links?
 
@@ -96,6 +97,8 @@
 - **Blocking:** the Monty phase of the runtime work — not the wasm-CLI spike, which needs no guest interpreter
 - **Options considered:** Monty first, WASI-CPython later behind the same contract (memo's lean); both from day one; wasm-only until Monty matures
 - **Status:** open — decide when the code-execution phase is specced; the wasm spike proceeds regardless
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §7 and study `05-guest-interpreters.md`, five candidates measured on this machine. Lean: Monty first (v1.1.0, a worker pool, 0.8 ms sessions, host functions and an `os` callback as its doors, no shim), QuickJS-NG second for JavaScript, CPython-on-WASI as the escalation (6 ms per call with a Wizer snapshot, but no host-function door without a guest-side C module and a build pipeline). Pyodide and RustPython rejected. The contract is a message protocol so a swap is a binding layer. Awaiting the ABI and policy ADRs.
+- **Decided 2026-10-16 (Clay, ADR 086; spike 173, study `13-wasi-python-spike.md`):** Monty dropped (Clay chose WASI Python); the guest is a statically linked CPython for `wasm32-wasip1` with numpy and pandas compiled in as builtins, rebuilt yearly, run under spec 169's host as a WASI reactor with a Wizer snapshot (4.8 ms per call) and a `host::call` door; QuickJS-NG for JavaScript. The spike built it with zero upstream patches and ran the CSV jobs over vfs in 15 verbs. Three leans pending Clay (the SDK line, the snapshot default and download size, int32 documented) are listed in ADR 086. Spec 172 carries the build.
 
 ## Shell pipe payload: Result envelopes with a canonical wire serialization, or bytes at v1?
 
@@ -104,6 +107,7 @@
 - **Blocking:** the shell-surface ADR; the wasm spike only touches it at the stdin boundary and can hardcode JSON lines without prejudice
 - **Options considered:** envelopes in the pipe + declared JSON-lines wire format at the external boundary (memo's lean); bytes-only v1; per-command negotiated formats (rejected on its face — nushell's warts show format decisions must be global)
 - **Status:** open
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §5 and study `03-program-abi-and-bin-namespace.md`, executed over the live tree. Lean: the pipe carries chunks of exactly one shape, `Rows` or `Bytes`; programs declare the shape they consume and produce; rows become bytes only for a byte-shaped consumer through the one renderer with the producing op's projection; bytes become rows as one row at `/.vfs/run/<call>/stdout`; errors never cross a byte seam; JSON is explicit (`to-json`), never the default. The media placeholder rule is what makes rows-in-the-pipe multimodal-safe. Awaiting the pipe-payload ADR.
 
 ## Result content must be typed blocks (text/image/audio) for the MCP wire — where does the content channel live?
 
@@ -117,6 +121,7 @@
   awaiting review, feeds the content-channel ADR. Hard prerequisite surfaced:
   the live tree has no binary channel at all (`Entry.content` is `str`-only,
   null-byte-rejecting) — the storage bytes story must be settled first.
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §10 and study `08-mcp-content-blocks.md` — the MCP vocabulary is unchanged since 2025-06-18 at the current 2026-07-28 revision (no video block; `resultType` required; `structuredContent` any JSON); a client matrix verified in source shows text is the only universally rendered block and two clients replace `content` with `structuredContent`; two live-tree gaps executed (a bytes row renders empty; `to_payload` inlines base64 unbounded). Proposed: one text block first then typed blocks keyed by path, `isError = not success`, `vfs:///` links with a minimal `resources` capability, the placeholder grammar. Clay (2026-10-15): MCP only, no provider adapters. Awaiting the content-channel ADR.
 
 ## Multimodal storage and search — how do media bytes live in the database, and what do the four search verbs mean over them?
 
@@ -262,6 +267,7 @@
 - **Options considered:** (a) one tool per agent-facing verb, `sweep` and topology admin withheld, capabilities advertised so a consumer's allow-list can be derived; (b) one `vfs` tool with a `verb` argument and the `Result` envelope as structured content; (c) both, with (b) as the compact surface for code-mode and tool-search clients.
 - **Status:** open
 
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §11 and study `09-agent-shell-peers.md` fork 1 — bash-tool ships three tools but its own example passes one; bashkit's contract is one; deepagents is verbs only. Answer (spec 171): the agent-facing verbs as tools plus one `cli(command | argv)` tool that re-enters them; hosts may expose only `cli` by listing; never a second `readFile` around `read`'s ladder. Ready to move to the archive when 171 lands.
 ## Reference adapters for host frameworks: publish them, or document the wire and let hosts write them?
 
 - **Asked:** 2026-09-15 by Claude (eve memo §7.1 seam 2, §9)
@@ -278,6 +284,7 @@
 - **Options considered:** (a) plain user directories, no reserved family; (b) a reserved `/.agents/<agent>/` family with grammar for instructions, skills and memory; (c) defer until a real consumer asks for per-agent isolation.
 - **Status:** parked
 
+- **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §9 and ADR 082 — the `/.agents` families are retired; programs and skills live anywhere and a host-set index feeds the `/.vfs/bin` and `/.vfs/skills` views (Plan 9's union); eve keeps the agent's own definition outside the namespace the shell sees; a per-agent home is a mount-table and grants question (`add_mount` at `/home/<agent>`, the session's `cwd` there), not a reserved family. Option (a), plain directories, stands.
 ## Write preconditions on the wire: expected version, content hash, or both?
 
 - **Asked:** 2026-09-15 by Claude (`research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §4.3, §8.4, §10)
@@ -385,3 +392,11 @@
 - **Blocking:** nothing in spec 163; the statement-count levers help regardless. It decides which later lever helps xdist most (fewer statements per test versus fewer workers than cores).
 - **Options considered:** `py-spy` one worker at `-n 1` against `-n 10` and compare where the extra time lands; repeat the 1/5/10 probe on a Linux box with homogeneous cores; measure `-n 8` (performance cores only) against `-n 10`.
 - **Status:** open — a one-hour probe when spec 163's frame has landed
+
+## What makes `0.1.0` final: a held beta alone, or a feature too?
+
+- **Asked:** 2026-10-15 by Claude while cutting spec 166 (the release lane: yank 0.0.x, alphas then betas to 0.1.0).
+- **Context:** Clay decided the same day to yank 0.0.20–0.0.22 and ship the rebuild as `0.1.0a1`, `a2`, … then `0.1.0b1`, … then `0.1.0`. Beta entry is "the public surface is frozen", called by Clay. Final needs a bar. The spec proposes: the current beta has been current for two weeks, no breaking fix was needed, and the four real-engine legs pass from the published wheel. It does not propose a feature gate.
+- **Blocking:** nothing until the first beta; the alphas ship regardless. Spec 166 decision 5.
+- **Options considered:** (a) the held-beta bar alone — features keep arriving as `0.2`, `0.3` minors, which is what the `0.x` lane is for; (b) the bar plus the MCP surface, since the README's positioning leads with it; (c) the bar plus a shipped `SupportsRun` storage, so `run` is not a verb with no storage at the first real version. Leaning (a).
+- **Status:** open — Clay's call, due before `0.1.0b1`

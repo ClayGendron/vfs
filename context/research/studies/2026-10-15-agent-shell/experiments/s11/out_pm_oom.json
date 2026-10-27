@@ -1,0 +1,31 @@
+{
+  "mode": "oom",
+  "packages": [
+    "numpy"
+  ],
+  "rss_mb_start": 117.4,
+  "env_detect": "function function function function",
+  "eval_asm_js_ms": 36,
+  "eval_loader_ms": 1,
+  "loadPyodide_type": "function",
+  "loadPyodide_ms": 1545,
+  "rss_mb_after_load": 481.5,
+  "python_version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489",
+  "loadPackage_ms": 421,
+  "rss_mb_after_packages": 532.2,
+  "loader_reads": {
+    "pyodide-lock.json": 1,
+    "python_stdlib.zip": 1,
+    "pyodide.asm.wasm": 1,
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": 1
+  },
+  "loader_bytes_mb": 13.5,
+  "oom": "SpiderMonkeyError: ls)\n  File \"<exec>\", line 3, in <module>\n  File \"/lib/python3.13/site-packages/numpy/_core/numeric.py\", line 199, in ones\n    a = empty(shape, dtype, order, device=device)\nnumpy._core._exceptions._ArrayMemoryError: Unable to allocate 47.7 MiB for an array with shape (50000000,) and data type uint8\n\n",
+  "oom_ms": 1253,
+  "rss_mb_after_oom": 3872.1,
+  "still_alive": "2.0",
+  "wall_s": 3.26,
+  "rss_mb_end": 3872.1,
+  "guest_stdout": "Loading numpy\nLoaded numpy\n",
+  "guest_stderr": ""
+}

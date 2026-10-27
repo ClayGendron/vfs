@@ -1,0 +1,16 @@
+--- ladder as alice ---
+/secret/x.md -> FileNotFoundError 44
+/secret -> FileNotFoundError 44
+exit: 0 faults: ()
+--- ladder as bob ---
+/secret/x.md -> top secret
+/secret -> listdir ['x.md']
+exit: 0 faults: ()
+--- rename-replace as alice ---
+replace -> FileExistsError 20
+refused: [('rename', ('/out/a.txt', '/out/b.txt'), 'EEXIST', 'call')]
+--- bare pandas csv job as alice ---
+[5, 4] exit: 0
+provider calls: {'stat': 17, 'list': 0, 'read': 2, 'write': 2, 'mkdir': 0, 'remove': 0, 'rmdir': 0, 'rename': 0}
+vfs verbs: 21 {'stat': 17, 'read': 2, 'write': 2}
+verb sequence: ['stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'stat', 'read', 'stat', 'write', 'write', 'read']

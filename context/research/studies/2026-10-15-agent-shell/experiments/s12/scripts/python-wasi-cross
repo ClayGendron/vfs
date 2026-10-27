@@ -1,0 +1,12 @@
+#!/bin/sh
+# The "target Python" meson introspects for the numpy cross build: the native build-python answering with the WASI
+# build's sysconfig data (the same trick CPython's own Makefile uses in PYTHON_FOR_BUILD).
+HERE=$(CDPATH= cd "$(dirname "$0")/.." && pwd -P)
+CP="$HERE/build/Python-3.14.8"
+W="$CP/cross-build/wasm32-wasip1"
+export _PYTHON_PROJECT_BASE="$W"
+export _PYTHON_HOST_PLATFORM=wasi-wasm32-wasi
+export _PYTHON_SYSCONFIGDATA_NAME=_sysconfigdata__wasi_wasm32-wasi
+export _PYTHON_SYSCONFIGDATA_PATH="$W/build/lib.wasi-wasm32-3.14"
+export PYTHONPATH="$CP/Lib:$_PYTHON_SYSCONFIGDATA_PATH:$HERE/build/host-pylib${PYTHONPATH:+:$PYTHONPATH}"   # host-pylib: Cython + versioneer for pandas' generators
+exec "$CP/cross-build/aarch64-apple-darwin/python.exe" "$@"

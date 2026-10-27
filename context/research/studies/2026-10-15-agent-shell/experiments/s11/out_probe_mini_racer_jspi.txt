@@ -1,0 +1,17 @@
+JSPI: function function function function
+['JSPromise', 'JSPromiseImpl']
+class JSPromise(JSObject):
+    """JavaScript Promise.
+
+    To get a value, call `promise.get()` (which blocks) or `await promise` (in async
+    code). Both operations will raise a Python exception if the JavaScript Promise is
+    rejected.
+    """
+
+    def get(self, *, timeout: float | None = None) -> PythonJSConvertedTypes:
+        raise NotImplementedError
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        raise NotImplementedError
+
+closed

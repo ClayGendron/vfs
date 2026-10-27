@@ -1,0 +1,31 @@
+{
+  "mode": "two",
+  "packages": [
+    "numpy"
+  ],
+  "rss_mb_start": 117.4,
+  "env_detect": "function function function function",
+  "eval_asm_js_ms": 32,
+  "eval_loader_ms": 1,
+  "loadPyodide_type": "function",
+  "loadPyodide_ms": 1609,
+  "rss_mb_after_load": 481.3,
+  "python_version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489",
+  "loadPackage_ms": 372,
+  "rss_mb_after_packages": 530.9,
+  "loader_reads": {
+    "pyodide-lock.json": 1,
+    "python_stdlib.zip": 1,
+    "pyodide.asm.wasm": 1,
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": 1
+  },
+  "loader_bytes_mb": 13.5,
+  "second_loadPyodide_ms": 1524,
+  "rss_mb_two_instances": 724.5,
+  "second_runs": "3.13.2",
+  "instances_share_globals": "no js.pyodide",
+  "wall_s": 3.54,
+  "rss_mb_end": 724.5,
+  "guest_stdout": "Loading numpy\nLoaded numpy\n",
+  "guest_stderr": ""
+}

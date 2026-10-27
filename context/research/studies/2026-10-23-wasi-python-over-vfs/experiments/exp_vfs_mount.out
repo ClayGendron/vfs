@@ -1,0 +1,25 @@
+--- guest stdout ---
+listdir /: ['data', 'docs', 'out', 'ro']
+read: hello from a vfs row
+stat size: 21
+csv back: [2, 12]
+after rename: ['b.txt']
+sub gone: False
+/ro/locked.md -> OSError 69
+/.vfs/trash -> FileNotFoundError 44
+/docs -> IsADirectoryError 31
+tool ls: True ['/docs/hello.md', '/docs/policy.md']
+tool grep: True 1
+tool write to read-only mount: False ['vfs.read_only']
+tool write ok: True
+
+--- guest stderr ---
+
+exit: 0 trapped: None
+provider calls: {'stat': 18, 'list': 3, 'read': 5, 'write': 5, 'mkdir': 1, 'remove': 1, 'rmdir': 1, 'rename': 1}
+faults: ()
+refused: [('write', ('/ro/locked.md',), 'EROFS', 'open', 'refused')]
+tool outcomes: [(None, 'ok'), ('ls', 'ok'), ('grep', 'ok'), ('write', 'ok'), ('write', 'ok')]
+vfs verbs issued: 40
+by verb: {'ls': 3, 'read': 4, 'stat': 20, 'write': 5, 'mkdir': 1, 'move': 1, 'delete': 2, 'tool:ls': 1, 'tool:grep': 1, 'tool:write': 2}
+row written as text? True 'x,y,z\n1,2,2\n3,4,12\n'

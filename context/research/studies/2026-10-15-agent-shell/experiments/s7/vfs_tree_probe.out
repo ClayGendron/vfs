@@ -1,0 +1,25 @@
+  alice write /.vfs row: ok rows=['/.vfs/sessions/s1/env/X']
+  alice write /.vfs/sessions/s1/history: ok rows=['/.vfs/sessions/s1/history']
+A. search verbs vs the reserved tree
+  glob **/* (unscoped): ok rows=[]
+  glob X paths=/.vfs: ok rows=['/.vfs/sessions/s1/env/X']
+  grep ^1$ unscoped: ok rows=[]
+  grep ^1$ paths=/.vfs: ok rows=['/.vfs/sessions/s1/env/X']
+  read row: ok rows=['/.vfs/sessions/s1/env/X']
+  ls /.vfs/sessions/s1: ok rows=['/.vfs/sessions/s1/env', '/.vfs/sessions/s1/history']
+B. the other principal and anonymous
+  bob read row: ok rows=['/.vfs/sessions/s1/env/X']
+  bob ls /.vfs/sessions: ok rows=['/.vfs/sessions/s1']
+  anon ls /.vfs/sessions: vfs.unauthenticated: Unauthenticated
+  anon read row: vfs.unauthenticated: Unauthenticated
+C. trash view after delete
+  alice delete row: ok rows=['/.vfs/sessions/s1/env/X']
+  ls /.vfs/trash: ok rows=[]
+  stat trash view of row: ok rows=['/.vfs/sessions/s1/env/X']
+  ls /.vfs/sessions/s1/env: ok rows=[]
+D. a plain user-space row for comparison
+  alice write /sessions/s1/env/Y: ok rows=['/sessions/s1/env/Y']
+  alice delete Y: ok rows=['/sessions/s1/env/Y']
+  ls /.vfs/trash: ok rows=['/sessions/s1/env/Y']
+  ls /.vfs/trash/sessions: vfs.not_found: Not found
+  stat /.vfs/trash/sessions/s1/env/Y: ok rows=['/sessions/s1/env/Y']

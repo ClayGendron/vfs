@@ -1,0 +1,1425 @@
+{
+  "trash_after": [
+    "/data/made",
+    "/data/moved.txt"
+  ],
+  "runs": [
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "/data/hello.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "hello from vfs\nsecond line\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 27,
+      "bytes_from_guest": 27,
+      "compile_seconds": 0.049,
+      "run_seconds": 0.0099,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'"
+      ],
+      "name": "cat"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "data/hello.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "hello from vfs\nsecond line\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 27,
+      "bytes_from_guest": 27,
+      "compile_seconds": 0.0157,
+      "run_seconds": 0.0049,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'"
+      ],
+      "name": "cat relative (no cwd)"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cwd"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "Ok(\"/\")\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_write": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 8,
+      "compile_seconds": 0.0161,
+      "run_seconds": 0.0008,
+      "trace": [],
+      "name": "cwd"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "/data/nope.txt"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "cat: No such file or directory (os error 44) [raw_os_error=Some(44)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_open": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 69,
+      "compile_seconds": 0.0152,
+      "run_seconds": 0.0067,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/nope.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/nope.txt'"
+      ],
+      "name": "cat missing -> ENOENT"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "/data/sub"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "cat: Is a directory (os error 31) [raw_os_error=Some(31)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 1,
+        "fd_seek": 1,
+        "fd_write": 12,
+        "path_open": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1,
+        "ls": 1
+      },
+      "sql_statements": 11,
+      "sql_statements_per_verb": {
+        "read": 5,
+        "ls": 6
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 58,
+      "compile_seconds": 0.0147,
+      "run_seconds": 0.0091,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/sub', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/sub'"
+      ],
+      "name": "cat directory -> EISDIR"
+    },
+    {
+      "argv": [
+        "fsops",
+        "stat",
+        "/data/hello.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "len=27 dir=false readonly=true mtime_ok=true\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_filestat_get": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "stat": 5
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 45,
+      "compile_seconds": 0.0156,
+      "run_seconds": 0.0063,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_filestat_get(fd=3, 'data/hello.txt') -> '/data/hello.txt'"
+      ],
+      "name": "stat file"
+    },
+    {
+      "argv": [
+        "fsops",
+        "stat",
+        "/data"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "len=0 dir=true readonly=true mtime_ok=true\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_filestat_get": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "stat": 5
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 43,
+      "compile_seconds": 0.0153,
+      "run_seconds": 0.0044,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_filestat_get(fd=3, 'data') -> '/data'"
+      ],
+      "name": "stat dir"
+    },
+    {
+      "argv": [
+        "fsops",
+        "write",
+        "/data/new.txt",
+        "fresh\n"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "write": 1
+      },
+      "sql_statements": 16,
+      "sql_statements_per_verb": {
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 6,
+      "compile_seconds": 0.0144,
+      "run_seconds": 0.0101,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/new.txt', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/new.txt'",
+        "fd_close -> write('/data/new.txt', 6 bytes) errors=[]"
+      ],
+      "name": "write new",
+      "after": {
+        "new": {
+          "version": 1,
+          "content": "fresh\n",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "write",
+        "/data/new.txt",
+        "second\n"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "write": 1
+      },
+      "sql_statements": 16,
+      "sql_statements_per_verb": {
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 7,
+      "compile_seconds": 0.0154,
+      "run_seconds": 0.0096,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/new.txt', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/new.txt'",
+        "fd_close -> write('/data/new.txt', 7 bytes) errors=[]"
+      ],
+      "name": "write overwrite",
+      "after": {
+        "new": {
+          "version": 2,
+          "content": "second\n",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "append",
+        "/data/new.txt",
+        "tail\n"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1,
+        "write": 1
+      },
+      "sql_statements": 21,
+      "sql_statements_per_verb": {
+        "read": 5,
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 5,
+      "compile_seconds": 0.0165,
+      "run_seconds": 0.0115,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/new.txt', oflags=0x1, rights=0x3fffbffd, fdflags=0x1) -> '/data/new.txt'",
+        "fd_close -> write('/data/new.txt', 12 bytes) errors=[]"
+      ],
+      "name": "append",
+      "after": {
+        "new": {
+          "version": 3,
+          "content": "second\ntail\n",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "patch",
+        "/data/new.txt",
+        "ZZ",
+        "2"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1,
+        "write": 1
+      },
+      "sql_statements": 21,
+      "sql_statements_per_verb": {
+        "read": 5,
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 2,
+      "compile_seconds": 0.0148,
+      "run_seconds": 0.0128,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/new.txt', oflags=0x0, rights=0x3fffbffd, fdflags=0x0) -> '/data/new.txt'",
+        "fd_close -> write('/data/new.txt', 12 bytes) errors=[]"
+      ],
+      "name": "patch at offset 2",
+      "after": {
+        "new": {
+          "version": 4,
+          "content": "seZZnd\ntail\n",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "range",
+        "/data/hello.txt",
+        "6",
+        "6"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "from v",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 1,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 6,
+      "bytes_from_guest": 6,
+      "compile_seconds": 0.0156,
+      "run_seconds": 0.0093,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/hello.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/hello.txt'"
+      ],
+      "name": "range read 6..12"
+    },
+    {
+      "argv": [
+        "fsops",
+        "truncate",
+        "/data/new.txt",
+        "3"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_set_size": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1,
+        "write": 1
+      },
+      "sql_statements": 21,
+      "sql_statements_per_verb": {
+        "read": 5,
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0154,
+      "run_seconds": 0.0116,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/new.txt', oflags=0x0, rights=0x3fffbffd, fdflags=0x0) -> '/data/new.txt'",
+        "fd_close -> write('/data/new.txt', 3 bytes) errors=[]"
+      ],
+      "name": "truncate to 3",
+      "after": {
+        "new": {
+          "version": 5,
+          "content": "seZ",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "catbytes",
+        "/data/bytes.bin"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "1024 bytes, head=[0, 1, 2, 3]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_write": 12,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 1024,
+      "bytes_from_guest": 30,
+      "compile_seconds": 0.0186,
+      "run_seconds": 0.0048,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/bytes.bin', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/bytes.bin'"
+      ],
+      "name": "catbytes binary row"
+    },
+    {
+      "argv": [
+        "fsops",
+        "tee",
+        "/data/out.bin"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "write": 1
+      },
+      "sql_statements": 16,
+      "sql_statements_per_verb": {
+        "write": 16
+      },
+      "bytes_to_guest": 4,
+      "bytes_from_guest": 4,
+      "compile_seconds": 0.0157,
+      "run_seconds": 0.0086,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/out.bin', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/out.bin'",
+        "fd_close -> write('/data/out.bin', 4 bytes) errors=[]"
+      ],
+      "name": "write binary via tee",
+      "after": {
+        "out": [
+          "vfs.unavailable"
+        ]
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "catbytes",
+        "/data/out.bin"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "4 bytes, head=[0, 1, 255, 254]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_write": 12,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 4,
+      "bytes_from_guest": 31,
+      "compile_seconds": 0.021,
+      "run_seconds": 0.0055,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/out.bin', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/out.bin'"
+      ],
+      "name": "catbytes written binary"
+    },
+    {
+      "argv": [
+        "fsops",
+        "tee",
+        "/data/t.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "write": 1
+      },
+      "sql_statements": 16,
+      "sql_statements_per_verb": {
+        "write": 16
+      },
+      "bytes_to_guest": 11,
+      "bytes_from_guest": 11,
+      "compile_seconds": 0.016,
+      "run_seconds": 0.01,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/t.txt', oflags=0x9, rights=0x3fffbffd, fdflags=0x0) -> '/data/t.txt'",
+        "fd_close -> write('/data/t.txt', 11 bytes) errors=[]"
+      ],
+      "name": "tee text via stdin",
+      "after": {
+        "t": {
+          "version": 1,
+          "content": "plain text\n",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "mkdir",
+        "/data/made"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "path_create_directory": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "mkdir": 1
+      },
+      "sql_statements": 13,
+      "sql_statements_per_verb": {
+        "mkdir": 13
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0251,
+      "run_seconds": 0.0101,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "mkdir"
+    },
+    {
+      "argv": [
+        "fsops",
+        "mkdir",
+        "/data/made"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "mkdir: File exists (os error 20) [raw_os_error=Some(20)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_create_directory": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "mkdir": 1
+      },
+      "sql_statements": 6,
+      "sql_statements_per_verb": {
+        "mkdir": 6
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 57,
+      "compile_seconds": 0.0146,
+      "run_seconds": 0.0065,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "mkdir exists -> EEXIST"
+    },
+    {
+      "argv": [
+        "fsops",
+        "ls",
+        "/data"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "d made\nd sub\nf big.txt\nf bytes.bin\nf hello.txt\nf new.txt\nf out.bin\nf t.txt\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_readdir": 1,
+        "fd_write": 2,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "ls": 1
+      },
+      "sql_statements": 6,
+      "sql_statements_per_verb": {
+        "ls": 6
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 75,
+      "compile_seconds": 0.0152,
+      "run_seconds": 0.0052,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/data'",
+        "fd_readdir(fd=4, cookie=0, buf_len=4096)"
+      ],
+      "name": "ls"
+    },
+    {
+      "argv": [
+        "fsops",
+        "mv",
+        "/data/new.txt",
+        "/data/moved.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "path_rename": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "move": 1
+      },
+      "sql_statements": 23,
+      "sql_statements_per_verb": {
+        "move": 23
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0157,
+      "run_seconds": 0.0131,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "mv",
+      "after": {
+        "moved": {
+          "version": 6,
+          "content": "seZ",
+          "bytes": null
+        }
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "rm",
+        "/data/moved.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "path_unlink_file": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1,
+        "delete": 1
+      },
+      "sql_statements": 14,
+      "sql_statements_per_verb": {
+        "stat": 5,
+        "delete": 9
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0167,
+      "run_seconds": 0.0092,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "rm -> trash",
+      "after": {
+        "moved": [
+          "vfs.not_found"
+        ]
+      }
+    },
+    {
+      "argv": [
+        "fsops",
+        "rm",
+        "/data/moved.txt"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "rm: No such file or directory (os error 44) [raw_os_error=Some(44)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_unlink_file": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "stat": 5
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 68,
+      "compile_seconds": 0.0223,
+      "run_seconds": 0.005,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "rm missing -> ENOENT"
+    },
+    {
+      "argv": [
+        "fsops",
+        "rmdir",
+        "/data/made"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "path_remove_directory": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1,
+        "delete": 1
+      },
+      "sql_statements": 16,
+      "sql_statements_per_verb": {
+        "stat": 5,
+        "delete": 11
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0153,
+      "run_seconds": 0.011,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "rmdir"
+    },
+    {
+      "argv": [
+        "fsops",
+        "rmdir",
+        "/data"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "rmdir: Directory not empty (os error 55) [raw_os_error=Some(55)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_remove_directory": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "stat": 1,
+        "delete": 1
+      },
+      "sql_statements": 13,
+      "sql_statements_per_verb": {
+        "stat": 5,
+        "delete": 8
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 65,
+      "compile_seconds": 0.0159,
+      "run_seconds": 0.0112,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)"
+      ],
+      "name": "rmdir nonempty -> ENOTEMPTY"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "/data/../../etc/passwd"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "cat: Capabilities insufficient (os error 76) [raw_os_error=Some(76)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_open": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 69,
+      "compile_seconds": 0.016,
+      "run_seconds": 0.0014,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/../../etc/passwd', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> ''"
+      ],
+      "name": "escape ../.."
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "../etc/passwd"
+      ],
+      "exit_code": 2,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "cat: Capabilities insufficient (os error 76) [raw_os_error=Some(76)]\n",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 12,
+        "path_open": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 69,
+      "compile_seconds": 0.0142,
+      "run_seconds": 0.0011,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, '../etc/passwd', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> ''"
+      ],
+      "name": "escape dotdot relative"
+    },
+    {
+      "argv": [
+        "fsops",
+        "ls",
+        "/.vfs/trash"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "d made\nf moved.txt\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_readdir": 1,
+        "fd_write": 2,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "ls": 1
+      },
+      "sql_statements": 6,
+      "sql_statements_per_verb": {
+        "ls": 6
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 19,
+      "compile_seconds": 0.0152,
+      "run_seconds": 0.0072,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, '.vfs/trash', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/.vfs/trash'",
+        "fd_readdir(fd=4, cookie=0, buf_len=4096)"
+      ],
+      "name": "hidden /.vfs"
+    },
+    {
+      "argv": [
+        "fsops",
+        "stdin"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "PIPED TEXT\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_read": 2,
+        "fd_write": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 11,
+      "bytes_from_guest": 11,
+      "compile_seconds": 0.0148,
+      "run_seconds": 0.0008,
+      "trace": [],
+      "name": "stdin"
+    },
+    {
+      "argv": [
+        "fsops",
+        "env"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "HOME=/\nTERM=dumb\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "environ_get": 1,
+        "environ_sizes_get": 1,
+        "fd_write": 2
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 17,
+      "compile_seconds": 0.014,
+      "run_seconds": 0.0009,
+      "trace": [],
+      "name": "env"
+    },
+    {
+      "argv": [
+        "fsops",
+        "exit",
+        "7"
+      ],
+      "exit_code": 7,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "proc_exit": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {},
+      "sql_statements": 0,
+      "sql_statements_per_verb": {},
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 0,
+      "compile_seconds": 0.0148,
+      "run_seconds": 0.0008,
+      "trace": [],
+      "name": "exit 7"
+    },
+    {
+      "argv": [
+        "fsops",
+        "cat",
+        "/data/big.txt"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_filestat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 2,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 8388600,
+      "bytes_from_guest": 8388600,
+      "compile_seconds": 0.017,
+      "run_seconds": 0.0147,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/big.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/big.txt'"
+      ],
+      "name": "big cat 8 MiB"
+    },
+    {
+      "argv": [
+        "fsops",
+        "range",
+        "/data/big.txt",
+        "4000000",
+        "1"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "x",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_read": 1,
+        "fd_seek": 1,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1
+      },
+      "sql_statements": 5,
+      "sql_statements_per_verb": {
+        "read": 5
+      },
+      "bytes_to_guest": 1,
+      "bytes_from_guest": 1,
+      "compile_seconds": 0.0163,
+      "run_seconds": 0.0096,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/big.txt', oflags=0x0, rights=0x3fbffebe, fdflags=0x0) -> '/data/big.txt'"
+      ],
+      "name": "big range 1 byte"
+    },
+    {
+      "argv": [
+        "fsops",
+        "append",
+        "/data/big.txt",
+        "end\n"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "read": 1,
+        "write": 1
+      },
+      "sql_statements": 21,
+      "sql_statements_per_verb": {
+        "read": 5,
+        "write": 16
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 4,
+      "compile_seconds": 0.0164,
+      "run_seconds": 0.0415,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'data/big.txt', oflags=0x1, rights=0x3fffbffd, fdflags=0x1) -> '/data/big.txt'",
+        "fd_close -> write('/data/big.txt', 8388604 bytes) errors=[]"
+      ],
+      "name": "big append"
+    },
+    {
+      "argv": [
+        "fsops",
+        "count",
+        "/many"
+      ],
+      "exit_code": 0,
+      "trapped": null,
+      "stdout": "2000\n",
+      "stderr": "",
+      "syscalls": {
+        "args_get": 1,
+        "args_sizes_get": 1,
+        "fd_close": 1,
+        "fd_fdstat_get": 1,
+        "fd_prestat_dir_name": 1,
+        "fd_prestat_get": 2,
+        "fd_readdir": 17,
+        "fd_write": 1,
+        "path_open": 1
+      },
+      "unimplemented_called": {},
+      "imports_stubbed": [],
+      "verbs": {
+        "ls": 1
+      },
+      "sql_statements": 6,
+      "sql_statements_per_verb": {
+        "ls": 6
+      },
+      "bytes_to_guest": 0,
+      "bytes_from_guest": 5,
+      "compile_seconds": 0.018,
+      "run_seconds": 0.0436,
+      "trace": [
+        "fd_prestat_get(4) -> EBADF (end of preopen scan)",
+        "path_open(dirfd=3, 'many', oflags=0x2, rights=0x3fbffebe, fdflags=0x4) -> '/many'",
+        "fd_readdir(fd=4, cookie=0, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=120, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=240, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=360, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=480, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=600, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=720, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=840, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=960, buf_len=4096)",
+        "fd_readdir(fd=4, cookie=1080, buf_len=4096)"
+      ],
+      "name": "count 2000 entries"
+    }
+  ]
+}

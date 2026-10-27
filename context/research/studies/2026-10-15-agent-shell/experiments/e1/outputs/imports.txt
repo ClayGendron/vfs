@@ -1,0 +1,11 @@
+alloc.wasm 4 imports: environ_get, environ_sizes_get, fd_write, proc_exit
+  exports: memory, _start, __main_void
+echo-stdin.wasm 5 imports: environ_get, environ_sizes_get, fd_read, fd_write, proc_exit
+  exports: memory, _start, __main_void
+fsops.wasm 20 imports: args_get, args_sizes_get, environ_get, environ_sizes_get, fd_close, fd_fdstat_get, fd_filestat_get, fd_prestat_dir_name, fd_prestat_get, fd_read, fd_readdir, fd_seek, fd_write, path_create_directory, path_filestat_get, path_open, path_remove_directory, path_rename, path_unlink_file, proc_exit
+  exports: memory, _start, __main_void
+spin.wasm 4 imports: environ_get, environ_sizes_get, fd_write, proc_exit
+  exports: memory, _start, __main_void
+upper.wasm 13 imports: args_get, args_sizes_get, environ_get, environ_sizes_get, fd_close, fd_fdstat_get, fd_filestat_get, fd_prestat_dir_name, fd_prestat_get, fd_read, fd_write, path_open, proc_exit
+  exports: memory, _start, __main_void
+UNION 20 ['args_get', 'args_sizes_get', 'environ_get', 'environ_sizes_get', 'fd_close', 'fd_fdstat_get', 'fd_filestat_get', 'fd_prestat_dir_name', 'fd_prestat_get', 'fd_read', 'fd_readdir', 'fd_seek', 'fd_write', 'path_create_directory', 'path_filestat_get', 'path_open', 'path_remove_directory', 'path_rename', 'path_unlink_file', 'proc_exit']

@@ -1,0 +1,1 @@
+interrupt mode: killed by hand after 1:22.81 CPU seconds; the Python timer thread never ran (GIL held by the JS engine while wasm spins)

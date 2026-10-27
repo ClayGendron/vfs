@@ -1,0 +1,40 @@
+mcp 2.3.0 | mcp-types 2.3.0
+surface keys for tools/call: ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28']
+--- 2024-11-05
+  tools/call       2024-11-05: kept blocks=['text', 'image', 'audio', 'resource_link'] structuredContent=True _meta on image=True
+  tools/list       2024-11-05: outputSchema kept=True keys=['tools']
+  resources/read   2024-11-05: keys=['contents']
+--- 2025-03-26
+  tools/call       2025-03-26: kept blocks=['text', 'image', 'audio', 'resource_link'] structuredContent=True _meta on image=True
+  tools/list       2025-03-26: outputSchema kept=True keys=['tools']
+  resources/read   2025-03-26: keys=['contents']
+--- 2025-06-18
+  tools/call       2025-06-18: kept blocks=['text', 'image', 'audio', 'resource_link'] structuredContent=True _meta on image=True
+  tools/list       2025-06-18: outputSchema kept=True keys=['tools']
+  resources/read   2025-06-18: keys=['contents']
+--- 2025-11-25
+  tools/call       2025-11-25: kept blocks=['text', 'image', 'audio', 'resource_link'] structuredContent=True _meta on image=True
+  tools/list       2025-11-25: outputSchema kept=True keys=['tools']
+  resources/read   2025-11-25: keys=['contents']
+--- 2026-07-28
+  tools/call       2026-07-28: kept blocks=['text', 'image', 'audio', 'resource_link'] structuredContent=True _meta on image=True
+  tools/list       2026-07-28: REJECTED ValidationError: 2 validation errors for ListToolsResult
+  resources/read   2026-07-28: keys=['cacheScope', 'contents', 'resultType', 'ttlMs']
+
+--- the sieved tools/call result against each revision's published schema
+  2024-11-05: INVALID - content/2: {'data': 'AAAA', 'mimeType': 'audio/wav', 'type': 'audio'} is not valid under an; content/3: {'_meta': {'dev.vfs/path': '/clips/intro.mp4'}, 'description': '[binary /clips/i
+      block 2 (audio) is not in 2024-11-05's vocabulary
+      block 3 (resource_link) is not in 2024-11-05's vocabulary
+  2025-03-26: INVALID - content/3: {'_meta': {'dev.vfs/path': '/clips/intro.mp4'}, 'description': '[binary /clips/i
+      block 3 (resource_link) is not in 2025-03-26's vocabulary
+  2025-06-18: VALID
+  2025-11-25: VALID
+  2026-07-28: VALID
+2 validation errors for ListToolsResult
+cacheScope
+  Field required [type=missing, input_value={'resultType': 'complete'...': {'type': 'object'}}]}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.12/v/missing
+ttlMs
+  Field required [type=missing, input_value={'resultType': 'complete'...': {'type': 'object'}}]}, input_type=dict]
+    For further information visit ht
+{'cacheScope': 'public', 'resultType': 'complete', 'tools': [{'inputSchema': {'type': 'object'}, 'name': 'read', 'outputSchema': {'type': 'object'}}], 'ttlMs': 0}

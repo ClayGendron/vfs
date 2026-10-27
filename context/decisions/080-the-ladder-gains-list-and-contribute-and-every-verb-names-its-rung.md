@@ -11,6 +11,9 @@
   (a tombstoned `list` row shows bare), and ADR 079 pin 2 (the walk's
   rung is `list` for passing, `read` for contents). Resolves the
   2026-10-07 addendum in `open-questions.md`; `manage` stays parked.
+  Amended 2026-10-15 by ADR 082 and ADR 084: `run` is retired, so
+  pin 9's "`run` on its own axis" has no verb; executing a program
+  is `read` on its entry.
 - **Date:** 2026-10-14
 - **Deciders:** Clay Gendron
 - **Decided by:** human (Clay set the rule on 2026-10-14 — "to

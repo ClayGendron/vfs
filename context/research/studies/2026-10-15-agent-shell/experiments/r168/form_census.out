@@ -1,0 +1,245 @@
+# Form census for spec 168 (labels and flags only)
+
+## Segments per program
+sed	8799
+wc	706
+cut	490
+awk	371
+find	329
+sort	259
+nl	141
+tr	132
+tee	105
+uniq	89
+xargs	52
+diff	29
+base64	9
+fold	8
+paste	7
+xxd	3
+comm	2
+cmp	1
+strings	1
+
+## cut: flag tokens (digits stripped), all
+-c	479
+-f	10
+-d|	4
+-d/	2
+-d 	1
+--complement	1
+-b	1
+-d:	1
+## cut: short-flag letters (bundles exploded)
+-c	479
+-f	10
+-d	8
+-|	4
+-/	2
+- 	1
+-b	1
+
+## sort: flag tokens (digits stripped), all
+-rn	64
+-u	33
+-n	19
+-k	18
+-t|	5
+-r	4
+-V	3
+-h	2
+-t:	2
+-u)	1
+-nr	1
+--version	1
+## sort: short-flag letters (bundles exploded)
+-n	84
+-r	69
+-u	34
+-k	18
+-t	7
+-|	5
+-V	3
+-h	2
+-)	1
+
+## uniq: flag tokens (digits stripped), all
+-c	87
+-f	1
+## uniq: short-flag letters (bundles exploded)
+-c	87
+-f	1
+
+## tr: flag tokens (digits stripped), all
+-d	22
+-s	6
+## tr: short-flag letters (bundles exploded)
+-d	22
+-s	6
+
+## awk: flag tokens (digits stripped), all
+-F:	29
+-v	9
+-F|	6
+-F\t	4
+--version	1
+-F/	1
+## awk: short-flag letters (bundles exploded)
+-F	40
+-v	9
+-|	6
+-\	4
+-t	4
+-/	1
+
+## sed: flag tokens (digits stripped), all
+-n	8324
+-i	258
+-e	43
+-E	29
+--version	1
+## sed: short-flag letters (bundles exploded)
+-n	8324
+-i	258
+-e	43
+-E	29
+
+## find: flag tokens (digits stripped), all
+-name	372
+-o	191
+-path	154
+-type	84
+-not	64
+-prune	48
+-iname	47
+-print	42
+-maxdepth	38
+-exec	7
+-ipath	5
+-rf	4
+-size	2
+-newer	2
+-c	1
+-mtime	1
+-	1
+
+## xargs: flag tokens (digits stripped), all
+-I{}	4
+## xargs: short-flag letters (bundles exploded)
+-I	4
+-{	4
+-}	4
+
+## jq: flag tokens (digits stripped), all
+## jq: short-flag letters (bundles exploded)
+
+## tee: flag tokens (digits stripped), all
+-a	4
+## tee: short-flag letters (bundles exploded)
+-a	4
+
+## nl: flag tokens (digits stripped), all
+-ba	141
+-v	45
+## nl: short-flag letters (bundles exploded)
+-b	141
+-a	141
+-v	45
+
+## diff: flag tokens (digits stripped), all
+-n	4
+-q	4
+-u	1
+-v	1
+## diff: short-flag letters (bundles exploded)
+-n	4
+-q	4
+-u	1
+-v	1
+
+## wc: flag tokens (digits stripped), all
+-l	665
+-w	21
+-c	19
+-name	3
+-o	2
+-lc	1
+-type	1
+-v	1
+## wc: short-flag letters (bundles exploded)
+-l	666
+-w	21
+-c	20
+-e	4
+-n	3
+-a	3
+-m	3
+-o	2
+-t	1
+-y	1
+-p	1
+-v	1
+
+## sed script shapes (all scripts; -e counted per script)
+A,Bp	7883	(with -n: 7883)
+other	391	(with -n: 135)
+s///	244	(with -n: 1)
+/re/,/re/p	143	(with -n: 143)
+multi-command (other)	101	(with -n: 100)
+/re/,$p	36	(with -n: 36)
+Ap	21	(with -n: 21)
+/re/p	2	(with -n: 2)
+A,/re/p	2	(with -n: 2)
+$p	1	(with -n: 1)
+
+## awk program shapes (371 programs)
+other	246
+multi-command (other)	68
+{print $N}	23
+{print $N,$M...}	15
+NR range	7
+/re/ {print ...}	4
+sum END	4
+{print $0}	2
+{print $NF}	1
+cond {print ...}	1
+
+## awk features used (a program may use several)
+NR	145
+printf	33
+if	25
+END	16
+gsub/sub	15
+array[]	11
+~ match	6
+next	6
+NF	5
+substr	5
+split	2
+length	1
+BEGIN	1
+while	1
+getline	1
+for	1
+
+## xargs: the command it runs
+grep	32
+wc	9
+git	2
+ls	2
+sh	2
+cat	2
+stat	1
+perl	1
+sed	1
+
+## find -exec: the command it runs, and the terminator
+rm	4
+cat	2
+sh	1
+terminator +	5
+terminator ;	2
+
+## tr set shapes
+escape	114
+literal	18

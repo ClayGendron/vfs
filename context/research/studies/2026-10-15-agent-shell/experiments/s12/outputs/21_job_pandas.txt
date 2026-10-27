@@ -1,0 +1,19 @@
+exit=0 trapped=None load=deserialize 0.0094s run=8.2126s
+verbs: {'read': 937, 'stat': 242, 'mkdir': 1, 'write': 1} sql: 5923 preview1 calls: 6855
+unimplemented called: {'path_readlink': 1, 'poll_oneoff': 1} pings: [] memory MiB: 108.1
+--- stdout ---
+rows: 36 regions: ['north', 'south', 'west']
+            sum    mean     max
+region                         
+north   1734.71  144.56  169.65
+south   1714.62  142.88  166.24
+west    1697.32  141.44  163.12
+region,sum,mean,max
+north,1734.71,144.55916666666667,169.65
+south,1714.62,142.885,166.24
+west,1697.32,141.44333333333333,163.12
+BENCH pandas=3.0.6 build1e6_s=0.0178 groupby_sum1e6_s=0.0092 groupby_agg3_1e6_s=0.0139 nkeys=100 total=500316.548
+
+--- stderr ---
+Could not find platform dependent libraries <exec_prefix>
+

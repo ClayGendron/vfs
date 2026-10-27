@@ -1,0 +1,155 @@
+[10/15/26 21:06:06] INFO     Tool 'search' rejected arguments:     server.py:450
+                             ['query']                                          
+                    INFO     Tool 'search' rejected arguments:     server.py:450
+                             ['limit']                                          
+                    INFO     Tool 'nope' failed: 'Unknown tool:    server.py:453
+                             nope'                                              
+                    ERROR    Tool 'boom' raised an unexpected      server.py:455
+                             exception                                          
+                             ╭─ Traceback (most recent call last─╮              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/tools/base.py:179 in │              
+                             │ run                               │              
+                             │                                   │              
+                             │   176 │   │   │   │   │   return  │              
+                             │       else resolved               │              
+                             │   177 │   │   │   │   pass_direct │              
+                             │   178 │   │   │                   │              
+                             │ ❱ 179 │   │   │   result = await  │              
+                             │       pass_directly)              │              
+                             │   180 │   │   │                   │              
+                             │   181 │   │   │   # Registration  │              
+                             │   182 │   │   │   # a body that r │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/utilities/func_metad │              
+                             │ ata.py:164 in call_fn             │              
+                             │                                   │              
+                             │   161 │   │   kwargs = arguments  │              
+                             │   162 │   │   if fn_is_async:     │              
+                             │   163 │   │   │   return await fn │              
+                             │ ❱ 164 │   │   return await anyio. │              
+                             │   165 │                           │              
+                             │   166 │   @deprecated(            │              
+                             │   167 │   │   "FuncMetadata.call_ │              
+                             │       3.0; "                      │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/anyio/to │              
+                             │ _thread.py:63 in run_sync         │              
+                             │                                   │              
+                             │   60 │   │   │   stacklevel=2,    │              
+                             │   61 │   │   )                    │              
+                             │   62 │                            │              
+                             │ ❱ 63 │   return await get_async_b │              
+                             │   64 │   │   func, args, abandon_ │              
+                             │   65 │   )                        │              
+                             │   66                              │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/anyio/_b │              
+                             │ ackends/_asyncio.py:2502 in       │              
+                             │ run_sync_in_worker_thread         │              
+                             │                                   │              
+                             │   2499 │   │   │   │   │   worker │              
+                             │   2500 │   │   │   │              │              
+                             │   2501 │   │   │   │   worker.que │              
+                             │ ❱ 2502 │   │   │   │   return awa │              
+                             │   2503 │                          │              
+                             │   2504 │   @classmethod           │              
+                             │   2505 │   def check_cancelled(cl │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/anyio/_b │              
+                             │ ackends/_asyncio.py:986 in run    │              
+                             │                                   │              
+                             │    983 │   │   │   │   │   except │              
+                             │    984 │   │   │   │   │   thread │              
+                             │    985 │   │   │   │   │   try:   │              
+                             │ ❱  986 │   │   │   │   │   │   re │              
+                             │    987 │   │   │   │   │   except │              
+                             │    988 │   │   │   │   │   │   ex │              
+                             │    989 │   │   │   │   │   finall │              
+                             │                                   │              
+                             │ /Users/claygendron/Git/Repos/vfs/ │              
+                             │ context/research/studies/2026-10- │              
+                             │ 15-agent-shell/experiments/r170/s │              
+                             │ chema_shapes_probe.py:89 in boom  │              
+                             │                                   │              
+                             │    86 @server.tool()              │              
+                             │    87 def boom() -> str:          │              
+                             │    88 │   """Raises."""           │              
+                             │ ❱  89 │   raise RuntimeError("ups │              
+                             │    90                             │              
+                             │    91                             │              
+                             │    92 @server.tool()              │              
+                             ╰───────────────────────────────────╯              
+                             RuntimeError: upstream exploded                    
+                                                                                
+                             The above exception was the direct                 
+                             cause of the following exception:                  
+                                                                                
+                             ╭─ Traceback (most recent call last─╮              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/server.py:442 in     │              
+                             │ _handle_call_tool                 │              
+                             │                                   │              
+                             │    439 │   ) -> CallToolResult |  │              
+                             │    440 │   │   context = Context( │              
+                             │        subscriptions=self._subscr │              
+                             │    441 │   │   try:               │              
+                             │ ❱  442 │   │   │   return await s │              
+                             │    443 │   │   except MCPError:   │              
+                             │    444 │   │   │   raise          │              
+                             │    445 │   │   except Exception a │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/server.py:548 in     │              
+                             │ call_tool                         │              
+                             │                                   │              
+                             │    545 │   │   """                │              
+                             │    546 │   │   if context is None │              
+                             │    547 │   │   │   context = Cont │              
+                             │ ❱  548 │   │   return await self. │              
+                             │        convert_result=True)       │              
+                             │    549 │                          │              
+                             │    550 │   async def list_resourc │              
+                             │    551 │   │   """List all availa │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/tools/tool_manager.p │              
+                             │ y:87 in call_tool                 │              
+                             │                                   │              
+                             │   84 │   │   if not tool:         │              
+                             │   85 │   │   │   raise ToolError( │              
+                             │   86 │   │                        │              
+                             │ ❱ 87 │   │   return await tool.ru │              
+                             │   88                              │              
+                             │                                   │              
+                             │ /Users/claygendron/.cache/uv/arch │              
+                             │ ive-v0/BMvQmKWUdjJAiwqHawE26/lib/ │              
+                             │ python3.13/site-packages/mcp/serv │              
+                             │ er/mcpserver/tools/base.py:213 in │              
+                             │ run                               │              
+                             │                                   │              
+                             │   210 │   │   │   raise ToolError │              
+                             │   211 │   │   except Exception as │              
+                             │   212 │   │   │   # A crash: the  │              
+                             │ ❱ 213 │   │   │   raise Unexpecte │              
+                             │   214                             │              
+                             ╰───────────────────────────────────╯              
+                             UnexpectedToolError: Error executing               
+                             tool boom                                          

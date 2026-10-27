@@ -383,6 +383,7 @@ way to change a binary.
   `data` as an `image` block for the boundary's accepted image types
   and a placeholder naming the true mime otherwise, from the row, as
   the July memo decided. This spec adds the row.
+- **Amended 2026-10-15 by ADR 085:** the adapter follows MCP's five blocks only (no provider adapters); one text block first holding the rendered result with the placeholder `[binary <path> <mime> <size>B v<version>[ -- <description>]]`, then `ImageContent` for PNG, JPEG, GIF and WebP within 1 MiB per block, 4 MiB per result and 8 blocks, `AudioContent` likewise, and a `ResourceLink` with a `vfs:///<path>` URI for everything else; `_meta` keys `dev.vfs/path` and `dev.vfs/version`; `to_payload` carries no bytes on the wire; a minimal `resources` capability serves the links. Spec 171 lands it.
 - The oracle, the parity tests, the grants algebra, the range join.
 
 ## Non-goals

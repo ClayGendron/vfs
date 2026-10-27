@@ -1,0 +1,300 @@
+The necessary bits to build these optional modules were not found:
+_gdbm                 _tkinter                                 
+To find the necessary bits, look in configure.ac and config.log.
+
+Checked 114 modules (36 built-in, 76 shared, 0 n/a on macosx-26.5-arm64, 0 disabled, 2 missing, 0 failed on import)
+./python.exe -E ../../Tools/build/generate-build-details.py `cat pybuilddir.txt`/build-details.json
+./python.exe -m test.pythoninfo
+Python debug information
+========================
+
+CC.version: Apple clang version 21.0.0 (clang-2100.1.1.101)
+_decimal.__libmpdec_version__: 4.0.1
+_testcapi.LONG_MAX: 9223372036854775807
+_testcapi.PY_SSIZE_T_MAX: 9223372036854775807
+_testcapi.SIZEOF_TIME_T: 8
+_testcapi.SIZEOF_WCHAR_T: 4
+_testinternalcapi.SIZEOF_PYGC_HEAD: 16
+_testinternalcapi.SIZEOF_PYOBJECT: 16
+build.NDEBUG: ignore assertions (macro defined)
+build.Py_DEBUG: No (sys.gettotalrefcount() missing)
+build.Py_TRACE_REFS: No (sys.getobjects() missing)
+build.WITH_DOC_STRINGS: Yes
+build.WITH_DTRACE: No
+build.WITH_MIMALLOC: Yes
+build.WITH_PYMALLOC: Yes
+build.WITH_VALGRIND: No
+builtins.float.double_format: IEEE, little-endian
+builtins.float.float_format: IEEE, little-endian
+config[_config_init]: 2
+config[_init_main]: True
+config[_install_importlib]: True
+config[_is_python_build]: True
+config[argv]: ('-m',)
+config[base_exec_prefix]: '/usr/local'
+config[base_executable]: '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe'
+config[base_prefix]: '/usr/local'
+config[buffered_stdio]: True
+config[bytes_warning]: 0
+config[check_hash_pycs_mode]: 'default'
+config[code_debug_ranges]: True
+config[configure_c_stdio]: True
+config[context_aware_warnings]: 0
+config[cpu_count]: -1
+config[dev_mode]: False
+config[dump_refs]: False
+config[dump_refs_file]: None
+config[exec_prefix]: '/usr/local'
+config[executable]: '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe'
+config[faulthandler]: False
+config[filesystem_encoding]: 'utf-8'
+config[filesystem_errors]: 'surrogateescape'
+config[hash_seed]: 0
+config[home]: None
+config[import_time]: 0
+config[inspect]: False
+config[install_signal_handlers]: True
+config[int_max_str_digits]: 4300
+config[interactive]: False
+config[isolated]: False
+config[malloc_stats]: False
+config[module_search_paths]: ('/usr/local/lib/python314.zip', '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Lib', '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/build/lib.macosx-26.5-arm64-3.14')
+config[module_search_paths_set]: True
+config[optimization_level]: 0
+config[orig_argv]: ('./python.exe', '-m', 'test.pythoninfo')
+config[parse_argv]: True
+config[parser_debug]: False
+config[pathconfig_warnings]: True
+config[perf_profiling]: 0
+config[platlibdir]: 'lib'
+config[prefix]: '/usr/local'
+config[program_name]: './python.exe'
+config[pycache_prefix]: None
+config[pythonpath_env]: None
+config[quiet]: False
+config[remote_debug]: True
+config[run_command]: None
+config[run_filename]: None
+config[run_module]: 'test.pythoninfo'
+config[safe_path]: False
+config[show_ref_count]: False
+config[site_import]: True
+config[skip_source_first_line]: False
+config[stdio_encoding]: 'utf-8'
+config[stdio_errors]: 'strict'
+config[stdlib_dir]: '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Lib'
+config[sys_path_0]: '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin'
+config[thread_inherit_context]: 0
+config[tracemalloc]: 0
+config[use_environment]: True
+config[use_frozen_modules]: True
+config[use_hash_seed]: False
+config[use_system_logger]: False
+config[user_site_directory]: True
+config[verbose]: 0
+config[warn_default_encoding]: False
+config[warnoptions]: ()
+config[write_bytecode]: True
+config[xoptions]: {}
+curses.ncurses_version: curses.ncurses_version(major=6, minor=0, patch=20150808)
+datetime.datetime.now: 2026-10-16 08:51:24.590332
+expat.EXPAT_VERSION: expat_2.8.5
+fips.openssl_fips_mode: 0
+global_config[Py_BytesWarningFlag]: 0
+global_config[Py_DebugFlag]: 0
+global_config[Py_DontWriteBytecodeFlag]: 0
+global_config[Py_FileSystemDefaultEncodeErrors]: 'surrogateescape'
+global_config[Py_FileSystemDefaultEncoding]: 'utf-8'
+global_config[Py_FrozenFlag]: 0
+global_config[Py_HasFileSystemDefaultEncoding]: 0
+global_config[Py_HashRandomizationFlag]: 1
+global_config[Py_IgnoreEnvironmentFlag]: 0
+global_config[Py_InspectFlag]: 0
+global_config[Py_InteractiveFlag]: 0
+global_config[Py_IsolatedFlag]: 0
+global_config[Py_NoSiteFlag]: 0
+global_config[Py_NoUserSiteDirectory]: 0
+global_config[Py_OptimizeFlag]: 0
+global_config[Py_QuietFlag]: 0
+global_config[Py_UTF8Mode]: 0
+global_config[Py_UnbufferedStdioFlag]: 0
+global_config[Py_VerboseFlag]: 0
+global_config[_Py_HasFileSystemDefaultEncodeErrors]: 0
+libregrtests.build_info: release
+locale.getencoding: UTF-8
+os.cpu_count: 10
+os.environ[HOME]: /Users/claygendron
+os.environ[LANG]: en_US.UTF-8
+os.environ[MACOSX_DEPLOYMENT_TARGET]: 26.5
+os.environ[PATH]: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasmtime-v49.0.3-aarch64-macos:/Users/claygendron/.bun/bin:/Users/claygendron/.nvm/versions/node/v22.14.0/bin:/Users/claygendron/miniconda3/bin:/Library/Frameworks/Python.framework/Versions/3.10/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/share/dotnet:~/.dotnet/tools:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/Users/claygendron/.cargo/bin:/Users/claygendron/.local/bin:/usr/local/bin:/Users/claygendron/Library/Application Support/Coursier/bin:/Users/claygendron/.lmstudio/bin
+os.environ[SHELL]: /bin/zsh
+os.environ[TERM]: xterm-256color
+os.environ[TMPDIR]: /var/folders/_c/n40__q_16zs0cbn45nb3c_nw0000gn/T/
+os.getcwd: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin
+os.getegid: 20
+os.geteuid: 501
+os.getgid: 20
+os.getgrouplist: 20, 12, 61, 79, 80, 81, 98, 701, 33, 100, 204, 250, 395, 398, 399, 400
+os.getgroups: 20, 12, 61, 79, 80, 81, 98, 701, 33, 100, 204, 250, 395, 398, 399, 400
+os.getloadavg: (17.244140625, 9.2158203125, 6.7373046875)
+os.getuid: 501
+os.login: claygendron
+os.name: posix
+os.process_cpu_count: 10
+os.supports_bytes_environ: True
+os.supports_effective_ids: ['access']
+os.supports_fd: ['chdir', 'chmod', 'chown', 'listdir', 'pathconf', 'scandir', 'stat', 'statvfs', 'truncate', 'utime']
+os.supports_follow_symlinks: ['access', 'chflags', 'chmod', 'chown', 'link', 'stat', 'utime']
+os.umask: 0o022
+os.uname: posix.uname_result(sysname='Darwin', nodename='Clays-MacBook-Pro.local', release='25.5.0', version='Darwin Kernel Version 25.5.0: Tue Jun  9 22:18:58 PDT 2026; root:xnu-12377.121.10~1/RELEASE_ARM64_T6000', machine='arm64')
+platform.architecture: 64bit Mach-O
+platform.platform: macOS-26.5.2-arm64-arm-64bit-Mach-O
+platform.python_implementation: CPython
+pre_config[_config_init]: 2
+pre_config[allocator]: 0
+pre_config[coerce_c_locale]: 0
+pre_config[coerce_c_locale_warn]: 0
+pre_config[configure_locale]: 1
+pre_config[dev_mode]: 0
+pre_config[isolated]: 0
+pre_config[parse_argv]: 1
+pre_config[use_environment]: 1
+pre_config[utf8_mode]: 0
+pwd.getpwuid(501): pwd.struct_passwd(pw_name='claygendron', pw_passwd='********', pw_uid=501, pw_gid=20, pw_gecos='Clay Gendron', pw_dir='/Users/claygendron', pw_shell='/bin/zsh')
+pymem.allocator: pymalloc
+readline._READLINE_LIBRARY_VERSION: EditLine wrapper
+readline._READLINE_RUNTIME_VERSION: 0x402
+readline._READLINE_VERSION: 0x402
+resource.RLIMIT_AS: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_CORE: (0, 9223372036854775807)
+resource.RLIMIT_CPU: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_DATA: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_FSIZE: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_MEMLOCK: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_NOFILE: (1048576, 9223372036854775807)
+resource.RLIMIT_NPROC: (5333, 8000)
+resource.RLIMIT_RSS: (9223372036854775807, 9223372036854775807)
+resource.RLIMIT_STACK: (67092480, 67092480)
+resource.pagesize: 16384
+socket.hostname: Clays-MacBook-Pro.local
+sqlite3.sqlite_version: 3.51.0
+ssl.HAS_SNI: True
+ssl.OPENSSL_VERSION: OpenSSL 3.6.3 9 Jun 2026
+ssl.OPENSSL_VERSION_INFO: (3, 6, 0, 3, 0)
+ssl.OP_ALL: 0x80000050
+ssl.OP_NO_TLSv1_1: 0x10000000
+ssl.SSLContext.maximum_version: -1
+ssl.SSLContext.minimum_version: 771
+ssl.SSLContext.options: 2186412112
+ssl.SSLContext.protocol: 16
+ssl.SSLContext.verify_mode: 2
+ssl.default_https_context.maximum_version: -1
+ssl.default_https_context.minimum_version: 771
+ssl.default_https_context.options: 2186412112
+ssl.default_https_context.protocol: 16
+ssl.default_https_context.verify_mode: 2
+ssl.stdlib_context.maximum_version: -1
+ssl.stdlib_context.minimum_version: 771
+ssl.stdlib_context.options: 2186412112
+ssl.stdlib_context.protocol: 16
+ssl.stdlib_context.verify_mode: 0
+subprocess._USE_POSIX_SPAWN: True
+support.MS_WINDOWS: False
+support._is_gui_available: False
+support.check_sanitizer(address=True): False
+support.check_sanitizer(memory=True): False
+support.check_sanitizer(ub=True): False
+support.has_fork_support: True
+support.has_socket_support: True
+support.has_strftime_extensions: True
+support.has_subprocess_support: True
+support.is_android: False
+support.is_emscripten: False
+support.is_jython: False
+support.is_wasi: False
+support.is_wasm32: False
+support.python_is_optimized: True
+support_os_helper.can_chmod: True
+support_os_helper.can_dac_override: False
+support_os_helper.can_symlink: True
+support_os_helper.can_xattr: False
+support_socket_helper.IPV6_ENABLED: True
+support_socket_helper.has_gethostname: True
+support_socket_helper.tcp_blackhole: False
+support_threading_helper.can_start_thread: True
+sys._is_gil_enabled: True
+sys.api_version: 1013
+sys.builtin_module_names: ('_abc', '_ast', '_codecs', '_collections', '_contextvars', '_datetime', '_functools', '_imp', '_io', '_locale', '_opcode', '_operator', '_signal', '_sre', '_stat', '_string', '_suggestions', '_symtable', '_sysconfig', '_thread', '_tokenize', '_tracemalloc', '_types', '_typing', '_warnings', '_weakref', 'atexit', 'builtins', 'errno', 'faulthandler', 'gc', 'itertools', 'marshal', 'posix', 'pwd', 'sys', 'time')
+sys.byteorder: little
+sys.dont_write_bytecode: False
+sys.executable: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/python.exe
+sys.filesystem_encoding: utf-8/surrogateescape
+sys.flags: sys.flags(debug=0, inspect=0, interactive=0, optimize=0, dont_write_bytecode=0, no_user_site=0, no_site=0, ignore_environment=0, verbose=0, bytes_warning=0, quiet=0, hash_randomization=1, isolated=0, dev_mode=False, utf8_mode=0, warn_default_encoding=0, safe_path=False, int_max_str_digits=4300)
+sys.float_info: sys.float_info(max=1.7976931348623157e+308, max_exp=1024, max_10_exp=308, min=2.2250738585072014e-308, min_exp=-1021, min_10_exp=-307, dig=15, mant_dig=53, epsilon=2.220446049250313e-16, radix=2, rounds=1)
+sys.float_repr_style: short
+sys.getrecursionlimit: 1000
+sys.hash_info: sys.hash_info(width=64, modulus=2305843009213693951, inf=314159, nan=0, imag=1000003, algorithm='siphash13', hash_bits=64, seed_bits=128, cutoff=0)
+sys.hexversion: 51251440
+sys.implementation: namespace(name='cpython', cache_tag='cpython-314', version=sys.version_info(major=3, minor=14, micro=8, releaselevel='final', serial=0), hexversion=51251440, _multiarch='darwin', supports_isolated_interpreters=True)
+sys.int_info: sys.int_info(bits_per_digit=30, sizeof_digit=4, default_max_str_digits=4300, str_digits_check_threshold=640)
+sys.is_remote_debug_enabled: True
+sys.maxsize: 9223372036854775807
+sys.maxunicode: 1114111
+sys.path: ['/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin', '/usr/local/lib/python314.zip', '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Lib', '/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/build/lib.macosx-26.5-arm64-3.14']
+sys.platform: darwin
+sys.platlibdir: lib
+sys.prefix: /usr/local
+sys.stderr.encoding: utf-8/backslashreplace
+sys.stdin.encoding: utf-8/strict
+sys.stdout.encoding: utf-8/strict
+sys.thread_info: sys.thread_info(name='pthread', lock='mutex+cond', version=None)
+sys.version: 3.14.8 (main, Oct 16 2026, 08:51:05) [Clang 21.0.0 (clang-2100.1.1.101)]
+sys.version_info: sys.version_info(major=3, minor=14, micro=8, releaselevel='final', serial=0)
+sysconfig.is_python_build: True
+sysconfig[CC]: gcc
+sysconfig[CFLAGS]: -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -g -O3 -Wall
+sysconfig[HOST_GNU_TYPE]: aarch64-apple-darwin25.5.0
+sysconfig[MACHDEP]: darwin
+sysconfig[MULTIARCH]: darwin
+sysconfig[OPT]: -DNDEBUG -g -O3 -Wall
+sysconfig[PGO_PROF_USE_FLAG]: -fprofile-instr-use="$(shell pwd)/code.profclangd"
+sysconfig[PY_CFLAGS]: -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -g -O3 -Wall
+sysconfig[PY_CFLAGS_NODIST]: -std=c11 -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wstrict-prototypes -Werror=implicit-function-declaration -fvisibility=hidden -Werror=unguarded-availability -I../../Include/internal -I../../Include/internal/mimalloc
+sysconfig[PY_STDMODULE_CFLAGS]: -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -g -O3 -Wall -std=c11 -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wstrict-prototypes -Werror=implicit-function-declaration -fvisibility=hidden -Werror=unguarded-availability -I../../Include/internal -I../../Include/internal/mimalloc -IObjects -IInclude -IPython -I. -I../../Include
+sysconfig[Py_DEBUG]: 0
+sysconfig[Py_ENABLE_SHARED]: 0
+sysconfig[Py_GIL_DISABLED]: 0
+sysconfig[Py_REMOTE_DEBUG]: 1
+sysconfig[SHELL]: /bin/sh -e
+sysconfig[SOABI]: cpython-314-darwin
+sysconfig[TEST_MODULES]: yes
+sysconfig[abs_builddir]: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin
+sysconfig[abs_srcdir]: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/aarch64-apple-darwin/../..
+sysconfig[prefix]: /usr/local
+sysconfig[srcdir]: /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8
+system.hardware: MacBookPro18,3
+system.uptime: 86 days, 8:46:53
+tempfile.gettempdir: /var/folders/_c/n40__q_16zs0cbn45nb3c_nw0000gn/T
+test_socket.HAVE_SOCKET_ALG: False
+test_socket.HAVE_SOCKET_BLUETOOTH: False
+test_socket.HAVE_SOCKET_BLUETOOTH_L2CAP: False
+test_socket.HAVE_SOCKET_CAN: False
+test_socket.HAVE_SOCKET_CAN_ISOTP: False
+test_socket.HAVE_SOCKET_CAN_J1939: False
+test_socket.HAVE_SOCKET_HYPERV: False
+test_socket.HAVE_SOCKET_QIPCRTR: False
+test_socket.HAVE_SOCKET_RDS: False
+test_socket.HAVE_SOCKET_UDPLITE: False
+test_socket.HAVE_SOCKET_VSOCK: False
+time.altzone: 14400
+time.daylight: 1
+time.get_clock_info(monotonic): namespace(implementation='mach_absolute_time()', monotonic=True, adjustable=False, resolution=4.166666666666666e-08)
+time.get_clock_info(perf_counter): namespace(implementation='mach_absolute_time()', monotonic=True, adjustable=False, resolution=4.166666666666666e-08)
+time.get_clock_info(process_time): namespace(implementation='clock_gettime(CLOCK_PROCESS_CPUTIME_ID)', monotonic=True, adjustable=False, resolution=1.0000000000000002e-06)
+time.get_clock_info(thread_time): namespace(implementation='clock_gettime(CLOCK_THREAD_CPUTIME_ID)', monotonic=True, adjustable=False, resolution=4.2000000000000006e-08)
+time.get_clock_info(time): namespace(implementation='clock_gettime(CLOCK_REALTIME)', monotonic=False, adjustable=True, resolution=1.0000000000000002e-06)
+time.time: 1792155084.678414
+time.timezone: 18000
+time.tzname: ('EST', 'EDT')
+zlib.ZLIB_RUNTIME_VERSION: 1.2.12
+zlib.ZLIB_VERSION: 1.2.12

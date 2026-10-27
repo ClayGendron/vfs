@@ -1,0 +1,20 @@
+{"id": 1, "dialect": "shlex", "ok": false, "error": "No closing quotation"}
+{"id": 1, "dialect": "just-bash-py", "ok": true}
+{"id": 2, "dialect": "shlex", "ok": true}
+{"id": 2, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Expected 'fi' to close if statement at line 1, column 27"}
+{"id": 3, "dialect": "shlex", "ok": true}
+{"id": 3, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Maximum parse iterations exceeded (possible infinite loop) at line 1, column 9"}
+{"id": 4, "dialect": "shlex", "ok": true}
+{"id": 4, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Expected command after pipe at line 1, column 23"}
+{"id": 5, "dialect": "shlex", "ok": true}
+{"id": 5, "dialect": "just-bash-py", "ok": true}
+{"id": 6, "dialect": "shlex", "ok": true}
+{"id": 6, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Expected 'done' to close for loop at line 1, column 26"}
+{"id": 7, "dialect": "shlex", "ok": true}
+{"id": 7, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Expected command after operator at line 1, column 7"}
+{"id": 8, "dialect": "shlex", "ok": true}
+{"id": 8, "dialect": "just-bash-py", "ok": true}
+{"id": 9, "dialect": "shlex", "ok": true}
+{"id": 9, "dialect": "just-bash-py", "ok": true}
+{"id": 10, "dialect": "shlex", "ok": true}
+{"id": 10, "dialect": "just-bash-py", "ok": false, "error": "ParseException: Maximum parse iterations exceeded (possible infinite loop) at line 2, column 1"}

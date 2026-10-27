@@ -1,0 +1,59 @@
+[
+  {
+    "label": "numpy-pyc-cache",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-numpy.wasm",
+    "wasm_bytes": 39551987,
+    "cwasm_bytes": 34321544,
+    "module_load": "deserialize",
+    "module_load_seconds": 0.0047,
+    "entry": "_start",
+    "programs": {
+      "pass": {
+        "median_s": 0.0777,
+        "min_s": 0.0767,
+        "runs": 5,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.0775,
+        "min_s": 0.0769,
+        "runs": 5,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 0.3384,
+        "min_s": 0.3375,
+        "runs": 5,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 0.3383,
+        "min_s": 0.3329,
+        "runs": 5,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 178.6,
+    "host_maxrss_mib_before": 165.7
+  }
+]

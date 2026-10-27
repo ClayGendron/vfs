@@ -1,0 +1,13 @@
+   Building pminit==1.3.2
+Downloading pythonmonkey (14.1MiB)
+ Downloaded pythonmonkey
+      Built pminit==1.3.2
+Installed 11 packages in 77ms
+import pythonmonkey 3308 ms version 1.3.2
+globals: WebAssembly=object SharedArrayBuffer=undefined Atomics=undefined TextDecoder=undefined TextEncoder=undefined setTimeout=function fetch=undefined crypto=undefined process=undefined require=undefined read=undefined load=undefined console=object performance=undefined queueMicrotask=undefined python=object
+JSPI: undefined undefined
+wasm add(2,3) = 5.0
+wasm memory 4 GiB max: 65536.0
+sync callback: string:hello from python for /data/x.csv calls ['/data/x.csv']
+bytes: Uint8Array:4:137
+exit 0

@@ -1,0 +1,47 @@
+{
+  "messages": {
+    "Tversion": 1,
+    "Tattach": 1,
+    "Tstat": 31,
+    "Twalk": 37,
+    "Topen": 3,
+    "Tread": 4,
+    "Tclunk": 31,
+    "Tcreate": 2,
+    "Twrite": 2,
+    "Twstat": 1,
+    "Tremove": 2
+  },
+  "verbs": {
+    "stat": 59,
+    "read": 2,
+    "ls": 1,
+    "write": 2,
+    "move": 1,
+    "delete": 2,
+    "mkdir": 1
+  },
+  "sql_total": 342,
+  "sql_per_message": {
+    "Tattach": 4,
+    "Tstat": 120,
+    "Twalk": 108,
+    "Topen": 13,
+    "Tclunk": 32,
+    "Twstat": 23,
+    "Tremove": 21,
+    "Tcreate": 17
+  },
+  "bytes_in": 8,
+  "bytes_out": 540,
+  "trace": [
+    "clunk -> write /out/new.txt 4B version 1",
+    "clunk -> write /out/new.txt 8B version 2"
+  ],
+  "png_row": null,
+  "out_listing": [],
+  "trash": [
+    "d",
+    "renamed.txt"
+  ]
+}

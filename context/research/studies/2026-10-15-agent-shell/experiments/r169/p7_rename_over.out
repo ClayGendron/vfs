@@ -1,0 +1,2 @@
+move tmp -> existing: success=False kind=vfs.exists msg=Already exists
+out.txt now: old

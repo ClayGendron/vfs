@@ -1,0 +1,145 @@
+{
+  "loadPyodide_ms": 966,
+  "rss_after_load_MB": 182,
+  "version": "0.28.3",
+  "loads": [
+    {
+      "asked": [
+        "numpy"
+      ],
+      "loaded": [
+        "numpy"
+      ],
+      "ms": 214,
+      "rss_delta_MB": 56
+    },
+    {
+      "asked": [
+        "pandas"
+      ],
+      "loaded": [
+        "six",
+        "pytz",
+        "python-dateutil",
+        "pandas"
+      ],
+      "ms": 374,
+      "rss_delta_MB": 136
+    },
+    {
+      "asked": [
+        "matplotlib"
+      ],
+      "loaded": [
+        "cycler",
+        "packaging",
+        "pyparsing",
+        "kiwisolver",
+        "fonttools",
+        "contourpy",
+        "Pillow",
+        "matplotlib"
+      ],
+      "ms": 263,
+      "rss_delta_MB": 79
+    },
+    {
+      "asked": [
+        "scipy"
+      ],
+      "loaded": [
+        "libopenblas",
+        "scipy"
+      ],
+      "ms": 1217,
+      "rss_delta_MB": 447
+    },
+    {
+      "asked": [
+        "pillow",
+        "pyyaml",
+        "beautifulsoup4",
+        "python-dateutil",
+        "pydantic",
+        "sqlite3",
+        "lxml",
+        "micropip"
+      ],
+      "loaded": [
+        "annotated-types",
+        "typing-extensions",
+        "micropip",
+        "pyyaml",
+        "pydantic",
+        "soupsieve",
+        "beautifulsoup4",
+        "lxml",
+        "sqlite3",
+        "pydantic_core"
+      ],
+      "ms": 1734,
+      "rss_delta_MB": 141
+    }
+  ],
+  "rss_after_packages_MB": 1041,
+  "micropip": {
+    "ok": true,
+    "ms": 966
+  },
+  "imports": {
+    "numpy": "2.2.5",
+    "pandas": "2.3.1",
+    "scipy": "1.14.1",
+    "matplotlib": "3.8.4",
+    "PIL": "11.3.0",
+    "yaml": "6.0.2",
+    "openpyxl": "3.1.5",
+    "docx": "1.2.0",
+    "bs4": "4.13.3",
+    "dateutil": "2.9.0.post0",
+    "pydantic": "2.10.6",
+    "sqlite3": "ok",
+    "lxml": "6.0.0",
+    "json": "2.0.9",
+    "csv": "1.0",
+    "threading": "ok",
+    "multiprocessing": "ok",
+    "socket": "ok",
+    "ssl": "ModuleNotFoundError: No module named 'ssl'",
+    "ctypes": "1.1.0",
+    "zlib": "1.0",
+    "thread_start": "RuntimeError: can't start new thread",
+    "platform": "emscripten",
+    "version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489"
+  },
+  "matplotlib_png": {
+    "bytes": 17537,
+    "magic_hex": "89504e470d0a1a0a",
+    "python_s": 0.093,
+    "wall_ms": 725,
+    "backend": "agg",
+    "js_byte_length": 17537,
+    "js_is_png": true
+  },
+  "js_door": {
+    "import_js": "ok: <class 'pyodide.ffi.JsProxy'>",
+    "js_process_pid": 45449,
+    "js_require": "no js.require attribute",
+    "pyodide_js": "ok",
+    "os_listdir_root": [
+      "tmp",
+      "home",
+      "dev",
+      "proc",
+      "lib",
+      "share",
+      "usr"
+    ]
+  },
+  "second_instance": {
+    "ok": true,
+    "ms": 825,
+    "rss_MB": 1118,
+    "version": "0.28.3"
+  }
+}

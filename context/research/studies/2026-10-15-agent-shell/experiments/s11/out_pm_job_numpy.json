@@ -1,0 +1,50 @@
+{
+  "mode": "job",
+  "packages": [
+    "numpy"
+  ],
+  "rss_mb_start": 116.3,
+  "env_detect": "function function function function",
+  "eval_asm_js_ms": 29,
+  "eval_loader_ms": 1,
+  "loadPyodide_type": "function",
+  "loadPyodide_ms": 1201,
+  "rss_mb_after_load": 495.4,
+  "python_version": "3.13.2 (main, Sep 22 2025, 12:14:53) [Clang 21.0.0git (https:/github.com/llvm/llvm-project 2f05451198e2f222ec66cec489",
+  "loadPackage_ms": 235,
+  "rss_mb_after_packages": 539.0,
+  "loader_reads": {
+    "pyodide-lock.json": 1,
+    "python_stdlib.zip": 1,
+    "pyodide.asm.wasm": 1,
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": 1
+  },
+  "loader_bytes_mb": 13.5,
+  "run_ms": 329,
+  "exit": 1,
+  "error": "Error in file evaluate, on line 8, column 620533:\nPythonError: Traceback (most recent call last):\n  File \"/lib/python313.zip/_pyodide/_base.py\", line 523, in eval_code\n    .run(globals, locals)\n     ~~~^^^^^^^^^^^^^^^^^\n  File \"/lib/python313.zip/_pyodide/_base.py\", line 357, in run\n    coroutine = eval(self.code, globals, locals)\n  File \"<exec>\", line 8, in <module>\nModuleNotFoundError: No module named 'pandas'\nThe module 'pandas' is included in the Pyodide distribution, but it is not installed.\nYou can install it by calling:\n  await micropip.install(\"pandas\") in Python, or\n  await pyodide.loadPackage(\"pandas\") in JavaScript\nSee https://pyodide.org/en/stable/usage/loading-packages.html for more details.\n\n",
+  "bridge_calls": 7,
+  "bridge_ms": 29,
+  "ops": {
+    "stat": 5,
+    "read": 1,
+    "readdir": 1
+  },
+  "verbs": {
+    "stat": 5,
+    "read": 1,
+    "ls": 1
+  },
+  "sql_total": 29,
+  "sql_per_op": {
+    "stat": 20,
+    "read": 4,
+    "readdir": 5
+  },
+  "trace": [],
+  "png_error": "vfs.not_found",
+  "wall_s": 1.8,
+  "rss_mb_end": 563.9,
+  "guest_stdout": "Loading numpy\nLoaded numpy\n",
+  "guest_stderr": ""
+}

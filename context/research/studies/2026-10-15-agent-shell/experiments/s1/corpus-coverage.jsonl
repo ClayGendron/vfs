@@ -1,0 +1,100 @@
+{"id": 1, "features": ["simple", "flags"], "cmd": "ls -la"}
+{"id": 2, "features": ["simple"], "cmd": "cat src/vfs/base.py"}
+{"id": 3, "features": ["pipe", "flags", "dquote"], "cmd": "grep -rn \"def route\" src/ | head -20"}
+{"id": 4, "features": ["pipe", "flags", "dquote"], "cmd": "rg -n \"TODO\" --type py src | wc -l"}
+{"id": 5, "features": ["simple", "flags", "dquote"], "cmd": "rg -l \"ErrorKind\" src tests"}
+{"id": 6, "features": ["pipe", "flags", "dquote"], "cmd": "find . -name \"*.py\" -not -path \"./.venv/*\" | head"}
+{"id": 7, "features": ["pipe", "xargs", "flags"], "cmd": "find src -type f -name \"*.py\" | xargs wc -l | sort -n | tail -5"}
+{"id": 8, "features": ["pipe", "flags"], "cmd": "cat file.txt | grep foo | sort | uniq -c | sort -rn | head"}
+{"id": 9, "features": ["simple", "flags"], "cmd": "head -n 50 README.md"}
+{"id": 10, "features": ["simple", "squote"], "cmd": "sed -n '100,150p' src/vfs/base.py"}
+{"id": 11, "features": ["simple", "squote", "sed-i"], "cmd": "sed -i 's/old_name/new_name/g' src/vfs/ops.py"}
+{"id": 12, "features": ["simple", "squote", "sed-i", "empty-arg"], "cmd": "sed -i '' 's/foo/bar/' file.txt"}
+{"id": 13, "features": ["heredoc", "heredoc-quoted", "redir-out"], "cmd": "cat > notes.md << 'EOF'\n# Notes\nline one\nEOF"}
+{"id": 14, "features": ["heredoc", "heredoc-expanding", "redir-out", "param"], "cmd": "cat <<EOF > config.yaml\nkey: $VALUE\nEOF"}
+{"id": 15, "features": ["redir-out", "dquote"], "cmd": "echo \"hello\" > out.txt"}
+{"id": 16, "features": ["redir-append", "dquote"], "cmd": "echo \"more\" >> out.txt"}
+{"id": 17, "features": ["pipe", "redir-dup", "flags"], "cmd": "uv run pytest tests/test_base.py -x -q 2>&1 | tail -20"}
+{"id": 18, "features": ["pipe", "redir-dup", "flags"], "cmd": "uv run pytest -q 2>&1 | tail -n 5"}
+{"id": 19, "features": ["simple", "subcommand"], "cmd": "git status"}
+{"id": 20, "features": ["simple", "subcommand", "flags"], "cmd": "git diff --stat"}
+{"id": 21, "features": ["simple", "subcommand", "flags"], "cmd": "git log --oneline -10"}
+{"id": 22, "features": ["and-list", "subcommand", "dquote"], "cmd": "git add -A && git commit -m \"feat: add thing\""}
+{"id": 23, "features": ["cmdsub", "heredoc", "heredoc-quoted", "dquote", "subcommand"], "cmd": "git commit -m \"$(cat <<'EOF'\nfeat: multi-line subject\n\nbody paragraph\nEOF\n)\""}
+{"id": 24, "features": ["and-list", "cd"], "cmd": "cd src && ls"}
+{"id": 25, "features": ["and-list", "flags"], "cmd": "mkdir -p a/b/c && touch a/b/c/file.txt"}
+{"id": 26, "features": ["simple", "flags"], "cmd": "rm -rf build/ dist/"}
+{"id": 27, "features": ["simple", "flags"], "cmd": "cp -r src/ backup/"}
+{"id": 28, "features": ["simple"], "cmd": "mv old.py new.py"}
+{"id": 29, "features": ["for", "glob", "dquote", "param"], "cmd": "for f in *.py; do echo \"$f\"; done"}
+{"id": 30, "features": ["for", "cmdsub", "dquote", "param"], "cmd": "for f in $(find . -name \"*.md\"); do wc -l \"$f\"; done"}
+{"id": 31, "features": ["if", "test-bracket"], "cmd": "if [ -f setup.py ]; then echo yes; else echo no; fi"}
+{"id": 32, "features": ["and-list", "or-list", "test-bracket"], "cmd": "[ -d node_modules ] && echo present || echo missing"}
+{"id": 33, "features": ["and-list"], "cmd": "test -f foo && cat foo"}
+{"id": 34, "features": ["dbracket", "and-list", "dquote", "param"], "cmd": "[[ -n \"$VAR\" ]] && echo set"}
+{"id": 35, "features": ["simple"], "cmd": "which python3"}
+{"id": 36, "features": ["simple", "dquote", "squote"], "cmd": "python3 -c \"print('hi')\""}
+{"id": 37, "features": ["heredoc", "heredoc-quoted"], "cmd": "python3 - <<'EOF'\nimport sys\nprint(sys.version)\nEOF"}
+{"id": 38, "features": ["param"], "cmd": "echo $PATH"}
+{"id": 39, "features": ["export", "assign"], "cmd": "export FOO=bar"}
+{"id": 40, "features": ["assign-prefix"], "cmd": "FOO=bar ./run.sh"}
+{"id": 41, "features": ["pipe", "flags"], "cmd": "ls | wc -l"}
+{"id": 42, "features": ["glob", "redir-err", "flags"], "cmd": "ls -1 *.py 2>/dev/null"}
+{"id": 43, "features": ["redir-err", "or-list", "dquote"], "cmd": "cat nonexistent 2>/dev/null || echo \"missing\""}
+{"id": 44, "features": ["simple", "flags", "dquote"], "cmd": "grep -c \"pattern\" file.txt"}
+{"id": 45, "features": ["pipe", "flags", "dquote"], "cmd": "grep -v \"^#\" config.ini | grep -v \"^$\""}
+{"id": 46, "features": ["redir-in", "flags"], "cmd": "wc -l < file.txt"}
+{"id": 47, "features": ["procsub"], "cmd": "diff <(sort a.txt) <(sort b.txt)"}
+{"id": 48, "features": ["simple", "flags"], "cmd": "tree -L 2 src"}
+{"id": 49, "features": ["simple", "flags"], "cmd": "du -sh node_modules"}
+{"id": 50, "features": ["background", "flags"], "cmd": "tail -f log.txt &"}
+{"id": 51, "features": ["seq-list"], "cmd": "sleep 5; echo done"}
+{"id": 52, "features": ["brace-expansion"], "cmd": "echo {a,b,c}.txt"}
+{"id": 53, "features": ["arith"], "cmd": "echo $((1 + 2))"}
+{"id": 54, "features": ["assign", "seq-list", "arith"], "cmd": "x=5; echo $((x * 2))"}
+{"id": 55, "features": ["pipe", "flags", "dquote"], "cmd": "ls | grep -E \"\\.py$\""}
+{"id": 56, "features": ["simple", "flags", "dquote"], "cmd": "grep -rn \"import numpy\" --include=\"*.py\" ."}
+{"id": 57, "features": ["simple", "squote"], "cmd": "awk '{print $1}' file.txt"}
+{"id": 58, "features": ["pipe", "flags", "squote"], "cmd": "awk -F: '{print $1}' /etc/passwd | head"}
+{"id": 59, "features": ["pipe", "flags"], "cmd": "cut -d, -f1 data.csv | sort -u"}
+{"id": 60, "features": ["redir-in", "squote"], "cmd": "tr 'a-z' 'A-Z' < file.txt"}
+{"id": 61, "features": ["redir-in", "xargs", "flags"], "cmd": "xargs -I{} echo {} < list.txt"}
+{"id": 62, "features": ["simple", "flags", "dquote"], "cmd": "find . -name \"*.pyc\" -delete"}
+{"id": 63, "features": ["simple", "flags", "find-exec"], "cmd": "find . -type d -name __pycache__ -exec rm -rf {} +"}
+{"id": 64, "features": ["pipe", "squote", "flags"], "cmd": "ls -la | awk 'NR>1 {print $NF}'"}
+{"id": 65, "features": ["squote"], "cmd": "echo 'single quoted $NOT_EXPANDED'"}
+{"id": 66, "features": ["dquote", "backslash", "param"], "cmd": "echo \"double quoted \\\"escaped\\\" $HOME\""}
+{"id": 67, "features": ["squote", "dquote", "special-param"], "cmd": "printf '%s\\n' \"$@\""}
+{"id": 68, "features": ["pipe", "while", "read", "dquote", "param"], "cmd": "cat file.txt | while read line; do echo \"$line\"; done"}
+{"id": 69, "features": ["while", "read", "redir-in", "dquote", "param"], "cmd": "while read -r line; do echo \"$line\"; done < file.txt"}
+{"id": 70, "features": ["case", "dquote", "param"], "cmd": "case \"$1\" in start) echo s;; stop) echo t;; *) echo other;; esac"}
+{"id": 71, "features": ["function", "function-keyword", "dquote", "param"], "cmd": "function greet() { echo \"hi $1\"; }"}
+{"id": 72, "features": ["function", "seq-list", "dquote", "param"], "cmd": "greet() { echo \"hi $1\"; }; greet bob"}
+{"id": 73, "features": ["subshell", "and-list", "cd"], "cmd": "(cd sub && make)"}
+{"id": 74, "features": ["group", "redir-out", "seq-list"], "cmd": "{ echo a; echo b; } > both.txt"}
+{"id": 75, "features": ["pipe", "redir-dup"], "cmd": "cmd 2>&1 | tee log.txt"}
+{"id": 76, "features": ["redir-err"], "cmd": "make 2> errors.txt"}
+{"id": 77, "features": ["redir-out", "redir-dup"], "cmd": "ls > /dev/null 2>&1"}
+{"id": 78, "features": ["redir-both-bashism"], "cmd": "ls &> /dev/null"}
+{"id": 79, "features": ["param-op", "dquote"], "cmd": "echo \"${VAR:-default}\""}
+{"id": 80, "features": ["param-op", "dquote"], "cmd": "echo \"${#VAR}\" \"${VAR%.py}\" \"${VAR##*/}\""}
+{"id": 81, "features": ["dollar-squote"], "cmd": "echo $'tab\\there'"}
+{"id": 82, "features": ["glob", "flags"], "cmd": "ls -d */"}
+{"id": 83, "features": ["pipe", "flags", "squote"], "cmd": "curl -s https://example.com | jq '.name'"}
+{"id": 84, "features": ["simple", "subcommand", "squote", "flags"], "cmd": "git grep -n \"pattern\" -- '*.py'"}
+{"id": 85, "features": ["simple", "subcommand", "flags"], "cmd": "npm run build -- --watch"}
+{"id": 86, "features": ["set-e", "seq-list"], "cmd": "set -e; make; make test"}
+{"id": 87, "features": ["set-e", "pipefail", "seq-list"], "cmd": "set -euo pipefail; ./script.sh"}
+{"id": 88, "features": ["bang-word"], "cmd": "echo done!"}
+{"id": 89, "features": ["pipe", "flags"], "cmd": "ls | head -n 5 | tail -n 2"}
+{"id": 90, "features": ["time-keyword", "flags"], "cmd": "time uv run pytest -q"}
+{"id": 91, "features": ["array", "seq-list", "dquote"], "cmd": "arr=(a b c); echo \"${arr[@]}\""}
+{"id": 92, "features": ["bang-pipeline", "flags"], "cmd": "! grep -q foo file.txt"}
+{"id": 93, "features": ["if", "bang-pipeline", "redir-out"], "cmd": "if ! command -v rg >/dev/null; then echo missing; fi"}
+{"id": 94, "features": ["dquote", "multiline-string"], "cmd": "echo \"line1\nline2\""}
+{"id": 95, "features": ["pipe", "line-continuation"], "cmd": "cat file.txt \\\n  | sort"}
+{"id": 96, "features": ["comment"], "cmd": "ls # list the directory"}
+{"id": 97, "features": ["backtick"], "cmd": "echo `date`"}
+{"id": 98, "features": ["cmdsub", "dquote"], "cmd": "echo \"$(date +%Y)\""}
+{"id": 99, "features": ["simple", "flags"], "cmd": "ls --color=never"}
+{"id": 100, "features": ["simple", "squote", "flags"], "cmd": "grep -rn 'def \\w+\\(' src --include=*.py"}

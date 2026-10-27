@@ -1,0 +1,5 @@
+== pandas-wizer: wasm 94501599 B, cwasm 110614640 B, load compile 2.3215s, host maxrss 1474.3 MiB
+   pass          median      4.8 ms  min      4.5 ms  mem   61.5 MiB  verbs {}  -> ''
+   print         median      4.8 ms  min      4.6 ms  mem   61.5 MiB  verbs {}  -> 'hello'
+   import_numpy  median      4.7 ms  min      4.5 ms  mem   61.5 MiB  verbs {}  -> '2.5.2'
+   arange_sum    median      4.9 ms  min      4.7 ms  mem   61.5 MiB  verbs {}  -> '45'

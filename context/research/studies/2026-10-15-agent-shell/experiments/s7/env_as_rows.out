@@ -1,0 +1,24 @@
+1. which homes accept an env row (alice, read_write at /)
+  /.vfs/sessions/s1/env/X: ok rows=['/.vfs/sessions/s1/env/X']
+  /.agents/sessions/s1/env/X: ok rows=['/.agents/sessions/s1/env/X']
+  /.agents/tools/s1/env/X: ok rows=['/.agents/tools/s1/env/X']
+  /sessions/s1/env/X: ok rows=['/sessions/s1/env/X']
+  /home/alice/.session/env/X: ok rows=['/home/alice/.session/env/X']
+2. visibility of env rows to the search verbs (alice)
+  glob **/X: ok rows=['/.agents/sessions/s1/env/X', '/.agents/tools/s1/env/X', '/home/alice/.session/env/X', '/sessions/s1/env/X']
+  glob /.vfs/**: ok rows=['/.vfs/sessions', '/.vfs/sessions/s1', '/.vfs/sessions/s1/env', '/.vfs/sessions/s1/env/X']
+  grep '^1$': ok rows=['/.agents/sessions/s1/env/X', '/.agents/tools/s1/env/X', '/home/alice/.session/env/X', '/sessions/s1/env/X']
+  tree /: ok rows=['/.agents', '/.agents/sessions', '/.agents/sessions/s1', '/.agents/sessions/s1/env', '/.agents/sessions/s1/env/X', '/.agents/tools', '/.agents/tools/s1', '/.agents/tools/s1/env', '/.agents/tools/s1/env/X', '/home', '/home/alice', '/home/alice/.session', '/home/alice/.session/env', '/home/alice/.session/env/X', '/sessions', '/sessions/s1', '/sessions/s1/env', '/sessions/s1/env/X']
+3. visibility of alice's env rows to bob (read at /)
+  bob read /sessions/s1/env/X: ok rows=['/sessions/s1/env/X']
+  bob glob **/X: ok rows=['/.agents/sessions/s1/env/X', '/.agents/tools/s1/env/X', '/home/alice/.session/env/X', '/sessions/s1/env/X']
+4. an env row changed is a version; deleted is a tombstone in the trash view
+  alice write X=2: ok rows=['/sessions/s1/env/X']
+  alice stat X: ok rows=['/sessions/s1/env/X']
+  alice delete X: ok rows=['/sessions/s1/env/X']
+  alice ls /.vfs/trash/sessions/s1/env: vfs.not_found: Not found
+  alice restore X: ok rows=['/sessions/s1/env/X']
+5. mount table is NOT rows: ls /.vfs/mounts
+  ls /.vfs: ok rows=['/.vfs/sessions', '/.vfs/trash']
+  ls /.vfs/mounts: vfs.not_found: Not found
+  fs.mounts() -> [('/', 'InMemoryStorage')]

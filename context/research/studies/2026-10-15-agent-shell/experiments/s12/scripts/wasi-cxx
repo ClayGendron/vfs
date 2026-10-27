@@ -1,0 +1,2 @@
+#!/bin/sh
+WASI_CC_TOOL=clang++ exec "$(dirname "$0")/wasi-cc" "$@"

@@ -1,0 +1,12 @@
+pydantic 2.12.5
+read /t/a.md columns=['data']: success=True errors=[] populated=['data', 'kind', 'path', 'version'] content=None data_len=None mime=None
+read /t/a.md columns=['data', 'mime_type']: success=True errors=[] populated=['data', 'kind', 'mime_type', 'path', 'version'] content=None data_len=None mime=None
+read /t/a.md columns=['content', 'data', 'kind', 'mime_type', 'version']: success=True errors=[] populated=['content', 'data', 'kind', 'mime_type', 'path', 'version'] content='# hello\n' data_len=None mime=None
+read /t/b.bin columns=['data']: success=True errors=[] populated=['data', 'kind', 'path', 'version'] content=None data_len=18 mime=None
+read /t/b.bin columns=['data', 'mime_type']: success=True errors=[] populated=['data', 'kind', 'mime_type', 'path', 'version'] content=None data_len=18 mime=application/octet-stream
+read /t/b.bin columns=['content', 'data', 'kind', 'mime_type', 'version']: success=True errors=[] populated=['content', 'data', 'kind', 'mime_type', 'path', 'version'] content=None data_len=18 mime=application/octet-stream
+
+Observation JSON data: -vv8_f7_-vv8_f7_-vv8_f7_
+standard base64       : +vv8/f7/+vv8/f7/+vv8/f7/
+urlsafe base64        : -vv8_f7_-vv8_f7_-vv8_f7_
+strict standard decode of the serializer's output: Error: Only base64 data is allowed

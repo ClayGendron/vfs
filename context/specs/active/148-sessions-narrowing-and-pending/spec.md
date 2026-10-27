@@ -5,6 +5,7 @@
   scheduled; sequenced after 070 (the facade it extends) and 058 (the
   grants a narrowing narrows). `[NEEDS CLARIFICATION]` markers are
   unresolved forks.
+- **Amended 2026-10-15** (ADR 082, ADR 083; study `07-session-state.md`): a shell session is this `Session` plus four in-memory fields — `cwd`, `env` with an exported set, `last_status` (`$?` and `$status`), and `history`, whose entries carry a `surfaced` field (spec 148's ring is that field, not a second buffer) — none a row, and none persisting across wire calls (each MCP `cli` call starts fresh at `workdir`); `cd` is `stat` at `list` plus a kind check; one session per conversation, child sessions copy `cwd` and `env` and never write back; the overlay is subtractive only (hide, deny, no session-level `bind`); `pending` maps to the MCP tasks extension's `input_required`; `/.vfs/sessions` and `/.vfs/jobs` are reserved view heads; close cancels. Spec 167 §6 lands the fields; this spec keeps narrowing and pending.
 - **Born from:** ADR 063, ADR 066 (join and leave; the leak-notice
   follow-up), the Mirage memo §3.6 to §3.9 and §4.3 to §4.5
   (`../../../research/2026-09-04-mirage-design-patterns.md`), the

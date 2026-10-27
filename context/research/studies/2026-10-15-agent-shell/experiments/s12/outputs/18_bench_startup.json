@@ -1,0 +1,161 @@
+[
+  {
+    "label": "floor",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/cross-build/wasm32-wasip1/python.wasm",
+    "wasm_bytes": 39551987,
+    "cwasm_bytes": 34321544,
+    "module_load": "compile",
+    "module_load_seconds": 1.1077,
+    "entry": "_start",
+    "programs": {
+      "pass": {
+        "median_s": 0.1192,
+        "min_s": 0.1173,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.1185,
+        "min_s": 0.1173,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 1.8899,
+        "min_s": 1.8783,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 1.8837,
+        "min_s": 1.8762,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 735.0,
+    "host_maxrss_mib_before": 704.8
+  },
+  {
+    "label": "numpy",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-numpy.wasm",
+    "wasm_bytes": 39551987,
+    "cwasm_bytes": 34321544,
+    "module_load": "compile",
+    "module_load_seconds": 1.0573,
+    "entry": "_start",
+    "programs": {
+      "pass": {
+        "median_s": 0.1186,
+        "min_s": 0.1171,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.1177,
+        "min_s": 0.1171,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 1.8896,
+        "min_s": 1.8841,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 1.8854,
+        "min_s": 1.8816,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 256,
+          "stat": 49
+        },
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 765.4,
+    "host_maxrss_mib_before": 765.4
+  },
+  {
+    "label": "wizer",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-wizer.wasm",
+    "wasm_bytes": 50768696,
+    "cwasm_bytes": 55388896,
+    "module_load": "compile",
+    "module_load_seconds": 1.0527,
+    "entry": "vfs_run",
+    "programs": {
+      "pass": {
+        "median_s": 0.0032,
+        "min_s": 0.0029,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.0027,
+        "min_s": 0.0026,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 0.0026,
+        "min_s": 0.0026,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "2.5.2"
+      },
+      "arange_sum": {
+        "median_s": 0.0027,
+        "min_s": 0.0026,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {},
+        "stdout": "45"
+      }
+    },
+    "host_maxrss_mib_after": 1008.0,
+    "host_maxrss_mib_before": 983.8
+  }
+]

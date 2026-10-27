@@ -4,6 +4,7 @@
   revised 2026-10-08 after a review against `0760fe9` (the real verb
   parameters, `rank` as a render-only column, where the slash lives,
   the grouping key, the empty `tree`, no CLI or MCP surface yet)
+- **Folded 2026-10-15** into spec 167 §5 and its task zero (ADR 085): the render cap is 32,768 characters (Clay) with one canonical marker naming characters removed, rows remaining and how to page; the media placeholder `[binary <path> <mime> <size>B v<version>[ -- <description>]]` is enforced at the chokepoint; the empty markers, the trailing slash, collapsed errors and rank-by-default land there. This spec stays as the record of the findings.
 - **Date:** 2026-10-08
 - **Owner:** Clay Gendron
 - **Kind:** feature (`results/render.py` and `results/projection.py`;

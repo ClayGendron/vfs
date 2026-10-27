@@ -1,0 +1,59 @@
+[
+  {
+    "label": "floor-brett",
+    "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/brett-3.14.7/python.wasm",
+    "wasm_bytes": 30522756,
+    "cwasm_bytes": 16452384,
+    "module_load": "compile",
+    "module_load_seconds": 0.4746,
+    "entry": "_start",
+    "programs": {
+      "pass": {
+        "median_s": 0.113,
+        "min_s": 0.1116,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": ""
+      },
+      "print": {
+        "median_s": 0.1119,
+        "min_s": 0.1114,
+        "runs": 10,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 14,
+          "stat": 21
+        },
+        "stdout": "hello"
+      },
+      "import_numpy": {
+        "median_s": 0.6883,
+        "min_s": 0.6883,
+        "runs": 1,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 83,
+          "stat": 23
+        },
+        "stdout": "rc=1 trapped=None stderr=not find platform dependent libraries <exec_prefix>\nTraceback (most recent call last):\n  File \u001b"
+      },
+      "arange_sum": {
+        "median_s": 0.6799,
+        "min_s": 0.6799,
+        "runs": 1,
+        "memory_mib": 40.0,
+        "verbs": {
+          "read": 83,
+          "stat": 23
+        },
+        "stdout": "rc=1 trapped=None stderr=ind platform dependent libraries <exec_prefix>\nTraceback (most recent call last):\n  File \u001b[35m\""
+      }
+    },
+    "host_maxrss_mib_after": 480.1,
+    "host_maxrss_mib_before": 456.7
+  }
+]

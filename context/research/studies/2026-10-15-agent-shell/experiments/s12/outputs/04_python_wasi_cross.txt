@@ -1,0 +1,1 @@
+3.14.8 wasi-wasm32-wasi .cpython-314-wasm32-wasi.so cpython-314-wasm32-wasi /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/Python-3.14.8/Include /Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/tools/wasi-sdk-24.0-arm64-macos/bin/clang

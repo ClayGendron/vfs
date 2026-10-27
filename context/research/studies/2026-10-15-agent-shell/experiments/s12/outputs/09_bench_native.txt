@@ -1,0 +1,3 @@
+NATIVE python=3.13.11 numpy=2.4.2 arange_sum_first_s=0.001266 arange_sum_mean_s=0.000247 sort1e6_s=0.038566 axpy_mean1e6_s=0.002755 sum=499999500000 m=2.000319
+NATIVE python=3.13.11 numpy=2.4.2 arange_sum_first_s=0.000841 arange_sum_mean_s=0.000236 sort1e6_s=0.036716 axpy_mean1e6_s=0.001517 sum=499999500000 m=2.000319
+NATIVE python=3.13.11 numpy=2.4.2 arange_sum_first_s=0.000851 arange_sum_mean_s=0.000238 sort1e6_s=0.036433 axpy_mean1e6_s=0.001477 sum=499999500000 m=2.000319

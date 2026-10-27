@@ -1,0 +1,10 @@
+{"dialect":"bashkit","error":"parse error at line 1, column 6: unexpected EOF while looking for matching `\"'","id":1,"ok":false}
+{"dialect":"bashkit","error":"parse error at line 2, column 1: syntax error: unexpected end of file","id":2,"ok":false}
+{"dialect":"bashkit","error":"parse error at line 1, column 9: syntax error near unexpected token `)'","id":3,"ok":false}
+{"dialect":"bashkit","error":"parse error at line 2, column 1: syntax error: unexpected end of file","id":4,"ok":false}
+{"dialect":"bashkit","id":5,"ok":true}
+{"dialect":"bashkit","error":"parse error at line 2, column 1: syntax error: unexpected end of file","id":6,"ok":false}
+{"dialect":"bashkit","error":"parse error at line 1, column 7: syntax error near unexpected token `&&'","id":7,"ok":false}
+{"dialect":"bashkit","id":8,"ok":true}
+{"dialect":"bashkit","id":9,"ok":true}
+{"dialect":"bashkit","error":"parse error at line 2, column 1: syntax error near unexpected token `}'","id":10,"ok":false}

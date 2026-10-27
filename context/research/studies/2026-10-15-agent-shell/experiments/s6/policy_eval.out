@@ -1,0 +1,35 @@
+case                                                                                     caller     verdict
+---------------------------------------------------------------------------------------------------------------------------------------------------
+1  list at list                                                                          bob        ALLOW
+2  cat at list                                                                           bob        DENY  vfs.permission_denied — read needs read on /x.md; bob holds list
+3  cat at read                                                                           alice      ALLOW
+4  rm -rf at read_write (trash, reversible)                                              alice      ALLOW
+5  rm -rf at contribute, not own                                                         bob        DENY  vfs.permission_denied — delete needs read_write on /notes; bob holds contribute
+6  rm own row at add (owner floor)                                                       bob        ALLOW
+7  cat 10k files (batch contract) — bytes over the stdout budget                         alice      ALLOW — [warning: vfs.budget_exhausted.truncated: stdout would be 209715200 bytes; cut at 4194304, rows served are whole]
+8  cat 25k files — over the fan-out budget                                               alice      ALLOW — [warning: vfs.budget_exhausted.truncated: 25000 paths exceed the fan-out budget of 10000; the first 10000 are served, refine the scope]
+9  a program that loops forever                                                          alice      ALLOW — [runtime: vfs.timeout after 10.0s (epoch deadline); rows already emitted are kept]
+10 a program that burns fuel                                                             alice      ALLOW — [runtime: vfs.budget_exhausted after 2000000000 instructions (fuel trap); not retryable as-is]
+11 install into bin at add (fresh name)                                                  installer  ALLOW
+12 install into bin at list                                                              bob        DENY  vfs.permission_denied — write needs add on /.agents/bin/yq.wasm; bob holds list
+13 overwrite another's program at add                                                    installer  DENY  vfs.permission_denied — write needs contribute on /.agents/bin/jq.wasm; installer holds add
+14 sweep (developer plane)                                                               alice      DENY  vfs.unrecognized — 'sweep' is a developer-plane verb; the shell has no such word
+15 posture (developer plane)                                                             alice      DENY  vfs.unrecognized — 'posture' is a developer-plane verb; the shell has no such word
+16 git (no such program)                                                                 alice      DENY  vfs.unrecognized — no builtin or installed program named 'git'
+17 jq at read on bin and on the data                                                     alice      ALLOW
+18 jq at list on bin (can name, not read)                                                bob        DENY  vfs.permission_denied — run needs read on /.agents/bin/jq.wasm; bob holds list
+19 curl wants the network                                                                alice      DENY  vfs.unsupported — 'curl' wants capability 'net'; the kernel has none
+20 pipeline grep | wc                                                                    alice      ALLOW
+21 write into a deny_ops-masked mount                                                    alice      DENY  vfs.unsupported — operation 'write' is not declared by the storage mounted at /archive
+22 write into a permissions='read' mount                                                 alice      DENY  vfs.read_only — the mount at /vendor is read-only
+23 rm when the host masks rm                                                             alice      DENY  vfs.unsupported — program 'rm' is masked by the host (deny_ops on programs)
+24 read the trash view                                                                   alice      ALLOW
+25 write into the trash view                                                             alice      DENY  vfs.invalid — write may not address the reserved tree /.vfs/trash/notes/x
+26 anonymous cat under a none posture                                                    anon       DENY  vfs.unauthenticated — /secret.md is 'none' to everyone; a named authority is needed
+27 anonymous write under an add posture                                                  anon       ALLOW
+28 cp: read on the source, add at the target                                             alice      ALLOW
+29 mv: read_write on the source                                                          alice      DENY  vfs.permission_denied — move needs read_write on /x.md; alice holds read
+30 a program writing into bin as a caller holding read on bin (no more than its caller)  alice      DENY  vfs.permission_denied — write needs add on /.agents/bin/evil.wasm; alice holds read
+31 a hidden path in a glob (never revealed)                                              alice      ALLOW
+32 cat a hidden path                                                                     alice      DENY  vfs.not_found — /secret/k.md is not visible to alice
+33 a 200-stage pipeline                                                                  alice      DENY  vfs.invalid — 200 stages exceed the stage budget of 64

@@ -1,0 +1,74 @@
+{
+  "spawn": "local",
+  "sandbox": "seatbelt",
+  "wall_s": 0.64,
+  "child_exit": 0,
+  "guest": {
+    "exit": 0,
+    "error": null,
+    "timing": {
+      "connect_ms": 0,
+      "preimport_ms": 483,
+      "sandbox_ms": 10.56,
+      "run_ms": 111
+    },
+    "sandbox": {
+      "seatbelt": "ok",
+      "profile_lines": 15,
+      "probes": {
+        "c_fopen /etc/hosts": "denied errno 1",
+        "c_fopen /private/tmp/claude-501/s11-guest-tmp/.ssh/config": "denied errno 2",
+        "c_fopen /private/tmp/claude-501/s11-guest-tmp/.zshrc": "denied errno 2",
+        "py_open /etc/passwd": "denied errno 1",
+        "socket+connect": "socket ok, connect errno 1 (EPERM)",
+        "execve": "denied errno 1 (EPERM)",
+        "write /tmp": "denied errno 1",
+        "thread": "ok"
+      }
+    },
+    "bridge_calls": 9,
+    "bridge_wait_ms": 30,
+    "rss_mb": 107.703125,
+    "platform": "darwin",
+    "python": "3.13.11"
+  },
+  "ops": {
+    "read": 3,
+    "stat": 3,
+    "write": 2,
+    "readdir": 1,
+    "done": 1
+  },
+  "verbs": {
+    "read": 3,
+    "stat": 3,
+    "write": 2,
+    "ls": 1
+  },
+  "sql_total": 69,
+  "sql_per_op": {
+    "read": 12,
+    "stat": 12,
+    "write": 32,
+    "readdir": 5
+  },
+  "trace": [
+    "write /out/plot.png 48444B -> version 1 mime None",
+    "write /out/summary.csv 135B -> version 1 mime None"
+  ],
+  "png_row": {
+    "path": "/out/plot.png",
+    "kind": "file",
+    "mime_type": "image/png",
+    "size_bytes": 48444,
+    "version": 1,
+    "data_is_png": true,
+    "content_is_none": true
+  },
+  "summary_row": {
+    "mime_type": null,
+    "content_head": "region,sum,mean,max\neast,818,68.16666666666667,109\nnorth,662,55.166666666666664,106\nsouth,690,57.5,1"
+  },
+  "guest_stdout": "rows: 48 regions: ['east', 'north', 'south', 'west']\n        sum       mean  max\nregion                     \neast    818  68.166667  109\nnorth   662  55.166667  106\nsouth   690  57.500000  102\nwest    646  53.833333  101\npng magic ok: True size: 48444\nlisting /out: ['plot.png', 'summary.csv']\nplatform: darwin numpy 2.4.2 pandas 3.0.5 mpl 3.11.1\n",
+  "guest_stderr": ""
+}

@@ -1,0 +1,16 @@
+exit=0 trapped=None load=deserialize 0.0448s run=2.1833s
+verbs: {'read': 279, 'stat': 62, 'mkdir': 1, 'write': 2} sql: 1749 preview1 calls: 2064
+unimplemented called: {'path_readlink': 1} pings: []
+--- stdout ---
+rows (36, 2) regions ['north', 'south', 'west']
+north 1734.71 144.56 169.65
+south 1714.62 142.88 166.24
+west 1697.32 141.44 163.12
+sum,mean,max
+1734.71,144.56,169.65
+1714.62,142.88,166.24
+1697.32,141.44,163.12
+
+--- stderr ---
+Could not find platform dependent libraries <exec_prefix>
+

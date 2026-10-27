@@ -1,0 +1,92 @@
+
+=== 1. default projection table today ===
+   'run': ('path',)
+   'cli': ('path',)
+   'read': ('content',)
+   'ls': ('path',)
+   'grep': ('path', 'matches')
+
+=== 2. a bytes row rendered today (read default columns, then data projected) ===
+read png (default columns): success=True ops=('read',) rows=1
+   row /img/logo.png populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+   warning vfs.unavailable path=/img/logo.png msg='Unavailable: the binary awaits a rendering; run reindex'
+   to_str() -> 'WARNING /img/logo.png: Unavailable: the binary awaits a rendering; run reindex — Retry shortly; the resource is temporarily unavailable. (retry: transient)'
+read png (data projected): success=True ops=('read',) rows=1
+   row /img/logo.png populated=['data', 'kind', 'mime_type', 'path', 'size_bytes', 'version']
+   to_str() -> ''
+   to_payload observations[0] keys -> ['data', 'kind', 'mime_type', 'path', 'populated', 'size_bytes', 'version']
+   to_payload data value -> 'iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+ls /img: success=True ops=('ls',) rows=1
+   row /img/logo.png populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+stat png: success=True ops=('stat',) rows=1
+   row /img/logo.png populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version']
+   stat to_str() -> '/img/logo.png\n  kind: file\n  size_bytes: 32\n  updated_at: 2026-10-16 01:02:07.147984'
+
+=== 3. read of two text rows renders with ==> headers (what a byte seam would carry) ===
+   '==> /d/a.txt <==\na\n\n\n==> /d/b.txt <==\nb\n'
+   single row without trailing newline -> 'no trailing newline'
+
+=== 4. empty results render as the empty string today ===
+   ls /empty -> ''
+   grep zzz -> ''
+
+=== 5. glob: slash-free pattern scoped to /src reaches nested leaves and dotfiles ===
+   glob('*.py', paths=('/src',)) -> ['/src/.hidden.py', '/src/auth.py', '/src/db.py', '/src/sub/deep.py']
+   glob('/src/*.py') -> ['/src/.hidden.py', '/src/auth.py', '/src/db.py']
+glob no match: success=True ops=('glob',) rows=0
+   ls /src -> ['/src/.hidden.py', '/src/auth.py', '/src/db.py', '/src/notes.txt', '/src/sub']
+   ls / -> ['/d', '/e', '/empty', '/img', '/src']
+
+=== 6. rows into grep as observations: content search, not a filter on names ===
+   ls /src | grep auth (rows->rows) -> '/src/db.py:1:token = auth()\n/src/db.py:2:auth again'
+   bash would print the one name containing 'auth': 'auth.py'
+
+=== 7. grep output modes as rendered ===
+   output_mode=lines -> '/e/one.txt:1:one one one\n/e/one.txt:2:two one'
+   output_mode=files -> '/e/one.txt'
+   output_mode=count -> '/e/one.txt'
+     count row populated=[['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'score', 'size_bytes', 'source', 'updated_at', 'version']] matches=[None]
+
+=== 8. copy / move onto an existing destination; copy of a directory ===
+copy /d/a.txt -> /d/b.txt (dest exists): success=False ops=('copy',) rows=0
+   error vfs.exists path=/d/b.txt msg='Already exists'
+move /d/a.txt -> /d/b.txt (dest exists): success=False ops=('move',) rows=0
+   error vfs.exists path=/d/b.txt msg='Already exists'
+copy /d -> /d2 (directory, no -r): success=True ops=('copy',) rows=1
+   row /d2 populated=['kind', 'path', 'status', 'version']
+copy /d/a.txt -> /empty (dest is a directory): success=False ops=('copy',) rows=0
+   error vfs.exists path=/empty msg='Already exists'
+
+=== 9. edit with a repeated needle (sed s/one/ONE/ without g) ===
+edit old='one' new='ONE': success=False ops=('edit',) rows=0
+   error vfs.invalid path=/e/one.txt msg='Invalid: Found 4 matches. Provide more context in old_string to identify a unique match.\n\nMatch at line 1:\n   1 > one one one\n   2   two one\n   3   \n\n---\n\nMatch at line 1:\n   1 > one one one\n   2   two one\n   3   \n\n---\n\nMatch at line 1:\n   1 > one one one\n   2   two one\n   3   \n\n---\n\nMatch at line 2:\n   1   one one one\n   2 > two one\n   3   '
+   body after -> 'one one one\ntwo one\n'
+
+=== 10. delete cascade=False on a non-empty directory; mkdir parents on an existing dir ===
+delete /d2 cascade=False: success=False ops=('delete',) rows=0
+   error vfs.not_empty path=/d2 msg='Directory not empty'
+mkdir /src parents=True: success=False ops=('mkdir',) rows=0
+   error vfs.exists path=/src msg='Already exists'
+delete /nope: success=False ops=('delete',) rows=0
+   error vfs.not_found path=/nope msg='Not found'
+
+=== 11. merge of two terminal rows at the same path (two statements' stdout) ===
+   merged rows=1 content=['first\n']
+   cat f; cat f merged rows=1
+   ls; cat merged op=None -> render first 80 chars '/src/.hidden.py\n/src/auth.py\n/src/db.py\n/src/notes.txt\n/src/sub'
+
+=== 12. system actor through the router's default authority ===
+   write with authority=None on a default-system router -> success=True
+'foo/bar' -> /foo/bar None
+'./x' -> /x None
+'/a/../b' -> /b None
+'/.vfs/run/1/stdout' -> /.vfs/run/1/stdout None
+'~/x' -> /~/x None
+'/a//b/' -> /a/b None
+mutation /.vfs/run -> /.vfs/run/1/stdout None
+'/d/{x,y}' -> ('/d/x', '/d/y')
+'/d/f{1..3}.txt' -> ('/d/f1..3.txt',)
+'/d/*.{py,md}' -> ('/d/*.py', '/d/*.md')
+"/i.png\n  data: b'\\x89PNG\\r\\n'"
+"| path   | data           |\n| ------ | -------------- |\n| /i.png | b'\\x89PNG\\r\\n' |"
+'==> /a.txt <==\nhi\n\n\n==> /i.png <==\n'

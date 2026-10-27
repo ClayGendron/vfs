@@ -1,0 +1,10 @@
+{"id": 1, "cmd": "echo \"unterminated"}
+{"id": 2, "cmd": "if [ -f x ]; then echo yes"}
+{"id": 3, "cmd": "echo hi )"}
+{"id": 4, "cmd": "grep -n foo file.txt |"}
+{"id": 5, "cmd": "cat <<'EOF'\nnever closed\n"}
+{"id": 6, "cmd": "for f in *.py; do echo $f"}
+{"id": 7, "cmd": "ls && && pwd"}
+{"id": 8, "cmd": "echo $((1 +))"}
+{"id": 9, "cmd": "echo 'it''s fine'"}
+{"id": 10, "cmd": "grep -rn \"def \" src/ | head -20\n}"}

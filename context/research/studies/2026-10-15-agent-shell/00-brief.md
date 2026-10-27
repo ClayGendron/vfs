@@ -1,0 +1,129 @@
+# Shared brief for every researcher on the vfs agent-shell study (2026-10-15)
+
+## The project
+vfs (`/Users/claygendron/Git/Repos/vfs`) is a virtual filesystem for AI agents over a SQL
+database (SQLite dev default; Postgres, MariaDB, SQL Server 2025, Oracle 23ai in production).
+Live code is `src/vfs` and `tests/`; `src2/` and `tests2/` are an ARCHIVED pre-refactor quarry:
+you may read them for semantics but never run, lint or port them.
+Run Python only through `uv run python ...` from the vfs repo root (for a one-off dependency
+use `uv run --with <pkg> python ...`; never edit `pyproject.toml`). Scripts and outputs you
+produce go under `context/research/studies/2026-10-15-agent-shell/experiments/<your-id>/`.
+Your report is the ONE file `context/research/studies/2026-10-15-agent-shell/<NN>-<slug>.md`.
+Touch nothing else in the repo. NEVER create git worktrees or branches. NEVER run `git
+checkout`, `git restore` or `git stash` on the vfs repo.
+
+## The question we are answering
+Clay (2026-10-15): build a full CLI for agents, Unix and Plan 9 class. "Agents shouldn't
+feel limited from what they can do with a bash terminal." The CLI is the agent-facing
+surface vfs promises in its README ("your agent already knows `ls`, `grep`, `cat`"). It must
+be built so its capability grows over time: today the vfs verbs as builtins; then pipes and
+the pure text programs; then wasm programs installed as entries; then guest interpreters
+(Python via Monty or CPython-on-WASI, JavaScript via QuickJS) behind one capability
+contract; eventually a hermetic runtime.
+
+The layering we start from (from the July memo, below): shell plus verbs are the kernel,
+our code, trusted; programs are user space, untrusted, capability-only. Every program is the
+same shape: arguments, a stdin stream, an environment and a filesystem capability in;
+stdout, stderr and an exit code out. The filesystem capability IS the vfs verbs with the
+caller's authority; no other door exists (ADR 069's no-shell rule is an enforcement
+property: `grep` in this shell can only resolve to `storage.grep()`). The program table is a
+directory in the namespace, Plan 9 `/bin` style; installing a program is a `write`.
+
+Multimodal: the shell's unit of data is the row, not the byte. An `Observation` already
+carries `data` + `mime_type` (spec 152 slice A landed it). Text output gets a canonical
+placeholder for media, never base64. The ONLY wire target for typed content is the MCP
+standard's content blocks (Clay, 2026-10-15: "follow the MCP standard and only that"; no
+LangChain/OpenAI/Anthropic-specific adapters). A pure-text CLI and an MCP tool are two
+projections of the same `Result`.
+
+The goal is measurable: a corpus of real commands agents issue in a bash terminal, and the
+fraction of it that parses and runs on the vfs shell. Toybox's roadmap (commands ranked by
+what distros actually invoke) is the model for the catalog.
+
+The memo this feeds will produce five ADRs: (1) the shell surface at v1 — grammar, quoting,
+operators; (2) the program ABI and the bin namespace; (3) the pipe payload; (4) execution
+policy — the rung `run` needs and how a host denies a program; (5) the content channel —
+the Observation media field's final shape, the placeholder grammar, the MCP adapter.
+
+## What is already law in vfs (read what applies to your study; it binds the design)
+- `src/vfs/ops.py` — the 25-verb vocabulary; `cli` is reserved as a meta-verb that parses a
+  command string into these ops and re-enters through the public methods so every gate
+  fires; `DEVELOPER_OPS` never reach an agent surface; `VERB_RUNGS` and the ladder
+  `none < list < read < add < contribute < read_write` (ADR 080).
+- `src/vfs/base.py` — the router: `read`, `write`, `edit`, `glob`, `grep`, `glean`, `graph`,
+  `run` signatures and docstrings (lines ~879–1570); `_route_single`, `_route_fanout`.
+- `src/vfs/storage/protocol.py` — the storage protocols, `SupportsRun` (no shipped storage
+  implements it).
+- `src/vfs/results/envelope.py` — `Result`: rows (`Observation`), classified errors, the
+  merge algebra (`|`, `&`), `to_payload`/`from_payload` (the MCP `structured_content` wire),
+  `to_str`; `src/vfs/results/render.py` — the pure text renderer, one chokepoint.
+- `src/vfs/models/entry.py` — `Entry`/`Observation` (`content` text XOR `data` bytes,
+  `mime_type`, `kind`, `version`); `src/vfs/paths.py` — reserved trees `/.vfs` (metadata,
+  trash view) and `/.agents/{tools,skills}` (`AGENT_FAMILIES`); `src/vfs/skills.py`.
+- `src/vfs/authority.py`, `src/vfs/permissions.py`, `src/vfs/storage/grants.py` — identity is
+  a value on the call (never in a string), the ladder, grants.
+- `src/vfs/native.py` + `crates/vfs-core` — the one Rust engine (ADR 057): performance work
+  is a kernel in our crate, pure Python is a test oracle only; no numpy.
+- `context/research/2026-07-24-hermetic-runtime-and-wasm-cli.md` — the OS mapping, nushell's
+  pipe lessons, Monty verified, the WASI preview1 shim checklist (§4.2: 17 must-be-real
+  functions, the preopen handshake, EOF rules), whole-file staging (§4.3), the proposed
+  spike (§6). NOTE: "verified" there means read-verified against checkouts; nothing was
+  executed.
+- `context/research/2026-07-25-multimodal-result-content.md` — media rides on rows, no
+  stored block vocabulary, blocks minted only at the boundary by an adapter that never
+  fetches, the text placeholder rule (§4 Q1–Q8), the eleven ADR decisions (§6).
+- `context/specs/active/152-binary-bodies-and-text-renderings/spec.md` — bytes landed
+  (`vfs_blobs`, `Entry.data`, the renderer seam, four document renderers); §10 the wire rule.
+- `context/decisions/069-*.md` (the no-shell rule, "there is no shell, no side door"),
+  `057-*.md` (one Rust engine), `080-*.md` (the ladder), `076-*.md` (errors are facts),
+  `059-*.md` (unknown dialects).
+- `context/open-questions.md` — "Shell pipe payload", "Hermetic-runtime guest bet", "Result
+  content must be typed blocks", "Per-path / per-principal execute policy",
+  "`serve()` re-spec", "Where does an agent's bundle live".
+- `CLAUDE.md` — production posture (10,000-file batches are a contract; never design toward
+  a hard scale cap; count operations never wall-clock in tests).
+
+## Rules of evidence
+- Reference repos live in `~/Git/Repos/<name>` and are READ-ONLY. They were refreshed to
+  their upstream default branch on 2026-10-15 (`refresh.log` beside this brief; a clone
+  marked DIRTY was not refreshed — say so when you cite it). Cite `repo:path:line`.
+  **Describe, never copy code.** Licences are in `licenses.log`: GPL/AGPL/BSL projects
+  (busybox, toybox is 0BSD, cpython PSF, 9front/plan9 MIT or LPL, codex Apache) are fine to
+  STUDY; the no-copy rule protects us. Record the commit you studied in your header.
+- Separate what you EXECUTED from what you READ from what you INFERRED. Label each claim.
+- An experiment is worth more than a claim. Where you can run something (a parser on a
+  corpus, a wasm module under wasmtime, a Python reference, a count over a source tree),
+  do it and report the output, with the script in your experiments folder.
+- Mark anything you could not verify as `[NOT VERIFIED: why]`.
+- Use WebSearch/WebFetch (standard mode; extended for specs) for documentation facts
+  (POSIX.1-2024, the MCP specification, WASI, provider docs) and cite the URL and date.
+- Toolchain facts: `cargo` and `rustup` are installed with the `wasm32-wasip1` target;
+  `wasmtime` the Python package is NOT installed (use `uv run --with wasmtime`).
+
+## Report shape
+Header: title, date, your researcher id, the clones and commits you read, the evidence
+labels. Then: **Summary** (one paragraph, the answer); **Findings** (numbered, each with its
+evidence label and citations); **What this means for vfs** (concrete: names, shapes, rules,
+what to adopt, what to reject and why); **Forks for the ADRs** (each as a question with the
+options and your lean); **Sources** (repo@commit, URLs with dates). Write plainly: short
+sentences, one idea each, define every term of art the first time. Length: whatever the
+evidence needs, typically 300–900 lines.
+
+## Addendum (2026-10-15, after a web search for recent entrants)
+A category appeared since the July memo: in-process bash interpreters over a virtual
+filesystem, built for agents. Cloned, refreshed and licensed (see `refresh.log` second
+wave and the tail of `licenses.log`): `just-bash` (Vercel Labs, TypeScript, Apache-2.0;
+~90 commands, four fs backends, custom commands, QuickJS, CPython-in-wasm, sql.js, network
+allowlist, THREAT_MODEL.md), `bashkit` (Rust, MIT; 160 commands, Python bindings,
+snapshots), `just-bash-py` (Python port, Apache-2.0), `lifo` (browser-as-kernel Unix, MIT),
+`amla-sandbox` (wasmtime+WASI shell with a tool-constraint DSL; Python MIT, wasm runtime
+AGPL/BUSL — study only), `llm-wasm-sandbox` (CPython + QuickJS-NG under wasmtime in
+Python, fuel metering, ships an MCP server; MIT), `quickjs-rs` (LangChain's QuickJS-in-wasm
+with linear-memory snapshots; MIT), `sandbox-runtime` (Anthropic, OS-level policy;
+Apache-2.0), `sandbox-sdk` (Cloudflare; Apache-2.0), `deepagentsjs` (holds LangChain's
+Node VFS backend over a polyfill of Node's proposed VFS, nodejs/node#61478; MIT),
+`agentvfs` (neul-labs, Rust, MIT). Not cloned, cite the posts: Mintlify's ChromaFs (just-bash
+parser over a Chroma store), Box's virtual filesystem layer, Google Filestore agent volumes.
+Dirty clones not refreshed: `plan9` (at ed1a9c21e), `gemini-cli` (at d42e3f1e7) — cite
+them at those commits and say so. `bash` was not cloned (mirror missing); use `oils`,
+`brush`, `mvdan-sh` and the POSIX spec for bash semantics.

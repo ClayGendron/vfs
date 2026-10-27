@@ -1,0 +1,9 @@
+exit=0 trapped=None load=deserialize 0.005s run=2.1816s
+verbs: {'read': 272, 'stat': 54} sql: 1630 preview1 calls: 2007
+unimplemented called: {'path_readlink': 1} pings: []
+--- stdout ---
+BENCH arange_sum_first_s=0.001049 arange_sum_mean_s=0.000553 sort1e6_s=0.072431 axpy_mean1e6_s=0.002357 sum=1783293664 m=2.000319
+
+--- stderr ---
+Could not find platform dependent libraries <exec_prefix>
+

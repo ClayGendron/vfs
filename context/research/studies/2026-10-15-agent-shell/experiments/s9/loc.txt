@@ -1,0 +1,75 @@
+=== just-bash @ 9ab0e0d
+=== bashkit @ b7904a4
+=== just-bash-py @ 48d111c
+=== lifo @ 5a35d05
+=== amla-sandbox @ 169384f
+
+--- just-bash (TypeScript)
+just-bash      packages/just-bash/src/parser                           *.ts        10352 lines    17 files
+just-bash      packages/just-bash/src/interpreter                      *.ts        47569 lines   170 files
+just-bash      packages/just-bash/src/commands                         *.ts       139363 lines   554 files
+just-bash      packages/just-bash/src/fs                               *.ts        20287 lines    53 files
+just-bash      packages/just-bash/src/network                          *.ts         5727 lines    18 files
+just-bash      packages/just-bash/src/utils                            *.ts          588 lines     6 files
+just-bash      packages/just-bash/src                                  *.ts       300014 lines  1106 files
+just-bash      examples                                                *.ts         5771 lines    27 files
+just-bash      packages/just-bash/src                                  *.test.ts   152323 lines   700 files
+just-bash      packages/just-bash/src                                  *.sh        46744 lines   144 files
+
+--- bashkit (Rust)
+bashkit        crates/bashkit-bench/                                   *.rs         2556 lines     3 files
+bashkit        crates/bashkit-capi/                                    *.rs         1762 lines     2 files
+bashkit        crates/bashkit-cli/                                     *.rs         3861 lines     3 files
+bashkit        crates/bashkit-coreutils-port/                          *.rs         4056 lines     5 files
+bashkit        crates/bashkit-cpython-wasm/                            *.rs          241 lines     3 files
+bashkit        crates/bashkit-eval/                                    *.rs         5176 lines    17 files
+bashkit        crates/bashkit-js/                                      *.rs         4810 lines     5 files
+bashkit        crates/bashkit-python/                                  *.rs         7646 lines     3 files
+bashkit        crates/bashkit-scripted-tool/                           *.rs         8295 lines    12 files
+bashkit        crates/bashkit-wasm/                                    *.rs         1553 lines     3 files
+bashkit        crates/bashkit/                                         *.rs       299429 lines   525 files
+bashkit        crates/bashkit/src/builtins/                            *.rs       136761 lines   209 files
+bashkit        crates/bashkit/src/fs/                                  *.rs        14183 lines    16 files
+bashkit        crates/bashkit/src/interop/                             *.rs         1376 lines     2 files
+bashkit        crates/bashkit/src/interpreter/                         *.rs        35272 lines    19 files
+bashkit        crates/bashkit/src/network/                             *.rs         2825 lines     5 files
+bashkit        crates/bashkit/src/parser/                              *.rs        14160 lines     9 files
+bashkit        crates/bashkit/src/snapshot/                            *.rs         3350 lines     6 files
+bashkit        crates/bashkit/src/terminal/                            *.rs         3087 lines     4 files
+bashkit        crates/bashkit/src/time_compat/                         *.rs          501 lines     2 files
+bashkit        crates                                                  *.py        17899 lines    69 files
+bashkit        contracts                                               *             251 lines     1 files
+bashkit        docs                                                    *.md         3854 lines    23 files
+
+--- just-bash-py (Python)
+just-bash-py   src/just_bash/ast/                                      *.py         1494 lines     3 files
+just-bash-py   src/just_bash/commands/                                 *.py        22938 lines   155 files
+just-bash-py   src/just_bash/fs/                                       *.py         2604 lines     5 files
+just-bash-py   src/just_bash/interpreter/                              *.py        11919 lines    26 files
+just-bash-py   src/just_bash/network/                                  *.py          513 lines     1 files
+just-bash-py   src/just_bash/parser/                                   *.py         4261 lines     3 files
+just-bash-py   src/just_bash/query_engine/                             *.py         4304 lines     6 files
+just-bash-py   src                                                     *.py        48576 lines   202 files
+just-bash-py   tests                                                   *.py        34421 lines    93 files
+
+--- lifo (TypeScript)
+lifo           packages/cli/                                           *.ts         2831 lines    17 files
+lifo           packages/core/                                          *.ts        51614 lines   263 files
+lifo           packages/create-lifo-pkg/                               *.ts          478 lines     3 files
+lifo           packages/lifo-pkg-bc/                                   *.ts          308 lines     3 files
+lifo           packages/lifo-pkg-cal/                                  *.ts          136 lines     3 files
+lifo           packages/lifo-pkg-fastfetch/                            *.ts          484 lines     3 files
+lifo           packages/lifo-pkg-ffmpeg/                               *.ts          265 lines     2 files
+lifo           packages/lifo-pkg-git/                                  *.ts         1405 lines     3 files
+lifo           packages/lifo-pkg-less/                                 *.ts          345 lines     2 files
+lifo           packages/lifo-pkg-man/                                  *.ts          216 lines     3 files
+lifo           packages/lifo-pkg-nano/                                 *.ts          523 lines     2 files
+lifo           packages/lifo-pkg-vi/                                   *.ts          739 lines     3 files
+lifo           packages/orchd/                                         *.ts         1290 lines     7 files
+lifo           packages/ui/                                            *.ts         3141 lines    10 files
+lifo           packages                                                *.test.ts    15260 lines    80 files
+
+--- amla-sandbox (Python side only)
+amla-sandbox   src/amla_sandbox/                                       *.py         7018 lines    21 files
+amla-sandbox   tests                                                   *.py         5447 lines    12 files
+amla-sandbox   docs                                                    *.md          775 lines     1 files

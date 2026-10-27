@@ -1,0 +1,4 @@
+write /opt/bin/jq        success=True kind=file err=None 
+write /opt/bin/jq.wasm   success=True kind=file err=None 
+write /opt/bin/jq.py     success=True kind=file err=None 
+ls /opt/bin: [('/opt/bin/jq', 'file'), ('/opt/bin/jq.py', 'file'), ('/opt/bin/jq.wasm', 'file')]

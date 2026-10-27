@@ -1,0 +1,6 @@
+amla-sandbox 0.2.8 / wasmtime 49.0.0 / amla_sandbox.wasm 15.3 MB
+cold start (Sandbox + first execute console.log): 1870 ms
+console.log('hello') (median of 10): 1.50 ms
+1e6-iteration loop (median of 3): 71 ms
+1000 tool calls through the capability gate (median of 3): 113.3 ms -> 113 us/call
+host RSS: before=24 MB after cold=410 MB end=410 MB

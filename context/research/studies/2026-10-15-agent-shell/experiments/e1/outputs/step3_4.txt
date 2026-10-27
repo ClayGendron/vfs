@@ -1,0 +1,307 @@
+### Step 3a: the /.agents/bin namespace
+
+[write /.agents/bin/upper.wasm parents=True] success=True rows=1
+  row path=/.agents/bin/upper.wasm kind=file version=1 populated=['kind', 'path', 'size_bytes', 'status', 'version'] size=82980 mime=None source=None data=NoneB content=None
+
+[mkdir /.agents/bin parents=True] success=False rows=0
+  error kind=vfs.exists severity=error path=/.agents/bin message='Already exists'
+
+[write /.agents/tools/upper/upper.wasm parents=True] success=True rows=1
+  row path=/.agents/tools/upper/upper.wasm kind=file version=1 populated=['kind', 'path', 'size_bytes', 'status', 'version'] size=82980 mime=None source=None data=NoneB content=None
+
+[ls /.agents] success=True rows=2
+  row path=/.agents/bin kind=directory version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=None mime=None source=text data=NoneB content=None
+  row path=/.agents/tools kind=directory version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=None mime=None source=text data=NoneB content=None
+
+### Step 3b: install = write into /bin
+  write /bin/upper.wasm: success=True status=created version=1 size=82980 mime=None source=None render=None
+  write /bin/spin.wasm: success=True status=created version=1 size=37367 mime=None source=None render=None
+  write /bin/echo-stdin.wasm: success=True status=created version=1 size=66338 mime=None source=None render=None
+  write /bin/alloc.wasm: success=True status=created version=1 size=49221 mime=None source=None render=None
+  write /bin/fsops.wasm: success=True status=created version=1 size=103783 mime=None source=None render=None
+  write /bin/jaq.wasm: success=True status=created version=1 size=3726466 mime=None source=None render=None
+
+### Step 3c: resolve 'upper' from the bin directory
+
+[ls /bin] success=True rows=6
+  row path=/bin/alloc.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=49221 mime=application/octet-stream source=bytes data=NoneB content=None
+  row path=/bin/echo-stdin.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=66338 mime=application/octet-stream source=bytes data=NoneB content=None
+  row path=/bin/fsops.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=103783 mime=application/octet-stream source=bytes data=NoneB content=None
+  row path=/bin/jaq.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=3726466 mime=application/octet-stream source=bytes data=NoneB content=None
+  row path=/bin/spin.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=37367 mime=application/octet-stream source=bytes data=NoneB content=None
+  row path=/bin/upper.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=82980 mime=application/octet-stream source=bytes data=NoneB content=None
+
+[glob /bin/upper.*] success=True rows=1
+  row path=/bin/upper.wasm kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=82980 mime=application/octet-stream source=bytes data=NoneB content=None
+  resolved -> /bin/upper.wasm version=1
+
+### Step 3d: reading the bytes back
+
+[read /bin/upper.wasm (no projection)] success=True rows=1
+  error kind=vfs.unavailable severity=warning path=/bin/upper.wasm message='Unavailable: the binary awaits a rendering; run reindex'
+  row path=/bin/upper.wasm kind=file version=1 populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=82980 mime=application/octet-stream source=bytes data=NoneB content=None
+
+[read /bin/upper.wasm columns={data}] success=True rows=1
+  row path=/bin/upper.wasm kind=file version=1 populated=['data', 'kind', 'path', 'version'] size=None mime=None source=None data=82980B content=None
+
+[read /data/in.txt columns={data,content}] success=True rows=1
+  row path=/data/in.txt kind=file version=1 populated=['content', 'data', 'kind', 'path', 'version'] size=None mime=None source=None data=NoneB content='alpha\nbeta\ngamma\n'
+
+[read /data/blob.bin columns={data,content}] success=True rows=1
+  row path=/data/blob.bin kind=file version=1 populated=['content', 'data', 'kind', 'path', 'version'] size=None mime=None source=None data=256B content=None
+
+### Step 4: run
+
+=== upper /data/in.txt /data/out.txt (first run: compile)
+  exit=0 trap=None timed_out=False 
+  stdout=b'3\n'
+  stderr=b''
+  module=compiled (52.5 ms)  run=246.2 ms
+  shim verbs per guest path: {"/data/in.txt": ["stat", "read"], "/data/out.txt": ["stat", "write"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 2, 'stat': 2, 'write': 1}
+  SQL statements this run: 42
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 2, 'fd_fdstat_get': 2, 'fd_filestat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_write': 2, 'path_open': 2}
+
+[stat /data/out.txt] success=True rows=1
+  row path=/data/out.txt kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=17 mime=None source=text data=NoneB content=None
+
+[read /data/out.txt] success=True rows=1
+  row path=/data/out.txt kind=file version=1 populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=17 mime=None source=text data=NoneB content='ALPHA\nBETA\nGAMMA\n'
+
+=== upper again (second run: cache hit; out.txt gets a new version)
+  exit=0 trap=None timed_out=False 
+  stdout=b'3\n'
+  stderr=b''
+  module=deserialized (0.6 ms)  run=121.1 ms
+  shim verbs per guest path: {"/data/in.txt": ["stat", "read"], "/data/out.txt": ["stat", "write"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1, 'stat': 2, 'write': 1}
+  SQL statements this run: 35
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 2, 'fd_fdstat_get': 2, 'fd_filestat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_write': 2, 'path_open': 2}
+
+[stat /data/out.txt] success=True rows=1
+  row path=/data/out.txt kind=file version=2 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=17 mime=None source=text data=NoneB content=None
+
+=== upper /data/missing.txt (guest's own error path)
+  exit=1 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'upper: /data/missing.txt: No such file or directory (os error 44)\n'
+  module=deserialized (0.6 ms)  run=24.4 ms
+  shim verbs per guest path: {"/data/missing.txt": ["stat"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'stat': 1}
+  SQL statements this run: 11
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 8, 'path_open': 1, 'proc_exit': 1}
+
+=== upper with no args (usage -> exit 2)
+  exit=2 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'usage: upper IN OUT\n'
+  module=deserialized (0.3 ms)  run=0.4 ms
+  shim verbs per guest path: {}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1}
+  SQL statements this run: 6
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_write': 1, 'proc_exit': 1}
+
+=== upper on a bytes body (invalid UTF-8 -> guest error)
+  exit=1 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'upper: /data/blob.bin: stream did not contain valid UTF-8\n'
+  module=deserialized (0.3 ms)  run=44.2 ms
+  shim verbs per guest path: {"/data/blob.bin": ["stat", "read"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1, 'stat': 1}
+  SQL statements this run: 16
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_filestat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_write': 5, 'path_open': 1, 'proc_exit': 1}
+
+=== upper with bytes writeback (data=) instead of text
+  exit=0 trap=None timed_out=False 
+  stdout=b'3\n'
+  stderr=b''
+  module=deserialized (0.3 ms)  run=65.9 ms
+  shim verbs per guest path: {"/data/in.txt": ["stat", "read"], "/data/out.bin": ["stat", "write"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1, 'stat': 2, 'write': 1}
+  SQL statements this run: 37
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 2, 'fd_fdstat_get': 2, 'fd_filestat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_write': 2, 'path_open': 2}
+
+[stat /data/out.bin] success=True rows=1
+  row path=/data/out.bin kind=file version=1 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=17 mime=application/octet-stream source=bytes data=NoneB content=None
+
+[read /data/out.bin] success=True rows=1
+  error kind=vfs.unavailable severity=warning path=/data/out.bin message='Unavailable: the binary awaits a rendering; run reindex'
+  row path=/data/out.bin kind=file version=1 populated=['content', 'content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=17 mime=application/octet-stream source=bytes data=NoneB content=None
+
+### Step 4b: the directory and mutation calls (fsops)
+
+=== fsops ls /data
+  exit=0 trap=None timed_out=False 
+  stdout=b'f blob.bin\nf in.txt\nf out.bin\nf out.txt\nf users.json\n'
+  stderr=b''
+  module=compiled (65.8 ms)  run=117.3 ms
+  shim verbs per guest path: {"/data": ["stat", "ls"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 2, 'read': 1, 'stat': 1}
+  SQL statements this run: 22
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_readdir': 1, 'fd_write': 5, 'path_open': 1}
+
+=== fsops stat /data/in.txt
+  exit=0 trap=None timed_out=False 
+  stdout=b'f 17 bytes\n'
+  stderr=b''
+  module=deserialized (0.7 ms)  run=11.8 ms
+  shim verbs per guest path: {"/data/in.txt": ["stat"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'stat': 1}
+  SQL statements this run: 11
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 1, 'path_filestat_get': 1}
+
+=== fsops stat /data
+  exit=0 trap=None timed_out=False 
+  stdout=b'd 0 bytes\n'
+  stderr=b''
+  module=deserialized (0.4 ms)  run=9.2 ms
+  shim verbs per guest path: {"/data": ["stat"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'stat': 1}
+  SQL statements this run: 11
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 1, 'path_filestat_get': 1}
+
+=== fsops mkdir /data/sub
+  exit=0 trap=None timed_out=False 
+  stdout=b''
+  stderr=b''
+  module=deserialized (0.6 ms)  run=16.9 ms
+  shim verbs per guest path: {"/data/sub": ["mkdir"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'mkdir': 1}
+  SQL statements this run: 19
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'path_create_directory': 1}
+
+=== fsops mv /data/out.txt /data/sub/moved.txt
+  exit=0 trap=None timed_out=False 
+  stdout=b''
+  stderr=b''
+  module=deserialized (0.5 ms)  run=51.2 ms
+  shim verbs per guest path: {"/data/out.txt": ["move"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'move': 1}
+  SQL statements this run: 30
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'path_rename': 1}
+
+=== fsops ls /data/sub
+  exit=0 trap=None timed_out=False 
+  stdout=b'f moved.txt\n'
+  stderr=b''
+  module=deserialized (0.3 ms)  run=59.4 ms
+  shim verbs per guest path: {"/data/sub": ["stat", "ls"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 2, 'stat': 1}
+  SQL statements this run: 17
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_readdir': 1, 'fd_write': 1, 'path_open': 1}
+
+=== fsops append /data/sub/moved.txt delta
+  exit=0 trap=None timed_out=False 
+  stdout=b''
+  stderr=b''
+  module=deserialized (0.7 ms)  run=68.9 ms
+  shim verbs per guest path: {"/data/sub/moved.txt": ["stat", "read", "write"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1, 'stat': 1, 'write': 1}
+  SQL statements this run: 32
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 2, 'path_open': 1}
+
+=== fsops seek /data/sub/moved.txt
+  exit=0 trap=None timed_out=False 
+  stdout=b'lta\n'
+  stderr=b''
+  module=deserialized (0.6 ms)  run=17.2 ms
+  shim verbs per guest path: {"/data/sub/moved.txt": ["stat", "read"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1, 'stat': 1}
+  SQL statements this run: 16
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_filestat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_seek': 2, 'fd_write': 1, 'path_open': 1}
+
+=== fsops rm /data/sub/moved.txt
+  exit=0 trap=None timed_out=False 
+  stdout=b''
+  stderr=b''
+  module=deserialized (0.6 ms)  run=55.8 ms
+  shim verbs per guest path: {"/data/sub/moved.txt": ["stat", "delete"]}
+  all vfs verb calls this run (incl. resolve+load): {'delete': 1, 'ls': 1, 'stat': 1}
+  SQL statements this run: 20
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'path_unlink_file': 1}
+
+=== fsops rmdir /data/sub
+  exit=0 trap=None timed_out=False 
+  stdout=b''
+  stderr=b''
+  module=deserialized (0.4 ms)  run=45.9 ms
+  shim verbs per guest path: {"/data/sub": ["delete"]}
+  all vfs verb calls this run (incl. resolve+load): {'delete': 1, 'ls': 1}
+  SQL statements this run: 17
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'path_remove_directory': 1}
+
+=== fsops rmdir /data
+  exit=1 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'fsops: Directory not empty (os error 55)\n'
+  module=deserialized (0.4 ms)  run=42.3 ms
+  shim verbs per guest path: {"/data": ["delete"]}
+  all vfs verb calls this run (incl. resolve+load): {'delete': 1, 'ls': 1}
+  SQL statements this run: 14
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 6, 'path_remove_directory': 1, 'proc_exit': 1}
+
+=== fsops ls /nope
+  exit=1 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'fsops: No such file or directory (os error 44)\n'
+  module=deserialized (0.3 ms)  run=11.1 ms
+  shim verbs per guest path: {"/nope": ["stat"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'stat': 1}
+  SQL statements this run: 11
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 6, 'path_open': 1, 'proc_exit': 1}
+
+=== fsops ls /
+  exit=0 trap=None timed_out=False 
+  stdout=b'd .agents\nd bin\nd data\n'
+  stderr=b''
+  module=deserialized (0.9 ms)  run=56.8 ms
+  shim verbs per guest path: {"/": ["stat", "ls"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 2, 'stat': 1}
+  SQL statements this run: 17
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_close': 1, 'fd_fdstat_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_readdir': 1, 'fd_write': 3, 'path_open': 1}
+
+=== fsops stat ../../etc/passwd
+  exit=1 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'fsops: Capabilities insufficient (os error 76)\n'
+  module=deserialized (0.5 ms)  run=1.6 ms
+  shim verbs per guest path: {}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1}
+  SQL statements this run: 6
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_write': 6, 'path_filestat_get': 1, 'proc_exit': 1}
+
+[ls /.vfs/trash] success=True rows=2
+  row path=/data/sub kind=directory version=4 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=None mime=None source=text data=NoneB content=None
+  row path=/data/sub/moved.txt kind=file version=5 populated=['content_hash', 'created_at', 'deleted_at', 'kind', 'mime_type', 'path', 'render_status', 'size_bytes', 'source', 'updated_at', 'version'] size=23 mime=None source=text data=NoneB content=None
+
+### Step 4c: a real-world binary — jaq (jq clone, crates.io 1.6.0, MIT) built for wasm32-wasip1
+
+=== cat /data/users.json | jaq '.users[].name'
+  exit=0 trap=None timed_out=False 
+  stdout=b'"ada"\n"grace"\n'
+  stderr=b''
+  module=compiled (711.2 ms)  run=2.4 ms
+  shim verbs per guest path: {}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 1}
+  SQL statements this run: 11
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'environ_sizes_get': 1, 'fd_read': 2, 'fd_write': 2, 'random_get': 1}
+
+=== jaq -c '[.users[].name]' /data/users.json (file arg)
+  exit=0 trap=None timed_out=False 
+  stdout=b'["ada","grace"]\n'
+  stderr=b''
+  module=deserialized (2.3 ms)  run=80.7 ms
+  shim verbs per guest path: {"/data/users.json": ["stat", "read", "stat", "read"]}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1, 'read': 2, 'stat': 2}
+  SQL statements this run: 26
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'environ_sizes_get': 1, 'fd_close': 2, 'fd_fdstat_get': 2, 'fd_filestat_get': 2, 'fd_prestat_dir_name': 1, 'fd_prestat_get': 2, 'fd_read': 2, 'fd_write': 1, 'path_open': 2, 'random_get': 1}
+
+=== jaq '.[' (syntax error -> jaq's own exit code)
+  exit=3 trap=None timed_out=False 
+  stdout=b''
+  stderr=b'Error: expected closing bracket\n  \xe2\x95\xad\xe2\x94\x80\n  \xe2\x94\x82\n1 \xe2\x94\x82 .[\n  \xe2\x94\x86  \xe2\x94\xac\xe2\x94\xac\n  \xe2\x94\x86  \xe2\x94\x82\xe2\x94\x82\n  \xe2\x94\x86  \xe2\x95\xb0\xe2\x94\x80\xe2\x94\x80 unclosed delimiter [\n  \xe2\x94\x86   \xe2\x94\x82\n  \xe2\x94\x86   \xe2\x95\xb0\xe2\x94\x80 unexpected end of input\n\xe2\x94\x80\xe2\x94\x80\xe2\x95\xaf\n'
+  module=deserialized (1.9 ms)  run=3.4 ms
+  shim verbs per guest path: {}
+  all vfs verb calls this run (incl. resolve+load): {'ls': 1}
+  SQL statements this run: 6
+  preview1 calls: {'args_get': 1, 'args_sizes_get': 1, 'environ_sizes_get': 1, 'fd_write': 61, 'proc_exit': 1, 'random_get': 1}

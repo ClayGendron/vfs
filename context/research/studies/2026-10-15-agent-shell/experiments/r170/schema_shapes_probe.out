@@ -1,0 +1,556 @@
+mcp 2.3.0 | mcp-types 2.3.0
+protocol_version: 2026-07-28
+--- listing meta (ttl/cacheScope)
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "cacheScope": "private",
+ "resultType": "complete",
+ "ttlMs": 0
+}
+--- tool list_widgets
+{
+ "annotations": {
+  "idempotentHint": true,
+  "readOnlyHint": true
+ },
+ "description": "No parameters at all.",
+ "inputSchema": {
+  "properties": {},
+  "title": "list_widgetsArguments",
+  "type": "object"
+ },
+ "name": "list_widgets",
+ "outputSchema": {
+  "properties": {
+   "result": {
+    "title": "Result",
+    "type": "string"
+   }
+  },
+  "required": [
+   "result"
+  ],
+  "title": "list_widgetsOutput",
+  "type": "object"
+ }
+}
+--- tool search
+{
+ "description": "Every shape a host function plausibly takes.",
+ "inputSchema": {
+  "$defs": {
+   "Color": {
+    "enum": [
+     "red",
+     "blue"
+    ],
+    "title": "Color",
+    "type": "string"
+   },
+   "Filter": {
+    "properties": {
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "op": {
+      "default": "eq",
+      "enum": [
+       "eq",
+       "ne"
+      ],
+      "title": "Op",
+      "type": "string"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "required": [
+     "field",
+     "value"
+    ],
+    "title": "Filter",
+    "type": "object"
+   }
+  },
+  "properties": {
+   "color": {
+    "$ref": "#/$defs/Color",
+    "default": "red"
+   },
+   "exact": {
+    "default": false,
+    "title": "Exact",
+    "type": "boolean"
+   },
+   "extra": {
+    "anyOf": [
+     {
+      "additionalProperties": {
+       "type": "string"
+      },
+      "type": "object"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Extra"
+   },
+   "ids": {
+    "default": [],
+    "items": {
+     "type": "integer"
+    },
+    "title": "Ids",
+    "type": "array"
+   },
+   "limit": {
+    "default": 10,
+    "title": "Limit",
+    "type": "integer"
+   },
+   "mode": {
+    "default": "fast",
+    "enum": [
+     "fast",
+     "deep"
+    ],
+    "title": "Mode",
+    "type": "string"
+   },
+   "query": {
+    "title": "Query",
+    "type": "string"
+   },
+   "since": {
+    "default": "2026-01-01",
+    "description": "ISO date",
+    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+    "title": "Since",
+    "type": "string"
+   },
+   "tags": {
+    "anyOf": [
+     {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Tags"
+   },
+   "threshold": {
+    "anyOf": [
+     {
+      "type": "number"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Threshold"
+   },
+   "where": {
+    "anyOf": [
+     {
+      "$ref": "#/$defs/Filter"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null
+   }
+  },
+  "required": [
+   "query"
+  ],
+  "title": "searchArguments",
+  "type": "object"
+ },
+ "name": "search"
+}
+--- tool upload
+{
+ "description": "One required text parameter: the stdin-as-body case.",
+ "inputSchema": {
+  "properties": {
+   "body": {
+    "title": "Body",
+    "type": "string"
+   }
+  },
+  "required": [
+   "body"
+  ],
+  "title": "uploadArguments",
+  "type": "object"
+ },
+ "name": "upload",
+ "outputSchema": {
+  "properties": {
+   "result": {
+    "title": "Result",
+    "type": "string"
+   }
+  },
+  "required": [
+   "result"
+  ],
+  "title": "uploadOutput",
+  "type": "object"
+ }
+}
+--- tool ingest
+{
+ "description": "One required object parameter.",
+ "inputSchema": {
+  "$defs": {
+   "Filter": {
+    "properties": {
+     "field": {
+      "title": "Field",
+      "type": "string"
+     },
+     "op": {
+      "default": "eq",
+      "enum": [
+       "eq",
+       "ne"
+      ],
+      "title": "Op",
+      "type": "string"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "required": [
+     "field",
+     "value"
+    ],
+    "title": "Filter",
+    "type": "object"
+   }
+  },
+  "properties": {
+   "doc": {
+    "$ref": "#/$defs/Filter"
+   }
+  },
+  "required": [
+   "doc"
+  ],
+  "title": "ingestArguments",
+  "type": "object"
+ },
+ "name": "ingest",
+ "outputSchema": {
+  "properties": {
+   "result": {
+    "title": "Result",
+    "type": "string"
+   }
+  },
+  "required": [
+   "result"
+  ],
+  "title": "ingestOutput",
+  "type": "object"
+ }
+}
+--- tool boom
+{
+ "description": "Raises.",
+ "inputSchema": {
+  "properties": {},
+  "title": "boomArguments",
+  "type": "object"
+ },
+ "name": "boom",
+ "outputSchema": {
+  "properties": {
+   "result": {
+    "title": "Result",
+    "type": "string"
+   }
+  },
+  "required": [
+   "result"
+  ],
+  "title": "boomOutput",
+  "type": "object"
+ }
+}
+--- tool picture
+{
+ "description": "",
+ "inputSchema": {
+  "properties": {},
+  "title": "pictureArguments",
+  "type": "object"
+ },
+ "name": "picture"
+}
+--- tool blocks
+{
+ "description": "",
+ "inputSchema": {
+  "properties": {},
+  "title": "blocksArguments",
+  "type": "object"
+ },
+ "name": "blocks"
+}
+--- tool soft_fail
+{
+ "description": "",
+ "inputSchema": {
+  "properties": {},
+  "title": "soft_failArguments",
+  "type": "object"
+ },
+ "name": "soft_fail"
+}
+--- call no-arg str with outputSchema
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "w1\nw2",
+   "type": "text"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete",
+ "structuredContent": {
+  "result": "w1\nw2"
+ }
+}
+--- call search ok
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "{\n  \"query\": \"x\",\n  \"limit\": 10,\n  \"tags\": null,\n  \"where\": {\n    \"field\": \"a\",\n    \"op\": \"eq\",\n    \"value\": 3\n  }\n}",
+   "type": "text"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete"
+}
+--- call search missing required
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "Error executing tool search: 1 validation error for searchArguments\nquery\n  Field required [type=missing, input_value={'limit': 5}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.12/v/missing",
+   "type": "text"
+  }
+ ],
+ "isError": true,
+ "resultType": "complete"
+}
+--- call search wrong type
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "Error executing tool search: 1 validation error for searchArguments\nlimit\n  Input should be a valid integer, unable to parse string as an integer [type=int_parsing, input_value='five', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.12/v/int_parsing",
+   "type": "text"
+  }
+ ],
+ "isError": true,
+ "resultType": "complete"
+}
+--- call search string-for-int coerced?
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "{\n  \"query\": \"x\",\n  \"limit\": 5,\n  \"tags\": null,\n  \"where\": null\n}",
+   "type": "text"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete"
+}
+--- call search unknown property
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "{\n  \"query\": \"x\",\n  \"limit\": 10,\n  \"tags\": null,\n  \"where\": null\n}",
+   "type": "text"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete"
+}
+--- call unknown tool
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "Unknown tool: nope",
+   "type": "text"
+  }
+ ],
+ "isError": true,
+ "resultType": "complete"
+}
+--- call raises
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "Error executing tool boom",
+   "type": "text"
+  }
+ ],
+ "isError": true,
+ "resultType": "complete"
+}
+--- call image
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
+   "mimeType": "image/png",
+   "type": "image"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete"
+}
+--- call three blocks
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "three blocks",
+   "type": "text"
+  },
+  {
+   "mimeType": "application/pdf",
+   "name": "a.pdf",
+   "size": 1234,
+   "type": "resource_link",
+   "uri": "https://example.com/a.pdf"
+  },
+  {
+   "resource": {
+    "mimeType": "text/plain",
+    "text": "embedded text",
+    "uri": "mem://notes/1"
+   },
+   "type": "resource"
+  }
+ ],
+ "isError": false,
+ "resultType": "complete",
+ "structuredContent": {
+  "n": 3
+ }
+}
+--- call isError with structured
+{
+ "_meta": {
+  "io.modelcontextprotocol/serverInfo": {
+   "name": "r170",
+   "version": ""
+  }
+ },
+ "content": [
+  {
+   "text": "quota exceeded for org acme",
+   "type": "text"
+  }
+ ],
+ "isError": true,
+ "resultType": "complete",
+ "structuredContent": {
+  "code": "quota"
+ }
+}

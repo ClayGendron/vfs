@@ -1,0 +1,5 @@
+== numpy-pyc-cache: wasm 39551987 B, cwasm 34321544 B, load deserialize 0.0047s, host maxrss 178.6 MiB
+   pass          median     77.7 ms  min     76.7 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> ''
+   print         median     77.5 ms  min     76.9 ms  mem   40.0 MiB  verbs {'read': 14, 'stat': 21}  -> 'hello'
+   import_numpy  median    338.4 ms  min    337.5 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '2.5.2'
+   arange_sum    median    338.3 ms  min    332.9 ms  mem   40.0 MiB  verbs {'read': 256, 'stat': 49}  -> '45'

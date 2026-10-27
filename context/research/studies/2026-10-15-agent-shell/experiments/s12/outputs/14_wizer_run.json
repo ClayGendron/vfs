@@ -1,0 +1,55 @@
+{
+  "wasm": "/Users/claygendron/Git/Repos/vfs/context/research/studies/2026-10-15-agent-shell/experiments/s12/build/python-wizer.wasm",
+  "wasm_bytes": 50768696,
+  "zip_bytes": 13494391,
+  "module_load": "compile",
+  "module_load_seconds": 1.1284,
+  "argv": [
+    "/usr/local/bin/python.wasm",
+    "-I",
+    "-X",
+    "utf8",
+    "-c",
+    "import sys, numpy, vfs; print('wizer', sys.version.split()[0], numpy.__version__, vfs.ping(1), numpy.arange(5).sum(), 'numpy' in sys.modules, sorted(k for k in sys.modules if k.startswith('numpy'))[:3], len(sys.modules))"
+  ],
+  "exit_code": 0,
+  "trapped": null,
+  "stdout": "wizer 3.14.8 2.5.2 3 10 True ['numpy', 'numpy.__config__', 'numpy._array_api_info'] 183\n",
+  "stderr": "",
+  "run_seconds": 0.011,
+  "preview1_calls": {
+    "args_get": 1,
+    "args_sizes_get": 1,
+    "fd_write": 1
+  },
+  "preview1_calls_total": 3,
+  "unimplemented_called": {},
+  "imports_stubbed": [
+    "clock_res_get",
+    "fd_filestat_set_times",
+    "fd_pread",
+    "fd_pwrite",
+    "path_filestat_set_times",
+    "path_link",
+    "path_readlink",
+    "path_symlink",
+    "poll_oneoff",
+    "sock_accept",
+    "sock_recv",
+    "sock_send",
+    "sock_shutdown"
+  ],
+  "verbs": {},
+  "verbs_total": 0,
+  "sql_statements": 0,
+  "sql_statements_per_verb": {},
+  "bytes_to_guest": 0,
+  "bytes_from_guest": 88,
+  "vfs_ping_calls": [
+    1
+  ],
+  "read_back": {},
+  "trace": [],
+  "memory_pages": 640,
+  "memory_mib": 40.0
+}
