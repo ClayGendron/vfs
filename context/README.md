@@ -22,6 +22,7 @@ context/
   decisions/            # DECIDE — ADRs: point-in-time choices, append-only
   specs/                # SPECIFY — open work packages, single-dev scope
   standards/            # FOLLOW — rarely-changing governing docs + grades/
+  architecture/         # THE MAP — living diagrams of the system, drawn from decisions and code (index.html views them)
 ```
 
 ## Lifecycle rules
@@ -47,6 +48,14 @@ The directory names matter less than the flow contract between them:
 - **`standards/`** — versioned, rarely changed, and the only directory the
   other three must obey. Holds the constitution, mission, roadmap, the
   how-we-build standards, the quality rubric, and the `grades/` time series.
+- **`architecture/`** — the map, not a stage. Living diagrams (Mermaid in
+  Markdown) of how the pieces fit, with every term defined on the page
+  that draws it and one consolidated glossary. Drawn **from** decisions
+  and code, revised in place, dated, and marked built or planned. Decides
+  nothing: when a diagram disagrees with an ADR, the ADR wins; when it
+  disagrees with the code, apply the rule at the top of this file. A spec
+  author starts at the diagram the spec will change and ends by changing
+  it.
 
 The backward-flow rule is the key design point: it is what lets a
 landed spec safely go stale and keeps `decisions/` and `research/` as
