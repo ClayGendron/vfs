@@ -1,7 +1,12 @@
 # Roadmap — vfs 0.1.0: the definition of done, by domain
 
-- **Status:** draft for Clay's review, second revision — 2026-10-28,
-  written against `main` at `90f5883`. Replaces the "Plan 9 wave"
+- **Status:** draft for Clay's review, third revision — 2026-10-28,
+  written against `main` at `90f5883`. The third revision carries four
+  changes Clay asked for on 2026-10-28: three audiences (§1.2); a
+  meaningful portion of bash *and* Python in 0.1.0 (§1.3, F, T5); the
+  kernel stories written as user stories (§4); and a human-in-the-loop
+  run that stops and picks up where it left off instead of re-running
+  (domain B, H4). Replaces the "Plan 9 wave"
   roadmap (specs 015–024, all landed and archived) and the root-level
   `ROADMAP-v0.1.0.md` of 2026-05-18 (a pre-rebuild plan for a FastAPI
   service, SSO and a web console; none of it applies). Supersedes no
@@ -43,6 +48,11 @@ Short version first. The long version follows.
   The beta freeze is defined in §2: no rename, no removal, no change of
   meaning; *additive* names are still allowed in a beta and are listed
   under *Added* (decision D2).
+- **Stories open with a user story** where the heading alone does not
+  say what a person gets: "As an agent / software developer / ETL
+  developer, I want …, so that …". Every kernel story (§4) and every
+  human-in-the-loop story (§5) has one; the functionality enabled is
+  the point, the mechanism is the *why*.
 - **Sizes** are the audits' estimates of agent effort: S ≤ 1 day, M
   2–4 days, L 1–2 weeks, XL > 2 weeks. They are not commitments. §14
   adds them up.
@@ -84,34 +94,45 @@ each is what must land first.
    table and the `/.vfs` views land (domains F and G). The threat model
    is R8.*
 2. **Agents reach it as the interface they already know — `ls`, `cat`,
-   `grep`, pipes — from Python (sync or async), from an agent shell, or
-   over MCP, with `glob`, `grep`, ranked `glean` and `graph` built in
-   and scoped to what the caller may see.**
-   *The search half is built. The sync facade (X1), the shell (F1–F5)
-   and `serve()` (M1–M2) are not.*
+   `grep`, pipes — from Python (sync or async), from a bash-like shell
+   that covers a meaningful portion of bash, from a Python program
+   running inside vfs, or over MCP, with `glob`, `grep`, ranked
+   `glean` and `graph` built in and scoped to what the caller may
+   see.**
+   *The search half is built. The sync facade (X1), the shell (F1–F6),
+   the Python guest (T5) and `serve()` (M1–M2) are not.*
 3. **Every body change is versioned and every delete is reversible. An
    action can be stopped before it happens and become a question a
    human answers — for vfs's own mutations, with a preview of what the
-   world will look like if they say yes — and then resume safely. One
+   world will look like if they say yes — and a run with several such
+   questions picks up where it stopped, never from the top. One
    permission structure governs a file and a tool alike.**
    *Trash and restore are built. Version rows exist for replaced
-   bodies; nothing reads them back yet (K8). The stop, the preview and
-   the resume are domain B. "A file and a tool alike" is I3.*
+   bodies; nothing reads them back yet (K8). The stop, the preview, the
+   durable run and the resume are domain B. "A file and a tool alike"
+   is I3.*
 
 ### 1.2 Who it is for
 
-Two audiences, both first-class (CLAUDE.md, *Production posture*):
+Three audiences, all first-class (Clay, 2026-10-28; CLAUDE.md's
+*Production posture* names the first and third and is updated in R7):
 
-- **Agents** making many small calls in a loop, many at once. They
-  care about latency and about never being lied to by a result.
+- **Agents** making many small calls in a loop, many at once, through
+  the shell, the verbs or MCP. They care about latency, about never
+  being lied to by a result, and about a question they raise being
+  answered without losing their place.
+- **Software developers** building the host: the application that
+  mounts storage, sets posture, registers tools, writes the policy
+  hook, mounts MCP servers, runs `serve()` and embeds vfs in LangGraph
+  or their own loop. They care about one small public surface, one
+  approval flow for everything an agent can run, and errors that are
+  classified rather than raised. Most of domains B, C, G, H and I are
+  for them.
 - **ETL developers and pipelines** making few large calls: ten
-  thousand files in one `write`, on a real engine. They care about
-  batches being bounded and atomic, and about a sync entry point that
-  works in a notebook.
-
-A third party sits beside them: the **host application** that mounts
-storage, sets posture, registers tools and runs `serve()`. Most of
-domains G, H and I are for the host.
+  thousand files in one `write`, on a real engine, from a notebook or
+  a scheduled job. They care about batches being bounded and atomic,
+  about a sync entry point that works in a notebook, and about a long
+  run that stops for an approval resuming where it stopped.
 
 ### 1.3 What 0.1.0 is not
 
@@ -122,13 +143,21 @@ Said once here so nobody re-argues it (details in §15):
   identity you can read, never an address you can use. The public copy
   says "the interface of a file system", never "mount it on your
   laptop".
-- Not bash. A static, bash-shaped subset (ADR 081) with a published
-  coverage number and a named reason for every refusal. The copy never
-  says "bash" unqualified.
+- Not all of bash. A meaningful portion of it (Clay, 2026-10-28): the
+  static, bash-shaped subset of ADR 081 — the programs, pipes, `&&`,
+  redirects and `set -e` that make up the measured majority of what
+  agents actually type — with a published coverage number and a named
+  reason for every refusal. Loops, functions and arithmetic are
+  refused at parse time; where bash runs out, the Python guest (T5) is
+  the answer, not a bigger grammar. The copy says "a bash-like shell"
+  with its measured number, never "bash" unqualified.
 - Not a web console, not SSO, not OpenTelemetry, not a managed
   service. Those are the product plan's, not the library's.
-- Not a general Python sandbox. The WASI Python guest is a stretch
-  item behind an extra (T5), not a gate.
+- Not a host-side Python `exec`. Python at 0.1.0 is the WASI guest
+  (T5, gate b): a static CPython with numpy and pandas compiled in,
+  whose only file system is vfs and whose every host call passes the
+  gate as the caller. It is in 0.1.0 (Clay, 2026-10-28), behind the
+  `vfs-py[python]` extra so the base wheel stays small.
 - Not "MCP servers as the user" in the OAuth sense at 0.1.0. The
   credential seam (I4) is per principal with host-held credentials;
   the OAuth round trip is T7 in 0.2. The README does not use the
@@ -158,12 +187,12 @@ not listed; they ride any alpha.)
 | Domain | `b` (before the freeze) | `f` (before final) |
 |---|---|---|
 | A Kernel | K1, K2, K3, K4, K5, K6, K9 | K7, K8 |
-| B Human in the loop | H1, H2, H3 | H4, H5 |
+| B Human in the loop | H1, H2, H3, H4, H5 | H6 |
 | C Identity | I1, I2, I3a, I3b, I6 | I4 |
 | D Storage | D1, D2, D3, D4 | D6, D7 |
 | E Search | E1, E2, E3, E4, E5 | E6 |
 | F Shell | F3, F4 | F5, F6 |
-| G Tools | T1, T2, T3, T4 | — |
+| G Tools | T1, T2, T3, T4, T5 | — |
 | H MCP front | M1, M2 | M3 |
 | I Developer experience | X1, X2, X6, X7 | X3, X4, X5 |
 | J Release and hygiene | R5, R6, R7, R8 | R4, R9 |
@@ -179,7 +208,7 @@ from the audit set; EXECUTED unless noted.
 | # | Theme | State |
 |---|---|---|
 | 1 | Public kernel API | **Built** as 25 async verbs behind one gate (`base.py:2835–3088`; `tests/test_ops.py:246` pins `ALL_OPS`). **None** of ADR 087's arguments exist: no cursor, no `range=`, no `if_version=`, no `replace=`, no request key, no `versions`. All three ADR 087 probes still reproduce on SQLite: twenty concurrent appends keep one line; a body changed by raw SQL reads as success; a replayed `move` is a bare `not_found` with no data. |
-| 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. `cancelled` and `timeout` are declared kinds with no producer in `src/`. |
+| 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. `cancelled` and `timeout` are declared kinds with no producer in `src/`. No run ledger exists; spec 169c's `/.vfs/run` record is per process by design. |
 | 2 | SQLite, Postgres, MSSQL, Oracle | **Built**, plus MariaDB and a generic floor (`dialects.py:389–561`). All four engine legs green together on 2026-10-15 (`ac5c515`). On 2026-10-28 the MSSQL leg is red at its `apt` step (run 40689014566; the tests never ran), so the five `fix(storage)` and one `perf(base)` commits of 2026-10-24 have no SQL Server evidence. No migration story: a format mismatch refuses "re-provision". |
 | 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `reindex` (`backend.py:554–687`, `glean.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
 | 4 | Three tool kinds | **Missing**. `run` is a routed verb no storage serves. Specs 169/170 drafted. "MCP servers authenticating as the user" is undecided; spec 170 §3.1 pins the opposite (one host credential per server). |
@@ -229,6 +258,7 @@ on arguments that do not exist today.
 
 #### K1 — Ratify ADR 087 and resolve its six leans · ADR 087 · S · gate b
 
+*Story.* As a software developer, I want the kernel's public names and argument families decided and written down once, so that the code I write against `0.1.0b1` keeps working at `0.1.0` and nothing I depend on is renamed under me.
 *Why.* Eight specs stand on a proposed ADR. Six pins carry a lean Clay
 has not confirmed; two change public names (pin 3, pin 16). Nothing in
 K2–K9 can freeze until they are decided.
@@ -243,6 +273,7 @@ K2–K9 can freeze until they are decided.
 
 #### K2 — Write preconditions and the guarded append · spec 174 · L · gate b
 
+*Story.* As an agent, I want `write` to refuse when the file has changed since I read it, and `>>` to append without clobbering a neighbour's line, so that two of us editing one file cannot silently lose each other's work; as an ETL developer, I want a 10,000-row batch with stale rows to write nothing rather than some.
 *Why.* Probe 1 is live data loss on every engine. Constitution Art. 5
 forbids silent clobbering. `if_version=` is what `edit`, the shell's
 `>>`, the guest's write-back and the resume (H3) need.
@@ -273,6 +304,7 @@ forbids silent clobbering. `if_version=` is what `edit`, the shell's
 
 #### K3 — Integrity: verify on read, hash on every written row · spec 175 A–C · M · gate b
 
+*Story.* As an ETL developer whose other jobs touch the same database with raw SQL, I want `read` to tell me when a body no longer matches the hash vfs stored, so that a corrupted or out-of-band-edited file is a classified error and never served as a success.
 *Why.* Probe 2: an out-of-band writer (an ETL job with SQL credentials)
 can change or delete a body and `read` serves it as success. The hash
 is stored and never compared.
@@ -293,6 +325,7 @@ is stored and never compared.
 
 #### K4 — The listing cursor · spec 176 · M · gate b
 
+*Story.* As an agent, I want `ls`, `tree` and `glob` over a 10,000-child directory to come back a page at a time with a key for the next page, so that a listing never floods my context and the shell's `ls | head` closes after one page.
 *Why.* `ls` of a 10,000-child directory returns all 10,000 rows with no
 limit or cursor. The MCP tools, the shell's `ls` and `find`, and later
 `scrub` and the bounded `sweep` page on this key.
@@ -314,6 +347,7 @@ limit or cursor. The MCP tools, the shell's `ls` and `find`, and later
 
 #### K5 — Replay: the per-verb contract and `request_key` · spec 177 · L · gate b
 
+*Story.* As a software developer whose host lost the reply to a `move`, I want to send the same call again with the same key and get the first answer back, so that a retry is always safe and the same key can later carry a human's approval.
 *Why.* Probe 3: a client that lost the reply to `move` cannot tell
 "already moved" from "never existed". The request key is also the
 resumption token for H3; one value serves replay and resume.
@@ -340,6 +374,7 @@ resumption token for H3; one value serves replay and resume.
 
 #### K6 — The ranged read · spec 178 · S · gate b
 
+*Story.* As an agent, I want `head` and `sed -n 1,20p` on a 4 MB file to read only the bytes I asked for, so that looking at the top of a big file costs what the top costs.
 *Why.* `head` and `sed -n 1,20p` on a 4 MB body read the whole body.
 *Depends on.* K3.
 *Acceptance.*
@@ -356,6 +391,7 @@ resumption token for H3; one value serves replay and resume.
 
 #### K7 — The storage seam as the kernel: atomic unit, crash points, engine error · spec 179 (slices) · L · gate f
 
+*Story.* As an ETL developer, I want a 10,000-row batch to commit all or nothing and every crash to leave the tables consistent, and as a software developer I want the engine's own error code on every backend failure, so that I can trust a batch result and route a failure without parsing a message.
 *Why.* ADR 087 pins 7 and 8 state the atomic unit and the fault model;
 nothing pins them.
 *Depends on.* K2–K5.
@@ -378,6 +414,7 @@ nothing pins them.
 
 #### K8 — The history read side: `versions(path)` and `read(version=)` · spec 180 (read slice) · M · gate f
 
+*Story.* As an agent, I want to list a file's versions and read any one of them with who changed it and when, so that "what did this say yesterday" and "who changed this" have answers.
 *Why.* The promise says "every body change is versioned"; today version
 rows exist for replaced bodies and nothing reads them back. Without a
 read side, "who changed this" has no answer. `pack` and the bounded
@@ -400,6 +437,7 @@ read side, "who changed this" has no answer. `pack` and the bounded
 
 #### K9 — Retire `run`, the kernel groups, `entry_id`, the frozen surface · spec 167 A (the `run` task) + spec 181 · M · gate b
 
+*Story.* As a software developer, I want one published list of every public name, argument, result field and protocol the beta freezes, so that I know exactly what I may build on.
 *Why.* `run` is retired on paper and live in code; the surface is
 counted three ways; beta entry needs a written list of what is frozen.
 *Depends on.* K1; K4, K6 (the arguments the list documents).
@@ -422,15 +460,18 @@ counted three ways; beta entry needs a written list of what is frozen.
 
 ---
 
-## 5. Domain B — Human in the loop: policy, preview, `pending`, resume, cancel
+## 5. Domain B — Human in the loop: policy, preview, `pending`, the durable run
 
 **Goal.** A host can run vfs with a human in the loop the way
 LangChain runs tools with `interrupt()` and `Command(resume=)`. An
 action can be stopped before it happens, described exactly, handed to
 a human, and resumed with the human's answer. For vfs's own mutations
-the description includes a preview of the world after. This works for
-kernel verbs, host tools, mounted MCP servers and shell lines, in
-process and over MCP.
+the description includes a preview of the world after. A run that has
+several questions in it — some at the same time, some one after
+another — stops at each, keeps what it has done, and picks up where it
+left off; it is never re-run from the top. This works for kernel
+verbs, host tools, mounted MCP servers, Python guests and shell lines,
+in process and over MCP.
 
 **The idea, in plain words.** vfs never asks a person a question. vfs
 never waits for a person either. What vfs does is *stop*.
@@ -441,19 +482,63 @@ returns a normal `Result` that says "stopped, waiting for a human",
 with a ticket. That result kind is called `pending`.
 
 The host program sees the `pending` result. The host asks the human
-however it likes. When the human answers, the host sends the *same
-call again*, with the ticket. vfs checks the call from the top again,
-as if it were new, and runs it once. Nothing was held open in memory
-while the human was thinking.
+however it likes. When the human answers, the host tells vfs to
+continue. vfs checks the stopped step from the top again, as if it
+were new, and runs it once. Nothing was held open in memory while the
+human was thinking.
 
 So vfs provides the stop, the description of what would happen, and a
 way to say yes. The host provides the asking. This is LangGraph's
-split (`interrupt()` stops a node; `Command(resume=)` re-runs it).
+split (`interrupt()` stops a node; `Command(resume=)` continues it).
 Operating systems do the same: Linux's seccomp user notification and
 fanotify permission events let a supervisor outside the kernel answer
 for a stopped call; Plan 9's factotum blocks a process on `needkey`
 and lets a user agent answer by writing a file. The kernel never asks.
 It stops, describes, and takes the answer as a new call.
+
+**The run.** A shell line is not one call. It is a *run* of many
+steps: every kernel verb, every tool call and every guest call the
+line makes. Picture a line with five questions in it. Two come at the
+same time, because `xargs -P 2` is converting two files at once and
+each conversion asks. Three come one after another, because a later
+stage asks once per file. Clay's rule (2026-10-28): vfs does not re-run
+that line from the top after each answer. It picks up where it left
+off.
+
+Here is how. As a run goes, vfs writes down each step as it finishes —
+which step, what it returned — in the mount, in the same row family as
+the replay store. When a step needs a human, vfs lets everything that
+can finish without the answer finish, writes down every open question,
+and stops. The `Result` says: this run, stopped, these questions open.
+The host asks. Answers can arrive one at a time, from different people,
+from a different process, tomorrow. `resume(run_id)` walks the line
+again, but every finished step is served from the ledger — no
+statement issued, no tool entered, no guest instruction executed for
+vfs's account — and only the unfinished steps run. So the second
+question is asked after the first answer, the two parallel questions
+are surfaced together, and the line reaches its end having done each
+thing exactly once.
+
+The walk must be the same walk each time. That is the one rule the
+run model needs: the shell numbers every call it makes (stage, ordinal
+within the stage) and the numbering is a function of the parsed line
+and the recorded inputs, never of timing. ADR 081's static grammar and
+ADR 084's static parse already make the shell deterministic; this rule
+names it and pins it (F3).
+
+This is how durable-workflow engines work. Temporal replays a workflow
+from its event history and never re-runs a completed activity; DBOS
+checkpoints each step's output in Postgres and resumes from the last
+completed step; LangGraph resumes by re-running the node, with
+`interrupt()` returning the saved answer in order, and warns that side
+effects placed before an `interrupt()` run again. Unix job control is
+the small-scale version: a background job that needs the terminal is
+stopped with `SIGTTIN` and `fg` continues it where it stopped. Unix
+keeps the stopped job in memory. A vfs run must outlive the process,
+so its memory is the database you already run. (The LangGraph, Temporal
+and DBOS behaviour here is from the assistant's knowledge; the two doc
+sites were outside this session's network. H1's ADR cites them with
+versions.)
 
 **The preview.** Clay's second requirement: when a call would change
 files, show what the world will look like if it is approved, the way
@@ -462,7 +547,7 @@ The database write path already works plan-then-execute: it stages
 every change against an in-memory plan and applies the plan only when
 it has no errors (`writes.py`, `_finish` then `_apply`). The preview is
 that plan, rendered, with no commit. The preview records each row's
-version. The resumed call carries those versions as preconditions
+version. The resumed step carries those versions as preconditions
 (K2), so an approval can only apply to the world the human looked at.
 That is the piece a plain diff approval lacks and Terraform's
 plan-then-apply has. A preview exists for vfs's own mutations only. A
@@ -471,12 +556,14 @@ preview code that runs elsewhere.
 
 **What this amends.** ADR 084 pin 4 ("no `ask` inside vfs") keeps its
 letter and gains one sentence: *vfs never asks; a policy hook, a tool,
-a server or a grant check may suspend a call into a `pending` `Result`
-that a host answers through the ledger.* ADR 063 rule 5 and spec 148
-§5 already say this. H1 lists every record that changes.
+a server or a grant check may suspend a step into a `pending` `Result`
+that a host answers through the ledger, and a run resumes from its
+ledger.* ADR 063 rule 5 and spec 148 §5 already say the first half.
+Spec 169c's per-process `/.vfs/run` record becomes rows. H1 lists
+every record that changes.
 
-One line: vfs stops and describes; the host asks; the answer is a
-re-send.
+One line: vfs stops and describes; the host asks; the run continues
+from where it stopped, and nothing runs twice.
 
 ### State today
 
@@ -485,6 +572,7 @@ re-send.
 | `pending` kind, ticket, ledger, resume | missing (spec 148 seed; ADR 063 rule 5 accepted) |
 | A dry-run form on any verb | missing (the plan seam exists inside `writes.py`) |
 | A host policy hook before dispatch | missing |
+| A run ledger: steps recorded, stop, resume | missing (spec 169c's per-process `/.vfs/run` record is the seed; spec 177's replay store is the row family) |
 | `cancelled`, `timeout` kinds | declared, no producer in `src/` |
 | Deadline on fan-out | missing (spec 051, a stale draft since July) |
 
@@ -492,37 +580,51 @@ re-send.
 
 #### H1 — The interrupt ADR: reconcile ask and no-ask, name the kind, place the ledger · new ADR · S · gate b
 
+*Story.* As a software developer embedding vfs in an agent host, I want
+one written rule for how vfs stops, describes and resumes an action,
+so that every tool kind, the shell and the wire behave the same way
+and I can build the asking once.
 *Why.* Two records contradict each other, and every story in this
 domain and in domains G and H depends on which wins. This ADR lands
 before specs 170 and 171 are built, or both are reopened.
-*Depends on.* Nothing. Decisions D9–D11.
+*Depends on.* Nothing. Decisions D9–D11, D40–D44.
 *Acceptance.*
 1. The ADR is accepted and lists its amendments: ADR 084 pin 4 and pin
    9's kind list; ADR 084 pin 1 (the hook judges the static parse,
    never the command text, and may only deny or suspend, never widen);
    ADR 063 rule 5 (a ledger row's expiry is judged at answer time and
    its reclamation by `sweep` is garbage collection, not a verdict);
-   spec 148 §5; spec 149 §5; spec 170 §4's failure table; spec 171's
-   scope; the glossary line; architecture page 11.
-2. `ErrorKind` gains exactly one new core kind for the suspended call
+   spec 148 §5; spec 149 §5; spec 169c (records as rows); spec 170
+   §4's failure table; spec 171's scope; spec 172 (every host import
+   is a step); the glossary line; architecture page 11.
+2. `ErrorKind` gains exactly one new core kind for the suspended step
    (lean `vfs.pending`, severity error, derived retry class `resume`);
    `KIND_CONTRACTS` carries its phrase, hint and `path` referent; the
    result-laws test round-trips it.
 3. A table in the ADR says, per producer — the policy hook, a gate
    refusal a principal could lift, a host tool, a mounted server's
-   elicitation, a shell line — whether the call suspends and what the
-   ticket carries.
+   elicitation, a guest's door call, a shell stage — whether the step
+   suspends and what the ticket carries.
 4. The ADR states the one model: a kernel call is never held open
-   across an interrupt; it is refused with a ticket and re-driven; a
-   tool that is interrupted is restarted, never resumed mid-body; at
-   0.1.0 a tool that cannot restart keeps its own checkpoint outside
-   vfs, and `/.vfs/jobs/<ticket>` is named as the 0.2 home.
-5. The ledger lives in the mount's schema beside the replay store,
-   swept with the trash, so a resume can arrive at a different
-   process; the ADR names the TTL (lean 24 h, spec 177's).
+   across an interrupt. A *run* — a bare verb, a `cli` line, a tool
+   body, a guest — is durable: each step is recorded in the mount as
+   it completes, a stop records every open ask, and a resume re-walks
+   the run serving recorded steps from the ledger and executing only
+   what has not run. The ADR names the determinism law (F3), the
+   drain-then-stop rule (D40), what is recorded (D41), how a guest
+   resumes (D42) and the run's budget and TTL (D43).
+5. The run ledger, the ask ledger and the replay store are one row
+   family in the mount's schema, swept with the trash, so a resume can
+   arrive at a different process; the ADR names the TTL (lean 24 h,
+   spec 177's).
 
 #### H2 — `plan=`: every mutating verb can preview the world after · new spec · M · gate b
 
+*Story.* As an agent, or a human approving an agent, I want to see
+what a `write`, `delete` or `move` would do to the files — the diff,
+the rows tombstoned, the path that would be replaced — before it
+happens, so that approval means approving a change and not a verb
+name.
 *Why.* The preview Clay asked for, and the half of an interrupt that
 makes an approval meaningful. A host can also call it with no
 interrupt at all, like `make -n` or `terraform plan`.
@@ -557,16 +659,24 @@ apply), K3.
 6. A plan pages on the K4 key and renders under `to_str(budget=)`
    (F1); the `vfs.plan` record carries `rows_planned` so a truncated
    preview says how much it hides.
-7. The renderer prints a plan as a diff-shaped block that the shell
-   and the MCP text block reuse unchanged.
+7. The renderer prints a plan as a diff-shaped block that the shell,
+   the `/.vfs/jobs` view (H4) and the MCP text block reuse unchanged.
 
-#### H3 — The policy hook, the `pending` Result, the ledger and resume for kernel verbs · spec 148 §5 rebuilt on H1 and K5 · L · gate b
+#### H3 — The policy hook, the `pending` Result, the ask ledger and `answer` for a kernel verb · spec 148 §5 rebuilt on H1 and K5 · L · gate b
 
-*Why.* The kernel half of the interrupt. Two producers: a host policy
-hook that may say "ask first" about an allowed call, and a gate refusal
-a principal could lift. The answer admits exactly one re-run; the
-re-run re-enters the gate, so a right revoked between the question and
-the answer is honoured.
+*Story.* As a software developer, I want to hand vfs one function that
+looks at each call before it runs and says allow, deny or ask, and I
+want a call it says "ask" about to come back as a normal result with a
+ticket and a preview, so that my host can put the question to a person
+with any UI and let the call through once with one more call.
+*Why.* The kernel half of the interrupt, for the simplest run: one
+verb, one step. Two producers: a host policy hook that may say "ask
+first" about an allowed call, and a gate refusal a principal could
+lift. The answer admits exactly one re-run; the re-run re-enters the
+gate, so a right revoked between the question and the answer is
+honoured. A bare verb is a run of one step; its ticket is its run id,
+and re-sending the call with the ticket is its resume (H4 adds
+`resume(run_id)` for runs of many steps).
 *Depends on.* H1, H2, K5.
 *Acceptance.*
 1. `VirtualFileSystem(policy=hook)` and `Session(policy=hook)` accept a
@@ -579,8 +689,9 @@ the answer is honoured.
    `permission_denied` call, counted).
 2. A hook answer of `pending` makes the call return `success=False`,
    one `vfs.pending` error whose `data["vfs.interrupt"]` carries
-   `ticket`, `digest`, `expires_at`, `needs`, `producer="policy"` and
-   the H2 plan for a mutating verb, with zero mutation statements.
+   `ticket`, `run_id` (equal to the ticket for a bare verb), `digest`,
+   `expires_at`, `needs`, `producer="policy"` and the H2 plan for a
+   mutating verb, with zero mutation statements.
 3. A verb the ladder refuses under a `none` posture that a principal
    could allow answers `pending` with `needs="grant:<rung>@<path>"` at
    no statement beyond the refusal's own; the ledger row carries no
@@ -591,61 +702,163 @@ the answer is honoured.
    they approve (`preview=True` returns the plan and writes nothing).
    An approver below `read_write` on the ticket's path is
    `permission_denied` and the ledger gains no row. The written row is
-   attributed (actor and subjects). `Session.answer` does not exist.
+   attributed (actor and subjects). `answer(ticket, allow=False,
+   reason=)` records a denial. `Session.answer` does not exist.
 5. Re-sending the identical call with `request_key=ticket` proceeds
    once and commits; a second re-send is `pending` again (one-shot
    spent); a changed argument has a different digest and is not
-   admitted; a ticket past its TTL is `pending` with `expired=True`
-   at re-send time; `sweep` reclaims rows past the TTL (rows counted).
+   admitted; a denied ticket answers `vfs.permission_denied` with the
+   recorded reason; a ticket past its TTL is `pending` with
+   `expired=True` at re-send time; `sweep` reclaims rows past the TTL
+   (rows counted).
 6. The ledger row is in the mount's schema: a resume from a second
-   `DatabaseStorage` over the same SQLite file succeeds.
+   `DatabaseStorage` over the same SQLite file succeeds; on SQLite and
+   on each engine leg.
 7. `docs/how-to/human-in-the-loop.md` shows a LangGraph host wrapping
    `pending` with `interrupt()` and `Command(resume=)`; its fences run
    under the docs gate against the in-memory backend and skip the
    LangGraph import when the extra is absent.
 8. `CallDescription` and `answer` join K9's frozen list.
 
-#### H4 — Interrupts for every tool kind: host tools, MCP elicitation, shell lines · amends specs 170 and 171 · L · gate f
+#### H4 — The durable run: steps recorded, stop, `resume`, the `/.vfs/jobs` view · new spec, rewrites spec 169c · L · gate b
 
-*Why.* Theme 4 says all three tool kinds are interruptible. A host tool
-raises an interrupt; a mounted server answers `input_required`; a
-shell line stops at the stage that asked. All three produce the same
-`pending` record and resume the same way. The call is gated and can be
-suspended; the tool body still runs with the authority its trust line
-names.
-*Depends on.* H3, T3, T4, F3, M1. Adds `cli(request_key=)` to spec
+*Story.* As an agent running a shell line with several approvals in
+it, I want the line to stop at each question, keep everything it has
+already done, and continue from that point when the answer comes —
+even if the answer comes from another process tomorrow — so that a
+five-question line costs five answers and not five re-runs, and nothing
+in it ever happens twice.
+*Why.* Clay's rule of 2026-10-28. Without it a resumed line re-runs
+from the top: the replay table keeps vfs's own verbs safe, but host
+tools re-enter, guests re-execute, and every question before the last
+is asked again. With it a run is a durable job whose memory is the
+mount.
+*Depends on.* H3, F3 (the determinism law, F3 criterion 10), T2, K5
+(the row family).
+*Acceptance.*
+1. A `cli` line whose stages raise asks ends with `success=False`, one
+   `vfs.pending` error whose `data["vfs.run"]` carries `run_id`,
+   `status="stopped"` and `asks`: one ticket per open ask, each with
+   its producer, stage, description and H2 plan. Two asks raised by
+   `xargs -P 2` children in the same scheduling round appear in one
+   result (two tickets, one stop, counted); everything that could
+   finish without an answer has finished before the stop (D40).
+2. Every step completed before the stop is a recorded row: for a line
+   that completed N kernel calls and M tool calls before stopping, the
+   run ledger holds N + M step rows keyed `(run_id, stage, ordinal)`,
+   each with its `Result` (bodies offloaded by `BLOB_PAGE_BYTES`
+   pages, chunk boundaries kept).
+3. `fs.resume(run_id, authority=)` after every open ask is answered
+   serves each recorded step from the ledger — zero storage statements
+   and zero tool entries for recorded steps (spied) — and executes
+   only unrecorded steps; the resumed line's stdout, `statuses` and
+   `exit_code` equal an uninterrupted run's byte for byte. A resume
+   with an open ask still unanswered proceeds for the answered stages,
+   stops again, and reports the unanswered ticket together with any
+   new ones.
+4. The five-question line: a line whose first stage asks once, whose
+   second stage fans out into two concurrent asks, and whose third
+   stage asks twice in sequence stops exactly four times, issues
+   exactly five tickets, enters each host tool exactly once per
+   answer, and commits each mutation exactly once (version rows
+   counted). On SQLite and on each engine leg.
+5. A denied ask makes its step `vfs.permission_denied` with the
+   recorded reason; the stage exits 1; `set -e` applies as F4 pins;
+   the run completes rather than stopping again.
+6. A resumed step re-enters the gate: a right revoked between the stop
+   and the resume refuses the step; an H2 plan whose versions moved is
+   `vfs.conflict` with nothing written.
+7. Cross-process: a line stopped through one `DatabaseStorage` resumes
+   through a second over the same SQLite file and through the sync
+   facade (X1); the run and its steps are rows in the mount's schema;
+   on each engine leg.
+8. `ls /.vfs/jobs` lists the caller's stopped runs; `cat
+   /.vfs/jobs/<run_id>/asks/<ticket>` renders the ask with its H2
+   block; `…/steps` lists the recorded steps; another authority's read
+   is `not_found`; a `write` into the view is `vfs.invalid` naming
+   `answer`; reads make zero tool calls. `/.vfs/run/<id>` (T2) is
+   served from the same rows.
+9. Budget and TTL (D43): a run whose recorded bodies exceed
+   `RUN_LEDGER_BYTES` keeps recording every mutating step and every
+   tool result, stops recording read results, and a resume re-executes
+   those reads (statements counted) with `replayed_reads=N` on the run
+   row; a stopped run past its TTL answers `resume` with `pending` and
+   `expired=True`; `sweep` reclaims run, step and ask rows past the TTL
+   in chunks of `membership_budget` (rows counted).
+10. `cancel(run_id)` (H6) marks the run and every open ask; `resume`
+    then answers `vfs.cancelled`.
+11. `resume`, `cancel` and the `/.vfs/jobs` head join K9's frozen
+    list; T1's served-heads pin gains `jobs`; `RUN_LEDGER_BYTES` is one
+    declared constant with its number in the docs.
+
+#### H5 — Interrupts for every tool kind: host tools, Python guests, MCP elicitation · amends specs 170, 171, 172 · L · gate b
+
+*Story.* As a software developer who already has LangChain tools, an
+MCP server and a Python script, I want each of them to be able to stop
+and ask from inside a vfs run and continue from the same point, so
+that one approval flow covers everything an agent can run, not just
+vfs's own verbs.
+*Why.* Theme 4 says all three tool kinds are interruptible. A host
+tool raises an interrupt; a mounted server answers `input_required`; a
+guest's door call asks; a shell stage stops at the step that asked.
+All produce the same ask record and resume through H4. The call is
+gated and can be suspended; the tool body still runs with the
+authority its trust line names.
+*Depends on.* H4, T3, T4, T5, M1. Adds `cli(request_key=)` to spec
 171's `cli` schema and to spec 177's verb list (an additive name).
 *Acceptance.*
 1. A host tool that raises `Interrupt(payload)` ends its stage with
-   exactly one `vfs.pending` error carrying `payload`, `stage`,
-   `program`, exit code 75 (`EX_TEMPFAIL`, D12), `success is False`;
-   the tool was entered exactly once (spied); zero verbs ran after it.
-   A host framework's own interrupt type registered as such
-   (LangGraph's) is caught by the tool door and converted to the same
-   `pending` record with the framework's payload in `data`; the host
-   re-raises its own type from the payload when it wants native
-   semantics. No exception escapes `cli` unclassified.
-2. `cli(line, request_key=ticket)` with a live allowance re-runs the
-   line once with the answer as the tool's resume value; a spent
-   allowance is `pending` again.
-3. A mounted server on the vendored 2026-07-28 schema answering
-   `input_required` yields `pending` with `inputRequests` and the
-   opaque `requestState`; the resume re-sends `tools/call` with
+   exactly one ask carrying `payload`, `stage`, `program`, exit code 75
+   (`EX_TEMPFAIL`, D12); zero verbs ran after it in that stage. A host
+   framework's own interrupt type registered as such (LangGraph's) is
+   caught by the tool door and converted to the same ask with the
+   framework's payload in `data`; the host re-raises its own type from
+   the payload when it wants native semantics. No exception escapes
+   `cli` unclassified.
+2. On resume the interrupted tool is re-entered once; its `Interrupt`
+   calls return the recorded answers in order (LangGraph's rule); a
+   tool that raises a second, new interrupt stops the run again with a
+   new ticket; vfs verbs the tool made through its `Fs` before the
+   interrupt are H4 steps and are not re-issued (zero statements,
+   spied). The how-to says in one line that host-side effects placed
+   before an interrupt run again, as LangGraph's docs say of theirs.
+3. The Python guest (T5): every host import — the door call, `clock_
+   time_get`, `random_get`, `args_get`, `environ_get` — is an H4 step.
+   A guest stopped at a door call that asked is, on resume,
+   instantiated again and replayed to the ask from the ledger (door
+   calls served with zero storage statements; the two clock reads
+   return the recorded values), then continues; the pandas job with one
+   ask in its middle instantiates the guest exactly twice, issues each
+   verb to storage once, and prints the same output as an
+   uninterrupted run. The docs say the guest's CPU work before the ask
+   runs again (D42 names the memory snapshot as the 0.2 upgrade).
+4. A mounted server on the vendored 2026-07-28 schema answering
+   `input_required` yields an ask with `inputRequests` and the opaque
+   `requestState`; the resume re-sends `tools/call` with
    `inputResponses` and the same `requestState` exactly once (spied);
-   the interim result is never cached.
-4. A pipeline `producer | interrupting_tool | consumer` ends with the
-   consumer having received zero chunks, the producer cancelled with
-   `vfs.cancelled` at info severity, stdout emitted before the stop
-   kept, and `statuses` marking the pending stage; a resumed line
-   re-runs from the start, which spec 177's replay table makes safe
-   for vfs's own verbs. (The pipe cannot checkpoint: asyncio queues,
-   Rust kernel state and wasm instances are not serialisable, and the
-   wire's `cli` is stateless by decision.)
-5. A `cli` line whose first mutating stage the policy hook suspends
-   carries the H2 plan of that stage and marks later stages "not run".
+   the interim result is never cached. Spec 170 §4's elicitation row
+   flips from `vfs.unsupported` 126 to `vfs.pending` 75 and T4's pin
+   is updated here.
+5. A pipeline `producer | interrupting_tool | consumer` stops with the
+   consumer having received the chunks the producer emitted before the
+   stop and no more, the producer drained to completion or to its own
+   stop (D40), stdout emitted before the stop kept, and `statuses`
+   marking the pending stage; the resumed line delivers the recorded
+   chunks to the consumer in the same boundaries.
+6. A `cli` line whose first mutating stage the policy hook suspends
+   carries the H2 plan of that stage; later stages are marked "not
+   run".
+7. The same five-question line as H4 criterion 4, with one host tool,
+   one guest and one policy-suspended verb among its askers, stops
+   four times and runs each thing once.
 
-#### H5 — Cancellation and deadlines as kernel facts · spec 051 rewritten · M · gate f
+#### H6 — Cancellation and deadlines as kernel facts · spec 051 rewritten · M · gate f
 
+*Story.* As a software developer running vfs over several mounts, I
+want a slow or hung mount to cost me a bounded wait and a classified
+error instead of a stalled query, and I want to be able to cancel a
+stopped run, so that one bad backend or one abandoned question cannot
+hold a host.
 *Why.* `timeout` and `cancelled` are reserved and unproduced; one hung
 remote mount stalls every namespace-wide query; a front that catches
 cancellation has no classified shape to return.
@@ -658,8 +871,8 @@ cancellation has no classified shape to return.
 2. A deadline on a mutation is refused `vfs.invalid` before any
    statement (lean), counted.
 3. An outer `CancelledError` still re-raises untouched.
-4. `cancel(ticket)` marks a pending ledger row and the next re-send is
-   `vfs.cancelled`.
+4. `cancel(ticket)` marks a pending ask and the next re-send is
+   `vfs.cancelled`; `cancel(run_id)` marks the run (H4 criterion 10).
 5. With no deadline configured, statement counts are identical to
    today on every leg.
 
@@ -1108,13 +1321,18 @@ time with a classified `unsupported.construct` naming the construct
 and its position. The README publishes one coverage number with its
 denominator: spec 167's harness rate on the synthesized corpus (F5).
 
-**What "fully functional" means here, honestly.** Not bash. The nine
+**What "a meaningful portion of bash" means here, honestly** (Clay,
+2026-10-28: not 100% of bash, but a meaningful portion). The nine
 commands that make 86% of agent pipeline segments in the measured
 corpus of 12,627 real calls (the 2026-10-15 memo §2), pipes in 74% of
 calls, `&&` in 44%, control flow under 10%. Every program keeps its
 Unix name and GNU flag semantics. `awk` (the largest hole, 331
 measured uses) needs a wasm host and is out of 0.1.0 unless D22 says
-otherwise. `git`, `docker`, `uv`, `sudo` never run and say so.
+otherwise. `git`, `docker`, `uv`, `sudo` never run and say so. Loops, functions
+and arithmetic are not grammar; they are the Python guest's job (T5),
+and `type for` says so. The shell is also the executor of the durable
+run (H4): it numbers every call it makes, and that numbering is what
+lets a stopped line continue where it stopped.
 
 ### State today
 
@@ -1183,6 +1401,12 @@ renders empty, `to_payload` inlines base64 without bound, and the dead
 8. `MANAGEMENT_METHODS` moves from `tests/test_ops.py` to `ops.py`
    and `cli` registers in `OpGroup` as `derived`.
 9. The slice-C battery is parametrized over the engine legs.
+10. The determinism law (H4's seam): the executor keys every kernel
+    call and tool call it makes as `(stage, ordinal)`; two executions
+    of the same line over the same world produce the same key
+    sequence per stage and the same chunk boundaries (recorded by a
+    spy, compared as lists), and the keys never depend on scheduling
+    order across stages.
 
 #### F4 — The program forms, `replace=`, `glob(case_mode=)`, `set -e`, the never table · spec 167 D · L · gate b
 
@@ -1207,7 +1431,7 @@ renders empty, `to_payload` inlines base64 without bound, and the dead
 
 #### F5 — The coverage harness and `docs/reference/shell.md` · spec 167 E · M · gate f
 
-*Depends on.* F4; H4 and F6 for exit rows 75 and 123.
+*Depends on.* F4; H5 and F6 for exit rows 75 and 123.
 *Acceptance.*
 1. The harness reports parse, resolve, flag and run rates on the
    synthesized corpus; the in-scope run rate is at least 85%; the
@@ -1254,9 +1478,10 @@ way.
 Every tool is a *path* an agent can see, grant and call. `cat` of a
 tool shows its manifest and never runs it (the mcpfs lesson: `stat`
 never executes). A tool runs only when typed as a command. The call is
-gated and can be suspended (H4); the tool body runs with the authority
+gated and can be suspended (H5); the tool body runs with the authority
 its trust line names. At 0.1.0 the installable kinds are skills and
-host tools; wasm programs are 0.2.
+host tools; the Python guest (T5) is in 0.1.0; generic wasm programs
+are 0.2.
 
 ### State today
 
@@ -1300,8 +1525,8 @@ afternoon each and becomes T4's first tasks.
 returns the output and `…/status` names the program and
 `content_hash`; another authority's read is `not_found`; eviction by
 count (64) and bytes (64 MiB) is counted. Records are per process at
-0.1.0 and the docs say links may not resolve across HTTP workers (rows
-in 0.2).
+this landing; H4 moves them to rows in the mount's schema (the run
+ledger) and updates this pin, so links resolve across HTTP workers.
 
 #### T3 — Host tools as files: `ToolView`, the schema-to-flags table, `_invoke` · spec 170 §1–2 · L · gate b
 
@@ -1346,7 +1571,7 @@ in 0.2).
 2. Every row of the failure map produces its kind and exit: `-32602` →
    `vfs.invalid` 2; `-32601` → `vfs.not_found` 127; transport →
    `vfs.unavailable.backend` 1; wall → `vfs.timeout` 124; elicitation →
-   `vfs.unsupported` 126 at this landing (spec 170 §4); H4 flips that
+   `vfs.unsupported` 126 at this landing (spec 170 §4); H5 flips that
    row to `vfs.pending` 75 and updates this pin.
 3. `ls /.vfs/bin` twice in one `cli` call issues one `tools/list` per
    server (per server and principal once I4 lands); inside the list
@@ -1360,14 +1585,19 @@ in 0.2).
 6. Credentials never appear in the environment of a spawned stdio
    server.
 
-#### T5 — The Python guest over wasi-python · spec 172 rewritten, ADR 086 amended · M · gate a (stretch; not a gate)
+#### T5 — The Python guest over wasi-python · spec 172 rewritten, ADR 086 amended · M · gate b
 
-*Why.* The mechanism is proven twice (spike 173; the 2026-10-23 memo
-ran wasi-python 0.1.0 over a vfs `Session` through public APIs only).
-What remains is a thin adapter behind `vfs-py[python]`. It ships when
-ready (D23).
+*Story.* As an agent, I want to run a Python script — with numpy and
+pandas — over the files I can see, as me, with every file call passing
+the gate, so that the loops and logic the shell refuses have a home
+and a script cannot reach anything the shell cannot.
+*Why.* Python is in 0.1.0 (Clay, 2026-10-28; D23 decided). The
+mechanism is proven twice (spike 173; the 2026-10-23 memo ran
+wasi-python 0.1.0 over a vfs `Session` through public APIs only). What
+remains is a thin adapter behind `vfs-py[python]`, and the step
+recording H5 needs: every host import is one call through one door.
 *Depends on.* F3, F4, T1; ADR 086 pins 1, 2, 4, 6, 7 rewritten from the
-memo.
+memo. H5 adds the guest's asks.
 *Acceptance.*
 1. `python3 -c "import numpy, pandas"` runs with zero host preopens
    beyond the runner's stdlib zip and zero vfs grants.
@@ -1394,7 +1624,7 @@ duplicates a preview1 host wasi-python's runner already owns. D22.
 A caller with no credential for a server that returns 401 gets
 `pending` carrying the authorization URL; completing the ledger entry
 with the callback's code mints the token record for that principal.
-An interrupt by construction; after H4 and I4.
+An interrupt by construction; after H5 and I4.
 
 ---
 
@@ -1486,7 +1716,7 @@ or a verifier.
 
 #### M3 — `pending` on the wire · amends spec 171 scope · M · gate f
 
-*Depends on.* H3, H4, M1.
+*Depends on.* H3, H4, H5, M1.
 *Acceptance.*
 1. `serve()` surfaces `pending` as the protocol's `input_required`
    with an integrity-protected `requestState` carrying the principal,
@@ -1495,9 +1725,14 @@ or a verifier.
    `vfs.invalid` with zero handler calls (spied); a client on a
    revision without `input_required` gets the `pending` text and
    payload as a `complete` error result.
-2. A resumed `tools/call` with `inputResponses` re-enters the gate from
-   the top and runs once.
-3. A suspended `cli` line does not become a task at 0.1.0 (D25).
+2. A resumed `tools/call` with `inputResponses` resumes the run (H4):
+   recorded steps are served from the ledger and the stopped step
+   re-enters the gate and runs once.
+3. `answer` and `resume` are exposed as two tools carrying the
+   request's principal (I2), so a run stopped over the wire can be
+   continued over the wire by an authorised approver.
+4. A suspended `cli` line does not become an MCP task at 0.1.0 (D25);
+   the client polls `/.vfs/jobs`.
 
 ---
 
@@ -1548,7 +1783,7 @@ is documented as SQLite-only until pinned.
    the management allowlist (`MANAGEMENT_METHODS`, promoted to `ops.py`
    here if F3 has not yet), that the sync signature equals the async
    one, and `SyncSession` matches `Session`; the parity test is the
-   one place later verbs (`cli`, `versions`, `answer`) must pass, so it
+   one place later verbs (`cli`, `versions`, `answer`, `resume`, `cancel`) must pass, so it
    fails loudly when a verb joins `Session` without a sync twin.
 4. A sync call issued from the facade's own loop thread returns a
    classified `vfs.invalid` naming the deadlock, never hangs.
@@ -1775,7 +2010,7 @@ D6's items 2–3; listed here because it is the lane's final gate.
    to `specs/archive/` with landing notes; their stale "uncommitted"
    lines are corrected first.
 2. Spec 161 is dropped (its write half landed with the tombstone
-   mint; its read half is K8); spec 051 is replaced by H5; spec 102 is
+   mint; its read half is K8); spec 051 is replaced by H6; spec 102 is
    closed as overtaken by the tombstone delete or re-cut against
    `move`/`copy` at 10k; spec 080 is tagged per D3.
 3. `STATUS.md` is replaced by a table of at most 60 lines (spec,
@@ -1785,6 +2020,9 @@ D6's items 2–3; listed here because it is the lane's final gate.
    amended or withdrawn; pending leans are zero before `0.1.0b1`.
 5. `open-questions.md` entries resolved by landed work move to the
    archive; the "what makes 0.1.0 final" entry is answered by D2.
+6. CLAUDE.md's *Production posture* names three audiences — agents,
+   software developers building the host, ETL developers — in the
+   words of §1.2; `spec 051` is replaced by H6.
 
 #### R8 — `SECURITY.md` and `THREAT_MODEL.md` · S · gate b
 
@@ -1827,14 +2065,14 @@ batch are independent unless an arrow says otherwise.
 | **a2** — the three defects and the two ADRs | K1, H1 → K2, K3, K5; F1, F2; I6; X7; R8; K1, H1 → R6, R7 | The ADRs first: eight specs and every interrupt story stand on them. K2/K3/K5 close the three live defects. F1/F2 are small and independent. |
 | **a3** — the filesystem arguments, the lifecycle, the facade | K4, K6 → K9; H2; I3a; D1, D2 → D3; D4; E1, E2, E3, E5; X1 → X2; X6; I5 | Cursor, range, the regroup and the freeze list. `plan=` rides the write seam. Storage lifecycle and the matrix. Search defaults. The sync facade. |
 | **a4** — the interrupt and the shell | H3; F3 → F4; I1; E4 | H3 depends on H1, H2 and K5 only, so Clay's first theme lands here, not last. The pipe and the forms are the long pole. |
-| **a5** — tools and the front | T1 → T2 → T3 → I3b → T4; I2; M1 → M2 | Views, host tools, servers, the adapter, the one-line serve. |
-| **a6** — interrupts for every kind | H4 → M3; I4; H5 | The ledger reaches tools and the wire. |
+| **a5** — tools, Python and the front | T1 → T2 → T3 → I3b → T4; T1 → T5; I2; M1 → M2 | Views, host tools, servers, the Python guest, the adapter, the one-line serve. |
+| **a6** — the durable run and interrupts for every kind | H4 → H5 → M3; I4; H6 | The run ledger; then tools, guests and the wire stop and resume through it. |
 | **b1** — freeze | R5 (after every `b` story above) | Nothing after b1 renames or removes a public name. |
-| **beta → final** | K7, K8; D6/R4, D7; E6; F5, F6; X3, X4, X5; R9; T5 if ready | Proof on every leg, docs, the bench. |
+| **beta → final** | K7, K8; D6/R4, D7; E6; F5, F6; X3, X4, X5; R9 | Proof on every leg, docs, the bench. |
 | **0.1.0** | A beta held ≥ 14 days; D6/R4 green from the wheel; every `f` story landed. | |
 
 **Critical path, in one line:** K1 → K2 → F3 → F4 → T1 → T3 → I3b →
-T4 → M1 → H4. Five L or XL items in series.
+T4 → M1 → H4 → H5. Seven L or XL items in series.
 
 **The arithmetic.** On the page's own scale (S ≤ 1 day, M 2–4 days, L
 1–2 weeks, XL > 2 weeks), the batches sum to about:
@@ -1845,10 +2083,10 @@ T4 → M1 → H4. Five L or XL items in series.
 | a2 | 2 L, 3 M, 7 S | 5–8 weeks |
 | a3 | 9 M, 8 S | 5.5–9.5 weeks |
 | a4 | 1 XL, 2 L, 2 M | 5–9+ weeks, F3 → F4 serial |
-| a5 | 4 L, 2 M, 2 S | 5.5–10.5 weeks, mostly serial |
-| a6 | 1 L, 3 M | 2.5–5 weeks |
-| beta → final | 1 L, 8 M, 4 S | 6–11 weeks |
-| **Total** | | **about 30–55 weeks** |
+| a5 | 4 L, 3 M, 2 S | 6–11.5 weeks, mostly serial |
+| a6 | 2 L, 3 M | 3–6.5 weeks, H4 → H5 serial |
+| beta → final | 1 L, 7 M, 4 S | 5.5–10 weeks |
+| **Total** | | **about 31–57 weeks** |
 
 Measured throughput from the spec archive (status lines "landed
 2026-MM"): July 20, August 44, September 8, October 7 specs a month.
@@ -1862,29 +2100,32 @@ one structural option (D2).
 **Cut order if capacity binds** (first cut first; each keeps a promise
 sentence true or moves a half-deferred theme whole):
 
-1. T5 out of the beta entirely (already not a gate).
-2. F6's Rust port → 0.1.x; ship `sort uniq tr tee` and `xargs` as
+1. F6's Rust port → 0.1.x; ship `sort uniq tr tee` and `xargs` as
    Python transforms inside F4. No name changes.
-3. H5 → 0.2 except `cancel(ticket)` (S).
-4. M3's `input_required` mapping → 0.2; ship only its fallback (the
-   `pending` text and payload as a `complete` error result). H3's
-   LangGraph host does not need the wire mapping.
-5. K7 → keep the atomic-unit pin (criterion 1, as a D4 pin) and the
+2. H6 → 0.2 except `cancel(ticket)` and `cancel(run_id)` (S).
+3. M3's `input_required` mapping → 0.2; ship only its fallback (the
+   `pending` text and payload as a `complete` error result) and the
+   `answer`/`resume` tools. H3's LangGraph host does not need the wire
+   mapping.
+4. K7 → keep the atomic-unit pin (criterion 1, as a D4 pin) and the
    trait; move crash injection, `engine_error` and `features()` to
    0.1.x.
-6. D7 → 0.1.x; document `engine_kwargs` pass-through in D3's how-to.
-7. H4's MCP-elicitation leg → 0.2; keep the host-tool interrupt and
-   the shell stage.
-8. T4's supervisor and respawn → 0.1.x; in-process and plain stdio
+5. D7 → 0.1.x; document `engine_kwargs` pass-through in D3's how-to.
+6. H5's MCP-elicitation leg → 0.2; keep the host-tool interrupt, the
+   guest's asks and the shell stage.
+7. T4's supervisor and respawn → 0.1.x; in-process and plain stdio
    only.
+8. T5's numpy/pandas bundle → 0.1.x; ship the stdlib-only guest first.
+   The guest's shape and the door do not change.
 9. **The structural option (D2, lean):** ship 0.1.0 with the shell core
-   (F3, F4) and host tools (T3), and make MCP servers as views (T4),
-   the credential seam (I4) and OAuth on demand (T7) the headline of
-   0.2, where "acting as the user" can be done whole instead of half.
-   This removes an L from the serial chain and the hardest
-   cross-process piece. Theme 4(b) then moves to 0.2 cleanly rather
-   than shipping as "one host credential per server" and being called
-   "as the user".
+   (F3, F4), host tools (T3) and the Python guest (T5), and make MCP
+   servers as views (T4), the credential seam (I4) and OAuth on demand
+   (T7) the headline of 0.2, where "acting as the user" can be done
+   whole instead of half. This removes an L from the serial chain and
+   the hardest cross-process piece. Theme 4(b) then moves to 0.2
+   cleanly rather than shipping as "one host credential per server"
+   and being called "as the user". The durable run (H4) is not a cut
+   candidate: it is what Clay's interrupt requirement means.
 
 **Where the kernel specs and the shell specs touch.** Spec 167 as
 drafted ships a racy `>>` and a `stat`-then-`write` `touch`; spec 174
@@ -1906,12 +2147,13 @@ replaces both. K2 lands before F3 (D33). The one flag name is
 | `manage` rung, group ownership, non-system membership admin | 0.2 | Parked; not needed to serve one organisation. |
 | Narrowing with content, child sessions (spec 148 §1–4) | 0.2 | `Narrowing.NONE` is honest; sub-agents can use a second `Session`. |
 | Width-change migration (E7), tuned fusion defaults, render at write (159), images (152 C), `imports` edges (147), signals on by default | 0.2 unless D21 | Independent of theme 3. |
-| `/.vfs/run` records as rows; `/.vfs/jobs`; MCP tasks for long `cli` lines; a `/.vfs/mounts` view | 0.2 | Per-process records are honest at 0.1.0 and documented. |
+| MCP tasks for long `cli` lines; a `/.vfs/mounts` view | 0.2 | A stopped run is polled through `/.vfs/jobs` at 0.1.0 (D25). |
+| A memory snapshot of a stopped guest, so a resume skips the guest's CPU work | 0.2 | Replay from recorded imports is correct and simpler (D42); the snapshot is an optimisation. |
+| Answering an ask by writing a file under `/.vfs/jobs` | 0.2 | `answer` is the one door at 0.1.0; the views stay read-only (T1). |
 | A public per-call statement counter on `Result` | 0.2 | Tests already count; a host-facing counter is a later seam. |
 | A local-disk storage backend; a change feed; OpenTelemetry spans; an object-store data plane; reference adapters for host frameworks | 0.2+ | The wedge is "the database you already run"; adapters need `serve()` first. |
 | FUSE or NFS fronts | later | A facet by ADR 087; the copy never promises it. |
 | Diff/cmp kernels (168c); the Rust port of 168a if cut | 0.1.x | Can slip without changing a name. |
-| The WASI Python guest (T5) | 0.1.x if not ready at b1 | Stretch; behind an extra; not a gate. |
 
 ---
 
@@ -1922,7 +2164,7 @@ A lean is the assistant's recommendation, not a decision.
 | # | Decision | Lean | Needed by |
 |---|---|---|---|
 | D1 | `0.1.0a1` ships the tree as it stands, decoupled from spec 167? | Yes; the shell is a4. | a1 |
-| D2 | What makes `0.1.0` final, and what does the beta freeze forbid? Options: (i) the held-beta bar alone; (ii) the bar plus the full `f` gate on this page; (iii) the bar plus the gate with the structural cut of §14 item 9 (shell core and host tools in; MCP servers as views, the credential seam and OAuth to 0.2). The freeze: no rename, removal or change of meaning; additions allowed and listed. | (iii), with the additive freeze rule. | before b1 |
+| D2 | What makes `0.1.0` final, and what does the beta freeze forbid? Options: (i) the held-beta bar alone; (ii) the bar plus the full `f` gate on this page; (iii) the bar plus the gate with the structural cut of §14 item 9 (shell core, host tools and the Python guest in; MCP servers as views, the credential seam and OAuth to 0.2). The freeze: no rename, removal or change of meaning; additions allowed and listed. | (iii), with the additive freeze rule. | before b1 |
 | D3 | MariaDB: first tier, second tier (served, in CI, no ANN, per-row updates documented), or dropped? | Second tier. | D1 |
 | D4 | ADR 087 pin 3: keep `delete`/`move`, or rename `remove`/`rename`? | Keep. | K1 |
 | D5 | ADR 087 pin 16: flat names, or kernel groups as namespaces? | Flat. | K1 |
@@ -1932,7 +2174,7 @@ A lean is the assistant's recommendation, not a decision.
 | D9 | Amend ADR 084 pin 4 so vfs *carries* `pending` (never asks, never blocks)? | Yes. | H1 |
 | D10 | `pending`'s shape: top-level `vfs.pending` with a derived retry class `resume`, or a child of `permission_denied`? Ledger in the mount's schema? TTL? | Top-level; the mount's schema; 24 h. | H1 |
 | D11 | ADR 087 pin 10: withhold `idempotentHint` from a tool whose verb has one non-idempotent form? | Withhold. | K5, M1 |
-| D12 | The exit code for a suspended shell stage (this page's proposal; no spec carries it). | 75 (`EX_TEMPFAIL`). | H4 |
+| D12 | The exit code for a suspended shell stage (this page's proposal; no spec carries it). | 75 (`EX_TEMPFAIL`). | H5 |
 | D13 | Spec 149: ignore a `groups` claim? | Ignore. | I1 |
 | D14 | Spec 149: add an `attested` provenance? | Add it. | I1 |
 | D15 | What "open" means on the ladder for `serve()`'s refusal (ADR 068 rule 7, after ADR 080 retired the old words). | Refuse when any mount's root everyone-level is `add` or above. | I2 |
@@ -1943,7 +2185,7 @@ A lean is the assistant's recommendation, not a decision.
 | D20 | Default local embedder: amend ADR 060 to model2vec potion, or build fastembed/MiniLM? | Amend; keep fastembed as a documented LangChain route. | E1 |
 | D21 | Render at write (159) in 0.1.0? | No, unless the first served pilot hits it. | E8 |
 | D22 | A generic wasm host for `awk`, or ship without? | Ship without; refuse with a hint; ask wasi_python in parallel. | T6 |
-| D23 | The Python guest: gate, stretch, or 0.2? | Stretch behind `vfs-py[python]`. | b1 |
+| D23 | The Python guest: gate, stretch, or 0.2? | **Decided** (Clay, 2026-10-28): in 0.1.0, gate b, behind `vfs-py[python]`. | — |
 | D24 | Reverse spec 171 decision 7: ship `vfs serve` and `python -m vfs.mcp`? | Yes. | M2 |
 | D25 | A suspended `cli` line as an MCP task at 0.1.0? | No. | M3 |
 | D26 | Sync facade: thread-loop (no dependency) or `anyio` portal? | Thread-loop. | X1 |
@@ -1960,6 +2202,11 @@ A lean is the assistant's recommendation, not a decision.
 | D37 | A precondition argument on every mutating verb now (H2 full form, size L) or stat-at-apply with a documented window? | Stat-at-apply at 0.1.0. | H2 |
 | D38 | A `/.vfs/mounts` view? | No; `mounts()` is the API. | T1 |
 | D39 | This page lives at `context/standards/roadmap.md` and the root `ROADMAP-v0.1.0.md` is deleted? | Yes. | R6 |
+| D40 | When one step asks, does the run stop at once, or drain first — let every stage that can finish without the answer finish, so asks that are raised together are surfaced together? | Drain, then stop. A stop collects every ask raised in that round. | H4 |
+| D41 | What a run records: every step (reads too, so a resume issues no statements for finished work), or only effects (mutations and tool calls), with reads re-executed on resume? | Every step within `RUN_LEDGER_BYTES`; past the budget, effects always, reads re-executed and counted. | H4 |
+| D42 | How a stopped Python guest resumes: re-instantiate and replay its recorded host imports to the ask (correct; the guest's CPU work before the ask runs again), or snapshot its linear memory? | Replay at 0.1.0; snapshot in 0.2. | H5 |
+| D43 | The run ledger's budget and TTL. | `RUN_LEDGER_BYTES` = 64 MiB per run (spec 169c's number); TTL 24 h, the same sweep as the ask ledger. | H4 |
+| D44 | The API shape: `answer(ticket, …)` per ask plus `resume(run_id)` per run (answers can arrive one at a time, from different approvers, from different processes), or one `resume(run_id, answers={…})`? | `answer` per ask and `resume` per run; a bare verb's ticket is its run id, so `request_key=ticket` stays as the one-step resume. | H3, H4 |
 
 ---
 
@@ -1967,8 +2214,9 @@ A lean is the assistant's recommendation, not a decision.
 
 Ship `0.1.0a1` this week from the tree as it is; ratify the kernel and
 the interrupt; close the three live defects; land the cursor, the range,
-the preconditions and `plan=`; make the interrupt real; build the shell,
-then the tools, then the front; freeze when every public name is written
+the preconditions and `plan=`; make the interrupt real and the run
+durable, so a stopped line continues where it stopped; build the
+shell, then the tools and the Python guest, then the front; freeze when every public name is written
 down; call it `0.1.0` when a beta has held and the engines pass from the
 wheel — and decide now whether MCP servers as views ride 0.1.0 or lead
 0.2.
