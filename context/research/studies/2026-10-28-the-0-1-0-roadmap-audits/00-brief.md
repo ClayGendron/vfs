@@ -53,3 +53,4 @@ structure; a bash-like CLI composing through the public APIs.
 
 Paths inside the files that begin with `/tmp/…/scratchpad/` were the
 auditors' working directory; the files now live here.
+| 11 | `11-review-fact-check.md` | fact-check of every checkable claim in the draft | ten corrections (24 error kinds; 6 of 9 examples; `awk` 331 uses; 35–49 statements for the 10k write; four names that are spec proposals, not live code); every cited ADR pin and spec status confirmed |
