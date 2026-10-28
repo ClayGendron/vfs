@@ -22,7 +22,9 @@
   and the decision record, then three reviews of the first draft (a PM
   review, an acceptance-criteria review, a fact-check). All eleven
   files are in
-  `../research/studies/2026-10-28-the-0-1-0-roadmap-audits/`. Every
+  `../research/studies/2026-10-28-the-0-1-0-roadmap-audits/`; a fourth
+  review, of the durable-run design (file 12), shaped the third
+  revision. Every
   claim there is labelled READ, EXECUTED or INFERRED; this page repeats
   the executed findings where they bind a story. Nothing on this page
   is a decision; §16 lists the decisions Clay must make, each with a
@@ -367,7 +369,8 @@ resumption token for H3; one value serves replay and resume.
    `vfs.unsupported`.
 5. A 10,000-row keyed `write` stores its answer paged by
    `BLOB_PAGE_BYTES`; `sweep` deletes replay rows older than the TTL
-   in chunks of `membership_budget` (rows counted); it does not page.
+   (rows counted) with the two whole statements spec 177 §4 names
+   until spec 180's bounded sweep lands; it does not page.
 6. A fault at the `mutate:after-commit` seam answers
    `vfs.unavailable.in_doubt` (retry class `refresh`); one inside the
    statement answers `vfs.unavailable.backend` (retryable).
@@ -506,8 +509,8 @@ that line from the top after each answer. It picks up where it left
 off.
 
 Here is how. As a run goes, vfs writes down each step as it finishes —
-which step, what it returned — in the mount, in the same row family as
-the replay store. When a step needs a human, vfs lets everything that
+which step, what it returned — in the root mount's database, in a
+table beside the replay store. When a step needs a human, vfs lets everything that
 can finish without the answer finish, writes down every open question,
 and stops. The `Result` says: this run, stopped, these questions open.
 The host asks. Answers can arrive one at a time, from different people,
@@ -524,7 +527,26 @@ run model needs: the shell numbers every call it makes (stage, ordinal
 within the stage) and the numbering is a function of the parsed line
 and the recorded inputs, never of timing. ADR 081's static grammar and
 ADR 084's static parse already make the shell deterministic; this rule
-names it and pins it (F3).
+names it and pins it (F3). Two things could break the walk, and both
+are handled. A consumer that closes early (`head`) can leave a
+producer's last read either issued or not, so the law is stated up to
+the point the consumer consumed. And some reads *are* inputs to the
+walk — a `glob` decides how many operands a stage has, a `$( )`
+becomes an argument — so those reads are always recorded, whatever
+the budget, and a read that is re-executed on resume is checked
+against the hash that was recorded; if the world moved, the run says
+so instead of walking a different line.
+
+Three more rules keep it honest. A resumed step runs as the authority
+that started the run, re-judged by the gate; an approver can let a
+run continue, never lend it their rights. An effectful step is
+claimed in the ledger before it is entered, so a crash in the middle
+of a tool call leaves a row that says "in doubt", and the resume asks
+the host instead of entering the tool again. And code vfs does not
+own — a host tool, a Python guest — is re-entered from the start, with
+the vfs calls it already made served from the ledger as long as they
+are the same calls; if the code took a different path, the differing
+call is made fresh and marked, never answered with a stale result.
 
 This is how durable-workflow engines work. Temporal replays a workflow
 from its event history and never re-runs a completed activity; DBOS
@@ -572,7 +594,7 @@ from where it stopped, and nothing runs twice.
 | `pending` kind, ticket, ledger, resume | missing (spec 148 seed; ADR 063 rule 5 accepted) |
 | A dry-run form on any verb | missing (the plan seam exists inside `writes.py`) |
 | A host policy hook before dispatch | missing |
-| A run ledger: steps recorded, stop, resume | missing (spec 169c's per-process `/.vfs/run` record is the seed; spec 177's replay store is the row family) |
+| A run ledger: steps recorded, stop, resume | missing (spec 169c's per-process `/.vfs/run` record is the seed; spec 177's replay store is the neighbouring table) |
 | `cancelled`, `timeout` kinds | declared, no producer in `src/` |
 | Deadline on fan-out | missing (spec 051, a stale draft since July) |
 
@@ -587,15 +609,15 @@ and I can build the asking once.
 *Why.* Two records contradict each other, and every story in this
 domain and in domains G and H depends on which wins. This ADR lands
 before specs 170 and 171 are built, or both are reopened.
-*Depends on.* Nothing. Decisions D9–D11, D40–D44.
+*Depends on.* Nothing. Decisions D9–D11, D40–D46.
 *Acceptance.*
 1. The ADR is accepted and lists its amendments: ADR 084 pin 4 and pin
    9's kind list; ADR 084 pin 1 (the hook judges the static parse,
    never the command text, and may only deny or suspend, never widen);
    ADR 063 rule 5 (a ledger row's expiry is judged at answer time and
    its reclamation by `sweep` is garbage collection, not a verdict);
-   spec 148 §5; spec 149 §5; spec 169c (records as rows); spec 170
-   §4's failure table; spec 171's scope; spec 172 (every host import
+   spec 148 §5; spec 149 §5; spec 169a's head table (`jobs` served)
+   and 169c (records as rows); spec 170 §4's failure table; spec 171's scope; spec 172 (every host import
    is a step); the glossary line; architecture page 11.
 2. `ErrorKind` gains exactly one new core kind for the suspended step
    (lean `vfs.pending`, severity error, derived retry class `resume`);
@@ -611,12 +633,16 @@ before specs 170 and 171 are built, or both are reopened.
    it completes, a stop records every open ask, and a resume re-walks
    the run serving recorded steps from the ledger and executing only
    what has not run. The ADR names the determinism law (F3), the
-   drain-then-stop rule (D40), what is recorded (D41), how a guest
-   resumes (D42) and the run's budget and TTL (D43).
-5. The run ledger, the ask ledger and the replay store are one row
-   family in the mount's schema, swept with the trash, so a resume can
-   arrive at a different process; the ADR names the TTL (lean 24 h,
-   spec 177's).
+   drain-then-stop rule (D40), what is recorded (D41), how a guest or
+   tool resumes (D42), where the ledger lives and its budget and TTL
+   (D43), whose authority a resume runs under (D45) and what a crash
+   leaves behind (D46).
+5. The run ledger and the ask ledger are tables of their own in the
+   *root binding's* schema, beside the replay store and swept by its
+   arm, so a resume can arrive at a different process; they keep
+   failed `Result`s and may carry bodies, which the replay store does
+   not (spec 177 §3), and the ADR says so; the ADR names the TTL (lean
+   24 h, spec 177's).
 
 #### H2 — `plan=`: every mutating verb can preview the world after · new spec · M · gate b
 
@@ -686,7 +712,9 @@ and re-sending the call with the ticket is its resume (H4 adds
    `allow`, `deny(kind, message)` or `pending(reason)`. The hook runs
    after the gate's structural checks and before storage: a call the
    gate would refuse never reaches it (zero hook calls on a
-   `permission_denied` call, counted).
+   `permission_denied` call, counted). The ask ledger is consulted in
+   the router *ahead of* the hook: a re-send carrying an answered
+   ticket skips the hook (zero hook calls, counted) and proceeds.
 2. A hook answer of `pending` makes the call return `success=False`,
    one `vfs.pending` error whose `data["vfs.interrupt"]` carries
    `ticket`, `run_id` (equal to the ticket for a bare verb), `digest`,
@@ -705,9 +733,12 @@ and re-sending the call with the ticket is its resume (H4 adds
    attributed (actor and subjects). `answer(ticket, allow=False,
    reason=)` records a denial. `Session.answer` does not exist.
 5. Re-sending the identical call with `request_key=ticket` proceeds
-   once and commits; a second re-send is `pending` again (one-shot
-   spent); a changed argument has a different digest and is not
-   admitted; a denied ticket answers `vfs.permission_denied` with the
+   once and commits; a second re-send is a replay hit — the first
+   answer with a `vfs.replayed` record and zero mutation statements
+   (spec 177 §3) — never a second run and never `pending` again; two
+   concurrent re-sends are serialised by the claim-first insert on
+   the ticket row (one commit, one replay hit, counted); a changed
+   argument has a different digest and is not admitted; a denied ticket answers `vfs.permission_denied` with the
    recorded reason; a ticket past its TTL is `pending` with
    `expired=True` at re-send time; `sweep` reclaims rows past the TTL
    (rows counted).
@@ -733,63 +764,109 @@ from the top: the replay table keeps vfs's own verbs safe, but host
 tools re-enter, guests re-execute, and every question before the last
 is asked again. With it a run is a durable job whose memory is the
 mount.
-*Depends on.* H3, F3 (the determinism law, F3 criterion 10), T2, K5
-(the row family).
+*The rules the criteria pin.* (i) **Whose run.** The run row stores
+the authority that started it; every resumed step runs under *that*
+authority, re-derived and re-judged by the gate. `resume(run_id,
+authority=)` only decides who may continue the run: its owner, or an
+approver who holds `read_write` on every path the open asks name. A
+resume never widens and never narrows what the line runs as. (ii)
+**What is recorded.** Every effect (a mutating verb, a tool call, a
+`tools/call`), every *expansion read* the walk depends on (`glob`,
+`$( )`, `find`, `cd`'s `stat`, `test`), and the identity triple
+`(entry_id, version, content_hash)` of every other read. Bodies are
+recorded only where a guest or a tool consumed them, within
+`RUN_LEDGER_BYTES`; a pipe stage's body read is re-executed on resume
+and checked against its triple (D41). (iii) **Crashes.** An effectful
+step is *claimed* — its row inserted with status `running` — before
+the tool is entered or the statement issued (spec 177's claim-first
+shape). A resume that meets a `running` row does not re-enter it: the
+step is `vfs.unavailable.in_doubt` and the run stops with that ask for
+the host. So: kernel verbs at most once; host and MCP tools at most
+once when stopped cleanly, in doubt after a crash, never silently
+twice. (iv) **Where.** The run, step and ask rows live in the *root
+binding's* storage, like grants on `/.vfs` paths; a root without the
+`replay` trait refuses a line's first ask `vfs.unsupported`. (v)
+**Drain, then stop** (D40), per pipeline: the stages of the pipeline
+that asked run until each is finished or waiting; a suspended stage's
+consumer sees neither data nor end-of-stream, so `head` neither closes
+nor completes; later `;` and `&&` statements are not run.
+*Depends on.* H3, F3 (the determinism law, F3 criterion 10), T2 (the
+rows), K5 (the claim-first shape and the fingerprint).
 *Acceptance.*
 1. A `cli` line whose stages raise asks ends with `success=False`, one
    `vfs.pending` error whose `data["vfs.run"]` carries `run_id`,
    `status="stopped"` and `asks`: one ticket per open ask, each with
-   its producer, stage, description and H2 plan. Two asks raised by
-   `xargs -P 2` children in the same scheduling round appear in one
-   result (two tickets, one stop, counted); everything that could
-   finish without an answer has finished before the stop (D40).
-2. Every step completed before the stop is a recorded row: for a line
-   that completed N kernel calls and M tool calls before stopping, the
-   run ledger holds N + M step rows keyed `(run_id, stage, ordinal)`,
-   each with its `Result` (bodies offloaded by `BLOB_PAGE_BYTES`
-   pages, chunk boundaries kept).
+   its producer, stage, description and H2 plan. Two stages of one
+   pipeline that both ask appear in one stop (`len(asks) == 2`, one
+   error, one run row, counted), and every other stage of that
+   pipeline has status 0 or 1, never `running`. (With F6, `xargs -P 2`
+   children are the same case.)
+2. The run row records the line, the starting `cwd`, `env`, `set -e`
+   state and the starting authority (actor, subjects, narrowing,
+   provenance). Every step completed before the stop is a row keyed
+   `(run_id, stage, ordinal)` with its fingerprint (spec 177 §3.3) and
+   its `Result`, successes and failures alike; a step whose packed
+   `Result` exceeds `BLOB_PAGE_BYTES` is `ceil(size / BLOB_PAGE_BYTES)`
+   page rows (counted); no statement's bind count grows with the body.
 3. `fs.resume(run_id, authority=)` after every open ask is answered
    serves each recorded step from the ledger — zero storage statements
-   and zero tool entries for recorded steps (spied) — and executes
-   only unrecorded steps; the resumed line's stdout, `statuses` and
-   `exit_code` equal an uninterrupted run's byte for byte. A resume
-   with an open ask still unanswered proceeds for the answered stages,
-   stops again, and reports the unanswered ticket together with any
-   new ones.
-4. The five-question line: a line whose first stage asks once, whose
-   second stage fans out into two concurrent asks, and whose third
-   stage asks twice in sequence stops exactly four times, issues
+   for recorded effects and expansion reads, zero tool entries (spied)
+   — re-executes pipe-stage body reads (statements counted equal to
+   the number of such reads) and refuses `vfs.conflict` on the run
+   when a re-read's `content_hash` differs; the resumed line's stdout,
+   `statuses` and `exit_code` equal an uninterrupted run's byte for
+   byte. A re-walk that produces a key absent from the ledger, or a
+   recorded key the walk does not reach, refuses `vfs.internal` naming
+   both keys with zero mutation statements. A resume with an ask still
+   unanswered proceeds for the answered stages, stops again, and
+   reports the unanswered ticket together with any new ones.
+4. Authority: a resumed step runs as the recorded authority (spied:
+   every router call carries it); an approver's resume neither adds
+   the approver's rights (a step the owner could not do is
+   `permission_denied`) nor loses the owner's; a right revoked between
+   the stop and the resume refuses the step. `resume` by a principal
+   who is neither the owner nor an approver holding `read_write` on
+   every open ask's path is `vfs.permission_denied` with zero steps
+   run.
+5. The five-question line: a line whose first stage asks once, whose
+   second pipeline has two stages that ask concurrently, and whose
+   third stage asks twice in sequence stops exactly four times, issues
    exactly five tickets, enters each host tool exactly once per
-   answer, and commits each mutation exactly once (version rows
-   counted). On SQLite and on each engine leg.
-5. A denied ask makes its step `vfs.permission_denied` with the
+   answer, issues zero `tools/call` re-sends (spied), and commits each
+   mutation exactly once (version rows counted). On SQLite and on each
+   engine leg as the root binding, with an in-memory submount.
+6. A denied ask makes its step `vfs.permission_denied` with the
    recorded reason; the stage exits 1; `set -e` applies as F4 pins;
    the run completes rather than stopping again.
-6. A resumed step re-enters the gate: a right revoked between the stop
-   and the resume refuses the step; an H2 plan whose versions moved is
-   `vfs.conflict` with nothing written.
-7. Cross-process: a line stopped through one `DatabaseStorage` resumes
+7. Crash: a process killed (the seams injector) after a tool's step
+   row is claimed and before its result row lands leaves a `running`
+   row; the next `resume` enters the tool zero times (spied), stops
+   with one `vfs.unavailable.in_doubt` ask naming the step, and the
+   host's answer (`answer(ticket, allow=True, outcome="done" |
+   "redo")`) either records the step or re-enters it once.
+8. Cross-process: a line stopped through one `DatabaseStorage` resumes
    through a second over the same SQLite file and through the sync
-   facade (X1); the run and its steps are rows in the mount's schema;
-   on each engine leg.
-8. `ls /.vfs/jobs` lists the caller's stopped runs; `cat
+   facade (X1); a root that is `InMemoryStorage` serves asks within
+   the process only and says so in `traits()`.
+9. `ls /.vfs/jobs` lists the caller's stopped runs; `cat
    /.vfs/jobs/<run_id>/asks/<ticket>` renders the ask with its H2
-   block; `…/steps` lists the recorded steps; another authority's read
-   is `not_found`; a `write` into the view is `vfs.invalid` naming
-   `answer`; reads make zero tool calls. `/.vfs/run/<id>` (T2) is
-   served from the same rows.
-9. Budget and TTL (D43): a run whose recorded bodies exceed
-   `RUN_LEDGER_BYTES` keeps recording every mutating step and every
-   tool result, stops recording read results, and a resume re-executes
-   those reads (statements counted) with `replayed_reads=N` on the run
-   row; a stopped run past its TTL answers `resume` with `pending` and
-   `expired=True`; `sweep` reclaims run, step and ask rows past the TTL
-   in chunks of `membership_budget` (rows counted).
-10. `cancel(run_id)` (H6) marks the run and every open ask; `resume`
+   block; the owner sees every ask; an approver sees the asks they may
+   answer and nothing else; anyone else reads `not_found`; no step row
+   is served through the view at 0.1.0; a `write` into the view is
+   `vfs.invalid` naming `answer`; reads make zero tool calls.
+10. Budget and TTL (D43): a run whose recorded bodies exceed
+    `RUN_LEDGER_BYTES` keeps recording effects, expansion reads and
+    identity triples and stops recording bodies; a guest or tool input
+    past the budget is re-read on resume and hash-checked as in
+    criterion 3; a stopped run past its TTL answers `resume` with
+    `pending` and `expired=True`; rows past the TTL are reclaimed by
+    the same sweep arm as the replay store.
+11. `cancel(run_id)` (H6) marks the run and every open ask; `resume`
     then answers `vfs.cancelled`.
-11. `resume`, `cancel` and the `/.vfs/jobs` head join K9's frozen
+12. `resume`, `cancel` and the `/.vfs/jobs` head join K9's frozen
     list; T1's served-heads pin gains `jobs`; `RUN_LEDGER_BYTES` is one
-    declared constant with its number in the docs.
+    declared constant with its number and its eviction direction
+    (oldest run first) in the docs.
 
 #### H5 — Interrupts for every tool kind: host tools, Python guests, MCP elicitation · amends specs 170, 171, 172 · L · gate b
 
@@ -804,6 +881,18 @@ guest's door call asks; a shell stage stops at the step that asked.
 All produce the same ask record and resume through H4. The call is
 gated and can be suspended; the tool body still runs with the
 authority its trust line names.
+*The one rule for code vfs does not own.* A host tool and a Python
+guest are re-entered from the start on resume (LangGraph's rule). The
+vfs calls they make — a tool through its `Fs`, a guest through its
+door — are H4 steps keyed by ordinal *within the stage* and matched by
+fingerprint: a call whose fingerprint equals the recorded one is
+served from the ledger; a call that differs (the tool branched on
+time, the network, or `random`) is a *fresh* call, issued and counted,
+with one `vfs.replay_diverged` info record naming the ordinal — never
+a served wrong answer. The how-to says in one line that host-side
+effects before an interrupt run again, as LangGraph's docs say of
+theirs. Recording every host import of the guest (full determinism)
+and snapshotting its memory are both 0.2 options (D42).
 *Depends on.* H4, T3, T4, T5, M1. Adds `cli(request_key=)` to spec
 171's `cli` schema and to spec 177's verb list (an additive name).
 *Acceptance.*
@@ -816,22 +905,24 @@ authority its trust line names.
    the payload when it wants native semantics. No exception escapes
    `cli` unclassified.
 2. On resume the interrupted tool is re-entered once; its `Interrupt`
-   calls return the recorded answers in order (LangGraph's rule); a
-   tool that raises a second, new interrupt stops the run again with a
-   new ticket; vfs verbs the tool made through its `Fs` before the
-   interrupt are H4 steps and are not re-issued (zero statements,
-   spied). The how-to says in one line that host-side effects placed
-   before an interrupt run again, as LangGraph's docs say of theirs.
-3. The Python guest (T5): every host import — the door call, `clock_
-   time_get`, `random_get`, `args_get`, `environ_get` — is an H4 step.
-   A guest stopped at a door call that asked is, on resume,
-   instantiated again and replayed to the ask from the ledger (door
-   calls served with zero storage statements; the two clock reads
-   return the recorded values), then continues; the pandas job with one
-   ask in its middle instantiates the guest exactly twice, issues each
-   verb to storage once, and prints the same output as an
-   uninterrupted run. The docs say the guest's CPU work before the ask
-   runs again (D42 names the memory snapshot as the 0.2 upgrade).
+   calls return the recorded answers in order; a tool that raises a
+   second, new interrupt stops the run again with a new ticket; the
+   `Fs` calls it made before the interrupt are served from the ledger
+   (zero statements, spied) when their fingerprints match, and a
+   mismatched call is issued once with one `vfs.replay_diverged`
+   record (counted). The how-to line is CI evidence under the docs
+   gate.
+3. The Python guest (T5): a guest stopped at a door call that asked
+   is, on resume, instantiated again (spied: exactly twice for the
+   pandas job with one ask in its middle); its door calls up to the
+   ask are served by fingerprint with zero storage statements; the ask
+   receives the recorded answer; each verb reaches storage once
+   (statements counted); stdout equals an uninterrupted run's. A guest
+   that diverges before the ask (a `time.time()` branch) issues its
+   diverged calls fresh with `vfs.replay_diverged` records and, if it
+   reaches the asking call with a different fingerprint, asks again.
+   `WALL_TIME_BUDGET` and the fuel budget restart per walk and the docs
+   say the guest's work before the ask runs again.
 4. A mounted server on the vendored 2026-07-28 schema answering
    `input_required` yields an ask with `inputRequests` and the opaque
    `requestState`; the resume re-sends `tools/call` with
@@ -840,15 +931,16 @@ authority its trust line names.
    flips from `vfs.unsupported` 126 to `vfs.pending` 75 and T4's pin
    is updated here.
 5. A pipeline `producer | interrupting_tool | consumer` stops with the
-   consumer having received the chunks the producer emitted before the
-   stop and no more, the producer drained to completion or to its own
-   stop (D40), stdout emitted before the stop kept, and `statuses`
-   marking the pending stage; the resumed line delivers the recorded
-   chunks to the consumer in the same boundaries.
+   consumer having received exactly the bytes the producer emitted
+   before the stop (byte count equal) and neither data nor
+   end-of-stream after it; the producer finishes or waits (D40);
+   stdout emitted before the stop is kept; `statuses` marks the
+   pending stage; the resumed line's stdout equals an uninterrupted
+   run's.
 6. A `cli` line whose first mutating stage the policy hook suspends
-   carries the H2 plan of that stage; later stages are marked "not
-   run".
-7. The same five-question line as H4 criterion 4, with one host tool,
+   carries the H2 plan of that stage; later pipelines of the line are
+   marked "not run".
+7. The same five-question line as H4 criterion 5, with one host tool,
    one guest and one policy-suspended verb among its askers, stops
    four times and runs each thing once.
 
@@ -872,7 +964,7 @@ cancellation has no classified shape to return.
    statement (lean), counted.
 3. An outer `CancelledError` still re-raises untouched.
 4. `cancel(ticket)` marks a pending ask and the next re-send is
-   `vfs.cancelled`; `cancel(run_id)` marks the run (H4 criterion 10).
+   `vfs.cancelled`; `cancel(run_id)` marks the run (H4 criterion 11).
 5. With no deadline configured, statement counts are identical to
    today on every leg.
 
@@ -1402,11 +1494,13 @@ renders empty, `to_payload` inlines base64 without bound, and the dead
    and `cli` registers in `OpGroup` as `derived`.
 9. The slice-C battery is parametrized over the engine legs.
 10. The determinism law (H4's seam): the executor keys every kernel
-    call and tool call it makes as `(stage, ordinal)`; two executions
-    of the same line over the same world produce the same key
-    sequence per stage and the same chunk boundaries (recorded by a
-    spy, compared as lists), and the keys never depend on scheduling
-    order across stages.
+    call and tool call it makes as `(stage, ordinal)` with spec 177's
+    fingerprint; for a line with no early-closing consumer, two
+    executions over the same world produce equal per-stage key lists
+    (recorded by a spy, compared as lists); for `cat a b c | head -1`
+    the recorded sequence is a prefix of the uninterrupted one; a key
+    never carries a timestamp, a task id or a queue position (a grep
+    over the key type).
 
 #### F4 — The program forms, `replace=`, `glob(case_mode=)`, `set -e`, the never table · spec 167 D · L · gate b
 
@@ -1518,15 +1612,20 @@ afternoon each and becomes T4's first tasks.
 6. `/.agents` names are gone from `src/`; the battery is parametrized
    over the engine legs.
 
-#### T2 — The `/.vfs/run` record · spec 169c · S · gate b
+#### T2 — The `/.vfs/run` record, as rows · spec 169c rewritten · M · gate b
 
-*Depends on.* T1, F3.
+*Why.* Spec 169c's per-process ring would be thrown away by H4 on the
+critical path; land the record as rows in the root binding's storage
+from the start (the review's call). H4 adds the steps and asks to the
+same tables.
+*Depends on.* T1, F3, K5 (the row shape).
 *Acceptance.* After `cat a.txt | upper`, `read /.vfs/run/<id>/stdout`
 returns the output and `…/status` names the program and
-`content_hash`; another authority's read is `not_found`; eviction by
-count (64) and bytes (64 MiB) is counted. Records are per process at
-this landing; H4 moves them to rows in the mount's schema (the run
-ledger) and updates this pin, so links resolve across HTTP workers.
+`content_hash`; the rows are in the root binding's schema and a read
+from a second `DatabaseStorage` over the same SQLite file resolves;
+another authority's read is `not_found`; eviction by count (64 per
+principal) and bytes (64 MiB, oldest first) is counted; on SQLite and
+on each engine leg as the root.
 
 #### T3 — Host tools as files: `ToolView`, the schema-to-flags table, `_invoke` · spec 170 §1–2 · L · gate b
 
@@ -1719,10 +1818,13 @@ or a verifier.
 *Depends on.* H3, H4, H5, M1.
 *Acceptance.*
 1. `serve()` surfaces `pending` as the protocol's `input_required`
-   with an integrity-protected `requestState` carrying the principal,
+   with a `requestState` signed by the server's key (HMAC) carrying
+   the `run_id`, the principal digest of the run's recorded authority,
    the TTL and the digest; the text content is H2's diff-shaped block
-   when a plan exists; a tampered `requestState` is refused
-   `vfs.invalid` with zero handler calls (spied); a client on a
+   when a plan exists; a one-byte change is refused `vfs.invalid` with
+   zero handler calls (spied); a `requestState` whose principal digest
+   differs from the run row's is `vfs.permission_denied` with zero
+   steps run; a client on a
    revision without `input_required` gets the `pending` text and
    payload as a `complete` error result.
 2. A resumed `tools/call` with `inputResponses` resumes the run (H4):
@@ -2072,7 +2174,7 @@ batch are independent unless an arrow says otherwise.
 | **0.1.0** | A beta held ≥ 14 days; D6/R4 green from the wheel; every `f` story landed. | |
 
 **Critical path, in one line:** K1 → K2 → F3 → F4 → T1 → T3 → I3b →
-T4 → M1 → H4 → H5. Seven L or XL items in series.
+T4 → M1 → H4 → H5. Nine L or XL items in series.
 
 **The arithmetic.** On the page's own scale (S ≤ 1 day, M 2–4 days, L
 1–2 weeks, XL > 2 weeks), the batches sum to about:
@@ -2083,10 +2185,10 @@ T4 → M1 → H4 → H5. Seven L or XL items in series.
 | a2 | 2 L, 3 M, 7 S | 5–8 weeks |
 | a3 | 9 M, 8 S | 5.5–9.5 weeks |
 | a4 | 1 XL, 2 L, 2 M | 5–9+ weeks, F3 → F4 serial |
-| a5 | 4 L, 3 M, 2 S | 6–11.5 weeks, mostly serial |
+| a5 | 4 L, 4 M, 1 S | 6–11.5 weeks, mostly serial |
 | a6 | 2 L, 3 M | 3–6.5 weeks, H4 → H5 serial |
-| beta → final | 1 L, 7 M, 4 S | 5.5–10 weeks |
-| **Total** | | **about 31–57 weeks** |
+| beta → final | 1 L, 8 M, 4 S | 5.5–10 weeks |
+| **Total** | | **about 30–55 weeks** |
 
 Measured throughput from the spec archive (status lines "landed
 2026-MM"): July 20, August 44, September 8, October 7 specs a month.
@@ -2148,7 +2250,8 @@ replaces both. K2 lands before F3 (D33). The one flag name is
 | Narrowing with content, child sessions (spec 148 §1–4) | 0.2 | `Narrowing.NONE` is honest; sub-agents can use a second `Session`. |
 | Width-change migration (E7), tuned fusion defaults, render at write (159), images (152 C), `imports` edges (147), signals on by default | 0.2 unless D21 | Independent of theme 3. |
 | MCP tasks for long `cli` lines; a `/.vfs/mounts` view | 0.2 | A stopped run is polled through `/.vfs/jobs` at 0.1.0 (D25). |
-| A memory snapshot of a stopped guest, so a resume skips the guest's CPU work | 0.2 | Replay from recorded imports is correct and simpler (D42); the snapshot is an optimisation. |
+| Recording every host import of a guest (full determinism), or a memory snapshot of a stopped guest | 0.2 | Re-entry with fingerprint-matched door calls is correct and simpler (D42). |
+| `/.vfs/jobs/<run>/steps` | 0.2 | Asks are the only view a person needs at 0.1.0; step rows hold bodies. |
 | Answering an ask by writing a file under `/.vfs/jobs` | 0.2 | `answer` is the one door at 0.1.0; the views stay read-only (T1). |
 | A public per-call statement counter on `Result` | 0.2 | Tests already count; a host-facing counter is a later seam. |
 | A local-disk storage backend; a change feed; OpenTelemetry spans; an object-store data plane; reference adapters for host frameworks | 0.2+ | The wedge is "the database you already run"; adapters need `serve()` first. |
@@ -2202,10 +2305,12 @@ A lean is the assistant's recommendation, not a decision.
 | D37 | A precondition argument on every mutating verb now (H2 full form, size L) or stat-at-apply with a documented window? | Stat-at-apply at 0.1.0. | H2 |
 | D38 | A `/.vfs/mounts` view? | No; `mounts()` is the API. | T1 |
 | D39 | This page lives at `context/standards/roadmap.md` and the root `ROADMAP-v0.1.0.md` is deleted? | Yes. | R6 |
-| D40 | When one step asks, does the run stop at once, or drain first — let every stage that can finish without the answer finish, so asks that are raised together are surfaced together? | Drain, then stop. A stop collects every ask raised in that round. | H4 |
-| D41 | What a run records: every step (reads too, so a resume issues no statements for finished work), or only effects (mutations and tool calls), with reads re-executed on resume? | Every step within `RUN_LEDGER_BYTES`; past the budget, effects always, reads re-executed and counted. | H4 |
-| D42 | How a stopped Python guest resumes: re-instantiate and replay its recorded host imports to the ask (correct; the guest's CPU work before the ask runs again), or snapshot its linear memory? | Replay at 0.1.0; snapshot in 0.2. | H5 |
-| D43 | The run ledger's budget and TTL. | `RUN_LEDGER_BYTES` = 64 MiB per run (spec 169c's number); TTL 24 h, the same sweep as the ask ledger. | H4 |
+| D40 | When one step asks, does the run stop at once, or drain first — let the other stages of that pipeline finish or reach their own ask, so asks raised together are surfaced together? | Drain, then stop, per pipeline; a suspended stage's consumer sees neither data nor end-of-stream; later statements of the line are not run. | H4 |
+| D41 | What a run records: every step (reads too), or effects plus the reads the walk depends on? | Effects, expansion reads (`glob`, `$( )`, `find`, `stat`, `test`) and every read's identity triple always; bodies only where a guest or tool consumed them, within `RUN_LEDGER_BYTES`; a re-executed read is hash-checked. | H4 |
+| D42 | How a stopped Python guest or host tool resumes: re-enter from the start with its vfs calls served by fingerprint (a diverging call is made fresh and marked), record every host import for full determinism, or snapshot the guest's memory? | Re-enter and match by fingerprint at 0.1.0; the other two in 0.2. | H5 |
+| D43 | Where the run ledger lives, its budget and TTL. | The root binding's storage; `RUN_LEDGER_BYTES` = 64 MiB per run (spec 169c's number), oldest run evicted first; TTL 24 h, the same sweep arm as the replay store. | H4 |
+| D45 | Whose authority a resumed step runs under, and who may resume. | The run's recorded authority, always, re-judged by the gate; `resume` is allowed to the owner or to an approver holding `read_write` on every open ask's path. | H4, M3 |
+| D46 | A step left `running` by a crash: refuse it in doubt and ask the host, or re-enter it? | In doubt; the host answers `done` or `redo`. | H4 |
 | D44 | The API shape: `answer(ticket, …)` per ask plus `resume(run_id)` per run (answers can arrive one at a time, from different approvers, from different processes), or one `resume(run_id, answers={…})`? | `answer` per ask and `resume` per run; a bare verb's ticket is its run id, so `request_key=ticket` stays as the one-step resume. | H3, H4 |
 
 ---

@@ -7,8 +7,9 @@
   fresh subagent with the same brief; every claim labelled READ (a file
   or record was read), EXECUTED (a command or probe was run) or
   INFERRED (the auditor's synthesis). Two review passes on the roadmap
-  draft followed (files 09 and 10); a third, the fact-check, is folded
-  into the roadmap's second revision. Nothing in the tree was edited by
+  draft followed (files 09 and 10); a third, the fact-check (file 11),
+  is folded into the roadmap's second revision; a fourth, of the
+  durable-run design (file 12), into the third. Nothing in the tree was edited by
   an auditor; no git state changed.
 - **Why a study set and not a memo:** each file is new investigation
   (executed probes against `InMemoryStorage`, a real ipykernel, the
@@ -50,7 +51,8 @@ structure; a bash-like CLI composing through the public APIs.
 | 08 | `08-industry-needs-and-positioning.md` | 2026 needs, the eight themes classified, forgotten themes, copy risks | web sources cited inline; three truthful announcement sentences |
 | 09 | `09-review-scope-gates-and-capacity.md` | PM review of the roadmap draft | the draft's own sizes sum to 26–48 weeks against a landing rate of 7 specs a month |
 | 10 | `10-review-acceptance-criteria.md` | engineering review of every criterion | 9 blocking, 40 should-fix, 35 nits, each with a rewrite |
+| 11 | `11-review-fact-check.md` | fact-check of every checkable claim in the draft | ten corrections (24 error kinds; 6 of 9 examples; `awk` 331 uses; 35–49 statements for the 10k write; four names that are spec proposals, not live code); every cited ADR pin and spec status confirmed |
+| 12 | `12-review-the-durable-run.md` | engineering review of the third revision's durable-run design (domain B, F3 c10, T2, T5, M3, D40–D44) | nine contradictions with specs 167/169/170/172/177 and ADRs 063/081/084 by `file:line`; resume authority unspecified; no crash semantics; reads are inputs to the walk; the arithmetic recount |
 
 Paths inside the files that begin with `/tmp/…/scratchpad/` were the
 auditors' working directory; the files now live here.
-| 11 | `11-review-fact-check.md` | fact-check of every checkable claim in the draft | ten corrections (24 error kinds; 6 of 9 examples; `awk` 331 uses; 35–49 statements for the 10k write; four names that are spec proposals, not live code); every cited ADR pin and spec status confirmed |
