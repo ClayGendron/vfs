@@ -1,12 +1,18 @@
 # Roadmap — vfs 0.1.0: the definition of done, by domain
 
-- **Status:** draft for Clay's review, third revision — 2026-10-28,
-  written against `main` at `90f5883`. The third revision carries four
-  changes Clay asked for on 2026-10-28: three audiences (§1.2); a
-  meaningful portion of bash *and* Python in 0.1.0 (§1.3, F, T5); the
-  kernel stories written as user stories (§4); and a human-in-the-loop
-  run that stops and picks up where it left off instead of re-running
-  (domain B, H4). Replaces the "Plan 9 wave"
+- **Status:** draft for Clay's review, fourth revision — 2026-10-28,
+  written against `main` at `90f5883`. The fourth revision carries
+  four changes Clay asked for on 2026-10-28, after reading the third:
+  the shell speaks the whole bash language, not a subset (§1.3, §9,
+  F7; amends ADR 081); a JavaScript guest beside the Python guest,
+  both optional (T5a, T5b); a session that remembers what it read and
+  guards the write for the developer (K10); and an action log of every
+  call vfs makes — who, what, how many rows, how long — that is the
+  analytics table and the checkpointer the durable run resumes from
+  (H0, with the spike L0 that prices it). The third revision carried
+  three audiences (§1.2), bash and Python in 0.1.0, the kernel stories
+  as user stories (§4) and the durable run (domain B, H4). Replaces the
+  "Plan 9 wave"
   roadmap (specs 015–024, all landed and archived) and the root-level
   `ROADMAP-v0.1.0.md` of 2026-05-18 (a pre-rebuild plan for a FastAPI
   service, SSO and a web console; none of it applies). Supersedes no
@@ -24,7 +30,9 @@
   files are in
   `../research/studies/2026-10-28-the-0-1-0-roadmap-audits/`; a fourth
   review, of the durable-run design (file 12), shaped the third
-  revision. Every
+  revision. The fourth revision stands on no new study: it is Clay's
+  feedback on the third, and the one measurement it needs (the cost of
+  logging every call) is commissioned as L0. Every
   claim there is labelled READ, EXECUTED or INFERRED; this page repeats
   the executed findings where they bind a story. Nothing on this page
   is a decision; §16 lists the decisions Clay must make, each with a
@@ -96,23 +104,28 @@ each is what must land first.
    table and the `/.vfs` views land (domains F and G). The threat model
    is R8.*
 2. **Agents reach it as the interface they already know — `ls`, `cat`,
-   `grep`, pipes — from Python (sync or async), from a bash-like shell
-   that covers a meaningful portion of bash, from a Python program
-   running inside vfs, or over MCP, with `glob`, `grep`, ranked
-   `glean` and `graph` built in and scoped to what the caller may
-   see.**
-   *The search half is built. The sync facade (X1), the shell (F1–F6),
-   the Python guest (T5) and `serve()` (M1–M2) are not.*
-3. **Every body change is versioned and every delete is reversible. An
+   `grep`, pipes, `for`, `if`, functions — from Python (sync or
+   async), from a bash shell that speaks the whole language, from a
+   Python or JavaScript program running inside vfs, or over MCP, with
+   `glob`, `grep`, ranked `glean` and `graph` built in and scoped to
+   what the caller may see.**
+   *The search half is built. The sync facade (X1), the shell (F1–F7),
+   the two guests (T5a, T5b) and `serve()` (M1–M2) are not.*
+3. **Every body change is versioned and every delete is reversible. A
+   session remembers what its agent read, so a write over a changed
+   file is refused without the developer carrying a version. An
    action can be stopped before it happens and become a question a
    human answers — for vfs's own mutations, with a preview of what the
    world will look like if they say yes — and a run with several such
    questions picks up where it stopped, never from the top. One
-   permission structure governs a file and a tool alike.**
+   permission structure governs a file and a tool alike, and every
+   call vfs makes is a row in the database you already run: who, what,
+   how many rows, how long.**
    *Trash and restore are built. Version rows exist for replaced
-   bodies; nothing reads them back yet (K8). The stop, the preview, the
-   durable run and the resume are domain B. "A file and a tool alike"
-   is I3.*
+   bodies; nothing reads them back yet (K8). The session's memory is
+   K10. The stop, the preview, the durable run and the resume are
+   domain B; the action log they stand on is H0. "A file and a tool
+   alike" is I3.*
 
 ### 1.2 Who it is for
 
@@ -127,9 +140,10 @@ Three audiences, all first-class (Clay, 2026-10-28; CLAUDE.md's
   mounts storage, sets posture, registers tools, writes the policy
   hook, mounts MCP servers, runs `serve()` and embeds vfs in LangGraph
   or their own loop. They care about one small public surface, one
-  approval flow for everything an agent can run, and errors that are
-  classified rather than raised. Most of domains B, C, G, H and I are
-  for them.
+  approval flow for everything an agent can run, a session that
+  carries read-then-write safety for them (K10), a log they can point
+  a dashboard at (H0), and errors that are classified rather than
+  raised. Most of domains B, C, G, H and I are for them.
 - **ETL developers and pipelines** making few large calls: ten
   thousand files in one `write`, on a real engine, from a notebook or
   a scheduled job. They care about batches being bounded and atomic,
@@ -145,21 +159,34 @@ Said once here so nobody re-argues it (details in §15):
   identity you can read, never an address you can use. The public copy
   says "the interface of a file system", never "mount it on your
   laptop".
-- Not all of bash. A meaningful portion of it (Clay, 2026-10-28): the
-  static, bash-shaped subset of ADR 081 — the programs, pipes, `&&`,
-  redirects and `set -e` that make up the measured majority of what
-  agents actually type — with a published coverage number and a named
-  reason for every refusal. Loops, functions and arithmetic are
-  refused at parse time; where bash runs out, the Python guest (T5) is
-  the answer, not a bigger grammar. The copy says "a bash-like shell"
-  with its measured number, never "bash" unqualified.
-- Not a web console, not SSO, not OpenTelemetry, not a managed
-  service. Those are the product plan's, not the library's.
-- Not a host-side Python `exec`. Python at 0.1.0 is the WASI guest
-  (T5, gate b): a static CPython with numpy and pandas compiled in,
-  whose only file system is vfs and whose every host call passes the
-  gate as the caller. It is in 0.1.0 (Clay, 2026-10-28), behind the
-  `vfs-py[python]` extra so the base wheel stays small.
+- Not a job-control shell, and not a host for programs vfs cannot
+  gate. The shell speaks bash — the whole language: pipes, lists,
+  redirects, here-documents, `for`, `while`, `if`, `case`, functions,
+  arithmetic, arrays, the parameter operators, process substitution
+  (Clay, 2026-10-28: "full bash, so it is an expressive language, with
+  everything that could be useful to vfs in it"; this reverses the
+  2026-10-15 subset and amends ADR 081 pins 4, 8 and 12 in F7). What
+  is refused is only what has no meaning inside one gated call: job
+  control past the call (`jobs`, `fg`, `bg`, `disown`, `nohup`),
+  dynamic evaluation (`eval`), process replacement (`exec`), signals
+  (`trap`). Each refusal is a classified fact that names its reason.
+  Programs the host machine has and vfs does not (`git`, `docker`,
+  `uv`, `sudo`, `curl`) never run and say so; `awk` and `jq` wait on
+  D22. The copy says "bash" and publishes two numbers: the corpus run
+  rate (F5) and the Oils spec-suite rate for the admitted constructs
+  (F7).
+- Not a web console, not SSO, not an OpenTelemetry exporter, not a
+  managed service. Those are the product plan's, not the library's.
+  The data an exporter would carry is the action log (H0); the
+  exporter is 0.2.
+- Not a host-side `exec`. Python and JavaScript at 0.1.0 are WASI
+  guests (T5a, T5b, gate b): a static CPython with numpy and pandas
+  compiled in, and QuickJS-NG, each whose only file system is vfs and
+  whose every host call passes the gate as the caller. Both are in
+  0.1.0 (Clay, 2026-10-28), each behind its own extra (`vfs-py[python]`,
+  `vfs-py[javascript]`) so the base wheel stays small. The guests are
+  for numpy, pandas and the JavaScript ecosystem's shapes, not for
+  control flow; the shell has that.
 - Not "MCP servers as the user" in the OAuth sense at 0.1.0. The
   credential seam (I4) is per principal with host-held credentials;
   the OAuth round trip is T7 in 0.2. The README does not use the
@@ -188,13 +215,13 @@ not listed; they ride any alpha.)
 
 | Domain | `b` (before the freeze) | `f` (before final) |
 |---|---|---|
-| A Kernel | K1, K2, K3, K4, K5, K6, K9 | K7, K8 |
-| B Human in the loop | H1, H2, H3, H4, H5 | H6 |
+| A Kernel | K1, K2, K3, K4, K5, K6, K9, K10 | K7, K8 |
+| B Human in the loop | H0, H1, H2, H3, H4, H5 | H6 |
 | C Identity | I1, I2, I3a, I3b, I6 | I4 |
 | D Storage | D1, D2, D3, D4 | D6, D7 |
 | E Search | E1, E2, E3, E4, E5 | E6 |
-| F Shell | F3, F4 | F5, F6 |
-| G Tools | T1, T2, T3, T4, T5 | — |
+| F Shell | F3, F4, F7 | F5, F6 |
+| G Tools | T1, T2, T3, T4, T5a, T5b | — |
 | H MCP front | M1, M2 | M3 |
 | I Developer experience | X1, X2, X6, X7 | X3, X4, X5 |
 | J Release and hygiene | R5, R6, R7, R8 | R4, R9 |
@@ -217,7 +244,8 @@ from the audit set; EXECUTED unless noted.
 | 5 | Sync calls, Jupyter, ETL | **Missing** sync facade. `asyncio.run` fails inside a running loop (reproduced). A 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06). A 10,000-row `write` lands in 35–49 statements on SQLite depending on whether the parent exists and how the hook counts. |
 | 6 | Serve vfs as MCP | **Missing**. Spec 171 drafted (verbs as tools + one `cli` tool); spec 149 (token → `Authority`) a seed. No `[project.scripts]` entry; spec 171 decision 7 says "no `vfs serve`". |
 | 7 | Everything is a file, one permission structure | Ladder **built** (six rungs; every verb names its rung, `ops.py:134–160`); `/.vfs` serves only the trash view. Views, index and `rungs_at` drafted (169a, 170 §5). |
-| 8 | Bash-like CLI | **Missing**. Spec 167 (five slices, twenty tasks) and 168 drafted, reviewed, not started. |
+| 8 | The shell (bash) | **Missing**. Spec 167 (five slices, twenty tasks) and 168 drafted, reviewed, not started; the whole language is a sixth slice (F7) no spec yet carries. |
+| — | The action log and analytics | **Missing**. No `import logging` in `src/vfs`; no table records a call; the only call-shaped record anywhere is spec 169c's per-process `/.vfs/run` ring (drafted). Elapsed time per call is stored nowhere. |
 | — | Release | `0.0.22` on PyPI, none yanked; the seven-platform publish matrix has **never run**; the bump script cannot write `0.1.0a1`. |
 
 Counts to keep in view: 31 active specs (4 built but not archived, 3
@@ -461,11 +489,90 @@ counted three ways; beta entry needs a written list of what is frozen.
 5. The conformance battery is reorganised by kernel operation with no
    test lost (count before equals count after).
 
+#### K10 — The session remembers what it read: automatic write preconditions · new spec · M · gate b
+
+*Story.* As a software developer, I want the session my agent works in
+to remember the version of every file it read, so that a later `write`
+or `edit` through that session is refused if the file changed
+underneath it, without my code carrying `if_version=` from the read to
+the write; as an agent, I want "read, think, write" to be safe by
+default.
+*Why.* Clay's request of 2026-10-28. K2 gives the kernel the
+precondition; today the caller must remember the version between two
+calls. The host loop is the one place that saw both calls, and the
+largest client cache is a model's context window, which no server can
+invalidate (ADR 087 pin 6). A `Session` already binds one authority to
+one conversation and holds no connection; it is the right owner of a
+small, bounded memory of what the conversation observed. A developer
+who uses sessions gets the guard for free; a developer who calls the
+router directly keeps today's behaviour. Precedent: eve's read stamp,
+Anthropic's `content_sha256` precondition, MongoDB's `IfMatch`, and
+the read-before-edit rule every coding agent enforces in its own
+loop.
+*The rule, in plain words.* Every result a session hands back that
+names a path and a version leaves a *stamp* in the session: the
+path's `entry_id`, `version` and `content_hash`. When the same session
+later writes, edits, moves or deletes that path and the caller gave no
+precondition of its own, the session fills in `if_version=` from the
+stamp. If the row moved on, the kernel answers `vfs.conflict` and
+writes nothing, exactly as K2 does for an explicit version. A
+successful mutation refreshes the stamp from its own result, so a
+session reads its own writes. An explicit `if_version=` always wins.
+A path the session never read writes unguarded by default (D50), or
+is refused when the session was opened `strict=True`. The memory is
+bounded by a declared constant; the stamps come off results the
+session already returned, so the guard costs no statement and no
+connection.
+*Depends on.* K2 (the precondition), K3 (the hash on every row). F3
+(`Session.cli` shares the stamps, so `sed -i` and `cp` over a read
+file are guarded without the shell carrying versions) and X1
+(`SyncSession` shares the shape) consume it.
+*Acceptance.*
+1. `s = fs.session(alice)`; `s.read("/a")`; bob writes `/a` through a
+   second session; `s.write(path="/a", content=…)` returns
+   `vfs.conflict` with `data["version"]` equal to bob's version and
+   zero mutation statements; the same call through
+   `fs.write(..., authority=alice)` with no session succeeds; on
+   SQLite and on each engine leg.
+2. `s.read("/a")` then `s.write("/a")` twice succeeds both times (the
+   stamp follows the write); `s.edit` likewise; a stamp is refreshed
+   by `read`, `stat`, `ls`, `tree`, `glob`, `grep` and `glean` rows
+   that carry `version` (one parametrized case per read verb) and
+   never by a row without one.
+3. An explicit `if_version=` on a stamped path reaches storage
+   unchanged (spied); a 10,000-entry `s.write(entries=)` carries
+   `if_versions=` for exactly the stamped paths and issues the same
+   statements as K2's batch pin.
+4. A path never read in the session writes unguarded by default (D50);
+   `fs.session(alice, strict=True)` refuses it `vfs.invalid` naming the
+   read-before-write rule with zero mutation statements; under
+   `strict=True`, `delete` and `move` need a stamp on the source and
+   `copy` needs none.
+5. Bounded memory: `SESSION_STAMPS` (lean 4,096) is a declared
+   constant; the 4,097th stamped path evicts the least recently
+   touched one (evictions counted) and an evicted path is unstamped;
+   each stamp is at most `STAMP_BYTES` (declared) and the test asserts
+   the table's size in entries and bytes, never a clock;
+   `Session.close()` drops the stamps.
+6. `Session.cli("cat f")` then `Session.cli("sed -i s/a/b/ f")` passes
+   the stamp as `if_version=` (spied); `echo x >> f` stays
+   `write(append=True)` and consults no stamp.
+7. `SyncSession` and `Session` share one stamp implementation; X1's
+   parity test covers `strict=`; `strict` and `SESSION_STAMPS` join
+   K9's frozen list.
+8. Stamps never cross the wire: `to_payload` of a session's `Result`
+   carries no stamp; whether `serve()` keeps a bounded per-principal
+   stamp table so agents over MCP get the same guard is D51.
+
 ---
 
-## 5. Domain B — Human in the loop: policy, preview, `pending`, the durable run
+## 5. Domain B — Human in the loop: the action log, policy, preview, `pending`, the durable run
 
-**Goal.** A host can run vfs with a human in the loop the way
+**Goal.** Every call vfs makes is a row in the database you already
+run — who called, what verb, which paths, how many rows, how long —
+and that one table is the operator's analytics, the Catalog's first
+introspection surface, and the memory a stopped run resumes from. On
+top of it, a host can run vfs with a human in the loop the way
 LangChain runs tools with `interrupt()` and `Command(resume=)`. An
 action can be stopped before it happens, described exactly, handed to
 a human, and resumed with the human's answer. For vfs's own mutations
@@ -509,8 +616,10 @@ that line from the top after each answer. It picks up where it left
 off.
 
 Here is how. As a run goes, vfs writes down each step as it finishes —
-which step, what it returned — in the root mount's database, in a
-table beside the replay store. When a step needs a human, vfs lets everything that
+which step, what it returned — in the root mount's database. The
+table it writes to is the action log (H0): the same rows every call
+already leaves behind for analytics, with the step's result pages
+beside them. When a step needs a human, vfs lets everything that
 can finish without the answer finish, writes down every open question,
 and stops. The `Result` says: this run, stopped, these questions open.
 The host asks. Answers can arrive one at a time, from different people,
@@ -591,14 +700,128 @@ from where it stopped, and nothing runs twice.
 
 | Piece | State |
 |---|---|
+| An action log: one row per call with actor, verb, paths, rows, statements, elapsed time, outcome | missing (no table, no logger; spec 169c's per-process ring is the only call-shaped record anywhere) |
 | `pending` kind, ticket, ledger, resume | missing (spec 148 seed; ADR 063 rule 5 accepted) |
 | A dry-run form on any verb | missing (the plan seam exists inside `writes.py`) |
 | A host policy hook before dispatch | missing |
-| A run ledger: steps recorded, stop, resume | missing (spec 169c's per-process `/.vfs/run` record is the seed; spec 177's replay store is the neighbouring table) |
+| A run ledger: steps recorded, stop, resume | missing (becomes a view over the action log's rows plus a result-page table; spec 177's replay store is the neighbouring table) |
 | `cancelled`, `timeout` kinds | declared, no producer in `src/` |
 | Deadline on fan-out | missing (spec 051, a stale draft since July) |
 
 ### Stories
+
+#### L0 — Spike: the cost of logging every call · new study · S · gate a
+
+*Story.* As the owner of 0.1.0, I want to know what one log row per
+call costs an agent-sized call and a 10,000-row batch before H0 is
+specified, so that the log's write discipline is a measured choice
+and not a guess.
+*Why.* Clay asked for the spike (2026-10-28) and said analytics is a
+must for 0.1.0; the question is not whether to log but how. CLAUDE.md
+puts wall-clock in a memo, never a test; this is that memo, and H0's
+acceptance then counts statements only.
+*Depends on.* Nothing. Runs through public APIs; lands nothing in
+`src/`.
+*Acceptance.*
+1. A dated memo under `context/research/` reports, on SQLite and on
+   Postgres, for one `read`, one `grep`, one `write` and a
+   10,000-entry `write`, under 1 and under 32 concurrent sessions:
+   statements issued and wall time with no log, with one synchronous
+   row per call, and with write-behind read rows plus synchronous
+   effect rows.
+2. The memo states the bar H0 inherits — write-behind adds zero
+   synchronous statements to a read and the effect path adds exactly
+   two — and the measured overhead against it, with a GO or a NO-GO
+   and, on NO-GO, the shape it recommends instead.
+3. The spike's scripts live under the study directory and use public
+   APIs only; nothing is merged into `src/`.
+
+#### H0 — The action log: every call vfs makes is a row, with who, what, how many and how long · new spec · L · gate b
+
+*Story.* As a software developer running many agents, I want every
+call vfs makes — every verb, tool call, guest door call and shell line
+— recorded in the database I already run, with the caller, the verb,
+the paths, the rows touched, the outcome and the time it took, so that
+I can see what my agents did, meter and tune the platform with the SQL
+tools I already have, and resume a stopped run from the same record.
+*Why.* Clay's rule of 2026-10-28: analytics is a must for 0.1.0, the
+elapsed time of every call is a must, and the log is the checkpointer.
+One table serves three readers. The operator reads it for analytics.
+The durable run (H4) reads it to resume: a run's steps are its rows.
+The Catalog (ADR 058 pin 5) reads it as vfs's first introspection
+surface. Precedent: DBOS checkpoints each step's output in Postgres
+and replays from it; Temporal's event history is both the audit and
+the replay source; Postgres's statement statistics and OpenTelemetry
+spans carry duration as data. vfs's version rows (ADR 064) are the
+write-side audit already; the log extends attribution to reads and
+calls.
+*The rules the criteria pin.* (i) **One row per call**, never per row
+touched: a 10,000-entry `write` is one row with `rows = 10000`. (ii)
+**What a row holds.** `call_id`; `run_id` and `parent_call_id` (a
+tool's `Fs` calls nest under the tool's row; a `cli` line's stages
+nest under the line's); `started_at`; `elapsed_ns` from a monotonic
+clock; actor, subjects and provenance; the verb or program name; the
+first `LOG_PATHS` paths (lean 16) and the full count; rows touched;
+statements issued; bytes moved; the outcome (`ok`, or the first fatal
+`ErrorKind`); the mount. Never a body, never a credential, never a
+token: X7's rule, pinned by the same test. (iii) **Two write
+disciplines.** An *effect* row — a mutating verb, a host tool call, a
+`tools/call`, a guest's effectful door call — is claimed before the
+effect is entered and completed after it, synchronously, in the root
+binding's storage (spec 177's claim-first shape; H4 rule iii). A
+*read* row goes to a bounded write-behind buffer flushed every
+`LOG_FLUSH_ROWS` (lean 256) rows or at `close()`, so a read adds zero
+synchronous statements. A crash loses at most one buffer of read rows
+and no effect row. (iv) **Where.** The root binding's storage, beside
+the replay store; a root without the `replay` trait logs in process
+only and `traits()` says so. (v) **Retention.** `LOG_RETENTION_DAYS`
+on the router (lean 30; the run and ask rows keep their own 24 h),
+reclaimed by the sweep arm in chunks; `VirtualFileSystem(log=False)`
+turns the log off for a host that will not pay for it (D52). (vi)
+**The read side at 0.1.0.** The table schema is documented and
+frozen, so Postgres, SQL Server, Oracle and SQLite tooling reads it
+directly — the point of "the database you already run" — and
+`fs.calls(since=, until=, actor=, verb=, outcome=, limit=, after=)`
+is a management method on the developer plane, paged on K4's key
+(D53). `/.vfs/jobs` (H4) is a view over the same rows.
+*Depends on.* L0 (its GO), K4 (the page key), K5 (the claim-first
+shape), X7 (the no-secrets pin). H3, H4 and T2 build on it.
+*Acceptance.*
+1. After one `read`, one `grep` and one `write`, `fs.calls()` as the
+   system actor returns three rows carrying actor, verb, paths,
+   `rows`, `statements`, `elapsed_ns`, `outcome` and `started_at`; the
+   test asserts every field is present, that `statements` equals the
+   statement hook's count and that `elapsed_ns` is a positive integer,
+   never its value; on SQLite and on each engine leg as the root.
+2. A `read` issues no statement beyond its own until the buffer
+   flushes: 255 reads issue exactly their own statements, the 256th
+   adds exactly one insert carrying 256 rows (bind count under the
+   dialect budget, pages counted); `close()` flushes the remainder
+   (rows counted).
+3. A `write` issues exactly one claim insert before its first mutation
+   statement and one completion update after its commit (statement
+   order asserted on the hook); a fault injected between the two (the
+   `seams` injector) leaves a row whose outcome is `running`, which
+   `fs.calls(outcome="running")` returns.
+4. A 10,000-entry `write` is one row with `rows == 10000`; a `cli` line
+   of five stages is one line row and five child rows with
+   `parent_call_id` set (rows counted); a host tool's `Fs` calls nest
+   under the tool's row; a guest's door calls nest under the guest's.
+5. No log row ever carries a body, a credential or a token: X7's
+   corpus of secret bytes is grepped across every log row the whole
+   suite writes (zero hits); paths past `LOG_PATHS` are a count.
+6. `sweep` reclaims rows older than `LOG_RETENTION_DAYS` in chunks of
+   `membership_budget` (rows and statements counted);
+   `VirtualFileSystem(log=False)` writes zero log rows (counted) and
+   `fs.calls()` answers `vfs.unsupported`.
+7. `fs.calls` is the system actor's: any other authority is
+   `vfs.permission_denied` with zero statements; it is never a served
+   tool and never a program name (T1's and M1's pins gain the
+   assertion); it joins K9's frozen list and the management allowlist.
+8. `docs/reference/analytics.md` carries the table schema and three
+   example queries — calls per actor per day, the 95th percentile of
+   `elapsed_ns` per verb, conflicts per path — each run by the docs
+   gate against SQLite.
 
 #### H1 — The interrupt ADR: reconcile ask and no-ask, name the kind, place the ledger · new ADR · S · gate b
 
@@ -637,12 +860,15 @@ before specs 170 and 171 are built, or both are reopened.
    tool resumes (D42), where the ledger lives and its budget and TTL
    (D43), whose authority a resume runs under (D45) and what a crash
    leaves behind (D46).
-5. The run ledger and the ask ledger are tables of their own in the
-   *root binding's* schema, beside the replay store and swept by its
-   arm, so a resume can arrive at a different process; they keep
-   failed `Result`s and may carry bodies, which the replay store does
-   not (spec 177 §3), and the ADR says so; the ADR names the TTL (lean
-   24 h, spec 177's).
+5. The run ledger is the action log (H0): a run's steps are its rows,
+   with a result-page table beside them for the recorded `Result`s;
+   the ask ledger is a table of its own beside both, in the *root
+   binding's* schema, swept by the replay store's arm, so a resume can
+   arrive at a different process. Step rows keep failed `Result`s and
+   their pages may carry bodies, which the replay store never does
+   (spec 177 §3), and the ADR says so; the ADR names the TTL of the
+   run and ask rows (lean 24 h, spec 177's) apart from the log's own
+   retention (H0, D52).
 
 #### H2 — `plan=`: every mutating verb can preview the world after · new spec · M · gate b
 
@@ -703,7 +929,7 @@ gate, so a right revoked between the question and the answer is
 honoured. A bare verb is a run of one step; its ticket is its run id,
 and re-sending the call with the ticket is its resume (H4 adds
 `resume(run_id)` for runs of many steps).
-*Depends on.* H1, H2, K5.
+*Depends on.* H0 (the ledger's home), H1, H2, K5.
 *Acceptance.*
 1. `VirtualFileSystem(policy=hook)` and `Session(policy=hook)` accept a
    callable (sync or async) that receives a `CallDescription` — verb,
@@ -783,15 +1009,19 @@ shape). A resume that meets a `running` row does not re-enter it: the
 step is `vfs.unavailable.in_doubt` and the run stops with that ask for
 the host. So: kernel verbs at most once; host and MCP tools at most
 once when stopped cleanly, in doubt after a crash, never silently
-twice. (iv) **Where.** The run, step and ask rows live in the *root
-binding's* storage, like grants on `/.vfs` paths; a root without the
-`replay` trait refuses a line's first ask `vfs.unsupported`. (v)
+twice. (iv) **Where.** A step row *is* an action-log row (H0) keyed
+`(run_id, stage, ordinal)`, with its recorded `Result` in the page
+table beside the log; the run head and the ask rows are two small
+tables beside both, all in the *root binding's* storage, like grants
+on `/.vfs` paths; a root without the `replay` trait refuses a line's
+first ask `vfs.unsupported`. (v)
 **Drain, then stop** (D40), per pipeline: the stages of the pipeline
 that asked run until each is finished or waiting; a suspended stage's
 consumer sees neither data nor end-of-stream, so `head` neither closes
 nor completes; later `;` and `&&` statements are not run.
-*Depends on.* H3, F3 (the determinism law, F3 criterion 10), T2 (the
-rows), K5 (the claim-first shape and the fingerprint).
+*Depends on.* H0 (the rows), H3, F3 (the determinism law, F3
+criterion 10; F7's D54 for the shell's nondeterministic words), T2,
+K5 (the claim-first shape and the fingerprint).
 *Acceptance.*
 1. A `cli` line whose stages raise asks ends with `success=False`, one
    `vfs.pending` error whose `data["vfs.run"]` carries `run_id`,
@@ -893,7 +1123,7 @@ a served wrong answer. The how-to says in one line that host-side
 effects before an interrupt run again, as LangGraph's docs say of
 theirs. Recording every host import of the guest (full determinism)
 and snapshotting its memory are both 0.2 options (D42).
-*Depends on.* H4, T3, T4, T5, M1. Adds `cli(request_key=)` to spec
+*Depends on.* H4, T3, T4, T5a, T5b, M1. Adds `cli(request_key=)` to spec
 171's `cli` schema and to spec 177's verb list (an additive name).
 *Acceptance.*
 1. A host tool that raises `Interrupt(payload)` ends its stage with
@@ -912,7 +1142,8 @@ and snapshotting its memory are both 0.2 options (D42).
    mismatched call is issued once with one `vfs.replay_diverged`
    record (counted). The how-to line is CI evidence under the docs
    gate.
-3. The Python guest (T5): a guest stopped at a door call that asked
+3. The guests (T5a, T5b; the Python case pinned, the JavaScript case
+   parametrized over the same test): a guest stopped at a door call that asked
    is, on resume, instantiated again (spied: exactly twice for the
    pandas job with one ask in its middle); its door calls up to the
    ask are served by fingerprint with zero storage statements; the ask
@@ -1405,26 +1636,36 @@ Independent of theme 3. Render at write moves up if D21 says so.
 
 ## 9. Domain F — The shell
 
-**Goal.** An agent types `grep -rn mfa /enterprise | head -20` through
-`VirtualFileSystem.cli` or `Session.cli` and every verb passes the
-gate. The grammar is ADR 081's static subset. `if`, `for`, functions,
-arithmetic, process substitution, arrays and `&` are refused at parse
-time with a classified `unsupported.construct` naming the construct
-and its position. The README publishes one coverage number with its
-denominator: spec 167's harness rate on the synthesized corpus (F5).
+**Goal.** An agent types `grep -rn mfa /enterprise | head -20`, or
+`for f in *.md; do grep -q TODO "$f" && echo "$f"; done`, through
+`VirtualFileSystem.cli` or `Session.cli`, and every verb passes the
+gate. The grammar is bash — the whole language, parsed statically to
+an AST before anything runs (ADR 081 pin 1 holds; pins 4, 8 and 12 are
+amended by F7). What is refused is only what has no meaning inside one
+gated call (D47, D48), each refusal a classified
+`unsupported.construct` naming the construct, its position and its
+reason. The README publishes two numbers with their denominators:
+spec 167's harness run rate on the synthesized corpus (F5) and the
+Oils spec-suite pass rate for the admitted constructs (F7).
 
-**What "a meaningful portion of bash" means here, honestly** (Clay,
-2026-10-28: not 100% of bash, but a meaningful portion). The nine
-commands that make 86% of agent pipeline segments in the measured
-corpus of 12,627 real calls (the 2026-10-15 memo §2), pipes in 74% of
-calls, `&&` in 44%, control flow under 10%. Every program keeps its
-Unix name and GNU flag semantics. `awk` (the largest hole, 331
-measured uses) needs a wasm host and is out of 0.1.0 unless D22 says
-otherwise. `git`, `docker`, `uv`, `sudo` never run and say so. Loops, functions
-and arithmetic are not grammar; they are the Python guest's job (T5),
-and `type for` says so. The shell is also the executor of the durable
-run (H4): it numbers every call it makes, and that numbering is what
-lets a stopped line continue where it stopped.
+**What "bash" means here, honestly** (Clay, 2026-10-28: full bash, as
+an expressive language, with everything that could be useful to vfs in
+it). The language is in: pipes (74% of the 12,627 measured calls),
+`&&` (44%), redirects, here-documents, variables and every parameter
+operator, `$( )`, `for`, `while`, `until`, `if`, `case`, functions,
+arithmetic, arrays, `[[ ]]`, process substitution, here-strings. The
+grammar is not where the shell runs out; programs are. Every program
+keeps its Unix name and GNU flag semantics; the nine commands that
+make 86% of pipeline segments land first (F3, F4) and the text kernels
+follow (F6). `awk` (the largest hole, 331 measured uses) needs a wasm
+host and is out of 0.1.0 unless D22 says otherwise. `git`, `docker`,
+`uv`, `sudo`, `curl` never run and say so. Job control past the call
+(`jobs`, `fg`, `bg`, `disown`, `nohup`), `eval`, `exec` and `trap`
+are refused with a hint; `cmd &` inside a line and `wait` are
+concurrency bounded by the call (D47). The shell is also the executor
+of the durable run (H4): it numbers every call it makes, and that
+numbering is what lets a stopped line continue where it stopped; a
+loop's iterations and a function's calls are numbered the same way.
 
 ### State today
 
@@ -1448,21 +1689,35 @@ renders empty, `to_payload` inlines base64 without bound, and the dead
    marker naming characters removed and rows remaining, never cutting
    the errors section.
 
-#### F2 — The parser · spec 167 B · M · gate a
+#### F2 — The parser: the whole grammar · spec 167 B (widened) · L · gate a
 
-*Depends on.* Nothing.
+*Story.* As an agent, I want every bash construct I type to parse to
+an AST before anything runs, so that a refused word is refused up
+front with its reason and nothing I wrote is half-executed.
+*Why.* Clay, 2026-10-28: the whole language. The parser is where that
+decision costs the least and matters the most: a static parse of
+`for`, functions and arithmetic is what keeps ADR 081 pin 1 and the
+pre-execution summary of ADR 084 pin 1 true once F7 runs them. The
+measured corpus already parsed 100 of 100 under mvdan-sh's bash
+dialect; vfs's parser is held to the same corpus.
+*Depends on.* Nothing. Decisions D47, D48.
 *Acceptance.*
-1. The weighted 100-command corpus parses 86 of 100; each of the 14
-   refusals is `vfs.unsupported.construct` with `line`, `column`,
-   `construct` and the slice named in the hint.
+1. The weighted 100-command corpus parses 100 of 100 to an AST; the
+   Oils spec-suite scripts for the constructs F7 admits parse (count
+   published beside F7's run rate); every refusal is one of D47's and
+   D48's words, classified `vfs.unsupported.construct` with `line`,
+   `column`, `construct` and the reason in the hint.
 2. Each malformed case (unclosed quote, unclosed here-document,
-   trailing `|`, `&& &&`, stray `)`) is `vfs.invalid.syntax` with
-   `line`, `column`, `offset`, `expected`, `incomplete`; exactly one
-   error per call; a caret in the display.
+   trailing `|`, `&& &&`, stray `)`, `if` without `fi`, `done` without
+   `do`) is `vfs.invalid.syntax` with `line`, `column`, `offset`,
+   `expected`, `incomplete`; exactly one error per call; a caret in
+   the display.
 3. The four parser budgets each classify `vfs.budget_exhausted` on a
    counted input (1 MiB + 1 byte; 100,001 tokens; depth 201; a brace
    expansion over `ITERATION_BUDGET`).
-4. `&` is refused with a hint; `time -p` parses as a builtin.
+4. `cmd &` parses as a job inside the list (D47); `time -p` parses as
+   a builtin; `source lib.sh` of a literal path is resolved and parsed
+   before the line runs and a computed path is refused (D48).
 
 #### F3 — The pipe, the ABI and `cli` with the minimal programs · spec 167 C · XL · gate b
 
@@ -1523,18 +1778,86 @@ renders empty, `to_payload` inlines base64 without bound, and the dead
 6. `rm -rf /` at a bind site is `vfs.busy`; elsewhere it tombstones
    with exactly one `delete(cascade=True)` call.
 
+#### F7 — The language runs: control flow, functions, arithmetic, arrays, the parameter operators · spec 167 F (new slice), amends ADR 081 · L · gate b
+
+*Story.* As an agent, I want to write the bash I already write —
+`for f in *.md; do …; done`, `if grep -q x f; then …; fi`, `while read
+-r line; do …; done`, a function, `$(( n + 1 ))`, an array — and have
+it run inside vfs with every verb gated, so that the shell is a
+language I can think in and not a list of one-liners.
+*Why.* Clay, 2026-10-28: full bash, as an expressive language, with
+everything useful to vfs in it. This reverses the 2026-10-15 subset:
+ADR 081's slices 2 and 3 land in 0.1.0 and its pin 8 shrinks to the
+constructs that have no meaning inside one gated call (D47, D48). The
+static parse holds (F2), so the pre-execution summary still names
+every program, verb and literal path; a loop over a glob names the
+glob. Control flow is the shell's job; the guests (T5a, T5b) are for
+numpy, pandas and the JavaScript world. The durable run (H4) numbers
+loop iterations and function calls as it numbers stages, and the
+shell's few nondeterministic words are recorded as expansion reads
+(D54).
+*Depends on.* F2, F4; K2. H4 consumes criterion 7.
+*Acceptance.*
+1. `for`, `while`, `until`, `if`/`elif`/`else`, `case` with `;;` and
+   `;&`, `break`, `continue`, `[[ ]]` with `=~` and pattern matching:
+   each has a spec-test file (script in; stdout, stderr and status
+   out) against committed bash fixtures from the pinned-image script;
+   `while read -r line` over a pipe consumes it in `ROWS_PER_CHUNK`
+   chunks at queue depth ≤ 2 (counted) and `read` is a builtin that
+   never leaves the shell.
+2. Functions in both spellings, `local`, `return`, `shift`, `getopts`,
+   `declare`, `readonly`, `unset -f`; recursion to
+   `FUNCTION_DEPTH_BUDGET` (lean 256) and then `vfs.budget_exhausted`
+   exit 137 (depth counted); `$(( ))`, `(( ))`, `let` and every
+   arithmetic operator, including `$RANDOM`.
+3. Arrays and associative arrays, `${x/a/b}`, `${x:1:2}`, `${!x}`,
+   `${x@Q}`, `${x,,}`, `${x^^}`, `${#a[@]}`, extended globs under
+   `shopt -s extglob`, here-strings `<<<`, `|&`, process substitution
+   `<( )` and `>( )` as seams of the pipe (ADR 083: one shape per
+   chunk, bounded queues).
+4. `LOOP_ITERATION_BUDGET` (lean 1,000,000) and `FUNCTION_DEPTH_BUDGET`
+   are declared constants; `while true; do :; done` ends with
+   `vfs.budget_exhausted` exit 137 after exactly the budget's
+   iterations (counted), inside `WALL_TIME_BUDGET`; a loop that calls
+   a verb per iteration counts each call against `VERB_CALL_BUDGET`.
+5. The Oils bash spec-suite files for the admitted constructs run
+   under F5's harness and the pass rate is published beside F5's
+   number (bashkit publishes 97.3%); `KNOWN_DELTAS` lists every
+   deliberate difference and the test asserts the list is exhaustive
+   (every failing case is named).
+6. The refusals (D47, D48): `jobs`, `fg`, `bg`, `disown`, `nohup`,
+   `eval`, `exec`, `trap`, `coproc`, `ulimit`, `umask`, and `source` of
+   a computed path are `vfs.unsupported.construct` or `vfs.unrecognized`
+   with a hint naming why; `a & b & wait` runs `a` and `b` concurrently
+   (two tasks counted) and the call returns when both have run, with
+   both statuses in the list; `source lib.sh` of a literal path reads
+   the file through the gate (one `read`, spied) and parses it before
+   the line runs.
+7. The durable run (H4, D54): `$RANDOM`, `$SECONDS`, `$EPOCHSECONDS`,
+   `$EPOCHREALTIME`, `$BASHPID`, `$$` and the `date` builtin are
+   expansion reads recorded in the ledger; a resumed loop replays them
+   from the ledger (zero fresh values, counted) and the resumed line's
+   stdout equals an uninterrupted run's byte for byte.
+8. ADR 081 pins 4, 8 and 12 are amended (no v1 arithmetic exclusion;
+   the refused list is D47's and D48's; slices 2 and 3 are landed and
+   slice 4 is the long tail); ADR 084 pin 1's summary is restated for
+   loops (programs, verbs and literal paths named; a glob named as a
+   glob); the glossary and architecture page 11 say "bash".
+
 #### F5 — The coverage harness and `docs/reference/shell.md` · spec 167 E · M · gate f
 
-*Depends on.* F4; H5 and F6 for exit rows 75 and 123.
+*Depends on.* F4, F7; H5 and F6 for exit rows 75 and 123.
 *Acceptance.*
 1. The harness reports parse, resolve, flag and run rates on the
    synthesized corpus; the in-scope run rate is at least 85%; the
-   README prints the harness's measured rate with its denominator.
+   README prints the harness's measured rate with its denominator
+   beside F7's Oils rate with its own.
 2. Fixtures come from one pinned-image script and are committed; tests
    never run bash.
-3. `docs/reference/shell.md` lists the grammar, every program with its
-   forms, the exit-code table (0, 1, 2, 75, 123, 124, 126, 127, 130,
-   134, 137) and the refusal table.
+3. `docs/reference/shell.md` lists the grammar (the whole language and
+   the D47/D48 refusals), every program with its forms, the exit-code
+   table (0, 1, 2, 75, 123, 124, 126, 127, 130, 134, 137), the budgets
+   (F7 criterion 4 included) and the refusal table.
 
 #### F6 — Text kernels: `sort uniq tr tee` (168a), `xargs` and `find -exec` (168b) · M + M · gate f
 
@@ -1567,14 +1890,15 @@ way.
 |---|---|---|---|---|
 | (a) host-program tools, LangChain-shaped | **tool** | T3 | the host's authority (ADR 084 pin 3's one exception); receives the caller's `Fs` only if it declares one | `read` on `/.vfs/tools/<name>` |
 | (b) mounted MCP servers | **MCP tool** | T4, I4 | the credential the resolver returns for the caller | `read` on `/.vfs/mcp/<server>/tools/<tool>` |
-| (c) CLI tools embedded or installed | **verb builtin**, **text program** (F3–F6); **skill** (read only, T1); **program** (`.wasm`, T6 in 0.2); the `python` kind (T5) | F3–F6, T1, T5 | the caller, never more | the verb's own gate; `read` on the entry; install is `add` on the directory |
+| (c) CLI tools embedded or installed | **verb builtin**, **text program** (F3–F7); **skill** (read only, T1); **program** (`.wasm`, T6 in 0.2); the `python` and `javascript` kinds (T5a, T5b) | F3–F7, T1, T5a, T5b | the caller, never more | the verb's own gate; `read` on the entry; install is `add` on the directory |
 
 Every tool is a *path* an agent can see, grant and call. `cat` of a
 tool shows its manifest and never runs it (the mcpfs lesson: `stat`
 never executes). A tool runs only when typed as a command. The call is
 gated and can be suspended (H5); the tool body runs with the authority
 its trust line names. At 0.1.0 the installable kinds are skills and
-host tools; the Python guest (T5) is in 0.1.0; generic wasm programs
+host tools; the Python and JavaScript guests (T5a, T5b) are in 0.1.0,
+each behind its own extra (Clay, 2026-10-28); generic wasm programs
 are 0.2.
 
 ### State today
@@ -1616,9 +1940,10 @@ afternoon each and becomes T4's first tasks.
 
 *Why.* Spec 169c's per-process ring would be thrown away by H4 on the
 critical path; land the record as rows in the root binding's storage
-from the start (the review's call). H4 adds the steps and asks to the
+from the start (the review's call). A run record is an action-log row
+(H0) plus the program's output rows; H4 adds the steps and asks to the
 same tables.
-*Depends on.* T1, F3, K5 (the row shape).
+*Depends on.* T1, F3, H0 (the row), K5 (the claim-first shape).
 *Acceptance.* After `cat a.txt | upper`, `read /.vfs/run/<id>/stdout`
 returns the output and `…/status` names the program and
 `content_hash`; the rows are in the root binding's schema and a read
@@ -1684,19 +2009,19 @@ on each engine leg as the root.
 6. Credentials never appear in the environment of a spawned stdio
    server.
 
-#### T5 — The Python guest over wasi-python · spec 172 rewritten, ADR 086 amended · M · gate b
+#### T5a — The Python guest over wasi-python · spec 172 rewritten, ADR 086 amended · M · gate b
 
 *Story.* As an agent, I want to run a Python script — with numpy and
 pandas — over the files I can see, as me, with every file call passing
-the gate, so that the loops and logic the shell refuses have a home
-and a script cannot reach anything the shell cannot.
+the gate, so that numeric and tabular work has a home inside vfs and a
+script cannot reach anything the shell cannot.
 *Why.* Python is in 0.1.0 (Clay, 2026-10-28; D23 decided). The
 mechanism is proven twice (spike 173; the 2026-10-23 memo ran
 wasi-python 0.1.0 over a vfs `Session` through public APIs only). What
 remains is a thin adapter behind `vfs-py[python]`, and the step
 recording H5 needs: every host import is one call through one door.
 *Depends on.* F3, F4, T1; ADR 086 pins 1, 2, 4, 6, 7 rewritten from the
-memo. H5 adds the guest's asks.
+memo. H5 adds the guest's asks. T5b reuses the adapter.
 *Acceptance.*
 1. `python3 -c "import numpy, pandas"` runs with zero host preopens
    beyond the runner's stdlib zip and zero vfs grants.
@@ -1713,10 +2038,54 @@ memo. H5 adds the guest's asks.
 6. `WASI_ERRNO` has one entry per `ErrorKind` (drift test); the guest
    tests are `slow`.
 
+#### T5b — The JavaScript guest over QuickJS-NG · spec 172 §6 rewritten, ADR 086 pin 9 · M (plus an S spike) · gate b
+
+*Story.* As an agent, I want to run a JavaScript program over the
+files I can see, as me, with every file call passing the gate, so that
+JSON work and the scripts I already write in JavaScript have the same
+home Python has.
+*Why.* Clay, 2026-10-28: Python and JavaScript, both optional extras.
+ADR 086 pin 9 already names QuickJS-NG "under the same host, with the
+same door". The open question is the host. wasi-python's runner hosts
+the Python guest; whether it hosts a generic `wasm32-wasip1` module
+over the same mount and tool protocols is unknown (the 2026-10-23
+memo's Q2). D49 decides: ask the `wasi_python` project to host a
+generic module (lean), or pull 169b's host (T6) forward for QuickJS
+alone. A one-afternoon spike (gate a, S) answers the question before
+the story is sized final.
+*Depends on.* T5a (its adapter is the template), D49 and its spike;
+F3, F4, T1.
+*Acceptance.*
+1. `qjs script.js` runs a QuickJS-NG guest with zero host preopens
+   beyond the artifact and zero vfs grants; `node` resolves to the
+   same kind and `type node` says "QuickJS-NG, not Node: no npm, no
+   network, no native modules" (ADR 082 pin 14: trust shown).
+2. A script that reads a JSON row, transforms it and writes a sibling
+   completes with exit 0 in a counted number of verbs (the test pins
+   the measured number as T5a criterion 2 does).
+3. A guest write on a read-only mount raises the guest's `EROFS` and
+   the stage reports one `vfs.read_only` error although the guest
+   exited 0; `/.vfs` is `ENOENT` with zero verbs; the same script as
+   Alice (no grant) and Bob (`read` on `/secret`) fails and succeeds
+   respectively, through the one provider.
+4. `trapped == "deadline"` → 124; fuel or file-call exhaustion → 137;
+   any other trap → 134; `WASI_ERRNO` is the one table both guests
+   share (drift test).
+5. `import vfs` works without `vfs-py[javascript]`; the extra pins the
+   QuickJS-NG artifact by hash; the artifact rides the extra's wheel,
+   never vfs's own, so the wheel budget is untouched; the guest tests
+   are `slow`.
+6. Both guests register as rows of one guest table in the program
+   table (`python`, `javascript`), share one host adapter class and
+   one door, and H5's resume rule (re-enter, match door calls by
+   fingerprint) is pinned for both.
+
 #### T6 — The generic wasm host, `/opt/bin` programs, `awk`, `jq`, uutils · spec 169b · XL · gate 0.2
 
 The only road to `awk` and to running arbitrary installed programs; it
-duplicates a preview1 host wasi-python's runner already owns. D22.
+duplicates a preview1 host wasi-python's runner already owns. D22. If
+D49 finds that runner cannot host QuickJS-NG, the host half of this
+story moves up for T5b and the program-install half stays here.
 
 #### T7 — OAuth on demand for mounted servers · extends I4 · L · gate 0.2
 
@@ -1885,7 +2254,8 @@ is documented as SQLite-only until pinned.
    the management allowlist (`MANAGEMENT_METHODS`, promoted to `ops.py`
    here if F3 has not yet), that the sync signature equals the async
    one, and `SyncSession` matches `Session`; the parity test is the
-   one place later verbs (`cli`, `versions`, `answer`, `resume`, `cancel`) must pass, so it
+   one place later verbs (`cli`, `versions`, `answer`, `resume`,
+   `cancel`, `calls`) and arguments (`strict=`) must pass, so it
    fails loudly when a verb joins `Session` without a sync twin.
 4. A sync call issued from the facade's own loop thread returns a
    classified `vfs.invalid` naming the deadlock, never hangs.
@@ -2164,17 +2534,18 @@ batch are independent unless an arrow says otherwise.
 | Alpha | Carries | Why this order |
 |---|---|---|
 | **a1** (this week) | R1, R2, R3 | The lane must exist before anything rides it. |
-| **a2** — the three defects and the two ADRs | K1, H1 → K2, K3, K5; F1, F2; I6; X7; R8; K1, H1 → R6, R7 | The ADRs first: eight specs and every interrupt story stand on them. K2/K3/K5 close the three live defects. F1/F2 are small and independent. |
-| **a3** — the filesystem arguments, the lifecycle, the facade | K4, K6 → K9; H2; I3a; D1, D2 → D3; D4; E1, E2, E3, E5; X1 → X2; X6; I5 | Cursor, range, the regroup and the freeze list. `plan=` rides the write seam. Storage lifecycle and the matrix. Search defaults. The sync facade. |
-| **a4** — the interrupt and the shell | H3; F3 → F4; I1; E4 | H3 depends on H1, H2 and K5 only, so Clay's first theme lands here, not last. The pipe and the forms are the long pole. |
-| **a5** — tools, Python and the front | T1 → T2 → T3 → I3b → T4; T1 → T5; I2; M1 → M2 | Views, host tools, servers, the Python guest, the adapter, the one-line serve. |
-| **a6** — the durable run and interrupts for every kind | H4 → H5 → M3; I4; H6 | The run ledger; then tools, guests and the wire stop and resume through it. |
+| **a2** — the three defects, the two ADRs, the spike | K1, H1 → K2, K3, K5; F1, F2; L0; I6; X7; R8; K1, H1 → R6, R7 | The ADRs first: eight specs and every interrupt story stand on them. K2/K3/K5 close the three live defects. F2 is now the whole grammar. L0 prices the log before H0 is shaped. |
+| **a3** — the filesystem arguments, the session's memory, the lifecycle, the facade | K4, K6 → K9; K2, K3 → K10; H2; I3a; D1, D2 → D3; D4; E1, E2, E3, E5; X1 → X2; X6; I5 | Cursor, range, the regroup and the freeze list. The session stamps. `plan=` rides the write seam. Storage lifecycle and the matrix. Search defaults. The sync facade. |
+| **a4** — the log, the interrupt and the shell | L0, K4, K5 → H0 → H3; F3 → F4 → F7; I1; E4 | The action log first: H3's ledger lives in it. H3 then depends on H0, H1, H2 and K5, so Clay's first theme lands here, not last. The pipe, the forms and the language are the long pole. |
+| **a5** — tools, the guests and the front | T1 → T2 → T3 → I3b → T4; T1 → T5a → T5b (after D49's spike); I2; M1 → M2 | Views, host tools, servers, the two guests, the adapter, the one-line serve. |
+| **a6** — the durable run and interrupts for every kind | H4 → H5 → M3; I4; H6 | The run ledger over the log; then tools, guests and the wire stop and resume through it. |
 | **b1** — freeze | R5 (after every `b` story above) | Nothing after b1 renames or removes a public name. |
 | **beta → final** | K7, K8; D6/R4, D7; E6; F5, F6; X3, X4, X5; R9 | Proof on every leg, docs, the bench. |
 | **0.1.0** | A beta held ≥ 14 days; D6/R4 green from the wheel; every `f` story landed. | |
 
-**Critical path, in one line:** K1 → K2 → F3 → F4 → T1 → T3 → I3b →
-T4 → M1 → H4 → H5. Nine L or XL items in series.
+**Critical path, in one line:** K1 → K2 → F3 → F4 → F7 → T1 → T3 →
+I3b → T4 → M1 → H4 → H5. Ten L or XL items in series; H0 sits beside
+F3 in a4 and gates H3, H4 and T2 but not the shell.
 
 **The arithmetic.** On the page's own scale (S ≤ 1 day, M 2–4 days, L
 1–2 weeks, XL > 2 weeks), the batches sum to about:
@@ -2182,19 +2553,25 @@ T4 → M1 → H4 → H5. Nine L or XL items in series.
 | Batch | Composition | Effort |
 |---|---|---|
 | a1 | 3 S | ~3 days |
-| a2 | 2 L, 3 M, 7 S | 5–8 weeks |
-| a3 | 9 M, 8 S | 5.5–9.5 weeks |
-| a4 | 1 XL, 2 L, 2 M | 5–9+ weeks, F3 → F4 serial |
-| a5 | 4 L, 4 M, 1 S | 6–11.5 weeks, mostly serial |
+| a2 | 3 L, 2 M, 8 S | 5.5–9.5 weeks (F2 is now L; L0 added) |
+| a3 | 10 M, 8 S | 5.5–10 weeks (K10 added) |
+| a4 | 1 XL, 4 L, 2 M | 7–13+ weeks, F3 → F4 → F7 serial; H0 beside them |
+| a5 | 4 L, 5 M, 2 S | 6.5–12.5 weeks, mostly serial (T5b and its spike added) |
 | a6 | 2 L, 3 M | 3–6.5 weeks, H4 → H5 serial |
 | beta → final | 1 L, 8 M, 4 S | 5.5–10 weeks |
-| **Total** | | **about 30–55 weeks** |
+| **Total** | | **about 34–62 weeks** |
+
+The fourth revision added two L stories (F7, H0), two M stories (K10,
+T5b), two S spikes (L0, D49's) and widened F2 from M to L: roughly
+four to seven weeks on the page's scale. None of the four is a cut
+candidate (Clay, 2026-10-28); the cut order below is unchanged and
+the structural option (D2 item iii) is the lever that absorbs them.
 
 Measured throughput from the spec archive (status lines "landed
 2026-MM"): July 20, August 44, September 8, October 7 specs a month.
 The pace fell about five-fold as specs became kernel-sized. At the
-autumn rate the page's sixty-odd stories are seven to nine months; on
-the effort scale, seven to thirteen. The product plan's own finding
+autumn rate the page's seventy-odd stories are eight to ten months; on
+the effort scale, eight to fourteen. The product plan's own finding
 was that every plan exceeded solo capacity three to four times. This
 page does not pretend otherwise; it gives Clay the cut order below and
 one structural option (D2).
@@ -2220,7 +2597,7 @@ sentence true or moves a half-deferred theme whole):
 8. T5's numpy/pandas bundle → 0.1.x; ship the stdlib-only guest first.
    The guest's shape and the door do not change.
 9. **The structural option (D2, lean):** ship 0.1.0 with the shell core
-   (F3, F4), host tools (T3) and the Python guest (T5), and make MCP
+   (F3, F4, F7), host tools (T3) and the two guests (T5a, T5b), and make MCP
    servers as views (T4), the credential seam (I4) and OAuth on demand
    (T7) the headline of 0.2, where "acting as the user" can be done
    whole instead of half. This removes an L from the serial chain and
@@ -2253,8 +2630,11 @@ replaces both. K2 lands before F3 (D33). The one flag name is
 | Recording every host import of a guest (full determinism), or a memory snapshot of a stopped guest | 0.2 | Re-entry with fingerprint-matched door calls is correct and simpler (D42). |
 | `/.vfs/jobs/<run>/steps` | 0.2 | Asks are the only view a person needs at 0.1.0; step rows hold bodies. |
 | Answering an ask by writing a file under `/.vfs/jobs` | 0.2 | `answer` is the one door at 0.1.0; the views stay read-only (T1). |
-| A public per-call statement counter on `Result` | 0.2 | Tests already count; a host-facing counter is a later seam. |
-| A local-disk storage backend; a change feed; OpenTelemetry spans; an object-store data plane; reference adapters for host frameworks | 0.2+ | The wedge is "the database you already run"; adapters need `serve()` first. |
+| A per-call statement and timing counter *on `Result`* | 0.2 | The counts and the elapsed time land in the action log (H0), where an operator reads them; a host-facing field on the envelope is a later seam. |
+| An OpenTelemetry exporter; a `/.vfs/log` view; log rows readable by a non-system principal | 0.2 | The action log (H0) is the data; the exporter and the agent-facing view read it later. At 0.1.0 the schema is documented and the system actor pages it (D53). |
+| A local-disk storage backend; a change feed; an object-store data plane; reference adapters for host frameworks | 0.2+ | The wedge is "the database you already run"; adapters need `serve()` first. |
+| Stamps over the wire (a per-principal session table in `serve()`) | 0.1.0 if D51 says so, else 0.2 | Spec 171 decided no sessions on the wire; K10's guard over MCP needs one bounded table per principal. |
+| `eval`, job control past the call (`jobs`, `fg`, `bg`), `exec`, `trap` | later, if ever | No meaning inside one gated call (D47, D48); `/.vfs/jobs` and the durable run are the job model. |
 | FUSE or NFS fronts | later | A facet by ADR 087; the copy never promises it. |
 | Diff/cmp kernels (168c); the Rust port of 168a if cut | 0.1.x | Can slip without changing a name. |
 
@@ -2287,8 +2667,8 @@ A lean is the assistant's recommendation, not a decision.
 | D19 | Schema lifecycle from `0.1.0b1`: D2 as written? A corrupt version row as `vfs.unavailable.corrupt`? | Yes; yes. | D2 |
 | D20 | Default local embedder: amend ADR 060 to model2vec potion, or build fastembed/MiniLM? | Amend; keep fastembed as a documented LangChain route. | E1 |
 | D21 | Render at write (159) in 0.1.0? | No, unless the first served pilot hits it. | E8 |
-| D22 | A generic wasm host for `awk`, or ship without? | Ship without; refuse with a hint; ask wasi_python in parallel. | T6 |
-| D23 | The Python guest: gate, stretch, or 0.2? | **Decided** (Clay, 2026-10-28): in 0.1.0, gate b, behind `vfs-py[python]`. | — |
+| D22 | A generic wasm host for `awk`, or ship without? | Ship without; refuse with a hint; ask wasi_python in parallel (D49's spike asks the same project). | T6 |
+| D23 | The guests: gate, stretch, or 0.2? | **Decided** (Clay, 2026-10-28): Python and JavaScript both in 0.1.0, gate b, behind `vfs-py[python]` and `vfs-py[javascript]`. | — |
 | D24 | Reverse spec 171 decision 7: ship `vfs serve` and `python -m vfs.mcp`? | Yes. | M2 |
 | D25 | A suspended `cli` line as an MCP task at 0.1.0? | No. | M3 |
 | D26 | Sync facade: thread-loop (no dependency) or `anyio` portal? | Thread-loop. | X1 |
@@ -2312,16 +2692,26 @@ A lean is the assistant's recommendation, not a decision.
 | D45 | Whose authority a resumed step runs under, and who may resume. | The run's recorded authority, always, re-judged by the gate; `resume` is allowed to the owner or to an approver holding `read_write` on every open ask's path. | H4, M3 |
 | D46 | A step left `running` by a crash: refuse it in doubt and ask the host, or re-enter it? | In doubt; the host answers `done` or `redo`. | H4 |
 | D44 | The API shape: `answer(ticket, …)` per ask plus `resume(run_id)` per run (answers can arrive one at a time, from different approvers, from different processes), or one `resume(run_id, answers={…})`? | `answer` per ask and `resume` per run; a bare verb's ticket is its run id, so `request_key=ticket` stays as the one-step resume. | H3, H4 |
+| D47 | `&` in the full language: refuse it forever (ADR 081 pin 8 as written), or admit `cmd &` and `wait` as concurrency bounded by the call — the line waits for every job at its end, so the call never returns early — with `jobs`, `fg`, `bg`, `disown` and `nohup` refused? | Admit the bounded form; refuse job control past the call. The durable run and `/.vfs/jobs` are the background model. | F2, F7 |
+| D48 | `source`/`.` and `eval`: admit `source` of a literal path (read through the gate and parsed before the line runs; a computed path refused) and refuse `eval` as the one construct that defeats the pre-execution summary? | Yes to both. | F2, F7 |
+| D49 | Who hosts the QuickJS-NG guest: ask the `wasi_python` project to host a generic `wasm32-wasip1` module over its mount and tool protocols, or pull 169b's host (T6) forward for QuickJS alone? A one-afternoon spike answers whether the runner can. | Ask `wasi_python`; the spike first; T6's host only if the answer is no. | T5b |
+| D50 | K10: a write through a session to a path the session never read — proceed unguarded (today's behaviour), or refuse until read? | Proceed by default; `Session(strict=True)` refuses `vfs.invalid` naming the rule. | K10 |
+| D51 | K10 over MCP: spec 171 decided no sessions on the wire. Keep a bounded per-principal stamp table inside `serve()` (process-local, `SESSION_STAMPS` per principal, swept with the connection), or leave the guard to the host at 0.1.0? | Keep the table: agents over MCP are the first audience and the guard is the point. Amends spec 171's "no sessions" to "no session *handles*". | M1, K10 |
+| D52 | H0: the action log on by default with `LOG_RETENTION_DAYS = 30` and a `log=False` escape, or opt-in? Run and ask rows keep their own 24 h. | On by default; analytics is a 0.1.0 must (Clay). | H0 |
+| D53 | H0's read side at 0.1.0: a documented, frozen table schema plus `fs.calls(...)` on the developer plane for the system actor, with a `/.vfs/log` view and agent-readable rows in 0.2? | As stated; the database you already run is the analytics surface. | H0 |
+| D54 | The shell's nondeterministic words under the durable run (`$RANDOM`, `$SECONDS`, `$EPOCHSECONDS`, `$EPOCHREALTIME`, `$BASHPID`, `$$`, `date`): record each as an expansion read (D41) and replay it on resume, or refuse them in a line that may ask? | Record and replay. | F7, H4 |
 
 ---
 
 ## 17. One-line version
 
 Ship `0.1.0a1` this week from the tree as it is; ratify the kernel and
-the interrupt; close the three live defects; land the cursor, the range,
-the preconditions and `plan=`; make the interrupt real and the run
-durable, so a stopped line continues where it stopped; build the
-shell, then the tools and the Python guest, then the front; freeze when every public name is written
-down; call it `0.1.0` when a beta has held and the engines pass from the
-wheel — and decide now whether MCP servers as views ride 0.1.0 or lead
-0.2.
+the interrupt; close the three live defects; land the cursor, the
+range, the preconditions, the session that remembers what it read, and
+`plan=`; log every call vfs makes — who, what, how many, how long —
+and make the interrupt real and the run durable over that log, so a
+stopped line continues where it stopped; build the shell as the whole
+bash language, then the tools and the two guests, then the front;
+freeze when every public name is written down; call it `0.1.0` when a
+beta has held and the engines pass from the wheel — and decide now
+whether MCP servers as views ride 0.1.0 or lead 0.2.
