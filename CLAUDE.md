@@ -182,9 +182,44 @@ Consequences that bind design work:
 - **All project knowledge lives in this repo — never outside it.** Do not
   write memory files to `~/.claude/projects/*/memory/` or any other
   out-of-repo location; if any exist, delete them. Durable context belongs
-  in `context/` (research, decisions, specs, standards) or this file, where
-  it is versioned and visible to everyone. The pipeline is research →
-  decide → specify → code, all under standards — see `context/README.md`.
+  in `context/` (intentions, research, specs, reviews, standards) or this
+  file, where it is versioned and visible to everyone. The pipeline is
+  intent → research → spec → review → code → review → commit, all under
+  standards — see `context/README.md`. Every change needs a spec; not
+  every change needs an intention or research.
+- **Decisions live in the spec that carries them** (Clay, 2026-10-29).
+  There are no decision records: `context/decisions/` froze on
+  2026-10-29 as history. A choice is a numbered entry in the spec's
+  Decisions section with its reason; a choice that cannot be made yet
+  becomes a placeholder research memo and the spec waits. No document
+  holds an open question: no clarification marker, neither of the two
+  marker words, no heading that opens a list of questions; `tests/lint/`
+  refuses them.
+- **Every document under `context/` is dated, headerless and one line
+  per paragraph** (Clay, 2026-10-29). Names are
+  `YYYY-MM-DD-descriptive-slug.md`, never numbered; the title is line
+  one and prose follows with no bullet header; cross-references are
+  Markdown links with relative paths; a paragraph is one line of any
+  length (`scripts/unwrap_context.py --fix` joins wrapped prose). The
+  lint package `tests/lint/` holds these shapes in `scripts/ci.sh`.
+- **Nothing lands unreviewed** (Clay, 2026-10-29). A spec is reviewed
+  before it is built and the code again before it lands, each by a
+  fresh agent or a person who did not write the change, given the spec
+  and the diff and never the author's summary; each review is a file
+  under `context/reviews/`, and the landing notes link both. The spec
+  review ends "Fit to build" or "Not yet"; the code review ends "Lands"
+  or "Does not land yet". The `spec_review` and `code_review` skills
+  write them; the security lens is the installed `security-audit` skill
+  in guidance mode.
+- **Tests first, then code** (Clay, 2026-10-29). A new behaviour's test
+  is written and seen failing before the code that passes it; a bug's
+  reproducing test before its fix; at the layer the behaviour lives.
+  This is an instruction of how to code, not a record to keep: the
+  tests land in the same commit as the code they pin. See
+  `context/standards/how-we-code.md`.
+- **A change lands as one commit** whose subject names it in words and
+  whose trailers link the spec and both reviews; see
+  `context/standards/landing.md`. Commit and push only when Clay asks.
 - **The research stage means new investigation, not transcription** (Clay,
   2026-08-04): a research memo is produced by actually gathering new
   findings — subagents studying the reference repos, executed experiments,
@@ -333,8 +368,9 @@ private *types and constants* stay next to what they support.
   needs more room, it belongs in a docstring.
 - Do **not** reference story/spec numbers or decision records (e.g.
   "spec 030 §5.2", "Phase 4", "ADR 019") in code comments **or
-  docstrings**. Traceability lives in `context/specs/` and
-  `context/decisions/`, not inline.
+  docstrings**. The comment gives its reason in words; the document
+  cites the code, never the other way round. `tests/lint/` holds this
+  for `src/`; traceability lives in `context/specs/`, not inline.
 
 ## Code smells
 

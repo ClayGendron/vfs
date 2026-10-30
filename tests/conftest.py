@@ -2,8 +2,9 @@
 
 Engines come from a fixture that disposes them. In-memory SQLite makes an
 abandoned connection cheap, but the suite also runs against real servers
-(see ``--mssql``), where every undisposed engine holds a socket and a
-server-side session for the length of the run.
+(the engine legs selected by ``VFS_TEST_<ENGINE>_URL`` below), where every
+undisposed engine holds a socket and a server-side session for the length
+of the run.
 """
 
 from __future__ import annotations

@@ -25,6 +25,7 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import embed as embed_module
 from vfs.storage.backends.database.embed import EmbedRow, token_batched, truncated_for
 from vfs.storage.backends.database.seams import installed
+from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -354,8 +355,6 @@ class TestStep:
         await storage.close()
 
     async def test_the_in_memory_default_is_the_hashing_provider(self) -> None:
-        from vfs.storage.backends.memory import InMemoryStorage
-
         storage = InMemoryStorage()
         assert isinstance(storage.embedder, HashEmbeddingProvider)
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha beta")])).success is True
@@ -368,8 +367,6 @@ class TestStep:
         storage = await _fresh(tmp_path, embedder=provider)
 
         async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw):
-            from vfs.results import Result, ResultError
-
             return Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
 
         monkeypatch.setattr(backend_module, "chunk_dirty", broken)

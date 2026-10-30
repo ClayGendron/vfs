@@ -51,8 +51,17 @@ from vfs.models.vector_codec import FLOAT32_BYTES, pack_vector, unpack_vector
 from vfs.models.vector_native import MariaDBVector, MSSQLVector
 from vfs.native import extension
 
+try:
+    from pgvector.sqlalchemy import Vector as _PGVector
+
+    PGVector: Callable[[int], TypeEngine[Any]] | None = _PGVector
+    _PGVECTOR_ERROR: ImportError | None = None
+except ImportError as _absent:  # pragma: no cover - the optional postgres extra is absent
+    PGVector = None
+    _PGVECTOR_ERROR = _absent
+
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from pydantic import GetCoreSchemaHandler
     from pydantic_core import CoreSchema
@@ -240,15 +249,13 @@ class VectorType(TypeDecorator[Vector]):
         raise ValueError(msg)
 
     def pgvector_sqlalchemy_type(self) -> TypeEngine[object]:
-        """Return the lazily imported pgvector SQLAlchemy type instance."""
+        """Return the pgvector SQLAlchemy type instance, or refuse when the extra is absent."""
         if self.dimension is None:
             msg = "Native pgvector columns require a fixed dimension"
             raise ValueError(msg)
-        try:
-            from pgvector.sqlalchemy import Vector as PGVector
-        except ImportError as exc:  # pragma: no cover - exercised in Postgres integration env
+        if PGVector is None:
             msg = "Native Postgres vectors require the 'pgvector' package. Install vfs-py[postgres]."
-            raise RuntimeError(msg) from exc
+            raise RuntimeError(msg) from _PGVECTOR_ERROR
         return PGVector(self.dimension)
 
     def _coerce_runtime_vector(self, value: list[float]) -> Vector:

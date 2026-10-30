@@ -14,6 +14,7 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import LargeBinary
 from sqlalchemy.dialects import postgresql, sqlite
 
+from vfs.models import vector as vector_module
 from vfs.models.vector import Vector, VectorType, pack_vector, unpack_vector
 
 SQLITE = sqlite.dialect()
@@ -114,6 +115,11 @@ class TestVectorTypeConfiguration:
     def test_pgvector_type_requires_a_fixed_dimension(self) -> None:
         with pytest.raises(ValueError, match="fixed dimension"):
             VectorType().pgvector_sqlalchemy_type()
+
+    def test_pgvector_type_refuses_when_the_extra_is_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(vector_module, "PGVector", None)
+        with pytest.raises(RuntimeError, match=r"vfs-py\[postgres\]"):
+            VectorType(dimension=3).pgvector_sqlalchemy_type()
 
     def test_dialect_impl_is_native_only_on_postgres(self) -> None:
         column = VectorType(dimension=3, native=True)

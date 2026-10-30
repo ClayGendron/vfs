@@ -7,6 +7,7 @@ pattern fan may grow with batch size, on any engine.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -979,8 +980,6 @@ class TestValueTooLarge:
     """The engines' own single-value caps, recognised by code and type, never text."""
 
     def test_sqlite_reports_a_value_past_its_length_limit_as_a_data_error(self) -> None:
-        import sqlite3
-
         assert is_value_too_large(sqlite3.DataError("string or blob too big")) is True
         assert is_value_too_large(_SqliteError(5)) is False
 
@@ -998,8 +997,6 @@ class TestValueTooLarge:
         assert is_value_too_large(_MySQLError(1213)) is False
 
     def test_a_wrapped_driver_error_is_unwrapped_first(self) -> None:
-        import sqlite3
-
         wrapped = DBAPIError("INSERT", None, sqlite3.DataError("too big"))
         assert is_value_too_large(wrapped) is True
         assert is_value_too_large(RuntimeError("nope")) is False

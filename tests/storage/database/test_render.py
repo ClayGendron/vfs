@@ -22,6 +22,7 @@ from tests.support.documents import (
     surrogate_pdf_bytes,
     xlsx_bytes,
 )
+from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.media import DOCX, OCTET_STREAM, OOXML_TYPES, PDF, RENDERED_STATUSES
 from vfs.models.version import line_count
@@ -29,9 +30,11 @@ from vfs.paths import Path
 from vfs.rendering import Builder, RendererRegistry, Rendering, RenderLimits, RenderSource
 from vfs.rendering.pdf import PdfRenderer
 from vfs.results import ErrorKind, Result, Severity
+from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import render as render_module
+from vfs.storage.backends.database import topology as topology_module
 from vfs.storage.backends.database.dialects import ValueCap
 from vfs.storage.backends.database.indexing import lease_lost
 from vfs.storage.backends.database.render import RenderReport, RenderRow, land_renderings, render_rows
@@ -161,8 +164,6 @@ class TestRenderings:
         await storage.close()
 
     async def test_the_extra_survives_the_embed_step(self, tmp_path) -> None:
-        from vfs.embedding import HashEmbeddingProvider
-
         storage = _mount(tmp_path, embedder=HashEmbeddingProvider())
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         result = await storage.reindex()
@@ -761,9 +762,6 @@ class TestBounds:
         await storage.close()
 
     async def test_copy_moves_bodies_in_bounded_pages(self, tmp_path, monkeypatch) -> None:
-        from vfs.storage import ResolvedPair
-        from vfs.storage.backends.database import topology as topology_module
-
         monkeypatch.setattr(topology_module, "BLOB_PAGE_BYTES", 1)
         storage = _mount(tmp_path)
         for index in range(3):

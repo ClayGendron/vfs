@@ -112,6 +112,8 @@ select = [
     "RUF",    # ruff-specific
     "PTH",    # flake8-use-pathlib
     "PERF",   # perflint
+    "TID252", # no relative imports: every import names vfs from the top
+    "PLC0415", # no import inside a function: every import sits at the top of its file
 ]
 ignore = [
     "ANN401",  # dynamically typed expressions (Any)

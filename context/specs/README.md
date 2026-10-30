@@ -1,92 +1,52 @@
 # /context/specs
 
-The SPECIFY stage of the pipeline (research → decide → specify → code).
-A spec is a detailed work package with a small scope — small enough to hand
-to a single developer (human or agent) to complete, and self-contained
-enough to leave the repo as a handoff artifact.
+The SPEC stage of the pipeline described in [the context README](../README.md). A spec is the one document every change must have: a work package small enough for one developer, human or agent, that decides every choice the build needs and names the test that will pin each acceptance criterion.
 
 ## Layout
 
 ```
 specs/
-  active/     # open specs — seed, draft, shaped, or in progress
-  archive/    # landed specs — permanent historical record
+  active/     # not yet landed: drafted, reviewed, building, or parked
+  archive/    # landed, moved here by the landing commit under the same name; or withdrawn
   README.md
-  STATUS.md
+  STATUS.md   # frozen 2026-10-29
 ```
 
-- **`active/`** holds every spec that is not yet landed, whatever its
-  maturity (seed, draft, parked, in progress). If work is happening or
-  could happen, the folder lives here.
-- **`archive/`** holds landed specs permanently (policy since
-  2026-08-05; deletion-after-mining is rescinded). A spec arrives here
-  awaiting its mining pass and stays after it as a historical record.
-  Nothing in `archive/` governs current work.
+The state of a spec is its folder. Under `active/` it is not landed; under `archive/` it is. A parked spec stays in `active/` and its first paragraph after the title begins "Parked:" with the reason. A withdrawn spec moves to `archive/` and its first paragraph begins "Withdrawn:" with the reason.
 
-## Naming
+## The shape
 
-```
-NNN-kebab-case-slug/
-```
+One file, `active/YYYY-MM-DD-descriptive-slug.md`. The title is line one and a first paragraph follows it with no header lines: it says what kind of change this is and which gates it needs, links the intention it comes from and the research it stands on (or says "none" and why), and names any spec it depends on by link. Then nine sections, in this order:
 
-- `NNN` is a zero-padded number, sequential across all specs, never reused
-  (the sequence continues from the pre-reorg stories)
-- Slug is git-branch-friendly; the feature branch (when one exists) should
-  be named `NNN-slug` as well
+1. **The problem.** What the code does today, at a named commit, and why that is wrong or missing. Facts labelled EXECUTED or READ.
+2. **Architecture.** One Mermaid block in the dialect of [the architecture pages](../architecture/README.md): solid for what exists, dashed (`planned`) for what this spec adds, dotted (`retiring`) for what it removes. Name the page the diagram will change on landing, and define any new term under it.
+3. **Decisions.** Every choice the change needs, as `### N.` headings numbered from 1, each a sentence with its reason in the body. A decision that departs from a landed spec or a frozen record names it. Nothing here is open.
+4. **Intent.** One paragraph beginning "After this spec, …": the observable state once it lands, in the user's terms.
+5. **Design.** The files, functions, types and tests that change, with sizes where a ceiling matters, and the order of work: the tests first, then the code that passes them.
+6. **Scope.** In: the decisions by number and the files by path. Out: each neighbouring thing this spec does not do, with where it belongs.
+7. **Acceptance criteria.** Numbered. Each is a sentence one test can pin, and it names that test (file and node id, or conformance row) before the test exists. Counts and states, never clocks.
+8. **Landing notes.** "Filled in on landing." until then. Then: the commits by sha, both reviews by link, the gate's counts, the engine legs run, measurements labelled EXECUTED, the disposition of every review finding, differences from the text above with their reasons, the architecture page and glossary entries updated, and one `**Changelog:**` line.
+9. **One line.** The whole change in one sentence.
 
-## Contents
+## The kind of change, in the first paragraph
 
-Every spec folder has at minimum:
+The primary word is one of feature, fix, refactor, spike, process, docs. The flags each trigger a gate: **structural** (adds or removes a module, a public class, a protocol method, a lifecycle or a seam: the spec review scores structure); **changes the public API** (the docs reference is regenerated; the review checks nothing else changed); **changes the schema format** (the format bump is a criterion; the four engine legs run before landing); **needs the engine legs** (touches `storage/backends/database/`, a profile, a builder or a loop over batch input: the `db_test` cycle before landing); **touches rights** (the security lens is mandatory, with a leak test among the criteria); **touches the engine** (`cargo test -p vfs-core` and the wheel reinstall are criteria); **parallel-safe** (touches files no other active spec touches).
 
-```
-NNN-slug/
-  spec.md      # WHAT & WHY — intent, scope, acceptance criteria
-  plan.md      # HOW — approach, trade-offs
-  tasks.md     # DO — ordered executable task list
-```
+## Lifecycle
 
-- **spec.md** is stable: if the spec changes, the work has changed
-- **plan.md** is regenerable: can be rewritten if a better approach emerges
-- **tasks.md** is disposable: it guides execution, nothing more
+1. **Born** from an intention, a research memo, or directly from a defect or a reviewer's finding, as a file in `active/`.
+2. **Drafted** whole: every section present, every decision made with its reason, the diagram drawn. A choice the author cannot make becomes a placeholder research memo, linked from the spec, and the spec waits. There is never a marker.
+3. **Reviewed** by someone who did not write it, as a file under [reviews/](../reviews/README.md). "Fit to build" is the signature on that draft; the spec links the review.
+4. **Built**, tests first, in the working tree; a decision taken during the build is appended to the Decisions section.
+5. **Reviewed again** on the local unpushed commits. "Lands" is the signature on that tip.
+6. **Landed** by one commit that fills the landing notes, moves the file to `archive/` with `git mv`, and links the spec and both reviews in its trailers. See [landing](../standards/landing.md).
 
-Optional: `contracts/` (API shapes, schemas), `data/` (fixtures),
-`spike/` (throwaway scripts and their result write-ups), `notes.md`
-(scratch; delete on ship). Substantive research does **not** live here —
-it goes to `../research/` as a dated memo, and the spec links to it.
+A landed spec is retired: nothing in `archive/` governs current work. The architecture pages and the code are what a reader trusts.
 
-A small fix can live as `spec.md` alone. The folder groups artifacts, it
-doesn't require them.
+## The lint
 
-## Lifecycle — specs are ephemeral
+`tests/lint/test_context_shape.py` holds this shape on every direct `.md` file under `active/` and `archive/` whose name begins with a date: the name, the absence of header lines, the nine sections in order, the Mermaid fence, the gap-free decisions, the absence of any open question, resolving links, one-line paragraphs, and, for an archived spec, links from its landing notes to a spec review whose standing verdict begins "Fit to build" and a code review whose standing verdict begins "Lands".
 
-1. A spec is born into `active/` from a decision (or directly from the
-   roadmap for small work); it cites the decisions and research it
-   stands on
-2. Draft `spec.md` with `[NEEDS CLARIFICATION]` markers; review until
-   markers are resolved and acceptance criteria are testable; pointer each
-   open marker in `../open-questions.md`
-3. Write `plan.md` against the spec, citing `../standards/constitution.md`
-   where it applies; generate `tasks.md` from the plan
-4. Execute; update plan/spec if reality disagrees
-5. **On landing, the folder moves to `archive/`** with its status line
-   updated to name the landing commit. From there, durable residue flows
-   backward — decisions made during implementation → `../decisions/`,
-   research and benchmark results → `../research/` — and the mined
-   folder stays in `archive/`, its status line noting the mining date
-   and where the residue went.
+## Before 2026-10-29
 
-## Status tracking
-
-`STATUS.md` is the periodic cross-spec true-up: every spec's status line
-verified against the live code. Trust per-spec `spec.md` status lines
-first; regenerate STATUS.md when the picture shifts.
-
-## archive/
-
-Landed specs, kept permanently as the historical record (deletion after
-mining was rescinded 2026-08-05 — see `archive/MINING.md`). This
-includes both the pre-reorg landed stories (001–071, moved 2026-07-16)
-and post-reorg specs moved here on landing (074 onward). Folders not
-yet mined get their backward-flow pass opportunistically — decisions →
-`../decisions/`, research → `../research/` — with the mining date noted
-in the spec's status line. Nothing in `archive/` governs current work.
+The numbered folders (`NNN-slug/spec.md`, some with a `plan.md` and a `tasks.md`) are the earlier shape. They keep their names and are not scanned by the shape lint; a ratchet in `tests/lint/allowlist.py` admits the open markers they hold today and may only shrink. A numbered spec picked up to build is converted in place: every marker becomes a numbered Decision or a placeholder memo, it gains an Architecture section, and its reviews name it by title. `STATUS.md` froze on the same day.

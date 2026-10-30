@@ -1,7 +1,8 @@
 # Open Questions
 
-**Status:** live — first populated 2026-07-16 (from the specs/STATUS.md picture)
-**Purpose:** A single list of unknowns, undecided calls, and parked ideas. Anything tagged `[NEEDS CLARIFICATION]` anywhere in `/context` should have a pointer here.
+This file froze on 2026-10-29. Its role is now the placeholder research memo under `context/research/`: a memo whose first paragraph says it is a placeholder, holding the question, what is known, and the experiment that answers it. `context/decisions/` froze the same day: no new file is written there and no record there is edited; a decision now lives as a numbered Decision in the spec that carries it, under `context/specs/`; a record still marked "proposed" stays so, and its pending pins are answered in the spec that implements them. The entries below are history as of that day; the process that replaced them is on [the process page](README.md).
+
+**Status:** live — first populated 2026-07-16 (from the specs/STATUS.md picture) **Purpose:** A single list of unknowns, undecided calls, and parked ideas. Anything tagged `[NEEDS CLARIFICATION]` anywhere in `/context` should have a pointer here.
 
 ## Format
 
@@ -19,9 +20,7 @@
 
 - **open** — actively unresolved; blocks work
 - **parked** — deliberately deferred; not blocking but not forgotten
-- **resolved** — closed by a decision or story; the entry moves to
-  `open-questions-archive.md` (split 2026-08-14) as the permanent
-  record, keeping this file live-only
+- **resolved** — closed by a decision or story; the entry moves to `open-questions-archive.md` (split 2026-08-14) as the permanent record, keeping this file live-only
 
 ---
 
@@ -115,66 +114,25 @@
 - **Context:** Models only "see" media delivered as typed content blocks (MCP `content` arrays / Messages API image blocks) — base64 in a text stream is invisible noise. The `Result` envelope carries only rows and errors, so a `read` of a PNG has no representable output a model can see. The hermetic-shell direction stands but its output has two consumers with different physics: stdout (text-only forever — media renders as a placeholder) and MCP tool results (ordered, interleaved text+image+audio blocks the model actually sees). `Result` needs a typed content channel that chains under the algebra and projects onto MCP block shapes.
 - **Blocking:** the shell-surface ADR (its output contract), any verb that returns media, the `run` verb's story for program-generated media (matplotlib PNGs etc.)
 - **Options considered (unstudied):** `content: list[ContentBlock]` on `Result`; media as a species of `Observation` row keyed by path; projection-time-only (renderer fetches payloads); see the brief for the full question list
-- **Status:** open — research memo drafted 2026-07-25
-  (`research/2026-07-25-multimodal-result-content.md`, superseding the brief;
-  eleven prior-art studies under `research/studies/2026-07-25-multimodal/`);
-  awaiting review, feeds the content-channel ADR. Hard prerequisite surfaced:
-  the live tree has no binary channel at all (`Entry.content` is `str`-only,
-  null-byte-rejecting) — the storage bytes story must be settled first.
+- **Status:** open — research memo drafted 2026-07-25 (`research/2026-07-25-multimodal-result-content.md`, superseding the brief; eleven prior-art studies under `research/studies/2026-07-25-multimodal/`); awaiting review, feeds the content-channel ADR. Hard prerequisite surfaced: the live tree has no binary channel at all (`Entry.content` is `str`-only, null-byte-rejecting) — the storage bytes story must be settled first.
 - **Researched 2026-10-15:** `research/2026-10-15-the-agent-shell-prior-art-and-experiments.md` §10 and study `08-mcp-content-blocks.md` — the MCP vocabulary is unchanged since 2025-06-18 at the current 2026-07-28 revision (no video block; `resultType` required; `structuredContent` any JSON); a client matrix verified in source shows text is the only universally rendered block and two clients replace `content` with `structuredContent`; two live-tree gaps executed (a bytes row renders empty; `to_payload` inlines base64 unbounded). Proposed: one text block first then typed blocks keyed by path, `isError = not success`, `vfs:///` links with a minimal `resources` capability, the placeholder grammar. Clay (2026-10-15): MCP only, no provider adapters. Awaiting the content-channel ADR.
 
 ## Multimodal storage and search — how do media bytes live in the database, and what do the four search verbs mean over them?
 
-- **Asked:** 2026-07-25 by Clay (the storage prerequisite surfaced by the
-  result-content memo, widened to the search half: multimodal embeddings and
-  what `glob`/`grep`/`glean`/`graph` become over media)
-- **Context:** No binary channel exists in the live tree; the hypothesis is a
-  binary sidecar beside the text `content` table — extending the existing
-  bodies-leave-the-narrow-row segmentation — rather than widening text
-  columns to bytes. Search must not be foreclosed by storage: derived-text
-  sidecars (OCR/transcripts/captions) make media greppable; multimodal
-  embedding spaces make `glean` see pixels; `graph` edges to media should be
-  free; all of it must survive 10,000-file batches on the least generous
-  engine and ride trash → restore → sweep.
-- **Blocking:** the storage-bytes ADR, which gates the content-channel ADR;
-  any verb that stores or searches media
-- **Options considered (unstudied):** entry-keyed blob rows vs hash-keyed
-  content-addressed blobs (GC × sweep); inline vs external-reference tiers;
-  one joint embedding space vs multi-space fan-out-and-fuse; see the brief
-  for the full question list
-- **Status:** open — research memo drafted 2026-07-25
-  (`research/2026-07-25-multimodal-storage-and-search.md`, superseding the
-  brief; eight studies under `research/studies/2026-07-25-multimodal-storage/`);
-  awaiting review, feeds the storage-bytes ADR that gates the content-channel
-  ADR. Headline positions: entry-keyed binary sidecar, hash-ready for later
-  content addressing; two new byte-denominated `DialectProfile` budgets;
-  derived-text table keyed to `(entry, content_hash)` feeding ordinary
-  chunks; glean as multi-space fan-out with rank fusion. Researched
-  further 2026-08-26 (the glean memos, below): the single-space form of
-  the space registry is the recommended first landing — model identity
-  on the `meta` row, packed float32 vectors, the registry reserved for
-  media spaces.
+- **Asked:** 2026-07-25 by Clay (the storage prerequisite surfaced by the result-content memo, widened to the search half: multimodal embeddings and what `glob`/`grep`/`glean`/`graph` become over media)
+- **Context:** No binary channel exists in the live tree; the hypothesis is a binary sidecar beside the text `content` table — extending the existing bodies-leave-the-narrow-row segmentation — rather than widening text columns to bytes. Search must not be foreclosed by storage: derived-text sidecars (OCR/transcripts/captions) make media greppable; multimodal embedding spaces make `glean` see pixels; `graph` edges to media should be free; all of it must survive 10,000-file batches on the least generous engine and ride trash → restore → sweep.
+- **Blocking:** the storage-bytes ADR, which gates the content-channel ADR; any verb that stores or searches media
+- **Options considered (unstudied):** entry-keyed blob rows vs hash-keyed content-addressed blobs (GC × sweep); inline vs external-reference tiers; one joint embedding space vs multi-space fan-out-and-fuse; see the brief for the full question list
+- **Status:** open — research memo drafted 2026-07-25 (`research/2026-07-25-multimodal-storage-and-search.md`, superseding the brief; eight studies under `research/studies/2026-07-25-multimodal-storage/`); awaiting review, feeds the storage-bytes ADR that gates the content-channel ADR. Headline positions: entry-keyed binary sidecar, hash-ready for later content addressing; two new byte-denominated `DialectProfile` budgets; derived-text table keyed to `(entry, content_hash)` feeding ordinary chunks; glean as multi-space fan-out with rank fusion. Researched further 2026-08-26 (the glean memos, below): the single-space form of the space registry is the recommended first landing — model identity on the `meta` row, packed float32 vectors, the registry reserved for media spaces.
 - **Researched 2026-09-15:** `research/2026-09-15-filesystem-over-database-landscape-and-vfs-differentiation.md` §6, §10 — MongoDB's VFS keeps bytes in S3 and only chunks in Atlas ("object storage is the data plane"), Archil and Mastra mount buckets, and Cloudflare Computer plans R2 tiering above 4 MiB; every peer keeps large bytes outside the relational store. Sharpened question: is there a size above which vfs content should live in an object store with the row holding a reference, and does that change the read-your-writes guarantee?
 
 ## Scattered 10k-target delete holds the topology lock for minutes — set-based batches or cross-transaction chunking?
 
 - **Asked:** 2026-07-25 by the b16c38b code review (scale lens)
-- **Context:** Trash-everything delete runs ~4 statements per target inside
-  one serialized transaction: a scattered 10k-target batch measured 52.9s
-  on Postgres while blocking a rival move for 51.9s, and ~2 minutes on
-  MSSQL. Not a regression — the commit made scattered batches 1.9-2.8x
-  *faster* than the removed permanent arm, and the set-based bulk escape
-  (cascade delete of one holding directory) is intact.
-- **Blocking:** nothing — bulk deletes have the documented escape; this is
-  latency under the topology lock, not a correctness defect
-- **Options considered:** set-based scattered execution (group targets per
-  bucket: one reparent executemany plus one rewrite pass); cross-transaction
-  chunking (weakens batch atomicity); leave as-is with the documented bulk
-  escape
-- **Status:** open — research and spec scheduled 2026-08-14 (Clay, in
-  session): owned by `specs/active/102-set-based-scattered-delete/`
-  (research-first; preconditions and acceptance criteria live there);
-  do not fix inline
+- **Context:** Trash-everything delete runs ~4 statements per target inside one serialized transaction: a scattered 10k-target batch measured 52.9s on Postgres while blocking a rival move for 51.9s, and ~2 minutes on MSSQL. Not a regression — the commit made scattered batches 1.9-2.8x *faster* than the removed permanent arm, and the set-based bulk escape (cascade delete of one holding directory) is intact.
+- **Blocking:** nothing — bulk deletes have the documented escape; this is latency under the topology lock, not a correctness defect
+- **Options considered:** set-based scattered execution (group targets per bucket: one reparent executemany plus one rewrite pass); cross-transaction chunking (weakens batch atomicity); leave as-is with the documented bulk escape
+- **Status:** open — research and spec scheduled 2026-08-14 (Clay, in session): owned by `specs/active/102-set-based-scattered-delete/` (research-first; preconditions and acceptance criteria live there); do not fix inline
 - **Researched 2026-08-25:** `research/2026-08-25-set-based-scattered-delete.md` — the per-target bumps are the measured cost (65 % on Postgres, 83 % on MySQL); a set-based prototype with byte-for-byte parity on all five engines holds the lock 37× (Postgres), 40× (MySQL), 24× (MariaDB), 26× (Oracle), 7.6× (MSSQL, residual = the snapshot IN-list fetch, 10.9 s → 0.4 s as a VALUES join) shorter at 10k; the byte-range predicate is sargable where LIKE is not; chunking not needed; design waits on Clay's review
 
 ## OKF integration: frontmatter as a query surface, and where bundle ingestion lives

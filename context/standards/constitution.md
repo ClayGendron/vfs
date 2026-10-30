@@ -4,7 +4,7 @@ The policies that, if broken, stop VFS from being VFS.
 
 ## Preamble — How to read this document
 
-Each principle below is a policy. Policies use RFC 2119 keywords: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY**. A **MUST** is load-bearing for the project's identity and cannot be waived inside the codebase. A **SHOULD** may be deviated from only by a written decision in `context/decisions/` that names the principle, the deviation, and the expected expiry.
+Each principle below is a policy. Policies use RFC 2119 keywords: **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, **MAY**. A **MUST** is load-bearing for the project's identity and cannot be waived inside the codebase. A **SHOULD** may be deviated from only by a numbered Decision in the spec that makes the deviation, naming the principle, the deviation, and the expected expiry.
 
 **Order of precedence.** When two articles apply to the same decision and conflict, the later article yields to the earlier one. Article 1 is the last to bend. This order is deliberate: primitive integrity is the most expensive thing to restore once broken; operational discipline (Article 5) is the easiest to tighten incrementally.
 
@@ -101,7 +101,7 @@ VFS a student of Plan 9 and Unix. In the cases where either of those tools has a
 
 **Limits.** Plan 9 itself refused to map every adjacent concern into the namespace. The Pike et al. 1992 paper is explicit: process creation and shared memory stayed as system calls because forcing them into file I/O would demand a dishonest file shape. VFS inherits this discipline. When a concern would require lying about what a file *is*, keep it out.
 
-Deviations from Plan 9 and Unix in future work MUST be well documented and recorded in `context/decisions/` with the motivating constraint.
+Deviations from Plan 9 and Unix in future work MUST be well documented as a numbered Decision in the spec that makes them, naming the principle, the deviation, the motivating constraint, and the expected expiry.
 
 ## Article 4 — Backend-Agnostic Contract
 
@@ -132,4 +132,4 @@ The following are out of scope here and governed by sibling documents under `con
 - **Observability, telemetry, tracing.** → `observability.md` (pending).
 - **Language style, testing policy, release mechanics.** → existing `python-style.md`, `testing.md`, `release.md`, `tooling.md`.
 
-Anything not covered here and not covered by a sibling standard is engineering judgment, not constitutional rule. Live trade-offs belong in `context/open-questions.md`.
+Anything not covered here and not covered by a sibling standard is engineering judgment, not constitutional rule. A live trade-off is a placeholder research memo under `context/research/`.

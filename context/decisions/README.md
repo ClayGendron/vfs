@@ -1,5 +1,7 @@
 # /context/decisions
 
+This folder froze on 2026-10-29. No new file is written to `context/decisions/` and no record here is edited. A decision now lives as a numbered Decision in the spec that carries it, under `context/specs/`. A record still marked "proposed" stays so, and its pending pins are answered in the spec that implements them. The rest of this page describes the folder as it was; the process that replaced it is on [the process page](../README.md).
+
 Architecture Decision Records (ADRs) — and, increasingly, Agent Decision Records (AgDRs) for choices the AI made with user approval.
 
 ## What belongs here

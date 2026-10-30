@@ -11,6 +11,7 @@ write target with no trash-specific arm.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -29,6 +30,7 @@ from vfs.models.rows import build_vfs_tables
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE, StaleSnapshot
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
@@ -1328,8 +1330,6 @@ class TestBytesBodies:
     async def test_blob_inserts_page_by_bytes_in_flight(self, tmp_path, monkeypatch) -> None:
         # Ten 1 KB bodies under a 2.5 KB page budget land in five statements;
         # a body past the budget rides alone (the flush law's singleton rule).
-        from vfs.storage.backends.database import writes as writes_module
-
         monkeypatch.setattr(writes_module, "BLOB_PAGE_BYTES", 2500)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
@@ -1361,8 +1361,6 @@ class TestBytesBodies:
     async def test_a_body_past_the_engines_value_cap_classifies_unsupported(self, tmp_path) -> None:
         # SQLite's length limit lowered on the live connection: the engine's
         # own cap, named by the engine, never a vfs ceiling.
-        import sqlite3
-
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         async with storage._host.session_factory() as session:

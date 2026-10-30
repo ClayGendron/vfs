@@ -1,0 +1,41 @@
+name: Lint
+
+# The shape of the documents under context/ and of the tooling the process relies
+# on, held by tests/lint. test.yml runs the whole suite on a code change; this job
+# runs the lint package alone when only the documents or the lint itself changed,
+# so a context-only commit is never unchecked.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "context/**"
+      - "tests/lint/**"
+      - "CLAUDE.md"
+      - "scripts/unwrap_context.py"
+      - ".github/workflows/lint.yml"
+  pull_request:
+    paths:
+      - "context/**"
+      - "tests/lint/**"
+      - "CLAUDE.md"
+      - "scripts/unwrap_context.py"
+      - ".github/workflows/lint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --all-extras --group dev
+
+      - name: The shape of the documents and the tooling
+        run: uv run pytest tests/lint -n 0 -p no:cacheprovider --tb=short

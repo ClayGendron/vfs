@@ -1,6 +1,6 @@
 ---
 name: code_review
-description: Run the full multi-agent code review of a commit set — one commit or a contiguous range — or an explicitly named code area; five parallel review agents (ownership_review, contract_review, scale_review, test_review, adversarial_review), an adversarial verifier per finding (verify_findings), and a final synthesis agent. Use when the user asks for a "code review", "review the last commit(s)", "review <sha>/ <sha range>", "review the <spec> landing", or "review <module/path>" with the whole suite.
+description: Run the full multi-agent code review of a commit set — the local unpushed commits that will land one spec, one commit, or a contiguous range — or an explicitly named code area, before it lands; five parallel review agents (ownership_review, contract_review, scale_review, test_review, adversarial_review), an adversarial verifier per finding (verify_findings), a final synthesis agent, and the review file written to context/reviews/ with a Security section and a verdict that begins "Lands" or "Does not land yet". Use when the user asks for a "code review", "review before landing", "review the last commit(s)", "review <sha>/ <sha range>", "review the <spec> landing", or "review <module/path>" with the whole suite.
 ---
 
 # Code review — the full suite as one workflow
@@ -10,25 +10,44 @@ every finding adversarially, and deliver a single synthesized report.
 Invoking this skill is the user's opt-in to multi-agent orchestration:
 launch it with the Workflow tool.
 
-Reviews sit at the end of the house pipeline — research → decide →
-specify → code → **commit → review** — so the unit of review is a
-**commit set**: one commit, or a contiguous range that lands one
-change. A named code area (a module, a subsystem) is the alternative
-scope when the user asks for one.
+The review happens **before the landing, not after a commit is
+pushed**. The house pipeline is intent → research → spec → spec review
+→ code → **code review → commit (the landing)**: the author builds on
+`main` in local commits that are not pushed, a reviewer who did not
+write the change reviews those commits, and only then does one landing
+commit go to `main` and get pushed when Clay asks. So the unit of
+review is a **commit set**: the local unpushed commits `<base>..<tip>`
+on `main` that will land one spec, or one commit, or a contiguous
+range. A named code area (a module, a subsystem) is the alternative
+scope when the user asks for one. The deliverable is a file,
+`context/reviews/YYYY-MM-DD-<spec-slug>-code-review.md` (§4), whose
+standing verdict must begin "Lands" before the change lands; the
+landing commit carries that file, so the review never lands after the
+code it reviewed.
 
 The design follows the suite's contract: each lens owns a defect class,
 so the five reviewers run in parallel without overlap; the verifier
 exists because unverified findings cost the reader attention — only
 findings that survive refutation reach the report.
 
-The orchestrator's own procedure is four numbered steps — **resolve
+The orchestrator's own procedure is five numbered steps — **resolve
 the scope (§0), bring up the engines then author + check + launch the
-script (§1), verify the launch (§2), report and tear down (§3)** — and
-the §1 checker and §2 check are not optional: a launch whose scope is
-wrong or whose prompts did not render is a review of nothing, and
-nothing downstream detects that.
+script (§1), verify the launch (§2), report and tear down (§3), write
+the review file (§4)** — and the §1 checker and §2 check are not
+optional: a launch whose scope is wrong or whose prompts did not render
+is a review of nothing, and nothing downstream detects that.
 The *Shape* and *Per-agent rules* sections between §0 and §1 describe
-what the launched workflow does internally.
+what the launched workflow does internally. The five lens skills
+(`ownership_review`, `contract_review`, `scale_review`, `test_review`,
+`adversarial_review`) and `verify_findings` are **unchanged** by the
+review-file step: they run as they always have, with their own
+vocabularies and close-out ledgers; §4 only says how their output is
+written into the file.
+
+Time box: **30 minutes** of the orchestrator's own attention, or **60**
+when the diff touches the database backend, a dialect profile, the
+Rust crate, or the MCP tool surface; the workflow's agents run inside
+it. The file states the box and where you stood when it ran out.
 
 ## 0. Resolve the commit scope first — inline, before launching
 
@@ -40,10 +59,12 @@ as `args` — never as hand-substituted text in the script:
 - **Resolve what the user named** into concrete SHAs: explicit SHAs, a
   range (`A..B`), "the last N commits", a spec or slice's landing (find
   its commits in `git log --oneline`), or a path area. Nothing named →
-  the latest commit — widened to the whole landing when the tip commits
-  are one change split into its conventional pieces (fix/feat/docs of
-  the same work); say in the report which commits you resolved to and
-  why.
+  the local unpushed commits on `main` (`git log --oneline
+  origin/main..HEAD`), which is the set a review before the landing
+  reads; when nothing is unpushed, the latest commit — widened to the
+  whole landing when the tip commits are one change split into its
+  conventional pieces (fix/feat/docs of the same work); say in the
+  report which commits you resolved to and why.
 - **The diff of the set is the review surface**:
   `git log --oneline <base>..<tip>` for the list,
   `git diff --stat <base>..<tip>` for the touched files,
@@ -292,10 +313,12 @@ its agent may simply have failed.
 
 ## 3. Reporting and teardown
 
-1. **Relay the synthesized report** — that is the deliverable. Do not
-   paste raw per-agent output. Lead with the resolved scope: the exact
-   commits (SHA + subject) or paths reviewed, so the report is
-   traceable to a fixed state of the tree.
+1. **Relay the synthesized report**, then write it into the review
+   file (§4) — the file is the deliverable the landing needs; the relay
+   is for the user in the session. Do not paste raw per-agent output.
+   Lead with the resolved scope: the exact commits (SHA + subject) or
+   paths reviewed, so the report is traceable to a fixed state of the
+   tree.
 2. **Call `ReportFindings` once** with the surviving findings, most
    severe first, so the host UI renders them: map `claim` →
    `summary`, the verifier's repro or failure path →
@@ -311,10 +334,170 @@ its agent may simply have failed.
 4. **Surface the leads** — unverified observations verifiers noticed in
    passing, clearly labelled as unverified, at the end.
 5. **Never apply fixes as part of the review.** If the user asks for
-   fixes afterward, re-report with `outcome` set per finding.
+   fixes afterward, re-report with `outcome` set per finding. A fix is
+   the author's, as a new local commit on top of `<tip>`; the reviewed
+   commits are never amended or rewritten, so the fix can be diffed.
 6. **Restore the machine.** Once the report is delivered and no
    follow-up supplement still needs the engines, tear down per the
    db_test skill: compose down naming every profile, verify no
    `vfs-test-*` containers remain, quit Docker Desktop. Skip teardown
    only when something else in the session (a resumed run, another
    engine task) is still using the containers — then it owns teardown.
+
+## 4. Write the review file
+
+The synthesis becomes one file under `context/reviews/`, written by
+the orchestrator (or by a person who did not write the change) and
+committed by the author inside the landing commit. The file is what
+the lint reads and what the spec's landing notes link; a review that
+stays in the session is lost.
+
+**Name and shape.** `context/reviews/YYYY-MM-DD-<spec-slug>-code-review.md`:
+the date is the review's own day (a second review on a later day is a
+new file), the slug is the spec's file name after its date, no number
+anywhere. The title is `# Code review of <spec title>`. The opening
+paragraph carries **no header bullets**; it names the reviewer (and,
+when the orchestrator is a sub-agent of the author's session, says "a
+fresh sub-agent of the author's session; not the author"), the spec as
+a Markdown link with its spec review beside it, the range
+`<base>..<tip>` with the commit count and whether the tree was clean
+at `<tip>`, what was re-ran (`scripts/ci.sh` with each step's PASS or
+FAIL, test counts and exit code; the engine legs by `-m <engine>` with
+counts when storage changed; the probes by node id), the method (the
+workflow run id and funnel, or "one reviewer, lenses in order"), and
+the box with where you stood. Say once: "EXECUTED means I ran it;
+READ means I read the file cited; INFERRED means my reasoning." Then
+these `## ` headings, in this order, exactly:
+
+1. `Scope` — the commits one line each (`<sha> <subject>`), what the
+   diff touches (`git diff --stat`), any drift caveat.
+2. `Acceptance criteria against evidence` — one line per criterion,
+   quoted from the spec, met or not met with its label, the test node
+   id that pins it, and the evidence or the gap. A criterion met only
+   by INFERRED is a Medium; a criterion with no test is a High.
+3. `Findings, most severe first` — the one ranked list. Each line:
+   rank, the lens in parentheses with the lens's own label, the title,
+   `path:line`, the defect in one sentence, the concrete failure, and
+   what closes it (for a Low, the fix text). An UNVERIFIED finding
+   says so.
+4. `Lenses` — with `### Contract`, `### Scale`, `### Tests`,
+   `### Ownership`, `### Adversarial`, in that order. A subsection
+   holds no findings of its own: it holds the lens's method notes and
+   **ends in its close-out ledger** — what it checked and found clean
+   and what it did not reach — taken from the workflow's `coverage`
+   field. A lens with zero findings still writes its ledger; a lens
+   whose agent failed writes "unreviewed surface", never "clean".
+5. `Security` — the lens below.
+6. `Standards checks` — the five lines below.
+7. `Disposition` — the author fills it in, one line per finding
+   ("fixed in `<commit>`: …" or "not fixed because …"); you confirm
+   each line with a label. Leave one line saying it awaits the author
+   when you first write the file.
+8. `Verdict` — the first line is the verdict.
+
+Like every document under `context/`, the file has one-line paragraphs
+(a paragraph or list item is one line of any length) and cites by
+Markdown link, never by number.
+
+**The ranking.** The verdict has two outcomes, so the file speaks three
+ranks; the workflow's four-value scale stays inside the lenses and
+rides along in parentheses. Map it so:
+
+| the file's rank | meaning | from the workflow and the lenses |
+|---|---|---|
+| **High** — does not land until fixed | a wrong answer, data loss, an unsafe default, a statement that grows with batch size, a crossed trust boundary, a criterion with no test or whose test cannot go red | `critical`; a `major` with a demonstrated failure; `scale_review`'s `blocker`; a `test_review` survived mutant; a Security `confirmed` at critical, high or medium |
+| **Medium** — does not land until closed, or answered in the Disposition with a reason you confirm | a guarantee not evidenced: a criterion met only by reading, a contract with no pin, a scale claim not run on the tightest engine, a Security `needs_validation` with its fact still missing | a `major` with no demonstrated failure; `needs_validation`; a `confirmed` at low or informational when the damage warrants it |
+| **Low** — lands; no round | a write-in: a nit, a stale docstring, a name, a comment, with the fix text given | `minor`; `question`; a `confirmed` at low or informational otherwise |
+
+`verify_findings`' DOWNGRADED carries its corrected severity through
+the same map. A `rejected` security record is not a finding; it is
+recorded in the Security section only. State for each Medium what
+evidence closes it. Number findings H1, M1, L1 and so on.
+
+**The Security lens.** It runs the installed security-audit skill at
+`.claude/skills/security-audit/SKILL.md` (cloudflare/security-audit-skill,
+MIT, installed unchanged; the lock is `skills-lock.json` at the repo
+root) in its **guidance mode**: no run folder, no output directory, no
+`findings.json`, no six phases, no artifacts. It is not one of the
+workflow's five agents; run it yourself after the workflow returns, or
+as one focused agent that returns to you, inside the box. This is the
+vendored skill, not Claude Code's built-in `security-review` skill.
+The procedure:
+
+1. Name the **trust boundaries the diff touches**, each as the
+   skill's evidence bar asks: the lower-trust principal, the input or
+   action it supplies, the control that should stop it, and the sink.
+   For vfs the usual ones are the SQL builders and the glob and grep
+   pattern compilers (injection), path normalisation and the metadata
+   root (resource and file handling), permission compilation and
+   mount admission (access control), database URLs in logs, errors,
+   `Result` payloads or MCP responses (cryptography and secrets),
+   batch size and whole-corpus builds (resource exhaustion), one
+   backend shared by two audiences and search as an existence oracle
+   (data isolation). A diff that touches none says "none" and why.
+2. Read the **matching blocks** of `ATTACK-CLASSES.md` (Injection,
+   Access control, Resource and file handling, Cryptography and
+   secrets, Business logic, Feature abuse and data leakage, Chained
+   vulnerabilities and trust boundaries, Obvious things), and, when
+   the diff touches a tool input on the MCP surface, the "Tool and
+   action attack classes" and "MCP and sub-agent trust classes"
+   blocks of `AI-AND-LLM.md`. Name the blocks you read in the section.
+3. **Trace each boundary from entry to sink** through the code at
+   `<tip>`. Any target code runs only as a scratch script under the
+   session scratchpad with no network and no live service, under the
+   skill's execution-safety rules; when a sandbox control cannot be
+   enforced, do not run it and record the gap.
+4. **Record each result** in the skill's three kinds: `confirmed`
+   with its severity (critical, high, medium, low, informational, by
+   the skill's anchors), `needs_validation` naming the exact missing
+   fact and a safe plan to get it, or `rejected` with why. A missing
+   best practice is not a record. A `confirmed` record is also a
+   ranked finding above, by the table.
+
+The Security section opens with one line naming the method (the skill
+path, guidance mode, no run folder), then the boundaries, the blocks
+read, and the records.
+
+**Standards checks**, one line each, in this order:
+
+- *Tests first*: the code stage is tests first, then code — an
+  instruction of how to code, not a record to audit. No written record
+  of the red run is required and none is asked for. You may reproduce
+  one red yourself: after every workflow agent has finished (never
+  while they run), on a file `git status` reports clean, copy it to the
+  scratchpad, write the pre-change version over it with
+  `git show <base>:<path>`, run the pinning test by node id, record the
+  red, restore from the scratchpad copy, and confirm `git status` is
+  clean again. A test that will not go red is a High (it pins
+  nothing). The line says what you did, or "not reproduced".
+- *The constitution* (`context/standards/constitution.md`): each
+  article the diff touches and whether it holds; Article 1's five
+  primitives named when the diff composes or manipulates them.
+- *The production posture* (`CLAUDE.md`): never assumes SQLite; no
+  statement grows with batch size; budgets from the dialect profile;
+  no designed scale cap; no numpy.
+- *The patterns standard* (`context/standards/how-we-code.md`): each
+  named pattern the diff uses or should have used.
+- *Tooling*: `ruff check`, `ruff format --check` and `ty` at zero;
+  `assert` narrows only; imports at the top; no spec, ADR or story
+  number in code comments or docstrings.
+
+**The verdict and the re-sign protocol.** The Verdict section's first
+line begins **"Lands"** (nothing High or Medium stands; say why in one
+sentence) or **"Does not land yet: <the Highs, or the Mediums and what
+closes them>"**. No third form and no hedge. The author answers every
+finding in the Disposition and fixes code in new local commits on top
+of `<tip>`; you read the fix commits, confirm each Disposition line
+with a label, and sign again as a line below the first verdict
+beginning `YYYY-MM-DD, re-read on <commit>:` followed by the verdict
+word. The first verdict stays. **The last such dated line is the
+standing verdict**, and the landing needs it to begin "Lands". A
+`<tip>` that moved by a code commit after your last signature is not
+signed; read it and sign again.
+
+**What you may and may not touch.** Write the one review file; never
+edit `src/`, `tests/`, the spec or any other document, and never run a
+git command that changes state. A Low whose fix touches only
+`context/` you may write as its exact text in the finding; the author
+applies it. The author commits the review file in the landing commit
+with the spec's landing notes linking it.
