@@ -5,11 +5,7 @@
 > catalog's promote verdicts (which residue flows backward) stand;
 > its delete instructions are rescinded. See `../README.md`.
 
-Verdicts from the four-agent mining pass over all 55 archived stories
-(each spec read and cross-checked against `src/vfs/`, the four existing
-ADRs, and the `research/` corpus). Execution order: write the promoted
-ADRs and memos, run the two pre-deletion checks, then delete every
-folder here — residue flows backward first (see `../README.md`).
+Verdicts from the four-agent mining pass over all 55 archived stories (each spec read and cross-checked against `src/vfs/`, the four existing ADRs, and the `research/` corpus). Execution order: write the promoted ADRs and memos, run the two pre-deletion checks, then delete every folder here — residue flows backward first (see `../README.md`).
 
 ## PROMOTE-DECISION — 8 ADRs to write
 
@@ -33,26 +29,13 @@ folder here — residue flows backward first (see `../README.md`).
 
 ## Pre-deletion checks
 
-- **013**: ~~confirm the `analysis-*.md` evidence files are reflected in the
-  existing grep-index memos~~ **done 2026-07-16** — one gap found and
-  extracted to `research/2026-07-16-fts5-trigram-tokenizer-divergence.md`
-  (FTS5 gram-alphabet divergence + zoekt DocChecker limits); everything
-  else re-covered by the 2026-07-13/14 memos. 013 is now safe to delete.
-- **069**: fold its three-lens `namei` review (Linux/Plan 9/BSD) into the
-  ADR's context section rather than a separate memo; same for 071's
-  openat2/9P/MCP validate-posture inputs.
+- **013**: ~~confirm the `analysis-*.md` evidence files are reflected in the existing grep-index memos~~ **done 2026-07-16** — one gap found and extracted to `research/2026-07-16-fts5-trigram-tokenizer-divergence.md` (FTS5 gram-alphabet divergence + zoekt DocChecker limits); everything else re-covered by the 2026-07-13/14 memos. 013 is now safe to delete.
+- **069**: fold its three-lens `namei` review (Linux/Plan 9/BSD) into the ADR's context section rather than a separate memo; same for 071's openat2/9P/MCP validate-posture inputs.
 
 ## DELETE — 45 folders, nothing durable beyond code/ADRs/research
 
-001, 003, 004, 005, 006, 007, 008, 010, 011, 012, 013*, 014, 015, 016,
-017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030,
-033, 034, 035, 038, 040, 041, 042, 043, 044, 046, 047, 048, 049, 050,
-052, 059, 068. (*013 after its pre-deletion check.)
+001, 003, 004, 005, 006, 007, 008, 010, 011, 012, 013*, 014, 015, 016, 017, 018, 019, 020, 021, 022, 023, 024, 025, 026, 027, 028, 029, 030, 033, 034, 035, 038, 040, 041, 042, 043, 044, 046, 047, 048, 049, 050, 052, 059, 068. (*013 after its pre-deletion check.)
 
-Dominant reasons: unbuilt namespace-wave features (018–024, 027, 034);
-explicit supersession (017→068, 026→057, 028→029, 030/013/014→072 §6,
-041/042/044/048/050→056/068); residue already promoted (046→ADR 001,
-059→ADR 004, 068→2026-07-11 memo, 057-research→2026-07-08 memo).
+Dominant reasons: unbuilt namespace-wave features (018–024, 027, 034); explicit supersession (017→068, 026→057, 028→029, 030/013/014→072 §6, 041/042/044/048/050→056/068); residue already promoted (046→ADR 001, 059→ADR 004, 068→2026-07-11 memo, 057-research→2026-07-08 memo).
 
-The 10 promote-source folders (002, 009, 031, 032, 036, 037, 055, 057,
-069, 071) are deleted too once their ADR/memo lands.
+The 10 promote-source folders (002, 009, 031, 032, 036, 037, 055, 057, 069, 071) are deleted too once their ADR/memo lands.

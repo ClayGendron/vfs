@@ -219,9 +219,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K1. Reconcile the ask question: one ADR on interrupts, cancellation and progress
 
-**Why.** R1 blocks everything else in theme 1. ADR 063/spec 148 say a `pending` Result exists; ADR 084 pin 4 says no ask inside vfs. Clay's 0.1.0 theme wants LangGraph-style interrupts across host tools, mounted MCP servers and CLI programs. The ADR must choose, name the kind, say where the ledger lives (storage per mount, as spec 177's replay store does, or the router), and amend ADR 084 pin 4 and spec 170's elicitation row. It should also give `cancelled` and `timeout` their producers (kernel, not facet) so R5 closes.
-**Depends on.** Nothing; it unblocks K6–K8.
-**Acceptance.**
+**Why.** R1 blocks everything else in theme 1. ADR 063/spec 148 say a `pending` Result exists; ADR 084 pin 4 says no ask inside vfs. Clay's 0.1.0 theme wants LangGraph-style interrupts across host tools, mounted MCP servers and CLI programs. The ADR must choose, name the kind, say where the ledger lives (storage per mount, as spec 177's replay store does, or the router), and amend ADR 084 pin 4 and spec 170's elicitation row. It should also give `cancelled` and `timeout` their producers (kernel, not facet) so R5 closes. **Depends on.** Nothing; it unblocks K6–K8. **Acceptance.**
 1. The ADR is accepted and lists the amendments to ADR 084 pin 4, spec 148 §5, spec 149 §5, spec 170 §(failures table), spec 171 scope, glossary L611.
 2. `ErrorKind` gains exactly one new core kind for the suspended call (lean: `vfs.pending`, retry class `resume`, a new `RetryClass` value) and `KIND_CONTRACTS` carries its phrase, hint and `path` referent; `tests/results/test_result_laws.py` round-trips it through `to_payload`/`from_payload`.
 3. A table in the ADR says, per producer (gate refusal a principal could allow; host tool; mounted MCP elicitation; CLI program), whether the call is suspendable and what the resumption token carries.
@@ -229,9 +227,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K2. Write preconditions and the guarded append (spec 174)
 
-**Why.** Probe 1 is a live data-loss defect on every engine (EXECUTED here on SQLite; spec 174 §0 says the same at `ba77449`). Constitution Art. 5 forbids silent clobbering. `if_version=` is also what `edit`-as-derived-verb, the WASI write-back and the shell's `>>` need.
-**Depends on.** ADR 087 accepted (pins 3, 6, 10).
-**Acceptance.**
+**Why.** Probe 1 is a live data-loss defect on every engine (EXECUTED here on SQLite; spec 174 §0 says the same at `ba77449`). Constitution Art. 5 forbids silent clobbering. `if_version=` is also what `edit`-as-derived-verb, the WASI write-back and the shell's `>>` need. **Depends on.** ADR 087 accepted (pins 3, 6, 10). **Acceptance.**
 1. `write(if_version=N)` on a row at version N+1 returns `conflict` with `data["version"] == N+1`, issues zero mutation statements (count statements on the SQLAlchemy `before_cursor_execute` hook), on SQLite, Postgres, MSSQL and Oracle legs.
 2. Twenty concurrent `write(append=True)` of one line each to one file leave twenty lines; each call commits exactly one version row; a guard miss on a `reprobe` dialect classifies `conflict` and on a `redrive` dialect reruns from a fresh snapshot (counted via the retry counter, spec 179 §5.1).
 3. `write(if_absent=True)` on a live occupant is `exists`; on a tombstone it revives (ADR 074 rule 5) and reports `created`.
@@ -241,9 +237,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K3. Integrity: verify on read, hash on every written row (spec 175 slices A–C)
 
-**Why.** Probe 2: an out-of-band writer (the ETL job with SQL credentials ADR 087 pin 8 names) is served as success. The hash is already stored and indexed; it is simply never compared.
-**Depends on.** K1 only for the kind's name (ADR 087 leaves "its own kind or `unavailable`" pending Clay).
-**Acceptance.**
+**Why.** Probe 2: an out-of-band writer (the ETL job with SQL credentials ADR 087 pin 8 names) is served as success. The hash is already stored and indexed; it is simply never compared. **Depends on.** K1 only for the kind's name (ADR 087 leaves "its own kind or `unavailable`" pending Clay). **Acceptance.**
 1. After `UPDATE vfs_content SET content='ROTTEN'` the next `read` returns no row content and one error of the chosen kind with `path` the entry; `success is False`, on all four engine legs.
 2. A fault is reported only when two reads agree (spec 175 §3.3): the second read is counted as exactly one extra statement.
 3. Every row a `write`, `edit`, `copy` or `move` returns carries `content_hash` equal to `hashlib.sha256(body).hexdigest()`; pinned on the memory leg.
@@ -251,9 +245,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K4. The listing cursor (spec 176)
 
-**Why.** Constitution Art. 2 §3 is violated today; the MCP tool surface and the shell's `ls`/`find` cannot page; spec 180's `sweep` and spec 175's `scrub` reuse the key.
-**Depends on.** ADR 087 pin 12 (Clay: field on `Result` or a pair).
-**Acceptance.**
+**Why.** Constitution Art. 2 §3 is violated today; the MCP tool surface and the shell's `ls`/`find` cannot page; spec 180's `sweep` and spec 175's `scrub` reuse the key. **Depends on.** ADR 087 pin 12 (Clay: field on `Result` or a pair). **Acceptance.**
 1. `ls(path, limit=1000)` over a 10,000-child directory returns 1,000 rows and `next_after == rows[-1].path`; `ls(path, after=key, limit=1000)` ten times visits each child exactly once; rows visited per page ≤ 1,001 on each engine (counted on the keyset statement).
 2. A tombstone between two pages is never emitted and never stalls the key (spec 176 §2.2).
 3. `tree` and `glob` page on the same path key; a fan-out over three mounts merges pages by the frontier rule and emits one key.
@@ -262,9 +254,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K5. Replay: the per-verb contract and `request_key` (spec 177)
 
-**Why.** Probe 3: a lost reply leaves an MCP client unable to tell "already moved" from "never existed". `request_key` is also the natural resumption key for K6's interrupts (the ledger row and the replay row are the same shape: a fingerprint of the exact request plus its stored answer).
-**Depends on.** K2 (the `unchanged` row of the replay table); K4 for the sweep arm.
-**Acceptance.**
+**Why.** Probe 3: a lost reply leaves an MCP client unable to tell "already moved" from "never existed". `request_key` is also the natural resumption key for K6's interrupts (the ledger row and the replay row are the same shape: a fingerprint of the exact request plus its stored answer). **Depends on.** K2 (the `unchanged` row of the replay table); K4 for the sweep arm. **Acceptance.**
 1. A replayed `move` returns `not_found` with `data["vfs.occupant"]` naming the destination and its `entry_id`; a move of a never-existing path carries no occupant.
 2. Every mutating verb sent twice matches the pinned replay table row (the table is a test, one row per verb, on the memory and sqlite legs).
 3. `write(path, content, request_key=k)` twice issues the second time exactly one replay-store select and zero mutation statements, and returns a `Result` equal to the first.
@@ -274,9 +264,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K6. The `pending` Result and the ask ledger (spec 148 §5 rebuilt on K1 and K5)
 
-**Why.** This is the kernel half of "interrupts like LangGraph". A verb the gate refuses but a principal could allow — and a tool that asks for input — must return a `Result` the caller can hand to a human, and the human's answer must admit exactly one re-run. The design (§6 below) keeps ADR 010 (evidence in, verdict derived), ADR 063 rule 5 (ask is a Result bound to the request), ADR 064 (attributed answers) and spec 177 (the ledger is the replay store's sibling table in the mount's schema).
-**Depends on.** K1, K5.
-**Acceptance.**
+**Why.** This is the kernel half of "interrupts like LangGraph". A verb the gate refuses but a principal could allow — and a tool that asks for input — must return a `Result` the caller can hand to a human, and the human's answer must admit exactly one re-run. The design (§6 below) keeps ADR 010 (evidence in, verdict derived), ADR 063 rule 5 (ask is a Result bound to the request), ADR 064 (attributed answers) and spec 177 (the ledger is the replay store's sibling table in the mount's schema). **Depends on.** K1, K5. **Acceptance.**
 1. `fs.delete("/x", authority=alice)` under a posture alice cannot delete returns `success=False`, one `vfs.pending` error with `data["vfs.interrupt"] = {ticket, digest, expires_at, needs: "grant:read_write@/x"}`, and dispatches zero mutation statements.
 2. `fs.answer(ticket, allow=True, authority=bob)` — bob holding `read_write` at `/x` — writes one ledger row attributed to bob (actor and subjects, ADR 064) and no entry row.
 3. Re-sending the identical call with `request_key=ticket` proceeds once and commits; the second re-send is refused `pending` again (one-shot spent); an answer from a principal without the right is `permission_denied` and the ledger gains no row.
@@ -287,9 +275,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K7. Cancellation and deadlines as kernel facts (spec 051 rewritten)
 
-**Why.** `timeout` and `cancelled` are reserved and unproduced; one hung mount stalls every fan-out; a front has no classified shape to return on cancel. Constitution Art. 5 asks for cancellation on MCP surfaces.
-**Depends on.** K1 (the producer lives in the kernel, not the shell).
-**Acceptance.**
+**Why.** `timeout` and `cancelled` are reserved and unproduced; one hung mount stalls every fan-out; a front has no classified shape to return on cancel. Constitution Art. 5 asks for cancellation on MCP surfaces. **Depends on.** K1 (the producer lives in the kernel, not the shell). **Acceptance.**
 1. `grep(pattern, deadline=…)` over one fast mount and one mount whose `grep` never returns yields the fast mount's rows and one `timeout` error with `path` the slow mount's prefix; `success=False`; the slow coroutine is cancelled (count of cancelled tasks = 1).
 2. A deadline on a mutation is refused `invalid` (lean (a) of spec 051) or classifies the in-doubt kind — one of the two, pinned.
 3. An outer `CancelledError` still re-raises untouched and outranks a timeout (`_gather_settled` contract).
@@ -298,9 +284,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K8. The sync facade for Jupyter and ETL
 
-**Why.** Theme 5. There is no sync entry point in live code. The right shape is a thin facet (ADR 087 pin 1: a front adds only its own machinery) that owns a loop/thread and forwards every verb to the one gate — never a second dispatch path.
-**Depends on.** Nothing in the kernel; but it should land after K4/K5 so its surface drift test covers the new arguments once.
-**Acceptance.**
+**Why.** Theme 5. There is no sync entry point in live code. The right shape is a thin facet (ADR 087 pin 1: a front adds only its own machinery) that owns a loop/thread and forwards every verb to the one gate — never a second dispatch path. **Depends on.** Nothing in the kernel; but it should land after K4/K5 so its surface drift test covers the new arguments once. **Acceptance.**
 1. `vfs.sync.SyncFileSystem(fs)` and `SyncSession` expose exactly the router's `ALL_OPS` and `MANAGEMENT_METHODS` as plain functions (drift test mirrors `tests/test_ops.py:246`); each forwards with the same keyword names (signature test mirrors `tests/test_params.py:28`).
 2. A sync call made from inside a running event loop (the Jupyter case) does not deadlock and does not spawn a loop per call: loop/thread creations counted, one per facade.
 3. A 10,000-entry `write` through the facade issues the same statement count as the async call.
@@ -308,9 +292,7 @@ Ordering follows ADR 087's "order of harm" with the interrupt work inserted wher
 
 ### K9. Retire `run`; the kernel groups and `entry_id` (spec 167 slice A + spec 181)
 
-**Why.** R3 and R10. `run` has no implementation and ADR 082 retires it; the kernel groups give the conformance suite and the docs one axis; `entry_id` is what K5's replay refusal and K6's ledger name.
-**Depends on.** K2–K5 for the arguments the regroup documents.
-**Acceptance.**
+**Why.** R3 and R10. `run` has no implementation and ADR 082 retires it; the kernel groups give the conformance suite and the docs one axis; `entry_id` is what K5's replay refusal and K6's ledger name. **Depends on.** K2–K5 for the arguments the regroup documents. **Acceptance.**
 1. `"run"` leaves `Op`, `EXEC_OPS`, `VERB_RUNGS`, `PARAMS`, `base.py`, `session.py`, `SupportsRun`, `README.md`; `ALL_OPS` has 24 members; `tests/base/test_gates.py:172,182` are replaced by a pin that the name is `unrecognized` on the MCP surface.
 2. `OpGroup` in `ops.py` assigns every op exactly one of `filesystem | query | history | rights | derived`; a drift test pins the five sets to ADR 087 pin 1 (with `add_member`/`remove_member` as the two members verbs).
 3. `stat` and `ls` rows carry `entry_id` in the populated mask; `write` of an `Entry` carrying `entry_id` is `invalid` (read-only, proved four ways per spec 181 §3.6).

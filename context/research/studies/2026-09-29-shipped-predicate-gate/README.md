@@ -1,9 +1,6 @@
 # Study: spec 058's performance gate — the shipped predicate against S1's literal form
 
-Spec 058's acceptance criteria end with a performance gate: *S1's probe
-run against the shipped resolver and compiler on Postgres stays within
-1.5x of the study's literal form for the grep pass and the 1,000-id
-join-back.* This study is that run.
+Spec 058's acceptance criteria end with a performance gate: *S1's probe run against the shipped resolver and compiler on Postgres stays within 1.5x of the study's literal form for the grep pass and the 1,000-id join-back.* This study is that run.
 
 ## What is here
 
@@ -26,5 +23,4 @@ Containers up (`docker/compose.test.yml`), then from this directory:
 
 ## Results
 
-See `runs/`. The verdict line of each run reads `PASS` or `FAIL`
-against the 1.5x gate.
+See `runs/`. The verdict line of each run reads `PASS` or `FAIL` against the 1.5x gate.

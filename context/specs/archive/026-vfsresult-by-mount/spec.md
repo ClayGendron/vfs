@@ -4,26 +4,15 @@
 - **Date:** 2026-05-03
 - **Owner:** Clay Gendron
 - **Kind:** refactor + contract + constitutional amendment
-- **Depends on:** 015 (router calls public API), 016 (`MountError`
-  / `MountErrorKind`), 025 (`_WriteAbort` orchestrator)
-- **Enables:** FSP error envelope, MCP wire mapping, CLI /
-  `parse_query` error surface, long-op cancellation surface,
-  data-pipeline ergonomics on `VFSClient`
+- **Depends on:** 015 (router calls public API), 016 (`MountError` / `MountErrorKind`), 025 (`_WriteAbort` orchestrator)
+- **Enables:** FSP error envelope, MCP wire mapping, CLI / `parse_query` error surface, long-op cancellation surface, data-pipeline ergonomics on `VFSClient`
 
 ## TL;DR
 
 Two changes in one story, because they are one design decision:
 
-1. **`VFSResult` partitions by mount.** `VFSResult.mounts:
-   list[MountResult]` replaces the old single envelope.
-   `MountResult` carries `(mount, success, message, candidates)`
-   per terminal filesystem the op visited.
-2. **Errors are typed Python exceptions, prose-only on the wire.**
-   A 13-kind internal `VFSErrorKind` enum drives a typed
-   exception hierarchy (`NotFoundError`, `ExistsError`, …).
-   `MountResult.message` is prose. `_classify_error` (the
-   prose-classifying function) is deleted. The kind is supplied
-   at the construction site, never inferred.
+1. **`VFSResult` partitions by mount.** `VFSResult.mounts: list[MountResult]` replaces the old single envelope. `MountResult` carries `(mount, success, message, candidates)` per terminal filesystem the op visited.
+2. **Errors are typed Python exceptions, prose-only on the wire.** A 13-kind internal `VFSErrorKind` enum drives a typed exception hierarchy (`NotFoundError`, `ExistsError`, …). `MountResult.message` is prose. `_classify_error` (the prose-classifying function) is deleted. The kind is supplied at the construction site, never inferred.
 
 The raise rule (v1 — strict, single policy):
 
@@ -35,29 +24,17 @@ if self._raise_on_error and result.mounts and not result.success:
 
 Where `result.success = all(m.success for m in result.mounts)`.
 
-This is the most honest v1 policy: any error is a problem. A
-write that landed on two mounts and failed on a third is a
-half-finished batch, not a success — the sync pipeline raises,
-the async caller sees `success=False`. Per-operation policies
-(read-style "any-mount-succeeded counts as success") are deferred
-to a follow-up; v1 treats every operation the same way.
+This is the most honest v1 policy: any error is a problem. A write that landed on two mounts and failed on a third is a half-finished batch, not a success — the sync pipeline raises, the async caller sees `success=False`. Per-operation policies (read-style "any-mount-succeeded counts as success") are deferred to a follow-up; v1 treats every operation the same way.
 
-`VFSClient` (sync) defaults `raise_on_error=True` — sync devs
-write data pipelines and want to know when something breaks.
-`VFSClientAsync` defaults `raise_on_error=False` — async devs
-write apps and don't want surprise exceptions; they handle
-results explicitly.
+`VFSClient` (sync) defaults `raise_on_error=True` — sync devs write data pipelines and want to know when something breaks. `VFSClientAsync` defaults `raise_on_error=False` — async devs write apps and don't want surprise exceptions; they handle results explicitly.
 
-This deviates from the current constitution (7 error kinds, no
-mount partition on results). The amendment to Article 2 is in
-scope.
+This deviates from the current constitution (7 error kinds, no mount partition on results). The amendment to Article 2 is in scope.
 
 ---
 
 ## 1. Problem
 
-Two defects, both observable on `main`, both addressed in one
-change because they are entangled:
+Two defects, both observable on `main`, both addressed in one change because they are entangled:
 
 ### 1.1 Prose-classified errors
 
@@ -77,52 +54,32 @@ def _classify_error(message, errors, result) -> VFSError:
     return VFSError(message, result)
 ```
 
-Any of 67 `_error(...)` call sites can be reworded and silently
-change exception type. The exception class is recovered from
-prose by string match.
+Any of 67 `_error(...)` call sites can be reworded and silently change exception type. The exception class is recovered from prose by string match.
 
 ### 1.2 No mount provenance on results
 
-Today's `VFSResult` has one flat `errors: list[str]` and one flat
-`candidates: list[Candidate]`. A merged result from a fan-out
-across `/postgres` + `/mssql` reduces every failure to a free-form
-string; the agent cannot tell which mount produced which error,
-which mounts succeeded, or which work landed.
+Today's `VFSResult` has one flat `errors: list[str]` and one flat `candidates: list[Candidate]`. A merged result from a fan-out across `/postgres` + `/mssql` reduces every failure to a free-form string; the agent cannot tell which mount produced which error, which mounts succeeded, or which work landed.
 
-CLI failures (`parse_query` raises bare `ValueError` for unknown
-commands) bypass the structured envelope entirely. Long-op
-deadline / cancellation surfaces have nowhere to land.
+CLI failures (`parse_query` raises bare `ValueError` for unknown commands) bypass the structured envelope entirely. Long-op deadline / cancellation surfaces have nowhere to land.
 
 ### 1.3 Why one story
 
-The shape change (1.2) and the typed-exception change (1.1) touch
-the same files, the same 67 call sites, and the same renderers.
-Splitting them means touching every call site twice. The raise
-rule depends on per-mount `success` existing. The renderer rewrite
-needs both. One story.
+The shape change (1.2) and the typed-exception change (1.1) touch the same files, the same 67 call sites, and the same renderers. Splitting them means touching every call site twice. The raise rule depends on per-mount `success` existing. The renderer rewrite needs both. One story.
 
 ---
 
 ## 2. The taxonomy
 
-The 13 kinds live as an **internal Python enum** — they drive the
-exception class `raise_on_error=True` raises, but they do not
-appear on `MountResult` or in JSON output. The wire shape is
-prose.
+The 13 kinds live as an **internal Python enum** — they drive the exception class `raise_on_error=True` raises, but they do not appear on `MountResult` or in JSON output. The wire shape is prose.
 
-The derivation rule: every kind appears in at least three of the
-four canonical traditions (POSIX, Plan 9, gRPC, MCP/JSON-RPC).
+The derivation rule: every kind appears in at least three of the four canonical traditions (POSIX, Plan 9, gRPC, MCP/JSON-RPC).
 
 ### 2.1 The four traditions
 
-- **POSIX `<errno.h>` (IEEE 1003.1-2024)** — 107 codes;
-  `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/errno.h`.
-- **Plan 9 `/sys/src/9/port/error.h`** — ~50 named `extern char
-  E*[]` strings carried on 9P's `Rerror` message.
+- **POSIX `<errno.h>` (IEEE 1003.1-2024)** — 107 codes; `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/errno.h`.
+- **Plan 9 `/sys/src/9/port/error.h`** — ~50 named `extern char E*[]` strings carried on 9P's `Rerror` message.
 - **gRPC** — 17 status codes; modern compressed peer.
-- **MCP / JSON-RPC 2.0** — 5 base codes plus MCP's
-  `URL_ELICITATION_REQUIRED = -32042` and the `TaskStatus`
-  vocabulary.
+- **MCP / JSON-RPC 2.0** — 5 base codes plus MCP's `URL_ELICITATION_REQUIRED = -32042` and the `TaskStatus` vocabulary.
 
 ### 2.2 The 13 kinds
 
@@ -176,25 +133,17 @@ class VFSErrorKind(StrEnum):
 
 ### 2.4 Deliberately rejected
 
-- **`RateLimited`** — folds into `Unavailable` with
-  `detail.reason="rate_limited"` (detail lives only on the
-  exception, not the wire) until a real boundary appears.
+- **`RateLimited`** — folds into `Unavailable` with `detail.reason="rate_limited"` (detail lives only on the exception, not the wire) until a real boundary appears.
 - **`OutOfRange`** — gRPC streaming concept; not applicable.
 - **`DataLoss`** — no detection layer.
 - **`Internal` / `Unknown`** — invites lazy classification.
-- **WebDAV `Locked`** — we use optimistic concurrency
-  (`if_revision`), not pessimistic locks. Folds into `Conflict`.
+- **WebDAV `Locked`** — we use optimistic concurrency (`if_revision`), not pessimistic locks. Folds into `Conflict`.
 - **POSIX socket / process errnos** — not filesystem.
 
 ### 2.5 Two design choices
 
-- **String identifiers, not integers.** Plan 9 / gRPC names.
-  POSIX/FUSE use small ints because the kernel ABI needs them;
-  we don't.
-- **One enum value per *agent decision*, not per *kernel
-  condition*.** ENOTEMPTY is a kind because the retry differs.
-  EALREADY is not because the agent does the same thing it
-  would for `Conflict`.
+- **String identifiers, not integers.** Plan 9 / gRPC names. POSIX/FUSE use small ints because the kernel ABI needs them; we don't.
+- **One enum value per *agent decision*, not per *kernel condition*.** ENOTEMPTY is a kind because the retry differs. EALREADY is not because the agent does the same thing it would for `Conflict`.
 
 ---
 
@@ -205,15 +154,9 @@ class VFSErrorKind(StrEnum):
 | **The LLM agent** (via JSON / MCP / CLI render) | `MountResult.message`, `MountResult.success`, `mount` | Prose. No taxonomy. |
 | **The Python developer** (via `try / except`) | The raised exception class | Typed. `except NotFoundError:`. |
 
-The kind enum exists *only* to drive the exception class. It
-never reaches JSON, never appears in `MountResult`, never shows
-up in renderer output.
+The kind enum exists *only* to drive the exception class. It never reaches JSON, never appears in `MountResult`, never shows up in renderer output.
 
-This is the FastAPI / MCP idiom: typed exception inside, prose
-outside. FastAPI's `HTTPException` carries `status_code` and
-`detail`; Pydantic's `ValidationError` is the same pattern. MCP
-SEP-1303 made this exact decision for tool-execution errors —
-prose to the model, types inside.
+This is the FastAPI / MCP idiom: typed exception inside, prose outside. FastAPI's `HTTPException` carries `status_code` and `detail`; Pydantic's `ValidationError` is the same pattern. MCP SEP-1303 made this exact decision for tool-execution errors — prose to the model, types inside.
 
 ---
 
@@ -250,22 +193,11 @@ class MountResult(BaseModel):
         return out
 ```
 
-`MountResult` is **mutable** — not `frozen=True`. Routers
-rewrite `mount` (via `add_prefix`) and may attach
-implementation state as the result rises through the mount
-chain, so freezing the model would force `model_copy` everywhere
-the existing per-mount surface evolves. `Candidate` stays frozen
-(its identity is the path); `MountResult` does not.
+`MountResult` is **mutable** — not `frozen=True`. Routers rewrite `mount` (via `add_prefix`) and may attach implementation state as the result rises through the mount chain, so freezing the model would force `model_copy` everywhere the existing per-mount surface evolves. `Candidate` stays frozen (its identity is the path); `MountResult` does not.
 
-Terminal filesystems produce `mount="/"` because they don't
-know what they're mounted as. `add_prefix` rewrites `mount` and
-every candidate's `path` together, preserving `_kind` so the
-raise rule still has the typed kind on the way up.
+Terminal filesystems produce `mount="/"` because they don't know what they're mounted as. `add_prefix` rewrites `mount` and every candidate's `path` together, preserving `_kind` so the raise rule still has the typed kind on the way up.
 
-`_kind` is a Pydantic `PrivateAttr`. It does not appear in
-`model_dump()` or `to_json()`, does not contribute to the model
-schema, and is invisible to agents reading `to_str`. The only
-consumers are `_error()` (writes) and `_return_or_raise` (reads).
+`_kind` is a Pydantic `PrivateAttr`. It does not appear in `model_dump()` or `to_json()`, does not contribute to the model schema, and is invisible to agents reading `to_str`. The only consumers are `_error()` (writes) and `_return_or_raise` (reads).
 
 ### 4.2 `VFSResult` — partition by mount
 
@@ -345,15 +277,11 @@ class VFSResult(BaseModel):
         return path in self.paths
 ```
 
-`errors: list[str]` is gone. There is no `VFSErrorRecord`. There
-is no `VFSPartial`. The result is a list of `MountResult`, period.
+`errors: list[str]` is gone. There is no `VFSErrorRecord`. There is no `VFSPartial`. The result is a list of `MountResult`, period.
 
 ### 4.3 What `_error(...)` returns
 
-A construction site that fails inside a terminal filesystem
-returns a `VFSResult` with one `MountResult` whose `mount="/"`,
-`success=False`, `message=<prose>`, and `_kind` stamped with the
-typed enum value:
+A construction site that fails inside a terminal filesystem returns a `VFSResult` with one `MountResult` whose `mount="/"`, `success=False`, `message=<prose>`, and `_kind` stamped with the typed enum value:
 
 ```python
 def _error(self, kind: VFSErrorKind, message: str) -> VFSResult:
@@ -372,10 +300,7 @@ def _error(self, kind: VFSErrorKind, message: str) -> VFSResult:
     )
 ```
 
-The kind lives on `MountResult._kind` (PrivateAttr — see §4.1).
-It does not appear in `model_dump()`, `to_json()`, or `to_str`.
-The only consumers are `_error` (writes the kind) and
-`_return_or_raise` (reads it to pick the exception class).
+The kind lives on `MountResult._kind` (PrivateAttr — see §4.1). It does not appear in `model_dump()`, `to_json()`, or `to_str`. The only consumers are `_error` (writes the kind) and `_return_or_raise` (reads it to pick the exception class).
 
 ### 4.4 The exception hierarchy
 
@@ -418,22 +343,18 @@ _EXCEPTION_FOR_KIND: dict[VFSErrorKind, type[VFSError]] = {
 }
 ```
 
-`_classify_error` is deleted. The kind comes from the
-construction site; the lookup is a dict access.
+`_classify_error` is deleted. The kind comes from the construction site; the lookup is a dict access.
 
 ---
 
 ## 5. Set algebra
 
-`VFSResult` algebra (`&`, `|`, `-`) defers to per-mount algebra,
-matching mounts by `mount` field. When two results are combined:
+`VFSResult` algebra (`&`, `|`, `-`) defers to per-mount algebra, matching mounts by `mount` field. When two results are combined:
 
-- **Same mount on both sides** → algebra runs on that mount's
-  candidates (left wins on overlap).
+- **Same mount on both sides** → algebra runs on that mount's candidates (left wins on overlap).
 - **Mount only on left** → carried through as-is.
 - **Mount only on right** → carried through as-is.
-- **`function` mismatch** → result `function = "hybrid"`. Same
-  rule as today.
+- **`function` mismatch** → result `function = "hybrid"`. Same rule as today.
 
 ```python
 def __or__(self, other: VFSResult) -> VFSResult:
@@ -449,38 +370,24 @@ def __or__(self, other: VFSResult) -> VFSResult:
     )
 ```
 
-`_merge_mount_or` does the existing left-wins candidate merge
-within one mount. `&` and `-` follow the same per-mount pattern.
+`_merge_mount_or` does the existing left-wins candidate merge within one mount. `&` and `-` follow the same per-mount pattern.
 
-Cross-mount merging never happens. A user who wants flattened
-candidates uses `result.candidates` (the property).
+Cross-mount merging never happens. A user who wants flattened candidates uses `result.candidates` (the property).
 
 ---
 
 ## 6. Routing changes
 
-Three router methods produce multi-mount results today:
-`_route_fanout`, `_route_glob_fanout`, `_route_grep_fanout`.
-Each gets two changes:
+Three router methods produce multi-mount results today: `_route_fanout`, `_route_glob_fanout`, `_route_grep_fanout`. Each gets two changes:
 
-1. **Build a `MountResult` per mount it dispatched to**, instead
-   of merging into a flat `VFSResult`. The `mount=` field is set
-   to the accumulated prefix as the result rises through the
-   mount chain.
-2. **Apply `add_prefix` on the way back up**, mirroring the
-   existing candidate-path rewrite.
+1. **Build a `MountResult` per mount it dispatched to**, instead of merging into a flat `VFSResult`. The `mount=` field is set to the accumulated prefix as the result rises through the mount chain.
+2. **Apply `add_prefix` on the way back up**, mirroring the existing candidate-path rewrite.
 
-Single-mount routers (`_route_single`, `_route_two_path`,
-`_route_write_batch` when one terminal) return a one-element
-`mounts` list.
+Single-mount routers (`_route_single`, `_route_two_path`, `_route_write_batch` when one terminal) return a one-element `mounts` list.
 
-`_merge_results` becomes a `MountResult`-aware merge: collect by
-`mount` field, run per-mount algebra on collisions, preserve
-order.
+`_merge_results` becomes a `MountResult`-aware merge: collect by `mount` field, run per-mount algebra on collisions, preserve order.
 
-The terminal `_*_impl` methods do not change. They still return
-`VFSResult` with `mount="/"` on their `MountResult`. The router
-stamps the prefix on the way back.
+The terminal `_*_impl` methods do not change. They still return `VFSResult` with `mount="/"` on their `MountResult`. The router stamps the prefix on the way back.
 
 ---
 
@@ -496,15 +403,9 @@ class VFSClientAsync:               # async
     def __init__(self, ..., raise_on_error: bool = False): ...
 ```
 
-**Why split the default.** `VFSClient` (sync) is used in data
-pipelines — short scripts, ETL jobs, notebooks. The pipeline dev
-wants to know when something breaks; surprise data loss in a
-silent `success=False` is the worst outcome. Default `True`.
+**Why split the default.** `VFSClient` (sync) is used in data pipelines — short scripts, ETL jobs, notebooks. The pipeline dev wants to know when something breaks; surprise data loss in a silent `success=False` is the worst outcome. Default `True`.
 
-`VFSClientAsync` is used in apps, agents, and long-running
-services. The app dev handles results explicitly and does not
-want surprise exceptions interleaving with their async control
-flow. Default `False`.
+`VFSClientAsync` is used in apps, agents, and long-running services. The app dev handles results explicitly and does not want surprise exceptions interleaving with their async control flow. Default `False`.
 
 Both surfaces let the caller flip the flag at construction:
 
@@ -515,10 +416,7 @@ app  = VFSClientAsync(..., raise_on_error=True)  # opt in to raises in apps
 
 ### 7.1 The `@boundary` decorator
 
-The rule fires at the public boundary only — implemented as a
-decorator applied explicitly to every public method that returns
-a `VFSResult`. The decorator is the **single source of truth**
-for "what does the public surface do with a failed result?"
+The rule fires at the public boundary only — implemented as a decorator applied explicitly to every public method that returns a `VFSResult`. The decorator is the **single source of truth** for "what does the public surface do with a failed result?"
 
 ```python
 # vfs/boundary.py
@@ -551,18 +449,11 @@ def boundary(fn: Callable) -> Callable:
     return sync_wrapper
 ```
 
-One decorator that detects coroutine vs. function at class
-definition time, so `@boundary` can be applied uniformly across
-sync and async surfaces without the caller picking a variant.
-The runtime check is paid once per method definition, never at
-call time.
+One decorator that detects coroutine vs. function at class definition time, so `@boundary` can be applied uniformly across sync and async surfaces without the caller picking a variant. The runtime check is paid once per method definition, never at call time.
 
 ### 7.2 The `_return_or_raise(...)` hook
 
-The decorator delegates to a method on the instance. The rule
-lives on `self`, not in the decorator. Subclasses that need a
-different policy (e.g., a future `raise_on_any_mount_failure`
-mode) override the method, not the decorator.
+The decorator delegates to a method on the instance. The rule lives on `self`, not in the decorator. Subclasses that need a different policy (e.g., a future `raise_on_any_mount_failure` mode) override the method, not the decorator.
 
 ```python
 class VirtualFileSystem:
@@ -593,22 +484,11 @@ class VirtualFileSystem:
         raise _EXCEPTION_FOR_KIND[kind](result.message, result=result)
 ```
 
-The "any mount failed" condition is strict by design. There is
-no `raise_on_partial` flag because there is no partial-success
-loophole to flip; v1 is strict. The async client surfaces the
-same shape as a return: `result.success = False`, `result.message`
-enumerating per-mount outcomes, `result.mounts` available for
-inspection. The exception's `.result` carries the same breakdown
-so a `try / except` on the sync side has full provenance.
+The "any mount failed" condition is strict by design. There is no `raise_on_partial` flag because there is no partial-success loophole to flip; v1 is strict. The async client surfaces the same shape as a return: `result.success = False`, `result.message` enumerating per-mount outcomes, `result.mounts` available for inspection. The exception's `.result` carries the same breakdown so a `try / except` on the sync side has full provenance.
 
 ### 7.3 Selective application
 
-`@boundary` is applied **explicitly, only to public methods that
-return `VFSResult`**. Methods that return other shapes
-(`add_mount`, `remove_mount`, `close`, `parse_query`, the
-`__init__` constructor) are not decorated — the decorator does
-not type-sniff its return value. Forgetting to decorate a new
-public method is caught by the boundary tests in §13.
+`@boundary` is applied **explicitly, only to public methods that return `VFSResult`**. Methods that return other shapes (`add_mount`, `remove_mount`, `close`, `parse_query`, the `__init__` constructor) are not decorated — the decorator does not type-sniff its return value. Forgetting to decorate a new public method is caught by the boundary tests in §13.
 
 ```python
 class VirtualFileSystem:
@@ -626,15 +506,11 @@ class VirtualFileSystem:
     async def close(self) -> None: ...
 ```
 
-Reading a public method's signature now tells the contributor
-two things at a glance: the return type (`VFSResult`) and the
-boundary policy (the `@boundary` decorator). The two travel
-together; missing one is a bug.
+Reading a public method's signature now tells the contributor two things at a glance: the return type (`VFSResult`) and the boundary policy (the `@boundary` decorator). The two travel together; missing one is a bug.
 
 ### 7.4 Why a decorator (not a method called at the end)
 
-The previous draft of this story called a `_maybe_raise(result)`
-helper at the end of every public method:
+The previous draft of this story called a `_maybe_raise(result)` helper at the end of every public method:
 
 ```python
 async def read(self, path, ...) -> VFSResult:
@@ -642,36 +518,20 @@ async def read(self, path, ...) -> VFSResult:
     return self._maybe_raise(result)        # ← every method must remember this
 ```
 
-That shape has two real defects. First, every new public method
-has to remember to call the helper; forgetting it silently
-breaks the contract. Second, the call-it-yourself pattern
-distributes the boundary rule across every method head, instead
-of locating it in one place. The decorator deletes both
-problems: the rule is one block of code, applied uniformly, and
-the absence of `@boundary` on a result-returning method is
-visible in code review.
+That shape has two real defects. First, every new public method has to remember to call the helper; forgetting it silently breaks the contract. Second, the call-it-yourself pattern distributes the boundary rule across every method head, instead of locating it in one place. The decorator deletes both problems: the rule is one block of code, applied uniformly, and the absence of `@boundary` on a result-returning method is visible in code review.
 
-The decorator approach has a small cost — `functools.wraps`
-preserves signatures but type checkers can occasionally lose
-overload information through async wrappers. We accept this; the
-codebase already runs `ty` against typed wrappers elsewhere (see
-`_use_session`) and the patterns are known.
+The decorator approach has a small cost — `functools.wraps` preserves signatures but type checkers can occasionally lose overload information through async wrappers. We accept this; the codebase already runs `ty` against typed wrappers elsewhere (see `_use_session`) and the patterns are known.
 
 ---
 
 ## 8. Per-kind usage guide
 
-Each entry: when to use, when NOT to use, the exception class,
-and an example showing both the result an agent sees and the
-exception a sync caller catches.
+Each entry: when to use, when NOT to use, the exception class, and an example showing both the result an agent sees and the exception a sync caller catches.
 
 ### `NotFound` — `NotFoundError`
 
-- **Use when** a path the operation needs does not exist. POSIX
-  `ENOENT`. Includes "no mount resolves this path."
-- **Do NOT use when** the path *exists but is the wrong kind*
-  (`WrongKind`), the path is *malformed* (`Invalid`), or no rule
-  grants you write access (`PermissionDenied`).
+- **Use when** a path the operation needs does not exist. POSIX `ENOENT`. Includes "no mount resolves this path."
+- **Do NOT use when** the path *exists but is the wrong kind* (`WrongKind`), the path is *malformed* (`Invalid`), or no rule grants you write access (`PermissionDenied`).
 - **Example:**
   ```python
   >>> r = await async_vfs.read("/missing.md")
@@ -686,10 +546,8 @@ exception a sync caller catches.
 
 ### `Exists` — `ExistsError`
 
-- **Use when** a write would create at a path that already
-  exists and the caller passed `overwrite=False`. POSIX `EEXIST`.
-- **Do NOT use when** the conflict is about state version
-  (`Conflict`) or kind (`WrongKind`).
+- **Use when** a write would create at a path that already exists and the caller passed `overwrite=False`. POSIX `EEXIST`.
+- **Do NOT use when** the conflict is about state version (`Conflict`) or kind (`WrongKind`).
 - **Example:**
   ```python
   >>> sync_vfs.write(path="/notes.md", content="…", overwrite=False)
@@ -700,109 +558,59 @@ exception a sync caller catches.
 
 ### `WrongKind` — `WrongKindError`
 
-- **Use when** the operation needs a directory and finds a
-  file (or vice versa, or a chunk-parent that's not a file).
-  POSIX `ENOTDIR` / `EISDIR`. Plan 9 `Enotdir` / `Eisdir`.
-- **Do NOT use when** the path doesn't exist (`NotFound`) or
-  the kind is right but the state is wrong (`Conflict`).
+- **Use when** the operation needs a directory and finds a file (or vice versa, or a chunk-parent that's not a file). POSIX `ENOTDIR` / `EISDIR`. Plan 9 `Enotdir` / `Eisdir`.
+- **Do NOT use when** the path doesn't exist (`NotFound`) or the kind is right but the state is wrong (`Conflict`).
 
 ### `NotEmpty` — `NotEmptyError`
 
-- **Use when** delete refuses because the target directory has
-  children and `cascade=False`. POSIX `ENOTEMPTY`.
+- **Use when** delete refuses because the target directory has children and `cascade=False`. POSIX `ENOTEMPTY`.
 - **Do NOT use when** delete refuses for any other reason.
 
 ### `PermissionDenied` — `PermissionDeniedError`
 
-- **Use when** a mutation hits a read-only mount, read-only
-  override, or future ReBAC rule. POSIX `EACCES` / `EROFS`.
-- **Do NOT use when** the op is unsupported by the backend
-  (`Unsupported`), the call shape is wrong (`Invalid`).
+- **Use when** a mutation hits a read-only mount, read-only override, or future ReBAC rule. POSIX `EACCES` / `EROFS`.
+- **Do NOT use when** the op is unsupported by the backend (`Unsupported`), the call shape is wrong (`Invalid`).
 
 ### `Unsupported` — `UnsupportedError`
 
-- **Use when** the op is recognized and well-formed but the
-  resolved terminal filesystem cannot execute it
-  (`semantic_search` with no embedding provider configured).
-  POSIX `ENOSYS` / `ENOTSUP`. gRPC `UNIMPLEMENTED`.
-- **Do NOT use when** the op name is unknown to the parser
-  (`Unrecognized`), the args are wrong (`Invalid`), or the
-  capability is declared but transient failure stopped it
-  (`Unavailable`).
+- **Use when** the op is recognized and well-formed but the resolved terminal filesystem cannot execute it (`semantic_search` with no embedding provider configured). POSIX `ENOSYS` / `ENOTSUP`. gRPC `UNIMPLEMENTED`.
+- **Do NOT use when** the op name is unknown to the parser (`Unrecognized`), the args are wrong (`Invalid`), or the capability is declared but transient failure stopped it (`Unavailable`).
 
 ### `Unrecognized` — `UnrecognizedError`
 
-- **Use when** the CLI / `parse_query` / MCP tool router
-  receives a verb, flag, or expression it has no handler for.
-  JSON-RPC `METHOD_NOT_FOUND` (-32601).
-- **Do NOT use when** the verb is recognized and the args are
-  wrong (`Invalid`) or this backend doesn't support it
-  (`Unsupported`).
-- **Example:** The CLI today raises bare `ValueError`; after this
-  story it returns `MountResult(success=False, message="unknown
-  command: grup — did you mean 'grep'?")` and on the sync client
-  raises `UnrecognizedError`.
+- **Use when** the CLI / `parse_query` / MCP tool router receives a verb, flag, or expression it has no handler for. JSON-RPC `METHOD_NOT_FOUND` (-32601).
+- **Do NOT use when** the verb is recognized and the args are wrong (`Invalid`) or this backend doesn't support it (`Unsupported`).
+- **Example:** The CLI today raises bare `ValueError`; after this story it returns `MountResult(success=False, message="unknown command: grup — did you mean 'grep'?")` and on the sync client raises `UnrecognizedError`.
 
 ### `Invalid` — `InvalidError`
 
-- **Use when** the call shape is wrong: missing required args,
-  contradictory args, malformed pattern, `max_depth < 1`,
-  post-tokenize empty query, write to root path, write to a
-  `chunk`/`version`/`edge` kind from the user surface, duplicate
-  path inside one batch, embedding provider returns wrong shape.
-  POSIX `EINVAL`.
-- **Heuristic:** "would this call be valid against an empty
-  filesystem?" If no → `Invalid`.
+- **Use when** the call shape is wrong: missing required args, contradictory args, malformed pattern, `max_depth < 1`, post-tokenize empty query, write to root path, write to a `chunk`/`version`/`edge` kind from the user surface, duplicate path inside one batch, embedding provider returns wrong shape. POSIX `EINVAL`.
+- **Heuristic:** "would this call be valid against an empty filesystem?" If no → `Invalid`.
 
 ### `Conflict` — `ConflictError`
 
-- **Use when** an `if_revision=` mismatch fires (Constitution
-  §1.5), a precondition does not hold. POSIX `ESTALE` / `EBUSY`.
-  gRPC `FAILED_PRECONDITION`.
-- **Do NOT use when** the conflict is "already exists" (use
-  `Exists`), "not empty" (use `NotEmpty`), "wrong kind" (use
-  `WrongKind`).
+- **Use when** an `if_revision=` mismatch fires (Constitution §1.5), a precondition does not hold. POSIX `ESTALE` / `EBUSY`. gRPC `FAILED_PRECONDITION`.
+- **Do NOT use when** the conflict is "already exists" (use `Exists`), "not empty" (use `NotEmpty`), "wrong kind" (use `WrongKind`).
 
 ### `CrossMount` — `CrossMountError`
 
-- **Use when** an op the contract declares same-mount is asked
-  to span two: `mkedge` between paths in different mounts,
-  atomic `move`/`copy` whose endpoints split. POSIX `EXDEV`.
-  Plan 9 `Emount`.
-- **Do NOT use when** a fan-out search merely visits multiple
-  mounts — that is the normal multi-mount case, not an error.
+- **Use when** an op the contract declares same-mount is asked to span two: `mkedge` between paths in different mounts, atomic `move`/`copy` whose endpoints split. POSIX `EXDEV`. Plan 9 `Emount`.
+- **Do NOT use when** a fan-out search merely visits multiple mounts — that is the normal multi-mount case, not an error.
 
 ### `Unavailable` — `UnavailableError`
 
-- **Use when** the backend is reachable-but-broken or
-  unreachable: SQLAlchemy driver exception during persist,
-  embedding-provider HTTP error, auto-chunk / index-maintenance
-  runtime failure, connection refused. POSIX `EIO` /
-  `ECONNREFUSED` / `EAGAIN`. gRPC `UNAVAILABLE` / `INTERNAL`.
-- **Do NOT use when** the failure is the caller's fault
-  (`Invalid`), the backend doesn't declare the capability
-  (`Unsupported`), the op timed out (`Timeout`), or a public-state
-  contradiction would result (`Conflict` / `Exists`).
+- **Use when** the backend is reachable-but-broken or unreachable: SQLAlchemy driver exception during persist, embedding-provider HTTP error, auto-chunk / index-maintenance runtime failure, connection refused. POSIX `EIO` / `ECONNREFUSED` / `EAGAIN`. gRPC `UNAVAILABLE` / `INTERNAL`.
+- **Do NOT use when** the failure is the caller's fault (`Invalid`), the backend doesn't declare the capability (`Unsupported`), the op timed out (`Timeout`), or a public-state contradiction would result (`Conflict` / `Exists`).
 
 ### `Timeout` — `VFSTimeout`
 
-- **Use when** an op could not complete within a deadline set
-  by the caller, harness, or backend (SQL `statement_timeout`,
-  HTTP read timeout, MCP long-op TTL). POSIX `ETIMEDOUT`. gRPC
-  `DEADLINE_EXCEEDED`.
-- **Do NOT use when** the work was *cancelled* by an explicit
-  caller decision (`Cancelled`), or the backend hard-failed
-  (`Unavailable`).
+- **Use when** an op could not complete within a deadline set by the caller, harness, or backend (SQL `statement_timeout`, HTTP read timeout, MCP long-op TTL). POSIX `ETIMEDOUT`. gRPC `DEADLINE_EXCEEDED`.
+- **Do NOT use when** the work was *cancelled* by an explicit caller decision (`Cancelled`), or the backend hard-failed (`Unavailable`).
 
 ### `Cancelled` — `VFSCancelled`
 
-- **Use when** an in-flight op observes an explicit cancel:
-  `asyncio.CancelledError` propagated to the result boundary,
-  MCP `notifications/cancelled` received. POSIX `ECANCELED` /
-  `EINTR`. gRPC `CANCELLED`.
-- **Do NOT use when** a deadline elapsed (`Timeout`), or the
-  cancel arrived before the op started (return success with empty
-  candidates — there is nothing to undo).
+- **Use when** an in-flight op observes an explicit cancel: `asyncio.CancelledError` propagated to the result boundary, MCP `notifications/cancelled` received. POSIX `ECANCELED` / `EINTR`. gRPC `CANCELLED`.
+- **Do NOT use when** a deadline elapsed (`Timeout`), or the cancel arrived before the op started (return success with empty candidates — there is nothing to undo).
 
 ---
 
@@ -822,9 +630,7 @@ True
 "/"
 ```
 
-The `mounts` list has exactly one entry. The convenience
-accessors (`r.content`, `r.file`, `r.paths`) work identically
-to today.
+The `mounts` list has exactly one entry. The convenience accessors (`r.content`, `r.file`, `r.paths`) work identically to today.
 
 ### 9.2 Single-mount failure
 
@@ -855,11 +661,7 @@ vfs.exceptions.NotFoundError: not found: /missing.md
 
 ### 9.3 Multi-mount fan-out, partial failure (async returns, sync raises)
 
-v1 is strict: any mount failure flips `success=False` on the
-async surface and raises on the sync surface. The async caller
-still gets the candidates from the healthy mounts attached to
-the result; the sync caller catches the exception and reads
-`exc.result.mounts` for the same breakdown.
+v1 is strict: any mount failure flips `success=False` on the async surface and raises on the sync surface. The async caller still gets the candidates from the healthy mounts attached to the result; the sync caller catches the exception and reads `exc.result.mounts` for the same breakdown.
 
 ```python
 >>> async_vfs = VFSClientAsync()       # raise_on_error=False
@@ -956,8 +758,7 @@ return self._error(
 )
 ```
 
-The kind is supplied; the message is prose. Both flow through
-the same single helper. No `_classify_error` step.
+The kind is supplied; the message is prose. Both flow through the same single helper. No `_classify_error` step.
 
 ### 9.6 The CLI / `Unrecognized` path
 
@@ -977,16 +778,13 @@ Traceback (most recent call last):
 vfs.exceptions.UnrecognizedError: unknown command: grup — did you mean 'grep'?
 ```
 
-Today this raises bare `ValueError` out of `parse_query`. After
-this story it goes through the structured envelope.
+Today this raises bare `ValueError` out of `parse_query`. After this story it goes through the structured envelope.
 
 ---
 
 ## 10. Migration map
 
-Every `_error(...)` and `_WriteAbort(...)` site converts
-mechanically. The kind comes from this table; the message stays
-prose.
+Every `_error(...)` and `_WriteAbort(...)` site converts mechanically. The kind comes from this table; the message stays prose.
 
 | Today's prose | New kind |
 |---|---|
@@ -1032,20 +830,11 @@ prose.
 
 ## 11. Renderer changes — `to_str` is the agent surface
 
-`to_str` renders for the **agent**, not the developer. The agent
-sees one filesystem; the mount partition is a developer/debugger
-concern that lives in `to_json` and on `exc.result.mounts`. The
-renderer therefore never shows a `mounts:` block on success and
-preserves the namespace illusion on the success path.
+`to_str` renders for the **agent**, not the developer. The agent sees one filesystem; the mount partition is a developer/debugger concern that lives in `to_json` and on `exc.result.mounts`. The renderer therefore never shows a `mounts:` block on success and preserves the namespace illusion on the success path.
 
 ### 11.1 The rule
 
-**Default = Unix-shaped per function. Tables = only when the
-caller projects metadata fields.** This is the existing
-`_render_body` contract (`results.py:521`); the only thing this
-story changes is what the *error block* looks like on multi-mount
-failure. The success body inherits the existing dispatcher
-unchanged.
+**Default = Unix-shaped per function. Tables = only when the caller projects metadata fields.** This is the existing `_render_body` contract (`results.py:521`); the only thing this story changes is what the *error block* looks like on multi-mount failure. The success body inherits the existing dispatcher unchanged.
 
 | Function | Default render | Unix analog | Becomes a table when… |
 |---|---|---|---|
@@ -1058,31 +847,22 @@ unchanged.
 | `write`/`delete`/`edit`/`mkdir`/`mkedge`/`move`/`copy` | one-liner: `Wrote /path` / `Wrote N paths` | (Unix-style) | never |
 | ranked search / centrality | Markdown table (score is always projected) | (no Unix analog) | always |
 
-Future renderers added under §11 must follow the same rule:
-**Unix-shaped by default, tabular only on request**. Reviewers
-can reject any new renderer that defaults to Markdown tables for
-a function with a Unix peer.
+Future renderers added under §11 must follow the same rule: **Unix-shaped by default, tabular only on request**. Reviewers can reject any new renderer that defaults to Markdown tables for a function with a Unix peer.
 
 ### 11.2 Three cases
 
-The full rule has three cases. The only difference between
-total failure and partial success is whether the success body
-renders below the error block.
+The full rule has three cases. The only difference between total failure and partial success is whether the success body renders below the error block.
 
 #### Full success (every mount succeeded)
 
-Render the candidates flattened, exactly as today's single-mount
-renderer would — no mount header, no partition visible. The
-namespace illusion is total. The agent cannot tell whether one
-mount or five mounts answered.
+Render the candidates flattened, exactly as today's single-mount renderer would — no mount header, no partition visible. The namespace illusion is total. The agent cannot tell whether one mount or five mounts answered.
 
 ```
 # Notes
 ...
 ```
 
-(For a single-file `read`, the file contents.) For `glob`/`ls`,
-the path listing. For `grep`, the `grep -n`-style line output.
+(For a single-file `read`, the file contents.) For `glob`/`ls`, the path listing. For `grep`, the `grep -n`-style line output.
 
 #### Failure error block
 
@@ -1110,15 +890,11 @@ ERROR: /broken1: connection refused
 ERROR: /broken2: connection timed out
 ```
 
-The mount appears as the first colon-delimited segment after
-`ERROR:`, exactly the slot where Unix tools put the source
-(`ls: /nonexistent: No such file or directory`,
-`grep: /nonexistent: No such file or directory`).
+The mount appears as the first colon-delimited segment after `ERROR:`, exactly the slot where Unix tools put the source (`ls: /nonexistent: No such file or directory`, `grep: /nonexistent: No such file or directory`).
 
 #### Total failure vs. partial success
 
-The error block above is identical in both cases. **The only
-difference is whether successful candidates render below it.**
+The error block above is identical in both cases. **The only difference is whether successful candidates render below it.**
 
 **Total failure** — error block, nothing else:
 
@@ -1127,9 +903,7 @@ ERROR: /broken1: connection refused
 ERROR: /broken2: connection timed out
 ```
 
-**Partial success** — error block, then the successful
-candidates flattened as if everything succeeded (the same
-function-specific Unix-shaped render from §11.1):
+**Partial success** — error block, then the successful candidates flattened as if everything succeeded (the same function-specific Unix-shaped render from §11.1):
 
 ```
 ERROR: /broken: connection refused
@@ -1137,8 +911,7 @@ ERROR: /broken: connection refused
 <normal candidate render of result.candidates from healthy mounts>
 ```
 
-The mount label appears *only* on error lines — never in the
-success body. A partial-success `glob` looks like:
+The mount label appears *only* on error lines — never in the success body. A partial-success `glob` looks like:
 
 ```
 ERROR: /broken: connection refused
@@ -1174,10 +947,7 @@ Each defers to its function-specific renderer for the body.
 
 ### 11.3 `to_json` is unchanged in spirit
 
-`to_json` emits the full `VFSResult` structure including the
-`mounts: [...]` partition. JSON consumers (FSP wire, MCP
-debugger, structured tooling) get the breakdown; the prose
-renderer doesn't. Two surfaces, two audiences.
+`to_json` emits the full `VFSResult` structure including the `mounts: [...]` partition. JSON consumers (FSP wire, MCP debugger, structured tooling) get the breakdown; the prose renderer doesn't. Two surfaces, two audiences.
 
 ---
 
@@ -1185,147 +955,64 @@ renderer doesn't. Two surfaces, two audiences.
 
 ### 12.1 In
 
-1. Constitutional amendment to Article 2: replace the
-   five-class taxonomy and the single-envelope `VFSResult` with
-   the per-mount partition plus the 13-kind internal enum.
+1. Constitutional amendment to Article 2: replace the five-class taxonomy and the single-envelope `VFSResult` with the per-mount partition plus the 13-kind internal enum.
 2. `MountResult` model.
-3. `VFSResult.mounts: list[MountResult]`. Drop `errors:
-   list[str]`. Add convenience accessors (`success`, `candidates`,
-   `message`, `mount`, `file`, `content`, `paths`).
-4. `MountResult.add_prefix(prefix)` mirroring the existing
-   pattern.
-5. `VFSResult` set algebra defers per-mount; `function` flips to
-   `"hybrid"` on mismatch.
+3. `VFSResult.mounts: list[MountResult]`. Drop `errors: list[str]`. Add convenience accessors (`success`, `candidates`, `message`, `mount`, `file`, `content`, `paths`).
+4. `MountResult.add_prefix(prefix)` mirroring the existing pattern.
+5. `VFSResult` set algebra defers per-mount; `function` flips to `"hybrid"` on mismatch.
 6. `VFSErrorKind` enum (13 values, internal only).
-7. Per-kind exception subclasses (`NotFoundError`, …,
-   `VFSTimeout`, `VFSCancelled`).
-8. `_error(kind, message)` signature; kind stashed for the raise
-   rule.
-9. Routers (`_route_fanout`, `_route_glob_fanout`,
-   `_route_grep_fanout`, `_merge_results`) build per-mount
-   results.
-10. `VFSClient.__init__(..., raise_on_error: bool = True)` and
-    `VFSClientAsync.__init__(..., raise_on_error: bool = False)`.
-11. `@boundary` decorator and `_return_or_raise(result)` hook
-    method. The decorator is applied explicitly to every public
-    method that returns `VFSResult`. The hook raises whenever
-    `raise_on_error` is set AND any mount in the result failed
-    (strict v1 policy — no partial-success loophole).
-12. CLI / `parse_query` wrapper that turns parser exceptions
-    into `MountResult(success=False, message="unknown command:
-    …")` records.
-13. Conversion of all 67 `_error(...)` and `_WriteAbort(...)`
-    sites per §10.
+7. Per-kind exception subclasses (`NotFoundError`, …, `VFSTimeout`, `VFSCancelled`).
+8. `_error(kind, message)` signature; kind stashed for the raise rule.
+9. Routers (`_route_fanout`, `_route_glob_fanout`, `_route_grep_fanout`, `_merge_results`) build per-mount results.
+10. `VFSClient.__init__(..., raise_on_error: bool = True)` and `VFSClientAsync.__init__(..., raise_on_error: bool = False)`.
+11. `@boundary` decorator and `_return_or_raise(result)` hook method. The decorator is applied explicitly to every public method that returns `VFSResult`. The hook raises whenever `raise_on_error` is set AND any mount in the result failed (strict v1 policy — no partial-success loophole).
+12. CLI / `parse_query` wrapper that turns parser exceptions into `MountResult(success=False, message="unknown command: …")` records.
+13. Conversion of all 67 `_error(...)` and `_WriteAbort(...)` sites per §10.
 14. Renderer rewrite per §11.
 15. Deletion of `_classify_error`.
 
 ### 12.2 Out
 
 - FSP / JSON-RPC wire framing (FSP wave 2's job).
-- Capability advertisement (`capabilities()` hook). The
-  `Unsupported` kind exists today for the configurable case;
-  pure "not implemented" lands in a separate story.
+- Capability advertisement (`capabilities()` hook). The `Unsupported` kind exists today for the configurable case; pure "not implemented" lands in a separate story.
 - Trace IDs / observability fields on errors.
 - `RateLimited` kind. Folds into `Unavailable`.
-- Per-operation raise policy (read-style ops tolerating
-  partial failure). v1 is strict for every op.
+- Per-operation raise policy (read-style ops tolerating partial failure). v1 is strict for every op.
 - Bind-cycle detection (story 016).
 
 ---
 
 ## 13. Acceptance criteria
 
-1. `VFSResult.mounts: list[MountResult]` is the canonical
-   structure. `errors: list[str]` is gone.
-2. `MountResult(mount, success, message, candidates)` is the
-   per-mount primitive. No `kind`, no `detail`, no `errors`.
-3. `MountResult.add_prefix(prefix)` rewrites both the `mount`
-   field and every candidate's `path`.
-4. Convenience accessors on `VFSResult` (`success`, `candidates`,
-   `message`, `mount`, `file`, `content`, `paths`, `__bool__`,
-   `__len__`, `__contains__`) work identically to today's
-   single-envelope behavior in the single-mount case.
+1. `VFSResult.mounts: list[MountResult]` is the canonical structure. `errors: list[str]` is gone.
+2. `MountResult(mount, success, message, candidates)` is the per-mount primitive. No `kind`, no `detail`, no `errors`.
+3. `MountResult.add_prefix(prefix)` rewrites both the `mount` field and every candidate's `path`.
+4. Convenience accessors on `VFSResult` (`success`, `candidates`, `message`, `mount`, `file`, `content`, `paths`, `__bool__`, `__len__`, `__contains__`) work identically to today's single-envelope behavior in the single-mount case.
 5. `VFSErrorKind` has the 13 values listed in §2.2.
-6. One exception subclass per kind. `_EXCEPTION_FOR_KIND` maps
-   one to one.
-7. Zero `self._error("…")` (string-literal, no kind) in
-   `src/vfs/`.
-8. `_classify_error` is deleted. No prose-classification path
-   remains.
-9. `VFSClient` defaults `raise_on_error=True`. `VFSClientAsync`
-   defaults `raise_on_error=False`. Both accept the constructor
-   override.
-10. The raise rule fires whenever `raise_on_error` is set AND
-    `result.mounts` is non-empty AND any mount returned
-    `success=False`. v1 is strict; partial failure raises.
-11. A multi-mount glob across one healthy and one broken mount:
-    on the async client returns a `VFSResult` with two
-    `MountResult` entries, the healthy mount's candidates
-    present in `result.candidates`, `result.success=False`, and
-    `result.message` listing only the failed mount
-    (`"(mount=/broken) connection refused"`). On the sync
-    client, the same call raises the typed exception with the
-    same message; `exc.result` preserves both `MountResult`
-    entries.
-12. A multi-mount glob across two broken mounts raises
-    `UnavailableError` from the sync client; the exception's
-    `.result.mounts` lists both broken entries.
-13. `vfs.cli("grup foo")` returns a `VFSResult` with
-    `MountResult(success=False, message="unknown command: grup
-    …")` and does not raise on the async client; raises
-    `UnrecognizedError` on the sync client.
-14. Set algebra (`&`, `|`, `-`) on `VFSResult` defers
-    per-mount; `function` flips to `"hybrid"` on mismatch.
-15. **`to_str` never reveals the mount partition on success.**
-    A multi-mount full-success `glob` renders byte-identically
-    to a single-mount `glob` over the same flattened candidates.
-    A multi-mount partial-success `glob` renders one
-    `ERROR (mount=...)` line per failed mount, then the
-    flattened successful candidates as if everything succeeded.
-    A multi-mount total-failure renders only the error block,
-    no body.
-16. **`to_json` always includes the full `mounts: [...]`
-    partition.** Two surfaces, two audiences: prose for the
-    agent, structured shape for the JSON consumer.
-17. Per-kind boundary tests cover the four most-confusable
-    pairs: `NotFound` vs `WrongKind`, `Exists` vs `Conflict`,
-    `Unsupported` vs `Unrecognized`, `Unavailable` vs `Timeout`.
-18. Existing tests in `tests/test_vfs_client.py` are updated to
-    assert classification via the typed exception subclass, not
-    via string matching.
+6. One exception subclass per kind. `_EXCEPTION_FOR_KIND` maps one to one.
+7. Zero `self._error("…")` (string-literal, no kind) in `src/vfs/`.
+8. `_classify_error` is deleted. No prose-classification path remains.
+9. `VFSClient` defaults `raise_on_error=True`. `VFSClientAsync` defaults `raise_on_error=False`. Both accept the constructor override.
+10. The raise rule fires whenever `raise_on_error` is set AND `result.mounts` is non-empty AND any mount returned `success=False`. v1 is strict; partial failure raises.
+11. A multi-mount glob across one healthy and one broken mount: on the async client returns a `VFSResult` with two `MountResult` entries, the healthy mount's candidates present in `result.candidates`, `result.success=False`, and `result.message` listing only the failed mount (`"(mount=/broken) connection refused"`). On the sync client, the same call raises the typed exception with the same message; `exc.result` preserves both `MountResult` entries.
+12. A multi-mount glob across two broken mounts raises `UnavailableError` from the sync client; the exception's `.result.mounts` lists both broken entries.
+13. `vfs.cli("grup foo")` returns a `VFSResult` with `MountResult(success=False, message="unknown command: grup …")` and does not raise on the async client; raises `UnrecognizedError` on the sync client.
+14. Set algebra (`&`, `|`, `-`) on `VFSResult` defers per-mount; `function` flips to `"hybrid"` on mismatch.
+15. **`to_str` never reveals the mount partition on success.** A multi-mount full-success `glob` renders byte-identically to a single-mount `glob` over the same flattened candidates. A multi-mount partial-success `glob` renders one `ERROR (mount=...)` line per failed mount, then the flattened successful candidates as if everything succeeded. A multi-mount total-failure renders only the error block, no body.
+16. **`to_json` always includes the full `mounts: [...]` partition.** Two surfaces, two audiences: prose for the agent, structured shape for the JSON consumer.
+17. Per-kind boundary tests cover the four most-confusable pairs: `NotFound` vs `WrongKind`, `Exists` vs `Conflict`, `Unsupported` vs `Unrecognized`, `Unavailable` vs `Timeout`.
+18. Existing tests in `tests/test_vfs_client.py` are updated to assert classification via the typed exception subclass, not via string matching.
 
 ---
 
 ## 14. Risks
 
-- **`VFSResult` shape change is a public-contract change.**
-  `errors: list[str]` is gone; `mounts` is new. Mitigation:
-  `result.message` and `result.success` keep working via
-  properties; the single-mount case is structurally identical
-  through the convenience accessors; pre-1.0 project; small
-  ecosystem.
-- **Sync vs. async raise default asymmetry.** A developer
-  importing `VFSClient` (sync) gets surprise raises; importing
-  `VFSClientAsync` doesn't. This is by design — the two have
-  different audiences — but it is a real footgun for someone
-  who switches between them. Mitigation: document at the top
-  of both classes' docstrings; mention in the README's "which
-  client should I use?" section; the constructor flag lets
-  either side flip.
-- **Conversion of 67 sites is mechanical but bulky.** Mitigation:
-  the migration table in §10 has a row per site; convert by
-  module batch with the test suite green between batches.
-- **Constitutional amendment is the largest in this project's
-  history.** Mitigation: every kind is named in at least three
-  of POSIX, Plan 9, gRPC, MCP/JSON-RPC; the partition by mount
-  has WebDAV 207 and Elasticsearch `_shards` precedent.
-- **`_classify_error` deletion in one change.** Mitigation:
-  pre-1.0; no external dependents; the shim's public surface
-  was always private.
-- **Per-mount result for single-mount ops adds one wrapping
-  level.** Mitigation: convenience accessors (`r.content`,
-  `r.file`, `r.mount`) keep ergonomics identical; only callers
-  who explicitly want the partition pay any new cost.
+- **`VFSResult` shape change is a public-contract change.** `errors: list[str]` is gone; `mounts` is new. Mitigation: `result.message` and `result.success` keep working via properties; the single-mount case is structurally identical through the convenience accessors; pre-1.0 project; small ecosystem.
+- **Sync vs. async raise default asymmetry.** A developer importing `VFSClient` (sync) gets surprise raises; importing `VFSClientAsync` doesn't. This is by design — the two have different audiences — but it is a real footgun for someone who switches between them. Mitigation: document at the top of both classes' docstrings; mention in the README's "which client should I use?" section; the constructor flag lets either side flip.
+- **Conversion of 67 sites is mechanical but bulky.** Mitigation: the migration table in §10 has a row per site; convert by module batch with the test suite green between batches.
+- **Constitutional amendment is the largest in this project's history.** Mitigation: every kind is named in at least three of POSIX, Plan 9, gRPC, MCP/JSON-RPC; the partition by mount has WebDAV 207 and Elasticsearch `_shards` precedent.
+- **`_classify_error` deletion in one change.** Mitigation: pre-1.0; no external dependents; the shim's public surface was always private.
+- **Per-mount result for single-mount ops adds one wrapping level.** Mitigation: convenience accessors (`r.content`, `r.file`, `r.mount`) keep ergonomics identical; only callers who explicitly want the partition pay any new cost.
 
 ---
 
@@ -1333,49 +1020,29 @@ renderer doesn't. Two surfaces, two audiences.
 
 ### Codebase
 
-- `src/vfs/exceptions.py:46` — `_classify_error` (deleted by
-  this story)
-- `src/vfs/results.py:268` — `VFSResult.errors: list[str]`
-  (replaced by `mounts`)
-- `src/vfs/results.py:403` — existing `add_prefix` pattern
-  (extended to `MountResult`)
-- `src/vfs/base.py:1093` — `_error()` constructor (signature
-  changes)
-- `src/vfs/base.py` (router methods) — multi-mount fan-out
-  builds `MountResult` per terminal
-- `src/vfs/permissions.py:298–301` — `Cannot write …` sites →
-  `PermissionDenied`
-- `src/vfs/backends/database.py:1424` — `_write_impl`'s
-  `_WriteAbort` catch
+- `src/vfs/exceptions.py:46` — `_classify_error` (deleted by this story)
+- `src/vfs/results.py:268` — `VFSResult.errors: list[str]` (replaced by `mounts`)
+- `src/vfs/results.py:403` — existing `add_prefix` pattern (extended to `MountResult`)
+- `src/vfs/base.py:1093` — `_error()` constructor (signature changes)
+- `src/vfs/base.py` (router methods) — multi-mount fan-out builds `MountResult` per terminal
+- `src/vfs/permissions.py:298–301` — `Cannot write …` sites → `PermissionDenied`
+- `src/vfs/backends/database.py:1424` — `_write_impl`'s `_WriteAbort` catch
 - Story 016 — `MountError` / `MountErrorKind` (consumed here)
 - Story 025 — `_WriteAbort` orchestrator (extended here)
 
 ### Project context
 
-- Constitution Article 2 (this story amends both the closed
-  taxonomy and the result shape)
-- `context/learnings/2026-04-18-posix-and-related-standards.md`
-  (prior POSIX-vs-VFS analysis; this story consciously updates
-  its "five-class hierarchy is enough" claim)
-- `context/learnings/2026-04-18-swe-agent-aci-principles.md`
-  (guardrail principle on error self-description)
+- Constitution Article 2 (this story amends both the closed taxonomy and the result shape)
+- `context/learnings/2026-04-18-posix-and-related-standards.md` (prior POSIX-vs-VFS analysis; this story consciously updates its "five-class hierarchy is enough" claim)
+- `context/learnings/2026-04-18-swe-agent-aci-principles.md` (guardrail principle on error self-description)
 - `project_fsp_vfs_synthesis.md` (`error.data.class` commitment)
 
 ### External precedent
 
-- POSIX `<errno.h>` (IEEE 1003.1-2024) —
-  `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/errno.h`
-- Plan 9 kernel error strings —
-  `/Users/claygendron/Git/Repos/plan9/sys/src/9/port/error.h`
-- gRPC status codes — `https://grpc.io/docs/guides/status-codes/`
-  (17 codes; closest peer to `VFSErrorKind`)
-- JSON-RPC 2.0 specification —
-  `https://www.jsonrpc.org/specification#error_object`
-- MCP draft schema —
-  `/Users/claygendron/Git/Repos/modelcontextprotocol/schema/draft/schema.ts`
-  (lines 224–345; SEP-1303 for input-validation as
-  tool-execution-error)
-- WebDAV (RFC 4918) `207 Multi-Status` — direct precedent for
-  partition-by-source on a single response envelope
-- Elasticsearch `_shards: {total, successful, failed,
-  failures}` — same posture, modern reference
+- POSIX `<errno.h>` (IEEE 1003.1-2024) — `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/errno.h`
+- Plan 9 kernel error strings — `/Users/claygendron/Git/Repos/plan9/sys/src/9/port/error.h`
+- gRPC status codes — `https://grpc.io/docs/guides/status-codes/` (17 codes; closest peer to `VFSErrorKind`)
+- JSON-RPC 2.0 specification — `https://www.jsonrpc.org/specification#error_object`
+- MCP draft schema — `/Users/claygendron/Git/Repos/modelcontextprotocol/schema/draft/schema.ts` (lines 224–345; SEP-1303 for input-validation as tool-execution-error)
+- WebDAV (RFC 4918) `207 Multi-Status` — direct precedent for partition-by-source on a single response envelope
+- Elasticsearch `_shards: {total, successful, failed, failures}` — same posture, modern reference

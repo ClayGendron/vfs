@@ -1,11 +1,6 @@
 # Open Questions — resolved archive
 
-**Status:** record — split from `open-questions.md` 2026-08-14, per its
-lifecycle rule ("if the list grows long, split resolved ones out").
-**Purpose:** The permanent record of resolved questions. Entries move
-here verbatim when their status flips to resolved; nothing here blocks
-work. Older documents citing `open-questions.md` for a resolved entry
-resolve to this file.
+**Status:** record — split from `open-questions.md` 2026-08-14, per its lifecycle rule ("if the list grows long, split resolved ones out"). **Purpose:** The permanent record of resolved questions. Entries move here verbatim when their status flips to resolved; nothing here blocks work. Older documents citing `open-questions.md` for a resolved entry resolve to this file.
 
 ---
 
@@ -87,153 +82,31 @@ resolve to this file.
 
 ## Move/copy overwrite destroys the occupant permanently — the last agent-reachable destruction
 
-- **Asked:** 2026-07-25 by Clay + Claude (surfaced while writing ADR 027; the
-  teaching-session review of `topology.py` established the delete-side
-  contract, and overwrite is the arm it does not cover)
-- **Context:** ADR 027 removes every delete-side path to permanence for
-  agents (delete always trashes; sweep is developer-plane). But
-  `move`/`copy` with `overwrite=True` still hard-purge the destination
-  occupant (`_execute_move` → `_purge_subtree`; `_execute_copy` deletes the
-  occupant's content row) — a file occupant's content is unrecoverable. The
-  refusal ladder limits the blast radius (only a file or an *empty*
-  directory can be overwritten), but a file's content is exactly the data
-  the trash arc exists to protect. This is now the only way an agent can
-  permanently destroy data.
-- **Options considered (unstudied):** trash the occupant before the
-  transfer lands (it gains restore columns at its original site; costs
-  divergence from POSIX rename-unlink parity and puts a same-address
-  trash row beside the incoming row); keep the unlink and document the
-  hole (POSIX parity, one honest exception to the ADR 027 sentence);
-  refuse `overwrite` onto files on the agent surface only (plane-split
-  the flag the way sweep split the verb).
-- **Blocking:** nothing — specs 084/085 land regardless; this decides
-  whether the ADR 027 contract sentence gets a footnote or loses it.
-- **Status:** resolved 2026-08-14 (Clay, in session) — **none of the
-  three options: the `overwrite` flag is removed from move and copy
-  entirely.** No agent surface may permanently destroy data, and no
-  overwrite arm should exist to guard: an occupied destination always
-  refuses `exists`, and a caller displaces an occupant the honest way
-  — `delete` it (which trashes, restorably, per ADR 027) and re-issue
-  the transfer. ADR 027's contract sentence loses its exception
-  rather than gaining a footnote. Owned by
-  `specs/active/101-move-copy-drop-overwrite/`, which also audits
-  restore's own `overwrite` arm under the same law. **Landed
-  2026-08-25** (`specs/archive/101-move-copy-drop-overwrite/`): the
-  restore audit found its arm purged through the same `_execute_move`,
-  so restore's flag went too — three verbs, one law.
+- **Asked:** 2026-07-25 by Clay + Claude (surfaced while writing ADR 027; the teaching-session review of `topology.py` established the delete-side contract, and overwrite is the arm it does not cover)
+- **Context:** ADR 027 removes every delete-side path to permanence for agents (delete always trashes; sweep is developer-plane). But `move`/`copy` with `overwrite=True` still hard-purge the destination occupant (`_execute_move` → `_purge_subtree`; `_execute_copy` deletes the occupant's content row) — a file occupant's content is unrecoverable. The refusal ladder limits the blast radius (only a file or an *empty* directory can be overwritten), but a file's content is exactly the data the trash arc exists to protect. This is now the only way an agent can permanently destroy data.
+- **Options considered (unstudied):** trash the occupant before the transfer lands (it gains restore columns at its original site; costs divergence from POSIX rename-unlink parity and puts a same-address trash row beside the incoming row); keep the unlink and document the hole (POSIX parity, one honest exception to the ADR 027 sentence); refuse `overwrite` onto files on the agent surface only (plane-split the flag the way sweep split the verb).
+- **Blocking:** nothing — specs 084/085 land regardless; this decides whether the ADR 027 contract sentence gets a footnote or loses it.
+- **Status:** resolved 2026-08-14 (Clay, in session) — **none of the three options: the `overwrite` flag is removed from move and copy entirely.** No agent surface may permanently destroy data, and no overwrite arm should exist to guard: an occupied destination always refuses `exists`, and a caller displaces an occupant the honest way — `delete` it (which trashes, restorably, per ADR 027) and re-issue the transfer. ADR 027's contract sentence loses its exception rather than gaining a footnote. Owned by `specs/active/101-move-copy-drop-overwrite/`, which also audits restore's own `overwrite` arm under the same law. **Landed 2026-08-25** (`specs/archive/101-move-copy-drop-overwrite/`): the restore audit found its arm purged through the same `_execute_move`, so restore's flag went too — three verbs, one law.
 
 ## Glob path-arm patterns do not cross the mount seam — namespace patterns or entry-local patterns?
 
-- **Asked:** 2026-07-31 by Clay + Claude (surfaced in a teaching session on
-  glob routing; executed repro in-session, same day)
-- **Context:** The router rebases scope *anchors* at the mount seam
-  (`/data/src` → `/src`) but passes the *pattern* verbatim
-  (`base.py:_route_fanout` — pattern rides in `**kwargs`), so each mount
-  matches the pattern against its own entry-relative rows. Executed
-  repro (mount at `/data` holding `a.txt`, `deep/b.txt`): unscoped
-  `glob("/data/*.txt")` and `glob("/data/**/*.txt")` both return **empty
-  success** — the mount's rows never start with `/data/`, and the root
-  entry has no matching rows of its own. The working idiom today is
-  entry-local: `glob("/*.txt", paths=("/data",))`. **No ADR, spec, or
-  router test pins the seam behavior** — no router-level test globs an
-  absolute pattern at all — and the verb's own docstring ("match
-  *pattern* against the namespace", `base.py:1021`) contradicts the
-  emergent behavior. Discovered gap, not decided contract.
-- **Blocking:** nothing lands broken today, but spec 073 rewrites the
-  pattern chokepoint (`patterns.py`) and its surface docs — the seam
-  contract should be decided before or immediately after 073 lands, and
-  Pass C grep's `globs`/`globs_not` filters face the identical seam
-  question.
-- **Options considered:** **(a) entry-local patterns** — ratify today's
-  behavior, true up the docstring, likely refuse (or warn on) unscoped
-  path-arm patterns to kill the silent empty success; **(b) namespace
-  patterns** — the router derives each mount's residual pattern
-  (segment-wise derivative of the glob by the bind path: literal and
-  wildcard segments consume mount segments, `**` survives the boundary,
-  a dead residual skips the mount entirely — routing on the pattern's
-  literal prefix falls out for free), dispatches the residual set, and
-  merges as today; **(c) staged** — 073 lands (a) honestly (docstring +
-  loud refusal), a fast-follow story lands (b). Multi-residual dispatch
-  shape (N patterns per mount: N calls vs a protocol change) is an
-  undecided sub-fork of (b).
-- **Research (2026-07-31, same day):**
-  `research/2026-07-31-glob-pattern-seam-routing.md` (five prior-art
-  studies; no studied system pushes a pattern across a boundary; git
-  documents residuation as its missing primitive at `dir.c:472-489`)
-  plus an executed spike
-  (`research/studies/2026-07-31-glob-residuation/verify_residuation.py`:
-  5,590 cases, exact equality, mutation-audited, residual sets ≤ 2 —
-  no protocol change needed). Side effect already landed: the ripgrep
-  study corrected 073's unanchored-pattern rule to gitignore-exact
-  anchoring.
-- **Status:** resolved 2026-07-31 (Clay, in session) →
-  `decisions/030-namespace-patterns-residual-routing.md` (accepted):
-  namespace-coordinate patterns; residual routing at the seam
-  (N-dispatch merge, necessary-fact posture, dead residuals skip
-  silently); verb shape derived net-new — roots + root-anchored
-  filters, the find/rg shape ADR 023 started, with `paths` reframed
-  as the assertion mechanism (five recorded reasons it survives).
-  Spec 091 owns implementation, test-first, after 073 lands.
-- **Landed:** 2026-08-01, same session as 073 — residuation
-  primitives in `src/vfs/glob_patterns.py` (`effective_pattern`,
-  `residuals`), the glob-only residual dispatch step in `base.py`
-  (`_glob_residual_dispatches`), the invariance battery in
-  `tests/base/test_glob_namespace.py`, and the spike re-pointed at
-  the landed functions (5,590 cases, zero failures, identical
-  statistics). The headline repro now returns the mount's rows; all
-  four Docker engine legs green. This entry is the defect record;
-  spec 091 owns closure.
-- **Dispatch-shape sub-fork:** resolved 2026-08-04 →
-  `decisions/031-pattern-only-glob-seam.md` (accepted): pattern-only
-  seam, one `patterns`-tuple call per entry in one transaction and
-  snapshot, root assertions carried by a concurrent router-side
-  probe. Spec 092 owns implementation — **landed 2026-08-05** (all
-  four slices; four Docker legs green; MSSQL benchmark gate passed,
-  batched fan 3.8×/1.4× ahead of per-root at K=100/1,000); the
-  same-day five-agent research pass is recorded in
-  `research/2026-08-04-batched-glob-seam-field-study.md` (both
-  precedent claims confirmed; batched fan measured ~1.4-2× ahead at
-  every scale with sweet spot ~200 arms/statement; sqlite
-  expression-depth wall at 997 arms; ext facts must render inside
-  arms — a call-level AND beside the fan measured ~350× slower) and
-  is folded into the spec.
+- **Asked:** 2026-07-31 by Clay + Claude (surfaced in a teaching session on glob routing; executed repro in-session, same day)
+- **Context:** The router rebases scope *anchors* at the mount seam (`/data/src` → `/src`) but passes the *pattern* verbatim (`base.py:_route_fanout` — pattern rides in `**kwargs`), so each mount matches the pattern against its own entry-relative rows. Executed repro (mount at `/data` holding `a.txt`, `deep/b.txt`): unscoped `glob("/data/*.txt")` and `glob("/data/**/*.txt")` both return **empty success** — the mount's rows never start with `/data/`, and the root entry has no matching rows of its own. The working idiom today is entry-local: `glob("/*.txt", paths=("/data",))`. **No ADR, spec, or router test pins the seam behavior** — no router-level test globs an absolute pattern at all — and the verb's own docstring ("match *pattern* against the namespace", `base.py:1021`) contradicts the emergent behavior. Discovered gap, not decided contract.
+- **Blocking:** nothing lands broken today, but spec 073 rewrites the pattern chokepoint (`patterns.py`) and its surface docs — the seam contract should be decided before or immediately after 073 lands, and Pass C grep's `globs`/`globs_not` filters face the identical seam question.
+- **Options considered:** **(a) entry-local patterns** — ratify today's behavior, true up the docstring, likely refuse (or warn on) unscoped path-arm patterns to kill the silent empty success; **(b) namespace patterns** — the router derives each mount's residual pattern (segment-wise derivative of the glob by the bind path: literal and wildcard segments consume mount segments, `**` survives the boundary, a dead residual skips the mount entirely — routing on the pattern's literal prefix falls out for free), dispatches the residual set, and merges as today; **(c) staged** — 073 lands (a) honestly (docstring + loud refusal), a fast-follow story lands (b). Multi-residual dispatch shape (N patterns per mount: N calls vs a protocol change) is an undecided sub-fork of (b).
+- **Research (2026-07-31, same day):** `research/2026-07-31-glob-pattern-seam-routing.md` (five prior-art studies; no studied system pushes a pattern across a boundary; git documents residuation as its missing primitive at `dir.c:472-489`) plus an executed spike (`research/studies/2026-07-31-glob-residuation/verify_residuation.py`: 5,590 cases, exact equality, mutation-audited, residual sets ≤ 2 — no protocol change needed). Side effect already landed: the ripgrep study corrected 073's unanchored-pattern rule to gitignore-exact anchoring.
+- **Status:** resolved 2026-07-31 (Clay, in session) → `decisions/030-namespace-patterns-residual-routing.md` (accepted): namespace-coordinate patterns; residual routing at the seam (N-dispatch merge, necessary-fact posture, dead residuals skip silently); verb shape derived net-new — roots + root-anchored filters, the find/rg shape ADR 023 started, with `paths` reframed as the assertion mechanism (five recorded reasons it survives). Spec 091 owns implementation, test-first, after 073 lands.
+- **Landed:** 2026-08-01, same session as 073 — residuation primitives in `src/vfs/glob_patterns.py` (`effective_pattern`, `residuals`), the glob-only residual dispatch step in `base.py` (`_glob_residual_dispatches`), the invariance battery in `tests/base/test_glob_namespace.py`, and the spike re-pointed at the landed functions (5,590 cases, zero failures, identical statistics). The headline repro now returns the mount's rows; all four Docker engine legs green. This entry is the defect record; spec 091 owns closure.
+- **Dispatch-shape sub-fork:** resolved 2026-08-04 → `decisions/031-pattern-only-glob-seam.md` (accepted): pattern-only seam, one `patterns`-tuple call per entry in one transaction and snapshot, root assertions carried by a concurrent router-side probe. Spec 092 owns implementation — **landed 2026-08-05** (all four slices; four Docker legs green; MSSQL benchmark gate passed, batched fan 3.8×/1.4× ahead of per-root at K=100/1,000); the same-day five-agent research pass is recorded in `research/2026-08-04-batched-glob-seam-field-study.md` (both precedent claims confirmed; batched fan measured ~1.4-2× ahead at every scale with sweet spot ~200 arms/statement; sqlite expression-depth wall at 997 arms; ext facts must render inside arms — a call-level AND beside the fan measured ~350× slower) and is folded into the spec.
 
 ## Probe verb for glob roots into a stat-incapable entry
 
-- **Asked:** 2026-08-04 by spec 092 shaping (the spec's one
-  `[NEEDS CLARIFICATION]` marker)
-- **Context:** ADR 031 D4 moves scoped-glob root assertions to a
-  batched point-read per entry, concurrent with the pattern
-  dispatch. An entry whose backend answers `glob` but not the
-  probe's point-read shape could be globbed yet not probed — the
-  find-operand law must not silently degrade there.
-- **Blocking:** nothing until 092 slice B; must be resolved in that
-  slice.
-- **Options considered:** capability-skip posture (probe unavailable
-  → the root's assertion recorded as the existing `unsupported`
-  skip, never silent — shaping-time lean); fall back to another read
-  verb (`ls`); declare the point-read capability a prerequisite for
-  scoped glob into the entry.
-- **Research (2026-08-04):**
-  `research/2026-08-04-batched-glob-seam-field-study.md` §3 —
-  precedent supports the skip posture: opendal propagates
-  capability-missing through `exists` as its own outcome
-  (three-way: present / absent / undeterminable), never coercing to
-  "absent"; the precedented fallback is a bounded list used as a
-  weaker signal (opendal `check`'s limit-1 lister, fsspec HTTP's
-  ls-based existence), which cannot distinguish empty-from-missing
-  on prefix-semantics backends and should be opt-in if built.
-- **Status:** resolved 2026-08-05 (Clay, in session, at the 092
-  implementation kickoff): the capability-skip posture — such roots
-  report honestly **undeterminable**, a warning-severity
-  `unsupported` record naming root and entry, never coerced to
-  "absent", never a silent pass; the bounded-list fallback stays
-  demand-gated. Clay's note: "really every storage backend should
-  support read" — the gap is a corner, not a designed-for path.
-  Landed in `_glob_probes` (`base.py`), pinned by
-  `test_glob_root_in_a_stat_incapable_entry_is_undeterminable`
-  (`tests/base/test_dispatch.py`). Recorded in spec 092's Open
-  questions; this entry is closed.
+- **Asked:** 2026-08-04 by spec 092 shaping (the spec's one `[NEEDS CLARIFICATION]` marker)
+- **Context:** ADR 031 D4 moves scoped-glob root assertions to a batched point-read per entry, concurrent with the pattern dispatch. An entry whose backend answers `glob` but not the probe's point-read shape could be globbed yet not probed — the find-operand law must not silently degrade there.
+- **Blocking:** nothing until 092 slice B; must be resolved in that slice.
+- **Options considered:** capability-skip posture (probe unavailable → the root's assertion recorded as the existing `unsupported` skip, never silent — shaping-time lean); fall back to another read verb (`ls`); declare the point-read capability a prerequisite for scoped glob into the entry.
+- **Research (2026-08-04):** `research/2026-08-04-batched-glob-seam-field-study.md` §3 — precedent supports the skip posture: opendal propagates capability-missing through `exists` as its own outcome (three-way: present / absent / undeterminable), never coercing to "absent"; the precedented fallback is a bounded list used as a weaker signal (opendal `check`'s limit-1 lister, fsspec HTTP's ls-based existence), which cannot distinguish empty-from-missing on prefix-semantics backends and should be opt-in if built.
+- **Status:** resolved 2026-08-05 (Clay, in session, at the 092 implementation kickoff): the capability-skip posture — such roots report honestly **undeterminable**, a warning-severity `unsupported` record naming root and entry, never coerced to "absent", never a silent pass; the bounded-list fallback stays demand-gated. Clay's note: "really every storage backend should support read" — the gap is a corner, not a designed-for path. Landed in `_glob_probes` (`base.py`), pinned by `test_glob_root_in_a_stat_incapable_entry_is_undeterminable` (`tests/base/test_dispatch.py`). Recorded in spec 092's Open questions; this entry is closed.
 
 ## Grep staleness trait vocabulary: what replaces the dead `"watermark"` value?
 
@@ -301,52 +174,15 @@ resolve to this file.
 - **Context:** Two MSSQL-only observations from the campaign's storm harness: (1) a cold `DatabaseStorage` instance whose first op lands inside a rival's in-flight topology window failed 2/2 with a raw "Attempt to use a closed connection" (warm control clean; other engines clean), and once hard-hung a storm leg; (2) a cold first touch blocked 237 s behind an in-flight topology transaction — consistent with `_serialize`'s documented meta-row X-lock, but unbounded waiting on first touch is a production startup-latency concern. Repro scripts were session-scratch (`wt_delete/exp5_firsttouch_stall.py`, `wt_sweep/05_mssql_blocking.py`) and are not preserved; the interleavings are described in the campaign report §5.5.
 - **Blocking:** nothing — both need a warm pool or land as latency, not corruption; spec 086 deliberately does not own them
 - **Options considered (unstudied):** classify the closed-connection failure retryable and redrive first touch; bound first-touch lock waits with a timeout + honest `unavailable`; document warm-up as a deployment requirement
-- **Status:** resolved 2026-08-14 (investigation ordered by Clay,
-  executed same session; scripts preserved this time) — see
-  `research/2026-08-14-mssql-cold-first-touch-investigation.md` +
-  `research/studies/2026-08-14-mssql-cold-first-touch/`. Lead 2
-  (unbounded block) is **real, first-touch-specific, and by design**:
-  `topology.py:_serialize`'s meta-row X-lock serializes topology verbs
-  *and first touch* on the non-postgres/non-sqlite engines, so a cold
-  instance queues for exactly the rival's hold (measured 10/45/60 s,
-  clean release, honest classification). The "237 s" was the rival's
-  hold time — spec 102's hold-shrinking is the real fix; a bounded
-  first-touch wait and deploy-time warm-up stay recorded mitigations.
-  Lead 1 (raw "closed connection", 2/2 pre-086) **does not reproduce**
-  on the current tree: 0/10 cold touches across long holds and an
-  8-way cold storm — retired as presumed fixed or environmental, with
-  097's watch item as the standing tripwire. Fresh-container combined
-  MSSQL leg green same session (205 passed / 4 skipped, 70 s).
+- **Status:** resolved 2026-08-14 (investigation ordered by Clay, executed same session; scripts preserved this time) — see `research/2026-08-14-mssql-cold-first-touch-investigation.md` + `research/studies/2026-08-14-mssql-cold-first-touch/`. Lead 2 (unbounded block) is **real, first-touch-specific, and by design**: `topology.py:_serialize`'s meta-row X-lock serializes topology verbs *and first touch* on the non-postgres/non-sqlite engines, so a cold instance queues for exactly the rival's hold (measured 10/45/60 s, clean release, honest classification). The "237 s" was the rival's hold time — spec 102's hold-shrinking is the real fix; a bounded first-touch wait and deploy-time warm-up stay recorded mitigations. Lead 1 (raw "closed connection", 2/2 pre-086) **does not reproduce** on the current tree: 0/10 cold touches across long holds and an 8-way cold storm — retired as presumed fixed or environmental, with 097's watch item as the standing tripwire. Fresh-container combined MSSQL leg green same session (205 passed / 4 skipped, 70 s).
 
 ## Gram-planner expansion caps: one final-width ceiling or per-upgrade caps? (spec 100 §6)
 
-- **Asked:** 2026-08-14 (spec 100 draft — the planner-upgrade
-  follow-up story ADR 033's consequences section records)
-- **Context:** The three planner upgrades (bounded char-class
-  expansion, alternation cross-products, anchor-tolerant extraction)
-  compose — a class inside a nested branch inside an anchored group —
-  so the caps must bound the *product* of expansions, not each in
-  isolation. Prior-art numbers (codesearch `RegexpQuery` clamps,
-  zoekt `regexpToQuery` limits) and a measured refusal-set delta over
-  field-pattern corpora are slice A's research memo.
+- **Asked:** 2026-08-14 (spec 100 draft — the planner-upgrade follow-up story ADR 033's consequences section records)
+- **Context:** The three planner upgrades (bounded char-class expansion, alternation cross-products, anchor-tolerant extraction) compose — a class inside a nested branch inside an anchored group — so the caps must bound the *product* of expansions, not each in isolation. Prior-art numbers (codesearch `RegexpQuery` clamps, zoekt `regexpToQuery` limits) and a measured refusal-set delta over field-pattern corpora are slice A's research memo.
 - **Blocking:** spec 100 slices B–D.
-- **Options considered:** one shared final-width ceiling on the
-  compiled query (the `MAX_PATTERN_ARMS` shape); per-upgrade caps
-  (class-member cap × branch arm cap); the numbers themselves.
-- **Status:** resolved 2026-08-16 (Clay, in session, taught through
-  the slice A memo's numbers) — **both caps, small values**: a
-  post-fold class-member cap of 8 plus a shared width ceiling of 64
-  enforced at every cross step; over-cap expansion degrades to
-  today's flush. Neither named option alone survived measurement: a
-  single ceiling is non-monotonic (W=128 rescues fewer than W=64 —
-  gramless digit-class forks starve the gram-bearing branch), and
-  per-upgrade caps alone leave the composed product unbounded
-  (width-1000 in-corpus). Evidence:
-  `research/2026-08-16-gram-planner-expansion-caps.md` (rerunnable
-  study in `research/studies/2026-08-16-gram-planner-expansion-caps/`);
-  decision recorded in `specs/archive/100-gram-planner-upgrades/`
-  §6 and, since the 2026-08-16 mining pass, as ADR 038
-  (`decisions/038-gram-planner-expansion-upgrades.md`).
+- **Options considered:** one shared final-width ceiling on the compiled query (the `MAX_PATTERN_ARMS` shape); per-upgrade caps (class-member cap × branch arm cap); the numbers themselves.
+- **Status:** resolved 2026-08-16 (Clay, in session, taught through the slice A memo's numbers) — **both caps, small values**: a post-fold class-member cap of 8 plus a shared width ceiling of 64 enforced at every cross step; over-cap expansion degrades to today's flush. Neither named option alone survived measurement: a single ceiling is non-monotonic (W=128 rescues fewer than W=64 — gramless digit-class forks starve the gram-bearing branch), and per-upgrade caps alone leave the composed product unbounded (width-1000 in-corpus). Evidence: `research/2026-08-16-gram-planner-expansion-caps.md` (rerunnable study in `research/studies/2026-08-16-gram-planner-expansion-caps/`); decision recorded in `specs/archive/100-gram-planner-upgrades/` §6 and, since the 2026-08-16 mining pass, as ADR 038 (`decisions/038-gram-planner-expansion-upgrades.md`).
 
 ## Rust extension posture for the grep pipeline
 
@@ -387,38 +223,14 @@ resolve to this file.
 - **Context:** Every review campaign has found laws that held by authorship and were proven unpinned by a hand-run mutant surviving the whole suite (specs 109 and 113 landed nine such pins, each hand-proven under the safe-restore rule; `standards/testing.md` now states the discipline). The question is whether the curated mutants should run as a standing harness — in CI or a periodic leg — so the pins stay armed against future rewrites, at real suite-time cost.
 - **Blocking:** nothing; the pins land hand-proven today. The ladder-defer comparator tie at the exact crossover (`allow_size=80`, observationally inert) is the first candidate row such a harness would carry.
 - **Options considered (none decided):** (a) a curated-mutant leg (a list of one-line mutations with their expected killing tests, run nightly or on demand, outside the coverage gate); (b) a general mutation tool (mutmut-style) scoped to the matching and storage modules, accepting its run time; (c) keep the hand-proven discipline only and re-run the ledger at each review campaign.
-- **Research:** `research/2026-08-25-standing-mutation-harness.md`
-  (commissioned by Clay) — executed replays: all 13 recorded sites
-  survived the week's refactors and both replayed mutants still die,
-  but M5's *recorded* killing test no longer kills it (three other
-  tests do) — the pins hold, the mutant→killer mapping already
-  drifted, and only a harness would have noticed. Costs measured:
-  ~5 s/mutant at file scope, ~70 s serial for the whole ledger.
-  Field study: no tool replays a fixed named-mutant ledger (bespoke
-  leg required); SQLite's TH3 runs exactly this shape as
-  infrastructure policy; the long-standing-mutants literature
-  endorses curated evolution-robust suites; general tools (mutmut 3,
-  cargo-mutants `--in-diff`) are a complement — diff-scoped,
-  report-only — not an alternative. Memo §4 carries the lean:
-  option (a) with three loud statuses (killed / survived / stale),
-  scoped-selection kills with recorded killers as advisory only.
+- **Research:** `research/2026-08-25-standing-mutation-harness.md` (commissioned by Clay) — executed replays: all 13 recorded sites survived the week's refactors and both replayed mutants still die, but M5's *recorded* killing test no longer kills it (three other tests do) — the pins hold, the mutant→killer mapping already drifted, and only a harness would have noticed. Costs measured: ~5 s/mutant at file scope, ~70 s serial for the whole ledger. Field study: no tool replays a fixed named-mutant ledger (bespoke leg required); SQLite's TH3 runs exactly this shape as infrastructure policy; the long-standing-mutants literature endorses curated evolution-robust suites; general tools (mutmut 3, cargo-mutants `--in-diff`) are a complement — diff-scoped, report-only — not an alternative. Memo §4 carries the lean: option (a) with three loud statuses (killed / survived / stale), scoped-selection kills with recorded killers as advisory only.
 - **Status:** resolved 2026-08-25 (Clay, in session; mechanism revised same day pre-commit) → **ADR 050** (`decisions/050-curated-mutant-leg.md`): the ledger (`standards/mutant-ledger.md` — 13 founding rows + the designed-inert comparator tie) is the durable artifact, and **review campaigns are the runner** — `test_review` now executes its strongest suspected mutations and replays the ledger rows intersecting the scope, always in an isolated scratchpad worktree (never the live repo — concurrent agents share it), ≥1 scoped failure as the assertion with recorded killers advisory-only, statuses killed / survived / stale→re-prove-or-retire. No standing script or CI leg; a drafted spec 119 for one was withdrawn unlanded. Diff-scoped general tools deferred; revisit if campaign cadence slows.
 
 ## Spec 143's edge-wiring fork pack (provenance, trash fate, version, re-convergence)
 
-- **Asked:** 2026-08-27 by Claude (drafting ADR 018's wiring spec,
-  `specs/active/143-edge-wiring-and-the-fs-mirror/`)
-- **Context:** ADR 018 pin 9 deferred user-edge fate and `edges.version`
-  to the wiring spec, and spec 138 §3 routed the extracted-edge
-  provenance decision to the schema owner.
-- **Status:** resolved 2026-08-27 (Clay, in session) → spec 143's
-  decided semantics: (A) a `provenance` column with vocabulary
-  `user`/`agent`/`system`/`extracted` — author class, never a type
-  prefix; (B) edges are deleted only by `rmedge` or endpoint deletion
-  **including soft delete** — trash cascades, restore re-mints fs rows
-  only; (C) no edge versions — `Edge.version` and the planned column
-  dropped (amends ADR 013/018, to be recorded at the mining pass);
-  (D) the guarded re-convergence phase ships as the repair arm.
+- **Asked:** 2026-08-27 by Claude (drafting ADR 018's wiring spec, `specs/active/143-edge-wiring-and-the-fs-mirror/`)
+- **Context:** ADR 018 pin 9 deferred user-edge fate and `edges.version` to the wiring spec, and spec 138 §3 routed the extracted-edge provenance decision to the schema owner.
+- **Status:** resolved 2026-08-27 (Clay, in session) → spec 143's decided semantics: (A) a `provenance` column with vocabulary `user`/`agent`/`system`/`extracted` — author class, never a type prefix; (B) edges are deleted only by `rmedge` or endpoint deletion **including soft delete** — trash cascades, restore re-mints fs rows only; (C) no edge versions — `Edge.version` and the planned column dropped (amends ADR 013/018, to be recorded at the mining pass); (D) the guarded re-convergence phase ships as the repair arm.
 
 ## Trash under a non-open posture: a granted non-owner cannot restore what it deleted
 

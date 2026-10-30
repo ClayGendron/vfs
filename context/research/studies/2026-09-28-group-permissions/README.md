@@ -1,15 +1,8 @@
 # Study: group permissions — max within each subject, min across the set
 
-Companion to the memo
-`../../2026-09-28-group-permissions-max-within-min-across.md`.
+Companion to the memo `../../2026-09-28-group-permissions-max-within-min-across.md`.
 
-The question (Clay, 2026-09-28): Ann is in three groups; she should see
-what any of them can see. Ann and John each have their own groups; a
-session acting for both should get, per path, the best level each of
-them holds (the **max within** each person), and then the worst of
-those two (the **min across** the pair). Is that case in scope for spec
-058, and does the resolver it specifies compute it correctly and inside
-every engine's budgets?
+The question (Clay, 2026-09-28): Ann is in three groups; she should see what any of them can see. Ann and John each have their own groups; a session acting for both should get, per path, the best level each of them holds (the **max within** each person), and then the worst of those two (the **min across** the pair). Is that case in scope for spec 058, and does the resolver it specifies compute it correctly and inside every engine's budgets?
 
 ## What is here
 
@@ -26,19 +19,10 @@ Nothing to start: stdlib SQLite only, no containers.
     uv run --no-sync python model.py           # 3,000 worlds, 20 sets per cell, a few minutes
     uv run --no-sync python model.py --quick   # 300 worlds, 5 sets per cell, about a minute
 
-The seed is fixed (`--seed 20260928`), so a rerun prints the same
-tables.
+The seed is fixed (`--seed 20260928`), so a rerun prints the same tables.
 
 ## Limits
 
-- The model counts binds and arms; it does not time engines. Study S1
-  (`../2026-09-05-permissions-predicate-at-scale/`) already timed the
-  literal intersection with per-member owner arms (its shape (c)) on
-  all five engines; this study only asks whether groups change the
-  *size* of what S1 timed.
-- SQLite is the only engine executed. The expression-depth finding is
-  SQLite's (`SQLITE_MAX_EXPR_DEPTH`, 1,000 by default); other engines'
-  parse limits are not probed here.
-- The worlds are small and random on purpose: they hunt for algebra
-  mistakes, not for realistic distributions. The sweep corpus is the
-  realistic one.
+- The model counts binds and arms; it does not time engines. Study S1 (`../2026-09-05-permissions-predicate-at-scale/`) already timed the literal intersection with per-member owner arms (its shape (c)) on all five engines; this study only asks whether groups change the *size* of what S1 timed.
+- SQLite is the only engine executed. The expression-depth finding is SQLite's (`SQLITE_MAX_EXPR_DEPTH`, 1,000 by default); other engines' parse limits are not probed here.
+- The worlds are small and random on purpose: they hunt for algebra mistakes, not for realistic distributions. The sweep corpus is the realistic one.

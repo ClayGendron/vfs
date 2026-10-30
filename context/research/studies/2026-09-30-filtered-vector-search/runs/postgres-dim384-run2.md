@@ -1,7 +1,6 @@
 ## [second clean run, with the ef100/top40 column; written by pg_bench.py as postgres-dim384.md] postgres 17.11 (Debian 17.11-1.pgdg12+2) + pgvector 0.8.6 — 50,000 chunks, dim 384, HNSW m=16 ef_construction=64, k=10, 20 queries, median ms · mean recall@10 · mean hits (load 12s, HNSW build 16s)
 
-Whole-mount exact scan (no filter): 26.7 ms
-Whole-mount HNSW (ef_search 40): 1.0 ms, recall@10 0.99
+Whole-mount exact scan (no filter): 26.7 ms Whole-mount HNSW (ef_search 40): 1.0 ms, recall@10 0.99
 
 | caller (admitted) | plan like/range | exact like (today, no index) | exact range-cte | hnsw like (today, indexed) | hnsw range | hnsw range ef100 top40 | hnsw post-100 | hnsw post-1000 | hnsw post-4000 | planner |
 |---|---|---|---|---|---|---|---|---|---|---|

@@ -1,116 +1,39 @@
 # Principals and permissions, Phase 0: the threat model, the requirement list, and the frozen rubric
 
-- **Status**: research memo, Phase 0 of the principals-and-permissions
-  programme (`2026-09-05-principals-and-permissions-research-plan.md`
-  §4). Commits us to nothing. Its job is to fix the targets every
-  later memo grades against: one threat table, one requirement list by
-  audience, and the thirteen-question rubric frozen. Feeds the five
-  Phase 1 lens memos (L1 Unix, L2 Plan 9, L3 capabilities, L4 engines,
-  L5 agent-native), the two Phase 2 studies (S1 the predicate at
-  scale, S2 what ranked search leaks), the Phase 3 synthesis, spec 070,
-  spec 058, ADR 021, ADR 058, and the future `serve()` spec.
+- **Status**: research memo, Phase 0 of the principals-and-permissions programme (`2026-09-05-principals-and-permissions-research-plan.md` §4). Commits us to nothing. Its job is to fix the targets every later memo grades against: one threat table, one requirement list by audience, and the thirteen-question rubric frozen. Feeds the five Phase 1 lens memos (L1 Unix, L2 Plan 9, L3 capabilities, L4 engines, L5 agent-native), the two Phase 2 studies (S1 the predicate at scale, S2 what ranked search leaks), the Phase 3 synthesis, spec 070, spec 058, ADR 021, ADR 058, and the future `serve()` spec.
 - **Date**: 2026-09-05
 - **Owner**: Clay Gendron
-- **Question**: What must a permission design for vfs prevent, for
-  whom, and how will we know whether a body of prior art helps? Three
-  parts: (A) the failures on record, each mapped to the vfs surface it
-  would hit and the invariant that prevents it; (B) what each of seven
-  audiences must be able to express, must see in the audit, and must
-  never be able to do; (C) the rubric, restated so five memos written
-  in parallel grade the same way.
-- **Method**: a line-level read of the repo's own records: the YoloFS
-  threat model (`2026-09-04-yolofs-agent-native-filesystem-threat-model.md`
-  §2, §5.0, §5.3), spec 070 (Intent, decisions 1 to 7, the research
-  review's objections, the resolved `system()` bypass), ADR 021, ADR
-  006, ADR 058, the Mirage memo (§B and §4.1 to §4.8), the two MCP
-  memos, `standards/mission.md`, the cloud permission models memo, and
-  the live seams they name (`src/vfs/permissions.py`, `ops.py`,
-  `rerank.py`, `models/version.py`). Then six external primary sources
-  fetched 2026-09-05: Hardy's *The Confused Deputy* (1988), Chen,
-  Wagner and Dean's *Setuid Demystified* (2002, read from the USENIX
-  PDF), the OWASP Top 10 for LLM Applications 2025 entry LLM06
-  *Excessive Agency*, the OWASP Top 10 for Agentic Applications 2026,
-  the PostgreSQL row-security and `LEAKPROOF` documentation, and the
-  MCP authorization specification with its security best practices
-  page (2025-11-25). No incident in Part A is invented: every example
-  names its source, and where a claim is my judgment it is marked
-  `[assumption]`. The full URL list with dates read is in Sources.
+- **Question**: What must a permission design for vfs prevent, for whom, and how will we know whether a body of prior art helps? Three parts: (A) the failures on record, each mapped to the vfs surface it would hit and the invariant that prevents it; (B) what each of seven audiences must be able to express, must see in the audit, and must never be able to do; (C) the rubric, restated so five memos written in parallel grade the same way.
+- **Method**: a line-level read of the repo's own records: the YoloFS threat model (`2026-09-04-yolofs-agent-native-filesystem-threat-model.md` §2, §5.0, §5.3), spec 070 (Intent, decisions 1 to 7, the research review's objections, the resolved `system()` bypass), ADR 021, ADR 006, ADR 058, the Mirage memo (§B and §4.1 to §4.8), the two MCP memos, `standards/mission.md`, the cloud permission models memo, and the live seams they name (`src/vfs/permissions.py`, `ops.py`, `rerank.py`, `models/version.py`). Then six external primary sources fetched 2026-09-05: Hardy's *The Confused Deputy* (1988), Chen, Wagner and Dean's *Setuid Demystified* (2002, read from the USENIX PDF), the OWASP Top 10 for LLM Applications 2025 entry LLM06 *Excessive Agency*, the OWASP Top 10 for Agentic Applications 2026, the PostgreSQL row-security and `LEAKPROOF` documentation, and the MCP authorization specification with its security best practices page (2025-11-25). No incident in Part A is invented: every example names its source, and where a claim is my judgment it is marked `[assumption]`. The full URL list with dates read is in Sources.
 
 ---
 
 ## Bottom line
 
-vfs's second safety invariant, "every action is scoped to a
-principal", does not exist yet: `user_id` is plumbed and inert, and
-the only enforcement treats every caller the same. The threat table
-below has 64 rows. Most of them are not exotic. They are the same five
-failures wearing different clothes: acting with the library's own
-authority instead of the caller's (Hardy's confused deputy, T12 to
-T15); narrowing that leaves a way back (sendmail's setuid bug, T19 to
-T21); a policy evaluated on rows the caller cannot see (Postgres's
-`LEAKPROOF` class, T34 to T40); an identity or token that crosses a
-wire it should not (MCP's passthrough and session rules, T26 to T33);
-and checking at one moment and acting at another (T37, T57). The
-multiplayer case (T58 to T64) adds one genuinely new demand: rights
-that are the *intersection* of several people's, never their union.
-The requirement lists say the same thing from seven seats: everyone
-needs to express *who is acting for whom*, everyone needs to see
-*both names in the audit*, and nobody, admin included, may widen a
-session or cross a wire with a bare identity. One line: **the design
-must make authority an explicit, narrowing-only, doubly-attributed
-input to every statement, and the lenses must be graded on whether
-their precedent does that.**
+vfs's second safety invariant, "every action is scoped to a principal", does not exist yet: `user_id` is plumbed and inert, and the only enforcement treats every caller the same. The threat table below has 64 rows. Most of them are not exotic. They are the same five failures wearing different clothes: acting with the library's own authority instead of the caller's (Hardy's confused deputy, T12 to T15); narrowing that leaves a way back (sendmail's setuid bug, T19 to T21); a policy evaluated on rows the caller cannot see (Postgres's `LEAKPROOF` class, T34 to T40); an identity or token that crosses a wire it should not (MCP's passthrough and session rules, T26 to T33); and checking at one moment and acting at another (T37, T57). The multiplayer case (T58 to T64) adds one genuinely new demand: rights that are the *intersection* of several people's, never their union. The requirement lists say the same thing from seven seats: everyone needs to express *who is acting for whom*, everyone needs to see *both names in the audit*, and nobody, admin included, may widen a session or cross a wire with a bare identity. One line: **the design must make authority an explicit, narrowing-only, doubly-attributed input to every statement, and the lenses must be graded on whether their precedent does that.**
 
 ## Terms used below
 
-- **Subject**: the principal on whose behalf work happens. A person, a
-  team, a service, admin, or (multiplayer) a set of them.
+- **Subject**: the principal on whose behalf work happens. A person, a team, a service, admin, or (multiplayer) a set of them.
 - **Actor**: the agent doing the work. Not the subject.
-- **Principal**: spec 070's frozen value meaning "the edge verified
-  this" (`sub` plus scopes, spec 070:70-82).
-- **Attenuation**: narrowing authority. A session may narrow and never
-  widen.
-- **Grant**: a row saying this principal has this level over this path
-  prefix (spec 058:27-31; ADR 021).
-- **Profile**: the document a session runs under; it only narrows what
-  the mount table declares (Mirage memo §3.6, §4.5).
-- **Hide vs deny**: a hidden path answers "not found" and its name
-  never appears; a denied path is listed and refused (Mirage memo
-  §3.7).
-- **Confused deputy**: a program that holds authority from two sources
-  and uses the wrong one (Hardy 1988).
-- **TOCTOU**: time-of-check to time-of-use. The state changes between
-  the check and the act.
-- **Leakproof**: Postgres's word for a function that "reveals no
-  information about its arguments other than by its return value"; only
-  such functions may run before a row-security filter.
-- **Audience**: the service a token was issued for. **Passthrough**:
-  forwarding a token to a service it was not issued for.
-- **The funnel**: vfs's one dispatch path, `_route_* → _call_storage`
-  (spec 070:103-113), where the principal reaches storage.
+- **Principal**: spec 070's frozen value meaning "the edge verified this" (`sub` plus scopes, spec 070:70-82).
+- **Attenuation**: narrowing authority. A session may narrow and never widen.
+- **Grant**: a row saying this principal has this level over this path prefix (spec 058:27-31; ADR 021).
+- **Profile**: the document a session runs under; it only narrows what the mount table declares (Mirage memo §3.6, §4.5).
+- **Hide vs deny**: a hidden path answers "not found" and its name never appears; a denied path is listed and refused (Mirage memo §3.7).
+- **Confused deputy**: a program that holds authority from two sources and uses the wrong one (Hardy 1988).
+- **TOCTOU**: time-of-check to time-of-use. The state changes between the check and the act.
+- **Leakproof**: Postgres's word for a function that "reveals no information about its arguments other than by its return value"; only such functions may run before a row-security filter.
+- **Audience**: the service a token was issued for. **Passthrough**: forwarding a token to a service it was not issued for.
+- **The funnel**: vfs's one dispatch path, `_route_* → _call_storage` (spec 070:103-113), where the principal reaches storage.
 
 ---
 
 ## Part A. The threat table
 
-Columns: the failure class; a concrete example or attack with its
-source; the vfs surface it would hit; the invariant that must hold to
-prevent it; the rubric question that governs it. Rows are grouped A to
-H by the shape of the failure. Citations are `file:line` in this repo
-or a named external source (URLs in Sources).
+Columns: the failure class; a concrete example or attack with its source; the vfs surface it would hit; the invariant that must hold to prevent it; the rubric question that governs it. Rows are grouped A to H by the shape of the failure. Citations are `file:line` in this repo or a named external source (URLs in Sources).
 
-Abbreviations: `yolofs` = `2026-09-04-yolofs-agent-native-filesystem-threat-model.md`;
-`070` = `specs/active/070-principal-scoped-sessions/spec.md`;
-`058` = `specs/active/058-row-level-permission-grants/spec.md`;
-`021` = `decisions/021-row-grant-model-spine.md`;
-`006` = `decisions/006-global-namespace-tenant-permissions.md`;
-`adr058` = `decisions/058-the-access-layer-for-agents-positioning.md`;
-`mirage` = `2026-09-04-mirage-design-patterns.md`;
-`mcp0810` = `2026-08-10-mcp-2026-07-28-stateless-revision.md`;
-`mcp0419` = `2026-04-19-mcp-specification.md`;
-`cloud` = `2026-04-22-cloud-permission-models.md`;
-`race` = `2026-09-04-delete-vs-mkedge-race.md`;
-`plan` = `2026-09-05-principals-and-permissions-research-plan.md`.
+Abbreviations: `yolofs` = `2026-09-04-yolofs-agent-native-filesystem-threat-model.md`; `070` = `specs/active/070-principal-scoped-sessions/spec.md`; `058` = `specs/active/058-row-level-permission-grants/spec.md`; `021` = `decisions/021-row-grant-model-spine.md`; `006` = `decisions/006-global-namespace-tenant-permissions.md`; `adr058` = `decisions/058-the-access-layer-for-agents-positioning.md`; `mirage` = `2026-09-04-mirage-design-patterns.md`; `mcp0810` = `2026-08-10-mcp-2026-07-28-stateless-revision.md`; `mcp0419` = `2026-04-19-mcp-specification.md`; `cloud` = `2026-04-22-cloud-permission-models.md`; `race` = `2026-09-04-delete-vs-mkedge-race.md`; `plan` = `2026-09-05-principals-and-permissions-research-plan.md`.
 
 | # | Failure class | Concrete example or attack (source) | vfs surface | Invariant that must hold | Q |
 |---|---|---|---|---|---|
@@ -189,61 +112,36 @@ Abbreviations: `yolofs` = `2026-09-04-yolofs-agent-native-filesystem-threat-mode
 
 Three notes on the table:
 
-1. **Row counts are YoloFS's and overlap.** The paper's Figure 4 says
-   "Counts can overlap" (`yolofs:148-151`), so T1 to T10 sum past 290.
-2. **Two rows are deployments, not library code.** T31 (OAuth proxy)
-   and T56 (the DSN) cannot be closed by vfs alone; they are listed so
-   the `serve()` spec and the deployment docs say so.
-3. **What the table does not contain.** No row for process isolation,
-   seccomp, or containers; the plan's §6 puts those with the harness.
-   No row for authentication itself; vfs ships no IdP.
+1. **Row counts are YoloFS's and overlap.** The paper's Figure 4 says "Counts can overlap" (`yolofs:148-151`), so T1 to T10 sum past 290.
+2. **Two rows are deployments, not library code.** T31 (OAuth proxy) and T56 (the DSN) cannot be closed by vfs alone; they are listed so the `serve()` spec and the deployment docs say so.
+3. **What the table does not contain.** No row for process isolation, seccomp, or containers; the plan's §6 puts those with the harness. No row for authentication itself; vfs ships no IdP.
 
 ---
 
 ## Part B. The requirement list, by audience
 
-Seven audiences. For each: what it must be able to **express**, what it
-must **see in the audit**, and what it must **never** be able to do.
-Each line names its source; `[assumption]` marks my judgment. The
-audiences are the project's own: the mission's primary user is the
-developer "building AI agents that need to operate on enterprise
-knowledge over long horizons" (`standards/mission.md:12`); ADR 058's
-buyer is "Platform and AI-infra teams stalled in security review"
-(`adr058:217-218`); the two production audiences are agents and ETL
-(`CLAUDE.md`, production posture); the wire audiences come from spec
-070 D6/D7 and the two MCP memos; the multiplayer audience is the
-plan's §1.1.
+Seven audiences. For each: what it must be able to **express**, what it must **see in the audit**, and what it must **never** be able to do. Each line names its source; `[assumption]` marks my judgment. The audiences are the project's own: the mission's primary user is the developer "building AI agents that need to operate on enterprise knowledge over long horizons" (`standards/mission.md:12`); ADR 058's buyer is "Platform and AI-infra teams stalled in security review" (`adr058:217-218`); the two production audiences are agents and ETL (`CLAUDE.md`, production posture); the wire audiences come from spec 070 D6/D7 and the two MCP memos; the multiplayer audience is the plan's §1.1.
 
 ### B1. The individual developer embedding vfs as a library
 
 **Must be able to express**
 
-- Run a script as a named privileged principal in one line:
-  `default_principal=Principal.system()` (`070:139-144`), "easy the way
-  `sudo` is easy to type, never ambient" (`070:155-156`).
-- Open a per-caller session that carries the principal so verbs take
-  no identity argument (`070:184-205`).
-- Declare mount-wide and per-prefix permission in code
-  (`src/vfs/permissions.py:1-10`; `006:59-66`), and later per-principal
-  grants as rows (`058:27-31`).
-- Ask what a call would do before doing it: `explain` returns the same
-  `Result` the real call would refuse with (`mirage:836-846`).
-- Build a `Principal` by hand in tests, and nowhere else in `src/`
-  (`070:86-92`).
+- Run a script as a named privileged principal in one line: `default_principal=Principal.system()` (`070:139-144`), "easy the way `sudo` is easy to type, never ambient" (`070:155-156`).
+- Open a per-caller session that carries the principal so verbs take no identity argument (`070:184-205`).
+- Declare mount-wide and per-prefix permission in code (`src/vfs/permissions.py:1-10`; `006:59-66`), and later per-principal grants as rows (`058:27-31`).
+- Ask what a call would do before doing it: `explain` returns the same `Result` the real call would refuse with (`mirage:836-846`).
+- Build a `Principal` by hand in tests, and nowhere else in `src/` (`070:86-92`).
 
 **Must see in the audit**
 
 - On every version row: the actor and the subject it acted for (T17).
-- On every refusal: the rule that fired, as structured `data`, never
-  only in the message (`mirage:862-870`).
-- On every mutating verb: the typed observations of what changed
-  (`trash_path`, `version`) (`yolofs:521-524`).
+- On every refusal: the rule that fired, as structured `data`, never only in the message (`mirage:862-870`).
+- On every mutating verb: the typed observations of what changed (`trash_path`, `version`) (`yolofs:521-524`).
 
 **Must never be able to do**
 
 - Get unscoped access by omitting an argument (`070:131-137`).
-- Widen a session past what the mount table declares
-  (`mirage:872-881`).
+- Widen a session past what the mount table declares (`mirage:872-881`).
 - Turn `sweep` into an agent-facing verb (`yolofs:448`).
 - Mint a `Principal.system()` from a token (`070:94-100`).
 
@@ -251,38 +149,21 @@ plan's §1.1.
 
 **Must be able to express**
 
-- Tenants as subtrees plus grants, never as path prefixes
-  (`006:38-41`, `006:88-91`).
-- Typed principals: user, group, domain, anyone (cloud invariant 1,
-  `cloud:84-87`).
-- Groups whose membership is resolved with a bounded staleness, so a
-  SCIM removal takes effect by the next statement (T49)
-  `[assumption: SCIM as the membership source]`.
-- A lifetime on every grant and every share link (`cloud:24-25`,
-  `cloud:72-75`).
-- Sensitivity labels as policy inputs that override per-item settings
-  (`cloud:54-57`, `cloud:103-106`).
-- Emergency (break-glass) access as a named principal with a reason and
-  a time box (T51) `[assumption]`.
-- Least privilege for service accounts: an agent's actor profile that
-  only narrows; no shared keys (`adr058:45-48`, "the recurring phrase
-  ... is **least privilege**").
-- A retention rule for versions and audit rows, with `sweep` as the
-  only destroyer and never on the tool surface (`yolofs:448`)
-  `[assumption on retention as a rule]`.
+- Tenants as subtrees plus grants, never as path prefixes (`006:38-41`, `006:88-91`).
+- Typed principals: user, group, domain, anyone (cloud invariant 1, `cloud:84-87`).
+- Groups whose membership is resolved with a bounded staleness, so a SCIM removal takes effect by the next statement (T49) `[assumption: SCIM as the membership source]`.
+- A lifetime on every grant and every share link (`cloud:24-25`, `cloud:72-75`).
+- Sensitivity labels as policy inputs that override per-item settings (`cloud:54-57`, `cloud:103-106`).
+- Emergency (break-glass) access as a named principal with a reason and a time box (T51) `[assumption]`.
+- Least privilege for service accounts: an agent's actor profile that only narrows; no shared keys (`adr058:45-48`, "the recurring phrase ... is **least privilege**").
+- A retention rule for versions and audit rows, with `sweep` as the only destroyer and never on the tool surface (`yolofs:448`) `[assumption on retention as a rule]`.
 
 **Must see in the audit**
 
-- "who can reach what, which tools live where, what changed and when",
-  the plane's four panels (`adr058:186-189`), answered by the
-  enforcement code itself rather than a second model of it
-  (`mirage:844-846`).
-- Every share as an act with actor, subject, scope and expiry (cloud
-  invariant 4, `cloud:96-99`).
+- "who can reach what, which tools live where, what changed and when", the plane's four panels (`adr058:186-189`), answered by the enforcement code itself rather than a second model of it (`mirage:844-846`).
+- Every share as an act with actor, subject, scope and expiry (cloud invariant 4, `cloud:96-99`).
 - Every admin or batch action attributed to `system` (`070:473-474`).
-- Every gated access (asked, allowed, denied, with the rule that fired)
-  and every rule change: YoloFS's `G` and `C` records as the Catalog's
-  feed (`yolofs:629-635`).
+- Every gated access (asked, allowed, denied, with the rule that fired) and every rule change: YoloFS's `G` and `C` records as the Catalog's feed (`yolofs:629-635`).
 
 **Must never be able to do**
 
@@ -295,27 +176,18 @@ plan's §1.1.
 
 **Must be able to express**
 
-- Run as `system` with one greppable line, and stamp `owner_id` per row
-  as data: "Caller identity is not row ownership" (`070:170-175`).
-- Batches of 10,000+ entries in one call, bounded on every engine
-  (`CLAUDE.md`; T53).
-- Run as a named, narrower principal when the pipeline should be
-  scoped, so that "admin as a principal" is a choice and not the only
-  option `[assumption: the PostgREST-style least-privilege internal
-  actor 070 declined for the batch case, `070:481-483`, remains
-  available as an opt-in]`.
+- Run as `system` with one greppable line, and stamp `owner_id` per row as data: "Caller identity is not row ownership" (`070:170-175`).
+- Batches of 10,000+ entries in one call, bounded on every engine (`CLAUDE.md`; T53).
+- Run as a named, narrower principal when the pipeline should be scoped, so that "admin as a principal" is a choice and not the only option `[assumption: the PostgREST-style least-privilege internal actor 070 declined for the batch case, `070:481-483`, remains available as an opt-in]`.
 
 **Must see in the audit**
 
-- Rows attributed to the job as actor and `system` as subject, with the
-  stamped owner visible as data (`070:473-474`).
-- The batch's own observations: which rows landed, which were refused,
-  which versions were minted (`yolofs:521-524`).
+- Rows attributed to the job as actor and `system` as subject, with the stamped owner visible as data (`070:473-474`).
+- The batch's own observations: which rows landed, which were refused, which versions were minted (`yolofs:521-524`).
 
 **Must never be able to do**
 
-- Bypass structure: `PermissionMap`, mount rights masks, topology locks
-  "bind every principal, system included" (`070:474-478`).
+- Bypass structure: `PermissionMap`, mount rights masks, topology locks "bind every principal, system included" (`070:474-478`).
 - Carry admin through a remote mount (`070:478-481`).
 - Learn a hidden name through a unique-constraint error (T36).
 - Emit a statement whose size grows with the batch (`CLAUDE.md`).
@@ -324,137 +196,87 @@ plan's §1.1.
 
 **Must be able to express**
 
-- allow, ask and deny by path and by verb: YoloFS's rule tree
-  (`yolofs:304-314`), Mirage's `commands` and `paths` blocks
-  (`mirage:240-246`), and the `PreToolUse`-style hook the harnesses
-  already ship (`yolofs:345-351`).
-- A session that binds one profile at open and only narrows
-  (`mirage:872-881`), plus an op mask (`mirage:882-885`).
+- allow, ask and deny by path and by verb: YoloFS's rule tree (`yolofs:304-314`), Mirage's `commands` and `paths` blocks (`mirage:240-246`), and the `PreToolUse`-style hook the harnesses already ship (`yolofs:345-351`).
+- A session that binds one profile at open and only narrows (`mirage:872-881`), plus an op mask (`mirage:882-885`).
 - A `write-ask` rung: reads free, writes asked (`yolofs:587-592`).
-- An `ask` that returns a classified `permission_denied.pending`
-  `Result` with an ask id, answered out of band through elicitation or
-  tasks, never a blocked thread (`mirage:848-860`; `yolofs:616-622`).
-- The scope of an answer: once, session, or persistent, with allow
-  landing as a grant row and deny as a profile rule
-  (`yolofs:593-601`).
+- An `ask` that returns a classified `permission_denied.pending` `Result` with an ask id, answered out of band through elicitation or tasks, never a blocked thread (`mirage:848-860`; `yolofs:616-622`).
+- The scope of an answer: once, session, or persistent, with allow landing as a grant row and deny as a profile rule (`yolofs:593-601`).
 - Tightening during a run without a restart (T8).
 
 **Must see in the audit**
 
-- Per-verb observations as the "introspect effects" primitive
-  (`yolofs:551-555`).
-- The ask ledger: pending and settled as one record type, one store
-  (`mirage:331-336`).
+- Per-verb observations as the "introspect effects" primitive (`yolofs:551-555`).
+- The ask ledger: pending and settled as one record type, one store (`mirage:331-336`).
 - What the agent read, at what version (`mirage:916-926`).
 
 **Must never be able to do**
 
-- Edit its own policy or loosen an ancestor through `bind`/`remount`
-  (`yolofs:607-614`).
+- Edit its own policy or loosen an ancestor through `bind`/`remount` (`yolofs:607-614`).
 - Parse `message` to learn the rule (`mirage:862-870`).
-- Decide a timeout inside the gate; timeout is the host's policy
-  (`yolofs:619-622`).
+- Decide a timeout inside the gate; timeout is the host's policy (`yolofs:619-622`).
 - Bank an answer from a run that no longer exists (`mirage:340-343`).
 
 ### B5. The MCP client and server
 
-What identity arrives: at the server, a bearer token whose verified
-claims are `sub`, scopes, `client_id`, issuer and expiry; the
-python-sdk's `AccessToken` carries "no `sub`" and vfs's verifier must
-surface it itself (`070:261`); the authorization spec requires
-"Authorization: Bearer" on "every HTTP request from client to server,
-even if they are part of the same logical session".
+What identity arrives: at the server, a bearer token whose verified claims are `sub`, scopes, `client_id`, issuer and expiry; the python-sdk's `AccessToken` carries "no `sub`" and vfs's verifier must surface it itself (`070:261`); the authorization spec requires "Authorization: Bearer" on "every HTTP request from client to server, even if they are part of the same logical session".
 
 **Must be able to express**
 
-- Server: act as an OAuth 2.1 resource server; validate audience,
-  signature, issuer and expiry at one seam (`070:218-228`); publish
-  scope challenges so clients step up rather than request everything
-  (MCP authorization, Scope Challenge Handling).
-- Server: construct the `Principal` and open the session server-side,
-  with exactly one sanctioned ambient read at the adapter
-  (`070:327-332`).
+- Server: act as an OAuth 2.1 resource server; validate audience, signature, issuer and expiry at one seam (`070:218-228`); publish scope challenges so clients step up rather than request everything (MCP authorization, Scope Challenge Handling).
+- Server: construct the `Principal` and open the session server-side, with exactly one sanctioned ambient read at the adapter (`070:327-332`).
 - Server: reject header/body mismatches (`mcp0810:155-162`).
-- Client: send the RFC 8707 `resource` parameter and PKCE `S256` (MCP
-  authorization, Resource Parameter Implementation); begin with baseline
-  scopes (Scope Minimization).
+- Client: send the RFC 8707 `resource` parameter and PKCE `S256` (MCP authorization, Resource Parameter Implementation); begin with baseline scopes (Scope Minimization).
 
 **Must see in the audit**
 
-- The principal on every request, so "the MCP Server will be
-  [able] to identify or distinguish between MCP Clients" (the
-  passthrough section's accountability risk, inverted).
-- Scope elevation events "with correlation IDs" (MCP, Scope
-  Minimization, server guidance).
+- The principal on every request, so "the MCP Server will be [able] to identify or distinguish between MCP Clients" (the passthrough section's accountability risk, inverted).
+- Scope elevation events "with correlation IDs" (MCP, Scope Minimization, server guidance).
 
 **Must never cross the wire**
 
 - The edge token, in either direction (T26; `070:235-250`).
-- A `principal` or `user_id` tool argument (`070:229-232`); the
-  `_meta.user_id` idea the April memo raised (`mcp0419:207`) is
-  answered no by 070 D6.
+- A `principal` or `user_id` tool argument (`070:229-232`); the `_meta.user_id` idea the April memo raised (`mcp0419:207`) is answered no by 070 D6.
 - `Principal.system()` in any encoding (`070:94-100`).
 - A hidden name, in a listing, a count, or an error (T38, T39).
 - A handle usable without the principal that minted it (T30).
 
 ### B6. The remote mount
 
-The rule in one line: "a remote mount's far side enforces under its
-own principal space" (`070:478-481`).
+The rule in one line: "a remote mount's far side enforces under its own principal space" (`070:478-481`).
 
 **Must be able to express**
 
-- Two shapes, chosen per trust relationship: trusted subsystem (the
-  backend authenticates as itself and sends `sub` as data, inside a
-  mutual-trust perimeter) or RFC 8693 token exchange for a separate
-  party (`070:239-243`).
-- On the receiving side, a mapping from `(issuer/client, sub)` into the
-  local principal space (`070:246-250`).
+- Two shapes, chosen per trust relationship: trusted subsystem (the backend authenticates as itself and sends `sub` as data, inside a mutual-trust perimeter) or RFC 8693 token exchange for a separate party (`070:239-243`).
+- On the receiving side, a mapping from `(issuer/client, sub)` into the local principal space (`070:246-250`).
 
 **Must see in the audit**
 
-- Per-user attribution on both sides even inside the trust perimeter
-  (`070:345-349`).
-- Which mount answered and under which far-side principal
-  `[assumption: the cross-mount merge's provenance (`source`, `mount`
-  in `rerank.py:67-84`) is the place]`.
+- Per-user attribution on both sides even inside the trust perimeter (`070:345-349`).
+- Which mount answered and under which far-side principal `[assumption: the cross-mount merge's provenance (`source`, `mount` in `rerank.py:67-84`) is the place]`.
 
 **Must never be able to do**
 
 - Forward the token (T26).
 - Treat local admin as remote admin (`070:478-481`).
-- Rank, count or export statistics over rows the caller cannot see on
-  the far side (T35, T40).
-- Name a binding the caller may not see in a `cross_mount` error
-  (`mirage:815-818`).
+- Rank, count or export statistics over rows the caller cannot see on the far side (T35, T40).
+- Name a binding the caller may not see in a `cross_mount` error (`mirage:815-818`).
 
 ### B7. The multiplayer session
 
-The rule in one line: "The session's subject is a set of principals,
-and the session holds a right only when every principal in the set
-holds it" (`plan:64-65`).
+The rule in one line: "The session's subject is a set of principals, and the session holds a right only when every principal in the set holds it" (`plan:64-65`).
 
 **Must be able to express**
 
-- A session opened for a set of subjects with one actor, where read
-  and write are each an intersection over the set (`plan:66-67`,
-  `plan:71-73`).
-- A change of set during the session: a join narrows immediately; a
-  leave does not widen, and a wider set is a new session (T60, T61).
-- An ownership rule for what the set writes (T63) `[assumption on
-  shape; Q13 is open]`.
-- Hide-vs-deny for a set: hidden if hidden from any member
-  (`plan:87-88`).
-- How a set composes with the actor's profile and with admin
-  (`plan:88-89`): the actor contributes no rights; admin in the set is
-  one member like any other `[assumption: the plan asks this; the
-  least-privilege reading is the only one consistent with §1.1]`.
+- A session opened for a set of subjects with one actor, where read and write are each an intersection over the set (`plan:66-67`, `plan:71-73`).
+- A change of set during the session: a join narrows immediately; a leave does not widen, and a wider set is a new session (T60, T61).
+- An ownership rule for what the set writes (T63) `[assumption on shape; Q13 is open]`.
+- Hide-vs-deny for a set: hidden if hidden from any member (`plan:87-88`).
+- How a set composes with the actor's profile and with admin (`plan:88-89`): the actor contributes no rights; admin in the set is one member like any other `[assumption: the plan asks this; the least-privilege reading is the only one consistent with §1.1]`.
 
 **Must see in the audit**
 
 - The actor and the whole set on every version row (T64).
-- The set's membership at every read, recorded with `(path, version)`
-  (T55, T60).
+- The set's membership at every read, recorded with `(path, version)` (T55, T60).
 - Any mid-session change of set, as its own record `[assumption]`.
 
 **Must never be able to do**
@@ -463,58 +285,39 @@ holds it" (`plan:64-65`).
 - Write where any member may not (T59).
 - Widen during the session (T61).
 - Let the actor's own profile add a right the set lacks (T62).
-- Let one member's wider personal session leak into the shared reply
-  `[assumption: the group session and a member's private session are
-  different sessions with different subjects]`.
+- Let one member's wider personal session leak into the shared reply `[assumption: the group session and a member's private session are different sessions with different subjects]`.
 
 ---
 
 ## Part C. The frozen rubric
 
-The thirteen questions, verbatim from the plan's §2 (`plan:101-115`),
-each followed by one sentence saying what each verdict looks like, so
-the five Phase 1 memos grade uniformly. The four verdicts are those
-spec 070's review used (`070:5-6`): **supports**, **qualified**,
-**no precedent**, **contradicts**.
+The thirteen questions, verbatim from the plan's §2 (`plan:101-115`), each followed by one sentence saying what each verdict looks like, so the five Phase 1 memos grade uniformly. The four verdicts are those spec 070's review used (`070:5-6`): **supports**, **qualified**, **no precedent**, **contradicts**.
 
-**Q1.** Who is the subject, and how is "acting on behalf of" represented? Is the actor distinct from the subject?
-*Supports*: the source names both and records both (real vs effective uid, RFC 8693 `act`); *qualified*: it distinguishes them in the mechanism but not in the record, or the reverse; *no precedent*: one identity only; *contradicts*: it deliberately merges actor and subject and argues for that.
+**Q1.** Who is the subject, and how is "acting on behalf of" represented? Is the actor distinct from the subject? *Supports*: the source names both and records both (real vs effective uid, RFC 8693 `act`); *qualified*: it distinguishes them in the mechanism but not in the record, or the reverse; *no precedent*: one identity only; *contradicts*: it deliberately merges actor and subject and argues for that.
 
-**Q2.** How does authority narrow (attenuation), and can it ever widen? What is the mechanism and where does it sit (token, session, process)?
-*Supports*: narrowing is a first-class operation that cannot be reversed within the same scope; *qualified*: narrowing exists but a path back exists too (a saved uid, a re-open); *no precedent*: authority is fixed at login; *contradicts*: the mechanism widens by design (supplementary groups, setuid escalation) and the source defends it.
+**Q2.** How does authority narrow (attenuation), and can it ever widen? What is the mechanism and where does it sit (token, session, process)? *Supports*: narrowing is a first-class operation that cannot be reversed within the same scope; *qualified*: narrowing exists but a path back exists too (a saved uid, a re-open); *no precedent*: authority is fixed at login; *contradicts*: the mechanism widens by design (supplementary groups, setuid escalation) and the source defends it.
 
-**Q3.** Where is enforcement: one chokepoint, per call, compiled into the query, or in the kernel/hooks?
-*Supports*: one chokepoint the caller cannot route around, ideally in the statement itself; *qualified*: one chokepoint with a documented bypass, or per-call checks with a discipline; *no precedent*: enforcement is advisory or in the caller; *contradicts*: many independent checks with no single owner, and the source argues that is correct.
+**Q3.** Where is enforcement: one chokepoint, per call, compiled into the query, or in the kernel/hooks? *Supports*: one chokepoint the caller cannot route around, ideally in the statement itself; *qualified*: one chokepoint with a documented bypass, or per-call checks with a discipline; *no precedent*: enforcement is advisory or in the caller; *contradicts*: many independent checks with no single owner, and the source argues that is correct.
 
-**Q4.** What is the unit of protection: path prefix, object id, relation tuple, label?
-*Supports*: the unit is stated and its coverage rule is computable at query time; *qualified*: the unit is clear but coverage needs a walk or a materialised table; *no precedent*: no per-object unit; *contradicts*: the unit conflicts with a stated vfs commitment (path-prefix tenancy, deny rows) and the source argues for it.
+**Q4.** What is the unit of protection: path prefix, object id, relation tuple, label? *Supports*: the unit is stated and its coverage rule is computable at query time; *qualified*: the unit is clear but coverage needs a walk or a materialised table; *no precedent*: no per-object unit; *contradicts*: the unit conflicts with a stated vfs commitment (path-prefix tenancy, deny rows) and the source argues for it.
 
-**Q5.** Hide vs deny: can a thing be invisible rather than refused? How does traversal interact (directory execute, walk)?
-*Supports*: hidden things answer "not found", drop out of every enumeration, and the source states its leak rules; *qualified*: hide exists for some verbs (listing) but not others (search, counts, errors); *no precedent*: refusal only; *contradicts*: the source shows hiding is unachievable or harmful at its tier.
+**Q5.** Hide vs deny: can a thing be invisible rather than refused? How does traversal interact (directory execute, walk)? *Supports*: hidden things answer "not found", drop out of every enumeration, and the source states its leak rules; *qualified*: hide exists for some verbs (listing) but not others (search, counts, errors); *no precedent*: refusal only; *contradicts*: the source shows hiding is unachievable or harmful at its tier.
 
-**Q6.** Groups, roles, tenants: modelled how, resolved when (at login, per query)?
-*Supports*: the model and the resolution moment are both stated, with the staleness bound; *qualified*: one is stated, the other implicit; *no precedent*: no groups; *contradicts*: a resolution moment that vfs's session law cannot honour (login-time widening) and the source argues for it.
+**Q6.** Groups, roles, tenants: modelled how, resolved when (at login, per query)? *Supports*: the model and the resolution moment are both stated, with the staleness bound; *qualified*: one is stated, the other implicit; *no precedent*: no groups; *contradicts*: a resolution moment that vfs's session law cannot honour (login-time widening) and the source argues for it.
 
-**Q7.** Defaults on creation (umask, inherited ACLs), ownership transfer, move/copy semantics
-*Supports*: rules for each, and inheritance only tightens; *qualified*: rules for some, or inheritance that can loosen with an audit; *no precedent*: no defaults, every object configured by hand; *contradicts*: creation inherits the creator's full authority by default and the source defends it.
+**Q7.** Defaults on creation (umask, inherited ACLs), ownership transfer, move/copy semantics *Supports*: rules for each, and inheritance only tightens; *qualified*: rules for some, or inheritance that can loosen with an audit; *no precedent*: no defaults, every object configured by hand; *contradicts*: creation inherits the creator's full authority by default and the source defends it.
 
-**Q8.** Audit: what is recorded, attributed to whom, at what version?
-*Supports*: every change records actor, subject and version, and reads are recordable; *qualified*: one of the three is missing, or reads are not recorded; *no precedent*: no audit beyond a modification time; *contradicts*: attribution to the intermediary only, defended as sufficient.
+**Q8.** Audit: what is recorded, attributed to whom, at what version? *Supports*: every change records actor, subject and version, and reads are recordable; *qualified*: one of the three is missing, or reads are not recorded; *no precedent*: no audit beyond a modification time; *contradicts*: attribution to the intermediary only, defended as sufficient.
 
-**Q9.** Failure modes on record: confused deputy, setuid hazards, TOCTOU, RLS leaks, passthrough
-*Supports*: the source names the failure and its structural fix, with an incident; *qualified*: names the failure, offers a discipline rather than a structure; *no precedent*: the class does not arise at that tier; *contradicts*: the source's own history shows the failure and no fix.
+**Q9.** Failure modes on record: confused deputy, setuid hazards, TOCTOU, RLS leaks, passthrough *Supports*: the source names the failure and its structural fix, with an incident; *qualified*: names the failure, offers a discipline rather than a structure; *no precedent*: the class does not arise at that tier; *contradicts*: the source's own history shows the failure and no fix.
 
-**Q10.** Reversibility and permission together: who may revert whose change, can a revert exceed the actor's rights?
-*Supports*: a revert is a new change under the same gate, and the source says who may do it; *qualified*: reversibility exists but is ungated or admin-only; *no precedent*: no reversibility; *contradicts*: revert is a bypass by design and the source argues for it.
+**Q10.** Reversibility and permission together: who may revert whose change, can a revert exceed the actor's rights? *Supports*: a revert is a new change under the same gate, and the source says who may do it; *qualified*: reversibility exists but is ungated or admin-only; *no precedent*: no reversibility; *contradicts*: revert is a bypass by design and the source argues for it.
 
-**Q11.** Scale and portability: does the mechanism survive Oracle/SQL Server caps and 10k-row batches?
-*Supports*: the mechanism is bounded and engine-neutral, or the source measures it; *qualified*: bounded on one engine, or unmeasured; *no precedent*: not a database mechanism; *contradicts*: it requires an engine feature vfs's floor cannot declare (RLS as the baseline, a recursive CTE per row).
+**Q11.** Scale and portability: does the mechanism survive Oracle/SQL Server caps and 10k-row batches? *Supports*: the mechanism is bounded and engine-neutral, or the source measures it; *qualified*: bounded on one engine, or unmeasured; *no precedent*: not a database mechanism; *contradicts*: it requires an engine feature vfs's floor cannot declare (RLS as the baseline, a recursive CTE per row).
 
-**Q12.** Take / adapt / reject for vfs, one line each
-*Supports* / *qualified* / *no precedent* / *contradicts* do not apply; the memo writes one line per source item and the synthesis collects them.
+**Q12.** Take / adapt / reject for vfs, one line each *Supports* / *qualified* / *no precedent* / *contradicts* do not apply; the memo writes one line per source item and the synthesis collects them.
 
-**Q13.** Many subjects at once: is there any conjunctive (intersection) authority model — acting at the meet of several principals' rights? Who owns what such a session creates, how is it audited, what happens when the set changes mid-session?
-*Supports*: the source computes a greatest lower bound over several principals and acts under it (restrictive policies, `cap_rights_limit`, a lowest-clearance session); *qualified*: intersection exists as an operator but not as a session's subject, or ownership and audit of the meet are unstated; *no precedent*: authority is per single principal; *contradicts*: multiple principals widen (union) and the source defends it.
+**Q13.** Many subjects at once: is there any conjunctive (intersection) authority model — acting at the meet of several principals' rights? Who owns what such a session creates, how is it audited, what happens when the set changes mid-session? *Supports*: the source computes a greatest lower bound over several principals and acts under it (restrictive policies, `cap_rights_limit`, a lowest-clearance session); *qualified*: intersection exists as an operator but not as a session's subject, or ownership and audit of the meet are unstated; *no precedent*: authority is per single principal; *contradicts*: multiple principals widen (union) and the source defends it.
 
 ---
 
@@ -522,77 +325,27 @@ spec 070's review used (`070:5-6`): **supports**, **qualified**,
 
 Repository files, read 2026-09-05, cited above as `file:line`:
 
-- `context/research/2026-09-05-principals-and-permissions-research-plan.md`
-  (§1, §1.1, §2, §4, §6).
-- `context/research/2026-09-04-yolofs-agent-native-filesystem-threat-model.md`
-  (§2.1 to §2.3, §3.4, §4.2, §5.0, §5.2, §5.3, §5.4, §6).
-- `context/specs/active/070-principal-scoped-sessions/spec.md` (Intent,
-  decisions 1 to 7, the research review's objections 1 to 9, non-goals,
-  open questions).
-- `context/specs/active/058-row-level-permission-grants/spec.md`
-  (Intent).
-- `context/decisions/021-row-grant-model-spine.md` (decisions 1 to 4,
-  the groups fork).
+- `context/research/2026-09-05-principals-and-permissions-research-plan.md` (§1, §1.1, §2, §4, §6).
+- `context/research/2026-09-04-yolofs-agent-native-filesystem-threat-model.md` (§2.1 to §2.3, §3.4, §4.2, §5.0, §5.2, §5.3, §5.4, §6).
+- `context/specs/active/070-principal-scoped-sessions/spec.md` (Intent, decisions 1 to 7, the research review's objections 1 to 9, non-goals, open questions).
+- `context/specs/active/058-row-level-permission-grants/spec.md` (Intent).
+- `context/decisions/021-row-grant-model-spine.md` (decisions 1 to 4, the groups fork).
 - `context/decisions/006-global-namespace-tenant-permissions.md`.
-- `context/decisions/058-the-access-layer-for-agents-positioning.md`
-  (Context, decisions 1 to 8).
-- `context/research/2026-09-04-mirage-design-patterns.md` (§3.3, §B:
-  §3.6 to §3.13, §4.1 to §4.8).
+- `context/decisions/058-the-access-layer-for-agents-positioning.md` (Context, decisions 1 to 8).
+- `context/research/2026-09-04-mirage-design-patterns.md` (§3.3, §B: §3.6 to §3.13, §4.1 to §4.8).
 - `context/research/2026-04-19-mcp-specification.md` (open question 3).
-- `context/research/2026-08-10-mcp-2026-07-28-stateless-revision.md`
-  (§2.6, §3, §5, §7, §8.2, §8.4).
+- `context/research/2026-08-10-mcp-2026-07-28-stateless-revision.md` (§2.6, §3, §5, §7, §8.2, §8.4).
 - `context/standards/mission.md`.
 - `context/research/2026-04-22-cloud-permission-models.md`.
-- `context/research/2026-09-04-delete-vs-mkedge-race.md` (the TOCTOU
-  window).
-- `src/vfs/permissions.py` (module docstring), `src/vfs/ops.py` (op
-  sets), `src/vfs/rerank.py` (`Statistics`, `_statistics`,
-  `lexical_stats`), `src/vfs/models/version.py` (`created_by`),
-  `CLAUDE.md` (production posture).
+- `context/research/2026-09-04-delete-vs-mkedge-race.md` (the TOCTOU window).
+- `src/vfs/permissions.py` (module docstring), `src/vfs/ops.py` (op sets), `src/vfs/rerank.py` (`Statistics`, `_statistics`, `lexical_stats`), `src/vfs/models/version.py` (`created_by`), `CLAUDE.md` (production posture).
 
 External primary sources, fetched 2026-09-05:
 
-- Norm Hardy, *The Confused Deputy (or why capabilities might have
-  been invented)*, ACM SIGOPS Operating Systems Review 22(4), October
-  1988. Read from the author's page
-  `http://cap-lore.com/CapTheory/ConfusedDeputy.html` (plain http; the
-  https path answers 404), with the citation cross-checked against
-  `https://en.wikipedia.org/wiki/Confused_deputy_problem`.
-- Hao Chen, David Wagner, Drew Dean, *Setuid Demystified*, 11th USENIX
-  Security Symposium, August 2002. Read from the USENIX PDF
-  `https://www.usenix.org/legacy/event/sec02/full_papers/chen/chen.pdf`
-  (downloaded with curl and extracted with `pdftotext`; the abstract,
-  §7.1, §8.1.1 to §8.1.3 quoted). The Berkeley mirror
-  `people.eecs.berkeley.edu/~daw/papers/setuid-usenix02.pdf` refused
-  the connection.
-- OWASP GenAI Security Project, *LLM06:2025 Excessive Agency*,
-  `https://genai.owasp.org/llmrisk/llm062025-excessive-agency/`.
-- OWASP GenAI Security Project, *OWASP Top 10 for Agentic Applications
-  for 2026*, announced 9 December 2025,
-  `https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/`.
-  The OWASP page carries the date and a PDF link only; the ten names
-  (ASI01 Agent Goal Hijack, ASI02 Tool Misuse & Exploitation, ASI03
-  Identity & Privilege Abuse, ASI04 Agentic Supply Chain
-  Vulnerabilities, ASI05 Unexpected Code Execution, ASI06 Memory &
-  Context Poisoning, ASI07 Insecure Inter-Agent Communication, ASI08
-  Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue
-  Agents) and the two quoted examples were taken from three secondary
-  renderings of the list, `https://docs.modulos.ai/frameworks/owasp-top-10-agentic`,
-  `https://cycode.com/blog/owasp-top-10-agentic-applications/`, and
-  `https://www.paloaltonetworks.com/blog/cloud-security/owasp-agentic-ai-security/`.
-  The L5 lens should quote the PDF directly.
-- PostgreSQL documentation, *Row Security Policies*,
-  `https://www.postgresql.org/docs/current/ddl-rowsecurity.html`
-  (permissive vs restrictive, `BYPASSRLS`, the referential-integrity
-  covert channel, the `mallory` stale-snapshot example), and *CREATE
-  FUNCTION*, the `LEAKPROOF` paragraph,
-  `https://www.postgresql.org/docs/current/sql-createfunction.html`.
-- Model Context Protocol, *Authorization* (2025-11-25),
-  `https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization`
-  (Token Handling, Token Audience Binding and Validation, Access Token
-  Privilege Restriction, Scope Challenge Handling), and *Security Best
-  Practices*,
-  `https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices`
-  (Confused Deputy Problem, Token Passthrough, Session Hijacking, SSRF
-  and DNS rebinding, Scope Minimization). Fetched at the 2025-06-18
-  path, which redirects to 2025-11-25.
+- Norm Hardy, *The Confused Deputy (or why capabilities might have been invented)*, ACM SIGOPS Operating Systems Review 22(4), October
+  1988. Read from the author's page `http://cap-lore.com/CapTheory/ConfusedDeputy.html` (plain http; the https path answers 404), with the citation cross-checked against `https://en.wikipedia.org/wiki/Confused_deputy_problem`.
+- Hao Chen, David Wagner, Drew Dean, *Setuid Demystified*, 11th USENIX Security Symposium, August 2002. Read from the USENIX PDF `https://www.usenix.org/legacy/event/sec02/full_papers/chen/chen.pdf` (downloaded with curl and extracted with `pdftotext`; the abstract, §7.1, §8.1.1 to §8.1.3 quoted). The Berkeley mirror `people.eecs.berkeley.edu/~daw/papers/setuid-usenix02.pdf` refused the connection.
+- OWASP GenAI Security Project, *LLM06:2025 Excessive Agency*, `https://genai.owasp.org/llmrisk/llm062025-excessive-agency/`.
+- OWASP GenAI Security Project, *OWASP Top 10 for Agentic Applications for 2026*, announced 9 December 2025, `https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/`. The OWASP page carries the date and a PDF link only; the ten names (ASI01 Agent Goal Hijack, ASI02 Tool Misuse & Exploitation, ASI03 Identity & Privilege Abuse, ASI04 Agentic Supply Chain Vulnerabilities, ASI05 Unexpected Code Execution, ASI06 Memory & Context Poisoning, ASI07 Insecure Inter-Agent Communication, ASI08 Cascading Failures, ASI09 Human-Agent Trust Exploitation, ASI10 Rogue Agents) and the two quoted examples were taken from three secondary renderings of the list, `https://docs.modulos.ai/frameworks/owasp-top-10-agentic`, `https://cycode.com/blog/owasp-top-10-agentic-applications/`, and `https://www.paloaltonetworks.com/blog/cloud-security/owasp-agentic-ai-security/`. The L5 lens should quote the PDF directly.
+- PostgreSQL documentation, *Row Security Policies*, `https://www.postgresql.org/docs/current/ddl-rowsecurity.html` (permissive vs restrictive, `BYPASSRLS`, the referential-integrity covert channel, the `mallory` stale-snapshot example), and *CREATE FUNCTION*, the `LEAKPROOF` paragraph, `https://www.postgresql.org/docs/current/sql-createfunction.html`.
+- Model Context Protocol, *Authorization* (2025-11-25), `https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization` (Token Handling, Token Audience Binding and Validation, Access Token Privilege Restriction, Scope Challenge Handling), and *Security Best Practices*, `https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices` (Confused Deputy Problem, Token Passthrough, Session Hijacking, SSRF and DNS rebinding, Scope Minimization). Fetched at the 2025-06-18 path, which redirects to 2025-11-25.

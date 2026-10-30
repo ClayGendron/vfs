@@ -1,7 +1,6 @@
 # Review of spec 165 — the permission ladder (`list`, `add`, `contribute`)
 
-Reviewer: senior review, 2026-10-14. Tree at `main` (`e8b8d9a`), working tree as found; nothing under the repo was modified.
-Evidence labels: **EXECUTED** (a script ran; outputs beside this file), **READ** (file read, `file:line`), **INFERRED** (my reasoning from the two).
+Reviewer: senior review, 2026-10-14. Tree at `main` (`e8b8d9a`), working tree as found; nothing under the repo was modified. Evidence labels: **EXECUTED** (a script ran; outputs beside this file), **READ** (file read, `file:line`), **INFERRED** (my reasoning from the two).
 
 ## Verdict
 

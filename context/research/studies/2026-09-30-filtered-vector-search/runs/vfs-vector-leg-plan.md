@@ -31,4 +31,3 @@
 
     admitted-first, path arms only: 42 ms — plan: MATERIALIZE v; MULTI-INDEX OR; INDEX 1; SEARCH vfs_88fc7062 USING INDEX ix_vfs_88fc7062_path (path=?)
     admitted-first, path arms UNION owner arm: 44 ms — plan: MATERIALIZE v; COMPOUND QUERY; LEFT-MOST SUBQUERY; MULTI-INDEX OR
-

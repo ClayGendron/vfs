@@ -1,7 +1,6 @@
 ## postgres 17.11 + pgvector 0.8.6 — first clean run (before the `hnsw range ef100 top40` column was added), same corpus and settings; load 20s, HNSW build 17s
 
-Whole-mount exact scan (no filter): 23.4 ms
-Whole-mount HNSW (ef_search 40): 1.3 ms
+Whole-mount exact scan (no filter): 23.4 ms Whole-mount HNSW (ef_search 40): 1.3 ms
 
 | caller (admitted) | plan like/range | exact like (today, no index) | exact range-cte | hnsw like (today, indexed) | hnsw range | hnsw post-100 | hnsw post-1000 | hnsw post-4000 | planner |
 |---|---|---|---|---|---|---|---|---|---|

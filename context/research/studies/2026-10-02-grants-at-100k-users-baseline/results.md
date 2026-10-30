@@ -1,7 +1,6 @@
 # Results — every number with its engine and N
 
-Medians of 3 warm runs unless a cell says otherwise; cold = first run on a fresh session or process.
-`pieces` and `admits` are pure Python on the event loop. The 100k world has 2 files per home (see README).
+Medians of 3 warm runs unless a cell says otherwise; cold = first run on a fresh session or process. `pieces` and `admits` are pure Python on the event loop. The 100k world has 2 files per home (see README).
 
 ## World and load
 
@@ -239,26 +238,10 @@ Medians of 3 warm runs unless a cell says otherwise; cold = first run on a fresh
 
 Three attempts, none finished:
 
-1. The first chain was stopped by me at N = 1,000 because the hole
-   ladder's statements wedged backends (see README).
-2. The second chain reached the 100k load and lost its connection when
-   the shared server went through crash recovery during another
-   agent's 1M-row writes (`connection was closed in the middle of
-   operation` on `bulk insert`, then `the database system is not yet
-   accepting connections`).
-3. The third attempt loaded the world (501,202 entries in 15 s,
-   214,000 grants + 500,000 memberships in 5 s) and completed step 1
-   for the ordinary caller, then was stopped on the coordinator's
-   instruction while inside the quadratic `pieces()` step.
+1. The first chain was stopped by me at N = 1,000 because the hole ladder's statements wedged backends (see README).
+2. The second chain reached the 100k load and lost its connection when the shared server went through crash recovery during another agent's 1M-row writes (`connection was closed in the middle of operation` on `bulk insert`, then `the database system is not yet accepting connections`).
+3. The third attempt loaded the world (501,202 entries in 15 s, 214,000 grants + 500,000 memberships in 5 s) and completed step 1 for the ordinary caller, then was stopped on the coordinator's instruction while inside the quadratic `pieces()` step.
 
-The one sound partial number, Postgres N = 100,000, ordinary caller,
-`resolve_authority` cold: **1,344 ms** (warm hit 3.4 ms; pure
-`resolve(read)` 814 ms; `_everyone_arms` 151 ms; 100,042 rows read;
-100,000 holes; 1 owner arm). It matches SQLite's 1,832 ms within the
-run-to-run noise (the resolver is pure Python past the row read).
+The one sound partial number, Postgres N = 100,000, ordinary caller, `resolve_authority` cold: **1,344 ms** (warm hit 3.4 ms; pure `resolve(read)` 814 ms; `_everyone_arms` 151 ms; 100,042 rows read; 100,000 holes; 1 owner arm). It matches SQLite's 1,832 ms within the run-to-run noise (the resolver is pure Python past the row read).
 
-Every Postgres timing in this study was taken on a server shared with
-another agent's bulk-write spike during the same hour, and is noisy:
-the range join's warm count for the same caller shape ranged from 8 ms
-to 600 ms across runs. Treat the Postgres rows as order-of-magnitude.
-The SQLite rows were taken on a private file.
+Every Postgres timing in this study was taken on a server shared with another agent's bulk-write spike during the same hour, and is noisy: the range join's warm count for the same caller shape ranged from 8 ms to 600 ms across runs. Treat the Postgres rows as order-of-magnitude. The SQLite rows were taken on a private file.

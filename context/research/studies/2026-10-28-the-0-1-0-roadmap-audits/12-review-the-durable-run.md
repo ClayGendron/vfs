@@ -1,22 +1,7 @@
 # 12 — Review of the durable-run design (roadmap third revision)
 
-- **Status:** review of `context/standards/roadmap.md` §5 (H1–H6), F3
-  criterion 10, T2, T5, M3, §14 and decisions D40–D44 as they stood
-  after Clay's 2026-10-28 request that a run with several
-  human-in-the-loop events pick up where it stopped instead of
-  re-running. Read-only; one subagent; every claim labelled READ,
-  EXECUTED or INFERRED. The roadmap's third revision folds in (a) 1–7
-  and 9, holes 1–8, the criterion rewrites, the arithmetic and (e)
-  1–4 and 6; (e) 5 was kept as drain-per-pipeline with `xargs -P`
-  riding F6.
-- **What changed because of it:** a resumed step runs as the run's
-  recorded authority (D45); effectful steps are claimed before entry
-  and a crash leaves an in-doubt step (D46); expansion reads are always
-  recorded and re-executed reads are hash-checked (D41); the ledger
-  lives in the root binding's storage (D43); host tools and guests are
-  re-entered with their vfs calls matched by fingerprint (D42); H3's
-  second re-send is a replay hit, not `pending`; T2 lands as rows;
-  `/.vfs/jobs/<run>/steps` is 0.2.
+- **Status:** review of `context/standards/roadmap.md` §5 (H1–H6), F3 criterion 10, T2, T5, M3, §14 and decisions D40–D44 as they stood after Clay's 2026-10-28 request that a run with several human-in-the-loop events pick up where it stopped instead of re-running. Read-only; one subagent; every claim labelled READ, EXECUTED or INFERRED. The roadmap's third revision folds in (a) 1–7 and 9, holes 1–8, the criterion rewrites, the arithmetic and (e) 1–4 and 6; (e) 5 was kept as drain-per-pipeline with `xargs -P` riding F6.
+- **What changed because of it:** a resumed step runs as the run's recorded authority (D45); effectful steps are claimed before entry and a crash leaves an in-doubt step (D46); expansion reads are always recorded and re-executed reads are hash-checked (D41); the ledger lives in the root binding's storage (D43); host tools and guests are re-entered with their vfs calls matched by fingerprint (D42); H3's second re-send is a replay hit, not `pending`; T2 lands as rows; `/.vfs/jobs/<run>/steps` is 0.2.
 
 ---
 

@@ -1,21 +1,9 @@
 # 2026-10-28 — The 0.1.0 roadmap audits
 
-- **Status:** study set, read-only against `main` at `90f5883`. Feeds
-  `../../../standards/roadmap.md` (the 0.1.0 definition of done).
+- **Status:** study set, read-only against `main` at `90f5883`. Feeds `../../../standards/roadmap.md` (the 0.1.0 definition of done).
 - **Owner:** Clay Gendron
-- **Method:** eight parallel read-only audits, one per domain, each a
-  fresh subagent with the same brief; every claim labelled READ (a file
-  or record was read), EXECUTED (a command or probe was run) or
-  INFERRED (the auditor's synthesis). Two review passes on the roadmap
-  draft followed (files 09 and 10); a third, the fact-check (file 11),
-  is folded into the roadmap's second revision; a fourth, of the
-  durable-run design (file 12), into the third. Nothing in the tree was edited by
-  an auditor; no git state changed.
-- **Why a study set and not a memo:** each file is new investigation
-  (executed probes against `InMemoryStorage`, a real ipykernel, the
-  statement counter, `gh run list`, PyPI, the web), not a transcription
-  of in-session reasoning. The synthesis lives in the roadmap, which is
-  a standard, not a research memo.
+- **Method:** eight parallel read-only audits, one per domain, each a fresh subagent with the same brief; every claim labelled READ (a file or record was read), EXECUTED (a command or probe was run) or INFERRED (the auditor's synthesis). Two review passes on the roadmap draft followed (files 09 and 10); a third, the fact-check (file 11), is folded into the roadmap's second revision; a fourth, of the durable-run design (file 12), into the third. Nothing in the tree was edited by an auditor; no git state changed.
+- **Why a study set and not a memo:** each file is new investigation (executed probes against `InMemoryStorage`, a real ipykernel, the statement counter, `gh run list`, PyPI, the web), not a transcription of in-session reasoning. The synthesis lives in the roadmap, which is a standard, not a research memo.
 
 ## The brief every auditor received
 
@@ -29,13 +17,7 @@
 > (count operations, never clocks; name engines; name classified
 > kinds); (6) open questions Clay must decide.
 
-The eight themes Clay named for 0.1.0 were given to every auditor: a
-public kernel API with human-in-the-loop interrupts; storage for
-SQLite, Postgres, SQL Server and Oracle; an embedding provider so
-`glean` fuses BM25 and vector at query time; three tool kinds, all
-interruptible; sync calls for Jupyter and ETL; serving vfs as an MCP
-server; everything is a file including tools under one permission
-structure; a bash-like CLI composing through the public APIs.
+The eight themes Clay named for 0.1.0 were given to every auditor: a public kernel API with human-in-the-loop interrupts; storage for SQLite, Postgres, SQL Server and Oracle; an embedding provider so `glean` fuses BM25 and vector at query time; three tool kinds, all interruptible; sync calls for Jupyter and ETL; serving vfs as an MCP server; everything is a file including tools under one permission structure; a bash-like CLI composing through the public APIs.
 
 ## Files
 
@@ -54,5 +36,4 @@ structure; a bash-like CLI composing through the public APIs.
 | 11 | `11-review-fact-check.md` | fact-check of every checkable claim in the draft | ten corrections (24 error kinds; 6 of 9 examples; `awk` 331 uses; 35–49 statements for the 10k write; four names that are spec proposals, not live code); every cited ADR pin and spec status confirmed |
 | 12 | `12-review-the-durable-run.md` | engineering review of the third revision's durable-run design (domain B, F3 c10, T2, T5, M3, D40–D44) | nine contradictions with specs 167/169/170/172/177 and ADRs 063/081/084 by `file:line`; resume authority unspecified; no crash semantics; reads are inputs to the walk; the arithmetic recount |
 
-Paths inside the files that begin with `/tmp/…/scratchpad/` were the
-auditors' working directory; the files now live here.
+Paths inside the files that begin with `/tmp/…/scratchpad/` were the auditors' working directory; the files now live here.

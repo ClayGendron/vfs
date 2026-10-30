@@ -1,8 +1,6 @@
 # L1 — What `list` and `contribute` touch inside vfs (impact map, measured on the live tree)
 
-Date: 2026-10-14. Researcher L1 (internal impact). Repo at `main` (`e8b8d9a`), working tree as found.
-Evidence labels: EXECUTED (a script or grep ran), READ (file read, cited `file:line`), INFERRED (my reasoning).
-Scripts and outputs beside this file: `l1_road_baseline.py` / `.out`, `l1_compile_cost.py` / `.out`.
+Date: 2026-10-14. Researcher L1 (internal impact). Repo at `main` (`e8b8d9a`), working tree as found. Evidence labels: EXECUTED (a script or grep ran), READ (file read, cited `file:line`), INFERRED (my reasoning). Scripts and outputs beside this file: `l1_road_baseline.py` / `.out`, `l1_compile_cost.py` / `.out`.
 
 ## Summary
 

@@ -95,8 +95,7 @@ The verification logic now checks, in order:
 4. `search_tsv` is a `tsvector`
 5. the generation expression resolves to a stored `to_tsvector('simple', coalesce(content, ''))` shape
 6. at least one `GIN` index exists on `search_tsv`
-7. at least one such index carries the live-search predicate:
-   `content IS NOT NULL AND deleted_at IS NULL AND kind != 'version'`
+7. at least one such index carries the live-search predicate: `content IS NOT NULL AND deleted_at IS NULL AND kind != 'version'`
 
 The important behavioral change from story 003 is that verification is now aligned with the runtime lexical query. The backend no longer accepts a looser expression-index setup while the search path itself reads from `o.search_tsv`.
 

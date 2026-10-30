@@ -1,19 +1,9 @@
 # 08. Indexes and search: reindex, grep, glean, graph
 
 - **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-- **Shows:** the one maintenance verb, `reindex`, and the phases it
-  runs; then the read side, how `grep`, `glean` and `graph` answer
-  over the indexes plus the dirty overlay, with the Rust engine's
-  kernels named where they run.
-- **Legend:** solid is built. Dashed is planned, with the spec named.
-  Rust kernels are marked `[rust]`.
-- **Sources:** `storage/backends/database/backend.py` (`reindex`,
-  `_reindex_phases`), `indexing.py`, `lexical.py`, `render.py`,
-  `links.py`, `embed.py`, `signals.py`, `segments.py`, `edges.py`,
-  `grep.py`, `scope.py`, `glean.py`, `distance.py`, `graph.py`;
-  `storage/ranking.py`, `rerank.py`, `results/preview.py`;
-  `crates/vfs-core`; ADRs 033, 036, 038 to 046, 048, 049, 051 to 055,
-  059, 060, 077, 079.
+- **Shows:** the one maintenance verb, `reindex`, and the phases it runs; then the read side, how `grep`, `glean` and `graph` answer over the indexes plus the dirty overlay, with the Rust engine's kernels named where they run.
+- **Legend:** solid is built. Dashed is planned, with the spec named. Rust kernels are marked `[rust]`.
+- **Sources:** `storage/backends/database/backend.py` (`reindex`, `_reindex_phases`), `indexing.py`, `lexical.py`, `render.py`, `links.py`, `embed.py`, `signals.py`, `segments.py`, `edges.py`, `grep.py`, `scope.py`, `glean.py`, `distance.py`, `graph.py`; `storage/ranking.py`, `rerank.py`, `results/preview.py`; `crates/vfs-core`; ADRs 033, 036, 038 to 046, 048, 049, 051 to 055, 059, 060, 077, 079.
 
 ## The picture: reindex
 
@@ -36,9 +26,7 @@ flowchart TB
   class pack planned
 ```
 
-Each numbered phase runs in its own writer transaction. The render
-and embed loops are resumable: they commit in bounded pages behind a
-durable mark, so a second run finishes what the first left.
+Each numbered phase runs in its own writer transaction. The render and embed loops are resumable: they commit in bounded pages behind a durable mark, so a second run finishes what the first left.
 
 ## The picture: grep
 
@@ -85,37 +73,15 @@ flowchart LR
 
 ## Reading the picture
 
-vfs keeps four indexes and one derived table, and `reindex` is the one
-verb that builds them: the gram index for `grep`, the lexical index
-for `glean`'s BM25 leg, the vector column for `glean`'s cosine leg,
-the stored signals for `glean`'s prior, and the `links` edges that
-feed `graph`. The write path does not build any of them. It stamps the
-row dirty and moves on, because an ETL batch of 10,000 files must not
-wait for tokenising, embedding or tree-sitter.
+vfs keeps four indexes and one derived table, and `reindex` is the one verb that builds them: the gram index for `grep`, the lexical index for `glean`'s BM25 leg, the vector column for `glean`'s cosine leg, the stored signals for `glean`'s prior, and the `links` edges that feed `graph`. The write path does not build any of them. It stamps the row dirty and moves on, because an ETL batch of 10,000 files must not wait for tokenising, embedding or tree-sitter.
 
-The gram and lexical indexes are built whole under a fresh epoch and
-published by one pointer flip. Between the write and the publish, the
-row's `encoded` flag is false, and `grep` scans it. That is why `grep`
-has two sides: the index side over encoded rows and the overlay side
-over dirty rows. Both pass the same structural gates and the same
-matcher. The matcher is the one authority on what "matches" means, and
-it lives in the Rust engine.
+The gram and lexical indexes are built whole under a fresh epoch and published by one pointer flip. Between the write and the publish, the row's `encoded` flag is false, and `grep` scans it. That is why `grep` has two sides: the index side over encoded rows and the overlay side over dirty rows. Both pass the same structural gates and the same matcher. The matcher is the one authority on what "matches" means, and it lives in the Rust engine.
 
-`glean` is grep's shape with a scorer where grep has a matcher. Its
-lexical leg never runs scoring SQL: every statement is a key fetch, and
-the engine scores. Its vector leg runs cosine inside the SQL engine,
-because every supported dialect has a distance function (ADR 059);
-the Rust kernel is the referee the dialects are pinned against. The two
-legs are normalised and fused under a law declared once on the mount.
+`glean` is grep's shape with a scorer where grep has a matcher. Its lexical leg never runs scoring SQL: every statement is a key fetch, and the engine scores. Its vector leg runs cosine inside the SQL engine, because every supported dialect has a distance function (ADR 059); the Rust kernel is the referee the dialects are pinned against. The two legs are normalised and fused under a law declared once on the mount.
 
-`graph` is a frontier walk the application holds. Each hop is one
-chunked statement, and every row is judged against the caller's view
-before it joins the frontier. A node the caller may read comes back
-whole; one it may only name comes back bare.
+`graph` is a frontier walk the application holds. Each hop is one chunked statement, and every row is judged against the caller's view before it joins the frontier. A node the caller may read comes back whole; one it may only name comes back bare.
 
-The permission view is a filter inside every one of these statements,
-never a pass over the rows afterwards. That is the fact that makes the
-query verbs kernel operations (ADR 087 pin 2).
+The permission view is a filter inside every one of these statements, never a pass over the rows afterwards. That is the fact that makes the query verbs kernel operations (ADR 087 pin 2).
 
 ## Terms this diagram introduces
 
@@ -144,9 +110,6 @@ query verbs kernel operations (ADR 087 pin 2).
 
 ## Open
 
-- `glean` fetches 1,000 candidate entries and builds a preview
-  unconditionally; both are recorded for a spec of their own (memo
-  2026-10-10).
-- Stored signals may count hidden in-links; grep's candidate budget
-  counts hidden candidates (`open-questions.md`).
+- `glean` fetches 1,000 candidate entries and builds a preview unconditionally; both are recorded for a spec of their own (memo 2026-10-10).
+- Stored signals may count hidden in-links; grep's candidate budget counts hidden candidates (`open-questions.md`).
 - `pack` as a `reindex` phase: spec 180.

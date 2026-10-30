@@ -1,40 +1,20 @@
 # Mutant ledger — proven bugs the suite must keep killing
 
-**Status:** live — founded 2026-08-25 (ADR 050); appended to by every
-review campaign that lands pins.
-**Purpose:** Each row is a one-line bug that once survived the whole
-suite and was killed by a landed pin. Replaying a row re-proves the
-pin still has teeth. Replays run **during review campaigns** — the
-`test_review` skill owns the procedure — not as standing CI.
+**Status:** live — founded 2026-08-25 (ADR 050); appended to by every review campaign that lands pins. **Purpose:** Each row is a one-line bug that once survived the whole suite and was killed by a landed pin. Replaying a row re-proves the pin still has teeth. Replays run **during review campaigns** — the `test_review` skill owns the procedure — not as standing CI.
 
 ## Replay protocol
 
-**Never mutate the live repo** — review agents run concurrently
-against it, and a briefly-mutated `src/` poisons every neighbor's
-reads and test runs. All replays happen in an isolated tree under the
-session scratchpad: `git worktree add <scratchpad>/mutant-tree
+**Never mutate the live repo** — review agents run concurrently against it, and a briefly-mutated `src/` poisons every neighbor's reads and test runs. All replays happen in an isolated tree under the session scratchpad: `git worktree add <scratchpad>/mutant-tree
 <tip-sha>`, primed once with `uv sync`, removed when done (the
 `test_review` skill carries the full protocol).
 
-For each row in scope (target file touched by the review, plus any
-row when time allows — the full ledger replays in ~2 minutes):
+For each row in scope (target file touched by the review, plus any row when time allows — the full ledger replays in ~2 minutes):
 
-1. Apply the mutation **in the worktree**. Rows record **intent plus
-   the best-known anchor**; if the anchor text has moved, re-derive
-   the mutation from the intent before declaring anything.
-2. Run the row's scope selection from the worktree. **Killed** = ≥1
-   failure.
-3. Restore the worktree file from its committed state
-   (`git -C <worktree> checkout -- <file>`) and confirm the worktree
-   is clean before the next row.
+1. Apply the mutation **in the worktree**. Rows record **intent plus the best-known anchor**; if the anchor text has moved, re-derive the mutation from the intent before declaring anything.
+2. Run the row's scope selection from the worktree. **Killed** = ≥1 failure.
+3. Restore the worktree file from its committed state (`git -C <worktree> checkout -- <file>`) and confirm the worktree is clean before the next row.
 
-Statuses, all reported: **killed** (healthy), **survived** (a pin
-regressed — a critical review finding), **stale** (the mutation's
-concept no longer exists in the code — propose retiring the row, with
-the reasoning; never silently skip). The *recorded killers* column is
-advisory diagnosis only — which test kills a mutant drifts even when
-protection holds (see M5, the founding example) — the assertion is
-always "≥1 failure in scope", never a named test.
+Statuses, all reported: **killed** (healthy), **survived** (a pin regressed — a critical review finding), **stale** (the mutation's concept no longer exists in the code — propose retiring the row, with the reasoning; never silently skip). The *recorded killers* column is advisory diagnosis only — which test kills a mutant drifts even when protection holds (see M5, the founding example) — the assertion is always "≥1 failure in scope", never a named test.
 
 ## Rows
 

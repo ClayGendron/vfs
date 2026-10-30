@@ -1,17 +1,9 @@
 # 10. History, trash, the atomic unit and the fault model
 
-- **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-  Draws ADR 087's promises (pins 7 to 11, 13) beside what the code
-  does today.
-- **Shows:** what happens to a body when it is replaced, to a row when
-  it is deleted, and to the store when something fails. The two
-  atomicity models every verb belongs to. The fault model: which layer
-  catches which fault.
+- **Status:** living diagram, drawn 2026-10-24 against `ba77449`. Draws ADR 087's promises (pins 7 to 11, 13) beside what the code does today.
+- **Shows:** what happens to a body when it is replaced, to a row when it is deleted, and to the store when something fails. The two atomicity models every verb belongs to. The fault model: which layer catches which fault.
 - **Legend:** solid is built. Dashed is planned, with the spec named.
-- **Sources:** `storage/backends/database/versions.py`, `trash.py`,
-  `serialized.py`, `topology.py`, `engine.py`, `dialects.py`;
-  `models/versioning.py`; ADRs 013, 017, 025, 027, 064, 074, 078,
-  087; specs 174, 175, 177, 180; the OSTEP memo §2.
+- **Sources:** `storage/backends/database/versions.py`, `trash.py`, `serialized.py`, `topology.py`, `engine.py`, `dialects.py`; `models/versioning.py`; ADRs 013, 017, 025, 027, 064, 074, 078, 087; specs 174, 175, 177, 180; the OSTEP memo §2.
 
 ## The picture: the life of a row
 
@@ -79,38 +71,15 @@ flowchart TB
 
 ## Reading the picture
 
-A file's history is kept, not reconstructed. When a body is replaced,
-the body it replaced is written to a version row in the same
-transaction, whole, with who replaced it. A create mints nothing. An
-identical body mints nothing, because nothing was lost. Today every
-version row is a snapshot; `pack` (spec 180) will later rewrite cold
-ranges into a snapshot plus forward deltas, and no version row is ever
-deleted by default.
+A file's history is kept, not reconstructed. When a body is replaced, the body it replaced is written to a version row in the same transaction, whole, with who replaced it. A create mints nothing. An identical body mints nothing, because nothing was lost. Today every version row is a snapshot; `pack` (spec 180) will later rewrite cold ranges into a snapshot plus forward deltas, and no version row is ever deleted by default.
 
-A delete is a tombstone. The row stays at its path with `deleted_at`
-and `trash_root_id` set. Nothing moves: no path rewrite, no posting
-move, no edge cascade. The trash view at `/.vfs/trash` shows the
-tombstoned rows at their own paths. `restore` clears the set. A write
-at a tombstoned path revives the row with the same `entry_id`. Only
-`sweep` destroys, and it is a developer-plane verb that agents never
-see.
+A delete is a tombstone. The row stays at its path with `deleted_at` and `trash_root_id` set. Nothing moves: no path rewrite, no posting move, no edge cascade. The trash view at `/.vfs/trash` shows the tombstoned rows at their own paths. `restore` clears the set. A write at a tombstoned path revives the row with the same `entry_id`. Only `sweep` destroys, and it is a developer-plane verb that agents never see.
 
-vfs has two atomicity models and names them. Whole-batch verbs commit
-the whole call on one mount in one transaction. Resumable verbs commit
-in bounded chunks behind a durable mark, so a second run finishes what
-the first left. Every verb is one or the other.
+vfs has two atomicity models and names them. Whole-batch verbs commit the whole call on one mount in one transaction. Resumable verbs commit in bounded chunks behind a durable mark, so a second run finishes what the first left. Every verb is one or the other.
 
-The serialized verbs rewrite or hide parts of the tree that other rows
-depend on, so they take the per-mount lock row first and never
-interleave. Writes are deliberately not serialized with them; every
-claim a write makes is guarded on the version it read, and a miss
-redrives.
+The serialized verbs rewrite or hide parts of the tree that other rows depend on, so they take the per-mount lock row first and never interleave. Writes are deliberately not serialized with them; every claim a write makes is guarded on the version it read, and a miss redrives.
 
-The fault model is written once. The engine owns the media and the
-atomic commit. vfs owns the logical faults above it, and the detector
-is the hash it already stores. Engines fail partially, not fail-stop,
-so the response is a classified retry, never a crash. Identities are
-never reused.
+The fault model is written once. The engine owns the media and the atomic commit. vfs owns the logical faults above it, and the detector is the hash it already stores. Engines fail partially, not fail-stop, so the response is a classified retry, never a crash. Identities are never reused.
 
 ## Terms this diagram introduces
 
@@ -145,14 +114,10 @@ never reused.
 | A body changed under vfs with direct SQL | `read` served it as success | verify on read, spec 175 |
 | A replayed `move` | a bare `not_found`; "already moved" and "never existed" look alike | the replay table and the request key, spec 177 |
 
-Six contract-free fixes landed the same day (`25f6da4` to `ba77449`):
-row locks in path order, jittered retry waits, three hidden statements
-removed, the write-path hash offloaded above 100 KB.
+Six contract-free fixes landed the same day (`25f6da4` to `ba77449`): row locks in path order, jittered retry waits, three hidden statements removed, the write-path hash offloaded above 100 KB.
 
 ## Open
 
-- Pin 17: on `move(replace=True)`, the destination's identity survives
-  (spec 167's lean) or the source's (POSIX's).
+- Pin 17: on `move(replace=True)`, the destination's identity survives (spec 167's lean) or the source's (POSIX's).
 - The replay row's time to live (spec 177 leans 24 hours).
-- Whether an integrity failure is a kind of its own or rides
-  `unavailable`.
+- Whether an integrity failure is a kind of its own or rides `unavailable`.

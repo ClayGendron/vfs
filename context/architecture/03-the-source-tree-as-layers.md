@@ -1,15 +1,9 @@
 # 03. The source tree as layers
 
 - **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-- **Shows:** every module under `src/vfs/` and the Rust crate, placed
-  in the layer it serves, with one line on what each owns. This is
-  the map from the design words to the files.
-- **Legend:** boxes are modules or packages. Arrows point from a
-  module to what it imports, at the layer level only. Planned
-  packages are dashed.
-- **Sources:** the module docstrings under `src/vfs/`;
-  `crates/vfs-core/src/lib.rs`; spec 167 (`shell/`), spec 171 (`mcp/`),
-  spec 181 (`derived.py`, `chain.py`).
+- **Shows:** every module under `src/vfs/` and the Rust crate, placed in the layer it serves, with one line on what each owns. This is the map from the design words to the files.
+- **Legend:** boxes are modules or packages. Arrows point from a module to what it imports, at the layer level only. Planned packages are dashed.
+- **Sources:** the module docstrings under `src/vfs/`; `crates/vfs-core/src/lib.rs`; spec 167 (`shell/`), spec 171 (`mcp/`), spec 181 (`derived.py`, `chain.py`).
 
 ## The picture
 
@@ -77,8 +71,7 @@ flowchart TB
 
 ## The database backend, module by module
 
-`storage/backends/database/` is the largest package. Each module owns
-one concern.
+`storage/backends/database/` is the largest package. Each module owns one concern.
 
 | Module | Owns |
 |---|---|
@@ -109,26 +102,11 @@ one concern.
 
 ## Reading the picture
 
-The layers import downward, with two exceptions worth knowing. The
-router imports the models and the storage seam, and also two concrete
-pieces of the database backend: `InMemoryStorage` as the default root
-and one trash constant from `descent.py`. And `base.py` imports
-`Session` at runtime so `vfs.session()` can build one, while
-`session.py` imports the router only for typing; the runtime arrow
-between those two points from the router to the surface. Storage
-imports the models and the outside seams. The one leaf that everything
-may import is `native.py`, which imports nothing else from vfs.
+The layers import downward, with two exceptions worth knowing. The router imports the models and the storage seam, and also two concrete pieces of the database backend: `InMemoryStorage` as the default root and one trash constant from `descent.py`. And `base.py` imports `Session` at runtime so `vfs.session()` can build one, while `session.py` imports the router only for typing; the runtime arrow between those two points from the router to the surface. Storage imports the models and the outside seams. The one leaf that everything may import is `native.py`, which imports nothing else from vfs.
 
-Two modules define vocabulary that every layer shares and neither
-layer may redefine. `ops.py` is the verb vocabulary: the names, the
-dispatch classes, the ladder, and the rung each verb needs. `params.py`
-is the parameter vocabulary: one row per public parameter, read by
-the router's gate, the signature drift test, and the planned wire
-schemas.
+Two modules define vocabulary that every layer shares and neither layer may redefine. `ops.py` is the verb vocabulary: the names, the dispatch classes, the ladder, and the rung each verb needs. `params.py` is the parameter vocabulary: one row per public parameter, read by the router's gate, the signature drift test, and the planned wire schemas.
 
-`pattern_matching/` is pure. Paths and text go in; decisions come out.
-It knows nothing about rows, sessions or the router. Storage prefilters
-and router dispatch both defer to it.
+`pattern_matching/` is pure. Paths and text go in; decisions come out. It knows nothing about rows, sessions or the router. Storage prefilters and router dispatch both defer to it.
 
 ## Terms this diagram introduces
 
@@ -143,9 +121,6 @@ and router dispatch both defer to it.
 ## What is planned, and where
 
 - `shell/` (spec 167): `parse.py`, `programs/`, `run.py`, `status.py`.
-- `mcp/` (spec 171): `serve.py`, `adapter.py`, `schemas.py`, behind
-  the `vfs-py[mcp]` extra.
-- `derived.py` and `chain.py` (specs 179, 181): the derived verbs and
-  the rows-in-hand filters that leave `glob` and `grep`.
-- `src2/` and `tests2/` are archived pre-refactor code, not part of
-  this map.
+- `mcp/` (spec 171): `serve.py`, `adapter.py`, `schemas.py`, behind the `vfs-py[mcp]` extra.
+- `derived.py` and `chain.py` (specs 179, 181): the derived verbs and the rows-in-hand filters that leave `glob` and `grep`.
+- `src2/` and `tests2/` are archived pre-refactor code, not part of this map.

@@ -1,88 +1,33 @@
 # Study 03 — File System Implementation (vsfs), laid against vfs's tables
 
 - **Date:** 2026-10-24
-- **Book section:** OSTEP v1.10, chapter 40, *File System
-  Implementation* (PDF pages 535–552). Page numbers below are the
-  chapter's own page numbers (p. 1–18). PDF page = chapter page + 534.
-- **vfs commit:** `ac5c515` (`main`, with the uncommitted ADR 081–086
-  and spec 166–173 drafts in the tree).
-- **Prior work cited, not redone:** study 05 of the 2026-10-23 set,
-  `context/research/studies/2026-10-23-filesystem-shaped-api/05-vfs-surface-audit.md`,
-  and its scripts under `experiments/s05/` (statement counts per verb
-  per authority, the 10,000-child `ls`, object allocations).
-- **New scripts (EXECUTED, in the session scratchpad, outputs beside
-  them):** `ostep/experiments/s03/access_paths.py` → `access_paths.out`
-  (ordered statement list per verb with rows returned, bytes bound and
-  bytes fetched; path depth 2 vs 20; a 4 MiB body; 10,000 overwrites in
-  one call vs 200 one-file calls; create-then-delete residue) and
-  `ostep/experiments/s03/edit_probe.py` (the SQL text of an edit's
-  first statements). Both run on `InMemoryStorage` (SQLite through
-  aiosqlite), system actor unless named. Every number is a count:
-  statements, rows, bytes. Nothing is timed.
-- **Engine references (READ, not refreshed for this study):**
-  `~/Git/Repos/postgres` at `b128e75e` (2026-10-14), PostgreSQL
-  licence; `~/Git/Repos/sqlite` at `3d17c3f9e` (2026-08-04), public
-  domain. Cited for how each engine stores one large value.
-- **Labels:** READ = the book (chapter and page) or a file at this
-  commit; EXECUTED = ran here with `uv run`; INFERRED = my reasoning
-  across sources.
+- **Book section:** OSTEP v1.10, chapter 40, *File System Implementation* (PDF pages 535–552). Page numbers below are the chapter's own page numbers (p. 1–18). PDF page = chapter page + 534.
+- **vfs commit:** `ac5c515` (`main`, with the uncommitted ADR 081–086 and spec 166–173 drafts in the tree).
+- **Prior work cited, not redone:** study 05 of the 2026-10-23 set, `context/research/studies/2026-10-23-filesystem-shaped-api/05-vfs-surface-audit.md`, and its scripts under `experiments/s05/` (statement counts per verb per authority, the 10,000-child `ls`, object allocations).
+- **New scripts (EXECUTED, in the session scratchpad, outputs beside them):** `ostep/experiments/s03/access_paths.py` → `access_paths.out` (ordered statement list per verb with rows returned, bytes bound and bytes fetched; path depth 2 vs 20; a 4 MiB body; 10,000 overwrites in one call vs 200 one-file calls; create-then-delete residue) and `ostep/experiments/s03/edit_probe.py` (the SQL text of an edit's first statements). Both run on `InMemoryStorage` (SQLite through aiosqlite), system actor unless named. Every number is a count: statements, rows, bytes. Nothing is timed.
+- **Engine references (READ, not refreshed for this study):** `~/Git/Repos/postgres` at `b128e75e` (2026-10-14), PostgreSQL licence; `~/Git/Repos/sqlite` at `3d17c3f9e` (2026-08-04), public domain. Cited for how each engine stores one large value.
+- **Labels:** READ = the book (chapter and page) or a file at this commit; EXECUTED = ran here with `uv run`; INFERRED = my reasoning across sources.
 - **Book text:** paraphrased only, never quoted, per the brief.
 
 Terms used below, defined once:
 
-- **Access path**: the ordered list of storage reads and writes one
-  call performs. The chapter draws these as timelines.
-- **Statement**: one SQL round trip the driver executes. An
-  `executemany` over 10,000 parameter rows counts as one statement in
-  SQLAlchemy's `before_cursor_execute` hook.
-- **Bytes sent / fetched**: the sizes of the string and bytes values
-  bound as parameters, and of those returned in result rows.
-- **Body**: a file's content. Text lives in `vfs_content`, bytes in
-  `vfs_blobs`.
-- **Pre-image**: the body a write is about to replace. vfs keeps it as
-  a version row.
+- **Access path**: the ordered list of storage reads and writes one call performs. The chapter draws these as timelines.
+- **Statement**: one SQL round trip the driver executes. An `executemany` over 10,000 parameter rows counts as one statement in SQLAlchemy's `before_cursor_execute` hook.
+- **Bytes sent / fetched**: the sizes of the string and bytes values bound as parameters, and of those returned in result rows.
+- **Body**: a file's content. Text lives in `vfs_content`, bytes in `vfs_blobs`.
+- **Pre-image**: the body a write is about to replace. vfs keeps it as a version row.
 
 ## 1. What the chapter says
 
-The chapter builds a toy Unix-like file system, vsfs, to teach one
-habit of mind. To understand any file system, learn two things: the
-structures it keeps on disk, and the access paths that each call walks
-through those structures (ch. 40 p. 1–2). The disk is cut into
-fixed-size blocks. Most blocks hold user data. A few hold the
-superblock (what this file system is and where its parts start), two
-bitmaps (which inodes and which data blocks are free), and the inode
-table (p. 2–4). An inode is a small fixed-size record of a file's
-metadata and of where its data blocks sit. Its number alone tells you
-where it lives on disk (p. 4–5). To reach big files, the inode uses a
-lopsided tree of pointers: a few direct pointers, then indirect blocks
-of pointers, then doubly and triply indirect ones. The tree is lopsided
-on purpose, because measured file systems hold mostly small files and a
-few huge ones (p. 6–8). Extents (a start plus a length) and linked
-allocation (FAT) are the alternatives (p. 7, 9). A directory is just a
-file whose data is a list of name-to-inode-number pairs, with tricks
-for deleted entries; XFS keeps directories as B-trees so that a create
-can check name uniqueness fast (p. 8–9). Free space is tracked in the
-bitmaps; ext2 also pre-allocates runs of blocks for locality (p. 10).
-The heart of the chapter is two timelines that count every disk read
-and write. Opening a file walks the path from the root, two reads per
-level. Each read of a block also writes the inode to record the access
-time. Each allocating write costs five I/Os. Creating one file costs
-about ten (p. 10–14). The chapter then asks how to make all this
-cheaper. The answer is memory: a cache for reads, sized dynamically in
-a unified page cache, and buffering for writes. Delaying writes lets
-the system batch them, schedule them, and sometimes skip them. The
-price is durability: a crash loses what was buffered. Applications that
-cannot accept that loss force writes out with `fsync` (p. 14–16).
+The chapter builds a toy Unix-like file system, vsfs, to teach one habit of mind. To understand any file system, learn two things: the structures it keeps on disk, and the access paths that each call walks through those structures (ch. 40 p. 1–2). The disk is cut into fixed-size blocks. Most blocks hold user data. A few hold the superblock (what this file system is and where its parts start), two bitmaps (which inodes and which data blocks are free), and the inode table (p. 2–4). An inode is a small fixed-size record of a file's metadata and of where its data blocks sit. Its number alone tells you where it lives on disk (p. 4–5). To reach big files, the inode uses a lopsided tree of pointers: a few direct pointers, then indirect blocks of pointers, then doubly and triply indirect ones. The tree is lopsided on purpose, because measured file systems hold mostly small files and a few huge ones (p. 6–8). Extents (a start plus a length) and linked allocation (FAT) are the alternatives (p. 7, 9). A directory is just a file whose data is a list of name-to-inode-number pairs, with tricks for deleted entries; XFS keeps directories as B-trees so that a create can check name uniqueness fast (p. 8–9). Free space is tracked in the bitmaps; ext2 also pre-allocates runs of blocks for locality (p. 10). The heart of the chapter is two timelines that count every disk read and write. Opening a file walks the path from the root, two reads per level. Each read of a block also writes the inode to record the access time. Each allocating write costs five I/Os. Creating one file costs about ten (p. 10–14). The chapter then asks how to make all this cheaper. The answer is memory: a cache for reads, sized dynamically in a unified page cache, and buffering for writes. Delaying writes lets the system batch them, schedule them, and sometimes skip them. The price is durability: a crash loses what was buffered. Applications that cannot accept that loss force writes out with `fsync` (p. 14–16).
 
 ## 2. Principles vfs should adopt
 
-Each item gives the principle, where the book teaches it, where vfs
-stands, and the one change it implies.
+Each item gives the principle, where the book teaches it, where vfs stands, and the one change it implies.
 
 ### 2.1 vfs's own on-disk layout, drawn the chapter's way
 
-First the picture the chapter would draw for vfs. READ,
-`src/vfs/models/rows.py`, unless marked.
+First the picture the chapter would draw for vfs. READ, `src/vfs/models/rows.py`, unless marked.
 
 | vsfs region (ch. 40 p. 2–4) | vfs's stand-in | What it holds |
 |---|---|---|
@@ -97,17 +42,11 @@ First the picture the chapter would draw for vfs. READ,
 | (no vsfs analogue) | `vfs_grants`, `vfs_memberships`, `vfs_relabels`, `vfs_principal_revisions` | Rights |
 | (no vsfs analogue) | `vfs_lock`, one row | The serialization point for move, copy and delete (ADR 078) |
 
-Twenty-three tables in one mount (`VFSTables`). vsfs has five regions.
-The extra eighteen are history, search and rights: the three things
-vfs exists to add on top of a file system.
+Twenty-three tables in one mount (`VFSTables`). vsfs has five regions. The extra eighteen are history, search and rights: the three things vfs exists to add on top of a file system.
 
 ### 2.2 vfs's access paths, drawn the chapter's way
 
-The chapter's timelines (ch. 40 p. 11, p. 13) list every block touched
-per call. Here is the same thing for vfs: every statement, in order,
-with the table it touches. EXECUTED, `access_paths.out`, section A.
-System actor, file `/docs/a.md` (depth 2, 60-byte body). R = read,
-W = write, D = delete.
+The chapter's timelines (ch. 40 p. 11, p. 13) list every block touched per call. Here is the same thing for vfs: every statement, in order, with the table it touches. EXECUTED, `access_paths.out`, section A. System actor, file `/docs/a.md` (depth 2, 60-byte body). R = read, W = write, D = delete.
 
 **read(/docs/a.md)** — 1 statement, 3 rows back, 330 B fetched.
 
@@ -115,8 +54,7 @@ W = write, D = delete.
 |---|---|---|---|
 | 1 | R `vfs_entries` LEFT JOIN `vfs_content`, `path IN ('/', '/docs', '/docs/a.md')` | 3 | target and every ancestor in one go; the ancestors classify a miss and carry rights |
 
-**stat(/docs/a.md)** — the same select without the body join. 1
-statement, 3 rows, 270 B.
+**stat(/docs/a.md)** — the same select without the body join. 1 statement, 3 rows, 270 B.
 
 **ls(/docs)** — 2 statements, 318 B.
 
@@ -151,20 +89,11 @@ statement, 3 rows, 270 B.
 | 6–7 | D `vfs_content`, D `vfs_blobs` | — | delete-then-insert of the body |
 | 8 | W `vfs_content` INSERT | — | the new body |
 
-**edit (/docs/b.md, `y` → `z`)** — 9 statements: the write-update list
-above, except the snapshot joins the body (it needs the old text to
-edit), and one extra select of the root row appears (principle 14).
+**edit (/docs/b.md, `y` → `z`)** — 9 statements: the write-update list above, except the snapshot joins the body (it needs the old text to edit), and one extra select of the root row appears (principle 14).
 
-Named principal (section B): add 2 reads at the front,
-`vfs_principal_revisions` and `vfs_relabels`. These are the rights
-stamps that validate the cached rights. A write by a named principal
-also writes one `vfs_version_subjects` row. Anonymous adds a
-`vfs_grants` read (study 05 §7). Delete (study 05): R `vfs_entries`,
-R `vfs_lock`, two W `vfs_entries` (stamp the root, stamp the
-descendants).
+Named principal (section B): add 2 reads at the front, `vfs_principal_revisions` and `vfs_relabels`. These are the rights stamps that validate the cached rights. A write by a named principal also writes one `vfs_version_subjects` row. Anonymous adds a `vfs_grants` read (study 05 §7). Delete (study 05): R `vfs_entries`, R `vfs_lock`, two W `vfs_entries` (stamp the root, stamp the descendants).
 
-The summary grid, one row per verb, one column per table (system
-actor):
+The summary grid, one row per verb, one column per table (system actor):
 
 | Verb | entries | content | blobs | versions | meta | grants | segments | edges | lock |
 |---|---|---|---|---|---|---|---|---|---|
@@ -178,120 +107,44 @@ actor):
 
 ### 2.3 The principles
 
-1. **Understand a file system by two things: what it stores, and the
-   path each call takes through what it stores.**
+1. **Understand a file system by two things: what it stores, and the path each call takes through what it stores.**
    - Book: ch. 40 p. 1–2 (the two aspects, and the mental-model aside).
-   - vfs: **half follows.** The storage half is well documented:
-     `rows.py` explains every table and index (READ). The access-path
-     half exists only in pieces. `tests/storage/database/test_writes.py:111`
-     pins the create and overwrite counts at 8 non-control statements
-     each, and `tests/storage/database/test_reads.py:294` pins that the
-     read family issues SELECTs only (READ). No test or doc shows the
-     ordered path per verb, as §2.2 does.
-   - Change: keep an **access-path table per verb** as a golden test:
-     the ordered list of (statement kind, first table) for read, stat,
-     ls, write-create, write-update, edit, delete, at three authorities.
-     A new statement then shows up as a reviewed diff, not a surprise
-     (INFERRED).
+   - vfs: **half follows.** The storage half is well documented: `rows.py` explains every table and index (READ). The access-path half exists only in pieces. `tests/storage/database/test_writes.py:111` pins the create and overwrite counts at 8 non-control statements each, and `tests/storage/database/test_reads.py:294` pins that the read family issues SELECTs only (READ). No test or doc shows the ordered path per verb, as §2.2 does.
+   - Change: keep an **access-path table per verb** as a golden test: the ordered list of (statement kind, first table) for read, stat, ls, write-create, write-update, edit, delete, at three authorities. A new statement then shows up as a reviewed diff, not a surprise (INFERRED).
 
-2. **Count the I/Os per step on a timeline, and count the unit that
-   actually costs.**
-   - Book: ch. 40 p. 11–14 (both timelines; five I/Os per allocating
-     write, about ten per create, open cost grows with path length).
-   - vfs: **half follows.** CLAUDE.md already says count operations,
-     never wall-clock, and the tests count statements (READ). But a
-     statement is not vfs's only cost. EXECUTED, section D: a one-byte
-     edit of a 4 MiB text file issues the same 9 statements as a
-     one-byte edit of a 2-byte file. It fetches **8,388,752 bytes** and
-     sends **8,388,980 bytes**. The small edit fetched 130 bytes and sent 355. The statement count
-     hides a difference of tens of thousands of times in bytes moved. In the other direction, section E: 10,000
-     overwrites in one call issue 15 statements but send 3.7 MB, because
-     `executemany` counts once.
-   - Change: count **three units** in the access-path test: statements,
-     rows, and body bytes moved (bound plus fetched). The book's unit
-     was a block; vfs's honest unit is a round trip *and* its payload
-     (INFERRED).
+2. **Count the I/Os per step on a timeline, and count the unit that actually costs.**
+   - Book: ch. 40 p. 11–14 (both timelines; five I/Os per allocating write, about ten per create, open cost grows with path length).
+   - vfs: **half follows.** CLAUDE.md already says count operations, never wall-clock, and the tests count statements (READ). But a statement is not vfs's only cost. EXECUTED, section D: a one-byte edit of a 4 MiB text file issues the same 9 statements as a one-byte edit of a 2-byte file. It fetches **8,388,752 bytes** and sends **8,388,980 bytes**. The small edit fetched 130 bytes and sent 355. The statement count hides a difference of tens of thousands of times in bytes moved. In the other direction, section E: 10,000 overwrites in one call issue 15 statements but send 3.7 MB, because `executemany` counts once.
+   - Change: count **three units** in the access-path test: statements, rows, and body bytes moved (bound plus fetched). The book's unit was a block; vfs's honest unit is a round trip *and* its payload (INFERRED).
 
-3. **Keep per-file metadata small and apart from the data, so metadata
-   calls never touch data.**
-   - Book: ch. 40 p. 4–6 (the inode is small, fixed, and points at the
-     data).
-   - vfs: **follows.** `rows.py` keeps bodies out of `vfs_entries` so a
-     metadata write never rewrites a body (READ, the `ENTRY_BODY_HOMES`
-     comment). EXECUTED: `stat` of the 4 MiB file fetched 273 bytes;
-     `ls /docs` with that file as a child fetched 453 bytes.
-   - Change: none to the design. Pin it: `stat` and `ls` fetch zero body
-     bytes, whatever the body size.
+3. **Keep per-file metadata small and apart from the data, so metadata calls never touch data.**
+   - Book: ch. 40 p. 4–6 (the inode is small, fixed, and points at the data).
+   - vfs: **follows.** `rows.py` keeps bodies out of `vfs_entries` so a metadata write never rewrites a body (READ, the `ENTRY_BODY_HOMES` comment). EXECUTED: `stat` of the 4 MiB file fetched 273 bytes; `ls /docs` with that file as a child fetched 453 bytes.
+   - Change: none to the design. Pin it: `stat` and `ls` fetch zero body bytes, whatever the body size.
 
-4. **A read never writes, and never touches the structures only writes
-   need.**
-   - Book: ch. 40 p. 12 (reads do not consult the allocation bitmaps).
-     The same timeline shows the cost of breaking the rule: vsfs writes
-     the inode's access time on every block read (p. 11–12).
-   - vfs: **follows, more strictly than vsfs.** Read builders execute
-     SELECTs only (`reads.py` docstring; `test_reads.py:294`) (READ).
-     There is no access time (`Observation` carries `created_at`,
-     `updated_at`, `deleted_at`; study 05 §4e) (READ). EXECUTED: a read
-     touches `vfs_entries` and `vfs_content` only; it never touches
-     `vfs_meta`, `vfs_lock` or `vfs_grants` as the system actor.
-   - Change: none. Record the absence of an access time as deliberate wherever the
-     stat fields are listed, so a future front (FUSE, WASI) does not add
-     one as a write-on-read (INFERRED).
+4. **A read never writes, and never touches the structures only writes need.**
+   - Book: ch. 40 p. 12 (reads do not consult the allocation bitmaps). The same timeline shows the cost of breaking the rule: vsfs writes the inode's access time on every block read (p. 11–12).
+   - vfs: **follows, more strictly than vsfs.** Read builders execute SELECTs only (`reads.py` docstring; `test_reads.py:294`) (READ). There is no access time (`Observation` carries `created_at`, `updated_at`, `deleted_at`; study 05 §4e) (READ). EXECUTED: a read touches `vfs_entries` and `vfs_content` only; it never touches `vfs_meta`, `vfs_lock` or `vfs_grants` as the system actor.
+   - Change: none. Record the absence of an access time as deliberate wherever the stat fields are listed, so a future front (FUSE, WASI) does not add one as a write-on-read (INFERRED).
 
 5. **Path lookup must not cost one round trip per path level.**
-   - Book: ch. 40 p. 12 and p. 14 (open cost grows with the number of
-     directories in the path; a hundred-level path means hundreds of
-     reads without a cache).
-   - vfs: **follows.** One `path IN` select fetches the target, every
-     ancestor, and the root together (`descent.py`
-     `targets_with_ancestors`, `reads.py` `_mappings_by_path`) (READ).
-     EXECUTED, section C: `stat` at depth 20 is **1 statement, 21 rows,
-     2,122 bytes**; at depth 2 it is 1 statement, 3 rows. vsfs would do
-     about 40 block reads for the same walk. The cost that still grows
-     with depth is rows, not round trips. One write cost also grows with
-     depth: a create at depth 20 inserts 19 `vfs_segments` rows, one per
-     ancestor name (EXECUTED, 352 bytes; READ, `rows.py` segments
-     comment).
-   - Change: none to the design. Add depth as a dimension of the
-     access-path test (statements constant, rows linear).
+   - Book: ch. 40 p. 12 and p. 14 (open cost grows with the number of directories in the path; a hundred-level path means hundreds of reads without a cache).
+   - vfs: **follows.** One `path IN` select fetches the target, every ancestor, and the root together (`descent.py` `targets_with_ancestors`, `reads.py` `_mappings_by_path`) (READ). EXECUTED, section C: `stat` at depth 20 is **1 statement, 21 rows, 2,122 bytes**; at depth 2 it is 1 statement, 3 rows. vsfs would do about 40 block reads for the same walk. The cost that still grows with depth is rows, not round trips. One write cost also grows with depth: a create at depth 20 inserts 19 `vfs_segments` rows, one per ancestor name (EXECUTED, 352 bytes; READ, `rows.py` segments comment).
+   - Change: none to the design. Add depth as a dimension of the access-path test (statements constant, rows linear).
 
 6. **A create must not read and write a structure every create shares.**
-   - Book: ch. 40 p. 10 and p. 13 (a create reads and writes the inode
-     bitmap; an allocating write reads and writes the data bitmap). The
-     book's own fix comes later: buffer the bitmap and batch it (p. 15).
-   - vfs: **follows, by decision.** ADR 013 dropped the per-mount
-     revision counter because every write held its lock. Versions are
-     per-entry values on their own rows (`writes.py` docstring: no
-     per-mount counter) (READ). Identity is a ULID minted by vfs, not
-     allocated from a table (ADR 019, `ULIDKey` in `rows.py`) (READ).
-     EXECUTED: a create touches no `vfs_meta` and no `vfs_lock` row. An
-     update *reads* `vfs_meta` once for the grant revision. That is a
-     read of a shared row, not a write.
-   - Change: none. Pin the rule in the access-path test: no create or
-     update path *writes* a mount-wide row (`vfs_meta`, `vfs_lock`).
+   - Book: ch. 40 p. 10 and p. 13 (a create reads and writes the inode bitmap; an allocating write reads and writes the data bitmap). The book's own fix comes later: buffer the bitmap and batch it (p. 15).
+   - vfs: **follows, by decision.** ADR 013 dropped the per-mount revision counter because every write held its lock. Versions are per-entry values on their own rows (`writes.py` docstring: no per-mount counter) (READ). Identity is a ULID minted by vfs, not allocated from a table (ADR 019, `ULIDKey` in `rows.py`) (READ). EXECUTED: a create touches no `vfs_meta` and no `vfs_lock` row. An update *reads* `vfs_meta` once for the grant revision. That is a read of a shared row, not a write.
+   - Change: none. Pin the rule in the access-path test: no create or update path *writes* a mount-wide row (`vfs_meta`, `vfs_lock`).
 
-7. **Name uniqueness in a directory should be checked by an index, not
-   a scan.**
-   - Book: ch. 40 p. 9 (XFS keeps directories as B-trees so a create
-     can check a name fast; a plain list must be scanned).
-   - vfs: **follows.** `UNIQUE(parent_id, name)` arbitrates concurrent
-     creates and orders listings (`rows.py`, `uq_vfs_entries_parent_name`)
-     (READ).
-   - Change: the same index carries the listing cursor. Keyset on
-     `(parent_id, name)`, as yesterday's memo §4.2 recommends; study 05
-     §4b measured `ls` of 10,000 children returning all 10,000 rows in 3
-     statements, with no cursor.
+7. **Name uniqueness in a directory should be checked by an index, not a scan.**
+   - Book: ch. 40 p. 9 (XFS keeps directories as B-trees so a create can check a name fast; a plain list must be scanned).
+   - vfs: **follows.** `UNIQUE(parent_id, name)` arbitrates concurrent creates and orders listings (`rows.py`, `uq_vfs_entries_parent_name`) (READ).
+   - Change: the same index carries the listing cursor. Keyset on `(parent_id, name)`, as yesterday's memo §4.2 recommends; study 05 §4b measured `ls` of 10,000 children returning all 10,000 rows in 3 statements, with no cursor.
 
-8. **Build for the measured common case: most files are small, and a
-   few large files hold most of the bytes.**
-   - Book: ch. 40 p. 7–8 (the lopsided multi-level index exists because
-     of this; the measurement summary on p. 8; and the advice to
-     revisit the design when workloads change, p. 8).
-   - vfs: **half follows.** One whole body per row is the small-file
-     fast path. It is the vfs version of the inode's direct pointers: a
-     small file is one row and one probe. But vfs has no indirect
-     tier of its own. A large body pays its whole size on every change.
-     EXECUTED, section D, one-byte change to a 4 MiB body:
+8. **Build for the measured common case: most files are small, and a few large files hold most of the bytes.**
+   - Book: ch. 40 p. 7–8 (the lopsided multi-level index exists because of this; the measurement summary on p. 8; and the advice to revisit the design when workloads change, p. 8).
+   - vfs: **half follows.** One whole body per row is the small-file fast path. It is the vfs version of the inode's direct pointers: a small file is one row and one probe. But vfs has no indirect tier of its own. A large body pays its whole size on every change. EXECUTED, section D, one-byte change to a 4 MiB body:
 
      | Call | Statements | Bytes fetched | Bytes sent |
      |---|---|---|---|
@@ -317,120 +170,40 @@ actor):
      inside SQLite. So vfs does have an indirect tier: the engine's.
      vfs's update path defeats it by replacing the whole value
      (INFERRED).
-   - Change: measure vfs's own file-size distribution before choosing a
-     chunked body (the chapter's p. 8 table, for vfs's corpora: agent
-     workspaces, code, ETL loads). Name the direction in the
-     `versions.py` and `writes.py` docstrings, never as a cap: ranged
-     read through the engine's `substr` (memo §4.5), and diff-form
-     versions for large text (the `version_diff` column already exists
-     in `rows.py`; the write path stores snapshots only).
+   - Change: measure vfs's own file-size distribution before choosing a chunked body (the chapter's p. 8 table, for vfs's corpora: agent workspaces, code, ETL loads). Name the direction in the `versions.py` and `writes.py` docstrings, never as a cap: ranged read through the engine's `substr` (memo §4.5), and diff-form versions for large text (the `version_diff` column already exists in `rows.py`; the write path stores snapshots only).
 
-9. **Buffering writes trades durability for fewer I/Os, so decide per
-   kind of data which side it sits on.**
-   - Book: ch. 40 p. 15–16 (batching, scheduling and avoidance; the
-     5–30 second window; the durability/performance tip; databases
-     force writes with `fsync`).
-   - vfs: **follows, with a split the chapter does not draw.** Primary
-     data is never buffered: each call is one transaction, committed
-     before the `Result` returns (`backend.py` `_mutate`) (READ). Derived
-     index data *is* deferred. A write only resets the `chunked` and
-     `encoded` flags; trigram, BM25, chunk and embedding rows wait for
-     `reindex` (ADR 033 §6: no per-write index maintenance;
-     `indexing.py` docstring) (READ). Correctness survives the delay:
-     the scan side serves every `NOT encoded` row (ADR 033 §5, ADR 051
-     decision 7) (READ). Only two derived facts are written in the same
-     transaction: path segments and the `fs` edge (EXECUTED, §2.2).
-     This is write buffering done safely. The buffered data is
-     rebuildable, and readers have a correct path while it is stale.
-   - Change: none to vfs. **One correction for the synthesis**:
-     yesterday's memo (§0 and §4.3) says the trigram, lexical and vector
-     indexes are written in the same transaction as the body. At this
-     commit they are not; only `vfs_segments` and the `fs` edge are
-     (READ + EXECUTED). The kernel ADR should state the real split.
+9. **Buffering writes trades durability for fewer I/Os, so decide per kind of data which side it sits on.**
+   - Book: ch. 40 p. 15–16 (batching, scheduling and avoidance; the 5–30 second window; the durability/performance tip; databases force writes with `fsync`).
+   - vfs: **follows, with a split the chapter does not draw.** Primary data is never buffered: each call is one transaction, committed before the `Result` returns (`backend.py` `_mutate`) (READ). Derived index data *is* deferred. A write only resets the `chunked` and `encoded` flags; trigram, BM25, chunk and embedding rows wait for `reindex` (ADR 033 §6: no per-write index maintenance; `indexing.py` docstring) (READ). Correctness survives the delay: the scan side serves every `NOT encoded` row (ADR 033 §5, ADR 051 decision 7) (READ). Only two derived facts are written in the same transaction: path segments and the `fs` edge (EXECUTED, §2.2). This is write buffering done safely. The buffered data is rebuildable, and readers have a correct path while it is stale.
+   - Change: none to vfs. **One correction for the synthesis**: yesterday's memo (§0 and §4.3) says the trigram, lexical and vector indexes are written in the same transaction as the body. At this commit they are not; only `vfs_segments` and the `fs` edge are (READ + EXECUTED). The kernel ADR should state the real split.
 
 10. **Batching is how you amortize the fixed cost of an I/O.**
-    - Book: ch. 40 p. 15 (delaying the bitmap write lets two creates
-      share one I/O).
-    - vfs: **follows, with the caller doing the batching.** EXECUTED,
-      section E: 10,000 overwrites in one `write(entries=…)` cost **15
-      statements**; 200 overwrites in 200 calls cost **2,200
-      statements** (11 each). That is about 0.0015 statements per file
-      against 11. This is the ETL contract in CLAUDE.md (READ). An agent
-      loop that writes one file per call gets no batching. vfs holds no
-      dirty state between calls, so it cannot merge two calls into one
-      commit.
-    - Change: none in the kernel. If a front ever coalesces small writes
-      across calls, it moves the durability point, and it must say so
-      in its contract (INFERRED; principle 9).
+    - Book: ch. 40 p. 15 (delaying the bitmap write lets two creates share one I/O).
+    - vfs: **follows, with the caller doing the batching.** EXECUTED, section E: 10,000 overwrites in one `write(entries=…)` cost **15 statements**; 200 overwrites in 200 calls cost **2,200 statements** (11 each). That is about 0.0015 statements per file against 11. This is the ETL contract in CLAUDE.md (READ). An agent loop that writes one file per call gets no batching. vfs holds no dirty state between calls, so it cannot merge two calls into one commit.
+    - Change: none in the kernel. If a front ever coalesces small writes across calls, it moves the durability point, and it must say so in its contract (INFERRED; principle 9).
 
-11. **Laziness can skip work entirely: a file created and then deleted
-    before the flush never reaches disk.**
+11. **Laziness can skip work entirely: a file created and then deleted before the flush never reaches disk.**
     - Book: ch. 40 p. 15.
-    - vfs: **does not, on purpose.** EXECUTED, section F: create then
-      delete leaves 1 `entries` row (tombstoned), 1 `content` row, 1
-      `segments` row and 1 `edges` row. Delete never destroys; `sweep`
-      is the only destroyer (ADR 027); trash is a tombstone on the row
-      (ADR 074) (READ).
-    - Change: none. Keep it as a deliberate non-adoption. Undo and audit
-      need the row.
+    - vfs: **does not, on purpose.** EXECUTED, section F: create then delete leaves 1 `entries` row (tombstoned), 1 `content` row, 1 `segments` row and 1 `edges` row. Delete never destroys; `sweep` is the only destroyer (ADR 027); trash is a tombstone on the row (ADR 074) (READ).
+    - Change: none. Keep it as a deliberate non-adoption. Undo and audit need the row.
 
-12. **Cache in one shared, dynamically sized pool rather than in fixed
-    private slices.**
-    - Book: ch. 40 p. 14–15 (the unified page cache; the static vs
-      dynamic partitioning tip).
-    - vfs: **follows, by having almost no cache of its own.** Rows and
-      bodies are cached by the engine's buffer pool, shared by every
-      process that talks to the database (INFERRED from the code: no
-      row or body cache exists in `src/vfs`). The caches vfs does keep
-      are small and statically bounded: `RightsCache`, bounded by
-      entries and bytes (`rights.py:250`), and the table-family LRU of
-      64 (`rows.py` `TABLE_FAMILY_CACHE`) (READ).
-    - Change: if a body cache arrives (the WASI provider's staged
-      buffers keyed by `(path, version)`, spec 172 per study 05 §4f),
-      key it by `version`. Versions only ever rise per entry (ADR 013),
-      so a cached body is valid exactly when a `stat` shows the same
-      version. That `stat` costs 1 statement and no body bytes
-      (principle 3).
+12. **Cache in one shared, dynamically sized pool rather than in fixed private slices.**
+    - Book: ch. 40 p. 14–15 (the unified page cache; the static vs dynamic partitioning tip).
+    - vfs: **follows, by having almost no cache of its own.** Rows and bodies are cached by the engine's buffer pool, shared by every process that talks to the database (INFERRED from the code: no row or body cache exists in `src/vfs`). The caches vfs does keep are small and statically bounded: `RightsCache`, bounded by entries and bytes (`rights.py:250`), and the table-family LRU of 64 (`rows.py` `TABLE_FAMILY_CACHE`) (READ).
+    - Change: if a body cache arrives (the WASI provider's staged buffers keyed by `(path, version)`, spec 172 per study 05 §4f), key it by `version`. Versions only ever rise per entry (ADR 013), so a cached body is valid exactly when a `stat` shows the same version. That `stat` costs 1 statement and no body bytes (principle 3).
 
-13. **The superblock is read once, at mount, and names the file
-    system's format.**
-    - Book: ch. 40 p. 4 (mount reads the superblock first; it carries a
-      magic number and the layout).
-    - vfs: **follows.** `vfs_meta` holds `schema_format_version`, and
-      first touch compares it and refuses loudly on mismatch (`rows.py`
-      `SCHEMA_FORMAT_VERSION` comment) (READ). First touch costs 100
-      statements, once (study 05 §7, EXECUTED there). ADR 078 moved the
-      serialization lock out of this row into `vfs_lock`, so the
-      meta row is not every writer's choke point (READ).
+13. **The superblock is read once, at mount, and names the file system's format.**
+    - Book: ch. 40 p. 4 (mount reads the superblock first; it carries a magic number and the layout).
+    - vfs: **follows.** `vfs_meta` holds `schema_format_version`, and first touch compares it and refuses loudly on mismatch (`rows.py` `SCHEMA_FORMAT_VERSION` comment) (READ). First touch costs 100 statements, once (study 05 §7, EXECUTED there). ADR 078 moved the serialization lock out of this row into `vfs_lock`, so the meta row is not every writer's choke point (READ).
     - Change: none.
 
-14. **Look for the hidden I/Os, the ones the obvious model does not
-    predict.**
-    - Book: ch. 40 p. 14, footnote 2 (creating an inode costs a read,
-      because the inode shares a block with others and the update is a
-      read-modify-write).
+14. **Look for the hidden I/Os, the ones the obvious model does not predict.**
+    - Book: ch. 40 p. 14, footnote 2 (creating an inode costs a read, because the inode shares a block with others and the update is a read-modify-write).
     - vfs: **has three of its own.** EXECUTED:
-      - Every create issues `DELETE vfs_content` and `DELETE vfs_blobs`
-        for a row minted in this same batch, whose body cannot exist
-        yet. That is 2 of the 9 create statements. Cause:
-        `_replace_bodies` is one delete-then-insert path for every
-        write (`writes.py:961`) (READ).
-      - Every edit issues a select of the root row alone
-        (`path IN ('/')`), even when no target missed (`edit_probe.py`).
-        Cause: `miss_errors` calls `classify_misses` with an empty miss
-        list, and `targets_with_ancestors` always adds `/`
-        (`descent.py:135`, `:183`) (READ).
-      - Every edit fetches the whole pre-image twice: once in the
-        snapshot, once again in the version mint (8.4 MB for a 4 MiB
-        file). The guarded update proves the version did not change
-        since the snapshot (`writes.py` `_update_materials`), so the
-        snapshot's body already is the pre-image (INFERRED).
-    - Change: skip the body pre-clear for freshly minted rows (the code
-      already separates them as `minted`); return early from
-      `miss_errors` when nothing missed; let the mint reuse an edit's
-      snapshot body for rows whose guard matched. Each is small. The
-      bigger lesson is that only an access-path table (principle 1)
-      shows them.
+      - Every create issues `DELETE vfs_content` and `DELETE vfs_blobs` for a row minted in this same batch, whose body cannot exist yet. That is 2 of the 9 create statements. Cause: `_replace_bodies` is one delete-then-insert path for every write (`writes.py:961`) (READ).
+      - Every edit issues a select of the root row alone (`path IN ('/')`), even when no target missed (`edit_probe.py`). Cause: `miss_errors` calls `classify_misses` with an empty miss list, and `targets_with_ancestors` always adds `/` (`descent.py:135`, `:183`) (READ).
+      - Every edit fetches the whole pre-image twice: once in the snapshot, once again in the version mint (8.4 MB for a 4 MiB file). The guarded update proves the version did not change since the snapshot (`writes.py` `_update_materials`), so the snapshot's body already is the pre-image (INFERRED).
+    - Change: skip the body pre-clear for freshly minted rows (the code already separates them as `minted`); return early from `miss_errors` when nothing missed; let the mint reuse an edit's snapshot body for rows whose guard matched. Each is small. The bigger lesson is that only an access-path table (principle 1) shows them.
 
 ## 3. Nouns and verbs
 
@@ -473,58 +246,17 @@ actor):
 
 ## 4. What does not transfer
 
-- **The unit of cost is different.** A vsfs I/O moves one 4 KB block.
-  A vfs statement can move one row or ten thousand, and one byte or
-  four megabytes (EXECUTED, §2.3 items 2 and 8). Counting statements
-  alone, the way the book counts blocks, undercounts both batches and
-  big bodies. vfs needs statements, rows and bytes (INFERRED).
-- **An address is not computed.** vsfs finds inode 32 by arithmetic
-  (ch. 40 p. 5). vfs finds a row by a B-tree probe on `path` or
-  `entry_id`. There is no layout to place, so the chapter's placement
-  questions (where to put a new file, p. 16) belong to the engine
-  (INFERRED).
-- **The path is stored, so the trade-off flips.** An inode file system
-  pays per level at lookup and almost nothing at rename. vfs stores the
-  full path on every row as a cache (`rows.py`), so lookup is one
-  statement at any depth, and moving a directory rewrites every
-  descendant's path. Study 05 §7 measured a one-file `move` at 14
-  non-control statements as the system actor. The chapter's cost model
-  would call vfs's choice backwards; for agents, who look up far more
-  than they rename, it is the right way round (INFERRED).
-- **There is no in-memory dirty state to lose.** vsfs's durability
-  trade-off is about memory the kernel holds (p. 15–16). vfs holds
-  nothing between calls; durability is the database's commit, WAL and
-  configuration. The knob the chapter describes exists, but it belongs
-  to the database operator, not to vfs (INFERRED).
-- **Many processes share one store.** The chapter's cache is one
-  machine's memory. Several vfs processes can serve one database, so a
-  process-local cache must prove itself fresh against the row. That is
-  why principle 12 keys any future cache by `version` (INFERRED).
-- **Concurrency is not in this chapter.** vsfs has one caller. vfs's
-  guarded updates, savepoint arbitration, whole-batch redrive (ADR 025)
-  and the lock row (ADR 078) have no counterpart here (READ, ch. 40;
-  READ, the ADRs).
-- **The extra tables have no counterpart.** Versions, search indexes and
-  rights are about eighteen of vfs's twenty-three tables (§2.1). The
-  chapter's I/O arithmetic covers the five regions vsfs has. The rest
-  is cost vfs chose for history, search and governance (study 05 §7:
-  the per-call SQL count is set by what the mount stores) (READ).
-- **Rights are checked on every call, not once at open.** vsfs checks
-  permission when `open` runs (p. 12). vfs judges rights on every
-  statement path (§2.2: two stamp reads per named call). No fd exists
-  to carry an earlier check (READ).
+- **The unit of cost is different.** A vsfs I/O moves one 4 KB block. A vfs statement can move one row or ten thousand, and one byte or four megabytes (EXECUTED, §2.3 items 2 and 8). Counting statements alone, the way the book counts blocks, undercounts both batches and big bodies. vfs needs statements, rows and bytes (INFERRED).
+- **An address is not computed.** vsfs finds inode 32 by arithmetic (ch. 40 p. 5). vfs finds a row by a B-tree probe on `path` or `entry_id`. There is no layout to place, so the chapter's placement questions (where to put a new file, p. 16) belong to the engine (INFERRED).
+- **The path is stored, so the trade-off flips.** An inode file system pays per level at lookup and almost nothing at rename. vfs stores the full path on every row as a cache (`rows.py`), so lookup is one statement at any depth, and moving a directory rewrites every descendant's path. Study 05 §7 measured a one-file `move` at 14 non-control statements as the system actor. The chapter's cost model would call vfs's choice backwards; for agents, who look up far more than they rename, it is the right way round (INFERRED).
+- **There is no in-memory dirty state to lose.** vsfs's durability trade-off is about memory the kernel holds (p. 15–16). vfs holds nothing between calls; durability is the database's commit, WAL and configuration. The knob the chapter describes exists, but it belongs to the database operator, not to vfs (INFERRED).
+- **Many processes share one store.** The chapter's cache is one machine's memory. Several vfs processes can serve one database, so a process-local cache must prove itself fresh against the row. That is why principle 12 keys any future cache by `version` (INFERRED).
+- **Concurrency is not in this chapter.** vsfs has one caller. vfs's guarded updates, savepoint arbitration, whole-batch redrive (ADR 025) and the lock row (ADR 078) have no counterpart here (READ, ch. 40; READ, the ADRs).
+- **The extra tables have no counterpart.** Versions, search indexes and rights are about eighteen of vfs's twenty-three tables (§2.1). The chapter's I/O arithmetic covers the five regions vsfs has. The rest is cost vfs chose for history, search and governance (study 05 §7: the per-call SQL count is set by what the mount stores) (READ).
+- **Rights are checked on every call, not once at open.** vsfs checks permission when `open` runs (p. 12). vfs judges rights on every statement path (§2.2: two stamp reads per named call). No fd exists to carry an earlier check (READ).
 
 ## 5. The one design lesson
 
-Draw vfs's access paths the way the chapter draws vsfs's: one table per
-verb, every statement in order, with rows and body bytes counted. Then
-pin those tables as tests, because that table is the mental model the
-chapter asks for. vfs has already collapsed the costly parts of the
-vsfs timeline (the walk per path level, the shared bitmap, the
-access-time write) into one bounded step each; what it has not
-collapsed is the whole-body cost, where a one-byte edit moves the body
-four times, and the engine's own chunked storage underneath is the
-place to look first.
+Draw vfs's access paths the way the chapter draws vsfs's: one table per verb, every statement in order, with rows and body bytes counted. Then pin those tables as tests, because that table is the mental model the chapter asks for. vfs has already collapsed the costly parts of the vsfs timeline (the walk per path level, the shared bitmap, the access-time write) into one bounded step each; what it has not collapsed is the whole-body cost, where a one-byte edit moves the body four times, and the engine's own chunked storage underneath is the place to look first.
 
-One line: count statements, rows and bytes per verb, pin the table,
-and the next cost to cut is the whole-body rewrite.
+One line: count statements, rows and bytes per verb, pin the table, and the next cost to cut is the whole-body rewrite.

@@ -1,14 +1,10 @@
 # Raw measurements — embedding-seam study (2026-08-26)
 
-Host: Apple M1 Pro, 10 cores, macOS (Darwin 25.5.0), CPython 3.13.11.
-Throwaway venvs under the session scratchpad (`uv venv` + `uv pip install`);
-the project's pyproject/lockfile were not touched.
+Host: Apple M1 Pro, 10 cores, macOS (Darwin 25.5.0), CPython 3.13.11. Throwaway venvs under the session scratchpad (`uv venv` + `uv pip install`); the project's pyproject/lockfile were not touched.
 
-Package versions: model2vec 0.9.0, numpy 2.5.2, tokenizers 0.23.1;
-fastembed 0.8.0, onnxruntime 1.29.0 (CPUExecutionProvider).
+Package versions: model2vec 0.9.0, numpy 2.5.2, tokenizers 0.23.1; fastembed 0.8.0, onnxruntime 1.29.0 (CPUExecutionProvider).
 
-Corpus (`corpus.py`): 10,000 synthetic chunks, 375 words each, 2,322 chars
-avg; potion-base-8M's tokenizer counts 464 tokens/chunk.
+Corpus (`corpus.py`): 10,000 synthetic chunks, 375 words each, 2,322 chars avg; potion-base-8M's tokenizer counts 464 tokens/chunk.
 
 ## hash embedder (`hash_embed.py`, stdlib only)
 

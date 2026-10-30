@@ -1,7 +1,6 @@
 # Audit — release engineering, CI, quality gates, packaging, repository hygiene, context-pipeline health
 
-Audited 2026-10-28 at `90f5883` (main). Read-only. Labels: READ / EXECUTED / INFERRED.
-Caveat: the checkout is a **shallow clone of 50 commits** (EXECUTED: `.git/shallow` exists, `git rev-list --count HEAD` = 50; `git tag` is empty). The oldest visible commit is `3e5e9cf` (2026-09-06). Every "last touched" below is therefore an upper bound: a file whose only visible commit is `3e5e9cf` was last changed **on or before** 2026-09-06. GitHub Actions history was read through `gh run list` (REST), which is not shallow.
+Audited 2026-10-28 at `90f5883` (main). Read-only. Labels: READ / EXECUTED / INFERRED. Caveat: the checkout is a **shallow clone of 50 commits** (EXECUTED: `.git/shallow` exists, `git rev-list --count HEAD` = 50; `git tag` is empty). The oldest visible commit is `3e5e9cf` (2026-09-06). Every "last touched" below is therefore an upper bound: a file whose only visible commit is `3e5e9cf` was last changed **on or before** 2026-09-06. GitHub Actions history was read through `gh run list` (REST), which is not shallow.
 
 ---
 

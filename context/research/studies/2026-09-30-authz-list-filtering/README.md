@@ -2,14 +2,7 @@
 
 Feeds `../../2026-09-30-authz-list-filtering-prior-art.md` (§8).
 
-vfs compiles a caller's rights to OR'd path-prefix arms, so a scan
-tests every row against every arm. This study asks which predicate
-shape keeps the per-query cost flat as the arm count grows. Every
-script builds a lean copy of the two tables glean scans (an entry
-table with vfs's `BytewiseString` path and its unique index, and a
-chunk table), 50,000 entries in the glean bench's layout (10 tops ×
-100 folders × 50 files), in a fresh `az*_<hex>` namespace dropped on
-exit. Every shape is asserted to return the same rows.
+vfs compiles a caller's rights to OR'd path-prefix arms, so a scan tests every row against every arm. This study asks which predicate shape keeps the per-query cost flat as the arm count grows. Every script builds a lean copy of the two tables glean scans (an entry table with vfs's `BytewiseString` path and its unique index, and a chunk table), 50,000 entries in the glean bench's layout (10 tops × 100 folders × 50 files), in a fresh `az*_<hex>` namespace dropped on exit. Every shape is asserted to return the same rows.
 
 ## What is here
 
@@ -36,7 +29,6 @@ With the test containers up (`docker/compose.test.yml`):
     uv run --no-sync python plans.py --engine postgres --no-jit
     uv run --no-sync python unnest.py
 
-Each run takes under 10 minutes. The SQLite `like` and `range` rows at
-5,000 grants dominate (about 10 s per statement).
+Each run takes under 10 minutes. The SQLite `like` and `range` rows at 5,000 grants dominate (about 10 s per statement).
 
 Study code only: nothing here is imported by vfs.

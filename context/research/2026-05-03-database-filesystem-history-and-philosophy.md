@@ -18,28 +18,19 @@ VFS is not the first system to claim that the filesystem and the database should
 
 The first system to seriously argue that "files" and "memory" and "the database" should not be separate primitives was [Multics](https://multicians.org/history.html). Daley and Neumann's 1965 FJCC paper [*A General Purpose File System for Secondary Storage*](https://multicians.org/fjcc4.html) defines the segment as the unit of both addressable memory and persistent storage; programs access files by issuing memory references, and the OS pages segments to and from disk. The [single-level store](https://en.wikipedia.org/wiki/Single_level_store) explicitly discards the file/memory distinction.
 
-Novel: hierarchical pathnames as the primary handle to structured persistent state; symbolic naming as a level of indirection above physical addresses.
-Aged well: the hierarchical namespace; pathname normalization; access-control lists at every node.
-Aged badly: the conflation of memory addressing and storage addressing — modern systems separate them so that crash recovery, replication, and tiered storage can each be reasoned about independently.
-For VFS: the namespace-as-world-model thesis is older than Unix. The constitution's Article 1 inherits it.
+Novel: hierarchical pathnames as the primary handle to structured persistent state; symbolic naming as a level of indirection above physical addresses. Aged well: the hierarchical namespace; pathname normalization; access-control lists at every node. Aged badly: the conflation of memory addressing and storage addressing — modern systems separate them so that crash recovery, replication, and tiered storage can each be reasoned about independently. For VFS: the namespace-as-world-model thesis is older than Unix. The constitution's Article 1 inherits it.
 
 #### IBM IMS (1968)
 
 [IMS](https://www.ibm.com/history/information-management-system) shipped in August 1968 to manage the bill of materials for the Saturn V. It is a hierarchical DBMS — segments arranged in parent-child trees — and it ran (still runs) atop OS/360 as a layer above the filesystem, not as a replacement for it. IMS picked the same shape Multics picked (a tree of named records) and applied it to transactional business data.
 
-Novel: the hierarchical data model formalized for OLTP, before Codd's relational paper.
-Aged well: hierarchical models survived as a niche (XML, JSON, document stores). IMS itself remained in production at >95% of Fortune 1000s [[twobithistory](https://twobithistory.org/2017/10/07/the-most-important-database.html)].
-Aged badly: child-segment access requires walking from the parent; ad-hoc queries that cross hierarchies are awkward. The relational model won the general case for a reason.
-For VFS: hierarchies are good defaults for navigation; they are bad defaults for arbitrary querying. VFS's `find`, `grep`, and graph edges exist precisely because pure tree traversal is insufficient.
+Novel: the hierarchical data model formalized for OLTP, before Codd's relational paper. Aged well: hierarchical models survived as a niche (XML, JSON, document stores). IMS itself remained in production at >95% of Fortune 1000s [[twobithistory](https://twobithistory.org/2017/10/07/the-most-important-database.html)]. Aged badly: child-segment access requires walking from the parent; ad-hoc queries that cross hierarchies are awkward. The relational model won the general case for a reason. For VFS: hierarchies are good defaults for navigation; they are bad defaults for arbitrary querying. VFS's `find`, `grep`, and graph edges exist precisely because pure tree traversal is insufficient.
 
 #### Pick (1965) and MUMPS (1966)
 
 Two contemporaneous systems took "the DB *is* the OS" further. [Pick](https://en.wikipedia.org/wiki/Pick_operating_system) (originally GIRLS, 1965, Don Nelson and Dick Pick at TRW) ran on the IBM System/360 as a database operating system: accounts, dictionaries, files, items, attributes, values, sub-values — a hash-organized hierarchical store with a built-in query language. [MUMPS](https://en.wikipedia.org/wiki/MUMPS) (1966, Massachusetts General Hospital) exposed persistent state as *globals* — sparse hierarchical arrays addressed by subscript paths like `^Patient("12345","Name")` — that programs read and write as ordinary variables. Both systems pre-date the relational model and outlived most relational competitors in their niches (Pick in inventory and ERP; MUMPS in healthcare via Epic, Meditech, and the VA's VistA).
 
-Novel: persistent state addressable as a hierarchical name without a separate API; no "open the database" step.
-Aged well: the addressing convention. Healthcare backends are still MUMPS globals.
-Aged badly: every system grew a bespoke query dialect that did not generalize; integration with the surrounding ecosystem was a perennial problem.
-For VFS: hierarchical addressing as the default *read* path is a winning shape. But pinning *all* operations to that shape (as Pick and MUMPS did) means every cross-cutting operation reinvents indexing. VFS keeps the path as the primary handle while accepting that search, graph traversal, and revision queries are first-class operations beside it (Article 1, Article 2 §3).
+Novel: persistent state addressable as a hierarchical name without a separate API; no "open the database" step. Aged well: the addressing convention. Healthcare backends are still MUMPS globals. Aged badly: every system grew a bespoke query dialect that did not generalize; integration with the surrounding ecosystem was a perennial problem. For VFS: hierarchical addressing as the default *read* path is a winning shape. But pinning *all* operations to that shape (as Pick and MUMPS did) means every cross-cutting operation reinvents indexing. VFS keeps the path as the primary handle while accepting that search, graph traversal, and revision queries are first-class operations beside it (Article 1, Article 2 §3).
 
 ### 1970s–80s — the integrated mainframe era and the Unix rebuttal
 
@@ -47,10 +38,7 @@ For VFS: hierarchical addressing as the default *read* path is a winning shape. 
 
 The [IBM System/38](https://en.wikipedia.org/wiki/IBM_System/38) (announced 1978) is the canonical "DB is the OS" production system. The Single-Level Store (SLS) presents one virtual address space across RAM and disk; every persistent thing is an *object* with a typed system-managed identity, not a file with bytes. DB2/400 is part of the OS, not a layer over it: tables, views, programs, users, queues, libraries — all are SLS objects, all participate in the same locking and authorization model. [IBM i](https://en.wikipedia.org/wiki/IBM_i) carries this forward today, advertising "everything is an object" as the explicit counter-thesis to "everything is a file."
 
-Novel: hardware-independent Machine Interface that survived two CPU transitions (CISC → PowerPC → Power); object-based addressing on top of SLS; the database as a peer of the OS, not a guest.
-Aged well: SLS's single namespace; the discipline of typed objects with declared capabilities (essentially a strongly-typed namespace).
-Aged badly: portability outside the IBM i ecosystem is essentially zero; the model is too dependent on platform-specific microcode and hardware.
-For VFS: the constitution rejects the "everything is an object" framing because object-based addressing requires every caller to learn the type taxonomy first. But the *typed namespace* idea returns, narrowed: VFS's `kind` enum (`file | directory | chunk | version | edge | tool | api`) is a closed type set declared in the path itself rather than discovered through metadata calls.
+Novel: hardware-independent Machine Interface that survived two CPU transitions (CISC → PowerPC → Power); object-based addressing on top of SLS; the database as a peer of the OS, not a guest. Aged well: SLS's single namespace; the discipline of typed objects with declared capabilities (essentially a strongly-typed namespace). Aged badly: portability outside the IBM i ecosystem is essentially zero; the model is too dependent on platform-specific microcode and hardware. For VFS: the constitution rejects the "everything is an object" framing because object-based addressing requires every caller to learn the type taxonomy first. But the *typed namespace* idea returns, narrowed: VFS's `kind` enum (`file | directory | chunk | version | edge | tool | api`) is a closed type set declared in the path itself rather than discovered through metadata calls.
 
 #### Ken Thompson, Dennis Ritchie, and "everything is a file" (1971–)
 
@@ -62,10 +50,7 @@ For VFS: the constitution sides with Unix on the framing (Article 1: file is the
 
 [Vnodes: An Architecture for Multiple File System Types in Sun UNIX](https://cgi.cse.unsw.edu.au/~cs3231/15s1/assignments/asst2/kleiman86vnodes.pdf) (Kleiman, USENIX 1986) is the first portable abstraction layer that lets multiple filesystem implementations coexist behind one POSIX-shaped interface. The split: `vfs` is the per-mount object; `vnode` is the per-file object. Each defines a vtable of operations. NFS, FFS, MS-DOS, RFS — different on disk, identical at the API.
 
-Novel: capability-bearing function tables behind a stable client interface; mount as the composition primitive.
-Aged well: every Unix-derived OS still uses some descendant of this design; FreeBSD's VFS is direct lineage [[2026-04-19 freebsd-vfs](2026-04-19-freebsd-vfs.md)].
-Aged badly: vnodes leak state; the locking discipline is hard for new backends to get right; cross-mount operations remain a known weak point.
-For VFS: this is the most direct ancestor of `VirtualFileSystem` and the `_*_impl` terminal pattern. The constitution's mount routing (Article 1 §1.4) is a deliberate Kleiman descendant. The decision to make capabilities explicit (Article 2 §2) is a *correction* of vnodes' weakness — vnodes leak unsupported-op surprises through `ENOTSUP` at call time rather than declaring capabilities up front.
+Novel: capability-bearing function tables behind a stable client interface; mount as the composition primitive. Aged well: every Unix-derived OS still uses some descendant of this design; FreeBSD's VFS is direct lineage [[2026-04-19 freebsd-vfs](2026-04-19-freebsd-vfs.md)]. Aged badly: vnodes leak state; the locking discipline is hard for new backends to get right; cross-mount operations remain a known weak point. For VFS: this is the most direct ancestor of `VirtualFileSystem` and the `_*_impl` terminal pattern. The constitution's mount routing (Article 1 §1.4) is a deliberate Kleiman descendant. The decision to make capabilities explicit (Article 2 §2) is a *correction* of vnodes' weakness — vnodes leak unsupported-op surprises through `ENOTSUP` at call time rather than declaring capabilities up front.
 
 ### 1990s — Plan 9 and the file-shaped extensions
 
@@ -73,28 +58,19 @@ For VFS: this is the most direct ancestor of `VirtualFileSystem` and the `_*_imp
 
 [The Use of Name Spaces in Plan 9](https://9p.io/sys/doc/names.pdf) (Pike, Presotto, Thompson, Trickey, Winterbottom, SIGOPS 1992) is the load-bearing paper for VFS's worldview. Three claims: (1) every resource — devices, processes, network endpoints, synthetic services — should appear in a name space addressed by hierarchical paths; (2) name spaces are per-process, composed by `bind` and `mount`; (3) a single small protocol, [9P](http://doc.cat-v.org/plan_9/4th_edition/papers/), suffices for everything. Plan 9 declined to absorb concerns that would require *lying* about file shape — process creation and shared memory stayed as system calls — and that discipline is what VFS inherits as Article 3.
 
-Novel: the *protocol* and the *kernel API* converge into one shape; composition through namespace manipulation rather than API plumbing.
-Aged well: 9P is a clean protocol; the namespace ideas show up everywhere now (FUSE, /proc, /sys, container mount namespaces).
-Aged badly: per-process namespaces never landed in mainstream Unix as a user feature; the wstat (omnibus metadata update) and msize negotiation became known anti-patterns.
-For VFS: Plan 9 is the explicit ancestor (constitution Article 3). Read this paper before adding any mount-routing rule.
+Novel: the *protocol* and the *kernel API* converge into one shape; composition through namespace manipulation rather than API plumbing. Aged well: 9P is a clean protocol; the namespace ideas show up everywhere now (FUSE, /proc, /sys, container mount namespaces). Aged badly: per-process namespaces never landed in mainstream Unix as a user feature; the wstat (omnibus metadata update) and msize negotiation became known anti-patterns. For VFS: Plan 9 is the explicit ancestor (constitution Article 3). Read this paper before adding any mount-routing rule.
 
 #### BeFS (Giampaolo, 1996)
 
 The [Be File System](https://en.wikipedia.org/wiki/Be_File_System) is the most successful "filesystem with database features" that ever shipped. Journaled, 64-bit, B+tree indexing per extended attribute, *live queries* that update as files change, query expressions parsed in-kernel. Giampaolo's [Practical File System Design](http://www.nobius.org/dbg/practical-file-system-design.pdf) book documents the implementation in unusual detail.
 
-Novel: extended attributes promoted to first-class queryable state; live queries (the query result is a directory whose contents update); a working demo that "FS + DB features" is feasible without inventing a relational schema.
-Aged well: the *extended-attributes-as-metadata* pattern shows up in macOS HFS+ xattrs and Linux user.* xattrs.
-Aged badly: BeOS itself died, taking BeFS with it on the desktop; Haiku keeps it alive. The kernel-side query parser is a complexity sink later systems avoided.
-For VFS: BeFS is the proof that the metadata-as-queryable-FS thread *can* work. The constitution's `Candidate` shape — query-time fields populated optionally on a path-keyed result — is BeFS's live-query pattern with the kernel parser cut out.
+Novel: extended attributes promoted to first-class queryable state; live queries (the query result is a directory whose contents update); a working demo that "FS + DB features" is feasible without inventing a relational schema. Aged well: the *extended-attributes-as-metadata* pattern shows up in macOS HFS+ xattrs and Linux user.* xattrs. Aged badly: BeOS itself died, taking BeFS with it on the desktop; Haiku keeps it alive. The kernel-side query parser is a complexity sink later systems avoided. For VFS: BeFS is the proof that the metadata-as-queryable-FS thread *can* work. The constitution's `Candidate` shape — query-time fields populated optionally on a path-keyed result — is BeFS's live-query pattern with the kernel parser cut out.
 
 #### ReiserFS / Reiser4 (Hans Reiser, 1996–)
 
 [Reiser4](https://en.wikipedia.org/wiki/Reiser4) attempted the most ambitious "FS subsumes the DB" position of the era: atomic operations on small files, tail-packing, plugins for arbitrary content schemas, and an explicit [future vision](https://reiser4.wiki.kernel.org/index.php/Future_Vision) of obviating the relational DB by making the FS itself transactional and queryable. The Dancing B*-tree was novel; the project never made mainline Linux.
 
-Novel: small-file performance via tail-packing; transactional commit semantics inside the FS.
-Aged well: small-file performance arguments were vindicated by later workloads (lots of tiny config files, lots of source files, lots of agent-written notes).
-Aged badly: ambition outran the kernel community's tolerance; Hans Reiser's incarceration killed momentum; the "FS replaces DB" framing scared developers off.
-For VFS: a cautionary case. The right framing is not "VFS replaces the DB" — it is "VFS is a discipline on top of the DB."
+Novel: small-file performance via tail-packing; transactional commit semantics inside the FS. Aged well: small-file performance arguments were vindicated by later workloads (lots of tiny config files, lots of source files, lots of agent-written notes). Aged badly: ambition outran the kernel community's tolerance; Hans Reiser's incarceration killed momentum; the "FS replaces DB" framing scared developers off. For VFS: a cautionary case. The right framing is not "VFS replaces the DB" — it is "VFS is a discipline on top of the DB."
 
 ### Early 2000s — the relational-FS dream and its grand failure
 
@@ -102,28 +78,19 @@ For VFS: a cautionary case. The right framing is not "VFS replaces the DB" — i
 
 [WinFS](https://en.wikipedia.org/wiki/WinFS) was Microsoft's bet that the Windows file system should *be* a relational database. Schema-up-front type system: every kind of data (`Person`, `Document`, `Photo`) is a typed Item with declared properties and relationships. Stored on top of SQL Server. Demoed in 2003, decoupled from Vista in 2004, fully canceled in 2006.
 
-Novel: typed items + declared relationships; the idea that relationships across "files" are first-class; integrated full-text and structured search.
-Aged well: pieces survived. The Item/Type model influenced ADO.NET Entity Framework; the metadata-and-relationships idea reappears in Spotlight, OneDrive, Google Drive, and (arguably) every modern note-graph tool.
-Aged badly: schema-up-front died on contact with reality. Every app wanted its own types; cross-app schemas required vendor coordination that never came; performance on the hardware of 2004 was unworkable. WinFS is the canonical "schema rigidity killed the project" cautionary tale.
-For VFS: any proposal to extend VFS with a typed-item schema layer MUST be argued against this failure mode. The constitution's response is a small, closed `kind` enum rather than an open user-defined type system; closing the set is the discipline that keeps VFS shippable.
+Novel: typed items + declared relationships; the idea that relationships across "files" are first-class; integrated full-text and structured search. Aged well: pieces survived. The Item/Type model influenced ADO.NET Entity Framework; the metadata-and-relationships idea reappears in Spotlight, OneDrive, Google Drive, and (arguably) every modern note-graph tool. Aged badly: schema-up-front died on contact with reality. Every app wanted its own types; cross-app schemas required vendor coordination that never came; performance on the hardware of 2004 was unworkable. WinFS is the canonical "schema rigidity killed the project" cautionary tale. For VFS: any proposal to extend VFS with a typed-item schema layer MUST be argued against this failure mode. The constitution's response is a small, closed `kind` enum rather than an open user-defined type system; closing the set is the discipline that keeps VFS shippable.
 
 #### Apple Spotlight + Core Data (2004–) — the survivors
 
 [Spotlight](https://en.wikipedia.org/wiki/Spotlight_(software)) shipped in 10.4 (2005) as the practical residue of the WinFS dream: a metadata index alongside a conventional FS, populated by per-format extractors, queried with a structured language. [Core Data](https://developer.apple.com/documentation/coredata) gave apps a managed object graph with SQLite as the default store. Together they delivered the user-visible parts of WinFS without the schema-up-front fight: the FS stays POSIX, the *index* gets the structure. Apple's [Core Spotlight semantic search](https://developer.apple.com/videos/play/wwdc2024/10131/) (WWDC 2024) extends this with embeddings.
 
-Novel: structure-as-side-channel rather than structure-in-FS. Apps donate; the index aggregates.
-Aged well: this is the dominant architecture for desktop search and increasingly for cloud drives.
-Aged badly: indexes go stale, deny inspection, and have their own failure modes; metadata richness depends on ad-hoc extractor coverage.
-For VFS: a direct precedent for VFS's pattern of layering search and graph indices over a path-keyed Entry table. Spotlight is the answer to "do we put structure in the namespace or in a side index?" — both, with the namespace as the source of truth.
+Novel: structure-as-side-channel rather than structure-in-FS. Apps donate; the index aggregates. Aged well: this is the dominant architecture for desktop search and increasingly for cloud drives. Aged badly: indexes go stale, deny inspection, and have their own failure modes; metadata richness depends on ad-hoc extractor coverage. For VFS: a direct precedent for VFS's pattern of layering search and graph indices over a path-keyed Entry table. Spotlight is the answer to "do we put structure in the namespace or in a side index?" — both, with the namespace as the source of truth.
 
 #### Venti (Quinlan and Dorward, 2002)
 
 [Venti: A New Approach to Archival Storage](https://www.cs.princeton.edu/courses/archive/spr05/cos598E/bib/venti-fast.pdf) (Quinlan and Dorward, FAST 2002, Bell Labs) is the often-overlooked progenitor of every CAS system. A network block store that addresses blocks by SHA-1 of their contents; writes are write-once and idempotent; deduplication is automatic; the block address *is* the integrity check. Plan 9's [Fossil](https://en.wikipedia.org/wiki/Fossil_(file_system)) (Quinlan, McKie, Cox, 2002) is the live filesystem that snapshots into Venti, organized as `/active`, `/snapshot/yyyy/mmdd/hhmm`, and `/archive/yyyy/mmdd<seq>`. This pair is the architectural template for everything that came after.
 
-Novel: content-addressed block storage validated on a decade of real Plan 9 usage data; the explicit separation of the live mutable filesystem (Fossil) from the immutable archival store (Venti).
-Aged well: Git (2005), IPFS (2014), Perkeep (2010s), DVC (2017), lakeFS (2020), Dolt (2019) are all variations on this theme.
-Aged badly: SHA-1 is now considered weak; the on-disk format and block sizes assumed disk economics that have changed.
-For VFS: Venti is the right reference for any future content-addressed storage in VFS. Read it before drafting a spec; the live/immutable two-tier design is the part that ages best, not the specific hash function or block format.
+Novel: content-addressed block storage validated on a decade of real Plan 9 usage data; the explicit separation of the live mutable filesystem (Fossil) from the immutable archival store (Venti). Aged well: Git (2005), IPFS (2014), Perkeep (2010s), DVC (2017), lakeFS (2020), Dolt (2019) are all variations on this theme. Aged badly: SHA-1 is now considered weak; the on-disk format and block sizes assumed disk economics that have changed. For VFS: Venti is the right reference for any future content-addressed storage in VFS. Read it before drafting a spec; the live/immutable two-tier design is the part that ages best, not the specific hash function or block format.
 
 ### Mid-2000s through 2010s — content addressing escapes the lab
 
@@ -135,19 +102,13 @@ Git is Venti for source code with a different vocabulary (blob, tree, commit, ta
 
 [ZFS](https://en.wikipedia.org/wiki/ZFS) (Bonwick, Moore, Ahrens at Sun, 2005) and Btrfs (Mason at Oracle, 2007) brought *transactional copy-on-write* into general-purpose filesystems. [Bonwick's *The Zettabyte File System*](https://www.semanticscholar.org/paper/The-Zettabyte-File-System-Bonwick-Ahrens/27f81148ecbcd04dd97cebd717c8921e5f2a4373) describes the pooled-storage model, end-to-end checksums, and the snapshot mechanism: a snapshot is a preserved root pointer; modified blocks go to new locations; the old pointer keeps the old tree alive. Snapshots cost O(1) at creation and grow only with divergence.
 
-Novel: snapshots as preserved pointers, not as data copies; pooled storage decoupled from filesystem boundaries; checksum every block.
-Aged well: every modern filesystem stole the snapshot-as-pointer idea; cloud block stores all do CoW now.
-Aged badly: CoW filesystems hosting databases produce write amplification — databases do their own CoW, and the layered CoW collides [[2026-02-17 doc](2026-02-17-database-vfs-patterns.md)].
-For VFS: the snapshot-as-pointer pattern is the right shape for branching when VFS gets there. The two-CoW collision is the warning against running ZFS underneath PostgreSQL underneath VFS.
+Novel: snapshots as preserved pointers, not as data copies; pooled storage decoupled from filesystem boundaries; checksum every block. Aged well: every modern filesystem stole the snapshot-as-pointer idea; cloud block stores all do CoW now. Aged badly: CoW filesystems hosting databases produce write amplification — databases do their own CoW, and the layered CoW collides [[2026-02-17 doc](2026-02-17-database-vfs-patterns.md)]. For VFS: the snapshot-as-pointer pattern is the right shape for branching when VFS gets there. The two-CoW collision is the warning against running ZFS underneath PostgreSQL underneath VFS.
 
 #### Perkeep / Camlistore (Brad Fitzpatrick, ~2010–)
 
 [Perkeep](https://perkeep.org/) is a personal-scale CAS with a deliberate split: blobs are content-addressed and immutable; *permanodes* are stable identity blobs; *claims* are signed, timestamped mutations against permanodes; the current state of a permanode is the fold of all valid claims. The covering [2026-02-17 doc](2026-02-17-database-vfs-patterns.md) maps this to VFS's File + FileVersion split.
 
-Novel: explicit reconciliation of mutable identity with immutable content via signed claims; offline-friendly and cryptographically attributable.
-Aged well: the permanode/claims pattern reappears in CRDT-flavored systems, in ATProto/Bluesky lexicons, and arguably in event-sourced architectures generally.
-Aged badly: GPG-signing every claim is operationally heavy; the user interface never crossed from prosumer to mainstream.
-For VFS: the permanode/claims model is the right reference for VFS's `path → revision → content` shape. Path is the permanode (mutable identity); revision is the claim ordering; content is the immutable blob.
+Novel: explicit reconciliation of mutable identity with immutable content via signed claims; offline-friendly and cryptographically attributable. Aged well: the permanode/claims pattern reappears in CRDT-flavored systems, in ATProto/Bluesky lexicons, and arguably in event-sourced architectures generally. Aged badly: GPG-signing every claim is operationally heavy; the user interface never crossed from prosumer to mainstream. For VFS: the permanode/claims model is the right reference for VFS's `path → revision → content` shape. Path is the permanode (mutable identity); revision is the claim ordering; content is the immutable blob.
 
 ### 2017–2024 — the table-format era
 
@@ -157,48 +118,37 @@ This is where the industry now sits. Iceberg, Delta Lake, and Hudi are not datab
 
 [Iceberg's spec](https://iceberg.apache.org/spec/) defines four metadata layers: a catalog pointer; a `metadata.json` table file; manifest lists per snapshot; manifest files listing data files with column-level statistics. Every write produces a new snapshot — an immutable list of data files at that instant. Time-travel queries are pointer reads; rollbacks are pointer writes.
 
-Novel: metadata files are the database; the data files are content-addressable Parquet blobs; snapshots are immutable manifests.
-Aged well: Iceberg is winning the format war as of 2026; major engines (Snowflake, BigQuery, Trino, Spark, Flink) all read it.
-Aged badly: the metadata layer has its own scaling problems; small-file proliferation requires periodic compaction; catalog choice (REST, Glue, Nessie) is non-trivial.
-For VFS: Iceberg is the reference for "manifest separates committed-immutable from staged-mutable." VFS's revision stamps per Entry are the per-file analog of Iceberg's per-snapshot pointer.
+Novel: metadata files are the database; the data files are content-addressable Parquet blobs; snapshots are immutable manifests. Aged well: Iceberg is winning the format war as of 2026; major engines (Snowflake, BigQuery, Trino, Spark, Flink) all read it. Aged badly: the metadata layer has its own scaling problems; small-file proliferation requires periodic compaction; catalog choice (REST, Glue, Nessie) is non-trivial. For VFS: Iceberg is the reference for "manifest separates committed-immutable from staged-mutable." VFS's revision stamps per Entry are the per-file analog of Iceberg's per-snapshot pointer.
 
 #### Delta Lake (Databricks, 2017)
 
 [Delta Lake](https://www.databricks.com/blog/2019/08/21/diving-into-delta-lake-unpacking-the-transaction-log.html) made a different trade: a `_delta_log` directory of numbered JSON files records every transaction as a sequence of actions (`Add`, `Remove`, `Update metadata`, `Change protocol`, `Commit info`). Optimistic concurrency control resolves writes; readers reconstruct table state by replaying the log forward to a checkpoint and then reading the trailing JSONs.
 
-Novel: the log *is* the schema-of-record; checkpoints are an optimization, not the truth.
-Aged well: append-only log + periodic checkpoint is now the table-format default shape.
-Aged badly: log replay cost grows with history; checkpoint discipline is required for performance.
-For VFS: append-only commit log is the right shape for any future write-history feature in VFS. Don't store deltas in a way that requires reconstruction order to read.
+Novel: the log *is* the schema-of-record; checkpoints are an optimization, not the truth. Aged well: append-only log + periodic checkpoint is now the table-format default shape. Aged badly: log replay cost grows with history; checkpoint discipline is required for performance. For VFS: append-only commit log is the right shape for any future write-history feature in VFS. Don't store deltas in a way that requires reconstruction order to read.
 
 #### Apache Hudi (Uber, 2016–)
 
 [Hudi](https://hudi.apache.org/docs/overview/) leaned into upserts: record-level indexes (bloom filters, column statistics), Copy-on-Write tables for read-heavy workloads, Merge-on-Read tables for write-heavy ones, and a `.hoodie` timeline. It is the most database-like of the three, designed for CDC.
 
-Novel: per-record indexes maintained inside the table format.
-For VFS: when VFS adds chunk-level write paths (already underway in story 014), Hudi's MoR pattern is the relevant precedent — write fast to small log files, compact later.
+Novel: per-record indexes maintained inside the table format. For VFS: when VFS adds chunk-level write paths (already underway in story 014), Hudi's MoR pattern is the relevant precedent — write fast to small log files, compact later.
 
 #### Project Nessie and lakeFS (2020–)
 
-[Nessie](https://projectnessie.org/) versions the *catalog* — branches and tags of Iceberg metadata pointers, Git-shaped. [lakeFS](https://lakefs.io/) versions the *whole object-store layer* with two-layer Merkle metaranges. Both ship the missing "branching for data" piece. Covered in detail in the [2026-02-17 doc](2026-02-17-database-vfs-patterns.md).
-For VFS: when branching arrives in VFS, the right reference is lakeFS's two-layer Merkle, not bespoke design.
+[Nessie](https://projectnessie.org/) versions the *catalog* — branches and tags of Iceberg metadata pointers, Git-shaped. [lakeFS](https://lakefs.io/) versions the *whole object-store layer* with two-layer Merkle metaranges. Both ship the missing "branching for data" piece. Covered in detail in the [2026-02-17 doc](2026-02-17-database-vfs-patterns.md). For VFS: when branching arrives in VFS, the right reference is lakeFS's two-layer Merkle, not bespoke design.
 
 ### 2019–2026 — DB-native versioning and the agent-era inflection
 
 #### Dolt and Prolly Trees (2019–)
 
-[Dolt](https://docs.dolthub.com/) embeds Git semantics into a MySQL-compatible engine. The novel data structure is the [Prolly Tree](https://www.dolthub.com/blog/2024-03-03-prolly-trees/): a content-addressed B-tree where chunk boundaries are determined by a hash function applied to keys, giving history-independent structural sharing and O(diff-size) diffs. Detailed in the [2026-02-17 doc](2026-02-17-database-vfs-patterns.md).
-For VFS: Prolly Trees are the most interesting structure on the horizon; implementation cost is high; the cheaper takeaway is exposing version control through the query interface (system tables, stored procedures), which agents can navigate as paths in VFS.
+[Dolt](https://docs.dolthub.com/) embeds Git semantics into a MySQL-compatible engine. The novel data structure is the [Prolly Tree](https://www.dolthub.com/blog/2024-03-03-prolly-trees/): a content-addressed B-tree where chunk boundaries are determined by a hash function applied to keys, giving history-independent structural sharing and O(diff-size) diffs. Detailed in the [2026-02-17 doc](2026-02-17-database-vfs-patterns.md). For VFS: Prolly Trees are the most interesting structure on the horizon; implementation cost is high; the cheaper takeaway is exposing version control through the query interface (system tables, stored procedures), which agents can navigate as paths in VFS.
 
 #### SQLite as application file format and DuckDB (~2020)
 
-[SQLite as Application File Format](https://sqlite.org/appfileformat.html) is Hipp's argument that "your enemy is complexity" — bespoke binary formats are vastly more code than reusing SQLite, and the SQLite file format is itself a stable specification. The same logic produced DuckDB's storage format. The pattern: a single-file embedded DB *is* the application's filesystem.
-For VFS: this is the architectural justification for VFS's `DatabaseFileSystem` even when "database" sounds heavyweight. A SQLite file is a portable, self-describing, transactional substrate — it is both the DB and the FS; the only question is what shape the namespace takes on top.
+[SQLite as Application File Format](https://sqlite.org/appfileformat.html) is Hipp's argument that "your enemy is complexity" — bespoke binary formats are vastly more code than reusing SQLite, and the SQLite file format is itself a stable specification. The same logic produced DuckDB's storage format. The pattern: a single-file embedded DB *is* the application's filesystem. For VFS: this is the architectural justification for VFS's `DatabaseFileSystem` even when "database" sounds heavyweight. A SQLite file is a portable, self-describing, transactional substrate — it is both the DB and the FS; the only question is what shape the namespace takes on top.
 
 #### Turso AgentFS (2025) and the agent-era inflection
 
-[AgentFS](https://turso.tech/blog/agentfs) is an agent-focused SQLite filesystem with three interfaces: POSIX-like dentry/inode, key-value, append-only audit log. Letta (formerly MemGPT) [[2026-04-23 letta](2026-04-23-letta.md)] models agent state as multi-tier memory atop SQL with checkpointing. LlamaIndex's "Files Are All You Need" [[2026-02-17 ai-agent-filesystems](2026-02-17-ai-agent-filesystems.md)] argues files are the primary agent interface. Across all of these the file metaphor is *reasserting* for agents specifically — not because POSIX is right but because agents read, write, and grep, and the file is the right shape for "thing I can read, write, and grep."
-For VFS: this is the project's home era. The constitution's Article 2 (agent-first contract) is the statement that this inflection is load-bearing for VFS, not incidental.
+[AgentFS](https://turso.tech/blog/agentfs) is an agent-focused SQLite filesystem with three interfaces: POSIX-like dentry/inode, key-value, append-only audit log. Letta (formerly MemGPT) [[2026-04-23 letta](2026-04-23-letta.md)] models agent state as multi-tier memory atop SQL with checkpointing. LlamaIndex's "Files Are All You Need" [[2026-02-17 ai-agent-filesystems](2026-02-17-ai-agent-filesystems.md)] argues files are the primary agent interface. Across all of these the file metaphor is *reasserting* for agents specifically — not because POSIX is right but because agents read, write, and grep, and the file is the right shape for "thing I can read, write, and grep." For VFS: this is the project's home era. The constitution's Article 2 (agent-first contract) is the statement that this inflection is load-bearing for VFS, not incidental.
 
 ## The recurring tensions
 

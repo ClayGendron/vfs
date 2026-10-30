@@ -1,17 +1,8 @@
 # Study: every grant operation as a linear sorted merge over range sets
 
-`src/vfs/storage/grants.py` turns a caller's grants into sorted, disjoint
-path pieces (ADR 072) and combines rights across members. The 2026-10-01
-review found three quadratic operations in it (findings 6 and 7:
-`_subtract`, `meet`, `_everyone_arms`/`_already`) and one correctness
-bug (finding 2: sibling grants `/v1` + `/v10` ship a bound ending in
-NUL, which Postgres rejects). This study asks one question: can every
-operation become a linear pass over sorted input, give the same
-answers, and lose the sibling bug? The answer is yes, and it is
-measured.
+`src/vfs/storage/grants.py` turns a caller's grants into sorted, disjoint path pieces (ADR 072) and combines rights across members. The 2026-10-01 review found three quadratic operations in it (findings 6 and 7: `_subtract`, `meet`, `_everyone_arms`/`_already`) and one correctness bug (finding 2: sibling grants `/v1` + `/v10` ship a bound ending in NUL, which Postgres rejects). This study asks one question: can every operation become a linear pass over sorted input, give the same answers, and lose the sibling bug? The answer is yes, and it is measured.
 
-Nothing in `src/` or `tests/` was changed. The study imports the shipped
-code and the test oracle only to hold the candidate against them.
+Nothing in `src/` or `tests/` was changed. The study imports the shipped code and the test oracle only to hold the candidate against them.
 
 ## What is here
 
@@ -36,82 +27,34 @@ From the repo root (about 4 minutes in all):
 
 ## The semantics, restated
 
-These are the rules the candidate reproduces. They are the shipped
-rules; the study only re-expresses them.
+These are the rules the candidate reproduces. They are the shipped rules; the study only re-expresses them.
 
-- A grant row says *principal holds level at and below prefix*. Rows
-  only widen. A subject's level on a path is the max over every row
-  that covers it: its own, its groups', and the everyone rows.
-- Everyone rows (`*`) carry postures. The *deepest* everyone row
-  covering a path decides what everyone holds there. A lower posture
-  row beneath a higher one is a hole; a higher one beneath a lower one
-  re-opens.
-- A subject set holds a right where *every* member does: the meet
-  (pointwise min) across members. Explicit grants are met per member
-  first, never over a pooled bag of groups.
-- The owner floor: a member's own rows pass where the *other* members
-  can see, even where the member itself has no grant.
-- The root is the exact path `/` plus the open range `('/', '0')`. A
-  prefix `p` is the point `p` plus the open range `(p/, p0)`: two
-  pieces, because `/a-b` sorts between `/a` and `/a/`.
+- A grant row says *principal holds level at and below prefix*. Rows only widen. A subject's level on a path is the max over every row that covers it: its own, its groups', and the everyone rows.
+- Everyone rows (`*`) carry postures. The *deepest* everyone row covering a path decides what everyone holds there. A lower posture row beneath a higher one is a hole; a higher one beneath a lower one re-opens.
+- A subject set holds a right where *every* member does: the meet (pointwise min) across members. Explicit grants are met per member first, never over a pooled bag of groups.
+- The owner floor: a member's own rows pass where the *other* members can see, even where the member itself has no grant.
+- The root is the exact path `/` plus the open range `('/', '0')`. A prefix `p` is the point `p` plus the open range `(p/, p0)`: two pieces, because `/a-b` sorts between `/a` and `/a/`.
 - No bound ever ends in a low byte. `\x00` is an internal sentinel only.
 
-So, pointwise: a row at `path` owned by `owner` passes for members M iff
-`E(path)` or every member in `M \ {owner}` holds a grant covering
-`path`, where `E` is the everyone region.
+So, pointwise: a row at `path` owned by `owner` passes for members M iff `E(path)` or every member in `M \ {owner}` holds a grant covering `path`, where `E` is the everyone region.
 
 ## The sibling fix, in plain words
 
-Two grants on `/v1` and `/v10` give the spans `[/v1, /v1\x00)`,
-`[/v1/, /v10)` and `[/v10, /v10\x00)`, `[/v10/, /v100)`. The middle two
-touch: the subtree of `/v1` ends exactly where the point `/v10` begins,
-because `0` is the byte after `/`. Merging them is right — the set is
-one unbroken run — but it produces the span `[/v1/, /v10\x00)`. The
-shipped `_split` only recognises a NUL-ended span when it is a single
-point (`hi == lo + \x00`), so it ships `/v10\x00` as an open upper
-bound. Postgres refuses a text bind holding NUL. Every other engine
-accepted it, which is why it was invisible on SQLite.
+Two grants on `/v1` and `/v10` give the spans `[/v1, /v1\x00)`, `[/v1/, /v10)` and `[/v10, /v10\x00)`, `[/v10/, /v100)`. The middle two touch: the subtree of `/v1` ends exactly where the point `/v10` begins, because `0` is the byte after `/`. Merging them is right — the set is one unbroken run — but it produces the span `[/v1/, /v10\x00)`. The shipped `_split` only recognises a NUL-ended span when it is a single point (`hi == lo + \x00`), so it ships `/v10\x00` as an open upper bound. Postgres refuses a text bind holding NUL. Every other engine accepted it, which is why it was invisible on SQLite.
 
-The fix is one rule in `split_to_pieces`: a span whose upper bound ends
-in the sentinel runs *through* the path just before it, inclusive. So
-`[lo, p\x00)` becomes the open range `(lo, p)` plus the exact point
-`p`. The pieces for the pair become `points=('/v1', '/v10')`,
-`opens=(('/v1/', '/v10'), ('/v10/', '/v100'))`. The lower-bound half of
-this rule is already in the shipped `_split` (a hole's upper edge
-`p\x00` becomes the exclusive lower bound `p`); the upper-bound half was
-missing.
+The fix is one rule in `split_to_pieces`: a span whose upper bound ends in the sentinel runs *through* the path just before it, inclusive. So `[lo, p\x00)` becomes the open range `(lo, p)` plus the exact point `p`. The pieces for the pair become `points=('/v1', '/v10')`, `opens=(('/v1/', '/v10'), ('/v10/', '/v100'))`. The lower-bound half of this rule is already in the shipped `_split` (a hole's upper edge `p\x00` becomes the exclusive lower bound `p`); the upper-bound half was missing.
 
-This is not a rare shape. Any numbered siblings (`/home/u1` and
-`/home/u10`, `/proj1` and `/proj10`, `/2024` and `/20240`) trigger it,
-and the timing run's own `/home/uN` layout hit it 99 times per 1,000
-names. The suite's random worlds never generate such a pair, which is
-why the 400-world parity test did not see it; `parity.py` adds a
-generator that does.
+This is not a rare shape. Any numbered siblings (`/home/u1` and `/home/u10`, `/proj1` and `/proj10`, `/2024` and `/20240`) trigger it, and the timing run's own `/home/uN` layout hit it 99 times per 1,000 names. The suite's random worlds never generate such a pair, which is why the 400-world parity test did not see it; `parity.py` adds a generator that does.
 
 ### Why no emitted bound can end in NUL or a control byte
 
-Every span bound the resolver produces is one of: `/`, `0`, `p`,
-`p + "\x00"`, `p + "/"`, `p + "0"`, for an input prefix `p`
-(`cover` emits only these; `union`, `intersect` and `subtract` only
-ever reuse existing bounds). `split_to_pieces` strips every `\x00`
-suffix, so each emitted bound is `/`, `0`, `p`, `p/` or `p0`. Its last
-byte is therefore `/` (0x2F), `0` (0x30), or the last byte of a lawful
-prefix. Path validation refuses NUL and every control byte (0x01–0x1F,
-0x7F, 0x80–0x9F), and normalisation strips trailing spaces, so a
-prefix's last byte is at least 0x21. The fuzz checks this membership
-on every case (invariant I11 for spans, I2 for pieces).
+Every span bound the resolver produces is one of: `/`, `0`, `p`, `p + "\x00"`, `p + "/"`, `p + "0"`, for an input prefix `p` (`cover` emits only these; `union`, `intersect` and `subtract` only ever reuse existing bounds). `split_to_pieces` strips every `\x00` suffix, so each emitted bound is `/`, `0`, `p`, `p/` or `p0`. Its last byte is therefore `/` (0x2F), `0` (0x30), or the last byte of a lawful prefix. Path validation refuses NUL and every control byte (0x01–0x1F, 0x7F, 0x80–0x9F), and normalisation strips trailing spaces, so a prefix's last byte is at least 0x21. The fuzz checks this membership on every case (invariant I11 for spans, I2 for pieces).
 
-Note the honest form of the claim: a bound may end in a byte *below*
-`/` when the grant prefix itself does (`/a-`, `/a.`, `/a!`). That is
-the prefix's own name, not a sentinel, and SQL Server compares it
-correctly. The hazard ADR 072 names is a path *plus* an appended low
-byte, and that never happens.
+Note the honest form of the claim: a bound may end in a byte *below* `/` when the grant prefix itself does (`/a-`, `/a.`, `/a!`). That is the prefix's own name, not a sentinel, and SQL Server compares it correctly. The hazard ADR 072 names is a path *plus* an appended low byte, and that never happens.
 
 ## Parity
 
-`runs/parity.md`. 2,000 worlds from the suite's generator (seed 58)
-and 2,000 from the sibling generator, each × 5 subject sets × 2 levels
-× every probe path × every owner variant (`None`, `u1`, `u2`, `u3`).
+`runs/parity.md`. 2,000 worlds from the suite's generator (seed 58) and 2,000 from the sibling generator, each × 5 subject sets × 2 levels × every probe path × every owner variant (`None`, `u1`, `u2`, `u3`).
 
 | check | result |
 |---|---|
@@ -125,14 +68,7 @@ and 2,000 from the sibling generator, each × 5 subject sets × 2 levels
 
 ## Fuzz
 
-`runs/fuzz.md`. 100,000 random worlds. Segments drawn from
-`('a', 'b', '0', '00', 'a0', 'a-', 'a.', 'b!', 'a a', '~', 'é', '日本',
-'-', '.', '!', 'a-b', 'z0', 'A', '~a')`, depth 1–3, plus derived
-siblings `p0`, `p-x`, `p/x`, `p00`, `p/x/y`, `p.`, `p!`, `p x`, `p~`;
-posture rows on random prefixes and the root; a hole equal to a named
-grant; grants from several members; groups with no rows; nested
-postures. Probes include each prefix, `p0`, `p/x`, `p-x`, `p00`,
-`p/x/y`, `p!`, the parent, `/`, `/0`, `/-`, `/zzz`.
+`runs/fuzz.md`. 100,000 random worlds. Segments drawn from `('a', 'b', '0', '00', 'a0', 'a-', 'a.', 'b!', 'a a', '~', 'é', '日本', '-', '.', '!', 'a-b', 'z0', 'A', '~a')`, depth 1–3, plus derived siblings `p0`, `p-x`, `p/x`, `p00`, `p/x/y`, `p.`, `p!`, `p x`, `p~`; posture rows on random prefixes and the root; a hole equal to a named grant; grants from several members; groups with no rows; nested postures. Probes include each prefix, `p0`, `p/x`, `p-x`, `p00`, `p/x/y`, `p!`, the parent, `/`, `/0`, `/-`, `/zzz`.
 
 - cases: 100,000 (seed 20261002), probes: 1,389,026, 137 s
 - shipped pieces carrying a NUL bound (the sibling bug), arm or owner pieces: 6,295
@@ -152,16 +88,11 @@ postures. Probes include each prefix, `p0`, `p/x`, `p-x`, `p00`,
 | I11 the new resolver never emits a span bound outside the input prefixes' closure {p, p+NUL, p/, p0, /, 0} | 0 |
 | I12 an empty subject set resolves to the whole mount in both resolvers (shipped vs new only; the oracle cannot answer) | 0 |
 
-`mutants.py` shows the invariants bite: removing the sibling fix is
-caught by I2 (NUL in a bound); an off-by-one in `subtract` is caught by
-I1, I4, I5, I9 and I11; a one-directional `meet` by I1, I4, I5 and I10.
+`mutants.py` shows the invariants bite: removing the sibling fix is caught by I2 (NUL in a bound); an off-by-one in `subtract` is caught by I1, I4, I5, I9 and I11; a one-directional `meet` by I1, I4, I5 and I10.
 
 ## Timing
 
-`runs/timing.md`. One process, pure Python, M-series laptop. "resolve"
-is the resolver; "pieces" is `Rights.ranges()` (shipped) or
-`RangeRights.pieces()` (new). A shipped run is skipped when the previous
-size projects it past 60 s.
+`runs/timing.md`. One process, pure Python, M-series laptop. "resolve" is the resolver; "pieces" is `Rights.ranges()` (shipped) or `RangeRights.pieces()` (new). A shipped run is skipped when the previous size projects it past 60 s.
 
 ### holes (open root, H private homes), 1 member
 
@@ -211,90 +142,31 @@ size projects it past 60 s.
 | 10,000 | 26.2 s | 64 ms | 20,000 / 20,000 |
 | 100,000 | skipped: projected ~2616 s | 798 ms | – / 200,000 |
 
-Reading the table: the shipped `pieces` is O(H²) in holes (97 ms → 16 s
-for 10×); the shipped resolver is O(H²) in posture rows and O(G²) in
-grants once there are two members. The new path is linear after the
-sort everywhere; at 100,000 holes or grants it costs 0.3–0.6 s, most of
-it building the Python tuples. A single-member authority with no
-holes was already linear in the shipped code and stays so.
+Reading the table: the shipped `pieces` is O(H²) in holes (97 ms → 16 s for 10×); the shipped resolver is O(H²) in posture rows and O(G²) in grants once there are two members. The new path is linear after the sort everywhere; at 100,000 holes or grants it costs 0.3–0.6 s, most of it building the Python tuples. A single-member authority with no holes was already linear in the shipped code and stays so.
 
 ## What would change in `grants.py`
 
-Described, not patched. Each line is a replacement for one shipped
-function; the public names and the `Rights.admits` contract stay.
+Described, not patched. Each line is a replacement for one shipped function; the public names and the `Rights.admits` contract stay.
 
-- `minimise(prefixes)`: sort by `tree_key` (split on `/`), keep a
-  prefix when the last kept does not cover it. One pass; today it is a
-  set lookup per ancestor per prefix.
-- `meet(left, right)`: a two-pointer merge over two tree-ordered
-  minimised lists: when one covers the other emit the deeper and
-  advance it, else advance the earlier. Today a cross product.
-- `meet_all(sets)` unchanged in shape; add `meet_all_but_each` (prefix
-  and suffix meets) so the owner floor costs M meets instead of M².
-- The `trimmed` comprehension in `resolve`: `uncovered(rest, shared)`,
-  a two-pointer walk; today G×G.
-- `_everyone_arms` + `_already`: replaced by `everyone_region(star,
-  need)`: tree-order the posture rows, find each row's nearest posture
-  parent with a stack, and give each qualifying row its own region
-  (`cover(p)` minus its posture children's covers). Union the regions.
-  Today each qualifying row scans every posture row, and `_already`
-  scans every earlier arm.
-- `_merged`: unchanged (it is `normalise`). `_subtract`: the two-pointer
-  `subtract`, one pass instead of one rebuild per hole.
+- `minimise(prefixes)`: sort by `tree_key` (split on `/`), keep a prefix when the last kept does not cover it. One pass; today it is a set lookup per ancestor per prefix.
+- `meet(left, right)`: a two-pointer merge over two tree-ordered minimised lists: when one covers the other emit the deeper and advance it, else advance the earlier. Today a cross product.
+- `meet_all(sets)` unchanged in shape; add `meet_all_but_each` (prefix and suffix meets) so the owner floor costs M meets instead of M².
+- The `trimmed` comprehension in `resolve`: `uncovered(rest, shared)`, a two-pointer walk; today G×G.
+- `_everyone_arms` + `_already`: replaced by `everyone_region(star, need)`: tree-order the posture rows, find each row's nearest posture parent with a stack, and give each qualifying row its own region (`cover(p)` minus its posture children's covers). Union the regions. Today each qualifying row scans every posture row, and `_already` scans every earlier arm.
+- `_merged`: unchanged (it is `normalise`). `_subtract`: the two-pointer `subtract`, one pass instead of one rebuild per hole.
 - `_split`: add the upper-bound rule (the sibling fix).
 - `pieces(arms)`: becomes `split_to_pieces(range_set)`.
-- `Rights` would hold a range set for the arms and one per owner, not
-  `Arm(prefix, holes)` tuples. `covers` becomes a bisect
-  (`contains`), `covers_subtree` becomes `subtree_contained`, `admits`
-  is unchanged in shape. `whole` becomes `arms == (("/", "0"),)`.
-- Consumers to re-point: `rights.py:_units` builds the Oracle/unknown
-  dialect and vector-leg fan from `Arm.prefix`/`Arm.holes`; it would
-  build it from the pieces instead (which also splits a many-holed arm
-  into bounded clauses — review finding 4). `rights.py:_existing_roots`
-  uses `Rights.roots()`; the root of each span run is its lower bound
-  (`lo`, or `lo[:-1]` for a sentinel-ended `lo`) — the same prefixes,
-  available in one pass. `OwnerArm.prefixes` is consumed by
-  `_owned_beneath` and `_units`; keep the trimmed prefix list beside the
-  owner range set (`RangeRights.owner_prefixes` does).
-- Tests: the suite's `_assert_well_formed` should also assert
-  `"\x00" not in bound` and that every bound is in `{p, p/, p0, /, 0}`;
-  the world generator should hold `p`/`p0` sibling names.
+- `Rights` would hold a range set for the arms and one per owner, not `Arm(prefix, holes)` tuples. `covers` becomes a bisect (`contains`), `covers_subtree` becomes `subtree_contained`, `admits` is unchanged in shape. `whole` becomes `arms == (("/", "0"),)`.
+- Consumers to re-point: `rights.py:_units` builds the Oracle/unknown dialect and vector-leg fan from `Arm.prefix`/`Arm.holes`; it would build it from the pieces instead (which also splits a many-holed arm into bounded clauses — review finding 4). `rights.py:_existing_roots` uses `Rights.roots()`; the root of each span run is its lower bound (`lo`, or `lo[:-1]` for a sentinel-ended `lo`) — the same prefixes, available in one pass. `OwnerArm.prefixes` is consumed by `_owned_beneath` and `_units`; keep the trimmed prefix list beside the owner range set (`RangeRights.owner_prefixes` does).
+- Tests: the suite's `_assert_well_formed` should also assert `"\x00" not in bound` and that every bound is in `{p, p/, p0, /, 0}`; the world generator should hold `p`/`p0` sibling names.
 
 ## Semantic subtleties found
 
-These are statements the ADR or spec should make, because the shipped
-code and the candidate both rely on them and nothing writes them down.
+These are statements the ADR or spec should make, because the shipped code and the candidate both rely on them and nothing writes them down.
 
-1. **The empty subject set resolves to the whole mount.** `meet_all([])`
-   is `(ROOT,)`, so `resolve({}, rows, level)` returns
-   `Rights.everything`. The oracle cannot answer for an empty set
-   (`min` of nothing). Both resolvers agree (fuzz I12). If an empty
-   authority can reach the resolver, the spec should say it sees
-   everything, or the resolver should refuse it.
-2. **`whole` is syntactic today.** The shipped flag is "one arm is the
-   root with no holes". An open root with a private `/a` plus a grant
-   on `/a` admits every row, but `whole` is False and the backend takes
-   the predicate path. The candidate's `whole` is semantic (the range
-   set is the whole mount). Parity found 584 such triples in 4,000
-   worlds. Both are correct; the semantic one takes the fast path more
-   often. The spec should say which `whole` means.
-3. **`covers_subtree` is syntactic today, too.** It asks whether one arm
-   covers the path with no hole inside; it says False when two arms
-   jointly cover the subtree. The candidate answers the semantic
-   question. Sound in both; the semantic one is more complete (550
-   cases in 4,000 worlds).
-4. **A duplicate `(principal, prefix)` row is undefined.** The oracle
-   takes the first row, the shipped resolver takes the last (dict
-   comprehension). The store's unique key prevents it; the pure
-   resolver's contract should say the input is keyed.
-5. **The owner floor is not trimmed by the everyone region.** A
-   single-member authority's owner arm is `(ROOT,)` even under an open
-   root with holes. Harmless for `admits` (arms are checked first), but
-   the owner branch in SQL does more work than it needs to. The
-   candidate keeps the shipped behaviour for parity; subtracting the
-   everyone region from the owner set is a free improvement.
-6. **Sibling names are an ordinary layout, not a trap.** `/home/u1` and
-   `/home/u10` arise from any numbered naming. The two-piece rule and
-   the sentinel discipline must be stated together: a sentinel may
-   appear as an *upper* bound after a merge, and the split must handle
-   both edges.
+1. **The empty subject set resolves to the whole mount.** `meet_all([])` is `(ROOT,)`, so `resolve({}, rows, level)` returns `Rights.everything`. The oracle cannot answer for an empty set (`min` of nothing). Both resolvers agree (fuzz I12). If an empty authority can reach the resolver, the spec should say it sees everything, or the resolver should refuse it.
+2. **`whole` is syntactic today.** The shipped flag is "one arm is the root with no holes". An open root with a private `/a` plus a grant on `/a` admits every row, but `whole` is False and the backend takes the predicate path. The candidate's `whole` is semantic (the range set is the whole mount). Parity found 584 such triples in 4,000 worlds. Both are correct; the semantic one takes the fast path more often. The spec should say which `whole` means.
+3. **`covers_subtree` is syntactic today, too.** It asks whether one arm covers the path with no hole inside; it says False when two arms jointly cover the subtree. The candidate answers the semantic question. Sound in both; the semantic one is more complete (550 cases in 4,000 worlds).
+4. **A duplicate `(principal, prefix)` row is undefined.** The oracle takes the first row, the shipped resolver takes the last (dict comprehension). The store's unique key prevents it; the pure resolver's contract should say the input is keyed.
+5. **The owner floor is not trimmed by the everyone region.** A single-member authority's owner arm is `(ROOT,)` even under an open root with holes. Harmless for `admits` (arms are checked first), but the owner branch in SQL does more work than it needs to. The candidate keeps the shipped behaviour for parity; subtracting the everyone region from the owner set is a free improvement.
+6. **Sibling names are an ordinary layout, not a trap.** `/home/u1` and `/home/u10` arise from any numbered naming. The two-piece rule and the sentinel discipline must be stated together: a sentinel may appear as an *upper* bound after a merge, and the split must handle both edges.

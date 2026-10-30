@@ -2,106 +2,33 @@
 
 - **Date:** 2026-10-15
 - **Researcher:** S7 (the session-state question of the agent-shell study)
-- **Question:** What state does a shell session hold between commands, where does each
-  item live in vfs, how does it relate to the `Session` vfs already has and to mounts,
-  and what does "many sessions over one tree" need?
-- **Clones and commits read:** `9front` (DIRTY clone at a0806493, not refreshed),
-  `plan9port` b6564bd9, `just-bash` 9ab0e0d, `bashkit` b7904a4, `lifo` 5a35d05,
-  `nushell` 818d4ac06, `elvish` 26a8bd5, `opencode` 13263f30ed, `gemini-cli` (DIRTY
-  clone at d42e3f1e7, not refreshed; read through `git show HEAD:`), `codex` 16e578d,
-  `claude-agent-sdk-python` aada024, `eve` 5666d2f0d, `deepagents` 0bf167654.
-  The `plan9` clone (dirty at ed1a9c21e) was not used; 9front carries the same manuals.
-- **Evidence labels:** `EXECUTED` (a script in `experiments/s7/` ran and the output is
-  quoted), `READ` (I or a delegated reader read the cited source), `WEB` (a document
-  fetched today, URL and date given), `OBSERVED` (the tool definitions of the Claude
-  Code session this study ran in), `INFERRED` (my reasoning from the above).
-- **Delegation:** four read-only subagents each studied a group of peer repos
-  (just-bash/bashkit/lifo; nushell/elvish; opencode/gemini-cli/codex/claude-agent-sdk;
-  eve/deepagents). Their citations are reproduced as `READ`. The Plan 9 reading and
-  every experiment are mine.
-- **Scripts:** `experiments/s7/shell_session.py` (the reference `ShellSession`, two
-  authorities over one tree), `experiments/s7/env_as_rows.py` and
-  `experiments/s7/vfs_tree_probe.py` (env, cwd and history as rows: where they can
-  live and who sees them), `experiments/s7/batch_10k.py` (a 10,000-file write in one
-  session call). Each has a `.out` beside it.
+- **Question:** What state does a shell session hold between commands, where does each item live in vfs, how does it relate to the `Session` vfs already has and to mounts, and what does "many sessions over one tree" need?
+- **Clones and commits read:** `9front` (DIRTY clone at a0806493, not refreshed), `plan9port` b6564bd9, `just-bash` 9ab0e0d, `bashkit` b7904a4, `lifo` 5a35d05, `nushell` 818d4ac06, `elvish` 26a8bd5, `opencode` 13263f30ed, `gemini-cli` (DIRTY clone at d42e3f1e7, not refreshed; read through `git show HEAD:`), `codex` 16e578d, `claude-agent-sdk-python` aada024, `eve` 5666d2f0d, `deepagents` 0bf167654. The `plan9` clone (dirty at ed1a9c21e) was not used; 9front carries the same manuals.
+- **Evidence labels:** `EXECUTED` (a script in `experiments/s7/` ran and the output is quoted), `READ` (I or a delegated reader read the cited source), `WEB` (a document fetched today, URL and date given), `OBSERVED` (the tool definitions of the Claude Code session this study ran in), `INFERRED` (my reasoning from the above).
+- **Delegation:** four read-only subagents each studied a group of peer repos (just-bash/bashkit/lifo; nushell/elvish; opencode/gemini-cli/codex/claude-agent-sdk; eve/deepagents). Their citations are reproduced as `READ`. The Plan 9 reading and every experiment are mine.
+- **Scripts:** `experiments/s7/shell_session.py` (the reference `ShellSession`, two authorities over one tree), `experiments/s7/env_as_rows.py` and `experiments/s7/vfs_tree_probe.py` (env, cwd and history as rows: where they can live and who sees them), `experiments/s7/batch_10k.py` (a 10,000-file write in one session call). Each has a `.out` beside it.
 
 ## Summary
 
-A shell session is a small bag of state: a working directory, an environment, the
-last exit status, a history, and (in a full shell) functions, aliases, options and a
-job table. The peers split cleanly on which of these survive between tool calls.
-In-process bash interpreters built for agents keep almost all of it (bashkit) or
-none of it (just-bash resets everything but the filesystem per call). Agent
-harnesses keep only one thing on purpose: **Claude Code carries the working
-directory between Bash calls and nothing else**; opencode, codex and gemini-cli
-carry nothing and take a `workdir` argument per call instead. Nobody persists an
-agent's command history as a shell artifact; the conversation transcript is the
-history. Background work, where it exists, is always the same three-part shape: a
-handle, output accumulating in a file, and a push notification when the job ends.
+A shell session is a small bag of state: a working directory, an environment, the last exit status, a history, and (in a full shell) functions, aliases, options and a job table. The peers split cleanly on which of these survive between tool calls. In-process bash interpreters built for agents keep almost all of it (bashkit) or none of it (just-bash resets everything but the filesystem per call). Agent harnesses keep only one thing on purpose: **Claude Code carries the working directory between Bash calls and nothing else**; opencode, codex and gemini-cli carry nothing and take a `workdir` argument per call instead. Nobody persists an agent's command history as a shell artifact; the conversation transcript is the history. Background work, where it exists, is always the same three-part shape: a handle, output accumulating in a file, and a push notification when the job ends.
 
-vfs's `Session` today holds exactly one thing, an `Authority`, and is sugar over the
-router's funnel (`src/vfs/session.py`). The experiment shows that is enough for the
-two-audience contract — two sessions with different authorities over one tree see
-different rows, and nothing in the shell layer has to re-check — and that a shell
-needs four more fields on top: `cwd`, `env`, `last_status`, `history`. All four are
-plain in-memory session state, not rows. Plan 9 agrees: its environment is a
-kernel-held group (`Egrp`) served as files by the `#e` device, not rows on the file
-server, and its working directory is a per-process attribute printed as the last
-line of `/proc/n/ns`. The thesis "a vfs shell session is a Plan 9 namespace" is
-half right: cwd and the **subtractive** half of the namespace (hide, deny, no
-further mounts — spec 148's narrowing with `RFNOMNT`) map exactly; env maps to a
-device view, never to stored rows; and the **additive** half of `bind` (the union
-`/bin`, Plan 9's replacement for `$path`) is a mount-table fact, never session
-state, because the session law (ADR 063) forbids a session adding reach.
+vfs's `Session` today holds exactly one thing, an `Authority`, and is sugar over the router's funnel (`src/vfs/session.py`). The experiment shows that is enough for the two-audience contract — two sessions with different authorities over one tree see different rows, and nothing in the shell layer has to re-check — and that a shell needs four more fields on top: `cwd`, `env`, `last_status`, `history`. All four are plain in-memory session state, not rows. Plan 9 agrees: its environment is a kernel-held group (`Egrp`) served as files by the `#e` device, not rows on the file server, and its working directory is a per-process attribute printed as the last line of `/proc/n/ns`. The thesis "a vfs shell session is a Plan 9 namespace" is half right: cwd and the **subtractive** half of the namespace (hide, deny, no further mounts — spec 148's narrowing with `RFNOMNT`) map exactly; env maps to a device view, never to stored rows; and the **additive** half of `bind` (the union `/bin`, Plan 9's replacement for `$path`) is a mount-table fact, never session state, because the session law (ADR 063) forbids a session adding reach.
 
-Background jobs: out of scope at v1. A 10,000-file write in one call returns one
-bounded `Result` in seconds; `glean` is budgeted; no shipped storage implements
-`run`. When guest programs arrive, the job is an MCP task on the wire (the 2025-11-25
-tasks extension, whose `input_required` status is exactly spec 148's `pending`) and
-a per-authority row family `/.vfs/jobs/<id>/` in the namespace. Spec 148 must gain
-the four fields, the one-session-per-conversation rule, the child-session copy
-semantics, the `pending` ↔ task mapping, and a reservation of `/.vfs/sessions` and
-`/.vfs/jobs` with trash-like posture rules — because today anything written under
-`/.vfs` is readable by every `read` holder at `/`.
+Background jobs: out of scope at v1. A 10,000-file write in one call returns one bounded `Result` in seconds; `glean` is budgeted; no shipped storage implements `run`. When guest programs arrive, the job is an MCP task on the wire (the 2025-11-25 tasks extension, whose `input_required` status is exactly spec 148's `pending`) and a per-authority row family `/.vfs/jobs/<id>/` in the namespace. Spec 148 must gain the four fields, the one-session-per-conversation rule, the child-session copy semantics, the `pending` ↔ task mapping, and a reservation of `/.vfs/sessions` and `/.vfs/jobs` with trash-like posture rules — because today anything written under `/.vfs` is readable by every `read` holder at `/`.
 
 ## Findings
 
 ### 1. What vfs's `Session` holds today: one authority, one lifecycle, nothing else — READ, EXECUTED
 
-- `Session.__slots__ == ("_authority", "_closed", "_fs")` (`src/vfs/session.py:48`;
-  printed by `experiments/s7/shell_session.py`). Every verb is the router's verb
-  with `authority=` filled in; the docstring says "the session is sugar; the
-  funnel is the gate" (`session.py:1-14`). `tests/base/test_authority.py:188-200`
-  pins that a session call equals the direct call, verb by verb.
-- `Authority` is frozen and hashable; `narrowing: Narrowing = Narrowing.NONE` is the
-  only value today (`src/vfs/authority.py:68-72, 139`). Rights are re-derived on
-  every call and never cached (`authority.py:126-131`; ADR 063 rule 2).
-- Spec 148 (`context/specs/active/148-sessions-narrowing-and-pending/spec.md`) is a
-  seed. It plans: `narrow(profile)` (hide globs, deny verbs, per-prefix mount
-  narrowing; only ever reduces), `child(...)` (parent ∩ own), `join(principal)`,
-  a `surfaced` ring buffer with a declared cap for leak notices (§4), the `pending`
-  kind with a request digest and an ask ledger outside the session (§5), and a
-  per-session namespace overlay "with `RFNOMNT` semantics: once set, no operation
-  may add or bypass a mount" (§6). Nothing in it names cwd, env, status or history.
-- The mount table is router state: `VirtualFileSystem._bindings`, one per router,
-  admin verbs `bind`/`unbind`/`add_mount`/`remove_mount`/`remount` run as the
-  system actor and "no dispatched verb can mutate a mount table"
-  (`src/vfs/base.py:20-24, 385-680`). `mounts()` returns `MountInfo` rows that are
-  "table facts and bind-time snapshots, JSON-native" and replayable
-  (`base.py:168-195, 683-720`).
-- The reserved trees: `/.vfs` (meta: trash view; `METADATA_ROOT`, `TRASH_ROOT`) and
-  `/.agents/{tools,skills}` (`AGENT_FAMILIES`) (`src/vfs/paths.py:43-52`).
-  `check_mutable_path` refuses only the root, `/.vfs` itself and anything beneath
-  the trash view; "every other path, the meta scope included, is a lawful write
-  target" (`paths.py:810-840`).
+- `Session.__slots__ == ("_authority", "_closed", "_fs")` (`src/vfs/session.py:48`; printed by `experiments/s7/shell_session.py`). Every verb is the router's verb with `authority=` filled in; the docstring says "the session is sugar; the funnel is the gate" (`session.py:1-14`). `tests/base/test_authority.py:188-200` pins that a session call equals the direct call, verb by verb.
+- `Authority` is frozen and hashable; `narrowing: Narrowing = Narrowing.NONE` is the only value today (`src/vfs/authority.py:68-72, 139`). Rights are re-derived on every call and never cached (`authority.py:126-131`; ADR 063 rule 2).
+- Spec 148 (`context/specs/active/148-sessions-narrowing-and-pending/spec.md`) is a seed. It plans: `narrow(profile)` (hide globs, deny verbs, per-prefix mount narrowing; only ever reduces), `child(...)` (parent ∩ own), `join(principal)`, a `surfaced` ring buffer with a declared cap for leak notices (§4), the `pending` kind with a request digest and an ask ledger outside the session (§5), and a per-session namespace overlay "with `RFNOMNT` semantics: once set, no operation may add or bypass a mount" (§6). Nothing in it names cwd, env, status or history.
+- The mount table is router state: `VirtualFileSystem._bindings`, one per router, admin verbs `bind`/`unbind`/`add_mount`/`remove_mount`/`remount` run as the system actor and "no dispatched verb can mutate a mount table" (`src/vfs/base.py:20-24, 385-680`). `mounts()` returns `MountInfo` rows that are "table facts and bind-time snapshots, JSON-native" and replayable (`base.py:168-195, 683-720`).
+- The reserved trees: `/.vfs` (meta: trash view; `METADATA_ROOT`, `TRASH_ROOT`) and `/.agents/{tools,skills}` (`AGENT_FAMILIES`) (`src/vfs/paths.py:43-52`). `check_mutable_path` refuses only the root, `/.vfs` itself and anything beneath the trash view; "every other path, the meta scope included, is a lawful write target" (`paths.py:810-840`).
 
 ### 2. The experiment: a reference `ShellSession` over the live tree — EXECUTED
 
-`experiments/s7/shell_session.py` wraps `fs.session(authority)` in a dataclass with
-`cwd`, `env`, `last_status`, `history`, dispatches a scripted command list by hand
-onto the existing verbs, and runs two of them over one `InMemoryStorage` tree:
-alice holds `read_write` on `/a`, bob holds `list` on `/a` and `read` on
-`/a/open.md`, everyone else holds `none`.
+`experiments/s7/shell_session.py` wraps `fs.session(authority)` in a dataclass with `cwd`, `env`, `last_status`, `history`, dispatches a scripted command list by hand onto the existing verbs, and runs two of them over one `InMemoryStorage` tree: alice holds `read_write` on `/a`, bob holds `list` on `/a` and `read` on `/a/open.md`, everyone else holds `none`.
 
 Output (`experiments/s7/shell_session.out`, abridged):
 
@@ -124,436 +51,85 @@ ShellSession fields: ['cwd', 'env', 'last_status', 'history', 'missing']
 
 What this shows:
 
-- **Per-authority visibility costs the shell nothing.** The shell layer never
-  checked a right. Bob's `ls` showed `secret.md` bare because the `list` rung
-  reveals path and kind (ADR 080 pin 2); his `cat` was refused, not hidden,
-  because the row was already visible. Two agents with different authorities ran
-  the same builtins over one tree and got different answers, judged by the funnel.
-- **`cd` is `stat` at the `list` rung.** `cd` needs exactly what `list` reveals:
-  that the path exists and is a directory. A `cd` into a hidden path answers
-  `not_found` (ADR 065's hide rule), the same thing bash prints.
-- **What was missing** from the live `Session`: `cwd`, `env`, `last_status`,
-  `history`. Nothing else was needed for this script. `grep` was left unmapped only
-  because the reference has no parser; the verb exists.
-- **Exit status is derived.** `last_status` was `0 if result.success else 1`. The
-  classified kind (`vfs.not_found`) is richer than the integer; see finding 11.
+- **Per-authority visibility costs the shell nothing.** The shell layer never checked a right. Bob's `ls` showed `secret.md` bare because the `list` rung reveals path and kind (ADR 080 pin 2); his `cat` was refused, not hidden, because the row was already visible. Two agents with different authorities ran the same builtins over one tree and got different answers, judged by the funnel.
+- **`cd` is `stat` at the `list` rung.** `cd` needs exactly what `list` reveals: that the path exists and is a directory. A `cd` into a hidden path answers `not_found` (ADR 065's hide rule), the same thing bash prints.
+- **What was missing** from the live `Session`: `cwd`, `env`, `last_status`, `history`. Nothing else was needed for this script. `grep` was left unmapped only because the reference has no parser; the verb exists.
+- **Exit status is derived.** `last_status` was `0 if result.success else 1`. The classified kind (`vfs.not_found`) is richer than the integer; see finding 11.
 
 ### 3. Env, cwd and history as rows: what the live tree does with them — EXECUTED
 
-`experiments/s7/env_as_rows.py` and `experiments/s7/vfs_tree_probe.py` wrote an env
-row to five candidate homes and probed visibility.
+`experiments/s7/env_as_rows.py` and `experiments/s7/vfs_tree_probe.py` wrote an env row to five candidate homes and probed visibility.
 
-- **Every candidate accepted the write**, including `/.vfs/sessions/s1/env/X`,
-  `/.agents/sessions/s1/env/X` (an unknown family under the capability tree) and
-  `/.agents/tools/s1/env/X`. The reserved trees have no grammar below their heads.
-- **Rows under `/.vfs` are dark to unscoped search and lit when addressed.**
-  `glob("**/X")` and `grep("^1$")` returned nothing from `/.vfs`; the same calls
-  with `paths=("/.vfs",)` found the row; `read` and `ls` answered it. This is the
-  meta-scoped rule in `storage/backends/database/scope.py:105` and
-  `descent.py:233`. It is exactly the property Plan 9's `/env` has: there, but out
-  of the way.
-- **Rows under `/.vfs` are governed by the ordinary ladder, not by a family rule.**
-  Bob, holding `read` at `/`, read alice's `/.vfs/sessions/s1/env/X` and listed
-  `/.vfs/sessions`. Anonymous was refused (`vfs.unauthenticated`). So a per-session
-  family under `/.vfs` would leak every session's state to every reader at `/`
-  unless it carries its own posture rule, as the trash view does.
-- **An env row is a versioned, trashable entry.** `write X=2` minted a version;
-  `delete` tombstoned it; `restore` brought it back. A tombstoned row under `/.vfs`
-  is answered by `stat` through the trash view but does **not** appear in
-  `ls /.vfs/trash`, while a plain user-space row does (`vfs_tree_probe.out` C vs D).
-  Every `export X=…` as a row would be a write, a version and a round trip.
-- **The mount table is not in the namespace.** `ls /.vfs/mounts` answers
-  `not_found`; only `fs.mounts()` sees bindings. The example path
-  `/.vfs/mounts/data.json` in `paths.py:14` describes an intent, not a view.
+- **Every candidate accepted the write**, including `/.vfs/sessions/s1/env/X`, `/.agents/sessions/s1/env/X` (an unknown family under the capability tree) and `/.agents/tools/s1/env/X`. The reserved trees have no grammar below their heads.
+- **Rows under `/.vfs` are dark to unscoped search and lit when addressed.** `glob("**/X")` and `grep("^1$")` returned nothing from `/.vfs`; the same calls with `paths=("/.vfs",)` found the row; `read` and `ls` answered it. This is the meta-scoped rule in `storage/backends/database/scope.py:105` and `descent.py:233`. It is exactly the property Plan 9's `/env` has: there, but out of the way.
+- **Rows under `/.vfs` are governed by the ordinary ladder, not by a family rule.** Bob, holding `read` at `/`, read alice's `/.vfs/sessions/s1/env/X` and listed `/.vfs/sessions`. Anonymous was refused (`vfs.unauthenticated`). So a per-session family under `/.vfs` would leak every session's state to every reader at `/` unless it carries its own posture rule, as the trash view does.
+- **An env row is a versioned, trashable entry.** `write X=2` minted a version; `delete` tombstoned it; `restore` brought it back. A tombstoned row under `/.vfs` is answered by `stat` through the trash view but does **not** appear in `ls /.vfs/trash`, while a plain user-space row does (`vfs_tree_probe.out` C vs D). Every `export X=…` as a row would be a write, a version and a round trip.
+- **The mount table is not in the namespace.** `ls /.vfs/mounts` answers `not_found`; only `fs.mounts()` sees bindings. The example path `/.vfs/mounts/data.json` in `paths.py:14` describes an intent, not a view.
 
 ### 4. Plan 9: the namespace is per process, the environment is a device, cwd is a line in `/proc` — READ
 
-- **Per-process namespace.** "The foundations of the system are built on two ideas:
-  a per-process name space and a simple message-oriented file system protocol"
-  (`9front:sys/doc/names.ms:38-40`). `rfork` "takes as argument a bit vector
-  defining which attributes of the process are to be shared … One of the
-  attributes is the name space: when shared, changes made by either process are
-  visible in the other; when copied, changes are independent" (`names.ms:369-376`).
-- **The flags are the whole model of session inheritance.** `fork(2)`: `RFNAMEG`
-  copies the name space, `RFCNAMEG` starts clean, `RFNOMNT` means "subsequent
-  mounts into the new name space are disallowed" and most `#` device paths cannot
-  be walked; `RFENVG` copies the environment, `RFCENVG` starts it empty; `RFFDG`
-  copies the fd table, `RFNOTEG` starts a new note group (`9front:sys/man/2/fork`).
-  In the kernel these are four groups on the `Proc`: `pgrp` (namespace), `egrp`
-  (environment), `fgrp` (fds), `rgrp` (rendezvous) (`9front:sys/src/9/port/portdat.h:710-713`),
-  and `sysrfork` allocates a new `Pgrp` or `Egrp` per flag
-  (`9front:sys/src/9/port/sysproc.c:84-122, 206-250`).
-- **The environment is kernel memory served as files, not stored rows.** `Egrp` is
-  a hash table of `Evalue{name, value, vers}` (`portdat.h:524-542`); `#e` "serves a
-  one-level directory containing files with arbitrary names and contents … the
-  content is the variable's current value" (`9front:sys/man/3/env`). `/lib/namespace`
-  binds it: `bind -c #e /env` (`9front:lib/namespace:4`). rc keeps its variables
-  in its own tables and writes them out to `/env/<name>` in `Updenv()` before every
-  fork and exec; functions are written as `/env/fn#<name>`
-  (`9front:sys/src/cmd/rc/plan9.c:123-129, 212-262`), and read back at start
-  (`plan9.c:133-160`). So Plan 9's env is per-process-group memory with a file
-  projection, written at well-defined points. The file server never sees it.
-- **cwd is a per-process attribute, shown as a `cd` line.** `/proc/n/ns` "contains a
-  textual representation of the process's file name space, in the format of
-  namespace(6) … The last line of the file identifies the current working
-  directory of the process, in the form of a `cd` command"
-  (`9front:sys/man/3/proc:101-108`). `namespace(6)` lists the operations a
-  namespace file may contain: `mount`, `bind`, `cd`, `unmount`, `chdev`, `clear`
-  (`rfork(RFCNAMEG)`), `.` (`9front:sys/man/6/namespace`).
-- **The additive bind replaces `$path`.** "A directory of private binaries is
-  usually unioned with `/bin`. (Compare this to the ad hoc and special-purpose idea
-  of the `PATH` variable, which is not used in the Plan 9 shell.)"
-  (`names.ms:392-399`). rc(1) agrees: `$path` "use is discouraged; instead use
-  bind(1) to build a `/bin` containing what's needed" (`9front:sys/man/1/rc`,
-  Special Variables). `/lib/namespace:31-33`: `bind /$cputype/bin /bin`,
-  `bind -a /rc/bin /bin`.
-- **rc's variable model.** Every variable is a list of strings; `$status` is "the
-  wait message of the last-executed program" — a string, null on success, used by
-  `&&`, `||`, `if`, `while`; `$apid` is the pid of the last `&` command; `$ifs`,
-  `$pid`, `$prompt`, `$home`, `$*` are the other specials (`9front:sys/man/1/rc`,
-  Special Variables; Command Lines, lines 40-62). `rfork` is a builtin whose
-  letters map to the flags (`n`, `N`, `e`, `E`, `s`, `f`, `F`, `m`) and default to
-  `ens` (`rc(1)`, Built-in Commands).
-- **Process creation is deliberately not a file operation.** "We could imagine a
-  message to a control file in `/proc` that creates a process, but the details of
-  constructing the environment of the new process — its open files, name space,
-  memory image, etc. — are too intricate to be described easily in a simple I/O
-  operation. Therefore new processes on Plan 9 are created by fairly conventional
-  `rfork` and `exec` system calls; `/proc` is used only to represent and control
-  existing processes" (`names.ms:603-613`). Observing a process is files
-  (`/proc/n/{ctl,status,note,wait,ns}`, `proc(3)`); creating one is a verb.
-- **plan9port's pseudo-namespace.** On Unix a namespace is "a directory containing
-  Unix domain sockets, one for each 9P server", default `/tmp/ns.$USER.$DISPLAY`,
-  overridden by `$NAMESPACE`; "all programs in an X Windows login session share a
-  single name space" (`plan9port:man/man4/0intro.4:48-60`). The per-process
-  namespace degraded to a per-login-session one when the kernel could not carry it.
+- **Per-process namespace.** "The foundations of the system are built on two ideas: a per-process name space and a simple message-oriented file system protocol" (`9front:sys/doc/names.ms:38-40`). `rfork` "takes as argument a bit vector defining which attributes of the process are to be shared … One of the attributes is the name space: when shared, changes made by either process are visible in the other; when copied, changes are independent" (`names.ms:369-376`).
+- **The flags are the whole model of session inheritance.** `fork(2)`: `RFNAMEG` copies the name space, `RFCNAMEG` starts clean, `RFNOMNT` means "subsequent mounts into the new name space are disallowed" and most `#` device paths cannot be walked; `RFENVG` copies the environment, `RFCENVG` starts it empty; `RFFDG` copies the fd table, `RFNOTEG` starts a new note group (`9front:sys/man/2/fork`). In the kernel these are four groups on the `Proc`: `pgrp` (namespace), `egrp` (environment), `fgrp` (fds), `rgrp` (rendezvous) (`9front:sys/src/9/port/portdat.h:710-713`), and `sysrfork` allocates a new `Pgrp` or `Egrp` per flag (`9front:sys/src/9/port/sysproc.c:84-122, 206-250`).
+- **The environment is kernel memory served as files, not stored rows.** `Egrp` is a hash table of `Evalue{name, value, vers}` (`portdat.h:524-542`); `#e` "serves a one-level directory containing files with arbitrary names and contents … the content is the variable's current value" (`9front:sys/man/3/env`). `/lib/namespace` binds it: `bind -c #e /env` (`9front:lib/namespace:4`). rc keeps its variables in its own tables and writes them out to `/env/<name>` in `Updenv()` before every fork and exec; functions are written as `/env/fn#<name>` (`9front:sys/src/cmd/rc/plan9.c:123-129, 212-262`), and read back at start (`plan9.c:133-160`). So Plan 9's env is per-process-group memory with a file projection, written at well-defined points. The file server never sees it.
+- **cwd is a per-process attribute, shown as a `cd` line.** `/proc/n/ns` "contains a textual representation of the process's file name space, in the format of namespace(6) … The last line of the file identifies the current working directory of the process, in the form of a `cd` command" (`9front:sys/man/3/proc:101-108`). `namespace(6)` lists the operations a namespace file may contain: `mount`, `bind`, `cd`, `unmount`, `chdev`, `clear` (`rfork(RFCNAMEG)`), `.` (`9front:sys/man/6/namespace`).
+- **The additive bind replaces `$path`.** "A directory of private binaries is usually unioned with `/bin`. (Compare this to the ad hoc and special-purpose idea of the `PATH` variable, which is not used in the Plan 9 shell.)" (`names.ms:392-399`). rc(1) agrees: `$path` "use is discouraged; instead use bind(1) to build a `/bin` containing what's needed" (`9front:sys/man/1/rc`, Special Variables). `/lib/namespace:31-33`: `bind /$cputype/bin /bin`, `bind -a /rc/bin /bin`.
+- **rc's variable model.** Every variable is a list of strings; `$status` is "the wait message of the last-executed program" — a string, null on success, used by `&&`, `||`, `if`, `while`; `$apid` is the pid of the last `&` command; `$ifs`, `$pid`, `$prompt`, `$home`, `$*` are the other specials (`9front:sys/man/1/rc`, Special Variables; Command Lines, lines 40-62). `rfork` is a builtin whose letters map to the flags (`n`, `N`, `e`, `E`, `s`, `f`, `F`, `m`) and default to `ens` (`rc(1)`, Built-in Commands).
+- **Process creation is deliberately not a file operation.** "We could imagine a message to a control file in `/proc` that creates a process, but the details of constructing the environment of the new process — its open files, name space, memory image, etc. — are too intricate to be described easily in a simple I/O operation. Therefore new processes on Plan 9 are created by fairly conventional `rfork` and `exec` system calls; `/proc` is used only to represent and control existing processes" (`names.ms:603-613`). Observing a process is files (`/proc/n/{ctl,status,note,wait,ns}`, `proc(3)`); creating one is a verb.
+- **plan9port's pseudo-namespace.** On Unix a namespace is "a directory containing Unix domain sockets, one for each 9P server", default `/tmp/ns.$USER.$DISPLAY`, overridden by `$NAMESPACE`; "all programs in an X Windows login session share a single name space" (`plan9port:man/man4/0intro.4:48-60`). The per-process namespace degraded to a per-login-session one when the kernel could not carry it.
 
 ### 5. The in-process agent shells: three different answers — READ
 
-**just-bash** (TypeScript, Apache-2.0). "Each `exec()` call gets its own isolated
-shell state — environment variables, functions, and working directory reset between
-calls. The filesystem is shared" (`just-bash:packages/just-bash/README.md:25`). The
-`Bash` class holds `fs`, the command registry, `limits` and one `InterpreterState`
-built by the constructor (`src/Bash.ts:330-479`: `env` Map, `cwd`, `functions`,
-`lastExitCode`, `lastBackgroundPid`, virtual pid/uid/gid, `options`, `shoptOptions`,
-`exportedVars` as a separate Set). `execInScope` copies that state per call and
-never writes it back (`Bash.ts:709-826`); `getCwd()`/`getEnv()` always return the
-constructor's values (`:1053-1058`). Limits are fuel-shaped (`src/limits.ts:14-149`:
-`maxCommandCount`, `maxLoopIterations`, `maxExecutionTimeMs` 1 h normal / 30 s
-hardened, `maxOutputSize` 256 MiB / 10 MiB); a timeout returns a normal result with
-exit 124 and the partial output (`Bash.ts:954-961`; `interpreter/errors.ts:20-38`).
-`&` is parsed (`parser.ts:531-546`) but no interpreter path reads it; `wait` is a
-no-op stub (`builtin-dispatch.ts:643`) — INFERRED: `&` runs synchronously. No job
-table, no snapshot API, no principal. `history` reads a JSON `BASH_HISTORY` env
-var, which resets per call (`commands/history/history.ts:18-34`).
+**just-bash** (TypeScript, Apache-2.0). "Each `exec()` call gets its own isolated shell state — environment variables, functions, and working directory reset between calls. The filesystem is shared" (`just-bash:packages/just-bash/README.md:25`). The `Bash` class holds `fs`, the command registry, `limits` and one `InterpreterState` built by the constructor (`src/Bash.ts:330-479`: `env` Map, `cwd`, `functions`, `lastExitCode`, `lastBackgroundPid`, virtual pid/uid/gid, `options`, `shoptOptions`, `exportedVars` as a separate Set). `execInScope` copies that state per call and never writes it back (`Bash.ts:709-826`); `getCwd()`/`getEnv()` always return the constructor's values (`:1053-1058`). Limits are fuel-shaped (`src/limits.ts:14-149`: `maxCommandCount`, `maxLoopIterations`, `maxExecutionTimeMs` 1 h normal / 30 s hardened, `maxOutputSize` 256 MiB / 10 MiB); a timeout returns a normal result with exit 124 and the partial output (`Bash.ts:954-961`; `interpreter/errors.ts:20-38`). `&` is parsed (`parser.ts:531-546`) but no interpreter path reads it; `wait` is a no-op stub (`builtin-dispatch.ts:643`) — INFERRED: `&` runs synchronously. No job table, no snapshot API, no principal. `history` reads a JSON `BASH_HISTORY` env var, which resets per call (`commands/history/history.ts:18-34`).
 
-**bashkit** (Rust, MIT). A real persistent shell. `Interpreter` holds env, scoped
-vars/arrays/functions/aliases/traps, `cwd`, `last_exit_code`, `jobs`, `history`
-(`crates/bashkit/src/interpreter/mod.rs:1672-1879`). `exec_impl` calls
-`reset_transient_state()` first, which clears traps, sets `last_exit_code = 0`,
-drops `set -o` options and pipeline fds, and keeps shopt "intentionally preserved —
-persistent session configuration" (`lib.rs:985-991`; `mod.rs:3111-3160`).
-Everything else — cwd, env, exports, variables, functions, aliases, dir stack —
-carries over. `SessionLimits` cap totals across calls: `max_total_commands` 100k,
-`max_exec_calls` 1000 (`limits.rs:403-460`); per call `timeout` 30 s and 1 MiB
-stdout/stderr (`limits.rs:53+`). Jobs are futures on a forked interpreter, polled
-on the same task, and "output is delivered at the next reap point: `wait`, a
-top-level command boundary, or the end of `exec()` (which waits for every job)"
-(`interpreter/jobs.rs:1-22`) — a job never outlives its call. **Snapshots**
-(`snapshot/mod.rs:17-100`) capture variables, env, cwd, `$?`, functions, aliases,
-traps, the VFS contents and the session counters; they exclude builtins, the
-execution stack, fds, pipes, background jobs and limits (`:93-100`). The container
-is content-addressed (`BKSNAP`, `snapshot/container.rs:25`), optionally HMAC-keyed;
-restore validates, swaps the VFS atomically and merges session counters
-monotonically so a restore cannot lower the used budget (`:461-481`). History rows
-are `{command, timestamp, cwd, exit_code, duration_ms}` (`mod.rs:109-120`),
-persisted to a VFS file only if `history_file` is set (`lib.rs:2273`).
+**bashkit** (Rust, MIT). A real persistent shell. `Interpreter` holds env, scoped vars/arrays/functions/aliases/traps, `cwd`, `last_exit_code`, `jobs`, `history` (`crates/bashkit/src/interpreter/mod.rs:1672-1879`). `exec_impl` calls `reset_transient_state()` first, which clears traps, sets `last_exit_code = 0`, drops `set -o` options and pipeline fds, and keeps shopt "intentionally preserved — persistent session configuration" (`lib.rs:985-991`; `mod.rs:3111-3160`). Everything else — cwd, env, exports, variables, functions, aliases, dir stack — carries over. `SessionLimits` cap totals across calls: `max_total_commands` 100k, `max_exec_calls` 1000 (`limits.rs:403-460`); per call `timeout` 30 s and 1 MiB stdout/stderr (`limits.rs:53+`). Jobs are futures on a forked interpreter, polled on the same task, and "output is delivered at the next reap point: `wait`, a top-level command boundary, or the end of `exec()` (which waits for every job)" (`interpreter/jobs.rs:1-22`) — a job never outlives its call. **Snapshots** (`snapshot/mod.rs:17-100`) capture variables, env, cwd, `$?`, functions, aliases, traps, the VFS contents and the session counters; they exclude builtins, the execution stack, fds, pipes, background jobs and limits (`:93-100`). The container is content-addressed (`BKSNAP`, `snapshot/container.rs:25`), optionally HMAC-keyed; restore validates, swaps the VFS atomically and merges session counters monotonically so a restore cannot lower the used budget (`:461-481`). History rows are `{command, timestamp, cwd, exit_code, duration_ms}` (`mod.rs:109-120`), persisted to a VFS file only if `history_file` is set (`lib.rs:2273`).
 
-**lifo** (TypeScript, MIT). One long-lived `Shell` per `Sandbox` over one `Kernel`
-(`packages/core/src/sandbox/Sandbox.ts:121-243`; `shell/Shell.ts:26-65`: `cwd`,
-`env`, `aliases`, `history`, `JobTable`, `processRegistry`). Everything persists,
-including per-call `env` overrides that are `Object.assign`ed into the shell and
-never removed (`Shell.ts:205-207`). `&` starts a list without awaiting, registers
-it in a `ProcessRegistry` with simulated signals (`interpreter.ts:135-178`;
-`ProcessRegistry.ts:5-44, 212-238`); its output after `run()` returns is lost
-unless a stream callback was given (INFERRED). Snapshots are a tar.gz of the VFS
-plus `{cwd, env}` (`Sandbox.ts:413-449`); functions, aliases, `$?` and jobs are not
-included. History lives at `/home/user/.bash_history` in the VFS, interactive only
-(`shell/history.ts:3-47`). No principal.
+**lifo** (TypeScript, MIT). One long-lived `Shell` per `Sandbox` over one `Kernel` (`packages/core/src/sandbox/Sandbox.ts:121-243`; `shell/Shell.ts:26-65`: `cwd`, `env`, `aliases`, `history`, `JobTable`, `processRegistry`). Everything persists, including per-call `env` overrides that are `Object.assign`ed into the shell and never removed (`Shell.ts:205-207`). `&` starts a list without awaiting, registers it in a `ProcessRegistry` with simulated signals (`interpreter.ts:135-178`; `ProcessRegistry.ts:5-44, 212-238`); its output after `run()` returns is lost unless a stream callback was given (INFERRED). Snapshots are a tar.gz of the VFS plus `{cwd, env}` (`Sandbox.ts:413-449`); functions, aliases, `$?` and jobs are not included. History lives at `/home/user/.bash_history` in the VFS, interactive only (`shell/history.ts:3-47`). No principal.
 
 ### 6. nushell and elvish: structured state, overlays, a job table, a store — READ
 
-Two corrections to the brief first: nushell's history defaults to **plaintext**
-(`crates/nu-protocol/src/config/history.rs:130-140`); SQLite is opt-in. elvish
-**removed** `store:shared-var` in 0.19.1 (`website/blog/0.19.1-release-notes.md:72-73`).
+Two corrections to the brief first: nushell's history defaults to **plaintext** (`crates/nu-protocol/src/config/history.rs:130-140`); SQLite is opt-in. elvish **removed** `store:shared-var` in 0.19.1 (`website/blog/0.19.1-release-notes.md:72-73`).
 
-**nushell.** `EngineState` is the shared, copy-on-write global (decls, blocks,
-modules, `scope: ScopeFrame`, `env_vars`, `config`, `history_session_id`,
-`jobs: Arc<Mutex<Jobs>>`; `crates/nu-protocol/src/engine/engine_state.rs:133-234`).
-`Stack` is the mutable per-call state (`vars`, layered `env_vars` keyed by overlay,
-`env_hidden`, `active_overlays`, `parent_stack`, `last_result`;
-`engine/stack.rs:53-122`). Commands get `&EngineState` and `&mut Stack`, so a
-command cannot change engine state (INFERRED). Each REPL line starts with
-`merge_env`, which folds the stack's env into the engine and syncs the process cwd
-from `$env.PWD` (`engine_state.rs:501-532`; `nu-cli/src/repl.rs:626`). **cwd is an
-env var**, `$env.PWD`, validated absolute and existing by `EngineState::cwd`
-(`engine_state.rs:1146-1185`); `cd` sets it (`nu-command/src/filesystem/cd.rs:115-125`).
-A callee's env reaches the caller only through `redirect_env`, used by `def --env`,
-`export-env` and `overlay use` (`nu-engine/src/eval.rs:508-527`). **Overlays** are
-stacked symbol tables (vars, decls, modules, env) with last-activated-wins lookup
-and per-overlay hiding (`engine/overlay.rs:255, 402-411`; `overlay/hide.rs:66-99`)
-— INFERRED: a union `bind -b` over identifier tables, not over paths. **Jobs**
-(`job spawn|list|kill|send|recv|unfreeze`, category Experimental): a `Jobs` table in
-`EngineState` (`engine/jobs.rs:21-29`), `Job::Thread` (signals, pids, a mailbox
-sender) or `Job::Frozen` (a stopped external child; `jobs.rs:145-164, 246-249`).
-`job spawn` clones the engine, spawns an OS thread, runs the closure with stdout
-and stderr redirected to `OutDest::Null`, and removes the job when done
-(`nu-command/src/experimental/job_spawn.rs:55-131`). **Output is not collected**;
-a job communicates only by `job send` to a tagged mailbox (`job_send.rs:16-26`;
-`job_recv.rs:29-43`). Nothing persists across sessions. **History** rows in the
-SQLite format hold `command, start_timestamp, hostname, cwd, exit_status, duration,
-session_id` (`nu-cli/src/commands/history/fields.rs`; filled at
-`repl.rs:974-1016`); plaintext holds the command only. `$env.LAST_EXIT_CODE` is set
-by `Stack::set_last_exit_code` (`stack.rs:677-679`); hooks (`pre_prompt`,
-`pre_execution`, `env_change`) live in `Config.hooks` (`config/hooks.rs:7-13`).
+**nushell.** `EngineState` is the shared, copy-on-write global (decls, blocks, modules, `scope: ScopeFrame`, `env_vars`, `config`, `history_session_id`, `jobs: Arc<Mutex<Jobs>>`; `crates/nu-protocol/src/engine/engine_state.rs:133-234`). `Stack` is the mutable per-call state (`vars`, layered `env_vars` keyed by overlay, `env_hidden`, `active_overlays`, `parent_stack`, `last_result`; `engine/stack.rs:53-122`). Commands get `&EngineState` and `&mut Stack`, so a command cannot change engine state (INFERRED). Each REPL line starts with `merge_env`, which folds the stack's env into the engine and syncs the process cwd from `$env.PWD` (`engine_state.rs:501-532`; `nu-cli/src/repl.rs:626`). **cwd is an env var**, `$env.PWD`, validated absolute and existing by `EngineState::cwd` (`engine_state.rs:1146-1185`); `cd` sets it (`nu-command/src/filesystem/cd.rs:115-125`). A callee's env reaches the caller only through `redirect_env`, used by `def --env`, `export-env` and `overlay use` (`nu-engine/src/eval.rs:508-527`). **Overlays** are stacked symbol tables (vars, decls, modules, env) with last-activated-wins lookup and per-overlay hiding (`engine/overlay.rs:255, 402-411`; `overlay/hide.rs:66-99`) — INFERRED: a union `bind -b` over identifier tables, not over paths. **Jobs** (`job spawn|list|kill|send|recv|unfreeze`, category Experimental): a `Jobs` table in `EngineState` (`engine/jobs.rs:21-29`), `Job::Thread` (signals, pids, a mailbox sender) or `Job::Frozen` (a stopped external child; `jobs.rs:145-164, 246-249`). `job spawn` clones the engine, spawns an OS thread, runs the closure with stdout and stderr redirected to `OutDest::Null`, and removes the job when done (`nu-command/src/experimental/job_spawn.rs:55-131`). **Output is not collected**; a job communicates only by `job send` to a tagged mailbox (`job_send.rs:16-26`; `job_recv.rs:29-43`). Nothing persists across sessions. **History** rows in the SQLite format hold `command, start_timestamp, hostname, cwd, exit_status, duration, session_id` (`nu-cli/src/commands/history/fields.rs`; filled at `repl.rs:974-1016`); plaintext holds the command only. `$env.LAST_EXIT_CODE` is set by `Stack::set_last_exit_code` (`stack.rs:677-679`); hooks (`pre_prompt`, `pre_execution`, `env_change`) live in `Config.hooks` (`config/hooks.rs:7-13`).
 
-**elvish.** Scopes are static and lexical; `Ns` is "immutable after its associated
-code chunk has finished execution" (`pkg/eval/ns.go:9-27`); the `Evaler` holds
-`global`, `builtin`, a `modules` cache, chdir hooks and `numBgJobs`
-(`pkg/eval/eval.go:38-90`). `E:NAME` is a view onto the OS process environment —
-`os.Getenv`/`os.Setenv`, strings only, no shadow copy (`pkg/eval/var_ref.go:52-102,
-147-148`; `pkg/eval/vars/env.go:14-38`). `$pwd` is computed: get is `os.Getwd`,
-set is `ev.Chdir`, which runs `before-chdir`/`after-chdir` hooks and sets `$E:PWD`
-(`pkg/eval/pwd.go`; `eval.go:242-266`). The **store** is a bbolt file behind a
-daemon spawned on demand, because bolt takes an exclusive lock (INFERRED); it holds
-two buckets, `cmd` (`{Text, Seq}` — no cwd, status or timestamp) and `dir`
-(frecency-scored, decay 0.986 and +10 per visit) (`pkg/store/db_store.go:8-41`;
-`pkg/store/cmd.go:30-43`; `pkg/store/dir.go:12-53`; `pkg/daemon/server.go:1-5`).
-`&` forks a frame, bumps a counter and notifies on finish; there is no job table,
-no ids, no output capture (`pkg/eval/compile_effect.go:64-176`). There is no `$?`:
-status exists only as an exception value from `?()` or `try`; `$ok` is the no-error
-value and pipelines aggregate per-form exceptions (`pkg/eval/exception.go:61-63,
-149-202`).
+**elvish.** Scopes are static and lexical; `Ns` is "immutable after its associated code chunk has finished execution" (`pkg/eval/ns.go:9-27`); the `Evaler` holds `global`, `builtin`, a `modules` cache, chdir hooks and `numBgJobs` (`pkg/eval/eval.go:38-90`). `E:NAME` is a view onto the OS process environment — `os.Getenv`/`os.Setenv`, strings only, no shadow copy (`pkg/eval/var_ref.go:52-102, 147-148`; `pkg/eval/vars/env.go:14-38`). `$pwd` is computed: get is `os.Getwd`, set is `ev.Chdir`, which runs `before-chdir`/`after-chdir` hooks and sets `$E:PWD` (`pkg/eval/pwd.go`; `eval.go:242-266`). The **store** is a bbolt file behind a daemon spawned on demand, because bolt takes an exclusive lock (INFERRED); it holds two buckets, `cmd` (`{Text, Seq}` — no cwd, status or timestamp) and `dir` (frecency-scored, decay 0.986 and +10 per visit) (`pkg/store/db_store.go:8-41`; `pkg/store/cmd.go:30-43`; `pkg/store/dir.go:12-53`; `pkg/daemon/server.go:1-5`). `&` forks a frame, bumps a counter and notifies on finish; there is no job table, no ids, no output capture (`pkg/eval/compile_effect.go:64-176`). There is no `$?`: status exists only as an exception value from `?()` or `try`; `$ok` is the no-error value and pipelines aggregate per-form exceptions (`pkg/eval/exception.go:61-63, 149-202`).
 
 ### 7. The harnesses: cwd is the only thing anyone keeps, and only Claude Code keeps it — READ, WEB, OBSERVED
 
-**Claude Code** (WEB: `https://code.claude.com/docs/en/tools-reference.md`, fetched
-2026-10-15, "What persists between commands"): "When Claude runs `cd` in the main
-session, the new working directory carries over to later Bash commands as long as
-it stays inside the project directory or an additional working directory … Subagent
-sessions never carry over working directory changes. … If `cd` lands outside those
-directories, Claude Code resets to the project directory and appends `Shell cwd was
-reset to <dir>` to the tool result." "Environment variables don't persist. An
-`export` in one command won't be available in the next." Aliases and functions
-come from the user's startup file, captured once at session start. Timeouts:
-`BASH_DEFAULT_TIMEOUT_MS` "two minutes out of the box", `BASH_MAX_TIMEOUT_MS` "ten
-minutes out of the box". Output: "Inline up to roughly 30,000 characters by default;
-past that, the path of a file saved to the session directory and truncated past
-64 MiB, plus a preview of up to the first 2,000 characters, and Claude reads or
-searches the file when it needs the rest"; failures "inline up to roughly 10,000
-characters; past that, a head-and-tail excerpt". Background: `run_in_background:
-true` starts a task; `TaskOutput` was "removed in v2.1.277. Previously retrieved
-output from a background task; Claude reads a background task's output file with
-`Read` instead"; `TaskStop` stops a task by id. A foreground command that reaches its
-timeout is moved to the background with the message `Command did not complete within
-its 120s timeout and was moved to the background`, and "a `cd` … inside a command
-that is moved to the background never carries over: the result states `Session cwd
-remains <dir>`". Unattended runs cap background commands at 30 minutes, at most
-2 hours. The `Monitor` tool runs a script in the background and "receives each
-output line as it arrives", deadline 5 minutes by default, at most 30. OBSERVED: this
-session's Bash tool says "Working directory persists between calls … Shell state
-(env vars, functions) does not persist", `run_in_background` "re-invokes you when it
-exits", and `Monitor` and `TaskStop` are in the tool list. The SDK repo
-(`claude-agent-sdk-python`) has no Bash implementation; background shells surface
-as `TaskStartedMessage`/`TaskNotificationMessage{output_file, summary}` with
-terminal statuses completed, failed, stopped, killed (`src/claude_agent_sdk/types.py:1530-1619`;
-`task_type: "local_bash"` in `tests/test_query.py:462-471`).
+**Claude Code** (WEB: `https://code.claude.com/docs/en/tools-reference.md`, fetched 2026-10-15, "What persists between commands"): "When Claude runs `cd` in the main session, the new working directory carries over to later Bash commands as long as it stays inside the project directory or an additional working directory … Subagent sessions never carry over working directory changes. … If `cd` lands outside those directories, Claude Code resets to the project directory and appends `Shell cwd was reset to <dir>` to the tool result." "Environment variables don't persist. An `export` in one command won't be available in the next." Aliases and functions come from the user's startup file, captured once at session start. Timeouts: `BASH_DEFAULT_TIMEOUT_MS` "two minutes out of the box", `BASH_MAX_TIMEOUT_MS` "ten minutes out of the box". Output: "Inline up to roughly 30,000 characters by default; past that, the path of a file saved to the session directory and truncated past 64 MiB, plus a preview of up to the first 2,000 characters, and Claude reads or searches the file when it needs the rest"; failures "inline up to roughly 10,000 characters; past that, a head-and-tail excerpt". Background: `run_in_background: true` starts a task; `TaskOutput` was "removed in v2.1.277. Previously retrieved output from a background task; Claude reads a background task's output file with `Read` instead"; `TaskStop` stops a task by id. A foreground command that reaches its timeout is moved to the background with the message `Command did not complete within its 120s timeout and was moved to the background`, and "a `cd` … inside a command that is moved to the background never carries over: the result states `Session cwd remains <dir>`". Unattended runs cap background commands at 30 minutes, at most 2 hours. The `Monitor` tool runs a script in the background and "receives each output line as it arrives", deadline 5 minutes by default, at most 30. OBSERVED: this session's Bash tool says "Working directory persists between calls … Shell state (env vars, functions) does not persist", `run_in_background` "re-invokes you when it exits", and `Monitor` and `TaskStop` are in the tool list. The SDK repo (`claude-agent-sdk-python`) has no Bash implementation; background shells surface as `TaskStartedMessage`/`TaskNotificationMessage{output_file, summary}` with terminal statuses completed, failed, stopped, killed (`src/claude_agent_sdk/types.py:1530-1619`; `task_type: "local_bash"` in `tests/test_query.py:462-471`).
 
-**opencode** (`packages/core/src/tool/plugin/shell.ts`; the brief's
-`packages/opencode/src/tool/bash.ts` no longer exists). Every call spawns
-`<shell> -c <command>` (`core/src/shell.ts:278-307`); the tool takes `workdir` and
-tells the model to use it "instead" of `cd` (`shell.ts:50-53`). Env is the
-session's stored variables or `process.env`, set only through the `Session.environment`
-API, never by a command (`core/src/shell.ts:259-262`; `session/environment.ts:17-30`).
-Default timeout 120 s, `0` disables, background commands have none (`shell.ts:24,
-54-56, 201`); on timeout the tail output is returned with a retry hint
-(`:229-231`). All output streams to `<data>/shell/<projectID>/<shellID>.out`; the
-result shows the tail (50 KiB, 2000 lines) with `[showing lines X-Y of N; full
-output saved to <file>]` (`core/src/shell.ts:235-248, 323-335`); files are kept
-7 days, the last 25 exited commands in memory. `background: true` returns at once
-with a shell id and the file path and "do NOT poll, you will be notified"
-(`:26-27, 96-101, 239-258`); completion is pushed as a synthetic session message
-(`:157-189`). The user can move a blocked foreground command to the background
-(`core/src/session.ts:442-455`). The shell registry belongs to the project
-location, not the session (`core/src/shell.ts:54-61, 133`).
+**opencode** (`packages/core/src/tool/plugin/shell.ts`; the brief's `packages/opencode/src/tool/bash.ts` no longer exists). Every call spawns `<shell> -c <command>` (`core/src/shell.ts:278-307`); the tool takes `workdir` and tells the model to use it "instead" of `cd` (`shell.ts:50-53`). Env is the session's stored variables or `process.env`, set only through the `Session.environment` API, never by a command (`core/src/shell.ts:259-262`; `session/environment.ts:17-30`). Default timeout 120 s, `0` disables, background commands have none (`shell.ts:24, 54-56, 201`); on timeout the tail output is returned with a retry hint (`:229-231`). All output streams to `<data>/shell/<projectID>/<shellID>.out`; the result shows the tail (50 KiB, 2000 lines) with `[showing lines X-Y of N; full output saved to <file>]` (`core/src/shell.ts:235-248, 323-335`); files are kept 7 days, the last 25 exited commands in memory. `background: true` returns at once with a shell id and the file path and "do NOT poll, you will be notified" (`:26-27, 96-101, 239-258`); completion is pushed as a synthetic session message (`:157-189`). The user can move a blocked foreground command to the background (`core/src/session.ts:442-455`). The shell registry belongs to the project location, not the session (`core/src/shell.ts:54-61, 133`).
 
-**codex** (`codex-rs/core/src/unified_exec/`). Each `exec_command` spawns `shell -lc
-cmd` with a `workdir` resolved against the turn cwd (`core/src/shell.rs:24-33`;
-`tools/handlers/unified_exec/exec_command.rs:184-193`); nothing carries between
-calls except inside one live process (INFERRED: `exec_command("bash")` then
-`write_stdin` lines). `yield_time_ms` 10 s default, clamped 250–30,000 ms; if the
-process is still running the call returns the output so far plus "Process running
-with session ID N" — no kill, no hard timeout (`unified_exec.rs:60-62`;
-`mod.rs:68-72`; `tools/context.rs:538-540`). `write_stdin` with empty `chars` is a
-pure poll, 5 s to 300 s (`process_manager.rs:1029-1038`; `mod.rs:71-73`). Each
-process has `pending` and `transcript` head-and-tail buffers of 1 MiB; **each call
-drains `pending`**, so it returns only output since the last poll
-(`head_tail_buffer.rs:5-19`; `process_manager.rs:1631-1641`). The model-facing
-text is middle-truncated to a token budget (default 10,000) with a `Chunk ID`
-header (`tools/context.rs:482-547`). The `ProcessStore` is per `Session`
-(conversation), ids random 1000–99999, soft cap 64 with LRU eviction, all
-terminated on session shutdown (`mod.rs:150-199`; `process_manager.rs:452-477,
-1750-1840`; `session/handlers.rs:310-314`).
+**codex** (`codex-rs/core/src/unified_exec/`). Each `exec_command` spawns `shell -lc cmd` with a `workdir` resolved against the turn cwd (`core/src/shell.rs:24-33`; `tools/handlers/unified_exec/exec_command.rs:184-193`); nothing carries between calls except inside one live process (INFERRED: `exec_command("bash")` then `write_stdin` lines). `yield_time_ms` 10 s default, clamped 250–30,000 ms; if the process is still running the call returns the output so far plus "Process running with session ID N" — no kill, no hard timeout (`unified_exec.rs:60-62`; `mod.rs:68-72`; `tools/context.rs:538-540`). `write_stdin` with empty `chars` is a pure poll, 5 s to 300 s (`process_manager.rs:1029-1038`; `mod.rs:71-73`). Each process has `pending` and `transcript` head-and-tail buffers of 1 MiB; **each call drains `pending`**, so it returns only output since the last poll (`head_tail_buffer.rs:5-19`; `process_manager.rs:1631-1641`). The model-facing text is middle-truncated to a token budget (default 10,000) with a `Chunk ID` header (`tools/context.rs:482-547`). The `ProcessStore` is per `Session` (conversation), ids random 1000–99999, soft cap 64 with LRU eviction, all terminated on session shutdown (`mod.rs:150-199`; `process_manager.rs:452-477, 1750-1840`; `session/handlers.rs:310-314`).
 
-**gemini-cli** (old, dirty snapshot d42e3f1e7 of 2025-08-01; the on-disk tree is a
-different project, so everything was read with `git show HEAD:`). `run_shell_command`
-spawns `bash` detached per call with `process.env` plus `GEMINI_CLI=1`
-(`packages/core/src/services/shellExecutionService.ts:93-106`); a relative
-`directory` parameter picks the cwd (`tools/shell.ts:77-81, 218-221`). The user's
-`!` mode prints "WARNING: shell mode is stateless; the directory change to '…' will
-not persist" (`packages/cli/src/ui/hooks/shellCommandProcessor.ts:230-235`). No
-timeout, no output cap at this commit; abort kills the process group and returns
-the partial output (`shellExecutionService.ts:180-201`; `shell.ts:309-315`).
-Background: the command is wrapped as `{ cmd; }; __code=$?; pgrep -g 0 > tmpfile`
-and the PIDs are reported as `Background PIDs:` — not tracked afterwards
-(`shell.ts:201-216, 285-306`). `[NOT VERIFIED: newer gemini-cli pty and background
-features; the clone is dirty and stale.]`
+**gemini-cli** (old, dirty snapshot d42e3f1e7 of 2025-08-01; the on-disk tree is a different project, so everything was read with `git show HEAD:`). `run_shell_command` spawns `bash` detached per call with `process.env` plus `GEMINI_CLI=1` (`packages/core/src/services/shellExecutionService.ts:93-106`); a relative `directory` parameter picks the cwd (`tools/shell.ts:77-81, 218-221`). The user's `!` mode prints "WARNING: shell mode is stateless; the directory change to '…' will not persist" (`packages/cli/src/ui/hooks/shellCommandProcessor.ts:230-235`). No timeout, no output cap at this commit; abort kills the process group and returns the partial output (`shellExecutionService.ts:180-201`; `shell.ts:309-315`). Background: the command is wrapped as `{ cmd; }; __code=$?; pgrep -g 0 > tmpfile` and the PIDs are reported as `Background PIDs:` — not tracked afterwards (`shell.ts:201-216, 285-306`). `[NOT VERIFIED: newer gemini-cli pty and background features; the clone is dirty and stale.]`
 
 ### 8. eve and deepagents: where per-agent and per-thread state lives — READ
 
-**eve** (Vercel, Apache-2.0). The agent is a directory compiled at build time:
-`agent/` holds `agent.ts`, `instructions.md`, `tools/`, `skills/`, `memory/<slot>.ts`,
-`sandbox/workspace/**`, `subagents/<name>/` and more; names come from paths
-(`eve:docs/reference/agent-files.md:12-65`). The loader `discoverAgent()` classifies
-root entries by name without importing them (`packages/eve/src/discover/discover-agent.ts:87`;
-`discover/filesystem.ts:~144-238`). Agent source is **not** visible to shell
-commands; only `agent/sandbox/workspace/**` is copied into `/workspace/`, and skills
-are seeded at `$HOME/.agents/skills/` (`agent-files.md:62, 85`). **Session** = one
-durable workflow run id, checkpointed at step boundaries (disk locally, Vercel
-Workflow or Postgres in production), 30-day default lifetime, compaction keeps the
-id (`docs/concepts/sessions-runs-and-streaming.md:10-30`;
-`docs/concepts/execution-model-and-durability.mdx:14-38`). `defineState` is a typed
-durable key in the session context that survives steps and turns and is never
-shared with subagents (`packages/eve/src/public/definitions/state.ts:43-80`). **The
-sandbox** is one per session, rooted at `/workspace`, persistent across turns,
-resumed from a checkpoint; providers do not share across sessions
-(`docs/sandbox/index.mdx:6-127`). The `bash` tool takes only `{command}`; every call
-is a fresh `sandbox.spawn(...)`; on a real bash the command runs in its own process
-group with output files under `/tmp/.eve/jobs/<id>` and after `BASH_YIELD_SECONDS =
-30` the tool returns `status: "running"` with a pid while the job keeps going;
-under just-bash nothing can be backgrounded so every command runs to completion
-(`packages/eve/src/execution/sandbox/bash.ts:10-45, 120-192`). INFERRED: cwd and
-env never carry between calls on any provider; only the filesystem does.
-**`byPrincipal`** is a memory scope resolver: `principalScope(auth)` returns `null`
-for anonymous or runtime principals (which disables the slot, no fallback) and
-otherwise `JSON.stringify([type, authenticator, issuer, principalId])`
-(`packages/eve/src/shared/principal-scope.ts:3-15`;
-`docs/memory/overview.mdx:255-270`). The scope is **not a path**: it is hashed with
-a namespace tuple into an opaque `scope.key` (`shared/memory-state.ts:59-95`) that
-the provider uses to partition storage; the file memory provider stores one bounded
-`MEMORY.md` per key with optimistic versioning
-(`public/memory/file/backend.ts:23-33`; `file/backends/vercel-blob.ts:19-20, 86-87`).
-INFERRED: eve's persistence unit is (deployment × slot × agent × scope value) —
-per agent and per principal, not per conversation.
+**eve** (Vercel, Apache-2.0). The agent is a directory compiled at build time: `agent/` holds `agent.ts`, `instructions.md`, `tools/`, `skills/`, `memory/<slot>.ts`, `sandbox/workspace/**`, `subagents/<name>/` and more; names come from paths (`eve:docs/reference/agent-files.md:12-65`). The loader `discoverAgent()` classifies root entries by name without importing them (`packages/eve/src/discover/discover-agent.ts:87`; `discover/filesystem.ts:~144-238`). Agent source is **not** visible to shell commands; only `agent/sandbox/workspace/**` is copied into `/workspace/`, and skills are seeded at `$HOME/.agents/skills/` (`agent-files.md:62, 85`). **Session** = one durable workflow run id, checkpointed at step boundaries (disk locally, Vercel Workflow or Postgres in production), 30-day default lifetime, compaction keeps the id (`docs/concepts/sessions-runs-and-streaming.md:10-30`; `docs/concepts/execution-model-and-durability.mdx:14-38`). `defineState` is a typed durable key in the session context that survives steps and turns and is never shared with subagents (`packages/eve/src/public/definitions/state.ts:43-80`). **The sandbox** is one per session, rooted at `/workspace`, persistent across turns, resumed from a checkpoint; providers do not share across sessions (`docs/sandbox/index.mdx:6-127`). The `bash` tool takes only `{command}`; every call is a fresh `sandbox.spawn(...)`; on a real bash the command runs in its own process group with output files under `/tmp/.eve/jobs/<id>` and after `BASH_YIELD_SECONDS = 30` the tool returns `status: "running"` with a pid while the job keeps going; under just-bash nothing can be backgrounded so every command runs to completion (`packages/eve/src/execution/sandbox/bash.ts:10-45, 120-192`). INFERRED: cwd and env never carry between calls on any provider; only the filesystem does. **`byPrincipal`** is a memory scope resolver: `principalScope(auth)` returns `null` for anonymous or runtime principals (which disables the slot, no fallback) and otherwise `JSON.stringify([type, authenticator, issuer, principalId])` (`packages/eve/src/shared/principal-scope.ts:3-15`; `docs/memory/overview.mdx:255-270`). The scope is **not a path**: it is hashed with a namespace tuple into an opaque `scope.key` (`shared/memory-state.ts:59-95`) that the provider uses to partition storage; the file memory provider stores one bounded `MEMORY.md` per key with optimistic versioning (`public/memory/file/backend.ts:23-33`; `file/backends/vercel-blob.ts:19-20, 86-87`). INFERRED: eve's persistence unit is (deployment × slot × agent × scope value) — per agent and per principal, not per conversation.
 
-**deepagents** (LangChain, MIT). `BackendProtocol` has `ls`, `read`, `grep`, `glob`,
-`write`, `edit`, `delete`, `upload_files`, `download_files`, each with an async twin
-(`libs/deepagents/deepagents/backends/protocol.py:404-804`);
-`SandboxBackendProtocol` adds `id` and `execute(command, *, timeout)` (`:886-935`).
-**`StateBackend`** keeps files in LangGraph state: "Files persist within a
-conversation thread but not across threads", checkpointed after each step, reading
-its own writes through `CONFIG_KEY_READ(fresh=True)` (`backends/state.py:38-110`);
-it is the default (`graph.py:657`). `FilesystemBackend(root_dir, virtual_mode=True)`
-is real disk with `..` and `~` refused, "not sandboxing" (`backends/filesystem.py:91-179`).
-`StoreBackend(namespace=factory)` persists across threads in a LangGraph `BaseStore`
-keyed by a namespace tuple the caller derives from `Runtime` — the documented
-example is `(rt.server_info.user.identity, "filesystem")` — with the file path as the
-item key (`backends/store.py:88-165, 448`). **`CompositeBackend` is a mount table**:
-routes sorted by prefix length, longest first; `_route_for_path` strips the prefix
-and re-roots the remainder at `/` (`/memories/a.txt` → `/a.txt`); results are
-remapped by prepending the prefix; `ls("/")` merges the default with a synthetic
-directory per route; `grep`/`glob` at `/` fan out to every backend under a global
-`max_count`; `execute` is never path-routed and always goes to the default
-(`backends/composite.py:37-115, 195-283, 300-349, 459-500, 814-850`). The
-**`execute`** tool is registered only when the default backend is a sandbox; its
-description says "Use absolute paths and avoid `cd` so the working directory stays
-stable" (`middleware/filesystem.py:1576-1584, 1711-1724`); per-call `timeout` ≤
-`max_execute_timeout` (3600 s default); `LocalShellBackend.execute` is a fresh
-`subprocess.run(..., cwd=self.cwd, env=self._env, start_new_session=True)` every
-call (`backends/local_shell.py:23, 298-316`). INFERRED: no cwd or env persists.
-**State** per thread holds `messages` and `files: dict[str, FileData]` as a
-`DeltaChannel` with a merge reducer and a snapshot every ~50 steps
-(`middleware/filesystem.py:1240, 1297-1301`); `files` is **not** excluded from the
-state handed to subagents, `todos` and `messages` are (`middleware/subagents.py:405-414`).
-**Permissions**: `FilesystemPermission(operations, paths, mode: allow|deny|interrupt)`,
-first match wins, matched against the requested path and its symlink target;
-interrupt rules become `interrupt_on` entries with approve/edit/reject/respond
-(`middleware/filesystem.py:367-400`; `middleware/_fs_interrupt.py:39-47, 174-203`).
-Permissions plus an execute-capable backend raise `NotImplementedError` ("Tool-level
-permissions for the execute tool are not implemented") unless every rule is scoped
-to a non-default route (`filesystem.py:1976-1983`) — the shell is the enforcement
-gap, in the peer's own code, which ADR 069 already cites.
+**deepagents** (LangChain, MIT). `BackendProtocol` has `ls`, `read`, `grep`, `glob`, `write`, `edit`, `delete`, `upload_files`, `download_files`, each with an async twin (`libs/deepagents/deepagents/backends/protocol.py:404-804`); `SandboxBackendProtocol` adds `id` and `execute(command, *, timeout)` (`:886-935`). **`StateBackend`** keeps files in LangGraph state: "Files persist within a conversation thread but not across threads", checkpointed after each step, reading its own writes through `CONFIG_KEY_READ(fresh=True)` (`backends/state.py:38-110`); it is the default (`graph.py:657`). `FilesystemBackend(root_dir, virtual_mode=True)` is real disk with `..` and `~` refused, "not sandboxing" (`backends/filesystem.py:91-179`). `StoreBackend(namespace=factory)` persists across threads in a LangGraph `BaseStore` keyed by a namespace tuple the caller derives from `Runtime` — the documented example is `(rt.server_info.user.identity, "filesystem")` — with the file path as the item key (`backends/store.py:88-165, 448`). **`CompositeBackend` is a mount table**: routes sorted by prefix length, longest first; `_route_for_path` strips the prefix and re-roots the remainder at `/` (`/memories/a.txt` → `/a.txt`); results are remapped by prepending the prefix; `ls("/")` merges the default with a synthetic directory per route; `grep`/`glob` at `/` fan out to every backend under a global `max_count`; `execute` is never path-routed and always goes to the default (`backends/composite.py:37-115, 195-283, 300-349, 459-500, 814-850`). The **`execute`** tool is registered only when the default backend is a sandbox; its description says "Use absolute paths and avoid `cd` so the working directory stays stable" (`middleware/filesystem.py:1576-1584, 1711-1724`); per-call `timeout` ≤ `max_execute_timeout` (3600 s default); `LocalShellBackend.execute` is a fresh `subprocess.run(..., cwd=self.cwd, env=self._env, start_new_session=True)` every call (`backends/local_shell.py:23, 298-316`). INFERRED: no cwd or env persists. **State** per thread holds `messages` and `files: dict[str, FileData]` as a `DeltaChannel` with a merge reducer and a snapshot every ~50 steps (`middleware/filesystem.py:1240, 1297-1301`); `files` is **not** excluded from the state handed to subagents, `todos` and `messages` are (`middleware/subagents.py:405-414`). **Permissions**: `FilesystemPermission(operations, paths, mode: allow|deny|interrupt)`, first match wins, matched against the requested path and its symlink target; interrupt rules become `interrupt_on` entries with approve/edit/reject/respond (`middleware/filesystem.py:367-400`; `middleware/_fs_interrupt.py:39-47, 174-203`). Permissions plus an execute-capable backend raise `NotImplementedError` ("Tool-level permissions for the execute tool are not implemented") unless every rule is scoped to a non-default route (`filesystem.py:1976-1983`) — the shell is the enforcement gap, in the peer's own code, which ADR 069 already cites.
 
-What the two say together (INFERRED): in both, the shell call is stateless and the
-**filesystem is the only thing that persists** across calls and turns. Session
-state is an opaque checkpoint (eve's workflow context, deepagents' LangGraph thread),
-not a path. Per-principal data is reached by a *key* — eve's hashed scope,
-deepagents' namespace tuple — and deepagents then mounts it under a path prefix.
-That is the vfs shape already: identity is a value on the call, grants scope the
-rows, the mount table composes backends by prefix. Neither peer carries cwd.
+What the two say together (INFERRED): in both, the shell call is stateless and the **filesystem is the only thing that persists** across calls and turns. Session state is an opaque checkpoint (eve's workflow context, deepagents' LangGraph thread), not a path. Per-principal data is reached by a *key* — eve's hashed scope, deepagents' namespace tuple — and deepagents then mounts it under a path prefix. That is the vfs shape already: identity is a value on the call, grants scope the rows, the mount table composes backends by prefix. Neither peer carries cwd.
 
 ### 9. The MCP tasks extension is the wire shape for anything long — WEB
 
-`https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks`
-(fetched 2026-10-15; "experimental"). A requestor adds `task: {ttl}` to a
-`tools/call`; the receiver answers at once with a `CreateTaskResult` carrying
-`taskId`, `status`, `createdAt`, `lastUpdatedAt`, `ttl`, `pollInterval`. Statuses:
-`working`, `input_required`, `completed`, `failed`, `cancelled`; "tasks with a
-`completed`, `failed`, or `cancelled` status are in a terminal state". `tasks/get`
-polls; `tasks/result` "blocks until the task reaches a terminal status" and returns
-"exactly what the underlying request would have returned"; `tasks/list` paginates;
-`tasks/cancel` is best-effort. For tool calls, "when the tool result has `isError`
-set to `true`, the task should reach `failed` status" — verdict derived from
-evidence, as vfs's `Result.success` already is. Tools declare
-`execution.taskSupport` as `required`, `optional` or `forbidden`. Security: "When
-an authorization context is provided, receivers MUST bind tasks to said context"
-and must reject `tasks/get`, `tasks/result`, `tasks/cancel` from another context.
-The `input_required` status exists for a receiver that "has messages for the
-requestor that are necessary to complete the task" — an elicitation.
+`https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks` (fetched 2026-10-15; "experimental"). A requestor adds `task: {ttl}` to a `tools/call`; the receiver answers at once with a `CreateTaskResult` carrying `taskId`, `status`, `createdAt`, `lastUpdatedAt`, `ttl`, `pollInterval`. Statuses: `working`, `input_required`, `completed`, `failed`, `cancelled`; "tasks with a `completed`, `failed`, or `cancelled` status are in a terminal state". `tasks/get` polls; `tasks/result` "blocks until the task reaches a terminal status" and returns "exactly what the underlying request would have returned"; `tasks/list` paginates; `tasks/cancel` is best-effort. For tool calls, "when the tool result has `isError` set to `true`, the task should reach `failed` status" — verdict derived from evidence, as vfs's `Result.success` already is. Tools declare `execution.taskSupport` as `required`, `optional` or `forbidden`. Security: "When an authorization context is provided, receivers MUST bind tasks to said context" and must reject `tasks/get`, `tasks/result`, `tasks/cancel` from another context. The `input_required` status exists for a receiver that "has messages for the requestor that are necessary to complete the task" — an elicitation.
 
-The vfs open question "MCP 2026-07-28: long-batch execution model"
-(`context/open-questions.md`, asked 2026-08-10) already names this extension as the
-spec's durability answer and notes only FastMCP 4 implements it.
+The vfs open question "MCP 2026-07-28: long-batch execution model" (`context/open-questions.md`, asked 2026-08-10) already names this extension as the spec's durability answer and notes only FastMCP 4 implements it.
 
 ### 10. A 10,000-file write in one call needs no job — EXECUTED
 
-`experiments/s7/batch_10k.py`: 10,000 entries written in one `session.write`
-over `InMemoryStorage` returned one `Result` with 10,000 rows in 3.27 s; `glob
-**/*.md` over them in 0.10 s; `grep alpha` in 0.24 s (`max_count` is per file, as
-`grep -m`, so 10,000 rows). The numbers are a memo fact, not a test pin. INFERRED:
-on Postgres with the chunked builders the same call lands in seconds to tens of
-seconds, inside every harness's foreground window (120 s default). The batch
-contract is "stay correct and bounded"; it is not a reason for a job table.
+`experiments/s7/batch_10k.py`: 10,000 entries written in one `session.write` over `InMemoryStorage` returned one `Result` with 10,000 rows in 3.27 s; `glob **/*.md` over them in 0.10 s; `grep alpha` in 0.24 s (`max_count` is per file, as `grep -m`, so 10,000 rows). The numbers are a memo fact, not a test pin. INFERRED: on Postgres with the chunked builders the same call lands in seconds to tens of seconds, inside every harness's foreground window (120 s default). The batch contract is "stay correct and bounded"; it is not a reason for a job table.
 
 ### 11. Exit status: rc's `$status` is vfs's error kind — READ, INFERRED
 
-rc sets `$status` to "the wait message of the last-executed program … the null
-string if the command was successful" (`9front:sys/man/1/rc`). vfs's `Result`
-carries classified kinds (`vfs.not_found`, `vfs.permission_denied`,
-`vfs.unauthenticated`…), dotted and hierarchical, and `success` is derived from the
-absence of fatal errors (`src/vfs/results/envelope.py:1-30`;
-`results/kinds.py:24-55`). The experiment printed exactly those kinds as the
-refusal text. INFERRED: a vfs shell has an rc-shaped status for free — `$status`
-is the kind of the first fatal error, empty on success — and a bash-shaped `$?`
-derived from it (0 on success, 1 otherwise, 127 for an unknown command, 124 for a
-budget-exhausted call, as just-bash and codex both map timeouts to 124).
+rc sets `$status` to "the wait message of the last-executed program … the null string if the command was successful" (`9front:sys/man/1/rc`). vfs's `Result` carries classified kinds (`vfs.not_found`, `vfs.permission_denied`, `vfs.unauthenticated`…), dotted and hierarchical, and `success` is derived from the absence of fatal errors (`src/vfs/results/envelope.py:1-30`; `results/kinds.py:24-55`). The experiment printed exactly those kinds as the refusal text. INFERRED: a vfs shell has an rc-shaped status for free — `$status` is the kind of the first fatal error, empty on success — and a bash-shaped `$?` derived from it (0 on success, 1 otherwise, 127 for an unknown command, 124 for a budget-exhausted call, as just-bash and codex both map timeouts to 124).
 
 ## What this means for vfs
 
 ### The session-state table
 
-"Lives where" names the vfs owner. "Persisted" means survives a process restart.
-"Namespace" means readable as a path. "Per" names the scoping unit.
+"Lives where" names the vfs owner. "Persisted" means survives a process restart. "Namespace" means readable as a path. "Per" names the scoping unit.
 
 | Item | Lives where (recommended) | Persisted? | In the namespace? | Per | Precedent |
 |---|---|---|---|---|---|
@@ -573,261 +149,82 @@ budget-exhausted call, as just-bash and codex both map timeouts to 124).
 
 ### The mapping of shell concepts onto `Session` and mounts
 
-- **A shell session = `Session` + four fields.** `cwd`, `env`, `last_status`,
-  `history`. None of them changes what the authority may do; the funnel re-derives
-  rights on every call exactly as today. The session stays "sugar over the funnel";
-  the sugar just remembers where it is standing.
-- **cwd is a path and `cd` is a verb the ladder already prices.** `cd X` is
-  `stat(X)` plus a kind check. It succeeds when the caller holds `list` on `X`
-  (ADR 080 pin 2: `list` reveals path and kind). A hidden `X` answers `not_found`,
-  a file answers "not a directory". Relative arguments to every builtin resolve
-  against cwd before they enter the funnel, so storage never sees a relative path
-  (`paths.py` keeps `..` for the resolver; the shell's `posixpath.normpath` is the
-  right place to collapse it, as the experiment did).
-- **env is memory with a projection, never rows.** Plan 9 is the proof that "env as
-  files" does not mean "env as stored rows": `#e` serves kernel memory. The
-  experiment shows why rows are wrong here: every `export` would be a write that
-  mints a version, lands in trash on unset, and is readable by every `read` holder
-  at `/` unless a new family rule is written. If a projection is ever wanted (so
-  `cat /.vfs/sessions/$id/env/X` works), it is a synthesized read-only view like
-  the trash view, served from the session's dict, with the meta-scoped search rule
-  the `/.vfs` tree already has.
-- **The namespace thesis, settled.** Spec 148's narrowing **is** the Plan 9
-  per-process namespace in its subtractive form: `RFNAMEG` (a copy the parent
-  cannot see change) plus `RFNOMNT` (no further mounts). What it is not is
-  additive `bind`. Plan 9's `bind -a /rc/bin /bin` is how a process grows its
-  `/bin`; under ADR 063 a session may never grow its reach, so the bin namespace
-  (ADR 2) is a mount-table fact set by the admin plane, and a session can only
-  hide programs from it (a deny rule in the profile). The host that wants a
-  per-agent `/bin` builds it with `add_mount`/`bind` at the router, as `/lib/namespace`
-  does at boot, not inside the session.
-- **The mount table stays out of the namespace at v1, with one cheap projection
-  worth planning.** Plan 9 prints the namespace as `/proc/n/ns`, a text file of
-  `bind`/`mount`/`cd` lines that `newns` can replay. `mounts()` already returns
-  replayable rows. A read-only `/.vfs/sessions/<id>/ns` that renders `mounts()`
-  through the session's narrowing and ends with `cd <cwd>` is the honest
-  "namespace file" and costs no storage.
-- **History is the `surfaced` ring.** Spec 148 §4 already wants the session to
-  remember what it surfaced, with a declared cap, for leak notices on `join`. A
-  history entry is `{seq, command, status, paths_surfaced}`; the two needs are one
-  ring buffer. It is not persisted: every harness keeps the transcript, vfs keeps
-  versions with subjects, and nushell's rich history row is the model if a host
-  ever asks for a persisted one.
-- **Children copy, never write back.** A sub-session (spec 148 §3; a subagent)
-  starts with the parent's cwd and env (Plan 9 `RFNAMEG|RFENVG`, rc's default
-  `ens`), intersects the narrowing, and its changes never flow up — Claude Code's
-  "Subagent sessions never carry over working directory changes" and nushell's
-  explicit `redirect_env` for the rare opposite case.
+- **A shell session = `Session` + four fields.** `cwd`, `env`, `last_status`, `history`. None of them changes what the authority may do; the funnel re-derives rights on every call exactly as today. The session stays "sugar over the funnel"; the sugar just remembers where it is standing.
+- **cwd is a path and `cd` is a verb the ladder already prices.** `cd X` is `stat(X)` plus a kind check. It succeeds when the caller holds `list` on `X` (ADR 080 pin 2: `list` reveals path and kind). A hidden `X` answers `not_found`, a file answers "not a directory". Relative arguments to every builtin resolve against cwd before they enter the funnel, so storage never sees a relative path (`paths.py` keeps `..` for the resolver; the shell's `posixpath.normpath` is the right place to collapse it, as the experiment did).
+- **env is memory with a projection, never rows.** Plan 9 is the proof that "env as files" does not mean "env as stored rows": `#e` serves kernel memory. The experiment shows why rows are wrong here: every `export` would be a write that mints a version, lands in trash on unset, and is readable by every `read` holder at `/` unless a new family rule is written. If a projection is ever wanted (so `cat /.vfs/sessions/$id/env/X` works), it is a synthesized read-only view like the trash view, served from the session's dict, with the meta-scoped search rule the `/.vfs` tree already has.
+- **The namespace thesis, settled.** Spec 148's narrowing **is** the Plan 9 per-process namespace in its subtractive form: `RFNAMEG` (a copy the parent cannot see change) plus `RFNOMNT` (no further mounts). What it is not is additive `bind`. Plan 9's `bind -a /rc/bin /bin` is how a process grows its `/bin`; under ADR 063 a session may never grow its reach, so the bin namespace (ADR 2) is a mount-table fact set by the admin plane, and a session can only hide programs from it (a deny rule in the profile). The host that wants a per-agent `/bin` builds it with `add_mount`/`bind` at the router, as `/lib/namespace` does at boot, not inside the session.
+- **The mount table stays out of the namespace at v1, with one cheap projection worth planning.** Plan 9 prints the namespace as `/proc/n/ns`, a text file of `bind`/`mount`/`cd` lines that `newns` can replay. `mounts()` already returns replayable rows. A read-only `/.vfs/sessions/<id>/ns` that renders `mounts()` through the session's narrowing and ends with `cd <cwd>` is the honest "namespace file" and costs no storage.
+- **History is the `surfaced` ring.** Spec 148 §4 already wants the session to remember what it surfaced, with a declared cap, for leak notices on `join`. A history entry is `{seq, command, status, paths_surfaced}`; the two needs are one ring buffer. It is not persisted: every harness keeps the transcript, vfs keeps versions with subjects, and nushell's rich history row is the model if a host ever asks for a persisted one.
+- **Children copy, never write back.** A sub-session (spec 148 §3; a subagent) starts with the parent's cwd and env (Plan 9 `RFNAMEG|RFENVG`, rc's default `ens`), intersects the narrowing, and its changes never flow up — Claude Code's "Subagent sessions never carry over working directory changes" and nushell's explicit `redirect_env` for the rare opposite case.
 
 ### Where an agent's bundle lives, seen from the session
 
-The open question "Where does an agent's bundle live in the namespace"
-(`context/open-questions.md`, parked) gets two facts from this study. eve keeps the
-agent's own definition (instructions, tools, memory slots) **outside** the namespace
-the shell sees — only `sandbox/workspace/**` reaches `/workspace`, and skills are
-seeded under `$HOME/.agents/skills/`, which is vfs's `/.agents/skills` shape to the
-letter. deepagents reaches per-principal state by a namespace tuple and then
-**mounts** it under a prefix (`/memories/`). INFERRED for vfs: the bundle is a
-mount-table and grants question, not a session question. A host that wants
-per-agent isolation mounts the agent's home (`add_mount` at `/home/<agent>`, or a
-`StoreBackend`-style per-principal mount) and sets the session's cwd there; the
-session itself holds nothing of the bundle. This keeps option (a) of the open
-question (plain user directories) viable without a third reserved family, and the
-reserved `/.agents/{tools,skills}` tree stays what it is: the program and skill
-catalog every session reads.
+The open question "Where does an agent's bundle live in the namespace" (`context/open-questions.md`, parked) gets two facts from this study. eve keeps the agent's own definition (instructions, tools, memory slots) **outside** the namespace the shell sees — only `sandbox/workspace/**` reaches `/workspace`, and skills are seeded under `$HOME/.agents/skills/`, which is vfs's `/.agents/skills` shape to the letter. deepagents reaches per-principal state by a namespace tuple and then **mounts** it under a prefix (`/memories/`). INFERRED for vfs: the bundle is a mount-table and grants question, not a session question. A host that wants per-agent isolation mounts the agent's home (`add_mount` at `/home/<agent>`, or a `StoreBackend`-style per-principal mount) and sets the session's cwd there; the session itself holds nothing of the bundle. This keeps option (a) of the open question (plain user directories) viable without a third reserved family, and the reserved `/.agents/{tools,skills}` tree stays what it is: the program and skill catalog every session reads.
 
 ### The background-job model: a recommendation
 
 **v1: no jobs.** The reasons, in order:
 
-1. Nothing in v1 runs long. A 10k write is one bounded call (finding 10); `glean`
-   is budgeted; `grep` has a candidate budget; no shipped storage implements
-   `SupportsRun` (`src/vfs/storage/protocol.py:346-355`). `&` in the grammar parses
-   to a classified refusal ("background execution is not available; every call
-   is bounded"), the way just-bash accepts the syntax and runs it inline.
-2. The host already owns the background channel for the agent. Claude Code wraps
-   any tool call in `run_in_background` (OBSERVED, WEB); MCP wraps any `tools/call`
-   in a task (finding 9). A vfs `cli` tool served over MCP gets `execution.taskSupport:
-   optional` and a background mode for free when the host supports tasks; the
-   task's `failed` is `not result.success`, its `input_required` is spec 148's
-   `pending`. vfs supplies the state machine's facts; the host supplies the loop.
-3. Every peer that built its own job table also built the same three parts —
-   a handle, an output file, a stop verb — and then a notification path. The
-   parts belong to the phase that introduces guest programs (ADR 2/4), not before.
+1. Nothing in v1 runs long. A 10k write is one bounded call (finding 10); `glean` is budgeted; `grep` has a candidate budget; no shipped storage implements `SupportsRun` (`src/vfs/storage/protocol.py:346-355`). `&` in the grammar parses to a classified refusal ("background execution is not available; every call is bounded"), the way just-bash accepts the syntax and runs it inline.
+2. The host already owns the background channel for the agent. Claude Code wraps any tool call in `run_in_background` (OBSERVED, WEB); MCP wraps any `tools/call` in a task (finding 9). A vfs `cli` tool served over MCP gets `execution.taskSupport: optional` and a background mode for free when the host supports tasks; the task's `failed` is `not result.success`, its `input_required` is spec 148's `pending`. vfs supplies the state machine's facts; the host supplies the loop.
+3. Every peer that built its own job table also built the same three parts — a handle, an output file, a stop verb — and then a notification path. The parts belong to the phase that introduces guest programs (ADR 2/4), not before.
 
-**When jobs come (guest programs), the shape is fixed by the two precedents vfs
-already follows.** Plan 9: creating a process is a verb (`rfork`/`exec`, never a
-write to `/proc`), observing and controlling one is files (`/proc/n/status`,
-`/proc/n/ctl`, `/proc/n/wait`). MCP: a task is bound to the authorization context,
-polled by `tasks/get`, collected by `tasks/result`, stopped by `tasks/cancel`. So:
+**When jobs come (guest programs), the shape is fixed by the two precedents vfs already follows.** Plan 9: creating a process is a verb (`rfork`/`exec`, never a write to `/proc`), observing and controlling one is files (`/proc/n/status`, `/proc/n/ctl`, `/proc/n/wait`). MCP: a task is bound to the authorization context, polled by `tasks/get`, collected by `tasks/result`, stopped by `tasks/cancel`. So:
 
-- `run <program> &` (or a task-augmented `cli` call) creates a job through the
-  verb. The `Result` returned at once carries one row: `/.vfs/jobs/<id>` with
-  `status: working`, `created_at`, `poll_interval`, `ttl`.
-- `/.vfs/jobs/<id>/status` and `/.vfs/jobs/<id>/result` are rows the job writes
-  as it runs: `status` is the MCP status word; `result` is the `Result` payload so
-  far (`to_payload()`, the same `structured_content` that crosses the wire), so
-  `cat` of it is the rendered text and an MCP `tasks/result` is its content
-  blocks. Rows, not bytes: codex's "drain since last poll" is a `read` with a
-  cursor; opencode's "full output saved to <file>" is the path itself.
-- The family carries a posture rule like the trash view: owner-only, `none` for
-  everyone, hidden from unscoped search (the `/.vfs` rule already does the last
-  part). This is MCP's "MUST bind tasks to said context" expressed as a grant.
-- `jobs` is `ls /.vfs/jobs`; `wait %id` is `tasks/result` (blocks until
-  terminal); `kill %id` is `tasks/cancel`; `$apid`/`$!` is the last job id.
-- Closing the session cancels its jobs (codex terminates all processes on session
-  shutdown; Claude Code stops a foreground subagent's commands when it ends).
-- Budgets stay the host's: a job has a `ttl` and a time limit the host sets
-  (Claude Code: 30 minutes, at most 2 hours unattended), never a vfs constant.
+- `run <program> &` (or a task-augmented `cli` call) creates a job through the verb. The `Result` returned at once carries one row: `/.vfs/jobs/<id>` with `status: working`, `created_at`, `poll_interval`, `ttl`.
+- `/.vfs/jobs/<id>/status` and `/.vfs/jobs/<id>/result` are rows the job writes as it runs: `status` is the MCP status word; `result` is the `Result` payload so far (`to_payload()`, the same `structured_content` that crosses the wire), so `cat` of it is the rendered text and an MCP `tasks/result` is its content blocks. Rows, not bytes: codex's "drain since last poll" is a `read` with a cursor; opencode's "full output saved to <file>" is the path itself.
+- The family carries a posture rule like the trash view: owner-only, `none` for everyone, hidden from unscoped search (the `/.vfs` rule already does the last part). This is MCP's "MUST bind tasks to said context" expressed as a grant.
+- `jobs` is `ls /.vfs/jobs`; `wait %id` is `tasks/result` (blocks until terminal); `kill %id` is `tasks/cancel`; `$apid`/`$!` is the last job id.
+- Closing the session cancels its jobs (codex terminates all processes on session shutdown; Claude Code stops a foreground subagent's commands when it ends).
+- Budgets stay the host's: a job has a `ttl` and a time limit the host sets (Claude Code: 30 minutes, at most 2 hours unattended), never a vfs constant.
 
 ### What spec 148 must gain
 
-1. **Four session fields:** `cwd: Path` (default `/`), `env: Mapping[str, str]`
-   (plus an exported set when the grammar separates them), `last_status`
-   (derived), `history` (the `surfaced` ring, renamed or widened, with its cap).
-   The law stays: none of these can change a right; rights are re-derived per call.
-2. **`cd` semantics:** `stat` at the `list` rung plus a kind check; relative paths
-   resolve against `cwd` in the shell, before the funnel; an optional per-call
-   `workdir` overrides `cwd` for that call without changing it (codex/opencode).
-3. **One `Session` per conversation (host thread), not per turn.** cwd must carry
-   across turns — the one persistence every harness user expects and the one Claude
-   Code chose to keep. Per-turn sessions are just-bash's model and lose `cd`.
-4. **Child sessions copy cwd and env and never write back** (`RFNAMEG|RFENVG`);
-   their narrowing is the intersection; their lifetime ends with the parent's.
-5. **The namespace overlay is subtractive only**, stated plainly: hide, deny,
-   `RFNOMNT`; no session-level `bind`. The bin namespace is a router fact.
-6. **`pending` ↔ MCP `input_required`:** a `pending` Result inside a task moves the
-   task to `input_required`; the answer still arrives through the grant channel,
-   never through the session. Add the task id to the digest's context when a task
-   wraps the request.
-7. **Durability is the host's.** A `Session` is in-memory; on restart the host
-   re-creates it from the conversation. Reserve `/.vfs/sessions/<id>` for a later
-   projection (`ns`, `env/`, `history`) and give the family a posture rule before
-   anything is ever stored there — today every `read` holder at `/` reads all of
-   `/.vfs`.
-8. **Jobs are out of scope; reserve `/.vfs/jobs`.** Record the shape above so ADR 2
-   and ADR 4 build toward it.
-9. **Close cancels.** Closing a session cancels its jobs and drops its ring; closed
-   stays final (already law).
+1. **Four session fields:** `cwd: Path` (default `/`), `env: Mapping[str, str]` (plus an exported set when the grammar separates them), `last_status` (derived), `history` (the `surfaced` ring, renamed or widened, with its cap). The law stays: none of these can change a right; rights are re-derived per call.
+2. **`cd` semantics:** `stat` at the `list` rung plus a kind check; relative paths resolve against `cwd` in the shell, before the funnel; an optional per-call `workdir` overrides `cwd` for that call without changing it (codex/opencode).
+3. **One `Session` per conversation (host thread), not per turn.** cwd must carry across turns — the one persistence every harness user expects and the one Claude Code chose to keep. Per-turn sessions are just-bash's model and lose `cd`.
+4. **Child sessions copy cwd and env and never write back** (`RFNAMEG|RFENVG`); their narrowing is the intersection; their lifetime ends with the parent's.
+5. **The namespace overlay is subtractive only**, stated plainly: hide, deny, `RFNOMNT`; no session-level `bind`. The bin namespace is a router fact.
+6. **`pending` ↔ MCP `input_required`:** a `pending` Result inside a task moves the task to `input_required`; the answer still arrives through the grant channel, never through the session. Add the task id to the digest's context when a task wraps the request.
+7. **Durability is the host's.** A `Session` is in-memory; on restart the host re-creates it from the conversation. Reserve `/.vfs/sessions/<id>` for a later projection (`ns`, `env/`, `history`) and give the family a posture rule before anything is ever stored there — today every `read` holder at `/` reads all of `/.vfs`.
+8. **Jobs are out of scope; reserve `/.vfs/jobs`.** Record the shape above so ADR 2 and ADR 4 build toward it.
+9. **Close cancels.** Closing a session cancels its jobs and drops its ring; closed stays final (already law).
 
 ### What to reject, and why
 
-- **Env as stored rows** (finding 3): versions on every `export`, trash on `unset`,
-  cross-principal reads, a round trip per expansion. Plan 9's `/env` is a device,
-  and so would vfs's be.
-- **A per-session additive `bind`** (Plan 9's own habit): forbidden by ADR 063; the
-  admin plane already has `bind`/`add_mount`; a session can hide, not add.
-- **Persisted command history in the namespace at v1:** no harness does it for an
-  agent; the transcript and the version audit already hold it; nushell shows it is
-  cheap to add later as a host option.
-- **A vfs-owned job runtime at v1:** no verb runs long; the host and MCP already
-  provide the loop; building the three parts before guest programs exist is
-  speculative generality.
-- **Wall-clock timeouts as vfs constants:** every peer makes them host policy
-  (`BASH_*_TIMEOUT_MS`, opencode `timeout`, codex `yield_time_ms`); vfs keeps
-  budgets as counts and leaves the clock to the caller (CLAUDE.md, performance
-  tests).
+- **Env as stored rows** (finding 3): versions on every `export`, trash on `unset`, cross-principal reads, a round trip per expansion. Plan 9's `/env` is a device, and so would vfs's be.
+- **A per-session additive `bind`** (Plan 9's own habit): forbidden by ADR 063; the admin plane already has `bind`/`add_mount`; a session can hide, not add.
+- **Persisted command history in the namespace at v1:** no harness does it for an agent; the transcript and the version audit already hold it; nushell shows it is cheap to add later as a host option.
+- **A vfs-owned job runtime at v1:** no verb runs long; the host and MCP already provide the loop; building the three parts before guest programs exist is speculative generality.
+- **Wall-clock timeouts as vfs constants:** every peer makes them host policy (`BASH_*_TIMEOUT_MS`, opencode `timeout`, codex `yield_time_ms`); vfs keeps budgets as counts and leaves the clock to the caller (CLAUDE.md, performance tests).
 
 ## Forks for the ADRs
 
-1. **Env: rows in the namespace, or in-memory session fields?** Options: (a) rows
-   under `/.vfs/sessions/<id>/env/`; (b) in-memory `dict` on the session, no
-   projection; (c) in-memory with a synthesized read-only projection (Plan 9 `#e`).
-   **Lean: (b) at v1, (c) when a consumer asks for `cat /.vfs/sessions/$id/env/X`.**
-   The experiment shows (a) is versions, trash and cross-principal reads for free.
-2. **History: persisted or not?** Options: (a) never; (b) an in-memory ring with a
-   declared cap, merged with spec 148's `surfaced` ring; (c) rows under
-   `/.vfs/sessions/<id>/history` shaped like nushell's SQLite row. **Lean: (b).**
-   The host's transcript and vfs's versions are the durable record; (c) is a later
-   host option, not v1.
-3. **One `Session` per agent turn, or per conversation?** Options: (a) per turn
-   (just-bash: everything resets, cwd included); (b) per conversation (Claude Code,
-   codex: cwd and the process table live with the thread); (c) per conversation
-   with child sessions per subagent that copy and never write back. **Lean: (c).**
-4. **Jobs as files, or out of scope at v1?** Options: (a) out of scope; `&` is a
-   classified refusal; (b) files now: `/.vfs/jobs/<id>/{status,result}` plus
-   `jobs`/`wait`/`kill`; (c) MCP tasks only, no namespace rows. **Lean: (a) now,
-   (b)+(c) together when guest programs land** — the verb creates, the files
-   observe, the task is the wire.
-5. **Exit status: `$?` integer, rc-style `$status` string, or both?** Options: (a)
-   `$?` only; (b) `$status` = classified kind only; (c) both, `$?` derived from
-   `$status`. **Lean: (c).** The kind is what vfs knows; the integer is what bash
-   scripts test.
-6. **cwd on the session, or `workdir` per call?** Options: (a) session cwd only;
-   (b) `workdir` per call only (opencode, codex, gemini); (c) both, the argument
-   overriding for one call. **Lean: (c).** (a) alone breaks concurrent calls in one
-   session; (b) alone breaks the agent's habit that Claude Code chose to keep.
-7. **Shell variables and exported variables: one map or two?** Options: (a) one
-   map, everything exported (lifo); (b) a map plus an exported set (just-bash,
-   bashkit). **Lean: (b)**, because ADR 2's program ABI says a program receives "an
-   environment", and that should be the exported subset.
-8. **The mount table in the namespace?** Options: (a) never; (b) a read-only
-   `/.vfs/sessions/<id>/ns` rendered from `mounts()` through the narrowing, ending
-   in `cd <cwd>` (Plan 9 `/proc/n/ns`). **Lean: (b) later**, once sessions have ids;
-   it is the "where am I and what can I see" file an agent asks for first.
+1. **Env: rows in the namespace, or in-memory session fields?** Options: (a) rows under `/.vfs/sessions/<id>/env/`; (b) in-memory `dict` on the session, no projection; (c) in-memory with a synthesized read-only projection (Plan 9 `#e`). **Lean: (b) at v1, (c) when a consumer asks for `cat /.vfs/sessions/$id/env/X`.** The experiment shows (a) is versions, trash and cross-principal reads for free.
+2. **History: persisted or not?** Options: (a) never; (b) an in-memory ring with a declared cap, merged with spec 148's `surfaced` ring; (c) rows under `/.vfs/sessions/<id>/history` shaped like nushell's SQLite row. **Lean: (b).** The host's transcript and vfs's versions are the durable record; (c) is a later host option, not v1.
+3. **One `Session` per agent turn, or per conversation?** Options: (a) per turn (just-bash: everything resets, cwd included); (b) per conversation (Claude Code, codex: cwd and the process table live with the thread); (c) per conversation with child sessions per subagent that copy and never write back. **Lean: (c).**
+4. **Jobs as files, or out of scope at v1?** Options: (a) out of scope; `&` is a classified refusal; (b) files now: `/.vfs/jobs/<id>/{status,result}` plus `jobs`/`wait`/`kill`; (c) MCP tasks only, no namespace rows. **Lean: (a) now, (b)+(c) together when guest programs land** — the verb creates, the files observe, the task is the wire.
+5. **Exit status: `$?` integer, rc-style `$status` string, or both?** Options: (a) `$?` only; (b) `$status` = classified kind only; (c) both, `$?` derived from `$status`. **Lean: (c).** The kind is what vfs knows; the integer is what bash scripts test.
+6. **cwd on the session, or `workdir` per call?** Options: (a) session cwd only; (b) `workdir` per call only (opencode, codex, gemini); (c) both, the argument overriding for one call. **Lean: (c).** (a) alone breaks concurrent calls in one session; (b) alone breaks the agent's habit that Claude Code chose to keep.
+7. **Shell variables and exported variables: one map or two?** Options: (a) one map, everything exported (lifo); (b) a map plus an exported set (just-bash, bashkit). **Lean: (b)**, because ADR 2's program ABI says a program receives "an environment", and that should be the exported subset.
+8. **The mount table in the namespace?** Options: (a) never; (b) a read-only `/.vfs/sessions/<id>/ns` rendered from `mounts()` through the narrowing, ending in `cd <cwd>` (Plan 9 `/proc/n/ns`). **Lean: (b) later**, once sessions have ids; it is the "where am I and what can I see" file an agent asks for first.
 
 ## Sources
 
-- vfs live tree: `src/vfs/session.py`, `src/vfs/authority.py`, `src/vfs/base.py`
-  (lines 1-30, 118-380, 385-800, 1548-1630), `src/vfs/paths.py` (43-52, 355-400,
-  750-840), `src/vfs/ops.py` (1-60, 85-170), `src/vfs/results/envelope.py`,
-  `src/vfs/results/kinds.py`, `src/vfs/storage/protocol.py` (346-380),
-  `src/vfs/storage/backends/database/scope.py:105`, `descent.py:233`;
-  `tests/base/test_authority.py`, `tests/storage/database/test_rights.py`;
-  `context/specs/active/148-sessions-narrowing-and-pending/spec.md`;
-  `context/decisions/063-a-session-never-widens-itself.md`,
-  `069-the-three-differentiators-…md`, `080-the-ladder-gains-list-and-contribute-…md`;
-  `context/open-questions.md` ("MCP 2026-07-28: long-batch execution model",
-  "Per-path / per-principal execute policy", "Where does an agent's bundle live").
-- 9front @ a0806493 (DIRTY, not refreshed; MIT/LPL, study only): `lib/namespace`,
-  `sys/man/2/fork`, `sys/man/2/bind`, `sys/man/3/env`, `sys/man/3/proc`,
-  `sys/man/6/namespace`, `sys/man/1/rc`, `sys/doc/names.ms`,
-  `sys/src/9/port/portdat.h`, `sys/src/9/port/sysproc.c`, `sys/src/cmd/rc/plan9.c`.
+- vfs live tree: `src/vfs/session.py`, `src/vfs/authority.py`, `src/vfs/base.py` (lines 1-30, 118-380, 385-800, 1548-1630), `src/vfs/paths.py` (43-52, 355-400, 750-840), `src/vfs/ops.py` (1-60, 85-170), `src/vfs/results/envelope.py`, `src/vfs/results/kinds.py`, `src/vfs/storage/protocol.py` (346-380), `src/vfs/storage/backends/database/scope.py:105`, `descent.py:233`; `tests/base/test_authority.py`, `tests/storage/database/test_rights.py`; `context/specs/active/148-sessions-narrowing-and-pending/spec.md`; `context/decisions/063-a-session-never-widens-itself.md`, `069-the-three-differentiators-…md`, `080-the-ladder-gains-list-and-contribute-…md`; `context/open-questions.md` ("MCP 2026-07-28: long-batch execution model", "Per-path / per-principal execute policy", "Where does an agent's bundle live").
+- 9front @ a0806493 (DIRTY, not refreshed; MIT/LPL, study only): `lib/namespace`, `sys/man/2/fork`, `sys/man/2/bind`, `sys/man/3/env`, `sys/man/3/proc`, `sys/man/6/namespace`, `sys/man/1/rc`, `sys/doc/names.ms`, `sys/src/9/port/portdat.h`, `sys/src/9/port/sysproc.c`, `sys/src/cmd/rc/plan9.c`.
 - plan9port @ b6564bd9: `man/man4/0intro.4`, `man/man1/namespace.1`, `man/man3/getns.3`.
-- just-bash @ 9ab0e0d (Apache-2.0): `packages/just-bash/README.md`, `src/Bash.ts`,
-  `src/limits.ts`, `src/execution-scope.ts`, `src/sandbox/Sandbox.ts`,
-  `src/interpreter/errors.ts`, `src/commands/history/history.ts`.
-- bashkit @ b7904a4 (MIT): `crates/bashkit/src/lib.rs`, `interpreter/mod.rs`,
-  `interpreter/jobs.rs`, `limits.rs`, `snapshot/mod.rs`, `snapshot/container.rs`,
-  `docs/start-rust.md`.
-- lifo @ 5a35d05 (MIT): `packages/core/src/sandbox/Sandbox.ts`, `shell/Shell.ts`,
-  `shell/interpreter.ts`, `shell/ProcessRegistry.ts`, `shell/history.ts`,
-  `kernel/vfs/snapshot.ts`.
-- nushell @ 818d4ac06 (MIT): `crates/nu-protocol/src/engine/{engine_state,stack,overlay,jobs}.rs`,
-  `crates/nu-protocol/src/config/{history,hooks}.rs`, `crates/nu-cli/src/repl.rs`,
-  `crates/nu-cli/src/commands/history/fields.rs`,
-  `crates/nu-command/src/experimental/job_*.rs`, `crates/nu-engine/src/eval.rs`.
-- elvish @ 26a8bd5 (BSD-2): `pkg/eval/{eval,ns,var_ref,pwd,exception,compile_effect}.go`,
-  `pkg/eval/vars/env.go`, `pkg/store/{db_store,cmd,dir}.go`, `pkg/daemon/server.go`,
-  `website/blog/0.19.1-release-notes.md`.
-- opencode @ 13263f30ed (MIT): `packages/core/src/tool/plugin/shell.ts`,
-  `packages/core/src/shell.ts`, `packages/core/src/shell/result.ts`,
-  `packages/core/src/job.ts`, `packages/core/src/session.ts`,
-  `packages/core/src/session/environment.ts`.
-- gemini-cli @ d42e3f1e7 (DIRTY, stale 2025-08-01; MIT; read via `git show HEAD:`):
-  `packages/core/src/tools/shell.ts`, `packages/core/src/services/shellExecutionService.ts`,
-  `packages/cli/src/ui/hooks/shellCommandProcessor.ts`.
-- codex @ 16e578d (Apache-2.0): `codex-rs/core/src/unified_exec/{mod,process_manager,process,head_tail_buffer}.rs`,
-  `codex-rs/core/src/tools/handlers/unified_exec.rs`, `tools/context.rs`,
-  `core/src/shell.rs`, `core/src/exec.rs`, `core/src/session/handlers.rs`.
-- claude-agent-sdk-python @ aada024 (MIT): `src/claude_agent_sdk/types.py`,
-  `src/claude_agent_sdk/query.py`, `_internal/transport/subprocess_cli.py`,
-  `tests/test_query.py`.
-- eve @ 5666d2f0d (Apache-2.0): `docs/reference/agent-files.md`, `docs/memory/overview.mdx`,
-  `docs/sandbox/index.mdx`, `docs/concepts/sessions-runs-and-streaming.md`,
-  `docs/concepts/execution-model-and-durability.mdx`,
-  `packages/eve/src/discover/discover-agent.ts`, `packages/eve/src/shared/principal-scope.ts`,
-  `packages/eve/src/shared/memory-state.ts`, `packages/eve/src/public/memory/file/backend.ts`,
-  `packages/eve/src/execution/sandbox/bash.ts`, `packages/eve/src/public/definitions/state.ts`.
-- deepagents @ 0bf167654 (MIT): `libs/deepagents/deepagents/backends/{protocol,state,filesystem,store,composite,local_shell}.py`,
-  `libs/deepagents/deepagents/middleware/{filesystem,subagents,_fs_interrupt}.py`,
-  `libs/deepagents/deepagents/graph.py`.
-- Claude Code docs, "Tools reference": https://code.claude.com/docs/en/tools-reference.md
-  (fetched 2026-10-15). The docs page `/docs/en/tools/bash` returned 404; a
-  community mirror (vineetagarwal-code-claude-code.mintlify.app/reference/tools/bash,
-  fetched 2026-10-15) agrees on 120,000 / 600,000 ms and "working directory is
-  preserved between calls".
-- MCP specification 2025-11-25, Tasks: https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
-  (fetched 2026-10-15).
-- This session's Claude Code tool definitions (Bash `run_in_background`, `Monitor`,
-  `TaskStop`), observed 2026-10-15.
+- just-bash @ 9ab0e0d (Apache-2.0): `packages/just-bash/README.md`, `src/Bash.ts`, `src/limits.ts`, `src/execution-scope.ts`, `src/sandbox/Sandbox.ts`, `src/interpreter/errors.ts`, `src/commands/history/history.ts`.
+- bashkit @ b7904a4 (MIT): `crates/bashkit/src/lib.rs`, `interpreter/mod.rs`, `interpreter/jobs.rs`, `limits.rs`, `snapshot/mod.rs`, `snapshot/container.rs`, `docs/start-rust.md`.
+- lifo @ 5a35d05 (MIT): `packages/core/src/sandbox/Sandbox.ts`, `shell/Shell.ts`, `shell/interpreter.ts`, `shell/ProcessRegistry.ts`, `shell/history.ts`, `kernel/vfs/snapshot.ts`.
+- nushell @ 818d4ac06 (MIT): `crates/nu-protocol/src/engine/{engine_state,stack,overlay,jobs}.rs`, `crates/nu-protocol/src/config/{history,hooks}.rs`, `crates/nu-cli/src/repl.rs`, `crates/nu-cli/src/commands/history/fields.rs`, `crates/nu-command/src/experimental/job_*.rs`, `crates/nu-engine/src/eval.rs`.
+- elvish @ 26a8bd5 (BSD-2): `pkg/eval/{eval,ns,var_ref,pwd,exception,compile_effect}.go`, `pkg/eval/vars/env.go`, `pkg/store/{db_store,cmd,dir}.go`, `pkg/daemon/server.go`, `website/blog/0.19.1-release-notes.md`.
+- opencode @ 13263f30ed (MIT): `packages/core/src/tool/plugin/shell.ts`, `packages/core/src/shell.ts`, `packages/core/src/shell/result.ts`, `packages/core/src/job.ts`, `packages/core/src/session.ts`, `packages/core/src/session/environment.ts`.
+- gemini-cli @ d42e3f1e7 (DIRTY, stale 2025-08-01; MIT; read via `git show HEAD:`): `packages/core/src/tools/shell.ts`, `packages/core/src/services/shellExecutionService.ts`, `packages/cli/src/ui/hooks/shellCommandProcessor.ts`.
+- codex @ 16e578d (Apache-2.0): `codex-rs/core/src/unified_exec/{mod,process_manager,process,head_tail_buffer}.rs`, `codex-rs/core/src/tools/handlers/unified_exec.rs`, `tools/context.rs`, `core/src/shell.rs`, `core/src/exec.rs`, `core/src/session/handlers.rs`.
+- claude-agent-sdk-python @ aada024 (MIT): `src/claude_agent_sdk/types.py`, `src/claude_agent_sdk/query.py`, `_internal/transport/subprocess_cli.py`, `tests/test_query.py`.
+- eve @ 5666d2f0d (Apache-2.0): `docs/reference/agent-files.md`, `docs/memory/overview.mdx`, `docs/sandbox/index.mdx`, `docs/concepts/sessions-runs-and-streaming.md`, `docs/concepts/execution-model-and-durability.mdx`, `packages/eve/src/discover/discover-agent.ts`, `packages/eve/src/shared/principal-scope.ts`, `packages/eve/src/shared/memory-state.ts`, `packages/eve/src/public/memory/file/backend.ts`, `packages/eve/src/execution/sandbox/bash.ts`, `packages/eve/src/public/definitions/state.ts`.
+- deepagents @ 0bf167654 (MIT): `libs/deepagents/deepagents/backends/{protocol,state,filesystem,store,composite,local_shell}.py`, `libs/deepagents/deepagents/middleware/{filesystem,subagents,_fs_interrupt}.py`, `libs/deepagents/deepagents/graph.py`.
+- Claude Code docs, "Tools reference": https://code.claude.com/docs/en/tools-reference.md (fetched 2026-10-15). The docs page `/docs/en/tools/bash` returned 404; a community mirror (vineetagarwal-code-claude-code.mintlify.app/reference/tools/bash, fetched 2026-10-15) agrees on 120,000 / 600,000 ms and "working directory is preserved between calls".
+- MCP specification 2025-11-25, Tasks: https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks (fetched 2026-10-15).
+- This session's Claude Code tool definitions (Bash `run_in_background`, `Monitor`, `TaskStop`), observed 2026-10-15.

@@ -14,10 +14,7 @@
 | 3 | Postgres trigram delta-store + bulk embed wiring (subsumes story 013 phase 2) | in progress — DDL + provisioning landed; maintenance overrides + grep rewrite next |
 | 4 | Multi-mount router merge in `VFSClient`; delete-side delta staging | not started |
 
-Slice 1 is mechanical — adds the API surface, hooks, and writer formatter
-without changing observable write behavior. Existing tests pass unchanged
-once positional `write(path, content)` callers migrate to kwargs (see
-**Caller migration** below).
+Slice 1 is mechanical — adds the API surface, hooks, and writer formatter without changing observable write behavior. Existing tests pass unchanged once positional `write(path, content)` callers migrate to kwargs (see **Caller migration** below).
 
 ## Slice 1 — landed
 
@@ -33,14 +30,11 @@ DatabaseFileSystem(
 )
 ```
 
-Stored as `self._auto_chunk` / `self._auto_index`. Subclasses
-(`PostgresFileSystem`, `MSSQLFileSystem`) inherit without override. The
-flags are not read yet by `_write_impl`; that happens in slice 2.
+Stored as `self._auto_chunk` / `self._auto_index`. Subclasses (`PostgresFileSystem`, `MSSQLFileSystem`) inherit without override. The flags are not read yet by `_write_impl`; that happens in slice 2.
 
 ### `write()` signature reshape
 
-`entries` becomes the first positional argument; `path`, `content`,
-`overwrite`, `user_id` are keyword-only. Applies to:
+`entries` becomes the first positional argument; `path`, `content`, `overwrite`, `user_id` are keyword-only. Applies to:
 
 - `VirtualFileSystem.write` (`src/vfs/base.py`)
 - `VirtualFileSystem._write_impl` (`src/vfs/base.py`)
@@ -54,9 +48,7 @@ await fs.write([entry_a, entry_b])              # primary, positional
 await fs.write(path="/foo.txt", content="...")  # convenience, kwargs
 ```
 
-`_route_single` (`src/vfs/base.py:480`) was updated to dispatch the
-resolved path through `path=` kwarg uniformly across all single-path
-impls. Verified all `_*_impl` callees accept `path` as a keyword.
+`_route_single` (`src/vfs/base.py:480`) was updated to dispatch the resolved path through `path=` kwarg uniformly across all single-path impls. Verified all `_*_impl` callees accept `path` as a keyword.
 
 ### `Candidate.status` field
 
@@ -66,17 +58,13 @@ impls. Verified all `_*_impl` callees accept `path` as a keyword.
 status: Literal["created", "updated", "unchanged"] | None = None
 ```
 
-Propagated through `_merge_candidate` so set-algebra (`&`, `|`, `-`)
-preserves status. Added to `CANDIDATE_FIELD_TO_MODEL_COLUMNS` as a
-computed field (empty frozenset) — `status` is set by the write
-pipeline, never read off a row.
+Propagated through `_merge_candidate` so set-algebra (`&`, `|`, `-`) preserves status. Added to `CANDIDATE_FIELD_TO_MODEL_COLUMNS` as a computed field (empty frozenset) — `status` is set by the write pipeline, never read off a row.
 
 `_write_impl` does **not** populate `status` yet. That's slice 2.
 
 ### `VFSResult.__str__` delegation + write formatter
 
-`VFSResult.__str__` now delegates to `to_str()`. A dedicated
-`_render_write` helper handles the `write` function:
+`VFSResult.__str__` now delegates to `to_str()`. A dedicated `_render_write` helper handles the `write` function:
 
 ```text
 # Empty
@@ -101,17 +89,11 @@ write errors:
 write success: 2 files, 6 chunks written
 ```
 
-Counts come from walking `result.candidates`, filtering to `kind in
-{"file", "chunk", "edge"}`, grouping by `kind`. Version rows are
-deliberately excluded from the summary. A status breakdown
-(`3 files (1 created, 1 updated, 1 unchanged) written`) is appended
-after the file count when the batch contains a mix of statuses.
+Counts come from walking `result.candidates`, filtering to `kind in {"file", "chunk", "edge"}`, grouping by `kind`. Version rows are deliberately excluded from the summary. A status breakdown (`3 files (1 created, 1 updated, 1 unchanged) written`) is appended after the file count when the batch contains a mix of statuses.
 
-For single-file batches, `verb = candidate.status or "wrote"` — until
-slice 2 wires up status, the fallback `"wrote"` shows up.
+For single-file batches, `verb = candidate.status or "wrote"` — until slice 2 wires up status, the fallback `"wrote"` shows up.
 
-Single-line `write success` summary uses the verb "wrote" / specific
-status; never the word "candidates."
+Single-line `write success` summary uses the verb "wrote" / specific status; never the word "candidates."
 
 ### Base-class no-op hooks
 
@@ -135,9 +117,7 @@ async def _apply_index_maintenance(
 ) -> None: ...   # no-op default
 ```
 
-Both default to no-ops so the in-memory and plain-SQL backends keep
-working without trigram or embedding stores. `PostgresFileSystem` and
-`MSSQLFileSystem` will override in slice 3.
+Both default to no-ops so the in-memory and plain-SQL backends keep working without trigram or embedding stores. `PostgresFileSystem` and `MSSQLFileSystem` will override in slice 3.
 
 ### `EmbeddingProvider.embed_entries`
 
@@ -148,33 +128,21 @@ async def embed_entries(self, entries: Sequence[VFSEntry]) -> Sequence[Vector]:
     """Return one vector per input entry, in input order."""
 ```
 
-`LangChainEmbeddingProvider.embed_entries` is a default adapter that
-extracts `entry.content` and delegates to `embed_batch`. Real bulk
-behavior (sub-batching, retry, rate-limit handling) is up to the
-provider implementation in slice 3.
+`LangChainEmbeddingProvider.embed_entries` is a default adapter that extracts `entry.content` and delegates to `embed_batch`. Real bulk behavior (sub-batching, retry, rate-limit handling) is up to the provider implementation in slice 3.
 
-**Order contract:** vector `i` belongs to entry `i`. Providers that
-sub-batch internally must reassemble in slice order before returning;
-the base class will use `zip(entries, vectors, strict=True)` to assert
-length on assignment. The reference test double for input-order
-preservation under sub-batching lives in slice 3 (spec AC 20).
+**Order contract:** vector `i` belongs to entry `i`. Providers that sub-batch internally must reassemble in slice order before returning; the base class will use `zip(entries, vectors, strict=True)` to assert length on assignment. The reference test double for input-order preservation under sub-batching lives in slice 3 (spec AC 20).
 
 ### Caller migration
 
-Positional `write(path, content)` is no longer supported; positional
-calls now bind `entries=path`, which fails in `_write_impl`. The
-following call shapes were rewritten to keyword form across the
-codebase:
+Positional `write(path, content)` is no longer supported; positional calls now bind `entries=path`, which fails in `_write_impl`. The following call shapes were rewritten to keyword form across the codebase:
 
-- `tests/` — 245 `.write("...", "...")` calls and ~270
-  `_write_impl(path, content)` calls
+- `tests/` — 245 `.write("...", "...")` calls and ~270 `_write_impl(path, content)` calls
 - `examples/cli_query_demo.py`, `examples/demo_dbfs.py`
 - `src/vfs/base.py` (the `_copy_impl`/`_move_impl` cross-mount write)
 
 `entries=...` callers are unchanged. Two test files added:
 
-- `tests/test_results.py::TestToStr` — coverage for the new write
-  formatter (4 shapes + `str()` delegation + status breakdown).
+- `tests/test_results.py::TestToStr` — coverage for the new write formatter (4 shapes + `str()` delegation + status breakdown).
 
 ### Files touched (slice 1)
 
@@ -196,89 +164,42 @@ examples/demo_dbfs.py
 
 ## Slice 2 — landed
 
-Pipeline restructure inside `DatabaseFileSystem._write_impl`. Behavior
-matches the [pipeline doc](../../../docs/internals/write_pipeline.md)
-end-to-end.
+Pipeline restructure inside `DatabaseFileSystem._write_impl`. Behavior matches the [pipeline doc](../../../docs/internals/write_pipeline.md) end-to-end.
 
 ### Per-entry change detection
 
-`_write_impl` now runs change detection per entry between the fetch
-and the persist. Unchanged file rows (where
-`incoming.content_hash == existing.content_hash`) skip the rest of the
-pipeline — no version row, no chunk cascade, no trigram delta call,
-no embedding call, no `UPDATE`, **no `updated_at` refresh**. The row
-surfaces in the result as `Candidate(status="unchanged")`.
+`_write_impl` now runs change detection per entry between the fetch and the persist. Unchanged file rows (where `incoming.content_hash == existing.content_hash`) skip the rest of the pipeline — no version row, no chunk cascade, no trigram delta call, no embedding call, no `UPDATE`, **no `updated_at` refresh**. The row surfaces in the result as `Candidate(status="unchanged")`.
 
-New entries and existing entries with a changed hash both fall into
-the `changed_paths` set and proceed through auto-chunk → auto-index →
-persist. Soft-deleted existing rows always count as changed (the
-write revives them). Directories always count as changed (existing
-behavior preserved — they get `updated_at` refreshed on touch).
+New entries and existing entries with a changed hash both fall into the `changed_paths` set and proceed through auto-chunk → auto-index → persist. Soft-deleted existing rows always count as changed (the write revives them). Directories always count as changed (existing behavior preserved — they get `updated_at` refreshed on touch).
 
 ### Auto-chunk
 
 When `self._auto_chunk` is True (default):
 
-1. **Batch-fatal pre-check.** Walk `write_map` once before mutating
-   anything. If any incoming chunk's owner file is also in the batch
-   with `index_content=True`, emit one error per offending owner and
-   return `VFSResult(success=False, candidates=[], errors=[...])`
-   without any DB write. Test:
-   `tests/test_write_pipeline.py::TestAutoChunk::test_auto_chunk_conflict_rejects_whole_batch`.
-2. **In-memory chunk().** For every changed file with `index_content
-   is True`, call `await asyncio.to_thread(incoming.chunk)`. The
-   returned chunk rows get appended to `write_map` and `changed_paths`;
-   the file's own `index_content` flips to `False` (already handled by
-   `chunk()`).
+1. **Batch-fatal pre-check.** Walk `write_map` once before mutating anything. If any incoming chunk's owner file is also in the batch with `index_content=True`, emit one error per offending owner and return `VFSResult(success=False, candidates=[], errors=[...])` without any DB write. Test: `tests/test_write_pipeline.py::TestAutoChunk::test_auto_chunk_conflict_rejects_whole_batch`.
+2. **In-memory chunk().** For every changed file with `index_content is True`, call `await asyncio.to_thread(incoming.chunk)`. The returned chunk rows get appended to `write_map` and `changed_paths`; the file's own `index_content` flips to `False` (already handled by `chunk()`).
 
-`chunk()` itself was patched in `models.py` — SQLModel `table=True`
-constructors bypass Pydantic validators, so chunks created via
-`type(self)(...)` were silently shipping with `index_content=False`,
-`lexical_tokens=0`, and a missing `content_hash`. Fixed by routing
-each chunk through a base `VFSEntry(...)` validator pass first, then
-re-materializing as the table class via `model_dump()`.
+`chunk()` itself was patched in `models.py` — SQLModel `table=True` constructors bypass Pydantic validators, so chunks created via `type(self)(...)` were silently shipping with `index_content=False`, `lexical_tokens=0`, and a missing `content_hash`. Fixed by routing each chunk through a base `VFSEntry(...)` validator pass first, then re-materializing as the table class via `model_dump()`.
 
 ### Auto-index
 
 When `self._auto_index` is True (default):
 
-1. `_apply_index_maintenance(...)` is called for changed indexable
-   entries with `old_entries` so backends can compute deltas. A second
-   call with `delete_only=True` covers files whose `index_content`
-   flag flipped from True to False (auto-chunked files).
-2. **One** `embedding_provider.embed_entries(targets)` call per
-   write, where `targets` is every changed indexable entry without a
-   caller-provided embedding. Vectors are zipped onto
-   `entry.embedding` in input order.
+1. `_apply_index_maintenance(...)` is called for changed indexable entries with `old_entries` so backends can compute deltas. A second call with `delete_only=True` covers files whose `index_content` flag flipped from True to False (auto-chunked files).
+2. **One** `embedding_provider.embed_entries(targets)` call per write, where `targets` is every changed indexable entry without a caller-provided embedding. Vectors are zipped onto `entry.embedding` in input order.
 
-Provider failure raises, gets caught, and aborts the pipeline with
-`VFSResult(success=False, candidates=[], errors=[...])` before any DB
-write — verified by
-`tests/test_write_pipeline.py::TestAutoIndex::test_provider_failure_aborts_with_no_db_mutation`.
+Provider failure raises, gets caught, and aborts the pipeline with `VFSResult(success=False, candidates=[], errors=[...])` before any DB write — verified by `tests/test_write_pipeline.py::TestAutoIndex::test_provider_failure_aborts_with_no_db_mutation`.
 
-The base-class `_apply_index_maintenance` stays a no-op
-(`PostgresFileSystem` will override in slice 3).
+The base-class `_apply_index_maintenance` stays a no-op (`PostgresFileSystem` will override in slice 3).
 
 ### Persist phase
 
 Single phase, single `flush()`:
 
-1. `_stage_chunk_cascade(files_for_cascade, session=...)` — issues a
-   batched `DELETE` over `'<meta_root>/__meta__/chunks/%'` for every
-   existing file whose content changed. The base-class default issues
-   the cascade; backends with chunk-derived indexes override to first
-   stage trigram delete deltas, then call `super()`.
-2. Per-entry insert / update. Files use `_update_existing` (with the
-   existing snapshot/version pipeline) or `_insert_new`. Chunks /
-   edges use `update_content` or `session.add`. After update,
-   `_apply_incoming_embedding(existing, incoming, prev_index_content=...)`
-   propagates the embedding from incoming to existing with the right
-   precedence (explicit caller value wins, then auto-computed value,
-   then clear if the file just became non-indexable).
+1. `_stage_chunk_cascade(files_for_cascade, session=...)` — issues a batched `DELETE` over `'<meta_root>/__meta__/chunks/%'` for every existing file whose content changed. The base-class default issues the cascade; backends with chunk-derived indexes override to first stage trigram delete deltas, then call `super()`.
+2. Per-entry insert / update. Files use `_update_existing` (with the existing snapshot/version pipeline) or `_insert_new`. Chunks / edges use `update_content` or `session.add`. After update, `_apply_incoming_embedding(existing, incoming, prev_index_content=...)` propagates the embedding from incoming to existing with the right precedence (explicit caller value wins, then auto-computed value, then clear if the file just became non-indexable).
 3. `await session.flush()` once.
-4. Parent-dir creations / revivals are committed in a second flush
-   only when the batch produced at least one durable write
-   (`unchanged`-only batches don't touch parent dirs).
+4. Parent-dir creations / revivals are committed in a second flush only when the batch produced at least one durable write (`unchanged`-only batches don't touch parent dirs).
 
 ### `Candidate.status`
 
@@ -288,31 +209,16 @@ Every returned candidate carries a status:
 - `updated` — existing row whose content changed (or directory touched)
 - `unchanged` — existing file row, hash matched, no DB write happened
 
-The render-time formatter from slice 1 already consumes this; a
-single-file batch's path line now says `created /foo.py` instead of
-`wrote /foo.py`.
+The render-time formatter from slice 1 already consumes this; a single-file batch's path line now says `created /foo.py` instead of `wrote /foo.py`.
 
 ### Pre-existing fix carried in this slice
 
-`VFSEntry.chunk()` in `src/vfs/models.py` now runs each chunk through
-the Pydantic validator before materializing it as the (possibly-table)
-class. Without this fix, chunk rows produced by the table class
-shipped with zeroed derived fields (`content_hash=None`,
-`lexical_tokens=0`, `index_content=False`). The bug was latent before
-slice 2 because nothing else reasoned about `chunk.index_content`;
-slice 2's auto-index loop made it user-visible.
+`VFSEntry.chunk()` in `src/vfs/models.py` now runs each chunk through the Pydantic validator before materializing it as the (possibly-table) class. Without this fix, chunk rows produced by the table class shipped with zeroed derived fields (`content_hash=None`, `lexical_tokens=0`, `index_content=False`). The bug was latent before slice 2 because nothing else reasoned about `chunk.index_content`; slice 2's auto-index loop made it user-visible.
 
 ### Test changes
 
-- New `tests/test_write_pipeline.py` — 19 tests covering change
-  detection, auto-chunk (cascade, conflict, runtime error), auto-index
-  (bulk call count, input order, caller-provided embedding wins,
-  provider failure), and the `auto_chunk=False` / `auto_index=False`
-  opt-outs.
-- Updated 8 tests in `tests/test_write_pressure.py` and 2 tests in
-  `tests/test_database.py` to add `index_content=False` on files that
-  ship pre-built chunks in the same batch — those previously-valid
-  shapes now hit the story 014 conflict rule.
+- New `tests/test_write_pipeline.py` — 19 tests covering change detection, auto-chunk (cascade, conflict, runtime error), auto-index (bulk call count, input order, caller-provided embedding wins, provider failure), and the `auto_chunk=False` / `auto_index=False` opt-outs.
+- Updated 8 tests in `tests/test_write_pressure.py` and 2 tests in `tests/test_database.py` to add `index_content=False` on files that ship pre-built chunks in the same batch — those previously-valid shapes now hit the story 014 conflict rule.
 
 ### Files touched (slice 2)
 
@@ -328,41 +234,19 @@ context/stories/014-...         # this implementation.md
 
 ### Verification
 
-`uv run pytest` — 2476 passed (was 2457 at slice 1), 108 skipped, no
-regressions. `uvx ruff check` clean on changed files.
+`uv run pytest` — 2476 passed (was 2457 at slice 1), 108 skipped, no regressions. `uvx ruff check` clean on changed files.
 
 ## Slice 3 — in progress
 
-Postgres trigram delta-store wiring. Story 013 phase 2 (DDL +
-provisioning) lands inside this slice, then the `PostgresFileSystem`
-overrides for `_stage_chunk_cascade` and the trigram-maintenance hook,
-then the `_grep_impl` rewrite to read candidates out of the delta
-store.
+Postgres trigram delta-store wiring. Story 013 phase 2 (DDL + provisioning) lands inside this slice, then the `PostgresFileSystem` overrides for `_stage_chunk_cascade` and the trigram-maintenance hook, then the `_grep_impl` rewrite to read candidates out of the delta store.
 
 ### Design deviations from spec
 
-Two spec deviations were settled during slice 3 design and are
-intentional. The spec is authoritative for intent; this section is
-authoritative for what shipped.
+Two spec deviations were settled during slice 3 design and are intentional. The spec is authoritative for intent; this section is authoritative for what shipped.
 
-1. **Hook renamed `_apply_index_maintenance` → `_apply_trigram_maintenance`.**
-   The base hook described itself as "trigram + embedding
-   maintenance" but the orchestrator (`_write_phase_auto_index`)
-   already runs the bulk `embed_entries` call directly — the hook
-   only ever touched trigrams in practice. The new name matches the
-   actual responsibility. Three call sites updated:
-   `src/vfs/backends/database.py:515` (definition),
-   `src/vfs/backends/database.py:1755` and `1762` (orchestrator
-   call sites). Error string at line 1768 became "Trigram
-   maintenance failed: ...". No test or external surface depended
-   on the old name.
+1. **Hook renamed `_apply_index_maintenance` → `_apply_trigram_maintenance`.** The base hook described itself as "trigram + embedding maintenance" but the orchestrator (`_write_phase_auto_index`) already runs the bulk `embed_entries` call directly — the hook only ever touched trigrams in practice. The new name matches the actual responsibility. Three call sites updated: `src/vfs/backends/database.py:515` (definition), `src/vfs/backends/database.py:1755` and `1762` (orchestrator call sites). Error string at line 1768 became "Trigram maintenance failed: ...". No test or external surface depended on the old name.
 
-2. **Schema: delta-append, not row-store-as-truth.** Spec §4 of
-   story 013 described the row-store MVP as "adds insert rows and
-   deletes remove rows" — the table at any point holds exactly
-   current truth. Slice 3 ships the **append-only delta** shape
-   instead, matching the posting-block model (spec §3, phase 5)
-   collapsed onto the row store:
+2. **Schema: delta-append, not row-store-as-truth.** Spec §4 of story 013 described the row-store MVP as "adds insert rows and deletes remove rows" — the table at any point holds exactly current truth. Slice 3 ships the **append-only delta** shape instead, matching the posting-block model (spec §3, phase 5) collapsed onto the row store:
 
    ```sql
    CREATE TABLE {entries_table}_chunk_grams (
@@ -376,99 +260,47 @@ authoritative for what shipped.
    CREATE INDEX ix_..._chunk_id ON {table} (chunk_id);
    ```
 
-   Reads use latest-action-wins per `(gram_key, chunk_id)` via
-   `DISTINCT ON ... ORDER BY seq DESC`. The trade is a slightly
-   slower hot path (3–5× at zero compaction lag) for a much
-   smoother path to posting-block compaction (story 013 phase 5)
-   when it lands — the staging stream IS the compaction input.
+   Reads use latest-action-wins per `(gram_key, chunk_id)` via `DISTINCT ON ... ORDER BY seq DESC`. The trade is a slightly slower hot path (3–5× at zero compaction lag) for a much smoother path to posting-block compaction (story 013 phase 5) when it lands — the staging stream IS the compaction input.
 
    Other schema simplifications vs. spec §4:
-   - **No `gram_kind` column.** Single normalization (folded);
-     case-sensitive grep gets a slightly less selective candidate
-     set with Python verification enforcing case. Raw grams are
-     a separate slice if benchmarks demand them.
-   - **No `owner_path`, `line_start`, `line_end`.** Spec marked
-     these optional; the join to `vfs_entries` is mandatory anyway
-     for content fetch, so denormalizing them ~5–10× the gram-row
-     storage for no correctness win.
-   - **No FK** to the entries table — write-order independent;
-     cascade is application-level via `_stage_chunk_cascade`.
-   - **No `user_id`** — `vfs_entries` is path-scoped, grep joins
-     back for the scope filter.
+   - **No `gram_kind` column.** Single normalization (folded); case-sensitive grep gets a slightly less selective candidate set with Python verification enforcing case. Raw grams are a separate slice if benchmarks demand them.
+   - **No `owner_path`, `line_start`, `line_end`.** Spec marked these optional; the join to `vfs_entries` is mandatory anyway for content fetch, so denormalizing them ~5–10× the gram-row storage for no correctness win.
+   - **No FK** to the entries table — write-order independent; cascade is application-level via `_stage_chunk_cascade`.
+   - **No `user_id`** — `vfs_entries` is path-scoped, grep joins back for the scope filter.
 
 ### Landed so far
 
 `src/vfs/backends/database.py`:
 
-- `_apply_trigram_maintenance` base hook with the new name + the
-  chunk-vs-file identity contract documented in the docstring
-  (chunks have no persistent identity; cascade stages their
-  deletes, this hook stages their adds).
+- `_apply_trigram_maintenance` base hook with the new name + the chunk-vs-file identity contract documented in the docstring (chunks have no persistent identity; cascade stages their deletes, this hook stages their adds).
 - Orchestrator call sites and error string renamed.
 
 `src/vfs/backends/postgres.py`:
 
 - `_native_chunk_grams_verified` flag.
-- `_chunk_grams_bare_name()`, `_chunk_grams_table()`,
-  `_chunk_grams_schema_hint()` — naming + provisioning hint
-  parallel to the existing `_pattern_schema_hint` /
-  `_fulltext_schema_hint` pattern.
-- `install_native_chunk_grams_schema()` — creates the table and
-  both indexes (idempotent via `IF NOT EXISTS`).
-- `verify_native_chunk_grams_schema()` (public) +
-  `_verify_chunk_grams_schema(session)` (internal, cached) —
-  fail-fast with a clear hint pointing at the installer.
-- Imports: `unique_code_grams` from `vfs.code_grams`; `Sequence`
-  and `VFSEntry` added to the `TYPE_CHECKING` block.
+- `_chunk_grams_bare_name()`, `_chunk_grams_table()`, `_chunk_grams_schema_hint()` — naming + provisioning hint parallel to the existing `_pattern_schema_hint` / `_fulltext_schema_hint` pattern.
+- `install_native_chunk_grams_schema()` — creates the table and both indexes (idempotent via `IF NOT EXISTS`).
+- `verify_native_chunk_grams_schema()` (public) + `_verify_chunk_grams_schema(session)` (internal, cached) — fail-fast with a clear hint pointing at the installer.
+- Imports: `unique_code_grams` from `vfs.code_grams`; `Sequence` and `VFSEntry` added to the `TYPE_CHECKING` block.
 
-The Postgres override for `_apply_trigram_maintenance` and the
-`_stage_chunk_cascade` override are next. The `_grep_impl`
-rewrite onto the delta store and the integration test sweep land
-after the maintenance side is green.
+The Postgres override for `_apply_trigram_maintenance` and the `_stage_chunk_cascade` override are next. The `_grep_impl` rewrite onto the delta store and the integration test sweep land after the maintenance side is green.
 
 ### Identity contract (chunks vs files)
 
 The trigram hook treats kind as load-bearing:
 
-- **Files** (`kind="file"`, `index_content=True`): persistent
-  identity. `_update_existing` keeps the existing row's id, so
-  `chunk_id = existing.id`. Diff against `old_entries[path]`:
-  stage `new_grams - old_grams` as adds, `old_grams - new_grams`
-  as deletes. Shared grams produce no row.
-- **Chunks** (`kind="chunk"`): no persistent identity across
-  content changes. The cascade (`_stage_chunk_cascade`) reads
-  the existing chunks and stages all-deletes for their grams
-  using the old chunk ids; this hook stages all-adds for the
-  incoming chunk grams using the incoming chunk ids. Never
-  diff chunks against `old_entries`.
-- **`delete_only=True`** (flag flip True→False, or row-delete in
-  slice 4): recompute current grams from `entry.content` and
-  stage every gram as a delete using `entry.id`.
+- **Files** (`kind="file"`, `index_content=True`): persistent identity. `_update_existing` keeps the existing row's id, so `chunk_id = existing.id`. Diff against `old_entries[path]`: stage `new_grams - old_grams` as adds, `old_grams - new_grams` as deletes. Shared grams produce no row.
+- **Chunks** (`kind="chunk"`): no persistent identity across content changes. The cascade (`_stage_chunk_cascade`) reads the existing chunks and stages all-deletes for their grams using the old chunk ids; this hook stages all-adds for the incoming chunk grams using the incoming chunk ids. Never diff chunks against `old_entries`.
+- **`delete_only=True`** (flag flip True→False, or row-delete in slice 4): recompute current grams from `entry.content` and stage every gram as a delete using `entry.id`.
 
-This is why "chunk_id" in the table name is slightly misleading
-— small unchunked files with `index_content=True` also land in
-the table, keyed by the file row's id. The naming is kept for
-spec alignment.
+This is why "chunk_id" in the table name is slightly misleading — small unchunked files with `index_content=True` also land in the table, keyed by the file row's id. The naming is kept for spec alignment.
 
 ## Open follow-ups (slice 3+ deliverables)
 
-- **Postgres override of `_apply_trigram_maintenance`** — staging
-  delta rows per the identity contract above. In progress.
-- **Postgres override of `_stage_chunk_cascade`** — read existing
-  chunks, stage delete deltas for their grams using old chunk
-  ids, then call `super()` to issue the DELETE.
-- **`_grep_impl` rewrite** — `GramQuery` → SQL intersection over
-  the delta store with latest-action-wins → fetch chunk content
-  → Python regex verification via existing `_collect_line_matches`.
-- **Compaction** — fold delta rows down to current truth per
-  `(gram_key, chunk_id)`. Required when delta-stream growth
-  starts costing read latency; can ship behind a manual
-  `compact_chunk_grams()` helper initially. Story 013 phase 5
-  is the eventual home.
-- **EmbeddingProvider input-order test** (spec AC 20) — reference
-  test double that proves a sub-batching provider returns vectors
-  in input order even when sub-batches complete out of order.
-  Slice 3.
-- **Multi-mount partial commit** — `VFSClient.write()`
-  flatten-and-merge with both blocks in `to_str()`. Slice 4.
+- **Postgres override of `_apply_trigram_maintenance`** — staging delta rows per the identity contract above. In progress.
+- **Postgres override of `_stage_chunk_cascade`** — read existing chunks, stage delete deltas for their grams using old chunk ids, then call `super()` to issue the DELETE.
+- **`_grep_impl` rewrite** — `GramQuery` → SQL intersection over the delta store with latest-action-wins → fetch chunk content → Python regex verification via existing `_collect_line_matches`.
+- **Compaction** — fold delta rows down to current truth per `(gram_key, chunk_id)`. Required when delta-stream growth starts costing read latency; can ship behind a manual `compact_chunk_grams()` helper initially. Story 013 phase 5 is the eventual home.
+- **EmbeddingProvider input-order test** (spec AC 20) — reference test double that proves a sub-batching provider returns vectors in input order even when sub-batches complete out of order. Slice 3.
+- **Multi-mount partial commit** — `VFSClient.write()` flatten-and-merge with both blocks in `to_str()`. Slice 4.
 - **Delete-side delta staging** in `_delete_impl`. Slice 4.

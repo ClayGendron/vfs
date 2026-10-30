@@ -2,28 +2,9 @@
 
 Companion to the memo `../../2026-09-04-mssql-membership-reads.md`.
 
-All probes run against the live SQL Server 2025 container from
-`docker/compose.test.yml` (`VFS_TEST_MSSQL_URL`, the `master` database,
-collation `SQL_Latin1_General_CP1_CI_AS`, compatibility level 170).
-The container is amd64 emulated under Rosetta on Apple Silicon, so
-absolute times are inflated; read the ratios and the plan shapes. Each
-probe mints its own `vfs_<hex>` table namespace through
-`DatabaseStorage`, writes three non-ASCII "canary" paths through the
-vfs write verb (`/n/café.py`, `/n/日本語.py`, `/n/emoji-😀.py`), grows
-the entry table with a raw `INSERT ... SELECT ... FROM GENERATE_SERIES`
-of minimal rows (`common.py`), refreshes statistics and clears the plan
-cache after each growth step, and drops everything at the end.
+All probes run against the live SQL Server 2025 container from `docker/compose.test.yml` (`VFS_TEST_MSSQL_URL`, the `master` database, collation `SQL_Latin1_General_CP1_CI_AS`, compatibility level 170). The container is amd64 emulated under Rosetta on Apple Silicon, so absolute times are inflated; read the ratios and the plan shapes. Each probe mints its own `vfs_<hex>` table namespace through `DatabaseStorage`, writes three non-ASCII "canary" paths through the vfs write verb (`/n/café.py`, `/n/日本語.py`, `/n/emoji-😀.py`), grows the entry table with a raw `INSERT ... SELECT ... FROM GENERATE_SERIES` of minimal rows (`common.py`), refreshes statistics and clears the plan cache after each growth step, and drops everything at the end.
 
-The prior-art half of the memo came from two delegated surveys whose
-reports are summarised there: a web sweep (Microsoft docs, Kornelis,
-White, Kehayias, Bertrand, Ozar, the EF Core `OPENJSON` regression,
-pyodbc's wiki, SQLAlchemy's tracker) and a study of twelve refreshed,
-licence-checked reference clones — only jackrabbit-oak (`IN` lists
-chunked at 2,048 with an in-statement 1,000-per-list `OR` split for
-Oracle; `varbinary(512)` keys on SQL Server) and sqlalchemy (ORM
-selectin chunk of 500; `setinputsizes` on by default "allowing
-indexes against VARCHAR columns to take effect") had anything to say
-about SQL Server. Nothing was copied from either.
+The prior-art half of the memo came from two delegated surveys whose reports are summarised there: a web sweep (Microsoft docs, Kornelis, White, Kehayias, Bertrand, Ozar, the EF Core `OPENJSON` regression, pyodbc's wiki, SQLAlchemy's tracker) and a study of twelve refreshed, licence-checked reference clones — only jackrabbit-oak (`IN` lists chunked at 2,048 with an in-statement 1,000-per-list `OR` split for Oracle; `varbinary(512)` keys on SQL Server) and sqlalchemy (ORM selectin chunk of 500; `setinputsizes` on by default "allowing indexes against VARCHAR columns to take effect") had anything to say about SQL Server. Nothing was copied from either.
 
 Rerun (container up, env exported):
 
@@ -36,12 +17,7 @@ Rerun (container up, env exported):
 
 `codepage_probe.py` creates a `vfs_utf8` database (UTF-8 default collation) on the container if it is missing and leaves it in place, like the earlier `vfs_rcsi`.
 
-Plans are read back from `sys.dm_exec_query_stats` + `sys.dm_exec_query_plan`
-by a marker comment each statement carries; locks from
-`sys.dm_tran_locks` for the probe's own SPID before rollback; escalations
-from `sys.dm_db_index_operational_stats` (`index_lock_promotion_*`).
-Every cell runs up to three times in fresh sessions: *cold* is the first
-run (it includes the statement's compile), *warm* the best of the rest.
+Plans are read back from `sys.dm_exec_query_stats` + `sys.dm_exec_query_plan` by a marker comment each statement carries; locks from `sys.dm_tran_locks` for the probe's own SPID before rollback; escalations from `sys.dm_db_index_operational_stats` (`index_lock_promotion_*`). Every cell runs up to three times in fresh sessions: *cold* is the first run (it includes the statement's compile), *warm* the best of the rest.
 
 ## `flip_probe.py` — the seek→scan flip by list size, table size, key and bind typing
 
@@ -57,15 +33,9 @@ Arms (all `WITH (UPDLOCK)`, the `lock_rows` spelling `mkedge` uses):
 | `forceseek` | the shipped nvarchar form under `WITH (UPDLOCK, FORCESEEK)` |
 | `entry_id` | `entry_id IN (@P varbinary(16), ...)` — the binary key, no conversion |
 
-Columns: found = rows returned; canaries = how many of the three
-non-ASCII paths were found (blank for `entry_id`); compile = the plan's
-`CompileTime` (ms); convert = `CONVERT_IMPLICIT` present; abort =
-`StatementOptmEarlyAbortReason`; locks = `sys.dm_tran_locks` for the SPID
-(`OBJECT:X` = escalated to a table lock; `KEY:U` = per-key update locks).
+Columns: found = rows returned; canaries = how many of the three non-ASCII paths were found (blank for `entry_id`); compile = the plan's `CompileTime` (ms); convert = `CONVERT_IMPLICIT` present; abort = `StatementOptmEarlyAbortReason`; locks = `sys.dm_tran_locks` for the SPID (`OBJECT:X` = escalated to a table lock; `KEY:U` = per-key update locks).
 
-Results 2026-09-04, tree at `c3903d7` + spec 144 working copy
-(the 1,000,000-row block ran separately with the `forceseek` and
-`varchar` arms dropped — both were already settled at 20k/200k):
+Results 2026-09-04, tree at `c3903d7` + spec 144 working copy (the 1,000,000-row block ran separately with the `forceseek` and `varchar` arms dropped — both were already settled at 20k/200k):
 
 | rows | arm | list | found | canaries | cold ms | warm ms | compile ms | convert | abort | plan | locks |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -221,8 +191,7 @@ Results 2026-09-04, tree at `c3903d7` + spec 144 working copy
 
 ## `codepage_probe.py` — which element costs the table, and where a `varchar` bind is lossless
 
-Part 1: the shipped nvarchar form, a 64-element list on 20,000 rows, with
-one non-ASCII path at a time.
+Part 1: the shipped nvarchar form, a 64-element list on 20,000 rows, with one non-ASCII path at a time.
 
 | list | found | canaries | ms | plan | locks |
 |---|---|---|---|---|---|
@@ -232,9 +201,7 @@ one non-ASCII path at a time.
 | 63 ascii + '/n/emoji-😀.py'         |   64 | 1 |      59 | SEEK:Filter>Merge Interval>Sort>Index Seek>Clustered Index Seek params=['nvarchar(26)', 'nvarchar(28)'] | {'OBJECT:IX': 1, 'KEY:U': 128} |
 | 61 ascii + all three               |   64 | 3 |     202 | SEEK:Filter>Merge Interval>Sort>Index Seek>Clustered Index Seek params=['nvarchar(18)', 'nvarchar(20)', 'nvarchar(26)', 'nvarchar(28)'] | {'OBJECT:X': 1} |
 
-Part 2: a stock SQLAlchemy engine (`setinputsizes` on → `varchar` binds)
-against `master` (CP-1252 default collation) and against a database
-created `COLLATE Latin1_General_100_BIN2_UTF8`, 64-element list, 20,000 rows.
+Part 2: a stock SQLAlchemy engine (`setinputsizes` on → `varchar` binds) against `master` (CP-1252 default collation) and against a database created `COLLATE Latin1_General_100_BIN2_UTF8`, 64-element list, 20,000 rows.
 
 | database / arm | found | canaries | ms | plan | locks |
 |---|---|---|---|---|---|
@@ -245,26 +212,9 @@ created `COLLATE Latin1_General_100_BIN2_UTF8`, 64-element list, 20,000 rows.
 
 ## `forms_probe.py` — alternative membership forms at K ∈ {2,067, 10,000, 20,000}
 
-Every form resolves K sorted paths to `(path, entry_id)` in one
-transaction under `WITH (UPDLOCK)`; the whole resolve is timed; locks
-are read before rollback. `in-nvarchar-*` rows use all-ASCII lists
-(one CJK element makes every shipped-form statement a table-range
-seek — see `codepage_probe.py`); every other form carries the three
-canaries. `plan` is the *last* statement's plan (a remainder chunk can
-differ from the full chunks — e.g. `in-cast-1000` at K=2,067 shows the
-67-element remainder's seek while the two 1,000-element statements
-scanned and took the table lock). The `promotions` column is the delta
-of `SUM(index_lock_promotion_attempt_count), SUM(index_lock_promotion_count)`
-and is **not trustworthy here**: it went negative both when read
-inside the transaction (first run) and from an independent autocommit
-connection (second run), and a direct check (three reads with nothing
-between, then a full-table `WITH (UPDLOCK)` scan that held `OBJECT:X`)
-showed the counters unchanged. Use the `locks` column: `OBJECT:X` is a
-table-level exclusive lock on the entry table; `KEY:U` counts are
-two per row (path index key + clustered key).
+Every form resolves K sorted paths to `(path, entry_id)` in one transaction under `WITH (UPDLOCK)`; the whole resolve is timed; locks are read before rollback. `in-nvarchar-*` rows use all-ASCII lists (one CJK element makes every shipped-form statement a table-range seek — see `codepage_probe.py`); every other form carries the three canaries. `plan` is the *last* statement's plan (a remainder chunk can differ from the full chunks — e.g. `in-cast-1000` at K=2,067 shows the 67-element remainder's seek while the two 1,000-element statements scanned and took the table lock). The `promotions` column is the delta of `SUM(index_lock_promotion_attempt_count), SUM(index_lock_promotion_count)` and is **not trustworthy here**: it went negative both when read inside the transaction (first run) and from an independent autocommit connection (second run), and a direct check (three reads with nothing between, then a full-table `WITH (UPDLOCK)` scan that held `OBJECT:X`) showed the counters unchanged. Use the `locks` column: `OBJECT:X` is a table-level exclusive lock on the entry table; `KEY:U` counts are two per row (path index key + clustered key).
 
-First run (`--sizes 20000,1000000 --ks 2067,10000`, all forms; `tvp` and
-`temp-2000` failed — see below):
+First run (`--sizes 20000,1000000 --ks 2067,10000`, all forms; `tvp` and `temp-2000` failed — see below):
 
 | rows | form | K | found | canaries | stmts | cold ms | warm ms | compile ms | est rows | plan | locks | promotions |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -323,9 +273,7 @@ First run (`--sizes 20000,1000000 --ks 2067,10000`, all forms; `tvp` and
 | 1,000,000 | tvp | 10000 | — | — | — | — | — | ERROR: (pyodbc.ProgrammingError) ("A TVP's rows must all be the same size.", 'HY000') | — | — |
 | 1,000,000 | temp-2000 | 10000 | — | — | — | — | — | ERROR: (pyodbc.ProgrammingError) ('42000', '[42000] [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]The number of row value expressions in the I | — | — |
 
-Second run (`--forms in-nvarchar-512,in-cast-fs-2067,openjson-2000,openjson-20000,temp-1000,values-fs-1000 --ks 2067,20000 --sizes 20000,1000000`),
-the K=20,000 cells being the lock-escalation question (10,000 edges →
-up to 20,000 endpoint rows locked in one transaction):
+Second run (`--forms in-nvarchar-512,in-cast-fs-2067,openjson-2000,openjson-20000,temp-1000,values-fs-1000 --ks 2067,20000 --sizes 20000,1000000`), the K=20,000 cells being the lock-escalation question (10,000 edges → up to 20,000 endpoint rows locked in one transaction):
 
 | rows | form | K | found | canaries | stmts | cold ms | warm ms | compile ms | est rows | plan | locks | promotions |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -354,20 +302,11 @@ up to 20,000 endpoint rows locked in one transaction):
 | 1,000,000 | temp-1000 | 20000 | 20000 | 3 | 23 | 275 | 187 | 15 | 20000.0 | SCAN:Hash Match>Clustered Index Scan | OBJECT:IX: 10, OBJECT:Sch-M: 2, KEY:X: 21 | (-5, 0) |
 | 1,000,000 | values-fs-1000 | 20000 | 20000 | 3 | 20 | 283 | 180 | 37 | 1000.0 | SEEK:Index Seek>Clustered Index Seek | OBJECT:IX: 1, KEY:U: 40000 | (-95, 0) |
 
-Failures worth their exact text: `temp-2000` — "The number of row value
-expressions in the INSERT statement exceeds the maximum allowed number
-of 1000 row values" (error 10738; the join over a 2,067-row `VALUES`
-derived table was accepted); `tvp` from ad hoc SQL — see `tvp_probe.py`.
+Failures worth their exact text: `temp-2000` — "The number of row value expressions in the INSERT statement exceeds the maximum allowed number of 1000 row values" (error 10738; the join over a 2,067-row `VALUES` derived table was accepted); `tvp` from ad hoc SQL — see `tvp_probe.py`.
 
 ## `tvp_probe.py` — can a table-valued parameter be bound from aioodbc/pyodbc?
 
-`CREATE TYPE <tn>_paths AS TABLE (path varchar(1024) COLLATE
-Latin1_General_100_BIN2_UTF8 NOT NULL PRIMARY KEY)` plus a stored
-procedure with a `READONLY` parameter, 2,067 paths (three canaries),
-20,000 rows. A first run passed the type as a nested `("dbo", type)`
-tuple and failed every ad hoc form ("A TVP's rows must all be the same
-size"); pyodbc's documented convention is two leading *strings*,
-`[type, schema, *rows]`, and with it the ad hoc join works:
+`CREATE TYPE <tn>_paths AS TABLE (path varchar(1024) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL PRIMARY KEY)` plus a stored procedure with a `READONLY` parameter, 2,067 paths (three canaries), 20,000 rows. A first run passed the type as a nested `("dbo", type)` tuple and failed every ad hoc form ("A TVP's rows must all be the same size"); pyodbc's documented convention is two leading *strings*, `[type, schema, *rows]`, and with it the ad hoc join works:
 
 | form | found | canaries | ms | plan | locks |
 |---|---|---|---|---|---|
@@ -378,10 +317,4 @@ size"); pyodbc's documented convention is two leading *strings*,
 | stored procedure {CALL}                  | 2067 | 3 | 29 ms | SCAN:Hash Match>Clustered Index Scan est=2067.0 compile=3 | {'OBJECT:X': 1} |
 | stored procedure EXEC                    | 2067 | 3 | 27 ms | SCAN:Hash Match>Clustered Index Scan est=2067.0 compile=3 | {'OBJECT:X': 1} |
 
-The ad hoc `JOIN ? AS k` plan is a scan of the table variable driving
-nested-loops seeks into the entry table (est 1 row for the TVP):
-4,134 `KEY:U`, no table lock, 28 ms. The `sp_executesql`
-`READONLY`-parameter spelling and the stored procedure see the TVP's
-true cardinality (2,067) and choose `Hash Match → Clustered Index
-Scan` under `OBJECT:X`. Rows-only forms fail: pyodbc cannot infer the
-type for ad hoc SQL.
+The ad hoc `JOIN ? AS k` plan is a scan of the table variable driving nested-loops seeks into the entry table (est 1 row for the TVP): 4,134 `KEY:U`, no table lock, 28 ms. The `sp_executesql` `READONLY`-parameter spelling and the stored procedure see the TVP's true cardinality (2,067) and choose `Hash Match → Clustered Index Scan` under `OBJECT:X`. Rows-only forms fail: pyodbc cannot infer the type for ad hoc SQL.

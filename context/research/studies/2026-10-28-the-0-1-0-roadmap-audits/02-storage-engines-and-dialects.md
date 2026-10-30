@@ -157,9 +157,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-1 — The engine support matrix is a published, tested page
 
-**Why.** "Supported" today means: a tuned `DialectProfile`, a Docker leg in CI, and a cosine distance function (ADR 059). Nowhere does the README say this, name versions (Postgres 17 + pgvector ≥0.8, MariaDB ≥11.8, SQL Server 2025 with the UTF-8 BIN2 collation floor of 2019+, Oracle 23ai/26ai Free, SQLite ≥3.50 with extension loading), or say what an unknown dialect gets. A 0.1.0 host picks an engine off this table. The table must be generated from or pinned to `PROFILES` so it cannot drift.
-**Depends on.** Nothing. Precedes 0.1.0b1.
-**Acceptance.**
+**Why.** "Supported" today means: a tuned `DialectProfile`, a Docker leg in CI, and a cosine distance function (ADR 059). Nowhere does the README say this, name versions (Postgres 17 + pgvector ≥0.8, MariaDB ≥11.8, SQL Server 2025 with the UTF-8 BIN2 collation floor of 2019+, Oracle 23ai/26ai Free, SQLite ≥3.50 with extension loading), or say what an unknown dialect gets. A 0.1.0 host picks an engine off this table. The table must be generated from or pinned to `PROFILES` so it cannot drift. **Depends on.** Nothing. Precedes 0.1.0b1. **Acceptance.**
 1. `README.md` carries a matrix with one row per `PROFILES` entry plus "any other SQLAlchemy dialect", columns: driver extra, minimum server version, verbs served, vector tier (`ann`/`exact`), ANN index provisioned (Postgres only), arbitration, isolation pins, known caps (Oracle `IN` 1,000; SQL Server 2,100 binds / 2,000 lock budget; MariaDB `max_allowed_packet` and 65,535-byte row; pgvector HNSW 2,000 dims).
 2. A docs-fence test (the existing `pytest docs README.md` job) asserts the matrix's dialect names equal `set(PROFILES) | {"generic"}` and each row's `arbitration`/`vector_distance` cell equals the profile field.
 3. CLAUDE.md:60 and `architecture/01:101` say `glean` alone is withheld; a grep test over `context/architecture/*.md` for "withholds `glean` and `graph`" finds nothing.
@@ -168,9 +166,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-2 — Schema lifecycle: directional mismatch, corruption class, and a `migrate`/re-provision path a host can run
 
-**Why.** Every format bump today strands any real database (`schema_mismatch` → "re-provision"). 0.1.0 is the commitment point ADR 020 named: from then on bumps must carry a path. The minimum honest story for 0.1.0: the refusal says which side is older; an absent/garbage version row classifies as corruption not mismatch; and a developer-plane verb (`migrate()` or `reprovision(confirm=…)`) exists with at least the identity-preserving dump/reload the test suite already does (`test_identity_portability.py` proves rows survive re-minting). Full `ALTER` migrations can wait for 0.2.
-**Depends on.** ADR 020 amendment (Clay). Interacts with spec 157 (schema creation) and spec 179 (fault model).
-**Acceptance.**
+**Why.** Every format bump today strands any real database (`schema_mismatch` → "re-provision"). 0.1.0 is the commitment point ADR 020 named: from then on bumps must carry a path. The minimum honest story for 0.1.0: the refusal says which side is older; an absent/garbage version row classifies as corruption not mismatch; and a developer-plane verb (`migrate()` or `reprovision(confirm=…)`) exists with at least the identity-preserving dump/reload the test suite already does (`test_identity_portability.py` proves rows survive re-minting). Full `ALTER` migrations can wait for 0.2. **Depends on.** ADR 020 amendment (Clay). Interacts with spec 157 (schema creation) and spec 179 (fault model). **Acceptance.**
 1. A meta row at `SCHEMA_FORMAT_VERSION + 1` refuses `schema_mismatch` with `data["direction"] == "store_newer"` and a message naming "upgrade vfs"; at `− 1`, `"store_older"` naming the migrate verb. Pinned on SQLite and on every engine leg.
 2. A meta table present with no row, or a non-integer/negative version, classifies `ErrorKind.corruption` (new kind or existing `internal`? — Clay), never `schema_mismatch`.
 3. `migrate()` on a store one version behind returns `success=True` and the next `first_touch` adopts; the number of DDL statements issued is pinned per bump (count, not time).
@@ -179,9 +175,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-3 — Provisioning for host apps: create the schema, pick the bulk path by driver, classify privilege refusals (spec 157, built)
 
-**Why.** A host handing vfs `schema="vfs"` on Postgres or SQL Server must `CREATE SCHEMA` by hand; a psycopg 3 session factory crashes on the first bulk insert with `AttributeError`; a role without `CREATE` privilege gets `internal`. These are the first three things a production host hits (the SmartOwl memo). Theme 6 (serve as MCP) and theme 5 (sync/ETL) both start with a host app's existing Postgres.
-**Depends on.** Spec 157 as written (markers resolved). S-2 for the corruption/direction vocabulary.
-**Acceptance.**
+**Why.** A host handing vfs `schema="vfs"` on Postgres or SQL Server must `CREATE SCHEMA` by hand; a psycopg 3 session factory crashes on the first bulk insert with `AttributeError`; a role without `CREATE` privilege gets `internal`. These are the first three things a production host hits (the SmartOwl memo). Theme 6 (serve as MCP) and theme 5 (sync/ETL) both start with a host app's existing Postgres. **Depends on.** Spec 157 as written (markers resolved). S-2 for the corruption/direction vocabulary. **Acceptance.**
 1. `DatabaseStorage(url=postgres, schema="vfs_demo")` on a database with no such schema serves its first `write`; same on the SQL Server leg; `profile.schema_ddl is None` on SQLite, MariaDB, Oracle and first touch issues no schema statement there (statement count pinned).
 2. Through a `vfs_nocreate` role (new initdb script), first touch refuses `unavailable` (or `permission_denied` — Clay) with `data["schema"] == "vfs_demo"` and `data["privilege"] == "CREATE"`, never a traceback.
 3. `bulk_insert_mode(profile, dialect)` returns `"copy"` only when `dialect.driver == "asyncpg"`; a `postgresql+psycopg://` leg (`VFS_TEST_POSTGRES_PSYCOPG_URL`) runs the conformance contract and a 10,000-file write lands in `"core"` with ≥2 insert pages counted.
@@ -189,9 +183,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-4 — Every verb has a 10k count pin, and the legs run them
 
-**Why.** The ETL contract is "10,000+ files in one call on every dialect". Pins exist for write, edges, glob, delete/restore, tombstoned reads and graph; none for move, copy, mkdir, sweep, grep, glean, grant verbs. A `count operations, never wall-clock` pin per verb is cheap on SQLite and is the only thing that catches a builder regressing to per-row statements. The slow tier runs them on the engine legs too.
-**Depends on.** Nothing; informs S-5 and S-7.
-**Acceptance.**
+**Why.** The ETL contract is "10,000+ files in one call on every dialect". Pins exist for write, edges, glob, delete/restore, tombstoned reads and graph; none for move, copy, mkdir, sweep, grep, glean, grant verbs. A `count operations, never wall-clock` pin per verb is cheap on SQLite and is the only thing that catches a builder regressing to per-row statements. The slow tier runs them on the engine legs too. **Depends on.** Nothing; informs S-5 and S-7. **Acceptance.**
 1. For each of `mkdir`, `move`, `copy`, `sweep`, `grep` (scoped to 10k paths), `glean` (scoped), `grant`/`revoke` (10k subjects or paths): a test writes 10,000 entries and asserts the statement count issued by the verb equals a declared formula in `O(chunks)` with the chunk count derived from `membership_budget`, marked `slow`.
 2. Each pin is parametrized over `ENGINE_LEGS` so the four legs run it with their real budgets (Oracle 1,000; MSSQL 2,000).
 3. Under a monkeypatched `parameter_budget = 48`, every verb above still returns the correct result (extends `test_tiny_budget_batch_survives_every_verb`).
@@ -199,9 +191,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-5 — MariaDB set-based guarded updates (spec 080) — only if MariaDB stays in 0.1.0
 
-**Why.** Correct and bounded today, but 10k overwrites are ~10k round trips inside REPEATABLE READ, widening the deadlock/lock-wait window. The research is done (UNION ALL derived-table join, 4× faster, savepoint-and-redrive attribution proven on both family members).
-**Depends on.** Clay's decision on MariaDB (§6 Q1). S-4's pin. Spec 080 slice B design.
-**Acceptance.**
+**Why.** Correct and bounded today, but 10k overwrites are ~10k round trips inside REPEATABLE READ, widening the deadlock/lock-wait window. The research is done (UNION ALL derived-table join, 4× faster, savepoint-and-redrive attribution proven on both family members). **Depends on.** Clay's decision on MariaDB (§6 Q1). S-4's pin. Spec 080 slice B design. **Acceptance.**
 1. A clean 10,000-row overwrite on the MariaDB leg issues `ceil(N / rows_per_statement)` UPDATE statements, counted by a `before_cursor_execute` spy; the per-row width is measured by `statement_budget`.
 2. `CLIENT_FOUND_ROWS` is asserted on the connection at first touch (the semantic the aggregate `rowcount == N` relies on); a connection without it refuses `unsupported`.
 3. A conflicted row inside a set-based chunk is attributed by the savepoint re-drive exactly as the executemany arm attributes it today (conformance contract unchanged, byte-identical observations).
@@ -209,9 +199,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-6 — The SQL Server leg is reliable and the four legs are a release gate
 
-**Why.** The latest CI run is red at `apt-get install msodbcsql18`, and the 2026-10-24 storage fixes have no SQL Server evidence. Spec 166's final bar requires the legs to pass *from the published wheel*. The leg must not depend on a third-party apt repo being up at push time, and the legs must be runnable against a wheel, not a checkout.
-**Depends on.** Spec 166.
-**Acceptance.**
+**Why.** The latest CI run is red at `apt-get install msodbcsql18`, and the 2026-10-24 storage fixes have no SQL Server evidence. Spec 166's final bar requires the legs to pass *from the published wheel*. The leg must not depend on a third-party apt repo being up at push time, and the legs must be runnable against a wheel, not a checkout. **Depends on.** Spec 166. **Acceptance.**
 1. The mssql job installs the ODBC driver with a retry loop or from a cached artifact; a `workflow_dispatch` input lets any leg run against `pip install vfs-py==<version>` instead of the checkout.
 2. `test-dialects.yml` is green on HEAD for all four engines, and the commit that fixes it records per-leg pass counts in its body (the `0e0f7d8` convention).
 3. A `scripts/legs.sh` (or the `db_test` skill) runs the four legs concurrently and prints one line per leg with its pass count; the skill's stale paths are corrected.
@@ -219,9 +207,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-7 — Pool, connection and borrowed-host posture, documented and pinned
 
-**Why.** Themes 5 and 6 put vfs inside notebooks, ETL processes and an MCP server, all long-lived. Today the engine is `create_async_engine(url)` with defaults: no `pool_pre_ping`, no recycle, no sizing, and a borrowed factory skips the MSSQL kwarg. A dropped connection classifies `backend_unavailable, retryable=True` and the whole-method redrive handles it, which is right — but the pool facts should be declared and the borrowed path's obligations stated at the seam.
-**Depends on.** Spec 179 (counters) is adjacent; not required.
-**Acceptance.**
+**Why.** Themes 5 and 6 put vfs inside notebooks, ETL processes and an MCP server, all long-lived. Today the engine is `create_async_engine(url)` with defaults: no `pool_pre_ping`, no recycle, no sizing, and a borrowed factory skips the MSSQL kwarg. A dropped connection classifies `backend_unavailable, retryable=True` and the whole-method redrive handles it, which is right — but the pool facts should be declared and the borrowed path's obligations stated at the seam. **Depends on.** Spec 179 (counters) is adjacent; not required. **Acceptance.**
 1. `DatabaseStorage(url=…, pool=PoolConfig(size, overflow, pre_ping, recycle))` (or kwargs) is plumbed into `create_async_engine`; the SQLite `:memory:` path keeps `StaticPool` and serialization.
 2. A test kills the connection between two ops on each engine leg (`pg_terminate_backend`, `KILL CONNECTION`, `KILL <spid>`, `ALTER SYSTEM KILL SESSION`) and asserts the next op succeeds after exactly one `backend_unavailable` retry counted by the retry spy.
 3. A borrowed `session_factory` on MSSQL built without `use_setinputsizes=False` round-trips `/测试.md` losslessly or refuses `invalid` at first touch — pinned on the mssql leg.
@@ -229,9 +215,7 @@ Per-profile declarations (READ, `dialects.py` lines cited above):
 
 ### S-8 — Engine error as a structured field at the seam (ADR 087 pin 8 slice of spec 179)
 
-**Why.** Every classified refusal from the engine today carries `str(origin)` in `detail`. An MCP client or a CLI cannot branch on `ORA-00060` vs `40P01` without parsing text, which the repo's own rule forbids. One field, read from the driver attributes the classifiers already read.
-**Depends on.** ADR 087 accepted (pin 8 is not among the leans). Spec 179 slice.
-**Acceptance.**
+**Why.** Every classified refusal from the engine today carries `str(origin)` in `detail`. An MCP client or a CLI cannot branch on `ORA-00060` vs `40P01` without parsing text, which the repo's own rule forbids. One field, read from the driver attributes the classifiers already read. **Depends on.** ADR 087 accepted (pin 8 is not among the leans). Spec 179 slice. **Acceptance.**
 1. `classify_failure` sets `data["vfs.engine_error"] = {"sqlstate": …, "code": …, "driver": dialect.driver}` using `_sqlstate_of`/`_driver_code_of`, never regex on the message.
 2. On each engine leg, a forced deadlock/serialization failure that outlives retries carries the engine's own code (`40001`/`40P01`, `1213`, `60`, `1205`) in that field.
 3. The `KindContract` table in `results/kinds.py` documents the field for `unavailable`, `backend_unavailable`, `conflict`, `internal`.

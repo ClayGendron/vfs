@@ -13,35 +13,21 @@ The production pattern is consistent:
 3. Use that query to return candidate documents/chunks.
 4. Run the exact matcher afterward.
 
-This is how Google Code Search worked, how Zoekt/Sourcegraph search works, how
-GitHub's Blackbird describes substring search at scale, and how Elasticsearch's
-`wildcard` field accelerates wildcard/regexp queries. PostgreSQL `pg_trgm`
-implements the same broad idea inside a database index, but its tokenizer is
-word-oriented: non-alphanumeric punctuation is ignored and words are padded.
-That is useful for natural-language-ish strings, but it is not the ideal
-canonical model for source code.
+This is how Google Code Search worked, how Zoekt/Sourcegraph search works, how GitHub's Blackbird describes substring search at scale, and how Elasticsearch's `wildcard` field accelerates wildcard/regexp queries. PostgreSQL `pg_trgm` implements the same broad idea inside a database index, but its tokenizer is word-oriented: non-alphanumeric punctuation is ignored and words are padded. That is useful for natural-language-ish strings, but it is not the ideal canonical model for source code.
 
-For VFS, the cross-database story should be a **code gram index**, not an
-English word trigram index. The canonical tokenizer should preserve punctuation,
-operators, indentation, and path separators.
+For VFS, the cross-database story should be a **code gram index**, not an English word trigram index. The canonical tokenizer should preserve punctuation, operators, indentation, and path separators.
 
 ## Production Code-Search Systems
 
 ### Google Code Search / Russ Cox
 
-Russ Cox's "Regular Expression Matching with a Trigram Index" describes Google
-Code Search as an inverted trigram index over source documents. Regex queries
-are compiled into boolean expressions over required trigrams, those trigrams
-select candidate documents, and the full regex runs afterward.
+Russ Cox's "Regular Expression Matching with a Trigram Index" describes Google Code Search as an inverted trigram index over source documents. Regex queries are compiled into boolean expressions over required trigrams, those trigrams select candidate documents, and the full regex runs afterward.
 
 Important lessons:
 
-- Word indexes are insufficient because regex/code matches do not align to word
-  boundaries.
-- Bigrams are too broad and 4-grams are too sparse; trigrams are the practical
-  middle.
-- Regex-to-gram extraction must handle alternation and concatenation as boolean
-  logic, not just "extract all literals and AND them."
+- Word indexes are insufficient because regex/code matches do not align to word boundaries.
+- Bigrams are too broad and 4-grams are too sparse; trigrams are the practical middle.
+- Regex-to-gram extraction must handle alternation and concatenation as boolean logic, not just "extract all literals and AND them."
 - Patterns with no required trigrams must degrade to a scan/capped fallback.
 - The final regex matcher is still required.
 
@@ -49,22 +35,14 @@ Source: https://swtch.com/~rsc/regexp/regexp4.html
 
 ### Zoekt / Sourcegraph
 
-Zoekt is explicitly a trigram-based source-code search engine. The active
-Sourcegraph-maintained repo says it supports substring and regexp matching over
-source code and can search across many repositories. Sourcegraph's own docs say
-indexed search uses Zoekt to create trigram indexes of repository default
-branches, and Sourcegraph's indexing docs call out skipped files with more than
-20,000 unique trigrams.
+Zoekt is explicitly a trigram-based source-code search engine. The active Sourcegraph-maintained repo says it supports substring and regexp matching over source code and can search across many repositories. Sourcegraph's own docs say indexed search uses Zoekt to create trigram indexes of repository default branches, and Sourcegraph's indexing docs call out skipped files with more than 20,000 unique trigrams.
 
 Important lessons:
 
 - Source code search needs substring and regexp search, not just token search.
-- Production systems impose file-size, binary, encoding, and unique-trigram
-  limits to control index blowups.
-- Indexing and freshness are explicit operational concerns; unindexed fallback
-  still exists.
-- Ranking may incorporate code-specific signals such as symbols, but candidate
-  generation starts with grams.
+- Production systems impose file-size, binary, encoding, and unique-trigram limits to control index blowups.
+- Indexing and freshness are explicit operational concerns; unindexed fallback still exists.
+- Ranking may incorporate code-specific signals such as symbols, but candidate generation starts with grams.
 
 Sources:
 
@@ -75,35 +53,25 @@ Sources:
 
 ### GitHub Blackbird
 
-GitHub's Blackbird article describes a custom Rust code search engine built
-because general text search products did not satisfy code-search needs at
-GitHub scale. It uses n-gram inverted indexes for substring search, intersects
-posting-list iterators lazily, and stores a compressed content copy for final
-verification and rendering.
+GitHub's Blackbird article describes a custom Rust code search engine built because general text search products did not satisfy code-search needs at GitHub scale. It uses n-gram inverted indexes for substring search, intersects posting-list iterators lazily, and stores a compressed content copy for final verification and rendering.
 
 Important lessons:
 
 - Code search at large scale is a domain-specific search problem.
-- Inverted n-gram indexes are used because code queries include substrings,
-  punctuation, identifiers, paths, and regex-like shapes.
-- Posting-list intersection should be lazy and ordered so the engine does not
-  materialize every candidate for top-k style interactions.
+- Inverted n-gram indexes are used because code queries include substrings, punctuation, identifiers, paths, and regex-like shapes.
+- Posting-list intersection should be lazy and ordered so the engine does not materialize every candidate for top-k style interactions.
 - Deduplication and content-addressed storage matter when indexing many repos.
 
 Source: https://github.blog/2023-02-06-the-technology-behind-githubs-new-code-search/
 
 ### Elasticsearch Wildcard Field
 
-Elastic's `wildcard` field is built for finding patterns inside arbitrary
-strings such as logs and security data. The design uses an n-gram index as an
-approximate filter, then verifies candidate values with wildcard/regexp logic.
+Elastic's `wildcard` field is built for finding patterns inside arbitrary strings such as logs and security data. The design uses an n-gram index as an approximate filter, then verifies candidate values with wildcard/regexp logic.
 
 Important lessons:
 
-- The "approximate index, exact verification" contract is not limited to code
-  search.
-- Keyword indexes are the wrong data structure for infix search over high
-  cardinality values.
+- The "approximate index, exact verification" contract is not limited to code search.
+- Keyword indexes are the wrong data structure for infix search over high cardinality values.
 - N-gram indexing has write/storage cost and still needs verification.
 
 Sources:
@@ -115,56 +83,39 @@ Sources:
 
 ### PostgreSQL `pg_trgm`
 
-`pg_trgm` provides GIN/GiST operator classes for trigram matching and can index
-`LIKE`, `ILIKE`, `~`, and `~*`. PostgreSQL extracts trigrams from the query or
-regular expression and uses the index to narrow candidate rows.
+`pg_trgm` provides GIN/GiST operator classes for trigram matching and can index `LIKE`, `ILIKE`, `~`, and `~*`. PostgreSQL extracts trigrams from the query or regular expression and uses the index to narrow candidate rows.
 
-The mismatch for code is tokenizer behavior: `pg_trgm` ignores non-word
-characters and pads words. For example, `foo|bar` is treated as separate
-word-like pieces rather than raw grams crossing the `|` operator. That is often
-fine for identifiers and prose, but it loses useful punctuation grams for code.
+The mismatch for code is tokenizer behavior: `pg_trgm` ignores non-word characters and pads words. For example, `foo|bar` is treated as separate word-like pieces rather than raw grams crossing the `|` operator. That is often fine for identifiers and prose, but it loses useful punctuation grams for code.
 
 Implication for VFS:
 
-- Keep using `pg_trgm` as the native Postgres adapter because it is already
-  fast and deeply integrated with the planner.
+- Keep using `pg_trgm` as the native Postgres adapter because it is already fast and deeply integrated with the planner.
 - Do not treat `pg_trgm` as the canonical semantics for code grams.
-- Add an optional code-gram side index when punctuation-sensitive narrowing is
-  worth the storage cost.
+- Add an optional code-gram side index when punctuation-sensitive narrowing is worth the storage cost.
 
 Source: https://www.postgresql.org/docs/current/pgtrgm.html
 
 ### SQLite FTS5 Trigram Tokenizer
 
-SQLite FTS5 has a built-in trigram tokenizer that supports substring matching.
-Its docs explicitly say it treats each contiguous sequence of three characters
-as a token. FTS5 trigram tables can also accelerate `LIKE` and `GLOB` where the
-pattern has at least one non-wildcard sequence of three or more characters.
+SQLite FTS5 has a built-in trigram tokenizer that supports substring matching. Its docs explicitly say it treats each contiguous sequence of three characters as a token. FTS5 trigram tables can also accelerate `LIKE` and `GLOB` where the pattern has at least one non-wildcard sequence of three or more characters.
 
 Implication for VFS:
 
 - SQLite can be a serious local prototype target for this story.
 - `tokenize='trigram case_sensitive 1'` is a native code-search-ish option.
-- FTS5 still has edge cases: sub-3-character searches cannot use the trigram
-  index, `LIKE` has case-sensitivity constraints, and `ESCAPE` prevents index
-  use.
+- FTS5 still has edge cases: sub-3-character searches cannot use the trigram index, `LIKE` has case-sensitivity constraints, and `ESCAPE` prevents index use.
 
 Source: https://sqlite.org/fts5.html
 
 ### SQL Server / MSSQL
 
-SQL Server Full-Text Search is word-breaker based. It is excellent for
-linguistic/token search and exposes `CONTAINSTABLE`/`FREETEXTTABLE`, but it is
-not a raw trigram index. SQL Server 2025 adds `REGEXP_LIKE`, which helps
-server-side verification, but it does not provide a native `pg_trgm` equivalent.
+SQL Server Full-Text Search is word-breaker based. It is excellent for linguistic/token search and exposes `CONTAINSTABLE`/`FREETEXTTABLE`, but it is not a raw trigram index. SQL Server 2025 adds `REGEXP_LIKE`, which helps server-side verification, but it does not provide a native `pg_trgm` equivalent.
 
 Implication for VFS:
 
-- MSSQL should start with a materialized row store for code grams, then move to
-  staged immutable posting blocks for the durable portable design.
+- MSSQL should start with a materialized row store for code grams, then move to staged immutable posting blocks for the durable portable design.
 - Full-Text Search can remain a separate lexical-search path.
-- `CONTAINSTABLE` can still be used as an additional prefilter for word-like
-  terms, but it should not be the code grep index.
+- `CONTAINSTABLE` can still be used as an additional prefilter for word-like terms, but it should not be the code grep index.
 
 Sources:
 
@@ -173,32 +124,24 @@ Sources:
 
 ### MySQL Ngram Full-Text Parser
 
-MySQL has a built-in ngram full-text parser, mainly motivated by CJK languages
-that do not use whitespace word boundaries. It tokenizes into contiguous
-`n`-character sequences and is available for InnoDB and MyISAM full-text
-indexes. The token size is a server-level configuration.
+MySQL has a built-in ngram full-text parser, mainly motivated by CJK languages that do not use whitespace word boundaries. It tokenizes into contiguous `n`-character sequences and is available for InnoDB and MyISAM full-text indexes. The token size is a server-level configuration.
 
 Limitations for code:
 
 - The parser is attached to MySQL full-text semantics, not grep semantics.
 - Stopword behavior can drop tokens containing stopwords.
-- Boolean/phrase behavior is not a direct equivalent of raw posting-list
-  intersection.
+- Boolean/phrase behavior is not a direct equivalent of raw posting-list intersection.
 
 Implication for VFS:
 
 - MySQL native ngram FTS can be an optional adapter.
-- The portable staged posting-block adapter is still preferable for exact
-  code-search behavior and predictable cross-database semantics.
+- The portable staged posting-block adapter is still preferable for exact code-search behavior and predictable cross-database semantics.
 
 Source: https://dev.mysql.com/doc/refman/8.0/en/fulltext-search-ngram.html
 
 ### ClickHouse N-Gram Bloom Filter
 
-ClickHouse has `ngrambf_v1` data-skipping indexes. These are not row-level
-inverted indexes; they are Bloom filters over granules that help ClickHouse skip
-blocks. They can help substring-like queries, but they are probabilistic and
-block-oriented.
+ClickHouse has `ngrambf_v1` data-skipping indexes. These are not row-level inverted indexes; they are Bloom filters over granules that help ClickHouse skip blocks. They can help substring-like queries, but they are probabilistic and block-oriented.
 
 Implication for VFS:
 
@@ -215,43 +158,17 @@ The portable VFS primitive should be:
 chunk content -> raw code grams -> inverted index -> candidate chunks -> exact Python matcher
 ```
 
-Do not use natural-language tokenization as the canonical index. It loses
-punctuation and operator information that matters in code.
+Do not use natural-language tokenization as the canonical index. It loses punctuation and operator information that matters in code.
 
-The build pipeline and storage model this implies are well-established IR
-techniques, worth citing directly:
+The build pipeline and storage model this implies are well-established IR techniques, worth citing directly:
 
-- The `staging -> flush -> immutable posting blocks` shape is single-pass
-  in-memory indexing (SPIMI) followed by block merging — Manning, Raghavan &
-  Schütze, *Introduction to Information Retrieval*, ch. 4. Posting-list
-  intersection with skip pointers is §2.3. https://nlp.stanford.edu/IR-book/
-- The append-only delta-log folded by latest-action-wins is the
-  log-structured / immutable-segment model: writes append, deletes are
-  tombstones, and background compaction reclaims space — exactly Lucene's
-  segment + `liveDocs` design.
-  https://deepwiki.com/apache/lucene/2.4-segment-management-and-merging
-- Posting-list compression (delta/gap encoding, Roaring bitmaps, Elias-Fano,
-  PForDelta) all require **sorted integer doc IDs**; that ordering is also
-  what makes the linear-merge intersection work. A text/UUID `chunk_id` cannot
-  be compressed this way directly — an integer doc-id layer is the prerequisite
-  (sorted is mandatory; dense merely compresses best). See spec.md §Data Model →
-  Doc IDs for VFS's design (auto-increment `doc_id` on `vfs_entries`, stable /
-  never renumbered, gaps tolerated).
-- hexops measured `pg_trgm` regex search over 10,000+ GitHub repos and found
-  GIN builds are single-core (OOM/multi-hour) and that partitioning is the
-  scaling fix — external corroboration of the local
-  `postgres-trigram-grep-vs-ripgrep` benchmark.
-  https://github.com/hexops-graveyard/pgtrgm_emperical_measurements
-- Sparse / variable-length n-grams (GitHub Blackbird, Cursor) are the
-  production answer to non-selective short grams — keep a gram only where its
-  border character-pair weights exceed the interior weights.
-  https://cursor.com/blog/fast-regex-search
+- The `staging -> flush -> immutable posting blocks` shape is single-pass in-memory indexing (SPIMI) followed by block merging — Manning, Raghavan & Schütze, *Introduction to Information Retrieval*, ch. 4. Posting-list intersection with skip pointers is §2.3. https://nlp.stanford.edu/IR-book/
+- The append-only delta-log folded by latest-action-wins is the log-structured / immutable-segment model: writes append, deletes are tombstones, and background compaction reclaims space — exactly Lucene's segment + `liveDocs` design. https://deepwiki.com/apache/lucene/2.4-segment-management-and-merging
+- Posting-list compression (delta/gap encoding, Roaring bitmaps, Elias-Fano, PForDelta) all require **sorted integer doc IDs**; that ordering is also what makes the linear-merge intersection work. A text/UUID `chunk_id` cannot be compressed this way directly — an integer doc-id layer is the prerequisite (sorted is mandatory; dense merely compresses best). See spec.md §Data Model → Doc IDs for VFS's design (auto-increment `doc_id` on `vfs_entries`, stable / never renumbered, gaps tolerated).
+- hexops measured `pg_trgm` regex search over 10,000+ GitHub repos and found GIN builds are single-core (OOM/multi-hour) and that partitioning is the scaling fix — external corroboration of the local `postgres-trigram-grep-vs-ripgrep` benchmark. https://github.com/hexops-graveyard/pgtrgm_emperical_measurements
+- Sparse / variable-length n-grams (GitHub Blackbird, Cursor) are the production answer to non-selective short grams — keep a gram only where its border character-pair weights exceed the interior weights. https://cursor.com/blog/fast-regex-search
 
-For databases without native raw n-gram indexing, materialize a portable
-inverted index. The row-per-gram table is a useful MVP shape; the target durable
-shape is staging plus immutable compressed posting blocks.
-For databases with good native support, use the native index behind the same
-capability interface.
+For databases without native raw n-gram indexing, materialize a portable inverted index. The row-per-gram table is a useful MVP shape; the target durable shape is staging plus immutable compressed posting blocks. For databases with good native support, use the native index behind the same capability interface.
 
 ## Recommended Canonical Tokenizer
 
@@ -260,26 +177,18 @@ Use lowercase, raw sliding UTF-8 byte trigrams for candidate generation:
 - Normalize line endings to `\n` before chunking/indexing.
 - Apply Unicode `casefold()` so the index is a single lowercase stream.
 - Encode content as UTF-8 bytes.
-- Emit every 3-byte window, including punctuation, whitespace, path separators,
-  operators, and bytes inside non-ASCII code points.
+- Emit every 3-byte window, including punctuation, whitespace, path separators, operators, and bytes inside non-ASCII code points.
 - Deduplicate grams per chunk before writing the inverted index.
-- Do **not** maintain a separate raw-case stream or a `gram_kind` dimension. The
-  grams only prefilter; the authoritative regex check enforces case. A
-  case-sensitive query casefolds its pattern to derive candidate grams, then
-  verifies the original case exactly in Python. This roughly halves index size
-  versus a dual raw+folded design, at the cost of a slightly broader (still
-  correct) candidate set for case-sensitive queries.
+- Do **not** maintain a separate raw-case stream or a `gram_kind` dimension. The grams only prefilter; the authoritative regex check enforces case. A case-sensitive query casefolds its pattern to derive candidate grams, then verifies the original case exactly in Python. This roughly halves index size versus a dual raw+folded design, at the cost of a slightly broader (still correct) candidate set for case-sensitive queries.
 
 Why bytes rather than SQL `nchar(3)`:
 
 - SQL Server `nchar(3)` is UTF-16-code-unit based and can split surrogate pairs.
 - Collations can rewrite equality behavior unless binary collations are used.
 - Byte grams are compact and database-agnostic.
-- Code search is mostly byte-oriented in practice, and final Python matching
-  protects correctness.
+- Code search is mostly byte-oriented in practice, and final Python matching protects correctness.
 
-The index should never be the semantic authority. It only needs to be a safe
-superset generator.
+The index should never be the semantic authority. It only needs to be a safe superset generator.
 
 ## Candidate Query Model
 
@@ -305,8 +214,6 @@ Every result is then verified by the authoritative Python/ripgrep-style matcher.
 - Storage blowup: large chunks can contain many unique byte trigrams.
 - Hot grams: whitespace and common punctuation produce huge posting lists.
 - Case-insensitive search doubles index size if stored separately.
-- Regex-to-gram extraction is easy to make unsound. Conservative extraction is
-  mandatory until a real regex AST compiler is built.
+- Regex-to-gram extraction is easy to make unsound. Conservative extraction is mandatory until a real regex AST compiler is built.
 - Side-table maintenance must be atomic with chunk writes/deletes.
-- Query plans vary widely by database. The same logical index may need
-  different physical layouts per backend.
+- Query plans vary widely by database. The same logical index may need different physical layouts per backend.

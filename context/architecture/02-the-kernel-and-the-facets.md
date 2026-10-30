@@ -1,17 +1,9 @@
 # 02. The kernel and the facets
 
-- **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-  Draws ADR 087 (proposed 2026-10-24) as the target shape and marks
-  what the code already is.
-- **Shows:** the one layering rule vfs now follows. The kernel is the
-  gate and everything under it. Everything else is a facet: a front
-  or a derived verb. The four groups of kernel operations and the
-  verbs in each.
-- **Legend:** solid is built. Dashed is planned, with the spec named.
-  Verbs in *italics* inside a group are planned additions.
-- **Sources:** ADR 087 pins 1, 2, 4, 5; spec 179 (the seam regrouped),
-  spec 181 (the public surface regrouped); `src/vfs/ops.py`,
-  `src/vfs/base.py`, `src/vfs/storage/protocol.py`.
+- **Status:** living diagram, drawn 2026-10-24 against `ba77449`. Draws ADR 087 (proposed 2026-10-24) as the target shape and marks what the code already is.
+- **Shows:** the one layering rule vfs now follows. The kernel is the gate and everything under it. Everything else is a facet: a front or a derived verb. The four groups of kernel operations and the verbs in each.
+- **Legend:** solid is built. Dashed is planned, with the spec named. Verbs in *italics* inside a group are planned additions.
+- **Sources:** ADR 087 pins 1, 2, 4, 5; spec 179 (the seam regrouped), spec 181 (the public surface regrouped); `src/vfs/ops.py`, `src/vfs/base.py`, `src/vfs/storage/protocol.py`.
 
 ## The picture
 
@@ -64,31 +56,13 @@ flowchart TB
 
 ## Reading the picture
 
-Start at the bottom. The database holds every fact. Storage reads and
-writes it through one protocol, the storage seam. The router calls the
-seam through one funnel, the gate. The kernel is that whole stack: the
-gate and everything under it.
+Start at the bottom. The database holds every fact. Storage reads and writes it through one protocol, the storage seam. The router calls the seam through one funnel, the gate. The kernel is that whole stack: the gate and everything under it.
 
-The kernel has four groups of operations. The filesystem core is the
-part every file protocol has. The query group is the part no file
-protocol has: search over an index, with the caller's rights compiled
-into the search statement. The history group reads and writes version
-and tombstone facts. The rights group reads and writes grant facts.
-All four pass the same gate. That is why they are kernel operations and
-not a layer above.
+The kernel has four groups of operations. The filesystem core is the part every file protocol has. The query group is the part no file protocol has: search over an index, with the caller's rights compiled into the search statement. The history group reads and writes version and tombstone facts. The rights group reads and writes grant facts. All four pass the same gate. That is why they are kernel operations and not a layer above.
 
-Everything above the gate is a facet. A front is a way in. A derived
-verb is a convenience built from kernel calls. Neither stores a fact.
-`tree` is `ls` repeated. `edit` is `read` followed by a guarded
-`write`. A facet may add its own machinery: a parser, a handle table, a
-wire format, a line window. It may not add a stored fact or a new
-permission check.
+Everything above the gate is a facet. A front is a way in. A derived verb is a convenience built from kernel calls. Neither stores a fact. `tree` is `ls` repeated. `edit` is `read` followed by a guarded `write`. A facet may add its own machinery: a parser, a handle table, a wire format, a line window. It may not add a stored fact or a new permission check.
 
-The gate has two halves, and a front that skipped either would skip
-the gate. The router's half judges what the router knows: the
-parameter table, the mount table, the capability set, the reserved
-grammar, the structural permission maps. Storage's half judges what
-only the rows know: the caller's grants, compiled into the statement.
+The gate has two halves, and a front that skipped either would skip the gate. The router's half judges what the router knows: the parameter table, the mount table, the capability set, the reserved grammar, the structural permission maps. Storage's half judges what only the rows know: the caller's grants, compiled into the statement.
 
 ## Today versus the target
 
@@ -115,15 +89,10 @@ only the rows know: the caller's grants, compiled into the statement.
 
 ## Not in the kernel, by evidence (ADR 087 pin 4)
 
-No handles or file descriptors (a front owns its own handle table).
-No inode-keyed addressing (`entry_id` becomes a read-only column on
-`stat`, never an address). No hard or symbolic links. No mode bits or
-`chmod`. No access time. No `fsync` verb. No seek (a byte range per
-call instead).
+No handles or file descriptors (a front owns its own handle table). No inode-keyed addressing (`entry_id` becomes a read-only column on `stat`, never an address). No hard or symbolic links. No mode bits or `chmod`. No access time. No `fsync` verb. No seek (a byte range per call instead).
 
 ## Open
 
-- Pin 3: keep `delete` and `move` as names, or rename to `remove` and
-  `rename`.
+- Pin 3: keep `delete` and `move` as names, or rename to `remove` and `rename`.
 - Pin 16: flat names, or groups as namespaces.
 - Pin 17: on `move(replace=True)`, which row's identity survives.

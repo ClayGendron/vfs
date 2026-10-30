@@ -1,8 +1,6 @@
 # The order law on SciFact — spec 137's pre-landing check (2026-09-05)
 
-Produced by `sim_order_law.py` (a copy of the two scratch runs that
-produced these tables, merged into one script; seed and setup as
-`sim_merge.py`). Oracle nDCG@10 0.6057 (single index, mount A's stack).
+Produced by `sim_order_law.py` (a copy of the two scratch runs that produced these tables, merged into one script; seed and setup as `sim_merge.py`). Oracle nDCG@10 0.6057 (single index, mount A's stack).
 
 ## The study's heterogeneous mounts A/B/C (C is a deliberately bad local ranker)
 

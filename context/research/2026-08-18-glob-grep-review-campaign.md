@@ -1,46 +1,14 @@
 # Glob/grep read-path review campaign — findings report
 
 - **Date:** 2026-08-18 (campaign run 2026-08-17, machine-local evening)
-- **Provenance:** synthesized output of a 34-agent review campaign over
-  the commit range `0359c8d..da3cee3` — everything landed since the
-  2026-08-13 campaign: specs 095–100 (flag algebra, entry-grain grams,
-  epoch-consistent reads, literal quoting, one-owner refactor, planner
-  caps), spec 103 (Rust verify core), spec 104 (path-segment index),
-  the priced-nomination perf arc, spec 105 (overlay gate), spec 106
-  (bytes content path); run `wf_2784b845-963`. Five review lenses
-  (ownership, contract, scale, test, adversarial) on Fable, one
-  independent Opus skeptic per finding at high effort, one synthesis
-  agent. All four Docker engine legs were live for the whole run;
-  findings cite executed repros. Repro scripts were written to the
-  session scratchpad (ephemeral); every finding names its script.
-  Funnel: 28 raw findings → 27 survived verification (one refuted) →
-  3 merged as one defect (the CI-red tip) → **25 reported: 1
-  critical, 4 major, 9 minor, 11 downgraded to design questions.
-  None unverified; no lens failed.**
-  Working-tree note: four scoped files were dirty at review time with
-  the CI-gate repairs; all findings were judged against the committed
-  state, and those repairs have since landed (`e4c72a5`, `771c019`,
-  `bd0b14a`).
-- **Feeds:** specs 107–111 (born 2026-08-18 from this memo, one per
-  defect category): 107 overlay verdict at the recheck (the critical
-  finding), 108 statement growth in the grep pushdown, 109 pins for
-  unpinned laws, 110 seam bounds, 111 assembly and batch shapes.
+- **Provenance:** synthesized output of a 34-agent review campaign over the commit range `0359c8d..da3cee3` — everything landed since the 2026-08-13 campaign: specs 095–100 (flag algebra, entry-grain grams, epoch-consistent reads, literal quoting, one-owner refactor, planner caps), spec 103 (Rust verify core), spec 104 (path-segment index), the priced-nomination perf arc, spec 105 (overlay gate), spec 106 (bytes content path); run `wf_2784b845-963`. Five review lenses (ownership, contract, scale, test, adversarial) on Fable, one independent Opus skeptic per finding at high effort, one synthesis agent. All four Docker engine legs were live for the whole run; findings cite executed repros. Repro scripts were written to the session scratchpad (ephemeral); every finding names its script. Funnel: 28 raw findings → 27 survived verification (one refuted) → 3 merged as one defect (the CI-red tip) → **25 reported: 1 critical, 4 major, 9 minor, 11 downgraded to design questions. None unverified; no lens failed.** Working-tree note: four scoped files were dirty at review time with the CI-gate repairs; all findings were judged against the committed state, and those repairs have since landed (`e4c72a5`, `771c019`, `bd0b14a`).
+- **Feeds:** specs 107–111 (born 2026-08-18 from this memo, one per defect category): 107 overlay verdict at the recheck (the critical finding), 108 statement growth in the grep pushdown, 109 pins for unpinned laws, 110 seam bounds, 111 assembly and batch shapes.
 
 ## Decision pass (Clay, 2026-08-18)
 
-1. **The critical finding's mitigation is the lock-free late verdict**
-   (finding 1 → spec 107): the constraint that selected it is that no
-   repair may hold locks or make a writer wait, even milliseconds.
-   Isolation pins (SQL Server SNAPSHOT needs a database option;
-   REPEATABLE READ takes shared locks), a writer-maintained overlay
-   generation (meta-row hotspot), and EXISTS-into-fetch fusion
-   (unsound under locking READ COMMITTED) were assessed and rejected
-   against it; disabling the gate on unpinned engines was sound but
-   strictly dominated.
-2. **Remediations land by category, one spec per defect class**
-   (107–111 above), so each lands as one reviewable change.
-3. **The 11 design questions remain open** for a future decision
-   pass; none require action to keep the tree correct.
+1. **The critical finding's mitigation is the lock-free late verdict** (finding 1 → spec 107): the constraint that selected it is that no repair may hold locks or make a writer wait, even milliseconds. Isolation pins (SQL Server SNAPSHOT needs a database option; REPEATABLE READ takes shared locks), a writer-maintained overlay generation (meta-row hotspot), and EXISTS-into-fetch fusion (unsound under locking READ COMMITTED) were assessed and rejected against it; disabling the gate on unpinned engines was sound but strictly dominated.
+2. **Remediations land by category, one spec per defect class** (107–111 above), so each lands as one reviewable change.
+3. **The 11 design questions remain open** for a future decision pass; none require action to keep the tree correct.
 
 ---
 ## Critical

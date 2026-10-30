@@ -6,22 +6,16 @@
 
 ## Executive Summary
 
-Postgres chunk trigram search is promising, but it is not a universal ripgrep
-replacement.
+Postgres chunk trigram search is promising, but it is not a universal ripgrep replacement.
 
-On the local `Git/Repos` corpus, Postgres wins when the predicate is selective
-and trigram-friendly, especially fixed strings and distinctive config/search
-terms. Ripgrep wins decisively on broad source-code regexes where the SQL side
-returns many chunk candidates and then Python has to verify them.
+On the local `Git/Repos` corpus, Postgres wins when the predicate is selective and trigram-friendly, especially fixed strings and distinctive config/search terms. Ripgrep wins decisively on broad source-code regexes where the SQL side returns many chunk candidates and then Python has to verify them.
 
 The practical rule is:
 
 - Use Postgres chunk trigram search as an indexed candidate generator.
 - Keep Python/ripgrep-style matching as the correctness authority.
-- Expect Postgres to beat filesystem grep when the SQL predicate sharply
-  narrows candidates.
-- Expect ripgrep to beat Postgres when the pattern matches broad language
-  structure, common framework names, or many chunks.
+- Expect Postgres to beat filesystem grep when the SQL predicate sharply narrows candidates.
+- Expect ripgrep to beat Postgres when the pattern matches broad language structure, common framework names, or many chunks.
 
 ## Setup
 
@@ -42,9 +36,7 @@ AND content IS NOT NULL
 AND deleted_at IS NULL
 ```
 
-The test notebook builds candidate SQL with `LIKE`, `ILIKE`, `~`, or `~*`,
-then groups chunk paths back to owning file paths and verifies the final match
-with Python's compiled grep regex.
+The test notebook builds candidate SQL with `LIKE`, `ILIKE`, `~`, or `~*`, then groups chunk paths back to owning file paths and verifies the final match with Python's compiled grep regex.
 
 The equivalent ripgrep benchmark ran against:
 
@@ -72,9 +64,7 @@ Timing protocol:
 - Ripgrep shell: 1 warmup, 3 measured runs through `/usr/bin/time -p`.
 - Ripgrep output redirected to `/tmp` so terminal rendering did not dominate.
 
-Count caveat: Postgres counts below are verified chunks/files. Ripgrep counts
-were output lines. Timing comparison is still useful, but counts are not
-one-to-one.
+Count caveat: Postgres counts below are verified chunks/files. Ripgrep counts were output lines. Timing comparison is still useful, but counts are not one-to-one.
 
 ## Results
 
@@ -95,26 +85,16 @@ one-to-one.
 
 The benchmark cases intentionally mixed several real corpus shapes:
 
-- anchored Python declaration regex:
-  `^[ \t]*(async[ \t]+def|def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*`
-- VFS/Postgres backend symbols:
-  `\b(Postgres(FileSystem|Backend)|DatabaseFileSystem|VirtualFileSystem)\b`
-- async SQLAlchemy/Postgres terms:
-  `\b(create_async_engine|AsyncSession|asyncpg|postgresql\+asyncpg|sqlalchemy)\b`
-- code-comment markers:
-  `\b(TODO|FIXME|XXX|HACK|BUG)\b`
-- React hooks/components:
-  `\b(useEffect|useMemo|useCallback|useLayoutEffect|React\.FC|createRoot)\b`
-- config token names:
-  `\b(OPENAI_API_KEY|ANTHROPIC_API_KEY|DATABASE_URL|SECRET_KEY|TOKEN|AUTH_SECRET)\b`
-- trigram/index SQL terms:
-  `\b(CREATE[ \t]+(UNIQUE[ \t]+)?INDEX|USING[ \t]+GIN|gin_trgm_ops|pg_trgm|EXPLAIN[ \t]*\([A-Z, \t]+\))`
-- Python API/router/model terms:
-  `\b(FastAPI|APIRouter|BaseModel|pydantic|Request|Response)\b`
-- graph/vector/search vocabulary:
-  `\b(pagerank|centrality|embedding|vector(_search|store)?|BM25|semantic[ \t]+search)\b`
-- fixed case-insensitive baseline:
-  `postgres`
+- anchored Python declaration regex: `^[ \t]*(async[ \t]+def|def|class)[ \t]+[A-Za-z_][A-Za-z0-9_]*`
+- VFS/Postgres backend symbols: `\b(Postgres(FileSystem|Backend)|DatabaseFileSystem|VirtualFileSystem)\b`
+- async SQLAlchemy/Postgres terms: `\b(create_async_engine|AsyncSession|asyncpg|postgresql\+asyncpg|sqlalchemy)\b`
+- code-comment markers: `\b(TODO|FIXME|XXX|HACK|BUG)\b`
+- React hooks/components: `\b(useEffect|useMemo|useCallback|useLayoutEffect|React\.FC|createRoot)\b`
+- config token names: `\b(OPENAI_API_KEY|ANTHROPIC_API_KEY|DATABASE_URL|SECRET_KEY|TOKEN|AUTH_SECRET)\b`
+- trigram/index SQL terms: `\b(CREATE[ \t]+(UNIQUE[ \t]+)?INDEX|USING[ \t]+GIN|gin_trgm_ops|pg_trgm|EXPLAIN[ \t]*\([A-Z, \t]+\))`
+- Python API/router/model terms: `\b(FastAPI|APIRouter|BaseModel|pydantic|Request|Response)\b`
+- graph/vector/search vocabulary: `\b(pagerank|centrality|embedding|vector(_search|store)?|BM25|semantic[ \t]+search)\b`
+- fixed case-insensitive baseline: `postgres`
 
 ## Interpretation
 
@@ -127,8 +107,7 @@ Postgres was strongest on selective corpus-wide searches:
 - `sql_trigram_indexes`: slight win, 3.504s vs ripgrep 4.300s.
 - `todo_fixme_hack`: slight win, 3.681s vs ripgrep 4.360s.
 
-These are good fits for pg_trgm because the index can narrow the corpus before
-the application receives rows.
+These are good fits for pg_trgm because the index can narrow the corpus before the application receives rows.
 
 ### Where Ripgrep Won
 
@@ -137,8 +116,7 @@ Ripgrep dominated broad code-structure scans:
 - Python declarations: 0.480s vs Postgres 24.807s.
 - API/router/model terms: 0.400s vs Postgres 22.917s.
 - React hook terms: 0.340s vs Postgres 12.292s.
-- VFS/Postgres symbol alternation: 0.390s vs Postgres 8.323s, despite the DB
-  returning only 226 verified chunks.
+- VFS/Postgres symbol alternation: 0.390s vs Postgres 8.323s, despite the DB returning only 226 verified chunks.
 
 Likely causes:
 
@@ -146,17 +124,13 @@ Likely causes:
 - Python verification over chunk content,
 - chunk overlap creating more candidate rows than line-oriented grep output,
 - broad predicates that defeat the intended selectivity advantage,
-- path/glob filtering that is still weaker than ripgrep's filesystem/type
-  traversal shortcuts.
+- path/glob filtering that is still weaker than ripgrep's filesystem/type traversal shortcuts.
 
 ## Design Implications
 
-1. Do not frame Postgres trigram grep as a faster ripgrep for every query.
-   It is an indexed candidate generator with a different performance envelope.
+1. Do not frame Postgres trigram grep as a faster ripgrep for every query. It is an indexed candidate generator with a different performance envelope.
 
-2. Push down the strongest safe predicate:
-   fixed strings should use `LIKE`/`ILIKE`; regexes should use `~`/`~*`; anchored
-   line regexes can use PostgreSQL newline-sensitive mode where safe.
+2. Push down the strongest safe predicate: fixed strings should use `LIKE`/`ILIKE`; regexes should use `~`/`~*`; anchored line regexes can use PostgreSQL newline-sensitive mode where safe.
 
 3. Keep the partial-index predicate mandatory:
 
@@ -166,13 +140,9 @@ Likely causes:
    AND deleted_at IS NULL
    ```
 
-4. Improve glob/path pushdown before judging broad language scans. The current
-   candidate path narrowing still leaves Postgres doing too much work for some
-   extension-scoped searches.
+4. Improve glob/path pushdown before judging broad language scans. The current candidate path narrowing still leaves Postgres doing too much work for some extension-scoped searches.
 
-5. Avoid returning large chunk payloads when the caller only needs file names or
-   counts. A two-stage query that returns only chunk ids/paths first may reduce
-   DB-side losses.
+5. Avoid returning large chunk payloads when the caller only needs file names or counts. A two-stage query that returns only chunk ids/paths first may reduce DB-side losses.
 
 6. Add benchmark modes for:
 
@@ -181,27 +151,18 @@ Likely causes:
    - final result shaping,
    - whole-file verification for exact context.
 
-   The current benchmark mixes these costs, which is useful end-to-end but less
-   useful for optimization.
+   The current benchmark mixes these costs, which is useful end-to-end but less useful for optimization.
 
 7. For interactive agent search, prefer routing:
 
-   - use Postgres for selective fixed strings, rare identifiers, config keys,
-     cross-repo metadata-like terms, and DB-resident corpora;
-   - use ripgrep for broad source scans, language declarations, common
-     framework names, and repo-local filesystem searches.
+   - use Postgres for selective fixed strings, rare identifiers, config keys, cross-repo metadata-like terms, and DB-resident corpora;
+   - use ripgrep for broad source scans, language declarations, common framework names, and repo-local filesystem searches.
 
 ## Next Experiments
 
-- Run `EXPLAIN (ANALYZE, BUFFERS)` for the slow-but-selective cases, especially
-  `vfs_postgres_types` and `react_hooks_tsx`, to see whether time is index scan,
-  heap recheck, sorting, transfer, or Python verification.
+- Run `EXPLAIN (ANALYZE, BUFFERS)` for the slow-but-selective cases, especially `vfs_postgres_types` and `react_hooks_tsx`, to see whether time is index scan, heap recheck, sorting, transfer, or Python verification.
 - Split notebook timings into SQL-only and Python-filter phases.
-- Add `SELECT count(*)` candidate probes so we can compare candidate selectivity
-  without transferring content.
-- Test path predicates that use `original_path` or a normalized owner-file path
-  if available, instead of deriving owner paths from chunk metadata paths.
-- Test smaller/larger chunk sizes and overlap values. The current chunk overlap
-  may be increasing duplicate candidate work for common terms.
-- Compare `rg` with `--count-matches`, `--files-with-matches`, and output
-  suppression variants to separate search time from match formatting.
+- Add `SELECT count(*)` candidate probes so we can compare candidate selectivity without transferring content.
+- Test path predicates that use `original_path` or a normalized owner-file path if available, instead of deriving owner paths from chunk metadata paths.
+- Test smaller/larger chunk sizes and overlap values. The current chunk overlap may be increasing duplicate candidate work for common terms.
+- Compare `rg` with `--count-matches`, `--files-with-matches`, and output suppression variants to separate search time from match formatting.

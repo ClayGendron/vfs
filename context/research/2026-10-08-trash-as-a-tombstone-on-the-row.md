@@ -1,101 +1,31 @@
 # Trash as a tombstone on the row: delete flags, restore clears, a write revives
 
-- **Status:** research memo (commits us to nothing). Re-opens the
-  question ADR 026 closed as option (e), "flag, don't move", because
-  two later decisions changed the ground it was decided on. Feeds
-  ADR 074 (proposed, same day) and, if accepted, a spec that replaces
-  spec 150 §8's origin-join patch and spec 156 rule 2.
+- **Status:** research memo (commits us to nothing). Re-opens the question ADR 026 closed as option (e), "flag, don't move", because two later decisions changed the ground it was decided on. Feeds ADR 074 (proposed, same day) and, if accepted, a spec that replaces spec 150 §8's origin-join patch and spec 156 rule 2.
 - **Date:** 2026-10-08
 - **Owner:** Clay Gendron
-- **Question:** Clay, 2026-10-08: "for trash, could we just create a
-  visibility flag? deleting something just turns the visibility off?
-  if you write back to that location, it turns it back on and creates
-  a new version? … this solves the permission problems when entries
-  'move' to the trash." The sub-questions: what the move costs today,
-  measured; how the flag school (S3) and the move school (JuiceFS)
-  handle permissions, directories, restore and expiry; whether a flag
-  needs a partial unique index and what that costs on five engines;
-  how the agent-audience peers model delete; and what a tombstone
-  design would have to decide in vfs.
+- **Question:** Clay, 2026-10-08: "for trash, could we just create a visibility flag? deleting something just turns the visibility off? if you write back to that location, it turns it back on and creates a new version? … this solves the permission problems when entries 'move' to the trash." The sub-questions: what the move costs today, measured; how the flag school (S3) and the move school (JuiceFS) handle permissions, directories, restore and expiry; whether a flag needs a partial unique index and what that costs on five engines; how the agent-audience peers model delete; and what a tombstone design would have to decide in vfs.
 - **Method:**
-  1. Read the live tree at `06e14b0`: `topology.py` (delete, restore,
-     sweep), `descent.py` and `scope.py` (the liveness filter),
-     `segments.py` and `edges.py` (the path-column mirrors), the row
-     model, ADRs 014, 026, 072, 073 and spec 150 §8.
-  2. **Ran** a statement-and-row spy on a sqlite `DatabaseStorage`:
-     delete and restore of a directory holding 1,000 and 2,000 files,
-     bucketed by verb and table (operation counts, never time).
-  3. **Ran** the search verbs against a trashed file to pin how trash
-     is excluded today.
-  4. Four read-only subagent studies of refreshed reference clones:
-     MinIO (delete markers), JuiceFS (enforced move-the-inode trash),
-     SQLAlchemy (partial and expression unique indexes per dialect),
-     and the agent-audience peers mirage, Cloudflare `computer`, agentfs.
-- **Sources (clones refreshed to `origin/<default>` 2026-10-08, none
-  dirty; licences re-checked):** `minio` master `7aac2a2`
-  (2026-02-12, AGPL-3.0 — studied, nothing copied); `juicefs` main
-  `cfea193` (2026-10-08, Apache-2.0); `sqlalchemy` main `e75a46516`
-  (2026-10-08, MIT); `mirage` main `3273608e9` (2026-10-08,
-  Apache-2.0); `computer` main `3249dce` (2026-10-08, MIT); `agentfs`
-  main `0a014eb` (2026-06-03; no licence text in the checkout, README
-  claims MIT — docs studied, source not; see §5). Earlier vfs memos:
-  `2026-07-18-trash-namespace-parity.md`,
-  `2026-07-23-trash-prior-art-naming-and-restore.md`. Claims marked
-  **[GK]** are general knowledge the studies could not ground in a
-  checkout.
+  1. Read the live tree at `06e14b0`: `topology.py` (delete, restore, sweep), `descent.py` and `scope.py` (the liveness filter), `segments.py` and `edges.py` (the path-column mirrors), the row model, ADRs 014, 026, 072, 073 and spec 150 §8.
+  2. **Ran** a statement-and-row spy on a sqlite `DatabaseStorage`: delete and restore of a directory holding 1,000 and 2,000 files, bucketed by verb and table (operation counts, never time).
+  3. **Ran** the search verbs against a trashed file to pin how trash is excluded today.
+  4. Four read-only subagent studies of refreshed reference clones: MinIO (delete markers), JuiceFS (enforced move-the-inode trash), SQLAlchemy (partial and expression unique indexes per dialect), and the agent-audience peers mirage, Cloudflare `computer`, agentfs.
+- **Sources (clones refreshed to `origin/<default>` 2026-10-08, none dirty; licences re-checked):** `minio` master `7aac2a2` (2026-02-12, AGPL-3.0 — studied, nothing copied); `juicefs` main `cfea193` (2026-10-08, Apache-2.0); `sqlalchemy` main `e75a46516` (2026-10-08, MIT); `mirage` main `3273608e9` (2026-10-08, Apache-2.0); `computer` main `3249dce` (2026-10-08, MIT); `agentfs` main `0a014eb` (2026-06-03; no licence text in the checkout, README claims MIT — docs studied, source not; see §5). Earlier vfs memos: `2026-07-18-trash-namespace-parity.md`, `2026-07-23-trash-prior-art-naming-and-restore.md`. Claims marked **[GK]** are general knowledge the studies could not ground in a checkout.
 
 ## Bottom line
 
-Today's delete is a flag plus a redundant path rewrite. The row already
-keeps `origin_path`, `original_parent_id`, `original_name` and
-`deleted_at`, and since spec 150 landed (`f823436`, 2026-10-03) every
-rights statement judges a trashed row by `origin_path`: the permission
-leak the 150 review found is **closed** (verified by a run in §1.4).
-What the rewrite still costs is the write amplification (about six
-row writes per file on delete, six more on restore, most of them in
-the path-segment postings that mirror the path column) and the doubled
-rights algebra: every piece branch of every visibility statement comes
-in a live form on `path` and a trashed form on `origin_path`, the
-hole test is an `OR` of two forms, and 46 sites across `topology.py`,
-`rights.py`, `ranges.py` and `labels.py` carry the origin columns.
+Today's delete is a flag plus a redundant path rewrite. The row already keeps `origin_path`, `original_parent_id`, `original_name` and `deleted_at`, and since spec 150 landed (`f823436`, 2026-10-03) every rights statement judges a trashed row by `origin_path`: the permission leak the 150 review found is **closed** (verified by a run in §1.4). What the rewrite still costs is the write amplification (about six row writes per file on delete, six more on restore, most of them in the path-segment postings that mirror the path column) and the doubled rights algebra: every piece branch of every visibility statement comes in a live form on `path` and a trashed form on `origin_path`, the hole test is an `OR` of two forms, and 46 sites across `topology.py`, `rights.py`, `ranges.py` and `labels.py` carry the origin columns.
 
-ADR 026 rejected the flag for one reason: it threads `deleted_at IS
-NULL` through every live query and makes the unique `path` index
-partial. Both halves have changed. ADR 073 put a row-level predicate
-(`everyone_level`) on every partial read anyway, and the trash
-exclusion already runs through one function (`liveness_filters`) that
-five call sites share. And Clay's revive-on-write rule removes the
-partial index entirely: if a write at a tombstoned path revives the
-same row, there is only ever one row per path, and the unique index
-stays plain. That matters because the five engines disagree on partial
-unique indexes (SQL Server's `UNIQUE` admits one NULL; MariaDB and
-Oracle have no partial indexes at all), and the codebase already
-carries a comment that a partial index over the restore columns "is
-not portable".
+ADR 026 rejected the flag for one reason: it threads `deleted_at IS NULL` through every live query and makes the unique `path` index partial. Both halves have changed. ADR 073 put a row-level predicate (`everyone_level`) on every partial read anyway, and the trash exclusion already runs through one function (`liveness_filters`) that five call sites share. And Clay's revive-on-write rule removes the partial index entirely: if a write at a tombstoned path revives the same row, there is only ever one row per path, and the unique index stays plain. That matters because the five engines disagree on partial unique indexes (SQL Server's `UNIQUE` admits one NULL; MariaDB and Oracle have no partial indexes at all), and the codebase already carries a comment that a partial index over the restore columns "is not portable".
 
-The field splits the same way it did in July. S3/MinIO flags (a delete
-marker is a version at the same key; a PUT on top is a new version; the
-marker stays in history; authorization is keyed on the unchanged key).
-JuiceFS moves (the inode is re-parented, keeps its own mode and owner,
-so reads are judged by origin while mutation is judged by trash rules;
-about 230 trash-specific lines, six "is it in a bucket" checks repeated
-per engine, and the gaps sit exactly where the two predicates meet).
-The agent-audience peers (§5) mostly hard-delete or snapshot and offer
-no granular trash at all.
+The field splits the same way it did in July. S3/MinIO flags (a delete marker is a version at the same key; a PUT on top is a new version; the marker stays in history; authorization is keyed on the unchanged key). JuiceFS moves (the inode is re-parented, keeps its own mode and owner, so reads are judged by origin while mutation is judged by trash rules; about 230 trash-specific lines, six "is it in a bucket" checks repeated per engine, and the gaps sit exactly where the two predicates meet). The agent-audience peers (§5) mostly hard-delete or snapshot and offer no granular trash at all.
 
-**One line: keep the row at its path, set a tombstone, judge it by the
-rights it already has; `restore` clears the tombstone, a `write` at the
-path revives the row and mints a version; nothing moves, so delete is
-not a permission event, and the unique index needs no engine tricks.**
+**One line: keep the row at its path, set a tombstone, judge it by the rights it already has; `restore` clears the tombstone, a `write` at the path revives the row and mints a version; nothing moves, so delete is not a permission event, and the unique index needs no engine tricks.**
 
 ## 1. What delete costs today, measured
 
 ### 1.1 The row writes
 
-One sqlite `DatabaseStorage`, a directory `/d` holding N files,
-`delete /d` then `restore /d`. Counts by verb and table (the spy is in
-the session scratchpad; it reads `cursor.rowcount` after each
-execute).
+One sqlite `DatabaseStorage`, a directory `/d` holding N files, `delete /d` then `restore /d`. Counts by verb and table (the spy is in the session scratchpad; it reads `cursor.rowcount` after each execute).
 
 | Op | N | Statements | `UPDATE vfs_entries` rows | `INSERT vfs_segments` rows | `DELETE vfs_segments` rows |
 |---|---|---|---|---|---|
@@ -104,220 +34,58 @@ execute).
 | restore | 1,000 | 29 | 1,003 | 1,000 | 4,003 |
 | restore | 2,000 | 29 | 2,003 | 2,000 | 8,003 |
 
-Statement counts are flat across N because the rewrite is chunked by
-the dialect budget, which is the boundedness the scale rules demand.
-Row writes are about **six per file on delete and six on restore**:
-one path rewrite on the entry row, four posting inserts for the new
-trash-side segments (`.vfs`, `trash`, the bucket, the directory) and
-one posting delete for the old segment, then the mirror image on the
-way back. A tombstone would write **one row per file in each
-direction** (the flag on the entry row) and touch no posting, because
-the path does not change. The postings module's own docstring states
-the reason the mirror has to move: "every verb that writes or rewrites
-a `path` extends its own transaction with the delta computed here"
-(`segments.py` L1–12).
+Statement counts are flat across N because the rewrite is chunked by the dialect budget, which is the boundedness the scale rules demand. Row writes are about **six per file on delete and six on restore**: one path rewrite on the entry row, four posting inserts for the new trash-side segments (`.vfs`, `trash`, the bucket, the directory) and one posting delete for the old segment, then the mirror image on the way back. A tombstone would write **one row per file in each direction** (the flag on the entry row) and touch no posting, because the path does not change. The postings module's own docstring states the reason the mirror has to move: "every verb that writes or rewrites a `path` extends its own transaction with the delta computed here" (`segments.py` L1–12).
 
 ### 1.2 Where the trash is special-cased
 
-`is_trash_path`, `METADATA_ROOT` and the trash filters appear at 20
-sites in `src/vfs` outside `paths.py`: `topology.py` 10, `descent.py`
-3, `edges.py` 3, `backend.py` 2, `base.py` 2. The search verbs do not
-name the trash at all: they go through `scope.py`, which applies
-`liveness_filters` (`descent.py`), and that one function is called
-from five sites (`reads.py` ×3, `scope.py` ×2). A run confirms the
-effect: after `delete /gone.md`, unscoped `grep`, `glean`, `glob` and
-`tree` show only `/live.md`; `grep` and `glob` scoped to `/.vfs` show
-the trashed copy at `/.vfs/trash/2026-10-08-21/<ulid>-gone.md`. So
-"exclude trash from default enumeration" already has one owner, and a
-`deleted_at IS NULL` term lands in that function once.
+`is_trash_path`, `METADATA_ROOT` and the trash filters appear at 20 sites in `src/vfs` outside `paths.py`: `topology.py` 10, `descent.py` 3, `edges.py` 3, `backend.py` 2, `base.py` 2. The search verbs do not name the trash at all: they go through `scope.py`, which applies `liveness_filters` (`descent.py`), and that one function is called from five sites (`reads.py` ×3, `scope.py` ×2). A run confirms the effect: after `delete /gone.md`, unscoped `grep`, `glean`, `glob` and `tree` show only `/live.md`; `grep` and `glob` scoped to `/.vfs` show the trashed copy at `/.vfs/trash/2026-10-08-21/<ulid>-gone.md`. So "exclude trash from default enumeration" already has one owner, and a `deleted_at IS NULL` term lands in that function once.
 
 ### 1.3 What the row already remembers
 
-`vfs_entries` carries `original_parent_id`, `original_name`,
-`origin_path` and `deleted_at` (`rows.py` L452–459), with two indexes
-for them: `ix_vfs_entries_restore (original_parent_id, original_name)`
-and `ix_vfs_entries_origin_path`, the latter commented "the range join
-for trashed rows seeks their origin as it seeks `path` for live ones"
-(L471–473). The index comment two lines above says a partial index
-over the restore columns "is not portable" — the team has already met
-the engine disagreement §4 documents. In other words the schema is
-halfway to the flag design: it keeps the origin so that permissions
-can be judged by it (spec 150 §8), while still paying for the move.
+`vfs_entries` carries `original_parent_id`, `original_name`, `origin_path` and `deleted_at` (`rows.py` L452–459), with two indexes for them: `ix_vfs_entries_restore (original_parent_id, original_name)` and `ix_vfs_entries_origin_path`, the latter commented "the range join for trashed rows seeks their origin as it seeks `path` for live ones" (L471–473). The index comment two lines above says a partial index over the restore columns "is not portable" — the team has already met the engine disagreement §4 documents. In other words the schema is halfway to the flag design: it keeps the origin so that permissions can be judged by it (spec 150 §8), while still paying for the move.
 
 ### 1.4 The leak is closed, at the price of a doubled algebra
 
-ADR 072 made explicit grants into sorted path ranges joined to the
-path index. A moved row leaves every range, and the trash sits under
-the root posture, so before spec 150 a private row became
-world-readable on delete (the 150 review's finding 1, critical).
-Spec 150 §8 fixed it, and the fix **is built** (`f823436`,
-2026-10-03; the SmartOwl memo and an earlier draft of this one said
-otherwise and were wrong — `STATUS.md` still called 150 "drafted").
-A run confirms it: under a `private` posture on `/home`, after alice
-deletes her `/home/secret.md`, bob's `glob` of the trash is empty and
-his `read` of the trash-side path is refused, while alice's succeed;
-bob's `tree` shows the hour bucket's directory and nothing in it.
+ADR 072 made explicit grants into sorted path ranges joined to the path index. A moved row leaves every range, and the trash sits under the root posture, so before spec 150 a private row became world-readable on delete (the 150 review's finding 1, critical). Spec 150 §8 fixed it, and the fix **is built** (`f823436`, 2026-10-03; the SmartOwl memo and an earlier draft of this one said otherwise and were wrong — `STATUS.md` still called 150 "drafted"). A run confirms it: under a `private` posture on `/home`, after alice deletes her `/home/secret.md`, bob's `glob` of the trash is empty and his `read` of the trash-side path is refused, while alice's succeed; bob's `tree` shows the hour bucket's directory and nothing in it.
 
-What the fix costs is the shape the tombstone removes.
-`visible_entries` (`ranges.py` L116–140) builds every piece branch
-twice whenever the scope can hold a trashed row — once joined to
-`path` with `origin_path IS NULL`, once joined to `origin_path` — and
-unions them; `hole_free` is an `OR` of a live and a trashed form
-(`ranges.py` L147–156); `judged_path` picks the column per row
-(`rights.py` L376–377); `labels.py` relabels over both columns
-(L357); the origin columns ride in `RIGHTS_FIELDS` and need their own
-index with its own per-dialect join hints. A tombstone has one judged
-path, the row's own, so every second form, the `OR`, the index and
-the 46 origin sites go.
+What the fix costs is the shape the tombstone removes. `visible_entries` (`ranges.py` L116–140) builds every piece branch twice whenever the scope can hold a trashed row — once joined to `path` with `origin_path IS NULL`, once joined to `origin_path` — and unions them; `hole_free` is an `OR` of a live and a trashed form (`ranges.py` L147–156); `judged_path` picks the column per row (`rights.py` L376–377); `labels.py` relabels over both columns (L357); the origin columns ride in `RIGHTS_FIELDS` and need their own index with its own per-dialect join hints. A tombstone has one judged path, the row's own, so every second form, the `OR`, the index and the 46 origin sites go.
 
 ### 1.5 Two rules the move design chose that a flag would revisit
 
-- **Authored edges die on delete.** `edges.py` L15–19: "an endpoint
-  entry is deleted — soft delete included. Delete's cascade removes
-  the trashed subtree's authored rows in both directions; restore
-  brings entries back with authored edges gone, by design." Under a
-  flag the edge rows (keyed by `entry_id`) need no cascade; whether
-  they *should* survive a delete-and-restore is a choice the ADR has
-  to make, not a consequence.
-- **A directory moves as one subtree.** Today the directory row is
-  re-parented and every descendant's path is rewritten (the 1,006 /
-  2,006 rows above). JuiceFS never moves a subtree (§3.2); S3 has no
-  directories (§2.6). A flag needs a cascade of its own, one column
-  wide.
+- **Authored edges die on delete.** `edges.py` L15–19: "an endpoint entry is deleted — soft delete included. Delete's cascade removes the trashed subtree's authored rows in both directions; restore brings entries back with authored edges gone, by design." Under a flag the edge rows (keyed by `entry_id`) need no cascade; whether they *should* survive a delete-and-restore is a choice the ADR has to make, not a consequence.
+- **A directory moves as one subtree.** Today the directory row is re-parented and every descendant's path is rewritten (the 1,006 / 2,006 rows above). JuiceFS never moves a subtree (§3.2); S3 has no directories (§2.6). A flag needs a cascade of its own, one column wide.
 
 ## 2. The flag school, verified: MinIO's delete markers
 
-MinIO implements S3 versioning natively, so it is the executable
-reference for "delete is a tombstone version". Study of `7aac2a2`.
+MinIO implements S3 versioning natively, so it is the executable reference for "delete is a tombstone version". Study of `7aac2a2`.
 
-1. **A marker is a version at the same key.** `xlMetaV2DeleteMarker`
-   holds a version id, a modtime and a small metadata map
-   (`cmd/xl-storage-format-v2.go:149-153`); it is one entry of type
-   `DeleteType` in the same per-key version list as real objects
-   (`:109-113`), inserted newest-first (`:1141-1172`). Nothing moves,
-   nothing is renamed, older versions keep their data. Markers count
-   toward the per-key version cap (`:1151-1153`).
-2. **Delete writes a marker unless a version is named.** On a
-   versioned bucket with no version id, a new marker is written
-   (`cmd/erasure-object.go:2109-2120`). With a version id, that exact
-   version is removed, marker or object (`xl-storage-format-v2.go:
-   1456, 1479-1500`). An unversioned bucket deletes outright
-   (`erasure-object.go:2128-2147`).
-3. **Listing hides a key whose latest version is a marker.**
-   `ListObjects` runs with `InclDeleted: false` and skips an entry when
-   `isLatestDeletemarker()` (`cmd/metacache-set.go:194`, `:399`);
-   `ListObjectVersions` includes them. GET without a version id on
-   such a key is `errFileNotFound` (404) with `x-amz-delete-marker:
-   true` and the marker's version id on the response
-   (`erasure-object.go:245-249`; `object-handlers.go:454-459`). GET of
-   the marker itself by version id is 405.
-4. **Restore is either of two things.** Delete the marker by its
-   version id, and the previous version is latest again (`:1456`); or
-   PUT on top, which mints a fresh version and leaves the marker in
-   history as a non-current version (`erasure-object.go:1347-1349`;
-   `xl-storage-format-v2.go:1722-1743`). Clay's "write back turns it
-   on and creates a new version" is exactly the second.
-5. **Tombstone retention is bounded by lifecycle, not by the trash.**
-   A marker that is the only remaining version is an "expired object
-   delete marker" and is removed immediately or after N days
-   (`internal/bucket/lifecycle/lifecycle.go:320-325, 366-394`);
-   non-current versions expire by age relative to their successor
-   while keeping K newest (`:412-433`).
-6. **Folders are the part not to copy.** A delimiter listing derives
-   prefixes from on-disk directories, and the marker filter applies
-   only to object entries (`metacache-set.go:194`, `metacache-walk.go:
-   313-330`), so a folder whose every key is a marker still lists
-   until lifecycle purges the markers (the subagent's inference from
-   code, not run; AWS hides the prefix). A SQL design should derive a
-   directory's visibility from its own row, not from its children.
-7. **Authorization never notices a delete.** Policy is evaluated on
-   bucket + key, and the key never changes (`object-handlers.go:2582`).
-   Deleting a specific version additionally checks
-   `s3:DeleteObjectVersion` as a deny-only action
-   (`auth-handler.go:465-479`); reads by version id check the
-   `GetObjectVersion*` actions (`object-handlers.go:588-597`).
+1. **A marker is a version at the same key.** `xlMetaV2DeleteMarker` holds a version id, a modtime and a small metadata map (`cmd/xl-storage-format-v2.go:149-153`); it is one entry of type `DeleteType` in the same per-key version list as real objects (`:109-113`), inserted newest-first (`:1141-1172`). Nothing moves, nothing is renamed, older versions keep their data. Markers count toward the per-key version cap (`:1151-1153`).
+2. **Delete writes a marker unless a version is named.** On a versioned bucket with no version id, a new marker is written (`cmd/erasure-object.go:2109-2120`). With a version id, that exact version is removed, marker or object (`xl-storage-format-v2.go: 1456, 1479-1500`). An unversioned bucket deletes outright (`erasure-object.go:2128-2147`).
+3. **Listing hides a key whose latest version is a marker.** `ListObjects` runs with `InclDeleted: false` and skips an entry when `isLatestDeletemarker()` (`cmd/metacache-set.go:194`, `:399`); `ListObjectVersions` includes them. GET without a version id on such a key is `errFileNotFound` (404) with `x-amz-delete-marker: true` and the marker's version id on the response (`erasure-object.go:245-249`; `object-handlers.go:454-459`). GET of the marker itself by version id is 405.
+4. **Restore is either of two things.** Delete the marker by its version id, and the previous version is latest again (`:1456`); or PUT on top, which mints a fresh version and leaves the marker in history as a non-current version (`erasure-object.go:1347-1349`; `xl-storage-format-v2.go:1722-1743`). Clay's "write back turns it on and creates a new version" is exactly the second.
+5. **Tombstone retention is bounded by lifecycle, not by the trash.** A marker that is the only remaining version is an "expired object delete marker" and is removed immediately or after N days (`internal/bucket/lifecycle/lifecycle.go:320-325, 366-394`); non-current versions expire by age relative to their successor while keeping K newest (`:412-433`).
+6. **Folders are the part not to copy.** A delimiter listing derives prefixes from on-disk directories, and the marker filter applies only to object entries (`metacache-set.go:194`, `metacache-walk.go: 313-330`), so a folder whose every key is a marker still lists until lifecycle purges the markers (the subagent's inference from code, not run; AWS hides the prefix). A SQL design should derive a directory's visibility from its own row, not from its children.
+7. **Authorization never notices a delete.** Policy is evaluated on bucket + key, and the key never changes (`object-handlers.go:2582`). Deleting a specific version additionally checks `s3:DeleteObjectVersion` as a deny-only action (`auth-handler.go:465-479`); reads by version id check the `GetObjectVersion*` actions (`object-handlers.go:588-597`).
 
-The minimal rule set the study extracted: visible iff the newest row
-is not a tombstone; read of a tombstoned key is not-found and names
-the tombstone; delete-without-version inserts a tombstone, delete-with-
-version hard-deletes that one row; PUT on top always inserts a new
-version; a sweeper drops sole tombstones and old non-current versions;
-authorization keyed on the path, never the version.
+The minimal rule set the study extracted: visible iff the newest row is not a tombstone; read of a tombstoned key is not-found and names the tombstone; delete-without-version inserts a tombstone, delete-with- version hard-deletes that one row; PUT on top always inserts a new version; a sweeper drops sole tombstones and old non-current versions; authorization keyed on the path, never the version.
 
 ## 3. The move school, verified: JuiceFS's enforced trash
 
-JuiceFS is the one filesystem that enforces trash at the metadata
-layer by moving the inode, the shape ADR 014 and ADR 026 chose. Study
-of `cfea193`.
+JuiceFS is the one filesystem that enforces trash at the metadata layer by moving the inode, the shape ADR 014 and ADR 026 chose. Study of `cfea193`.
 
-1. **What delete does.** The bucket is one directory per UTC hour under
-   `.trash` (`pkg/meta/base.go:3058`), created lazily with mode 0555
-   (`:3051-3085`). The entry is renamed `<parentIno>-<ino>-<name>`,
-   cut to 255 bytes with a warning (`:3087-3094`). On the inode only
-   `ctime` and `parent` change; mode, uid, gid, ACL and xattrs stay
-   (`sql.go:2154-2180`). A rename over an occupied target trashes the
-   victim the same way (`sql.go:2525-2648`).
-2. **A subtree is never moved as one.** `Rmdir` refuses a non-empty
-   directory (`sql.go:2313-2319`); `rm -r` and `juicefs rmr` go
-   depth-first and trash each file and each emptied directory on its
-   own (`utils.go:293-392`), leaving a flat bucket of
-   `parent-ino-name` entries (`docs/en/security/trash.md:39`). The tree
-   is rebuilt only by `juicefs restore`.
-3. **Permissions are judged by origin for reads, by trash rules for
-   mutation.** `.trash` and its buckets are 0555, so anyone may list
-   them (`base.go:2286-2289`). Opening a trashed file runs the ordinary
-   `Access` check on the inode's own mode, uid, gid and ACL
-   (`base.go:2085`, `:1417-1452`), none of which changed, so whoever
-   could read it before can read it in the trash (`trash.md:168`).
-   Purge (`Unlink` in a bucket) and restore (`Rename` out of a bucket)
-   are root-only (`base.go:1810`, `:1909`); even root cannot `rmdir` a
-   bucket through the mount (`:1841`, `:3246`).
-4. **What the trash refuses.** Create, mkdir and link into the trash:
-   EPERM (`base.go:1619-1624`, `:1718-1723`). Rename into any trash
-   inode: EPERM for everyone (`:1909`). Open for write when the parent
-   is a bucket: EPERM (`:2089`). `SetAttr`: always EPERM (`sql.go:
-   1565`). Truncate, clone, quota: refused. The checks use two
-   different predicates, `ino.IsTrash()` for the trash directories and
-   `attr.Parent > TrashInode` for user inodes inside them, and the
-   second is repeated six times per storage engine (sql, redis, tkv).
-   Not guarded: xattr changes (`base.go:2316-2340`), writes through
-   handles already open, and hard-linked files, whose `Parent` is 0 so
-   none of the bucket checks fire.
-5. **Restore is a root-only rename out.** `juicefs restore META HOUR
-   [--put-back]` parses each entry name back into parent, inode, name
-   (`cmd/restore.go:124-137`) and renames with `RenameNoReplace`;
-   an occupied original site is EEXIST, logged as a conflict, and the
-   entry stays in the trash (`:144-146`).
-6. **Expiry parses bucket names as timestamps.** `CleanupTrashBefore`
-   sorts buckets by inode number, parses each name with
-   `time.Parse("2006-01-02-15")`, and stops at the first unexpired
-   bucket (`base.go:3180-3252`). That is safe only because nothing but
-   `checkTrash` can create a child of the trash root and bucket inode
-   numbers come from one increasing counter; clock skew between
-   clients is not handled.
-7. **The cost of the move, counted.** In `pkg/meta` alone, outside
-   tests: about 31 `IsTrash()` calls, 98 `TrashInode` references (19
-   of them the "in a bucket" check), 13 `checkTrash` and 21
-   `trashEntry` calls, 18 `FlagSkipTrash` checks; across `pkg` and
-   `cmd` about 230 trash-related lines, repeated almost verbatim per
-   engine. Extra code is needed in `GetAttr`, `Lookup`, `Readdir`,
-   dump/load, quota and directory statistics, and hard-link
-   bookkeeping. The gaps in item 4 sit exactly where the two
-   predicates meet.
+1. **What delete does.** The bucket is one directory per UTC hour under `.trash` (`pkg/meta/base.go:3058`), created lazily with mode 0555 (`:3051-3085`). The entry is renamed `<parentIno>-<ino>-<name>`, cut to 255 bytes with a warning (`:3087-3094`). On the inode only `ctime` and `parent` change; mode, uid, gid, ACL and xattrs stay (`sql.go:2154-2180`). A rename over an occupied target trashes the victim the same way (`sql.go:2525-2648`).
+2. **A subtree is never moved as one.** `Rmdir` refuses a non-empty directory (`sql.go:2313-2319`); `rm -r` and `juicefs rmr` go depth-first and trash each file and each emptied directory on its own (`utils.go:293-392`), leaving a flat bucket of `parent-ino-name` entries (`docs/en/security/trash.md:39`). The tree is rebuilt only by `juicefs restore`.
+3. **Permissions are judged by origin for reads, by trash rules for mutation.** `.trash` and its buckets are 0555, so anyone may list them (`base.go:2286-2289`). Opening a trashed file runs the ordinary `Access` check on the inode's own mode, uid, gid and ACL (`base.go:2085`, `:1417-1452`), none of which changed, so whoever could read it before can read it in the trash (`trash.md:168`). Purge (`Unlink` in a bucket) and restore (`Rename` out of a bucket) are root-only (`base.go:1810`, `:1909`); even root cannot `rmdir` a bucket through the mount (`:1841`, `:3246`).
+4. **What the trash refuses.** Create, mkdir and link into the trash: EPERM (`base.go:1619-1624`, `:1718-1723`). Rename into any trash inode: EPERM for everyone (`:1909`). Open for write when the parent is a bucket: EPERM (`:2089`). `SetAttr`: always EPERM (`sql.go: 1565`). Truncate, clone, quota: refused. The checks use two different predicates, `ino.IsTrash()` for the trash directories and `attr.Parent > TrashInode` for user inodes inside them, and the second is repeated six times per storage engine (sql, redis, tkv). Not guarded: xattr changes (`base.go:2316-2340`), writes through handles already open, and hard-linked files, whose `Parent` is 0 so none of the bucket checks fire.
+5. **Restore is a root-only rename out.** `juicefs restore META HOUR [--put-back]` parses each entry name back into parent, inode, name (`cmd/restore.go:124-137`) and renames with `RenameNoReplace`; an occupied original site is EEXIST, logged as a conflict, and the entry stays in the trash (`:144-146`).
+6. **Expiry parses bucket names as timestamps.** `CleanupTrashBefore` sorts buckets by inode number, parses each name with `time.Parse("2006-01-02-15")`, and stops at the first unexpired bucket (`base.go:3180-3252`). That is safe only because nothing but `checkTrash` can create a child of the trash root and bucket inode numbers come from one increasing counter; clock skew between clients is not handled.
+7. **The cost of the move, counted.** In `pkg/meta` alone, outside tests: about 31 `IsTrash()` calls, 98 `TrashInode` references (19 of them the "in a bucket" check), 13 `checkTrash` and 21 `trashEntry` calls, 18 `FlagSkipTrash` checks; across `pkg` and `cmd` about 230 trash-related lines, repeated almost verbatim per engine. Extra code is needed in `GetAttr`, `Lookup`, `Readdir`, dump/load, quota and directory statistics, and hard-link bookkeeping. The gaps in item 4 sit exactly where the two predicates meet.
 
-What JuiceFS confirms for vfs: the move school *can* judge reads by
-origin, but only because a POSIX inode carries its own mode and owner.
-vfs's rights are path ranges (ADR 072), so a moved row carries nothing
-a range can match. JuiceFS also shows the price of the move in
-special-casing, and that even a mature implementation leaves holes at
-the seams.
+What JuiceFS confirms for vfs: the move school *can* judge reads by origin, but only because a POSIX inode carries its own mode and owner. vfs's rights are path ranges (ADR 072), so a moved row carries nothing a range can match. JuiceFS also shows the price of the move in special-casing, and that even a mature implementation leaves holes at the seams.
 
 ## 4. Does a flag need a partial unique index? Per engine
 
-`vfs_entries.path` is `unique=True` (`rows.py` L406) and
-`(parent_id, name)` is a unique constraint (L460). A flag design in
-which a live row and a tombstoned row could share a path needs
-"unique among live rows". Study of SQLAlchemy `e75a46516`:
+`vfs_entries.path` is `unique=True` (`rows.py` L406) and `(parent_id, name)` is a unique constraint (L460). A flag design in which a live row and a tombstoned row could share a path needs "unique among live rows". Study of SQLAlchemy `e75a46516`:
 
 | Dialect | Partial unique index | Expression index | `Computed` column | Unique among live rows |
 |---|---|---|---|---|
@@ -327,31 +95,13 @@ which a live row and a tombstoned row could share a path needs
 | Oracle | **none** (`dialects/oracle/base.py:2146-2151`) | yes (`:1970-1975`) | `VIRTUAL` only; `STORED` raises (`:2020-2032`) | function-based unique index on `CASE WHEN deleted_at IS NULL THEN path END` (all-NULL keys are not indexed [GK]) |
 | MariaDB | **none** (`dialects/mysql/base.py:2816-2822`) | MySQL 8.0.13+ syntax only; MariaDB none [GK] | `GENERATED ALWAYS AS … VIRTUAL/STORED` (`:2055-2063`; the MariaDB shim forces nullable, `_mariadb_shim.py:180-186`) | generated column plus plain `UNIQUE` (InnoDB admits many NULLs [GK]; 10.2.3+) |
 
-There is no single portable idiom: a generated column plus a plain
-`UNIQUE` works on four engines and breaks on SQL Server; the native
-`*_where` kwarg exists on three and not on Oracle or MariaDB. Each
-engine needs its own DDL, and `Computed(persisted=…)` has no value
-that compiles everywhere without a warning (`sql/schema.py:
-6838-6856`). This is the cost ADR 026 named, and it is real.
+There is no single portable idiom: a generated column plus a plain `UNIQUE` works on four engines and breaks on SQL Server; the native `*_where` kwarg exists on three and not on Oracle or MariaDB. Each engine needs its own DDL, and `Computed(persisted=…)` has no value that compiles everywhere without a warning (`sql/schema.py: 6838-6856`). This is the cost ADR 026 named, and it is real.
 
-**Revive-on-write removes the question.** If a write at a tombstoned
-path revives the same row (clears the flag, mints a version of the old
-body, lands the new one), there is never a second row at a path. The
-plain unique index on `path` and the plain unique constraint on
-`(parent_id, name)` stay as they are on every engine. The rule is
-load-bearing, not a convenience: without it the flag design pays the
-per-engine DDL above; with it the design has no engine-specific
-schema at all. It also makes restore's "occupied site" case trivial:
-the site can only be occupied by the row itself, already live.
+**Revive-on-write removes the question.** If a write at a tombstoned path revives the same row (clears the flag, mints a version of the old body, lands the new one), there is never a second row at a path. The plain unique index on `path` and the plain unique constraint on `(parent_id, name)` stay as they are on every engine. The rule is load-bearing, not a convenience: without it the flag design pays the per-engine DDL above; with it the design has no engine-specific schema at all. It also makes restore's "occupied site" case trivial: the site can only be occupied by the row itself, already live.
 
 ## 5. The agent-audience peers
 
-The three filesystem-over-a-database peers nearest vfs's audience were
-read for the same questions. Licence note: `agentfs` ships no licence
-text at all (README.md L14 links a `LICENSE.md` that is absent;
-`sdk/*/` manifests say MIT; two crates declare none), so it was
-studied through `README.md`, `MANUAL.md` and `SPEC.md` only, never
-source, per the no-licence rule.
+The three filesystem-over-a-database peers nearest vfs's audience were read for the same questions. Licence note: `agentfs` ships no licence text at all (README.md L14 links a `LICENSE.md` that is absent; `sdk/*/` manifests say MIT; two crates declare none), so it was studied through `README.md`, `MANUAL.md` and `SPEC.md` only, never source, per the no-licence rule.
 
 | Peer | Delete | Undo | Visibility layer |
 |---|---|---|---|
@@ -361,122 +111,29 @@ source, per the no-licence rule.
 
 Three things to take from them.
 
-- **None keeps a deleted content row at its path.** dofs and agentfs
-  reap content immediately; the path-keyed rows that survive are
-  masks (agentfs's whiteout) or logs (dofs's sync marker). The
-  agent-audience peers chose coarse rollback (a snapshot, a delta
-  layer) over granular trash. vfs's trash is a differentiator, not
-  table stakes, which argues for making it cheap and invisible to
-  permissions rather than for copying a peer.
-- **Write-to-a-deleted-path clears the mask everywhere, and brings
-  nothing back.** agentfs's whiteout MUST be removed when a file is
-  created at the path (`SPEC.md:541-547, 609`); dofs's "live inodes
-  win over tombstones" handles delete-then-recreate (`sync/changes.ts:
-  44-47, 94-103`) by creating a fresh inode; mirage's `/dev` tombstone
-  set is cleared by the next write (`vfs/dev/store.py:31-32, 127`).
-  Revive-on-write is the field's instinct; what vfs adds is that the
-  revived row keeps its identity and its history (§6 item 6).
-- **mirage's hide/show is the other kind of visibility flag, and it is
-  not a trash.** Hidden is a property of a path pattern in a session,
-  not of a row; "a session's mutation may destroy what it cannot see
-  … but may never reveal it" (`utils/hidden.py:383-385`), so `rm -r`
-  of a visible ancestor silently removes hidden children
-  (`dispatcher.py:1290-1365`) and a rename that would expose hidden
-  content is refused (`hidden.py:380-432`). The lesson for a tombstone
-  is the same invariant stated the other way: a delete must never
-  change who can see a row, and a restore must never reveal one.
+- **None keeps a deleted content row at its path.** dofs and agentfs reap content immediately; the path-keyed rows that survive are masks (agentfs's whiteout) or logs (dofs's sync marker). The agent-audience peers chose coarse rollback (a snapshot, a delta layer) over granular trash. vfs's trash is a differentiator, not table stakes, which argues for making it cheap and invisible to permissions rather than for copying a peer.
+- **Write-to-a-deleted-path clears the mask everywhere, and brings nothing back.** agentfs's whiteout MUST be removed when a file is created at the path (`SPEC.md:541-547, 609`); dofs's "live inodes win over tombstones" handles delete-then-recreate (`sync/changes.ts: 44-47, 94-103`) by creating a fresh inode; mirage's `/dev` tombstone set is cleared by the next write (`vfs/dev/store.py:31-32, 127`). Revive-on-write is the field's instinct; what vfs adds is that the revived row keeps its identity and its history (§6 item 6).
+- **mirage's hide/show is the other kind of visibility flag, and it is not a trash.** Hidden is a property of a path pattern in a session, not of a row; "a session's mutation may destroy what it cannot see … but may never reveal it" (`utils/hidden.py:383-385`), so `rm -r` of a visible ancestor silently removes hidden children (`dispatcher.py:1290-1365`) and a rename that would expose hidden content is refused (`hidden.py:380-432`). The lesson for a tombstone is the same invariant stated the other way: a delete must never change who can see a row, and a restore must never reveal one.
 
 ## 6. What a tombstone design has to decide in vfs
 
 The pieces, with what each study says about them.
 
-1. **The flag.** `deleted_at` is already on the row. Add
-   `trash_root_id` (the entry id of the row the caller deleted; equal
-   to the row's own id for that root) so that a directory restore
-   clears exactly the rows that went with it and a child deleted on
-   its own earlier stays deleted. This is Drive's `explicitlyTrashed`
-   [GK, from the July memo] by another name.
-2. **The cascade.** A directory delete sets both columns on every
-   descendant with `deleted_at IS NULL`, chunked by the dialect budget
-   as the path rewrite is today. One column write per row, no posting
-   work (§1.1). Descendants already tombstoned keep their earlier
-   `deleted_at` and `trash_root_id`.
-3. **Liveness.** `liveness_filters` gains `deleted_at IS NULL`; the
-   five sites inherit it (§1.2). Point reads of a tombstoned path
-   classify `not_found` exactly as today, so the pjdfstest contract
-   ADR 014 leaned on survives, now by filter rather than by rewrite.
-   MinIO's `x-amz-delete-marker` suggests the refusal carry
-   `data["vfs.trashed"] = true` when the caller's rights admit the
-   row, so an agent learns it can `restore` without a trash listing.
-4. **Permissions.** Unchanged by delete: path, `everyone_level`,
-   `owner_id`, and every grant range still match. Spec 150 §8 (judge by
-   origin) becomes true by construction, and its built second
-   predicate form, the `OR`'d hole test and the origin index are
-   removed. Who may `restore`: write rights at the path, same as
-   the delete needed. Who may `destroy`: the developer plane, as
-   today.
-5. **Restore.** Clears the flag on the row and on every row sharing its
-   `trash_root_id`, guarded on version as today. Addressed by the
-   original path only; the trash-side address form of ADR 026 has no
-   referent. With one row per path there is at most one tombstone per
-   path, so "newest matching trash row wins" has nothing to choose
-   between; older generations are version rows (spec 161).
-6. **Revive on write.** A `write` whose path holds a tombstoned row
-   clears the flag, mints a version row of the old body (161), lands
-   the new body, and keeps the entry id. A kind mismatch (a file
-   written where a directory is tombstoned, or the reverse) is the one
-   hard case: the July memo's field is unanimous that restore refuses
-   an occupied site, and the same rule serves here if the write is
-   allowed to change the row's kind and a later directory restore then
-   refuses `exists`. The alternative, refusing the write, surprises an
-   agent that deleted `/x` and now wants a file there.
-7. **Edges.** Nothing moves, so the fs mirror row needs no repoint and
-   authored edges need no cascade. Whether they *survive* a
-   delete-and-restore is now a free choice (§1.5); `graph` joins
-   liveness like every read either way.
-8. **The trash as a view.** ADR 014 wanted a browsable trash. A
-   tombstone has no second path to browse, so `/.vfs/trash` becomes a
-   view: `ls`, `tree`, `glob` and `grep` scoped to it enumerate
-   tombstoned roots at their own paths with `deleted_at` projected.
-   Drive's "trash is a query, not a place" [GK]. The hourly buckets and
-   ADR 026's self-describing names go with the move; the memo that
-   produced them said the flag school "dissolves the naming and
-   collision questions".
-9. **Sweep.** `destroy` of rows with `deleted_at < now − trash_days`,
-   chunked by id, each root with its cascade; no bucket name to parse
-   and no closed-world assumption (§3.6). The purge arm's content,
-   blob, chunk, posting and edge cleanup is unchanged.
-10. **Mutation inside the trash.** No longer a category. A tombstoned
-    row answers `restore` and `destroy`; a `write` at its path is the
-    revive; `edit`, `move`, `copy`-from, `mkdir`, `mkedge` see
-    `not_found`. The SmartOwl memo's item 15 (trash is writable) and
-    spec 156 rule 2 dissolve.
+1. **The flag.** `deleted_at` is already on the row. Add `trash_root_id` (the entry id of the row the caller deleted; equal to the row's own id for that root) so that a directory restore clears exactly the rows that went with it and a child deleted on its own earlier stays deleted. This is Drive's `explicitlyTrashed` [GK, from the July memo] by another name.
+2. **The cascade.** A directory delete sets both columns on every descendant with `deleted_at IS NULL`, chunked by the dialect budget as the path rewrite is today. One column write per row, no posting work (§1.1). Descendants already tombstoned keep their earlier `deleted_at` and `trash_root_id`.
+3. **Liveness.** `liveness_filters` gains `deleted_at IS NULL`; the five sites inherit it (§1.2). Point reads of a tombstoned path classify `not_found` exactly as today, so the pjdfstest contract ADR 014 leaned on survives, now by filter rather than by rewrite. MinIO's `x-amz-delete-marker` suggests the refusal carry `data["vfs.trashed"] = true` when the caller's rights admit the row, so an agent learns it can `restore` without a trash listing.
+4. **Permissions.** Unchanged by delete: path, `everyone_level`, `owner_id`, and every grant range still match. Spec 150 §8 (judge by origin) becomes true by construction, and its built second predicate form, the `OR`'d hole test and the origin index are removed. Who may `restore`: write rights at the path, same as the delete needed. Who may `destroy`: the developer plane, as today.
+5. **Restore.** Clears the flag on the row and on every row sharing its `trash_root_id`, guarded on version as today. Addressed by the original path only; the trash-side address form of ADR 026 has no referent. With one row per path there is at most one tombstone per path, so "newest matching trash row wins" has nothing to choose between; older generations are version rows (spec 161).
+6. **Revive on write.** A `write` whose path holds a tombstoned row clears the flag, mints a version row of the old body (161), lands the new body, and keeps the entry id. A kind mismatch (a file written where a directory is tombstoned, or the reverse) is the one hard case: the July memo's field is unanimous that restore refuses an occupied site, and the same rule serves here if the write is allowed to change the row's kind and a later directory restore then refuses `exists`. The alternative, refusing the write, surprises an agent that deleted `/x` and now wants a file there.
+7. **Edges.** Nothing moves, so the fs mirror row needs no repoint and authored edges need no cascade. Whether they *survive* a delete-and-restore is now a free choice (§1.5); `graph` joins liveness like every read either way.
+8. **The trash as a view.** ADR 014 wanted a browsable trash. A tombstone has no second path to browse, so `/.vfs/trash` becomes a view: `ls`, `tree`, `glob` and `grep` scoped to it enumerate tombstoned roots at their own paths with `deleted_at` projected. Drive's "trash is a query, not a place" [GK]. The hourly buckets and ADR 026's self-describing names go with the move; the memo that produced them said the flag school "dissolves the naming and collision questions".
+9. **Sweep.** `destroy` of rows with `deleted_at < now − trash_days`, chunked by id, each root with its cascade; no bucket name to parse and no closed-world assumption (§3.6). The purge arm's content, blob, chunk, posting and edge cleanup is unchanged.
+10. **Mutation inside the trash.** No longer a category. A tombstoned row answers `restore` and `destroy`; a `write` at its path is the revive; `edit`, `move`, `copy`-from, `mkdir`, `mkedge` see `not_found`. The SmartOwl memo's item 15 (trash is writable) and spec 156 rule 2 dissolve.
 
-Costs, honestly: every future nominator must go through
-`liveness_filters` or carry the predicate itself, pinned by a test per
-verb; the trash view is new code where the subtree was free; the
-archived trash specs 081 (names), 082 (restore address forms) and 083
-(sweep) are superseded in part; and `topology.py`'s delete, restore and
-sweep arms are rewritten. None of these is a scale concern: the
-cascade is one column wide and chunked, and the predicate sits on a
-column the liveness index can carry.
+Costs, honestly: every future nominator must go through `liveness_filters` or carry the predicate itself, pinned by a test per verb; the trash view is new code where the subtree was free; the archived trash specs 081 (names), 082 (restore address forms) and 083 (sweep) are superseded in part; and `topology.py`'s delete, restore and sweep arms are rewritten. None of these is a scale concern: the cascade is one column wide and chunked, and the predicate sits on a column the liveness index can carry.
 
 ## 7. Verdict
 
-The move design was the right call in July, when nothing in the read
-path carried a row predicate and rights were not path ranges. ADR 072
-made a move a permission event, spec 150 had to double the rights
-algebra to undo that, ADR 073 put a predicate on every read anyway,
-and revive-on-write removes the partial-index cost that was ADR 026's
-one stated reason. The measured delete writes six rows per
-file where a flag writes one. MinIO shows the complete flag model
-including the two restore forms Clay described; JuiceFS shows what the
-move model costs in special-casing even when done well, and that its
-"judge reads by origin" works only because an inode carries its own
-rights, which a vfs row under path-range grants does not.
+The move design was the right call in July, when nothing in the read path carried a row predicate and rights were not path ranges. ADR 072 made a move a permission event, spec 150 had to double the rights algebra to undo that, ADR 073 put a predicate on every read anyway, and revive-on-write removes the partial-index cost that was ADR 026's one stated reason. The measured delete writes six rows per file where a flag writes one. MinIO shows the complete flag model including the two restore forms Clay described; JuiceFS shows what the move model costs in special-casing even when done well, and that its "judge reads by origin" works only because an inode carries its own rights, which a vfs row under path-range grants does not.
 
-Recommendation: an ADR that supersedes ADR 026's rejection of option
-(e) and amends ADR 014 (trash is a view, not a subtree), with the ten
-decisions of §6; a spec that retires spec 150 §8's trashed forms and
-spec 156 rule 2 and ties the version mint to spec 161. ADR 074 is cut
-from this memo the same day.
+Recommendation: an ADR that supersedes ADR 026's rejection of option (e) and amends ADR 014 (trash is a view, not a subtree), with the ten decisions of §6; a spec that retires spec 150 §8's trashed forms and spec 156 rule 2 and ties the version mint to spec 161. ADR 074 is cut from this memo the same day.

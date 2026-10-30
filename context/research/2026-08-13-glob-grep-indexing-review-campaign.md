@@ -1,56 +1,24 @@
 # Glob/grep/indexing review campaign — findings report and decision pass
 
 - **Date:** 2026-08-13
-- **Provenance:** synthesized output of a 73-agent review campaign over
-  the commit range `f1ab5b3^..0359c8d` (specs 092/093/094, ADRs 033–035,
-  and follow-up refactors; run `wf_c780e724-818`): five review lenses
-  (ownership, contract, scale, test, adversarial) on Fable, an Opus
-  skeptic panel per finding (three for critical/major, one for
-  minor/question), one synthesis agent. All four Docker engine legs were
-  live for the whole run; findings cite executed repros. Repro scripts
-  were written to the session scratchpad (ephemeral); every finding
-  names its script. Funnel: 35 raw findings → 34 survived verification
-  (one refuted) → 4 merged as cross-lens duplicates → 30 reported.
-- **Feeds:** specs 095–099 (born 2026-08-13 from this memo); the 094
-  mining pass (STATUS true-up — decision 7 below).
+- **Provenance:** synthesized output of a 73-agent review campaign over the commit range `f1ab5b3^..0359c8d` (specs 092/093/094, ADRs 033–035, and follow-up refactors; run `wf_c780e724-818`): five review lenses (ownership, contract, scale, test, adversarial) on Fable, an Opus skeptic panel per finding (three for critical/major, one for minor/question), one synthesis agent. All four Docker engine legs were live for the whole run; findings cite executed repros. Repro scripts were written to the session scratchpad (ephemeral); every finding names its script. Funnel: 35 raw findings → 34 survived verification (one refuted) → 4 merged as cross-lens duplicates → 30 reported.
+- **Feeds:** specs 095–099 (born 2026-08-13 from this memo); the 094 mining pass (STATUS true-up — decision 7 below).
 
 ---
 
 ## Decision pass (Clay, 2026-08-13)
 
-The review's eight downgraded design questions were posed with
-prior-art-grounded recommendations; Clay accepted all eight. These
-resolutions govern specs 095 and 099; the mining pass may promote any
-of them to a decision record if they prove load-bearing.
+The review's eight downgraded design questions were posed with prior-art-grounded recommendations; Clay accepted all eight. These resolutions govern specs 095 and 099; the mining pass may promote any of them to a decision record if they prove load-bearing.
 
-1. **`passes_filters` moves to `pattern_matching/glob.py`.** The
-   path-language module owns path gates; grep imports one-way —
-   ripgrep's `globset`/`ignore` ↔ `searcher` split is the precedent.
-2. **The two inline admission-law re-spellings consolidate** onto the
-   named gate where the signature fits; the irreducible per-row keep
-   closure stays, with its authority named in a comment.
-3. **The ext-membership rideability condition and its bind count get
-   one paired helper** — the same centralize-the-budget-fact move as
-   `membership_budget`/`chunked()`.
-4. **`meta_scoped` stays in the backend and imports
-   `paths._under_meta_root`** — closes the byte-identical duplication;
-   hoisting for a second backend that doesn't exist is speculative
-   generality.
-5. **Index-format identity becomes a hand-bumped
-   `INDEX_FORMAT_VERSION`** named as the one knob every fold, chunk
-   grain, or extraction change must bump — zoekt
-   (`IndexFormatVersion`/`IndexFeatureVersion`) and codesearch
-   (`"csearch index 2\n"` magic) both hand-declare; the derived
-   fingerprint is dropped as verified-insufficient.
-6. **Refusal labels unify through one channel→label map** at the
-   minting sites.
+1. **`passes_filters` moves to `pattern_matching/glob.py`.** The path-language module owns path gates; grep imports one-way — ripgrep's `globset`/`ignore` ↔ `searcher` split is the precedent.
+2. **The two inline admission-law re-spellings consolidate** onto the named gate where the signature fits; the irreducible per-row keep closure stays, with its authority named in a comment.
+3. **The ext-membership rideability condition and its bind count get one paired helper** — the same centralize-the-budget-fact move as `membership_budget`/`chunked()`.
+4. **`meta_scoped` stays in the backend and imports `paths._under_meta_root`** — closes the byte-identical duplication; hoisting for a second backend that doesn't exist is speculative generality.
+5. **Index-format identity becomes a hand-bumped `INDEX_FORMAT_VERSION`** named as the one knob every fold, chunk grain, or extraction change must bump — zoekt (`IndexFormatVersion`/`IndexFeatureVersion`) and codesearch (`"csearch index 2\n"` magic) both hand-declare; the derived fingerprint is dropped as verified-insufficient.
+6. **Refusal labels unify through one channel→label map** at the minting sites.
 7. **STATUS.md trues up with 094's mining pass** (which also archives
-   094) — no standalone ledger commit; the repo's own convention is
-   that STATUS true-ups ride mining/landing docs commits.
-8. **The posting-insert row cap is deleted.** SQLAlchemy's
-   insertmanyvalues owns per-dialect row chunking (verified uncapped on
-   MSSQL and Oracle); the byte-budget half stays; one test pins the
-   insertmanyvalues behavior.
+   094) — no standalone ledger commit; the repo's own convention is that STATUS true-ups ride mining/landing docs commits.
+8. **The posting-insert row cap is deleted.** SQLAlchemy's insertmanyvalues owns per-dialect row chunking (verified uncapped on MSSQL and Oracle); the byte-budget half stays; one test pins the insertmanyvalues behavior.
 
 ---
 

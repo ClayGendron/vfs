@@ -1,24 +1,14 @@
 # Write-vs-topology adversarial campaign — findings report
 
 - **Date:** 2026-07-25
-- **Provenance:** synthesized output of a 23-agent adversarial test campaign
-  (6 Opus attackers, one per race surface; Opus skeptic verification of every
-  critical/major finding; run `wf_2932b694-72b`). Repro scripts were written
-  to the session scratchpad (ephemeral); every finding cites its script and
-  exact command. Two verifier agents died on API errors mid-run — the §4.1
-  purge-arm residual repro and the delete-carrier known-race confirmation
-  carry attacker evidence without an independent skeptic verdict (the delete
-  carrier is cross-confirmed by other surfaces' verifiers).
+- **Provenance:** synthesized output of a 23-agent adversarial test campaign (6 Opus attackers, one per race surface; Opus skeptic verification of every critical/major finding; run `wf_2932b694-72b`). Repro scripts were written to the session scratchpad (ephemeral); every finding cites its script and exact command. Two verifier agents died on API errors mid-run — the §4.1 purge-arm residual repro and the delete-carrier known-race confirmation carry attacker evidence without an independent skeptic verdict (the delete carrier is cross-confirmed by other surfaces' verifiers).
 - **Feeds:** spec 086 (guarded-bump write-vs-topology hardening) — see §7.
 
 ---
 
 # Adversarial-Concurrency Campaign Report: Write-vs-Topology Races in the vfs Storage Backend
 
-**Empirical input to spec 086 (guarded-bump hardening of the torn-path-cache race).**
-All repro scripts live under the campaign scratch root, hereafter `<SCRATCH>`:
-`/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/8b014bcd-77ba-48e7-abbe-b3fd59cf5480/scratchpad`
-Every script resets its own table namespace and is re-runnable from the repo root with `uv run python <script> [engine ...]`. Engines: Postgres, MySQL, MSSQL, Oracle (SQLite out of scope per brief). Findings below carry their skeptic verdicts; refuted and downgraded claims are in §5, honestly labeled.
+**Empirical input to spec 086 (guarded-bump hardening of the torn-path-cache race).** All repro scripts live under the campaign scratch root, hereafter `<SCRATCH>`: `/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/8b014bcd-77ba-48e7-abbe-b3fd59cf5480/scratchpad` Every script resets its own table namespace and is re-runnable from the repo root with `uv run python <script> [engine ...]`. Engines: Postgres, MySQL, MSSQL, Oracle (SQLite out of scope per brief). Findings below carry their skeptic verdicts; refuted and downgraded claims are in §5, honestly labeled.
 
 ---
 

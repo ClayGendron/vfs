@@ -1,13 +1,8 @@
 # Results: traverse vs list above a usable subtree
 
-Captured 2026-09-28. One non-root user, no sudo. The script chmods its
-own directory `P`, so the **owner** bits decide. Owner mode `0100`
-(`--x`) stands in for the classic `0711` home directory as seen by
-everyone else: search, no list.
+Captured 2026-09-28. One non-root user, no sudo. The script chmods its own directory `P`, so the **owner** bits decide. Owner mode `0100` (`--x`) stands in for the classic `0711` home directory as seen by everyone else: search, no list.
 
-Tree: `P/alpha/file.txt` is the file the caller may use (think
-`/projects/alpha`). `P/beta` is a sibling the caller should not learn
-about.
+Tree: `P/alpha/file.txt` is the file the caller may use (think `/projects/alpha`). `P/beta` is a sibling the caller should not learn about.
 
 ## Summary table (identical on macOS and Linux)
 
@@ -25,26 +20,12 @@ about.
 
 Read it this way:
 
-- **Search only (`--x`)** is "reach by name". The caller reaches the
-  deep file, lists the deep directory, and creates under it. It cannot
-  list `P`. But it can stat `P` with full metadata, and it can probe
-  any guessed name: an existing sibling answers ok, a missing one
-  answers ENOENT.
-- **No search (`r--` or `---`)** is "stopped at the door". Everything
-  below `P` answers EACCES, **whether or not the name exists**. So a
-  missing search right hides existence below that directory.
-- **stat of `P` itself** never needs a right on `P`. It needs search on
-  `P`'s parent only. So a traverse-only directory leaks its metadata.
-- **The leak probe** shows what that metadata carries. A hidden sibling
-  appeared, and the search-only caller saw `P`'s link count go up by
-  one and its mtime move (and on APFS its size grow). It could then
-  confirm the new name by guessing it.
+- **Search only (`--x`)** is "reach by name". The caller reaches the deep file, lists the deep directory, and creates under it. It cannot list `P`. But it can stat `P` with full metadata, and it can probe any guessed name: an existing sibling answers ok, a missing one answers ENOENT.
+- **No search (`r--` or `---`)** is "stopped at the door". Everything below `P` answers EACCES, **whether or not the name exists**. So a missing search right hides existence below that directory.
+- **stat of `P` itself** never needs a right on `P`. It needs search on `P`'s parent only. So a traverse-only directory leaks its metadata.
+- **The leak probe** shows what that metadata carries. A hidden sibling appeared, and the search-only caller saw `P`'s link count go up by one and its mtime move (and on APFS its size grow). It could then confirm the new name by guessing it.
 
-Tool quirks, not kernel differences: macOS `ls` on an `r--` directory
-prints the names and then exits 1 (`fts_read: Permission denied`),
-because BSD `ls` also tries to enter the directory; `os.listdir` returns
-the names cleanly on both systems. Shell and Python `glob` both turn a
-denied directory into "no matches" silently.
+Tool quirks, not kernel differences: macOS `ls` on an `r--` directory prints the names and then exits 1 (`fts_read: Permission denied`), because BSD `ls` also tries to enter the directory; `os.listdir` returns the names cleanly on both systems. Shell and Python `glob` both turn a denied directory into "no matches" silently.
 
 ## macOS, `sh repro.sh`
 

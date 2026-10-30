@@ -231,8 +231,7 @@ What 171 excludes that themes 1/4 need: MRTR `input_required` and tasks (§3.3),
 Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFERRED from the specs' task counts and criteria counts). Every acceptance criterion counts operations or names a kind and an exit code; none reads a clock.
 
 ### S1 — Retire `run` and land the renderer gaps (spec 167 slice A). **M.** Depends on: nothing (179 may delete `SupportsRun` first; whichever lands first).
-*Why.* Every front in this domain stands on three live-tree gaps: a bytes row renders empty, `to_payload` carries unbounded base64, and the dead `run` verb sits where `cli` goes. Landing these first lets B and C proceed in parallel and makes the README true.
-*Acceptance.*
+*Why.* Every front in this domain stands on three live-tree gaps: a bytes row renders empty, `to_payload` carries unbounded base64, and the dead `run` verb sits where `cli` goes. Landing these first lets B and C proceed in parallel and makes the README true. *Acceptance.*
 1. `run` is absent from `Op`, `EXEC_OPS` (the class is gone; `ALL_OPS` is the union of three), `VERB_RUNGS`, `PARAMS`, `_DEFAULT_PROJECTION`, `base.py`, `session.py`, `README.md`; `SupportsRun` is absent from `protocol.py`, `_FAMILY_OPS`, `storage/__init__.py`; `uv run python -c "from vfs.ops import EXEC_OPS"` raises `ImportError`; the drift tests pass.
 2. A bytes-sourced row renders `[binary <path> <mime> <size>B v<version>]` byte-for-byte in `_render_read`, `_render_block` and a table cell; no `to_str()` output contains base64 or a bytes `repr` (a test greps the rendering of a 10,000-row result of bytes rows: 0 matches).
 3. `to_payload()` carries no bytes and no `"data"` in any populated mask; `to_payload(include_bytes=True)` round-trips through `from_payload` with equality.
@@ -240,8 +239,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 5. `scripts/ci.sh` green at 100%; README verb table has no `Execute` row.
 
 ### S2 — The parser (spec 167 slice B). **M.** Depends on: nothing (parallel with S1).
-*Why.* ADR 081's static parse is what makes the execution policy and a future interrupt summary sound: nothing runs on a refused line.
-*Acceptance.*
+*Why.* ADR 081's static parse is what makes the execution policy and a future interrupt summary sound: nothing runs on a refused line. *Acceptance.*
 1. The weighted 100-command corpus of study 01 parses 86 of 100; each of the 14 refusals is `vfs.unsupported.construct` with `line`, `column`, `construct` and, for slice-2 constructs, the slice named in the hint.
 2. Each malformed case (unclosed quote, unclosed here-document, trailing `|`, `&& &&`, stray `)`) is `vfs.invalid.syntax` with `line`, `column`, `offset`, `construct`, `expected`, `incomplete`; exactly one error per call; the display shows the source line and a caret under `column`.
 3. The four parser budgets each classify `vfs.budget_exhausted` on a counted input (1 MiB + 1 byte; 100,001 tokens; depth 201; the brace expansion that would exceed `ITERATION_BUDGET`) and never hang (the test asserts the error, not time).
@@ -249,8 +247,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 5. Parse-level spec tests exist for `quoting expansion redirect heredoc pipeline lists errors refused`, asserting the AST or the refusal, never stdout.
 
 ### S3 — The pipe, the ABI and `cli` with the minimal programs (spec 167 slice C). **XL.** Depends on: S1, S2.
-*Why.* This is the shell. After it an agent types `grep -rn mfa /enterprise | head -20` through `VirtualFileSystem.cli` or `Session.cli` and every verb passes the gate.
-*Acceptance.*
+*Why.* This is the shell. After it an agent types `grep -rn mfa /enterprise | head -20` through `VirtualFileSystem.cli` or `Session.cli` and every verb passes the gate. *Acceptance.*
 1. `ls /nope | wc -l` prints `0` with `statuses == [[1, 0]]`, `exit_code == 0`, `success is False`, one `not_found` in `errors`; `grep zzz f` and `false` succeed with `exit_code == 1`; `cat /nope` fails.
 2. A 10,000-file `ls | wc -l` prints `10000` in 10 chunks at a maximum queue depth of 2 (counted); `head -3` on a 10,000-row producer closes after 1 chunk and the producer reports `vfs.cancelled` at info severity.
 3. Every `Fs` call reaches a public router method with the admitted authority (spied: N calls, N matches); `vfs.shell` imports nothing from `vfs.storage` (import-graph test); two sessions with different authorities see different `ls /` through `cli`.
@@ -261,8 +258,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 8. `scripts/ci.sh` green at 100%; the four engine legs green.
 
 ### S4 — The program forms, `copy/move(replace=)`, `glob(case_mode=)`, `set -e`, the never table (spec 167 slice D). **L.** Depends on: S3; ADR 087 pin 17 answered (which identity survives a replace).
-*Why.* Slice C is the minimal set; D is what makes `ls -la`, `find`, `rm -rf`, `cp -r`, `sed -i`, `stat -c`, `tree`, `glean`, `graph` and `set -e` real, and lands the two verb changes the WASI provider also needs.
-*Acceptance.*
+*Why.* Slice C is the minimal set; D is what makes `ls -la`, `find`, `rm -rf`, `cp -r`, `sed -i`, `stat -c`, `tree`, `glean`, `graph` and `set -e` real, and lands the two verb changes the WASI provider also needs. *Acceptance.*
 1. Every row of 167 §4.1 has a test against a committed GNU fixture; `ls -l` prints `kind size_bytes updated_at owner_id version` in that order and never mode bits.
 2. `move(src, dest, replace=True)` onto a file keeps the destination's `entry_id`, versions the replaced body, tombstones the source; a directory over a directory is `exists`; on all five engine legs.
 3. `glob(case_mode="insensitive")` returns the same set as a case-folded Python filter on all five legs, in one statement per mount (counted), with a scale review recorded.
@@ -271,15 +267,13 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. `rm -rf /` at a bind site is `busy`; elsewhere it tombstones (counted `delete` calls = 1 with `cascade=True`).
 
 ### S5 — The coverage harness and `docs/reference/shell.md` (spec 167 slice E). **M.** Depends on: S4.
-*Why.* bashkit's method — fixtures from real bash, a replayed corpus, four counted rates — is the only honest answer to "how bash-like is it", and the reference page is what an agent's host reads.
-*Acceptance.*
+*Why.* bashkit's method — fixtures from real bash, a replayed corpus, four counted rates — is the only honest answer to "how bash-like is it", and the reference page is what an agent's host reads. *Acceptance.*
 1. The harness reports parse, resolve, flag and run rates in total and in scope on the synthesized corpus; the in-scope run rate is at least 85%.
 2. Fixtures are produced by one pinned-image script and committed; tests never run bash (a test asserts no `subprocess` call in the shell test module).
 3. `docs/reference/shell.md` lists the grammar, every program with its forms, the exit-code table and the refusal table; the docs fences in `scripts/ci.sh` pass; `docs/how-to/expose-over-mcp.md` is either written (S10) or removed from the nav.
 
 ### S6 — `/.vfs` views, the index, union resolution, install rules, `/.agents` retired (spec 169a). **L.** Depends on: S3 (`shell/status.py`, `Session`), S4 (`replace=` for `cp`/`mv` into an index directory).
-*Why.* This is "everything is a file": the catalogue views and the gated resolution (`read` on the entry) that every tool kind shares.
-*Acceptance.*
+*Why.* This is "everything is a file": the catalogue views and the gated resolution (`read` on the entry) that every tool kind shares. *Acceptance.*
 1. On a fresh node `ls /.vfs` lists `bin skills trash`; `ls /data/.vfs` at a mount lists `trash`; `stat /.vfs` is a directory at both.
 2. `write`, `mkdir`, `move`, `copy` into `/.vfs/bin/x`, `/.vfs/sessions/x`, `/data/.vfs/bin/x` are each `invalid` carrying the caller's path and the index detail; `sweep /.vfs/trash` passes; `posture /.vfs/bin` lands in the root binding's grants table.
 3. An unscoped `glob **` and `grep -r /` make zero calls into any view (spied); `mounts()` lists no view.
@@ -288,14 +282,12 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. `/.agents` names are gone from `src/`; `Skill.to_entries(at=container)` writes `<container>/<name>/SKILL.md`; the drift tests pass; four engine legs green.
 
 ### S7 — The `/.vfs/run` record (spec 169c). **S.** Depends on: S6.
-*Why.* Program output and MCP tool results need an address (`/.vfs/run/<call-id>/stdout`, `/<i>`) before the adapter can mint links for them.
-*Acceptance.*
+*Why.* Program output and MCP tool results need an address (`/.vfs/run/<call-id>/stdout`, `/<i>`) before the adapter can mint links for them. *Acceptance.*
 1. After `cat /data/a.txt | upper`, `read /.vfs/run/<id>/stdout` returns the output and `read …/status` names the program path and `content_hash`.
 2. Another authority's `read` of the record is `not_found`; the 65th call evicts the first for that authority (counted); the byte budget evicts across authorities (counted).
 
 ### S8 — Host tools as files: `ToolView`, the schema-to-flags table, `_invoke`, `rungs_at` (spec 170 §1, §2, §5). **L.** Depends on: S6, S7; S10 §2.6 only for the MCP half (not needed here).
-*Why.* Theme 4(a) and theme 7 together: a LangChain-shaped function becomes `/.vfs/tools/<name>`, callable as `<name> --arg value`, gated by `read` on its entry.
-*Acceptance.*
+*Why.* Theme 4(a) and theme 7 together: a LangChain-shaped function becomes `/.vfs/tools/<name>`, callable as `<name> --arg value`, gated by `read` on its entry. *Acceptance.*
 1. A registered function (plain, async, and a LangChain `BaseTool` by shape) appears at `/.vfs/tools/<name>` and in `/.vfs/bin` with `callable_kind=tool`; `<name> --x 1` calls it once (spied); a `str` return is one `text/plain` row, a `dict` one `application/json` row, `None` no row, a `Result` passes through.
 2. Each row of the flag table has one passing call and one `vfs.invalid` exit 2 with zero tool calls (spied); an unknown flag and an unknown property are refused client-side; `--json` mixed with a property flag is `vfs.invalid`; `cat f | upload` binds `body`.
 3. `cat`, `stat`, `ls -l`, `grep -r . /.vfs/tools` issue zero tool calls (spied); `type <name>` prints "runs on the host, with the host's authority (network: yes|no)".
@@ -304,8 +296,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. A tool declaring a parameter typed `Fs` receives the caller's `Fs` and nothing wider: a `write` through it to a path the caller cannot write is `permission_denied` (spied: the authority on the router call is the caller's, not the host's).
 
 ### S9 — MCP servers as views: `McpView`, the inbound table, the supervisor (spec 170 §3, §4, §7 + its three study pieces). **L.** Depends on: S8, S10's `from_call_tool_result` (171 §2.6) — or land that function with this story.
-*Why.* Theme 4(b)'s first half: a mounted server appears under `/.vfs/mcp/<server>/{tools,resources,prompts}` and its tools are callable like any program, with the host's configured credential.
-*Acceptance.*
+*Why.* Theme 4(b)'s first half: a mounted server appears under `/.vfs/mcp/<server>/{tools,resources,prompts}` and its tools are callable like any program, with the host's configured credential. *Acceptance.*
 1. A connected in-process server appears under `/.vfs/mcp/<name>/`; one call yields a text row, a media row, a `[link …]` row, an embedded text row and an `[unknown block …]` row at `/.vfs/run/<call-id>/<i>` with `structured` as an extra; `isError` is exit 1 with its text on stderr and no rows and no minted kind.
 2. Every row of the failure map produces its kind and exit: `-32602` → `invalid` 2; `-32601` → `not_found` 127; `-32000`/transport → `unavailable.backend` 1; wall → `timeout` 124; `-32021` → `unsupported` 126 (until S11 changes elicitation).
 3. `ls /.vfs/bin` twice in one `cli` call issues one `tools/list` per server; inside `MCP_LIST_FLOOR_MS`, zero (counted); a tool missing from a refreshed listing is 127.
@@ -314,8 +305,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. Credentials passed to `add_mcp(credentials=)` never appear in `os.environ` of a spawned stdio server (the test spawns a server that prints its environment).
 
 ### S10 — The MCP adapter, `serve()` and the token edge (spec 171 + spec 149). **XL** (171 L + 149 M). Depends on: S1 (placeholder, cap, `to_payload`), S3 (`cli`); S7 for links to program output (degrades to placeholder without it).
-*Why.* Theme 6. Every verb as a tool plus one `cli` tool, five blocks only, bounded on all three channels, an `Authority` per request, the system actor and open mounts refused at the edge.
-*Acceptance.*
+*Why.* Theme 6. Every verb as a tool plus one `cli` tool, five blocks only, bounded on all three channels, an `Authority` per request, the system actor and open mounts refused at the edge. *Acceptance.*
 1. `tools/list` names exactly the `AGENT_OPS` verbs in `fs.capabilities()` plus `cli`: 21 on the default router, 19 on an unknown dialect, 1 with `tools={"cli"}`; no input schema names `authority`, `observations` or `provenance` (counted over the listing); no served tool and no kernel program names a mount-admin verb.
 2. A spy on the router sees zero calls with `authority=None` across the MCP test module; `serve(fs, transport="stdio", authority=Authority.system())` raises before binding a transport, as does a router whose `default_authority` is the system actor; `serve()` refuses an `open` mount unless `allow_open=True` and names it.
 3. Over HTTP: no token reads a `shared` mount and is `unauthenticated` on a `private` one; an invalid token is 401; `authority_from_token` refuses a `sub` equal to the reserved system name; audience, signature, issuer and expiry are checked by the verifier (one failing test per check).
@@ -325,8 +315,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 7. The wire validates in the four session modes against the vendored 2025-06-18, 2025-11-25 and 2026-07-28 schemas; the 2025-03-26 session carries no link, no audio and no `structuredContent`; the core install imports nothing from `mcp`.
 
 ### S11 — Interrupts: the `pending` kind, the ask ledger, and resume for every tool kind (new; amends ADR 084 pin 4, spec 148 rule 5, spec 149 rule 5, spec 170 §4, spec 171 scope). **L.** Depends on: S3, S8, S9, S10; ADR 087's replay contract (spec 177) for safe re-runs.
-*Why.* Themes 1 and 4 require a tool call to stop, ask a human, and continue. The kernel keeps its law — it never blocks and never decides — by carrying the question as a classified, resumable `Result` whose answer lives in a ledger written through the grant channel. Without this story, 170 and 171 ship with elicitation refused and complete-only tools, and the host must build its own interrupt layer around vfs, against theme 1.
-*Acceptance.*
+*Why.* Themes 1 and 4 require a tool call to stop, ask a human, and continue. The kernel keeps its law — it never blocks and never decides — by carrying the question as a classified, resumable `Result` whose answer lives in a ledger written through the grant channel. Without this story, 170 and 171 ship with elicitation refused and complete-only tools, and the host must build its own interrupt layer around vfs, against theme 1. *Acceptance.*
 1. A host tool that raises `Interrupt(payload)` ends its stage with exactly one `vfs.pending` error carrying `data = {digest, ttl, payload, stage, program}`, exit code 75, `success is False`, `isError: true` on the wire; the tool function was entered exactly once (spied); zero verbs ran after the interrupt.
 2. Writing a one-shot allowance for that digest and re-issuing the same `cli` line runs the tool once more with the answer as its resume value; a second re-issue with the spent allowance is `pending` again (allowance count 1 → 0, counted); a foreign digest admits nothing; a grant row admits every later run.
 3. A mounted 2026-07-28 server answering `input_required` yields `vfs.pending` with `inputRequests` and the opaque `requestState` in `data`; the resume re-sends `tools/call` with `inputResponses` and the same `requestState` exactly once (spied on the wire); the interim result is never cached.
@@ -335,8 +324,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. `pending` has a `KindContract` with `retry_class=refresh`; `WASI_ERRNO[pending]` exists (drift test); ADR 084 pin 9's kind list and `shell/status.py` carry the new row; the ledger write path is a grant-channel call (a test asserts no `Session` method writes it).
 
 ### S12 — MCP servers that authenticate as the user (new ADR + spec; extends 170 and 149). **L.** Depends on: S9, S10, S11 (an OAuth authorization-code round trip is itself an interrupt).
-*Why.* Theme 4(b)'s second half. Spec 170 decided one credential per server at v1. A per-caller identity means per-caller connections (or per-caller headers on streamable HTTP), a credential record keyed by principal, the MCP client-side OAuth 2.1 flow when a server demands it, and a refusal to forward the served bearer token upstream (149 rule 4's spirit, RFC 8707 audience).
-*Acceptance.*
+*Why.* Theme 4(b)'s second half. Spec 170 decided one credential per server at v1. A per-caller identity means per-caller connections (or per-caller headers on streamable HTTP), a credential record keyed by principal, the MCP client-side OAuth 2.1 flow when a server demands it, and a refusal to forward the served bearer token upstream (149 rule 4's spirit, RFC 8707 audience). *Acceptance.*
 1. `add_mcp(name, server=, identity="caller")` opens one connection per distinct `(issuer, sub)` principal, lazily, capped by `MCP_CALLER_CONNECTION_BUDGET` (counted); `identity="host"` keeps today's one connection.
 2. Two callers see two `tools/list` results when the server lists per identity (an in-process server that varies its catalogue by bearer), and the `/.vfs/mcp/<server>` view differs per caller with zero cross-caller cache hits (counted).
 3. A caller with no stored credential for a server that returns 401 gets `vfs.pending` carrying the authorization URL and a digest; completing the ledger entry with the callback's code mints the token record for that principal; the re-run calls the tool once (spied).
@@ -344,16 +332,14 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 5. `remove_mcp` and principal revocation drop every connection and credential for that principal (counted to zero); credentials are never written to `os.environ` or to a vfs row the agent can `read`.
 
 ### S13 — A one-line serve entry point (`python -m vfs.mcp` / `vfs serve`). **S-M.** Depends on: S10; a router-from-URL constructor (another domain: storage/host config; spec 157's Postgres provisioning is adjacent).
-*Why.* Theme 6 says "easy". `await serve(fs, …)` in a Python file is not a one-liner a Claude Desktop or Codex config can name.
-*Acceptance.*
+*Why.* Theme 6 says "easy". `await serve(fs, …)` in a Python file is not a one-liner a Claude Desktop or Codex config can name. *Acceptance.*
 1. `uv run python -m vfs.mcp --url sqlite+aiosqlite:///x.db --transport stdio --as me` starts a server whose `tools/list` equals S10's; `[project.scripts] vfs = "vfs.cli:main"` provides `vfs serve` with the same flags.
 2. Starting against a mount whose posture is `open` exits non-zero naming the mount unless `--allow-open`; `--as system` exits non-zero before binding.
 3. The command imports nothing from `mcp` until `serve` is chosen (`vfs --help` works without the extra; a test asserts the import graph).
 4. `docs/how-to/expose-over-mcp.md` has the steps and a Claude Desktop / Codex config block, and the docs fences pass.
 
 ### S14 — Text kernels in Rust (spec 168 a → b → c). **L** (a M, b M, c S). Depends on: S4; the Rust seam (`PROTOCOL_VERSION` 10 → 11).
-*Why.* Moves six names off Python and adds `sort uniq tr tee xargs diff cmp`; `xargs` is the one explicit rows-to-verb form and what makes `find -exec` run. Honest gain about 1% of measured calls beyond 167, so a is worth 0.1.0, b is needed for `find -exec`, c can slip.
-*Acceptance.*
+*Why.* Moves six names off Python and adds `sort uniq tr tee xargs diff cmp`; `xargs` is the one explicit rows-to-verb form and what makes `find -exec` run. Honest gain about 1% of measured calls beyond 167, so a is worth 0.1.0, b is needed for `find -exec`, c can slip. *Acceptance.*
 1. Parity tests pass for `head tail wc cut nl sed` against the slice-D Python transforms as oracles under `tests/support/oracles/shell/`; a refused form calls `feed` 0 times (spied).
 2. Every new kernel passes its GNU fixtures and the split law (whole, one byte at a time, seeded random boundaries); `KNOWN_DELTAS` lists `cut -c` characters, BSD `sed -i ''`, no `sort -R`.
 3. `cat f | sort | uniq -c | sort -rn | head -5` over 10,000 lines feeds 10 chunks, each `sort` materializes once, queue depth ≤ 2 at every seam, `head` drains 1 chunk, the second `sort` reports `vfs.cancelled` (counted).
@@ -361,8 +347,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 5. `awk '{print $1}'` and `jq .` are `unrecognized` 127 with their hints until S16; `cargo test -p vfs-core` green; the wheel budget holds.
 
 ### S15 — The Python guest over wasi-python (spec 172 rewritten per memo 2026-10-23; ADR 086 amended). **M.** Depends on: S3 (the ABI and `cli`), S4 (`replace=`), S6 (resolution of `python3`); Clay's answers to memo Q1-Q5 and ADR 086 pins 5/8.
-*Why.* Theme 4(c), the installed-interpreter half. The mechanism is proven twice; what remains is a thin adapter (`VfsProvider`, `verb_tools`, budgets, exit codes) behind `vfs-py[python]`, and a rewrite of the stale spec.
-*Acceptance.*
+*Why.* Theme 4(c), the installed-interpreter half. The mechanism is proven twice; what remains is a thin adapter (`VfsProvider`, `verb_tools`, budgets, exit codes) behind `vfs-py[python]`, and a rewrite of the stale spec. *Acceptance.*
 1. `python3 -c "import numpy, pandas; print(numpy.__version__)"` runs with zero host preopens beyond the stdlib zip the runner preopens itself and zero vfs `Grant`s (the runner's `done` record is asserted).
 2. The pandas CSV job (`read_csv` from a row, `groupby`, `to_csv`, read back) completes with exit 0 in at most 21 verbs (17 `stat`, 2 `read`, 2 `write` as measured; a per-run stat cache lowers the bound and the test pins the new number).
 3. A guest `open("/ro/x", "w")` on a read-only mount raises `EROFS` 69 in the guest, lands in `files.refused`, and the stage reports status 1 with one `read_only` error although the guest exited 0; `open("/.vfs/trash")` is `ENOENT` 44 with zero verbs.
@@ -371,8 +356,7 @@ Sizes: S ≤ 1 day, M 2-4 days, L 1-2 weeks, XL > 2 weeks of agent effort (INFER
 6. `WASI_ERRNO` has one entry per `ErrorKind` (drift test); `import vfs` works without the `python` extra; the guest tests are `slow`.
 
 ### S16 — The generic wasm host, `/opt/bin` programs, `awk`/`jq`/uutils (spec 169b + its post-171 section). **XL.** Depends on: S6, S7, S14 (kernel names), S10 (`vfs install`). **Recommend post-0.1.0 unless Q6 is answered "yes, our own host".**
-*Why.* It is the only road to `awk` (the largest measured hole) and to installing arbitrary programs as files, but it duplicates a preview1 host that wasi-python's runner already owns, and the memo asks whether vfs still wants it.
-*Acceptance (if taken).* 169b's fourteen counted criteria as written (verb counts `{stat 2, read 3, write 1}` on a first run and `{stat 2, read 2, write 1}` on a cached one; `ACCES` on a refused close with stage status 1; `NOTCAPABLE` on `../../etc/passwd` with zero verbs; fuel kill 137 after exactly the budget; `WASI_ERRNO` drift test; `prog | head -1` issues no host verb after the cancel), plus `cat users.json | jq '.users[].name'` through installed jaq with zero guest verbs.
+*Why.* It is the only road to `awk` (the largest measured hole) and to installing arbitrary programs as files, but it duplicates a preview1 host that wasi-python's runner already owns, and the memo asks whether vfs still wants it. *Acceptance (if taken).* 169b's fourteen counted criteria as written (verb counts `{stat 2, read 3, write 1}` on a first run and `{stat 2, read 2, write 1}` on a cached one; `ACCES` on a refused close with stage status 1; `NOTCAPABLE` on `../../etc/passwd` with zero verbs; fuel kill 137 after exactly the budget; `WASI_ERRNO` drift test; `prog | head -1` issues no host verb after the cancel), plus `cat users.json | jq '.users[].name'` through installed jaq with zero guest verbs.
 
 ### Dependency-ordered landing list with sizes
 

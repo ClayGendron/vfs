@@ -1,82 +1,28 @@
 # Principals and permissions: the synthesis (Phase 3)
 
-- **Status**: research memo, Phase 3 of the principals and permissions
-  programme (`2026-09-05-principals-and-permissions-research-plan.md`).
-  It digests the framing memo, the five lens memos and the two studies
-  into one verdict table, states whether the hypothesis survived, and
-  hands the result to six proposed decision records (ADR 062 to 067)
-  that await Clay's ratification. Commits us to nothing by itself.
+- **Status**: research memo, Phase 3 of the principals and permissions programme (`2026-09-05-principals-and-permissions-research-plan.md`). It digests the framing memo, the five lens memos and the two studies into one verdict table, states whether the hypothesis survived, and hands the result to six proposed decision records (ADR 062 to 067) that await Clay's ratification. Commits us to nothing by itself.
 - **Date**: 2026-09-05
 - **Owner**: Clay Gendron
-- **Question**: Does the hypothesis (subject, actor, attenuation, with a
-  subject *set* for the multiplayer case and the intersection law for
-  read and write) survive fifty years of prior art and two measured
-  studies? Where does it need correcting, and what is still open?
-- **Method**: a read of the seven Phase 0 to 2 memos (below), their
-  thirteen-question verdicts tabulated, the threat table checked row by
-  row against the drafted rules, and the studies' numbers carried into
-  the decisions they settle. No new sources.
-- **Inputs**:
-  `2026-09-05-permissions-framing-threat-model-and-requirements.md`
-  (64 threat rows, seven audiences, the frozen rubric);
-  `2026-09-05-permissions-lens-unix-lineage.md` (L1);
-  `2026-09-05-permissions-lens-plan9.md` (L2);
-  `2026-09-05-permissions-lens-capabilities-and-delegation.md` (L3);
-  `2026-09-05-permissions-lens-authz-engines-and-databases.md` (L4);
-  `2026-09-05-permissions-lens-agent-native-2026.md` (L5);
-  `2026-09-05-permissions-predicate-at-scale.md` (S1, with
-  `studies/2026-09-05-permissions-predicate-at-scale/`);
-  `2026-09-05-glean-statistics-leak.md` (S2, with
-  `studies/2026-09-05-glean-statistics-leak/`).
+- **Question**: Does the hypothesis (subject, actor, attenuation, with a subject *set* for the multiplayer case and the intersection law for read and write) survive fifty years of prior art and two measured studies? Where does it need correcting, and what is still open?
+- **Method**: a read of the seven Phase 0 to 2 memos (below), their thirteen-question verdicts tabulated, the threat table checked row by row against the drafted rules, and the studies' numbers carried into the decisions they settle. No new sources.
+- **Inputs**: `2026-09-05-permissions-framing-threat-model-and-requirements.md` (64 threat rows, seven audiences, the frozen rubric); `2026-09-05-permissions-lens-unix-lineage.md` (L1); `2026-09-05-permissions-lens-plan9.md` (L2); `2026-09-05-permissions-lens-capabilities-and-delegation.md` (L3); `2026-09-05-permissions-lens-authz-engines-and-databases.md` (L4); `2026-09-05-permissions-lens-agent-native-2026.md` (L5); `2026-09-05-permissions-predicate-at-scale.md` (S1, with `studies/2026-09-05-permissions-predicate-at-scale/`); `2026-09-05-glean-statistics-leak.md` (S2, with `studies/2026-09-05-glean-statistics-leak/`).
 
 ## Bottom line
 
-The hypothesis survives with three corrections, and the multiplayer
-rule survives with one exact precedent and two rules of its own.
+The hypothesis survives with three corrections, and the multiplayer rule survives with one exact precedent and two rules of its own.
 
-1. **The pair is right; the precedent for it is wrong.** Unix's real
-   and effective uid and Plan 9's `hostid` and `uid` are the
-   actor/subject pair, but Unix built it to run *above* the invoker
-   (setuid) and Plan 9 throws it away at the boundary (the auth server
-   writes one name into both ticket slots). vfs keeps the pair to
-   attribute and to narrow, and never lets a boundary drop it.
-2. **"Never widens" is a law about the session, not about the
-   principal.** No system runs on intersection alone; each ships one
-   gated, marked widening. Every 2026 harness widens by a human click.
-   The correct statement is: the session never widens *itself*; a
-   principal widens by an attributed grant row that the session sees on
-   its next call; one actor (system) is the marked exception.
-3. **The subject set is a session construct on the grant spine, never
-   a wire object.** Every token in the field has one subject; tokens
-   attenuate one authority block and cannot express the meet of two
-   people's grants. The meet is computed where the grants live.
-4. **Conjunctive authority has one shipped precedent and it is exact:**
-   SpiceDB's intersection arrow. Every member must hold the right, an
-   empty set denies, membership is read live. The field's vendors ship
-   three approximations (space-only, asker-plus-leak-gate, per-room
-   service account) and none is the meet.
-5. **The enforcement spine is the field's consensus and the measured
-   shape is not the one ADR 021 sketched.** Compile in app code at one
-   chokepoint, yes; but resolve the caller's covering prefixes first
-   and ship a bounded literal, which is 3 to 19x faster than the
-   correlated `EXISTS` and is the only shape that stays flat as a
-   subject set grows (22 ms at n = 20, the same as one principal).
-6. **Visibility must reach statistics.** Global BM25 statistics leak
-   the hidden set totally, on scores, ranks and the merge's export;
-   visible-set statistics close it at no measured ranking cost.
+1. **The pair is right; the precedent for it is wrong.** Unix's real and effective uid and Plan 9's `hostid` and `uid` are the actor/subject pair, but Unix built it to run *above* the invoker (setuid) and Plan 9 throws it away at the boundary (the auth server writes one name into both ticket slots). vfs keeps the pair to attribute and to narrow, and never lets a boundary drop it.
+2. **"Never widens" is a law about the session, not about the principal.** No system runs on intersection alone; each ships one gated, marked widening. Every 2026 harness widens by a human click. The correct statement is: the session never widens *itself*; a principal widens by an attributed grant row that the session sees on its next call; one actor (system) is the marked exception.
+3. **The subject set is a session construct on the grant spine, never a wire object.** Every token in the field has one subject; tokens attenuate one authority block and cannot express the meet of two people's grants. The meet is computed where the grants live.
+4. **Conjunctive authority has one shipped precedent and it is exact:** SpiceDB's intersection arrow. Every member must hold the right, an empty set denies, membership is read live. The field's vendors ship three approximations (space-only, asker-plus-leak-gate, per-room service account) and none is the meet.
+5. **The enforcement spine is the field's consensus and the measured shape is not the one ADR 021 sketched.** Compile in app code at one chokepoint, yes; but resolve the caller's covering prefixes first and ship a bounded literal, which is 3 to 19x faster than the correlated `EXISTS` and is the only shape that stays flat as a subject set grows (22 ms at n = 20, the same as one principal).
+6. **Visibility must reach statistics.** Global BM25 statistics leak the hidden set totally, on scores, ranks and the merge's export; visible-set statistics close it at no measured ranking cost.
 
-One line: **authority is a subject set, an actor and a narrowing;
-rights are the meet of the subjects' grants, cut by the actor's
-profile and the session, compiled to a bounded literal at one
-chokepoint, applied before any content function and to the statistics
-themselves, attributed to actor and subjects on every version row, and
-widened only by an attributed grant outside the session.**
+One line: **authority is a subject set, an actor and a narrowing; rights are the meet of the subjects' grants, cut by the actor's profile and the session, compiled to a bounded literal at one chokepoint, applied before any content function and to the statistics themselves, attributed to actor and subjects on every version row, and widened only by an attributed grant outside the session.**
 
 ## 1. The verdict table
 
-Verdicts are relative to the hypothesis (Q1 to Q12) and to the
-multiplayer intersection rule (Q13). S = supports, Q = qualified,
-N = no precedent, C = contradicts.
+Verdicts are relative to the hypothesis (Q1 to Q12) and to the multiplayer intersection rule (Q13). S = supports, Q = qualified, N = no precedent, C = contradicts.
 
 | # | Question | L1 Unix | L2 Plan 9 | L3 Capabilities | L4 Engines/DBs | L5 Agent-native | Studies |
 |---|---|---|---|---|---|---|---|
@@ -93,14 +39,7 @@ N = no precedent, C = contradicts.
 | Q11 | Scale, portability | Q | N | Q | S (+ one constraint) | Q | S1: no shape breaks a budget |
 | Q13 | Conjunctive authority | Q → N (meets are self-narrowing) | N (`srv -a` is the anti-pattern) | Q (conjunctive credentials, not authority) | **S** (SpiceDB `.all()`) | N (three approximations) | S1: intersection flat; S2: set stats fine |
 
-Reading the columns: Q3, Q5, Q7 and Q9 are settled by consensus. Q1
-and Q2 are settled with the corrections above. Q6 splits cleanly:
-groups widen a *principal's* rights everywhere (union), which is fine
-inside one subject's grants and forbidden across subjects, exactly the
-algebra Landlock uses (union within a layer, intersection across
-layers). Q8 and Q10 are ours to define; the nearest shapes are one
-attribution row per party and "revert is a write". Q13 has one exact
-precedent and otherwise silence.
+Reading the columns: Q3, Q5, Q7 and Q9 are settled by consensus. Q1 and Q2 are settled with the corrections above. Q6 splits cleanly: groups widen a *principal's* rights everywhere (union), which is fine inside one subject's grants and forbidden across subjects, exactly the algebra Landlock uses (union within a layer, intersection across layers). Q8 and Q10 are ours to define; the nearest shapes are one attribution row per party and "revert is a write". Q13 has one exact precedent and otherwise silence.
 
 ## 2. What the studies settled
 
@@ -120,8 +59,7 @@ precedent and otherwise silence.
 
 ## 3. The threat table, answered
 
-The framing memo's 64 rows reduce to five failures plus the
-multiplayer group. Each has a rule now:
+The framing memo's 64 rows reduce to five failures plus the multiplayer group. Each has a rule now:
 
 | Failure class (rows) | Rule |
 |---|---|
@@ -163,29 +101,14 @@ exception    = Principal.system(): skips grants, stamped         # ADR 062 rule 
 
 ## 6. Still open, deliberately
 
-- ~~**Re-grading on join.**~~ Decided 2026-09-06 (Clay): no
-  re-grade; the audit shows the set at each version; a leak notice on
-  join is a sessions-spec follow-up.
-- **The `ask` rung's wire shape.** ADR 063 fixes the semantics (a
-  Result bound to a request digest); the MRTR `requestState` shape
-  waits on the `serve()` spec.
-- **Nested group depth and the prefix cap values.** ADR 067 declares
-  them; S1's scripts size them per engine when spec 058 is written.
-- **Fork B2 and vectors.** S2 measured the lexical leg. The embedding
-  leg's distance function runs under the same predicate (ADR 065
-  rule 4); whether any vector statistic leaks is a follow-up.
-- **The remote-mount attestation.** ADR 062 rule 6 says verified names
-  cross under the near side's attestation; the mechanism is the
-  `serve()` spec's (070 D7's trusted-subsystem shape).
+- ~~**Re-grading on join.**~~ Decided 2026-09-06 (Clay): no re-grade; the audit shows the set at each version; a leak notice on join is a sessions-spec follow-up.
+- **The `ask` rung's wire shape.** ADR 063 fixes the semantics (a Result bound to a request digest); the MRTR `requestState` shape waits on the `serve()` spec.
+- **Nested group depth and the prefix cap values.** ADR 067 declares them; S1's scripts size them per engine when spec 058 is written.
+- **Fork B2 and vectors.** S2 measured the lexical leg. The embedding leg's distance function runs under the same predicate (ADR 065 rule 4); whether any vector statistic leaks is a follow-up.
+- **The remote-mount attestation.** ADR 062 rule 6 says verified names cross under the near side's attestation; the mechanism is the `serve()` spec's (070 D7's trusted-subsystem shape).
 
 ## 7. What happens next
 
-1. ~~Clay ratifies, amends or rejects ADR 062 to 067.~~ Ratified as
-   written, 2026-09-06.
-2. Spec 070 is rewritten around `Authority`; spec 058 is written in
-   full against ADR 067 with S1's scripts as its benchmark; a sessions
-   spec (narrowing, sub-sessions, `pending`) and the `serve()` auth
-   spec are seeded.
-3. The pjdfstest-shaped permission conformance suite (L1's take row)
-   enumerates (authority, object state, verb) triples, one result kind
-   per clause, and S2's scripts become the leak regression.
+1. ~~Clay ratifies, amends or rejects ADR 062 to 067.~~ Ratified as written, 2026-09-06.
+2. Spec 070 is rewritten around `Authority`; spec 058 is written in full against ADR 067 with S1's scripts as its benchmark; a sessions spec (narrowing, sub-sessions, `pending`) and the `serve()` auth spec are seeded.
+3. The pjdfstest-shaped permission conformance suite (L1's take row) enumerates (authority, object state, verb) triples, one result kind per clause, and S2's scripts become the leak regression.

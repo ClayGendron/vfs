@@ -1,348 +1,78 @@
 # 162 — Trash as a tombstone on the row: delete flags, restore clears, a write revives
 
-- **Status:** **both slices built 2026-10-11, in the working tree,
-  uncommitted, awaiting Clay's review** (Clay: "work on 162 but do not
-  commit work until I approve"). Built as written, taking the two
-  proposed ADR 074 amendments (rules 4 and 5) as the working answers;
-  Clay has not yet confirmed them. `scripts/ci.sh` green: 3,938 tests
-  at 100% coverage. **Reviewed and committed 2026-10-12** (`7d0bc3c`,
-  then the review's fixes): the Postgres leg is green (335 passed);
-  MariaDB, SQL Server and Oracle have not run. See *Landing notes* at
-  the end for the deviations and the review's findings.
-  Drafted 2026-10-08 from ADR 074 (accepted the same day) and the memo
-  it stands on; revised 2026-10-08 after a review against `0760fe9`
-  that worked the restore and revive sequences by hand (two
-  tree-tearing cases fixed; the parent gate; the view's pattern
-  semantics; the mint's real columns; the schema format bump).
+- **Status:** **both slices built 2026-10-11, in the working tree, uncommitted, awaiting Clay's review** (Clay: "work on 162 but do not commit work until I approve"). Built as written, taking the two proposed ADR 074 amendments (rules 4 and 5) as the working answers; Clay has not yet confirmed them. `scripts/ci.sh` green: 3,938 tests at 100% coverage. **Reviewed and committed 2026-10-12** (`7d0bc3c`, then the review's fixes): the Postgres leg is green (335 passed); MariaDB, SQL Server and Oracle have not run. See *Landing notes* at the end for the deviations and the review's findings. Drafted 2026-10-08 from ADR 074 (accepted the same day) and the memo it stands on; revised 2026-10-08 after a review against `0760fe9` that worked the restore and revive sequences by hand (two tree-tearing cases fixed; the parent gate; the view's pattern semantics; the mint's real columns; the schema format bump).
 - **Date:** 2026-10-08
 - **Owner:** Clay Gendron
-- **Kind:** feature and removal (database backend: `topology.py`'s
-  delete, restore and sweep arms rewritten; two row columns added,
-  three removed; the trashed predicate forms removed from the rights
-  algebra; the trash served as a view; the write pipeline's revive;
-  the first landing of the version mint)
-- **Depends on:** ADR 074; ADR 064 (the attribution columns the mint
-  fills); ADR 017 pin 4 (the write path snapshots); ADR 072 and 073 as
-  built (`ranges.py`, `rights.py`, `labels.py`); the write pipeline as
-  built (`_fetch_committed` L259–285, which finds rows by path with no
-  liveness term; `put_file` staging an `update`, `staging.py`
-  L237–283; `_update_materials`' guarded arm L600–709; the rival
-  clobber arm L412–477 and `_CLOBBER_COLUMNS` L82; `_replace_bodies`
-  L916–918); `liveness_filters` (`descent.py` L167–174; five sites:
-  `reads.py` L235, L463, L686, `scope.py` L129, L248); `_point_rows`
-  and `classify_misses` (`descent.py` L62–63, no liveness term, as
-  today); the purge arm (`topology.py`); spec 152 §3.
-- **Decisions it implements:** ADR 074, all ten items, with the two
-  amendments below. Retires the trashed forms spec 150 §8 built;
-  dissolves spec 156 rule 2; lands the write-replace half of spec
-  161's mint (161 keeps the read-side verb and retention).
-- **Research it stands on:**
-  `../../../research/2026-10-08-trash-as-a-tombstone-on-the-row.md`
-  (the measured move cost, the four studies, the ten decisions);
-  `../../../research/2026-07-23-trash-prior-art-naming-and-restore.md`
-  (the occupied-site refusal the field is unanimous on).
+- **Kind:** feature and removal (database backend: `topology.py`'s delete, restore and sweep arms rewritten; two row columns added, three removed; the trashed predicate forms removed from the rights algebra; the trash served as a view; the write pipeline's revive; the first landing of the version mint)
+- **Depends on:** ADR 074; ADR 064 (the attribution columns the mint fills); ADR 017 pin 4 (the write path snapshots); ADR 072 and 073 as built (`ranges.py`, `rights.py`, `labels.py`); the write pipeline as built (`_fetch_committed` L259–285, which finds rows by path with no liveness term; `put_file` staging an `update`, `staging.py` L237–283; `_update_materials`' guarded arm L600–709; the rival clobber arm L412–477 and `_CLOBBER_COLUMNS` L82; `_replace_bodies` L916–918); `liveness_filters` (`descent.py` L167–174; five sites: `reads.py` L235, L463, L686, `scope.py` L129, L248); `_point_rows` and `classify_misses` (`descent.py` L62–63, no liveness term, as today); the purge arm (`topology.py`); spec 152 §3.
+- **Decisions it implements:** ADR 074, all ten items, with the two amendments below. Retires the trashed forms spec 150 §8 built; dissolves spec 156 rule 2; lands the write-replace half of spec 161's mint (161 keeps the read-side verb and retention).
+- **Research it stands on:** `../../../research/2026-10-08-trash-as-a-tombstone-on-the-row.md` (the measured move cost, the four studies, the ten decisions); `../../../research/2026-07-23-trash-prior-art-naming-and-restore.md` (the occupied-site refusal the field is unanimous on).
 
 ## Intent
 
-Delete today rewrites the row's path under `/.vfs/trash/<hour>/`, every
-descendant's path with it, and the path-segment postings that mirror
-the column: about six row writes per file, six more on restore. The
-rights algebra then undoes the move by judging every trashed row by
-`origin_path`, so every visibility statement carries each piece branch
-twice and the hole test as an `OR`. And the trash is a place: an agent
-can `write` into it and clobber the only copy `restore` could bring
-back.
+Delete today rewrites the row's path under `/.vfs/trash/<hour>/`, every descendant's path with it, and the path-segment postings that mirror the column: about six row writes per file, six more on restore. The rights algebra then undoes the move by judging every trashed row by `origin_path`, so every visibility statement carries each piece branch twice and the hole test as an `OR`. And the trash is a place: an agent can `write` into it and clobber the only copy `restore` could bring back.
 
-After this spec a deleted row stays where it is with a timestamp on it.
-Nothing moves, so permissions need one form, the postings never
-change, restore is a column clear, and there is no trash to write
-into. A `write` at the path brings the row back and mints a version of
-the body it replaced, which is the undo the README promises.
+After this spec a deleted row stays where it is with a timestamp on it. Nothing moves, so permissions need one form, the postings never change, restore is a column clear, and there is no trash to write into. A `write` at the path brings the row back and mints a version of the body it replaced, which is the undo the README promises.
 
-One line: delete sets a flag, restore clears it, a write revives the
-row and keeps its history, and one row per path keeps the unique
-index plain on every engine.
+One line: delete sets a flag, restore clears it, a write revives the row and keeps its history, and one row per path keeps the unique index plain on every engine.
 
 ## Decided semantics
 
 Numbered as in ADR 074.
 
-1. **The flag.** `vfs_entries` gains `trash_root_id` (`ULIDKey`,
-   nullable, indexed) beside the existing `deleted_at`. `delete` sets
-   both on the target (`trash_root_id` = its own `entry_id`) and, for a
-   directory, on every live descendant (`trash_root_id` = the
-   target's id), chunked by `membership_budget`. A descendant already
-   tombstoned keeps its earlier values. `path`, `parent_id`, `name`,
-   `everyone_level`, `owner_id`, postings and the fs edge row are
-   untouched. `original_parent_id`, `original_name`, `origin_path`,
-   `ix_vfs_entries_restore` and `ix_vfs_entries_origin_path` are
-   dropped; `ENTRY_ROW_ONLY_COLUMNS` (`rows.py` L85–90) and
-   `SCHEMA_FORMAT_VERSION` (L138) follow. The contract on the index:
-   the unscoped visible read seeks on the liveness index on every
-   engine leg, EXPLAIN-pinned (`test_ranges.py` L75 is the model);
-   whether `deleted_at` is prepended to `ix_vfs_entries_everyone_path`
-   or stands alone is the plan's measurement, and the per-dialect join
-   hints in `rights.py` and `labels.py` follow a rename.
-2. **Liveness.** `liveness_filters` returns `deleted_at IS NULL` in
-   every mode; the meta-subtree exclusion stays as it is. All five
-   call sites inherit it. A point read, `stat`, `edit`, `move`,
-   `copy`-from, `mkdir`, `mkedge` at a tombstoned path classify
-   `not_found`; when the caller's rights admit the row the refusal
-   carries `data["vfs.trashed"] = true` and the row's `deleted_at`.
-   The hint costs no second statement: `_point_rows` and
-   `classify_misses`' ancestor query already fetch without a liveness
-   term and `_screen` already runs `view.admits`; they project
-   `deleted_at`, and a tombstoned row classifies `not_found` in
-   Python. A 10,000-path `read` issues exactly today's chunked `path
-   IN` selects. **A tombstoned ancestor is `not_found` for every
-   parent gate**: `_fetch_committed` finds tombstoned rows, so
-   `kind_of` treats one as absent for the parent gate and
-   `mint_chain`; `write /d/new.md` under a tombstoned `/d` refuses,
-   and `parents=True` never revives it.
-3. **Permissions.** `RIGHTS_FIELDS` loses `origin_path`;
-   `judged_path` is `path`; `visible_entries` builds one form per
-   piece branch; `hole_free` is one form; `labels.py` relabels over
-   `path` only; `on_trash_chain` is deleted. `restore` is gated as a
-   write at the path; `destroy` stays on the developer plane.
-4. **Restore.** `restore(path=…)` clears `deleted_at` and
-   `trash_root_id` on the row at *path* and on every row whose
-   `trash_root_id` equals its id, version-guarded, chunked. **Only a
-   root restores**: a tombstoned row whose `trash_root_id` is not its
-   own id classifies `not_found` naming the root in
-   `data["vfs.trash_root"]`. A root whose parent is tombstoned
-   classifies `not_found` at the parent (rule 2), as today's
-   `_dest_parent_id` does. A live row at the path classifies `exists`.
-   The trash-side address form is removed; `Observation.trash_path`
-   and its rebase arms (`entry.py` L464, L505–515) are removed, and
-   the delete observation projects `deleted_at`. *(The cut spec's
-   "not in the same root" clause is gone: it admitted `restore
-   /d/f.md` after `delete /d`, leaving a live file under a tombstoned
-   directory. ADR 074 item 4 never had the clause.)*
-5. **Revive on write, same kind only.** A `write` whose path holds a
-   tombstoned row of the same kind is a revive: the staged write keeps
-   the row's id, clears both flag columns, and mints a version row of
-   the replaced body (slice B). A kind mismatch refuses `wrong_kind`
-   with the `vfs.trashed` hint, as `put_file` refuses a live mismatch
-   today (`staging.py` L265–267): a tombstoned directory comes back
-   only through `restore`, a tombstoned file through `restore` or a
-   file `write`. `overwrite=False` does not refuse a revive: the path
-   is not occupied by a live row.
-   *Confirmed by Clay, 2026-10-13, and recorded as ADR 074 item 5's
-   amendment: a revive keeps the row's kind; a write of the other kind
-   at a tombstoned path refuses `wrong_kind`; `overwrite=False` admits
-   a revive. The ADR's original kind change produced a live file with
-   live children (`mkdir /d`, `write /d/a.md`, `delete /d`, `write /d`
-   as a file, `delete /d`, `restore /d` revived both), and its escape
-   hatch was unreachable under item 9.*
-6. **Edges.** The authored-edge cascade on delete and the
-   "authored edges gone on restore" rule are removed. `DatabaseStorage`
-   has no `graph` verb (the router answers `_backend_unsupported`);
-   the edge code that carries the liveness term is `collect_graph`
-   (`signals.py` L84, already `deleted_at IS NULL`), `mkedge_rows`'
-   endpoint resolve, `links.py`'s candidates, and the reindex reclaim
-   (`edges.py` L302, L353 `is_trash_path`; `backend.py` L749). Reindex
-   stops reclaiming edges on tombstoned endpoints.
-7. **The trash view.** `/.vfs/trash/<rest>` addresses the tombstoned
-   rows at `<rest>`: the trash head is stripped before pattern and
-   scope compilation and before the Python gate (`passes_gates`,
-   `scope.py` L94, which rejects non-meta paths today), the liveness
-   term flips to `deleted_at IS NOT NULL`, and observations carry the
-   row's own path with `deleted_at` projected, under the caller's
-   ordinary rights. `ls /.vfs/trash` lists tombstoned roots
-   (`trash_root_id = entry_id`) at every depth; `ls /.vfs/trash/d`
-   lists the children of tombstoned `/d`; `tree`, `glob`, `grep` and
-   `glean` under the head match `<rest>` against row paths with the
-   flipped term. `/.vfs/trash` itself is a synthesized directory row
-   in the result, never a stored row; the hour buckets are gone. A
-   `write` or `mkdir` at `/.vfs/trash/...` classifies `invalid` (the
-   existing meta-root rule, extended one segment). The router already
-   resolves `/mine/.vfs/trash` per mount (`without_mount`, `base.py`
-   L2749).
-8. **Sweep.** `destroy /.vfs/trash` (and the retention pass)
-   purges rows with `deleted_at < now − trash_days` whose
-   `trash_root_id` is their own id, each with every row sharing that
-   root id, chunked by id through the existing purge arm. No bucket
-   name is parsed; the orphan reclaim runs as today.
-9. **No other mutation reaches a tombstoned row.** The restore-only
-   gate rule of spec 156 is not written; `not_found` from rule 2 is
-   the answer everywhere.
-10. **Scale.** Delete and restore issue a flat number of statements
-    in batch size (the spy pins ≤ today's 45 and 29 at N = 1,000 and
-    2,000; memo §1.1) and touch one `vfs_entries` row per entry and
-    zero `vfs_segments` rows. No dialect-specific DDL is added.
+1. **The flag.** `vfs_entries` gains `trash_root_id` (`ULIDKey`, nullable, indexed) beside the existing `deleted_at`. `delete` sets both on the target (`trash_root_id` = its own `entry_id`) and, for a directory, on every live descendant (`trash_root_id` = the target's id), chunked by `membership_budget`. A descendant already tombstoned keeps its earlier values. `path`, `parent_id`, `name`, `everyone_level`, `owner_id`, postings and the fs edge row are untouched. `original_parent_id`, `original_name`, `origin_path`, `ix_vfs_entries_restore` and `ix_vfs_entries_origin_path` are dropped; `ENTRY_ROW_ONLY_COLUMNS` (`rows.py` L85–90) and `SCHEMA_FORMAT_VERSION` (L138) follow. The contract on the index: the unscoped visible read seeks on the liveness index on every engine leg, EXPLAIN-pinned (`test_ranges.py` L75 is the model); whether `deleted_at` is prepended to `ix_vfs_entries_everyone_path` or stands alone is the plan's measurement, and the per-dialect join hints in `rights.py` and `labels.py` follow a rename.
+2. **Liveness.** `liveness_filters` returns `deleted_at IS NULL` in every mode; the meta-subtree exclusion stays as it is. All five call sites inherit it. A point read, `stat`, `edit`, `move`, `copy`-from, `mkdir`, `mkedge` at a tombstoned path classify `not_found`; when the caller's rights admit the row the refusal carries `data["vfs.trashed"] = true` and the row's `deleted_at`. The hint costs no second statement: `_point_rows` and `classify_misses`' ancestor query already fetch without a liveness term and `_screen` already runs `view.admits`; they project `deleted_at`, and a tombstoned row classifies `not_found` in Python. A 10,000-path `read` issues exactly today's chunked `path IN` selects. **A tombstoned ancestor is `not_found` for every parent gate**: `_fetch_committed` finds tombstoned rows, so `kind_of` treats one as absent for the parent gate and `mint_chain`; `write /d/new.md` under a tombstoned `/d` refuses, and `parents=True` never revives it.
+3. **Permissions.** `RIGHTS_FIELDS` loses `origin_path`; `judged_path` is `path`; `visible_entries` builds one form per piece branch; `hole_free` is one form; `labels.py` relabels over `path` only; `on_trash_chain` is deleted. `restore` is gated as a write at the path; `destroy` stays on the developer plane.
+4. **Restore.** `restore(path=…)` clears `deleted_at` and `trash_root_id` on the row at *path* and on every row whose `trash_root_id` equals its id, version-guarded, chunked. **Only a root restores**: a tombstoned row whose `trash_root_id` is not its own id classifies `not_found` naming the root in `data["vfs.trash_root"]`. A root whose parent is tombstoned classifies `not_found` at the parent (rule 2), as today's `_dest_parent_id` does. A live row at the path classifies `exists`. The trash-side address form is removed; `Observation.trash_path` and its rebase arms (`entry.py` L464, L505–515) are removed, and the delete observation projects `deleted_at`. *(The cut spec's "not in the same root" clause is gone: it admitted `restore /d/f.md` after `delete /d`, leaving a live file under a tombstoned directory. ADR 074 item 4 never had the clause.)*
+5. **Revive on write, same kind only.** A `write` whose path holds a tombstoned row of the same kind is a revive: the staged write keeps the row's id, clears both flag columns, and mints a version row of the replaced body (slice B). A kind mismatch refuses `wrong_kind` with the `vfs.trashed` hint, as `put_file` refuses a live mismatch today (`staging.py` L265–267): a tombstoned directory comes back only through `restore`, a tombstoned file through `restore` or a file `write`. `overwrite=False` does not refuse a revive: the path is not occupied by a live row. *Confirmed by Clay, 2026-10-13, and recorded as ADR 074 item 5's amendment: a revive keeps the row's kind; a write of the other kind at a tombstoned path refuses `wrong_kind`; `overwrite=False` admits a revive. The ADR's original kind change produced a live file with live children (`mkdir /d`, `write /d/a.md`, `delete /d`, `write /d` as a file, `delete /d`, `restore /d` revived both), and its escape hatch was unreachable under item 9.*
+6. **Edges.** The authored-edge cascade on delete and the "authored edges gone on restore" rule are removed. `DatabaseStorage` has no `graph` verb (the router answers `_backend_unsupported`); the edge code that carries the liveness term is `collect_graph` (`signals.py` L84, already `deleted_at IS NULL`), `mkedge_rows`' endpoint resolve, `links.py`'s candidates, and the reindex reclaim (`edges.py` L302, L353 `is_trash_path`; `backend.py` L749). Reindex stops reclaiming edges on tombstoned endpoints.
+7. **The trash view.** `/.vfs/trash/<rest>` addresses the tombstoned rows at `<rest>`: the trash head is stripped before pattern and scope compilation and before the Python gate (`passes_gates`, `scope.py` L94, which rejects non-meta paths today), the liveness term flips to `deleted_at IS NOT NULL`, and observations carry the row's own path with `deleted_at` projected, under the caller's ordinary rights. `ls /.vfs/trash` lists tombstoned roots (`trash_root_id = entry_id`) at every depth; `ls /.vfs/trash/d` lists the children of tombstoned `/d`; `tree`, `glob`, `grep` and `glean` under the head match `<rest>` against row paths with the flipped term. `/.vfs/trash` itself is a synthesized directory row in the result, never a stored row; the hour buckets are gone. A `write` or `mkdir` at `/.vfs/trash/...` classifies `invalid` (the existing meta-root rule, extended one segment). The router already resolves `/mine/.vfs/trash` per mount (`without_mount`, `base.py` L2749).
+8. **Sweep.** `destroy /.vfs/trash` (and the retention pass) purges rows with `deleted_at < now − trash_days` whose `trash_root_id` is their own id, each with every row sharing that root id, chunked by id through the existing purge arm. No bucket name is parsed; the orphan reclaim runs as today.
+9. **No other mutation reaches a tombstoned row.** The restore-only gate rule of spec 156 is not written; `not_found` from rule 2 is the answer everywhere.
+10. **Scale.** Delete and restore issue a flat number of statements in batch size (the spy pins ≤ today's 45 and 29 at N = 1,000 and 2,000; memo §1.1) and touch one `vfs_entries` row per entry and zero `vfs_segments` rows. No dialect-specific DDL is added.
 
 ### The version mint (slice B)
 
-A write that replaces a body — overwrite of a live file, or a revive —
-inserts one `vfs_versions` row in the same transaction carrying the
-replaced body (text in `content`, bytes in `data` as a snapshot per
-152 §3; `is_snapshot = true`, `version_diff` null), the replaced
-`version` as `version_number`, its `content_hash`, `size_bytes` and
-`lines`, the attribution columns of ADR 064 (`actor`, `provenance`,
-`source_identity`, `grant_revision` from one `read_revision` per write
-transaction), and `created_at`; and one `vfs_version_subjects` row per
-subject in a second paged insert. Creates mint nothing; a revive of a
-directory mints nothing (`content_hash` is not null). A batch mints in
-bulk through `bulk_insert`, paged by `rows_per_statement` for the
-fourteen-column row. The read-side verb and retention are spec 161's.
+A write that replaces a body — overwrite of a live file, or a revive — inserts one `vfs_versions` row in the same transaction carrying the replaced body (text in `content`, bytes in `data` as a snapshot per 152 §3; `is_snapshot = true`, `version_diff` null), the replaced `version` as `version_number`, its `content_hash`, `size_bytes` and `lines`, the attribution columns of ADR 064 (`actor`, `provenance`, `source_identity`, `grant_revision` from one `read_revision` per write transaction), and `created_at`; and one `vfs_version_subjects` row per subject in a second paged insert. Creates mint nothing; a revive of a directory mints nothing (`content_hash` is not null). A batch mints in bulk through `bulk_insert`, paged by `rows_per_statement` for the fourteen-column row. The read-side verb and retention are spec 161's.
 
 ## Scope
 
-- **Slice A — the tombstone.** Columns, indexes and the format
-  version; `liveness_filters`; the parent gate; the rights algebra
-  simplification; delete, restore and sweep in `topology.py`; the
-  restore gate in `backend.py` L740–760 (`original_parent_id`,
-  `is_trash_path`); the edge rules; the view; `Observation`; the
-  router's `restore` docstring and `check_mutable_path`'s
-  (`paths.py` L781–788); the `edges.py` and `indexing.py` docstrings;
-  the conformance suite's trash arc rewritten; STATUS.md.
-- **Slice B — the revive and the mint.** Staging and the guarded
-  update; `_CLOBBER_COLUMNS`; the version insert; the bulk shape;
-  `python -O` parity.
-- Out of scope: the read-side `versions` verb and version retention
-  (161); hiding tombstoned rows from the in-memory grep oracle beyond
-  the shared predicate; a per-row "who deleted" column (the version
-  row's actor covers the revive; delete's actor is the audit's).
+- **Slice A — the tombstone.** Columns, indexes and the format version; `liveness_filters`; the parent gate; the rights algebra simplification; delete, restore and sweep in `topology.py`; the restore gate in `backend.py` L740–760 (`original_parent_id`, `is_trash_path`); the edge rules; the view; `Observation`; the router's `restore` docstring and `check_mutable_path`'s (`paths.py` L781–788); the `edges.py` and `indexing.py` docstrings; the conformance suite's trash arc rewritten; STATUS.md.
+- **Slice B — the revive and the mint.** Staging and the guarded update; `_CLOBBER_COLUMNS`; the version insert; the bulk shape; `python -O` parity.
+- Out of scope: the read-side `versions` verb and version retention (161); hiding tombstoned rows from the in-memory grep oracle beyond the shared predicate; a per-row "who deleted" column (the version row's actor covers the revive; delete's actor is the audit's).
 
 ## Acceptance criteria
 
-- After `delete /d` on a directory of N files, `vfs_entries` holds the
-  same N+1 paths with `deleted_at` set and `trash_root_id` = `/d`'s id;
-  `vfs_segments` is unchanged; the spy counts one `UPDATE vfs_entries`
-  page set and no segment statements, flat across N = 1,000 and 2,000.
-- `read`, `ls`, `tree`, `glob`, `grep`, `glean` and `stat` never
-  surface a tombstoned row outside `/.vfs/trash`; one test per verb;
-  `collect_graph` and `links` never return an edge with a tombstoned
-  endpoint.
-- Under a `private` posture, bob's `glob` and `tree` of `/.vfs/trash`
-  show nothing of alice's deleted file; alice's show it at its own
-  path with `deleted_at`. The statement for an unscoped visible read
-  carries one form per piece branch (counted via the compiled SQL)
-  and seeks on the liveness index on every engine leg.
-- `restore /d` clears every row sharing the root id and nothing else;
-  a child deleted earlier on its own stays tombstoned; `restore
-  /d/f.md` while `/d` is tombstoned refuses `not_found` with
-  `data["vfs.trash_root"]` naming `/d`'s id.
-- `write /d/new.md` under a tombstoned `/d` refuses `not_found`, with
-  and without `parents=True`.
-- `write /d/f1.md` after `delete /d/f1.md` returns an `updated`
-  observation with the same `entry_id`, the row is live, and
-  `vfs_versions` holds one row with the old body, `is_snapshot` true
-  and the caller as actor. `write` of a file at a tombstoned
-  directory's path refuses `wrong_kind` with `data["vfs.trashed"]`
-  true.
-- `write /.vfs/trash/x` refuses `invalid`; `edit` at a tombstoned path
-  refuses `not_found` with `data["vfs.trashed"]` true for an admitted
-  caller and absent for one who could not see the row; a 10,000-path
-  `read` with half the paths tombstoned issues the same statement
-  count as one with none.
-- `ls /.vfs/trash` lists tombstoned roots at every depth;
-  `glob("/.vfs/trash/**/*.md")` matches tombstoned markdown rows at
-  their own paths.
-- `destroy /.vfs/trash` with `trash_days=0` purges every tombstoned
-  root and its cascade and runs the orphan reclaim; family rows
-  (content, blobs, chunks, postings, edges, versions) go with them.
-- Authored edges on a tombstoned endpoint are hidden from
-  `collect_graph` and return on restore and on revive.
-- `scripts/ci.sh 3.13` green; the four engine legs green (the db_test
-  skill); `cargo test -p vfs-core` untouched.
+- After `delete /d` on a directory of N files, `vfs_entries` holds the same N+1 paths with `deleted_at` set and `trash_root_id` = `/d`'s id; `vfs_segments` is unchanged; the spy counts one `UPDATE vfs_entries` page set and no segment statements, flat across N = 1,000 and 2,000.
+- `read`, `ls`, `tree`, `glob`, `grep`, `glean` and `stat` never surface a tombstoned row outside `/.vfs/trash`; one test per verb; `collect_graph` and `links` never return an edge with a tombstoned endpoint.
+- Under a `private` posture, bob's `glob` and `tree` of `/.vfs/trash` show nothing of alice's deleted file; alice's show it at its own path with `deleted_at`. The statement for an unscoped visible read carries one form per piece branch (counted via the compiled SQL) and seeks on the liveness index on every engine leg.
+- `restore /d` clears every row sharing the root id and nothing else; a child deleted earlier on its own stays tombstoned; `restore /d/f.md` while `/d` is tombstoned refuses `not_found` with `data["vfs.trash_root"]` naming `/d`'s id.
+- `write /d/new.md` under a tombstoned `/d` refuses `not_found`, with and without `parents=True`.
+- `write /d/f1.md` after `delete /d/f1.md` returns an `updated` observation with the same `entry_id`, the row is live, and `vfs_versions` holds one row with the old body, `is_snapshot` true and the caller as actor. `write` of a file at a tombstoned directory's path refuses `wrong_kind` with `data["vfs.trashed"]` true.
+- `write /.vfs/trash/x` refuses `invalid`; `edit` at a tombstoned path refuses `not_found` with `data["vfs.trashed"]` true for an admitted caller and absent for one who could not see the row; a 10,000-path `read` with half the paths tombstoned issues the same statement count as one with none.
+- `ls /.vfs/trash` lists tombstoned roots at every depth; `glob("/.vfs/trash/**/*.md")` matches tombstoned markdown rows at their own paths.
+- `destroy /.vfs/trash` with `trash_days=0` purges every tombstoned root and its cascade and runs the orphan reclaim; family rows (content, blobs, chunks, postings, edges, versions) go with them.
+- Authored edges on a tombstoned endpoint are hidden from `collect_graph` and return on restore and on revive.
+- `scripts/ci.sh 3.13` green; the four engine legs green (the db_test skill); `cargo test -p vfs-core` untouched.
 
 ## Landing notes (2026-10-11, both slices, uncommitted)
 
 Built as specified, with these decisions and deviations:
 
-- **The liveness index.** No column was prepended to
-  `ix_vfs_entries_everyone_path`: a leading `IS NULL` is not an access
-  predicate on Oracle, and on every engine the live read keeps its
-  seek on `(everyone_level, path)` with `deleted_at IS NULL` as a
-  residual. Two single-column indexes were added instead,
-  `ix_vfs_entries_deleted_at` (the view and the retention sweep) and
-  `ix_vfs_entries_trash_root` (restore's and the purge's root sets);
-  both hold the tombstoned rows alone on Oracle. SQLite cannot seek
-  `IS NOT NULL`, so the view's own listing is a bounded walk there;
-  `test_trash.py` pins that the live partial read seeks an index and
-  never scans, and the per-engine EXPLAIN is db_test's to pin.
-- **The write gate's reading of a tombstone.** A tombstoned row the
-  caller may see is `not_found` with the hint to a *read*; to a
-  mutation (restore, sweep, edit, move) it is judged by its label and
-  owner as an occupied path is, so a caller who may see but not write
-  it is `permission_denied`, never told it is absent. A hidden
-  directory, live or deleted, with a deleted row the caller sees
-  beneath it is on the road (the trash view already shows it so).
-- **The trash head in the path grammar.** `check_mutable_path` refuses
-  every path strictly beneath `/.vfs/trash`; the head itself passes
-  because `sweep` addresses it, and the storage's write plan refuses
-  the head and everything beneath it as `invalid`.
-- **Sweep of the view** needs write rights over the whole mount
-  (`subtrees([ROOT])`), because the retention arm may destroy a row
-  anywhere; a partial caller is `permission_denied` at the head.
-- **`mkedge`** at a tombstoned endpoint classifies through the descent
-  ladder, so it carries the hint like every other verb in rule 2.
-- **Transfers.** A move carries a tombstoned descendant with its tree;
-  a copy reproduces the live rows alone. A transfer onto a tombstoned
-  occupant refuses `exists` with the hint (one row per path).
-- **`add_mount`** restores a mount-point directory an unmount deleted
-  (the remount-after-unmount shape would otherwise refuse `not_found`).
-- **The mint** (`versions.py`) measures hash, size and lines from the
-  body it reads, never from the entry row (an arbitration clobber has
-  already overwritten that row), and numbers the row `version - 1`.
-  A row with no body row mints nothing. It runs after the entry
-  updates and before the bodies are replaced.
-- **`Observation`** loses `trash_path` and gains the `deleted_at`
-  mirror, which every row served through the view projects.
-- **Search scope.** A grep or glean channel is one side of the
-  tombstone: every admission under the head, or none; a mix refuses
-  `invalid`.
-- **Spy counts** (`test_trash.py`): delete and restore of a 1,000- and
-  2,000-file directory each issue ≤ 10 statements, flat in N, and no
-  statement touches `vfs_segments`.
-- **An identical body mints nothing** (Clay, 2026-10-12, review of the
-  landing). The mint compares the pre-image's hash with the staged
-  `content_hash` and skips an equal one: an agent rewriting an
-  unchanged file leaves no history behind. The slice B sentence "a
-  write that replaces a body" reads "replaces it with a different
-  body".
-- **The update guard carries the tombstone side** (review of the
-  landing, 2026-10-12). The old delete rewrote every descendant's
-  path, so a guarded overwrite's `path = path-at-snapshot` term missed
-  after a parent's delete. The tombstone rewrites no path and bumps no
-  descendant, and an ordinary overwrite bumps no parent, so the
-  version-and-path guard alone passed and the clobber cleared the
-  child's tombstone: a live file under a deleted directory, and after
-  retention a row with a destroyed parent (reproduced sequentially on
-  SQLite; reachable on every server engine, where writes are not
-  serialized with topology). Every material update now proves its side
-  of the tombstone with no bind: `deleted_at IS NULL` for an overwrite
-  and an absorb, `deleted_at IS NOT NULL` for a revive, so a rival
-  restore mid-window misses too. The guarded rows run as two groups,
-  one per side. Pinned by `TestStaleSnapshotGuards` (the stale-snapshot
-  shape, on SQLite) and a new forward-ordering race in `test_races.py`
-  (overwrite and edit under a `delete` carrier, the engine legs).
-- **The clobber's VALUES join casts the tombstone columns** (the
-  Postgres leg, 2026-10-12). `_CLOBBER_COLUMNS` gained `deleted_at` and
-  `trash_root_id`, both always NULL in a clobber, and Postgres types an
-  all-NULL `VALUES` column as text, so every set-based overwrite on
-  Postgres failed with a type error until the typed-cell cast widened
-  from integers to timestamps, identities and flags. SQLite never takes
-  that path, which is why the sqlite suite was green.
-- **pgvector is a precondition, never installed** (ADR 077, the same
-  leg): three first touches on the fresh cluster raced on `CREATE
-  EXTENSION IF NOT EXISTS`. The DDL event is gone; the profile declares
-  the probe and the fix it names (`vector_function`), first touch runs it on
-  every engine that declares one, and the compose init script installs
-  the extension once.
-- **`topology.py` is three files** (Clay, 2026-10-12). Delete, restore
-  and sweep rewrite no path, parent pointer or posting anymore, so they
-  no longer belong in the module whose docstring defines topology as
-  exactly that. `trash.py` owns the three tombstone verbs with the
-  cascades, the restore verdict, the purge and the orphan reclaim;
-  `topology.py` keeps move and copy; `serialized.py` is the kit both
-  share — the serialization point, the guarded claim, the bump, the
-  snapshot and point reads, the destination parent gate, and the
-  re-read observation of an executed batch. The locking discipline is
-  unchanged: every verb in both files still takes the per-mount
-  serialization point first, because delete's cascade is one `LIKE`
-  over a subtree a concurrent move could otherwise interleave with.
-- **Not done here:** the engine legs (db_test), the archive move and
-  the status lines on 081/082/083 (task 16, on landing), spec 156's
-  rule 2 stub and spec 150 §8's note.
+- **The liveness index.** No column was prepended to `ix_vfs_entries_everyone_path`: a leading `IS NULL` is not an access predicate on Oracle, and on every engine the live read keeps its seek on `(everyone_level, path)` with `deleted_at IS NULL` as a residual. Two single-column indexes were added instead, `ix_vfs_entries_deleted_at` (the view and the retention sweep) and `ix_vfs_entries_trash_root` (restore's and the purge's root sets); both hold the tombstoned rows alone on Oracle. SQLite cannot seek `IS NOT NULL`, so the view's own listing is a bounded walk there; `test_trash.py` pins that the live partial read seeks an index and never scans, and the per-engine EXPLAIN is db_test's to pin.
+- **The write gate's reading of a tombstone.** A tombstoned row the caller may see is `not_found` with the hint to a *read*; to a mutation (restore, sweep, edit, move) it is judged by its label and owner as an occupied path is, so a caller who may see but not write it is `permission_denied`, never told it is absent. A hidden directory, live or deleted, with a deleted row the caller sees beneath it is on the road (the trash view already shows it so).
+- **The trash head in the path grammar.** `check_mutable_path` refuses every path strictly beneath `/.vfs/trash`; the head itself passes because `sweep` addresses it, and the storage's write plan refuses the head and everything beneath it as `invalid`.
+- **Sweep of the view** needs write rights over the whole mount (`subtrees([ROOT])`), because the retention arm may destroy a row anywhere; a partial caller is `permission_denied` at the head.
+- **`mkedge`** at a tombstoned endpoint classifies through the descent ladder, so it carries the hint like every other verb in rule 2.
+- **Transfers.** A move carries a tombstoned descendant with its tree; a copy reproduces the live rows alone. A transfer onto a tombstoned occupant refuses `exists` with the hint (one row per path).
+- **`add_mount`** restores a mount-point directory an unmount deleted (the remount-after-unmount shape would otherwise refuse `not_found`).
+- **The mint** (`versions.py`) measures hash, size and lines from the body it reads, never from the entry row (an arbitration clobber has already overwritten that row), and numbers the row `version - 1`. A row with no body row mints nothing. It runs after the entry updates and before the bodies are replaced.
+- **`Observation`** loses `trash_path` and gains the `deleted_at` mirror, which every row served through the view projects.
+- **Search scope.** A grep or glean channel is one side of the tombstone: every admission under the head, or none; a mix refuses `invalid`.
+- **Spy counts** (`test_trash.py`): delete and restore of a 1,000- and 2,000-file directory each issue ≤ 10 statements, flat in N, and no statement touches `vfs_segments`.
+- **An identical body mints nothing** (Clay, 2026-10-12, review of the landing). The mint compares the pre-image's hash with the staged `content_hash` and skips an equal one: an agent rewriting an unchanged file leaves no history behind. The slice B sentence "a write that replaces a body" reads "replaces it with a different body".
+- **The update guard carries the tombstone side** (review of the landing, 2026-10-12). The old delete rewrote every descendant's path, so a guarded overwrite's `path = path-at-snapshot` term missed after a parent's delete. The tombstone rewrites no path and bumps no descendant, and an ordinary overwrite bumps no parent, so the version-and-path guard alone passed and the clobber cleared the child's tombstone: a live file under a deleted directory, and after retention a row with a destroyed parent (reproduced sequentially on SQLite; reachable on every server engine, where writes are not serialized with topology). Every material update now proves its side of the tombstone with no bind: `deleted_at IS NULL` for an overwrite and an absorb, `deleted_at IS NOT NULL` for a revive, so a rival restore mid-window misses too. The guarded rows run as two groups, one per side. Pinned by `TestStaleSnapshotGuards` (the stale-snapshot shape, on SQLite) and a new forward-ordering race in `test_races.py` (overwrite and edit under a `delete` carrier, the engine legs).
+- **The clobber's VALUES join casts the tombstone columns** (the Postgres leg, 2026-10-12). `_CLOBBER_COLUMNS` gained `deleted_at` and `trash_root_id`, both always NULL in a clobber, and Postgres types an all-NULL `VALUES` column as text, so every set-based overwrite on Postgres failed with a type error until the typed-cell cast widened from integers to timestamps, identities and flags. SQLite never takes that path, which is why the sqlite suite was green.
+- **pgvector is a precondition, never installed** (ADR 077, the same leg): three first touches on the fresh cluster raced on `CREATE EXTENSION IF NOT EXISTS`. The DDL event is gone; the profile declares the probe and the fix it names (`vector_function`), first touch runs it on every engine that declares one, and the compose init script installs the extension once.
+- **`topology.py` is three files** (Clay, 2026-10-12). Delete, restore and sweep rewrite no path, parent pointer or posting anymore, so they no longer belong in the module whose docstring defines topology as exactly that. `trash.py` owns the three tombstone verbs with the cascades, the restore verdict, the purge and the orphan reclaim; `topology.py` keeps move and copy; `serialized.py` is the kit both share — the serialization point, the guarded claim, the bump, the snapshot and point reads, the destination parent gate, and the re-read observation of an executed batch. The locking discipline is unchanged: every verb in both files still takes the per-mount serialization point first, because delete's cascade is one `LIKE` over a subtree a concurrent move could otherwise interleave with.
+- **Not done here:** the engine legs (db_test), the archive move and the status lines on 081/082/083 (task 16, on landing), spec 156's rule 2 stub and spec 150 §8's note.

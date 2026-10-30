@@ -163,18 +163,14 @@ Rating: **built / partial / planned / missing**.
 ## 5. Proposed roadmap stories
 
 ### S1. Settle the default local embedder (ADR 060 vs model2vec)
-**Why.** The accepted decision and the shipped code disagree. Theme 3 needs one documented "pip install vfs-py[embed-local]; DatabaseStorage(embedder=LocalEmbedder())" answer. Two lawful outcomes: (a) build `FastEmbedEmbeddingProvider` (MiniLM, 384-d, ONNX Runtime, ~100 MB of wheels incl. numpy in the extra only) as ADR 060 says; (b) amend ADR 060 to make potion-base-8M the default and keep fastembed as a documented LangChain route. The study measured MiniLM fused 0.7998 vs potion 0.7809 on vfs_native, 0.6903 vs 0.6583 on scifact; potion is ~15× faster to embed and 3× lighter.
-**Depends on.** Clay's decision (Q1). S2 if (a).
-**Acceptance.**
+**Why.** The accepted decision and the shipped code disagree. Theme 3 needs one documented "pip install vfs-py[embed-local]; DatabaseStorage(embedder=LocalEmbedder())" answer. Two lawful outcomes: (a) build `FastEmbedEmbeddingProvider` (MiniLM, 384-d, ONNX Runtime, ~100 MB of wheels incl. numpy in the extra only) as ADR 060 says; (b) amend ADR 060 to make potion-base-8M the default and keep fastembed as a documented LangChain route. The study measured MiniLM fused 0.7998 vs potion 0.7809 on vfs_native, 0.6903 vs 0.6583 on scifact; potion is ~15× faster to embed and 3× lighter. **Depends on.** Clay's decision (Q1). S2 if (a). **Acceptance.**
 - `vfs.embedding` exports exactly the providers the ADR names; `pyproject.toml` `embed-local` lists their packages; `tests/embedding/test_provider.py::test_every_provider_satisfies_the_seam` covers each.
 - The provider's `model_id` is `provider/model@dim` and the identity pin in `tests/ranking/test_embedders.py` records its digest for `PIN_SENTENCE`; the test skips (printed reason) when the model is not cached, never downloads.
 - `README.md` and a new `docs/how-to/configure-an-embedding-provider.md` show the one-line opt-in; the docs fence test (Sybil) executes the snippet against `InMemoryStorage`.
 - ADR 060's status line records the outcome; no stale "fastembed" claim remains in `context/` living pages (`grep -rn fastembed context/architecture docs` is empty or points at the ADR).
 
 ### S2. The embed step converges for slow providers (the ADR 060 committed-to fix)
-**Why.** `EMBED_TIMEOUT_SECONDS=120` is per request and `LOCAL_BATCH_INPUTS=2048`; any provider under ~17 chunks/s never lands a vector and every rerun repeats the same failure. A hosted provider's 2,048-input batch at a low tier has the same shape.
-**Depends on.** none.
-**Acceptance.**
+**Why.** `EMBED_TIMEOUT_SECONDS=120` is per request and `LOCAL_BATCH_INPUTS=2048`; any provider under ~17 chunks/s never lands a vector and every rerun repeats the same failure. A hosted provider's 2,048-input batch at a low tier has the same shape. **Depends on.** none. **Acceptance.**
 - A `ScriptedProvider` whose per-input latency makes a 2,048-input batch exceed the timeout still finishes `reindex` with `unembedded == 0` (the step halves the batch, or budgets time per input — design choice recorded in `embed.py`'s docstring); assert on the request count, not the clock.
 - A batch that times out is retried at a smaller size at most `log2(max_batch_inputs)` times before the step records `unavailable`; the count of requests issued is pinned.
 - `LocalEmbeddingProvider.max_batch_inputs` defaults to a value the memo justifies (≤ 256) and the pin in `tests/embedding/test_provider.py::test_the_declared_caps` is updated.
@@ -182,9 +178,7 @@ Rating: **built / partial / planned / missing**.
 - The `embedding` extra gains `retried` (batches shrunk) so operators can see it.
 
 ### S3. Provider configuration by name for `serve()`, the CLI and ETL configs
-**Why.** Themes 6 and 8 cannot pass a Python object. A small registry — `embedder_from_spec("model2vec:minishlab/potion-base-8M")`, `"openai:text-embedding-3-small@1024"`, `"hash:64"`, `"langchain:<dotted factory>"` — plus env-var resolution of API keys gives one spelling for `DatabaseStorage(embedder=…)`, the MCP server's mount table, and a config file. Keep the object form.
-**Depends on.** S1; spec 171 (MCP) for the consumer.
-**Acceptance.**
+**Why.** Themes 6 and 8 cannot pass a Python object. A small registry — `embedder_from_spec("model2vec:minishlab/potion-base-8M")`, `"openai:text-embedding-3-small@1024"`, `"hash:64"`, `"langchain:<dotted factory>"` — plus env-var resolution of API keys gives one spelling for `DatabaseStorage(embedder=…)`, the MCP server's mount table, and a config file. Keep the object form. **Depends on.** S1; spec 171 (MCP) for the consumer. **Acceptance.**
 - `vfs.embedding.embedder_from_spec` parses the four schemes; an unknown scheme or a malformed `@dim` raises `ValueError` naming the schemes (construction time, never a `Result`).
 - `openai:` resolves the client from `OPENAI_API_KEY` and refuses `ValueError` when it is absent; the test uses a fake transport and sets the env var with `monkeypatch`.
 - `model2vec:` without the extra raises the classified `ImportError` naming `vfs-py[embed-local]` (existing test extended).
@@ -192,44 +186,34 @@ Rating: **built / partial / planned / missing**.
 - `docs/how-to/configure-an-embedding-provider.md` documents the grammar.
 
 ### S4. Hybrid determinism and quality pins on every engine
-**Why.** Theme 3 is "BM25 + vector at query time" on SQLite, Postgres, MSSQL and Oracle (theme 2). The ordered hybrid pin runs only on sqlite + memory; server engines run the contract but no ordered pin. ADR 051 promised byte-identical rankings on all five engines.
-**Depends on.** none (engine legs via `db_test`).
-**Acceptance.**
+**Why.** Theme 3 is "BM25 + vector at query time" on SQLite, Postgres, MSSQL and Oracle (theme 2). The ordered hybrid pin runs only on sqlite + memory; server engines run the contract but no ordered pin. ADR 051 promised byte-identical rankings on all five engines. **Depends on.** none (engine legs via `db_test`). **Acceptance.**
 - `tests/ranking/test_harness.py` gains `test_the_hybrid_ordered_top10_pin_holds_on_a_server(env_var)` parametrized over `ENGINE_LEGS`, asserting `top10_hybrid.json` through the verb on a server mount carrying the 64-d hashing embedder; deselected when the URL is unset.
 - A fused-arm gate on vfs_native: with the potion model cached, `ndcg@10(fused) >= ndcg@10(bm25) - GATE`; skips with a printed reason when the model is absent.
 - `test_vector_leg.py::TestReferee` runs on each engine leg: the engine's top-`depth` order equals `cosine_topk`'s over the same rows (count the rows compared, not time).
 - The `legs` extra on each server reports `tier` ∈ {`native_exact`, `native_ann`} as the profile declares (`mssql` exact, `oracle`/`mariadb`/`postgresql` ann when indexed).
 
 ### S5. Width change is a migration, not a re-provision
-**Why.** ADR 054 pin 4 promised "reindex is the migration". At equal width it is; at a new width on a native column first touch refuses `invalid` and names re-provisioning. A host that upgrades from a 1536-d to a 1024-d model should run `reindex`, not drop the mount.
-**Depends on.** none.
-**Acceptance.**
+**Why.** ADR 054 pin 4 promised "reindex is the migration". At equal width it is; at a new width on a native column first touch refuses `invalid` and names re-provisioning. A host that upgrades from a 1536-d to a 1024-d model should run `reindex`, not drop the mount. **Depends on.** none. **Acceptance.**
 - A mount stamped `openai/text-embedding-3-small@1536` reconfigured with a 1024-d provider: first touch succeeds with a `conflict` record (`reason="stale_identity"`), glean serves lexical-only, and `reindex` rebuilds the vector column at the new width (per-dialect DDL under the lease: `ALTER … TYPE vector(1024)` on Postgres; drop-and-add on MSSQL/MariaDB/Oracle), clears vectors, re-embeds and re-stamps. Pinned on sqlite (packed column, no DDL) and on each engine leg by reading the column width from the live catalog.
 - The pgvector index is recreated at the new width; `test_sqlite_vec.py` style pins cover `permission_denied` when the role may not alter.
 - `engine.py:583-592` no longer refuses on width; `test_embed.py::test_a_stored_width_other_than_the_native_columns_refuses_at_first_touch` is replaced by the migration pin.
 - Statement count of the migration is pinned (one DDL + one clear + the embed step's pages).
 
 ### S6. Close the ADR 065 paperwork: the statistics-leak regression test and the trait truth
-**Why.** ADR 065 asked for S2's leak scripts to become a regression test; the visible lexicon exists but nothing asserts that a hidden row cannot move a visible score. Separately the `glean_staleness` trait should not claim overlay for the vector leg.
-**Depends on.** none.
-**Acceptance.**
+**Why.** ADR 065 asked for S2's leak scripts to become a regression test; the visible lexicon exists but nothing asserts that a hidden row cannot move a visible score. Separately the `glean_staleness` trait should not claim overlay for the vector leg. **Depends on.** none. **Acceptance.**
 - A test writes a corpus, hides half from `bob`, and asserts that for every probe term `result.lexical_stats["terms"][t]["df"]` and every visible row's score are identical whether the hidden half exists or has been deleted (two mounts, same visible rows); the hidden count is unrecoverable from `n_docs`.
 - Under the clause fan (generic floor profile) the same assertion holds (the fan merges per clause).
 - `traits()` gains or refines a key so `glean_staleness` reads `overlay` for the lexical leg and the vector leg's staleness is declared (`reindex`); `storage/protocol.py`'s vocabulary and its drift test are updated; spec 179's `FEATURES` drift test agrees.
 - `docs/reference/api.md` states it.
 
 ### S7. glean reference docs and the embedder how-to (spec 152 slice D's search half)
-**Why.** `docs/reference/api.md` has no glean section; the README promises hybrid search. 0.1.0 is the first version anyone is asked to depend on (spec 166).
-**Depends on.** S1, S3.
-**Acceptance.**
+**Why.** `docs/reference/api.md` has no glean section; the README promises hybrid search. 0.1.0 is the first version anyone is asked to depend on (spec 166). **Depends on.** S1, S3. **Acceptance.**
 - `api.md` documents `glean` parameters, the records (`no_provider`, `stale_identity`, `embed_failed`, `truncated`), the `legs` and `lexical_stats` extras, `Ranker`/`Convex`/`RRF`/`Signal`, and `install_extensions`.
 - The how-to shows SQLite (sqlite-vec, nothing to install), Postgres (`CREATE EXTENSION` or `install_extensions()`), MSSQL 2025 and Oracle 23ai prerequisites.
 - Every fenced example executes under the Sybil docs gate in `scripts/ci.sh`.
 
 ### S8 (optional for 0.1.0). Fusion weights the harness tunes and a provider can declare
-**Why.** Study finding 4: equal weights drag a strong leg down; the right α is corpus- and model-dependent. Minimal form: let a provider declare a suggested `fusion_weight`, keep `Ranker` the authority, and record per-model α in the harness.
-**Depends on.** S4.
-**Acceptance.** `Ranker()` with no explicit fusion reads the provider's suggestion when present else 0.5; the hybrid pin is re-recorded; the harness's `optimize_fusion` output is checked into `tests/fixtures/ranking/` for hash and potion.
+**Why.** Study finding 4: equal weights drag a strong leg down; the right α is corpus- and model-dependent. Minimal form: let a provider declare a suggested `fusion_weight`, keep `Ranker` the authority, and record per-model α in the harness. **Depends on.** S4. **Acceptance.** `Ranker()` with no explicit fusion reads the provider's suggestion when present else 0.5; the hybrid pin is re-recorded; the harness's `optimize_fusion` output is checked into `tests/fixtures/ranking/` for hash and potion.
 
 ### S9 (not needed for theme 3; Clay's call). Render at write (spec 159), images (152 C), imports edges (147)
 These are independent of the embedding theme. 159 matters once agents upload PDFs through the MCP server and expect `grep` to work before a `reindex`; 147 matters once signals are on by default for code corpora.

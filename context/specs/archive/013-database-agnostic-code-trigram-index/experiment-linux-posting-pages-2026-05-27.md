@@ -2,9 +2,7 @@
 
 Date: 2026-05-27
 
-Purpose: use real Linux source data and a localhost Postgres database to inform
-Story 013's posting-list storage design, especially whether posting blocks
-should be large blobs or page-shaped segments.
+Purpose: use real Linux source data and a localhost Postgres database to inform Story 013's posting-list storage design, especially whether posting blocks should be large blobs or page-shaped segments.
 
 ## Harness
 
@@ -24,11 +22,7 @@ uv run --with asyncpg python scripts/bench_linux_trigram_posting_pages.py \
   --staging-rows 100000
 ```
 
-The script creates a fresh `vfs_linux_trgm_bench` database, extracts folded VFS
-byte trigrams from `/Users/claygendron/Git/Repos/linux`, materializes compressed
-posting pages in Postgres, measures storage/read timings, measures a real append
-batch against an existing base index, and drops the database unless `--keep-db`
-is passed.
+The script creates a fresh `vfs_linux_trgm_bench` database, extracts folded VFS byte trigrams from `/Users/claygendron/Git/Repos/linux`, materializes compressed posting pages in Postgres, measures storage/read timings, measures a real append batch against an existing base index, and drops the database unless `--keep-db` is passed.
 
 ## Corpus
 
@@ -45,9 +39,7 @@ is passed.
 | Median gram document frequency | 5 |
 | Max gram document frequency | 8,265 |
 
-The chunk count is intentionally smaller than the full Linux tree so the
-experiment can be rerun quickly. It is large enough to produce hot grams that
-cross 2 KB, 4 KB, and 8 KB compressed payload targets.
+The chunk count is intentionally smaller than the full Linux tree so the experiment can be rerun quickly. It is large enough to produce hot grams that cross 2 KB, 4 KB, and 8 KB compressed payload targets.
 
 ## Results
 
@@ -65,9 +57,7 @@ payload  blocks     load_s  read_s  table     total     toast     avg_docs  p95_
  65,536  120,437    1.546   0.014     18 MB     30 MB    384 kB      76.3       277     80    294  8,264
 ```
 
-Read timing fetches and decodes up to four rarest grams for each built-in query
-literal. This is a narrow candidate-generation microbenchmark, not a complete
-grep benchmark.
+Read timing fetches and decodes up to four rarest grams for each built-in query literal. This is a narrow candidate-generation microbenchmark, not a complete grep benchmark.
 
 Write-path staging measurement from the same run:
 
@@ -106,10 +96,7 @@ Staging measurement from the same default-storage run:
 100,000 staging rows inserted in 1.044s
 ```
 
-`append_s` times only the database insert of already-built posting pages. It
-does not include Python gram extraction or page construction. That is deliberate:
-the storage question is whether immutable page insertion is plausible once the
-indexer has a batch of sorted doc IDs.
+`append_s` times only the database insert of already-built posting pages. It does not include Python gram extraction or page construction. That is deliberate: the storage question is whether immutable page insertion is plausible once the indexer has a batch of sorted doc IDs.
 
 ### Forced Inline Storage
 
@@ -125,8 +112,7 @@ uv run --with asyncpg python scripts/bench_linux_trigram_posting_pages.py \
   --storage plain
 ```
 
-`ALTER TABLE posting_pages ALTER COLUMN postings SET STORAGE PLAIN` avoids TOAST
-for tested payloads through 4 KB:
+`ALTER TABLE posting_pages ALTER COLUMN postings SET STORAGE PLAIN` avoids TOAST for tested payloads through 4 KB:
 
 ```text
 payload  blocks     load_s  append_s  append_rows  read_s  table     total     toast     avg_docs  p95_docs  avg_B  p95_B  max_B
@@ -143,8 +129,7 @@ The same `PLAIN` run fails at the 8 KB target:
 asyncpg.exceptions.ProgramLimitExceededError: row is too big: size 8280, maximum size 8160
 ```
 
-So forced-inline storage is useful as a guardrail, but the hard payload ceiling
-must stay comfortably below 8 KB if `PLAIN` is enabled.
+So forced-inline storage is useful as a guardrail, but the hard payload ceiling must stay comfortably below 8 KB if `PLAIN` is enabled.
 
 A retained inspection database was then created with:
 
@@ -171,40 +156,19 @@ toast relation size: 8192 bytes
 
 ## Implications
 
-1. **A 64 KB default is not justified for Postgres.** On this real corpus, the
-   largest hot gram only needs an 8,264-byte encoded blob. Allowing 64 KB does
-   not improve row count over 16 KB for this sample, and it invites much larger
-   TOASTed values on bigger corpora.
+1. **A 64 KB default is not justified for Postgres.** On this real corpus, the largest hot gram only needs an 8,264-byte encoded blob. Allowing 64 KB does not improve row count over 16 KB for this sample, and it invites much larger TOASTed values on bigger corpora.
 
-2. **Postgres starts showing TOAST once payload targets reach ~2 KB.** The 512 B
-   and 1 KB layouts keep the TOAST table at its empty baseline. The 2 KB target
-   produces measurable TOAST usage. This does not make 2 KB invalid, but it means
-   the design should be explicit about whether small amounts of TOAST are
-   acceptable.
+2. **Postgres starts showing TOAST once payload targets reach ~2 KB.** The 512 B and 1 KB layouts keep the TOAST table at its empty baseline. The 2 KB target produces measurable TOAST usage. This does not make 2 KB invalid, but it means the design should be explicit about whether small amounts of TOAST are acceptable.
 
-3. **Page-shaped rows are viable.** Moving from 512 B to 2 KB reduces posting
-   rows by about 9,000 rows for this sample, while total storage drops from 34 MB
-   to 31 MB. Larger targets produce only minor additional savings.
+3. **Page-shaped rows are viable.** Moving from 512 B to 2 KB reduces posting rows by about 9,000 rows for this sample, while total storage drops from 34 MB to 31 MB. Larger targets produce only minor additional savings.
 
-4. **Append-only immutable-page flush is plausible.** A 1,000-chunk append batch
-   with 985,259 postings compiled to about 40.5k posting-page rows and inserted
-   in roughly 0.4-0.6s. This supports the staging -> background flush model.
-   It does not argue for doing flush inline with user writes; extraction,
-   sorting, and compaction still belong off the foreground path.
+4. **Append-only immutable-page flush is plausible.** A 1,000-chunk append batch with 985,259 postings compiled to about 40.5k posting-page rows and inserted in roughly 0.4-0.6s. This supports the staging -> background flush model. It does not argue for doing flush inline with user writes; extraction, sorting, and compaction still belong off the foreground path.
 
-5. **Forced inline storage is a tradeoff, not an obvious win.** `STORAGE PLAIN`
-   eliminates TOAST through 4 KB but did not improve total size or timing in
-   this run. It also turns too-large rows into hard failures. That is attractive
-   if the design wants strict page-shaped rows, but default storage with a 1 KB
-   target already avoids TOAST on this corpus.
+5. **Forced inline storage is a tradeoff, not an obvious win.** `STORAGE PLAIN` eliminates TOAST through 4 KB but did not improve total size or timing in this run. It also turns too-large rows into hard failures. That is attractive if the design wants strict page-shaped rows, but default storage with a 1 KB target already avoids TOAST on this corpus.
 
-6. **The payload target should be backend-specific.** A Postgres-oriented default
-   should be much closer to 1-2 KB than 64 KB. SQLite or object-storage-backed
-   implementations may choose larger pages.
+6. **The payload target should be backend-specific.** A Postgres-oriented default should be much closer to 1-2 KB than 64 KB. SQLite or object-storage-backed implementations may choose larger pages.
 
-7. **Rarest-first reads dominate the query story.** The read timings are low for
-   these literals because the query path reads selective grams first. Hot grams
-   should be late filters or skipped when they add little selectivity.
+7. **Rarest-first reads dominate the query story.** The read timings are low for these literals because the query path reads selective grams first. Hot grams should be late filters or skipped when they add little selectivity.
 
 ## Recommended Next Defaults
 
@@ -219,10 +183,7 @@ For the Postgres portable-table implementation:
 | Row shape name | posting page / posting segment |
 | Required metadata | `gram_key`, `min_doc_id`, `max_doc_id`, `doc_count`, `byte_count`, `encoding`, `is_active` |
 
-The current `VFSPostingBlock` model already has most of this shape. The main
-schema addition suggested by the experiment is `byte_count`; the main spec
-change is to describe the rows as page-shaped segments and to set a
-backend-specific compressed byte target instead of implying large generic blobs.
+The current `VFSPostingBlock` model already has most of this shape. The main schema addition suggested by the experiment is `byte_count`; the main spec change is to describe the rows as page-shaped segments and to set a backend-specific compressed byte target instead of implying large generic blobs.
 
 For Postgres, the strongest current recommendation is:
 

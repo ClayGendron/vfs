@@ -1,17 +1,13 @@
 # Design: public API across mount boundaries
 
-This is the concrete implementation design for [spec.md](./spec.md). The
-architectural rule is:
+This is the concrete implementation design for [spec.md](./spec.md). The architectural rule is:
 
 ```text
 Across a mount boundary: public API only.
 Inside one filesystem's own storage: private impl is allowed.
 ```
 
-The point is to make a mounted `DatabaseFileSystem` and a mounted MCP server
-look identical to the parent router. The parent passes values and receives
-`VFSResult`. It never sees a SQLAlchemy session, engine, MCP transport, or
-`_*_impl`.
+The point is to make a mounted `DatabaseFileSystem` and a mounted MCP server look identical to the parent router. The parent passes values and receives `VFSResult`. It never sees a SQLAlchemy session, engine, MCP transport, or `_*_impl`.
 
 ## The key correction
 
@@ -20,9 +16,7 @@ look identical to the parent router. The parent passes values and receives
 - the router base class, and
 - the storage-backend base class.
 
-So "base.py never calls `_impl`" is too strong. A direct call like
-`dbfs.read("/x")` must eventually reach `dbfs._read_impl(...)`; otherwise
-`read -> _route_single -> read -> ...` recurses forever.
+So "base.py never calls `_impl`" is too strong. A direct call like `dbfs.read("/x")` must eventually reach `dbfs._read_impl(...)`; otherwise `read -> _route_single -> read -> ...` recurses forever.
 
 The correct rule is narrower and stronger:
 
@@ -51,9 +45,7 @@ async def _call_local_impl(
         return await impl(user_id=user_id, session=session, **kwargs)
 ```
 
-This helper is intentionally local. It is valid only for `self`, never for a
-child mount. A remote mount adapter simply overrides public methods and never
-uses `_call_local_impl`.
+This helper is intentionally local. It is valid only for `self`, never for a child mount. A remote mount adapter simply overrides public methods and never uses `_call_local_impl`.
 
 ## Single-path dispatch
 
@@ -89,8 +81,7 @@ else:
 return result.add_prefix(prefix)
 ```
 
-The parent router still owns path resolution, permission checks, and prefix
-rebasing. The terminal filesystem owns its own transaction.
+The parent router still owns path resolution, permission checks, and prefix rebasing. The terminal filesystem owns its own transaction.
 
 ## MCP target shape
 
@@ -110,8 +101,7 @@ await session.call_tool(
 )
 ```
 
-The local call is still a Python method for speed. The MCP shape is the
-cross-process version of the same call, not an in-process abstraction tax.
+The local call is still a Python method for speed. The MCP shape is the cross-process version of the same call, not an in-process abstraction tax.
 
 VFS results should have conversion helpers at the adapter boundary:
 
@@ -146,13 +136,11 @@ class VFSResult(BaseModel):
         )
 ```
 
-Do not make route code depend on MCP SDK classes directly. Keep the SDK at the
-adapter edge so local VFS operations remain lightweight and testable.
+Do not make route code depend on MCP SDK classes directly. Keep the SDK at the adapter edge so local VFS operations remain lightweight and testable.
 
 ## Candidate dispatch
 
-Candidate operations already group by terminal filesystem. The grouped dispatch
-should use the same `fs is self` branch:
+Candidate operations already group by terminal filesystem. The grouped dispatch should use the same `fs is self` branch:
 
 ```python
 if fs is self:
@@ -171,8 +159,7 @@ else:
 return result.add_prefix(prefix)
 ```
 
-This preserves batched reads/stats/deletes/searches per mount. It also gives a
-remote mount a wire-shaped batch call instead of many per-path calls.
+This preserves batched reads/stats/deletes/searches per mount. It also gives a remote mount a wire-shaped batch call instead of many per-path calls.
 
 ## Batch writes
 
@@ -195,8 +182,7 @@ else:
 return result.add_prefix(prefix)
 ```
 
-This keeps one transaction per terminal backend for a write batch. It is also
-the shape an MCP mount can implement as a single tool call.
+This keeps one transaction per terminal backend for a write batch. It is also the shape an MCP mount can implement as a single tool call.
 
 ## Two-path operations
 
@@ -246,15 +232,11 @@ if op == "move":
     delete_result = await src_fs.delete(candidates=delete_candidates, user_id=user_id)
 ```
 
-The cross-mount atomicity contract does not change: read, write, and delete are
-separate backend transactions. The improvement is that the parent router no
-longer opens those transactions or calls private methods.
+The cross-mount atomicity contract does not change: read, write, and delete are separate backend transactions. The improvement is that the parent router no longer opens those transactions or calls private methods.
 
 ## Fanout operations
 
-Glob/grep already call public methods on child mounts. Keep that. Change only
-self-storage branches from open-coded `_use_session + _*_impl` to the local
-helper:
+Glob/grep already call public methods on child mounts. Keep that. Change only self-storage branches from open-coded `_use_session + _*_impl` to the local helper:
 
 ```python
 self_result = await self._call_local_impl(
@@ -272,8 +254,7 @@ Do not call `self.glob(...)` from inside `_route_glob_fanout`; that would recurs
 
 ## MCP filesystem mount adapter
 
-An MCP-backed filesystem mount should override public methods it supports and
-translate them to `tools/call`:
+An MCP-backed filesystem mount should override public methods it supports and translate them to `tools/call`:
 
 ```python
 class MCPFileSystemMount(VirtualFileSystem):
@@ -308,9 +289,7 @@ class MCPFileSystemMount(VirtualFileSystem):
         )
 ```
 
-It should not inherit the storage route for operations it claims to support.
-Unsupported operations should return `CapabilityNotSupportedError` or a failed
-`VFSResult`, depending on the error policy in the later MCP mount story.
+It should not inherit the storage route for operations it claims to support. Unsupported operations should return `CapabilityNotSupportedError` or a failed `VFSResult`, depending on the error policy in the later MCP mount story.
 
 The adapter should discover capabilities during initialization:
 
@@ -322,13 +301,11 @@ required = {"vfs.read", "vfs.write", "vfs.stat", "vfs.ls"}
 supported = required & tool_by_name.keys()
 ```
 
-Name alone is not enough for trust. Tool annotations are useful hints, but VFS
-permissions still decide whether a routed operation is allowed.
+Name alone is not enough for trust. Tool annotations are useful hints, but VFS permissions still decide whether a routed operation is allowed.
 
 ## VFS as an MCP server
 
-The reverse adapter exposes a VFS instance as an MCP server. Tools call public
-methods, then convert `VFSResult` to `CallToolResult`:
+The reverse adapter exposes a VFS instance as an MCP server. Tools call public methods, then convert `VFSResult` to `CallToolResult`:
 
 ```python
 def install_vfs_tools(server: MCPServer, vfs: VirtualFileSystem) -> None:
@@ -391,13 +368,11 @@ async def read_resource(path: str) -> ReadResourceResult:
     )
 ```
 
-Resources are a view over readable files. Mutations, searches, and generic
-tool execution remain tools.
+Resources are a view over readable files. Mutations, searches, and generic tool execution remain tools.
 
 ## Generic MCP tool namespace
 
-An MCP server that does not expose VFS/FSP tools can still be mounted as a
-tool catalog:
+An MCP server that does not expose VFS/FSP tools can still be mounted as a tool catalog:
 
 ```text
 /tools/github/clone_repo
@@ -405,8 +380,7 @@ tool catalog:
 /tools/gmail/search_messages
 ```
 
-`ls` lists tool entries. `read` returns the MCP `Tool` definition and input
-schema. It does not execute the tool:
+`ls` lists tool entries. `read` returns the MCP `Tool` definition and input schema. It does not execute the tool:
 
 ```python
 async def read(self, path: str | None = None, ...) -> VFSResult:
@@ -424,18 +398,14 @@ Do not overload normal file reads with execution side effects.
 
 ## Lifecycle
 
-`remove_mount()` should only remove the namespace binding. It should not dispose
-the child filesystem's engine:
+`remove_mount()` should only remove the namespace binding. It should not dispose the child filesystem's engine:
 
 ```python
 fs = self._mounts.pop(path)
 self._rebuild_sorted_mounts()
 ```
 
-`close()` remains the lifecycle hook that disposes engines for filesystems owned
-by the current client. A caller that unmounts and wants disposal should retain
-the filesystem reference it originally mounted and explicitly call
-`await fs.close()`.
+`close()` remains the lifecycle hook that disposes engines for filesystems owned by the current client. A caller that unmounts and wants disposal should retain the filesystem reference it originally mounted and explicitly call `await fs.close()`.
 
 ## Migration steps
 
@@ -445,18 +415,12 @@ the filesystem reference it originally mounted and explicitly call
 4. Change `_route_write_batch` the same way.
 5. Change `_route_two_path` and `_cross_mount_transfer`, preserving batched calls.
 6. Change fanout self branches to use `_call_local_impl`; leave child fanout public.
-7. Change `mkedge` to branch self vs child public call, or introduce a candidate-free
-   grouped helper for same-mount edge creation.
+7. Change `mkedge` to branch self vs child public call, or introduce a candidate-free grouped helper for same-mount edge creation.
 8. Remove engine disposal from `remove_mount`; keep disposal in `close()`.
-9. Add tests proving a `storage=False` remote-style mount receives public calls and
-   no parent code opens its session.
-10. Add `VFSResult.to_mcp_tool_result()` / `from_mcp_tool_result()` as boundary
-    helpers, or document them as pending if the result-envelope story lands later.
-11. Add an `MCPFileSystemMount` test double whose `call_tool` records tool names and
-    JSON arguments.
-12. Add a VFS MCP server registry test double that can generate `vfs.read`,
-    `vfs.write`, `vfs.edit`, `vfs.delete`, `vfs.glob`, and `vfs.grep` tool
-    definitions with JSON input/output schemas.
+9. Add tests proving a `storage=False` remote-style mount receives public calls and no parent code opens its session.
+10. Add `VFSResult.to_mcp_tool_result()` / `from_mcp_tool_result()` as boundary helpers, or document them as pending if the result-envelope story lands later.
+11. Add an `MCPFileSystemMount` test double whose `call_tool` records tool names and JSON arguments.
+12. Add a VFS MCP server registry test double that can generate `vfs.read`, `vfs.write`, `vfs.edit`, `vfs.delete`, `vfs.glob`, and `vfs.grep` tool definitions with JSON input/output schemas.
 
 ## Verification
 
@@ -487,7 +451,4 @@ Generic tools:
   read("/tools/server/tool_name") returns schema metadata only; execution is explicit.
 ```
 
-The grep rule should be semantic, not absolute. `base.py` may contain
-`self._call_local_impl(...)`, `_use_session`, and `self._*_impl` for local storage.
-It must not contain code that calls those private members on a different filesystem
-object.
+The grep rule should be semantic, not absolute. `base.py` may contain `self._call_local_impl(...)`, `_use_session`, and `self._*_impl` for local storage. It must not contain code that calls those private members on a different filesystem object.

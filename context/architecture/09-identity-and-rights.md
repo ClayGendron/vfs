@@ -1,16 +1,9 @@
 # 09. Identity and rights: who a call is for, and what it may see
 
 - **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-- **Shows:** the one identity value every call carries, the permission
-  ladder, the rows that grant rights, how storage compiles a caller's
-  rights into every statement, and the three places a refusal can come
-  from. Everything here is built unless marked.
+- **Shows:** the one identity value every call carries, the permission ladder, the rows that grant rights, how storage compiles a caller's rights into every statement, and the three places a refusal can come from. Everything here is built unless marked.
 - **Legend:** solid is built. Dashed is planned, with the spec named.
-- **Sources:** `src/vfs/authority.py`, `ops.py` (the ladder,
-  `VERB_RUNGS`), `permissions.py`, `storage/grants.py`,
-  `storage/backends/database/rights.py`, `ranges.py`, `labels.py`,
-  `revision.py`; `docs/reference/glossary.md`; ADRs 062 to 073, 080;
-  spec 165 (landed 2026-10-14).
+- **Sources:** `src/vfs/authority.py`, `ops.py` (the ladder, `VERB_RUNGS`), `permissions.py`, `storage/grants.py`, `storage/backends/database/rights.py`, `ranges.py`, `labels.py`, `revision.py`; `docs/reference/glossary.md`; ADRs 062 to 073, 080; spec 165 (landed 2026-10-14).
 
 ## The picture: the identity value
 
@@ -94,41 +87,17 @@ flowchart LR
 
 ## Reading the picture
 
-Every call carries one value that says who it is for and who is doing
-the work. That value is an `Authority`. It is frozen and hashable, and
-it caches no decision. Rights are re-derived on every call, so a grant
-revoked at noon takes effect on the next call. The cost is paid by a
-cache keyed on a revision stamp, not by remembering a verdict.
+Every call carries one value that says who it is for and who is doing the work. That value is an `Authority`. It is frozen and hashable, and it caches no decision. Rights are re-derived on every call, so a grant revoked at noon takes effect on the next call. The cost is paid by a cache keyed on a revision stamp, not by remembering a verdict.
 
-Rights come from rows. A grant row says a principal holds a rung at
-and below a prefix. Rows only widen; there is no deny row. A posture is
-a grant row for everyone, and it is the one thing that can narrow,
-because the deepest posture wins. A group is a principal whose
-membership rows say who belongs; a member holds its groups' grants.
+Rights come from rows. A grant row says a principal holds a rung at and below a prefix. Rows only widen; there is no deny row. A posture is a grant row for everyone, and it is the one thing that can narrow, because the deepest posture wins. A group is a principal whose membership rows say who belongs; a member holds its groups' grants.
 
-A set of subjects holds a right only when every member holds it. That
-is the intersection law. An agent working for Alice and Bob sees what
-both may see.
+A set of subjects holds a right only when every member holds it. That is the intersection law. An agent working for Alice and Bob sees what both may see.
 
-Storage compiles the caller's rights into every statement. The
-everyone level is stamped on each row, so the common case is one index
-seek. The caller's own grants travel as sorted path ranges joined to
-the path index. The rows the caller owns are a third branch. The three
-branches are disjoint and merge with `UNION ALL`, so no engine plans a
-deduplication and the statement text never changes with the number of
-grants. A row the caller may not see is not fetched. It looks exactly
-like a row that does not exist, and it never counts in search
-statistics (ADR 065).
+Storage compiles the caller's rights into every statement. The everyone level is stamped on each row, so the common case is one index seek. The caller's own grants travel as sorted path ranges joined to the path index. The rows the caller owns are a third branch. The three branches are disjoint and merge with `UNION ALL`, so no engine plans a deduplication and the statement text never changes with the number of grants. A row the caller may not see is not fetched. It looks exactly like a row that does not exist, and it never counts in search statistics (ADR 065).
 
-A mutation passes a write gate first: one batched fetch of the targets
-and their ancestors, judged in application code against the verb's
-rungs. Any refusal fails the batch whole.
+A mutation passes a write gate first: one batched fetch of the targets and their ancestors, judged in application code against the verb's rungs. Any refusal fails the batch whole.
 
-The router has its own, older layer: a structural `PermissionMap` per
-binding whose values are `read` and `read_write` (built by the
-`read_only()` and `read_write()` factories) that can make a mount or a
-prefix read-only for everyone. It composes downward and only tightens.
-It is not about who the caller is.
+The router has its own, older layer: a structural `PermissionMap` per binding whose values are `read` and `read_write` (built by the `read_only()` and `read_write()` factories) that can make a mount or a prefix read-only for everyone. It composes downward and only tightens. It is not about who the caller is.
 
 ## Terms this diagram introduces
 
@@ -161,8 +130,6 @@ It is not about who the caller is.
 
 ## What is planned, and where
 
-- `Narrowing` beyond `NONE`, sub-sessions, the subject set's lifecycle:
-  spec 148 (seed).
+- `Narrowing` beyond `NONE`, sub-sessions, the subject set's lifecycle: spec 148 (seed).
 - A token in and an `Authority` out at `serve()`: spec 149 (seed).
-- Three enforcement gaps noticed in the 2026-10-07 teaching session,
-  a `manage` rung, and group ownership: `open-questions.md`.
+- Three enforcement gaps noticed in the 2026-10-07 teaching session, a `manage` rung, and group ownership: `open-questions.md`.

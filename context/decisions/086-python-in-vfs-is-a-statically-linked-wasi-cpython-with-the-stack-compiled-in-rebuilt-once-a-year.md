@@ -1,173 +1,47 @@
 # 086. Python in vfs is a statically linked CPython for WebAssembly with numpy and pandas compiled in, rebuilt once a year as a basic code interpreter
 
-- **Status:** proposed 2026-10-16, **written in full on spike 173's
-  result the same day**. Clay's decision ("let's go with option 2 and
-  commission a spike") after the two Python studies and the Deno
-  acquisition removed every other shape; the 2026-10-15 drafts of this
-  number (a native sidecar under bubblewrap, Seatbelt and 9P; then a
-  self-sandboxed native subprocess) are withdrawn and survive only as
-  the record in studies 11 and 12 and spec 172's appendix. Three pins
-  carry a lean the spike recommends and Clay has not yet confirmed;
-  they are marked **(lean)** and listed under *Pending Clay*. Amended
-  the same day: the build is its own project, `wasi_python` (pin 3). Depends
-  on ADR 082 (the ABI, the program kinds), ADR 084 (budgets) and spec
-  169's WASI host.
+- **Status:** proposed 2026-10-16, **written in full on spike 173's result the same day**. Clay's decision ("let's go with option 2 and commission a spike") after the two Python studies and the Deno acquisition removed every other shape; the 2026-10-15 drafts of this number (a native sidecar under bubblewrap, Seatbelt and 9P; then a self-sandboxed native subprocess) are withdrawn and survive only as the record in studies 11 and 12 and spec 172's appendix. Three pins carry a lean the spike recommends and Clay has not yet confirmed; they are marked **(lean)** and listed under *Pending Clay*. Amended the same day: the build is its own project, `wasi_python` (pin 3). Depends on ADR 082 (the ABI, the program kinds), ADR 084 (budgets) and spec 169's WASI host.
 - **Date:** 2026-10-16
 - **Deciders:** Clay Gendron
-- **Decided by:** human (Clay set the requirement, reframed the
-  runtime as a basic interpreter frozen annually rather than a tracked
-  development environment, and chose the static WebAssembly build; the
-  assistant led the studies and the spike)
+- **Decided by:** human (Clay set the requirement, reframed the runtime as a basic interpreter frozen annually rather than a tracked development environment, and chose the static WebAssembly build; the assistant led the studies and the spike)
 
 ## Context
 
-Study `11-python-in-vfs.md` executed every candidate against the
-requirement to run numpy, pandas, scipy, matplotlib and the common
-utilities inside vfs: CPython on WASI as shipped cannot load numpy
-because WASI has no dynamic linking; no interpreter other than CPython
-can load the stack at all; Pyodide needs a JavaScript host and Deno is
-ending; a native CPython in a sandbox works but needs the kernel.
-Study `12-python-anywhere.md` executed the native subprocess that
-sandboxes itself with Landlock, seccomp and Seatbelt, which runs in a
-web server on most hosts but not on gVisor, Lambda's kernel or Windows,
-and whose wall is the kernel's and so differs per host.
+Study `11-python-in-vfs.md` executed every candidate against the requirement to run numpy, pandas, scipy, matplotlib and the common utilities inside vfs: CPython on WASI as shipped cannot load numpy because WASI has no dynamic linking; no interpreter other than CPython can load the stack at all; Pyodide needs a JavaScript host and Deno is ending; a native CPython in a sandbox works but needs the kernel. Study `12-python-anywhere.md` executed the native subprocess that sandboxes itself with Landlock, seccomp and Seatbelt, which runs in a web server on most hosts but not on gVisor, Lambda's kernel or Windows, and whose wall is the kernel's and so differs per host.
 
-Clay's framing on 2026-10-16 changed the cost of the one design that
-is the same everywhere: the dynamic-linking gap disappears if the
-stack is linked statically into one `python.wasm`, and "maintained
-forever" becomes one build a year if the runtime is a basic code
-interpreter, not a tracked development environment. The wall is then
-WebAssembly itself, the same on every platform including Windows, and
-the host mechanism already exists: study 04 ran the real CPython WASI
-binary over vfs through the preview1 shim, and study 10 ran real
-programs with timeouts, memory limits and a compiled-module cache.
+Clay's framing on 2026-10-16 changed the cost of the one design that is the same everywhere: the dynamic-linking gap disappears if the stack is linked statically into one `python.wasm`, and "maintained forever" becomes one build a year if the runtime is a basic code interpreter, not a tracked development environment. The wall is then WebAssembly itself, the same on every platform including Windows, and the host mechanism already exists: study 04 ran the real CPython WASI binary over vfs through the preview1 shim, and study 10 ran real programs with timeouts, memory limits and a compiled-module cache.
 
-**Spike 173 (study `13-wasi-python-spike.md`, executed 2026-10-16)
-proved the build.** CPython 3.14.8 with numpy 2.5.2 and pandas 3.0.6
-compiled in as builtin modules builds from pinned sources in about
-ten minutes with **zero patches** to CPython, numpy or pandas (twelve
-small recipe files: two meson cross files, a compiler wrapper that
-turns each extension module's shared link into a static archive, two
-rename headers for symbols that only collide in a static link, a
-reactor entry point, a `Setup.local`, two one-function stand-ins).
-Under vfs's preview1 shim `import numpy` opens no shared library and
-touches no host directory; `loadtxt` and `read_csv` read vfs rows and
-`savetxt` and `to_csv` write them. A Wizer snapshot with numpy and
-pandas pre-imported starts in 4.8 ms per call and runs the whole CSV
-job in 120 ms with 15 verbs and 93 SQL statements (reproduced by the
-session after the spike reported). Kernels run at 1.3 to 2.3 times
-native, single-threaded, without SIMD or BLAS. The verb door is a
-30-line C module calling a custom wasm import the host binds with
-`Linker.define_func`. matplotlib is gated on C++ exceptions, which the
-WASI SDK CPython 3.14 pins (24) cannot link and the SDK CPython 3.15
-pins (33) can (both executed): weeks on the 3.15 line. scipy needs
-Fortran through f2c: months. Two facts of the platform surfaced: numpy's
-default integer is 32-bit on wasm32 and wraps silently, and a C++
-`throw` aborts the guest on the SDK-24 line.
+**Spike 173 (study `13-wasi-python-spike.md`, executed 2026-10-16) proved the build.** CPython 3.14.8 with numpy 2.5.2 and pandas 3.0.6 compiled in as builtin modules builds from pinned sources in about ten minutes with **zero patches** to CPython, numpy or pandas (twelve small recipe files: two meson cross files, a compiler wrapper that turns each extension module's shared link into a static archive, two rename headers for symbols that only collide in a static link, a reactor entry point, a `Setup.local`, two one-function stand-ins). Under vfs's preview1 shim `import numpy` opens no shared library and touches no host directory; `loadtxt` and `read_csv` read vfs rows and `savetxt` and `to_csv` write them. A Wizer snapshot with numpy and pandas pre-imported starts in 4.8 ms per call and runs the whole CSV job in 120 ms with 15 verbs and 93 SQL statements (reproduced by the session after the spike reported). Kernels run at 1.3 to 2.3 times native, single-threaded, without SIMD or BLAS. The verb door is a 30-line C module calling a custom wasm import the host binds with `Linker.define_func`. matplotlib is gated on C++ exceptions, which the WASI SDK CPython 3.14 pins (24) cannot link and the SDK CPython 3.15 pins (33) can (both executed): weeks on the 3.15 line. scipy needs Fortran through f2c: months. Two facts of the platform surfaced: numpy's default integer is 32-bit on wasm32 and wraps silently, and a C++ `throw` aborts the guest on the SDK-24 line.
 
 ## Options considered
 
-- **A static `python.wasm` with the stack compiled in, rebuilt once a
-  year (chosen; proven by the spike).** Pros: one artifact, one wall,
-  every platform; the shim and host are executed; no kernel feature,
-  no sandbox policy, no bridge, no probe; zero upstream patches. Cons:
-  a yearly build pipeline; a 10 to 20 MB download; no threads, no pip,
-  a frozen package set; 1.3 to 2.3 times slower than native; int32
-  default integers; matplotlib waits for the SDK-33 line and scipy for
-  a Fortran effort.
-- **The self-sandboxed native subprocess.** Rejected: the wall depends
-  on the kernel and is absent on gVisor, Lambda and Windows.
-- **Pyodide in-process.** Rejected: a JavaScript engine wheel, 0.9 GB
-  per worker, a maintained door list.
-- **Tracking every upstream release.** Rejected by the framing: a
-  basic interpreter, frozen annually.
+- **A static `python.wasm` with the stack compiled in, rebuilt once a year (chosen; proven by the spike).** Pros: one artifact, one wall, every platform; the shim and host are executed; no kernel feature, no sandbox policy, no bridge, no probe; zero upstream patches. Cons: a yearly build pipeline; a 10 to 20 MB download; no threads, no pip, a frozen package set; 1.3 to 2.3 times slower than native; int32 default integers; matplotlib waits for the SDK-33 line and scipy for a Fortran effort.
+- **The self-sandboxed native subprocess.** Rejected: the wall depends on the kernel and is absent on gVisor, Lambda and Windows.
+- **Pyodide in-process.** Rejected: a JavaScript engine wheel, 0.9 GB per worker, a maintained door list.
+- **Tracking every upstream release.** Rejected by the framing: a basic interpreter, frozen annually.
 
 ## Decision
 
-1. **One Python at v1.** A statically linked CPython for
-   `wasm32-wasip1` with numpy and pandas compiled in as builtin
-   modules, plus zlib, python-dateutil, tzdata and six in the stdlib
-   zip; no `dlopen`, no `_ctypes`, no `mmap`, no threads, no pip, no
-   sockets. The first annual build is numpy and pandas only;
-   matplotlib (Agg only, one bundled font) is the second build's
-   item once the runtime is on the SDK-33 line; scipy is not
-   scheduled until an agent workload demands it.
-2. **The toolchain line (lean).** The first release is built on
-   CPython 3.15 with wasi-sdk 33, re-running the spike's recipe,
-   because that SDK links C++ exceptions (pocketfft's `throw` becomes
-   a Python exception instead of an abort; matplotlib becomes
-   reachable). CPython 3.14.8 with wasi-sdk 24 is the proven fallback
-   if the re-run costs more than a day.
-3. **Built once a year by its own project, `wasi_python`** (Clay,
-   2026-10-16: "its own project outside of vfs"; `~/Git/Repos/
-   wasi_python`, site wasipython.dev, Apache-2.0), from sources pinned
-   by URL and SHA-256, with zero upstream patches as the standing
-   rule: an adaptation is a recipe file (cross file, wrapper, rename
-   header, stand-in) and a needed source change goes upstream first.
-   That project verifies its artifact with the wasmtime CLI and its
-   own runner; vfs verifies the pinned release against its shim as
-   the consumer gate, as `slow` tests with operation counts.
-4. **The artifacts** are a plain reactor `python.wasm`, a Wizer
-   snapshot `python.wasm` with the stack pre-imported, the stdlib
-   zip, `SHA256SUMS` and a `MANIFEST` naming every pin and recipe
-   hash, published by `wasi_python` as GitHub release assets (xz, 8
-   to 20 MB) and as the `wasi-python` wheel on PyPI carrying the same
-   files. vfs consumes the wheel through an optional extra
-   (`vfs-py[python]`) pinned and hashed by the lockfile; never inside
-   vfs's own wheel. A host command copies them into vfs as the system
-   actor: the binary at `/opt/bin/python3.wasm` (ADR 082's
-   install directory) and the zip at `/opt/lib/python3XY.zip`, where
-   CPython's own landmark search finds it from the binary's path. The
-   compiled `.cwasm` is never shipped; the host compiles once per
-   wasmtime version into spec 169's cache keyed on content hash.
-5. **The snapshot is the default guest (lean)**; the plain reactor is
-   kept beside it for debugging and runs when the snapshot is absent.
-   The download is one optional install-time fetch of about 20 MB.
-6. **Run under spec 169's WASI host**, extended with a reactor entry:
-   `_initialize` runs once at snapshot time, `vfs_run` runs per call
-   with that call's argv and environment; the preview1 shim over vfs
-   verbs, whole-file staging, the epoch deadline, the memory limit,
-   fuel, the exit code recorded before it raises, one guest per
-   process. The host caches a staged buffer by `(path, version)` so
-   `zipimport`'s repeated opens of the zip row cost one read.
-7. **The verb door** is `wasi_python`'s neutral host door: a C
-   module compiled into the interpreter that calls one custom import
-   (`host::call`, length-prefixed frames) which vfs's host defines with
-   `Linker.define_func`, carrying length-prefixed frames of the
-   `Result` wire; a pure-Python `vfs` package on top exposes the verb
-   table bound to the caller's authority. No verb is reachable except
-   through that door and the preview1 file calls, both gated.
-8. **The platform's semantics are documented, not patched.**
-   `python3 --version` reports the real version, the build date and
-   the package set; an import outside the set fails with the set
-   named in the hint. numpy's default integer is 32-bit (`dtype=
-   np.int64` when it matters); there are no threads; kernels run at
-   1.3 to 2.3 times native. These are product facts in the
-   agent-facing docs.
-9. **JavaScript is QuickJS-NG** as study 05 measured, under the same
-   host, with the same door.
+1. **One Python at v1.** A statically linked CPython for `wasm32-wasip1` with numpy and pandas compiled in as builtin modules, plus zlib, python-dateutil, tzdata and six in the stdlib zip; no `dlopen`, no `_ctypes`, no `mmap`, no threads, no pip, no sockets. The first annual build is numpy and pandas only; matplotlib (Agg only, one bundled font) is the second build's item once the runtime is on the SDK-33 line; scipy is not scheduled until an agent workload demands it.
+2. **The toolchain line (lean).** The first release is built on CPython 3.15 with wasi-sdk 33, re-running the spike's recipe, because that SDK links C++ exceptions (pocketfft's `throw` becomes a Python exception instead of an abort; matplotlib becomes reachable). CPython 3.14.8 with wasi-sdk 24 is the proven fallback if the re-run costs more than a day.
+3. **Built once a year by its own project, `wasi_python`** (Clay, 2026-10-16: "its own project outside of vfs"; `~/Git/Repos/ wasi_python`, site wasipython.dev, Apache-2.0), from sources pinned by URL and SHA-256, with zero upstream patches as the standing rule: an adaptation is a recipe file (cross file, wrapper, rename header, stand-in) and a needed source change goes upstream first. That project verifies its artifact with the wasmtime CLI and its own runner; vfs verifies the pinned release against its shim as the consumer gate, as `slow` tests with operation counts.
+4. **The artifacts** are a plain reactor `python.wasm`, a Wizer snapshot `python.wasm` with the stack pre-imported, the stdlib zip, `SHA256SUMS` and a `MANIFEST` naming every pin and recipe hash, published by `wasi_python` as GitHub release assets (xz, 8 to 20 MB) and as the `wasi-python` wheel on PyPI carrying the same files. vfs consumes the wheel through an optional extra (`vfs-py[python]`) pinned and hashed by the lockfile; never inside vfs's own wheel. A host command copies them into vfs as the system actor: the binary at `/opt/bin/python3.wasm` (ADR 082's install directory) and the zip at `/opt/lib/python3XY.zip`, where CPython's own landmark search finds it from the binary's path. The compiled `.cwasm` is never shipped; the host compiles once per wasmtime version into spec 169's cache keyed on content hash.
+5. **The snapshot is the default guest (lean)**; the plain reactor is kept beside it for debugging and runs when the snapshot is absent. The download is one optional install-time fetch of about 20 MB.
+6. **Run under spec 169's WASI host**, extended with a reactor entry: `_initialize` runs once at snapshot time, `vfs_run` runs per call with that call's argv and environment; the preview1 shim over vfs verbs, whole-file staging, the epoch deadline, the memory limit, fuel, the exit code recorded before it raises, one guest per process. The host caches a staged buffer by `(path, version)` so `zipimport`'s repeated opens of the zip row cost one read.
+7. **The verb door** is `wasi_python`'s neutral host door: a C module compiled into the interpreter that calls one custom import (`host::call`, length-prefixed frames) which vfs's host defines with `Linker.define_func`, carrying length-prefixed frames of the `Result` wire; a pure-Python `vfs` package on top exposes the verb table bound to the caller's authority. No verb is reachable except through that door and the preview1 file calls, both gated.
+8. **The platform's semantics are documented, not patched.** `python3 --version` reports the real version, the build date and the package set; an import outside the set fails with the set named in the hint. numpy's default integer is 32-bit (`dtype= np.int64` when it matters); there are no threads; kernels run at 1.3 to 2.3 times native. These are product facts in the agent-facing docs.
+9. **JavaScript is QuickJS-NG** as study 05 measured, under the same host, with the same door.
 
 ## Pending Clay
 
-- Pin 2: 3.15 with wasi-sdk 33 (the lean) or 3.14.8 with wasi-sdk 24
-  (proven end to end).
-- Pin 5: the snapshot as the default guest, and a 20 MB optional
-  install-time download accepted on every host we care about.
-- Pin 8: document the int32 default integer rather than carry a numpy
-  patch (the lean; Pyodide documents it).
+- Pin 2: 3.15 with wasi-sdk 33 (the lean) or 3.14.8 with wasi-sdk 24 (proven end to end).
+- Pin 5: the snapshot as the default guest, and a 20 MB optional install-time download accepted on every host we care about.
+- Pin 8: document the int32 default integer rather than carry a numpy patch (the lean; Pyodide documents it).
 
 ## Consequences
 
-- The "anywhere" requirement is met by construction, Windows included.
-  No sandbox policies, no bridge, no probe, no 9P on the critical path.
-- The yearly build is `wasi_python`'s; vfs owns a pinned dependency and
-  the consumer gate. The standing rule that nothing upstream is patched
-  keeps the yearly cost to re-pinning and re-running.
-- The first annual build ships without matplotlib and scipy; spec 172
-  says what is in and out, and the second build's gate is the SDK-33
-  line.
-- Spec 169's host gains a reactor entry mode and a staged-buffer
-  cache; both are spec 172's slices, neither changes ADR 082's kinds
-  or suffix order (`.py` is a guest suffix resolving to this runtime).
-- Spec 166's wheel budget is untouched: the runtime is a download, not
-  a wheel member.
+- The "anywhere" requirement is met by construction, Windows included. No sandbox policies, no bridge, no probe, no 9P on the critical path.
+- The yearly build is `wasi_python`'s; vfs owns a pinned dependency and the consumer gate. The standing rule that nothing upstream is patched keeps the yearly cost to re-pinning and re-running.
+- The first annual build ships without matplotlib and scipy; spec 172 says what is in and out, and the second build's gate is the SDK-33 line.
+- Spec 169's host gains a reactor entry mode and a staged-buffer cache; both are spec 172's slices, neither changes ADR 082's kinds or suffix order (`.py` is a guest suffix resolving to this runtime).
+- Spec 166's wheel budget is untouched: the runtime is a download, not a wheel member.

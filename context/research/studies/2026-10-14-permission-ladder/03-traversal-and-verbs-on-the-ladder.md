@@ -1,7 +1,6 @@
 # L3 — The walk, the search verbs and the write verbs on the expanded ladder
 
-Researcher L3, 2026-10-14. Brief: `scratchpad/ladder/BRIEF.md`. Scope addition from Clay (via the coordinator): check every rule against Plan 9's permission model, with `repo:path:line` citations.
-Script: `scratchpad/ladder/l3_walk_examples.py`; full output: `scratchpad/ladder/l3_walk_examples.out`.
+Researcher L3, 2026-10-14. Brief: `scratchpad/ladder/BRIEF.md`. Scope addition from Clay (via the coordinator): check every rule against Plan 9's permission model, with `repo:path:line` citations. Script: `scratchpad/ladder/l3_walk_examples.py`; full output: `scratchpad/ladder/l3_walk_examples.out`.
 
 Evidence labels: **EXECUTED** (I ran it), **READ** (I read the code, doc or page and cite it), **INFERRED** (my reasoning). Anything else is `[NOT VERIFIED: why]`.
 

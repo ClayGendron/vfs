@@ -1,7 +1,6 @@
 # sqlite — N = 1,000
 
-World: {'users': 1000, 'groups': 5, 'shared': 10, 'grant_rows': 2141, 'memberships': 5000, 'entries': 23213, 'files_per_home': 20, 'files_per_shared': 200}
-Load: {'entries_s': 0.4832715829834342, 'grants_s': 0.030558125115931034, 'analyze_s': 0.011033667251467705}
+World: {'users': 1000, 'groups': 5, 'shared': 10, 'grant_rows': 2141, 'memberships': 5000, 'entries': 23213, 'files_per_home': 20, 'files_per_shared': 200} Load: {'entries_s': 0.4832715829834342, 'grants_s': 0.030558125115931034, 'analyze_s': 0.011033667251467705}
 
 ## 1. Resolution (ms)
 

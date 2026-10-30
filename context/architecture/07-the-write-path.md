@@ -1,16 +1,9 @@
 # 07. The write path: one transaction per mount
 
 - **Status:** living diagram, drawn 2026-10-24 against `ba77449`.
-- **Shows:** what one `write` call does inside storage, in order: the
-  snapshot, the gate, the plan, the pinned statement order, the commit,
-  and what is deliberately left for `reindex`. The same discipline
-  serves `edit` and `mkdir`.
+- **Shows:** what one `write` call does inside storage, in order: the snapshot, the gate, the plan, the pinned statement order, the commit, and what is deliberately left for `reindex`. The same discipline serves `edit` and `mkdir`.
 - **Legend:** solid is built. Dashed is planned, with the spec named.
-- **Sources:** `src/vfs/storage/backends/database/writes.py`,
-  `staging.py`, `versions.py`, `edges.py`, `segments.py`, `labels.py`,
-  `rights.py` (`WriteGate`), `dialects.py` (arbitration, budgets);
-  ADR 025 (conflict redrive), 033 §6 (the index catches up later),
-  056 (bulk inserts), 087 pins 7 and 13; the OSTEP memo §2.2.
+- **Sources:** `src/vfs/storage/backends/database/writes.py`, `staging.py`, `versions.py`, `edges.py`, `segments.py`, `labels.py`, `rights.py` (`WriteGate`), `dialects.py` (arbitration, budgets); ADR 025 (conflict redrive), 033 §6 (the index catches up later), 056 (bulk inserts), 087 pins 7 and 13; the OSTEP memo §2.2.
 
 ## The picture
 
@@ -58,39 +51,15 @@ flowchart TB
 
 ## Reading the picture
 
-A write is not "insert a row". It is plan, then execute. First storage
-reads the committed state of every path the batch touches in one
-chunked statement. Then it decides the whole batch in memory: who may
-write where, which parents exist, which names collide, which bodies are
-unchanged. Only a plan with no error executes. A batch of 10,000 good
-rows and one bad row writes nothing, and the result names the bad row.
+A write is not "insert a row". It is plan, then execute. First storage reads the committed state of every path the batch touches in one chunked statement. Then it decides the whole batch in memory: who may write where, which parents exist, which names collide, which bodies are unchanged. Only a plan with no error executes. A batch of 10,000 good rows and one bad row writes nothing, and the result names the bad row.
 
-Execution is a handful of bulk statements in a pinned order. The
-posture rows are read once so every new row carries its everyone
-level. Inserts go parents before children, with the label and the
-dirty flags as columns of the insert. The segment postings and the
-`fs` mirror edge follow for the fresh creates. Updates are guarded on
-the entry id, version and path the plan read, so a rival who wrote in
-between makes the guard miss; the miss classifies `conflict` and the
-verb redrives from a fresh snapshot (ADR 025). Then the version mint,
-the body replace, and the parent bumps. Row locks are taken in path
-order, so two batches that overlap cannot deadlock.
+Execution is a handful of bulk statements in a pinned order. The posture rows are read once so every new row carries its everyone level. Inserts go parents before children, with the label and the dirty flags as columns of the insert. The segment postings and the `fs` mirror edge follow for the fresh creates. Updates are guarded on the entry id, version and path the plan read, so a rival who wrote in between makes the guard miss; the miss classifies `conflict` and the verb redrives from a fresh snapshot (ADR 025). Then the version mint, the body replace, and the parent bumps. Row locks are taken in path order, so two batches that overlap cannot deadlock.
 
-What commits with the body: the entry row, the body row, the version
-row holding the replaced body, the `fs` mirror edge, the path
-segments, the everyone-level label, the dirty flags, and the parent
-bumps. One call on one mount commits whole or not at all, at any batch
-size. A batch that spans two mounts is per-mount atomic only.
+What commits with the body: the entry row, the body row, the version row holding the replaced body, the `fs` mirror edge, the path segments, the everyone-level label, the dirty flags, and the parent bumps. One call on one mount commits whole or not at all, at any batch size. A batch that spans two mounts is per-mount atomic only.
 
-What does not commit with the body: the search indexes. A write stamps
-the row dirty. `reindex` builds chunks, postings, embeddings and
-signals later, each in its own transaction. `grep` stays correct in
-between by scanning dirty rows (diagram 08).
+What does not commit with the body: the search indexes. A write stamps the row dirty. `reindex` builds chunks, postings, embeddings and signals later, each in its own transaction. `grep` stays correct in between by scanning dirty rows (diagram 08).
 
-An unchanged body costs nothing: same hash, no version row, no body
-write, no dirty flag, no `updated_at` churn. Re-running an ingestion
-over identical content writes nothing, which makes `updated_at` a
-trustworthy change signal.
+An unchanged body costs nothing: same hash, no version row, no body write, no dirty flag, no `updated_at` churn. Re-running an ingestion over identical content writes nothing, which makes `updated_at` a trustworthy change signal.
 
 ## Statement counts (system actor, `ba77449`)
 
@@ -103,8 +72,7 @@ Counts are the measure, never clocks (CLAUDE.md, *Performance tests*).
 | `edit` | 7 |
 | `mkdir` | 5 |
 
-A named principal with a warm rights cache adds two statements to each.
-The whole-body rewrite is the next cost to cut (ADR 087 pin 14).
+A named principal with a warm rights cache adds two statements to each. The whole-body rewrite is the next cost to cut (ADR 087 pin 14).
 
 ## Terms this diagram introduces
 
@@ -125,11 +93,7 @@ The whole-body rewrite is the next cost to cut (ADR 087 pin 14).
 
 ## What is planned, and where
 
-- `write(if_version=, if_absent=, append=)` and an `unchanged` status
-  with no version bump: spec 174. These close the lost-update append
-  the OSTEP probe found.
-- `content_hash` returned on every written row and verified on every
-  read: spec 175 (the column is already stamped on every write).
+- `write(if_version=, if_absent=, append=)` and an `unchanged` status with no version bump: spec 174. These close the lost-update append the OSTEP probe found.
+- `content_hash` returned on every written row and verified on every read: spec 175 (the column is already stamped on every write).
 - A request key answered from the stored first result: spec 177.
-- `overwrite=` may leave `write`, since `if_absent=True` is today's
-  `overwrite=False` (pending Clay).
+- `overwrite=` may leave `write`, since `if_absent=True` is today's `overwrite=False` (pending Clay).

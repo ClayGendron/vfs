@@ -1,18 +1,8 @@
 # Study: the row-grant predicate at scale — what enforcement costs on each engine, and which shape wins
 
-Companion to the memo `../../2026-09-05-permissions-predicate-at-scale.md`
-(study S1 of the principals-and-permissions research programme,
-`../../2026-09-05-principals-and-permissions-research-plan.md` §4 Phase 2).
+Companion to the memo `../../2026-09-05-permissions-predicate-at-scale.md` (study S1 of the principals-and-permissions research programme, `../../2026-09-05-principals-and-permissions-research-plan.md` §4 Phase 2).
 
-The question: for ADR 021's additive prefix-grant model (grant rows
-`(principal_id, path_prefix, level)`, coverage
-`path = prefix OR path LIKE prefix || '/%'`, compiled into the query at
-one chokepoint), what does the read predicate cost on SQLite, Postgres,
-MariaDB, SQL Server and Oracle at 100k and 1M entry rows, which
-predicate shape wins, what the write point check and a materialised
-visibility table cost, how groups and the multiplayer subject-set
-predicate behave, and whether any shape breaks a bind or `IN`-list
-budget at a 10k batch.
+The question: for ADR 021's additive prefix-grant model (grant rows `(principal_id, path_prefix, level)`, coverage `path = prefix OR path LIKE prefix || '/%'`, compiled into the query at one chokepoint), what does the read predicate cost on SQLite, Postgres, MariaDB, SQL Server and Oracle at 100k and 1M entry rows, which predicate shape wins, what the write point check and a materialised visibility table cost, how groups and the multiplayer subject-set predicate behave, and whether any shape breaks a bind or `IN`-list budget at a 10k batch.
 
 ## What is here
 
@@ -25,21 +15,11 @@ budget at a 10k batch.
 | `results.md` | The raw per-engine tables, assembled from `runs/`. |
 | `runs/` | One `.md` and one `.json` per engine and size, as measured on 2026-09-05. |
 
-Key typing matters on SQL Server: principal-id and path binds are cast
-through the column's UTF-8 collation and length (`Bench.sbind`,
-`Bench.pbind`), which is what vfs ships since spec 145. Without the
-cast the nvarchar bind forces a scan of the grant table per outer row
-and the correlated `EXISTS` costs ~10 ms per row (observed in the
-first smoke run; kept out of the results because vfs never issues that
-form).
+Key typing matters on SQL Server: principal-id and path binds are cast through the column's UTF-8 collation and length (`Bench.sbind`, `Bench.pbind`), which is what vfs ships since spec 145. Without the cast the nvarchar bind forces a scan of the grant table per outer row and the correlated `EXISTS` costs ~10 ms per row (observed in the first smoke run; kept out of the results because vfs never issues that form).
 
 ## Rerun
 
-Containers up (`docker/compose.test.yml`), env exported
-(`VFS_TEST_POSTGRES_URL`, `VFS_TEST_MSSQL_URL`, `VFS_TEST_ORACLE_URL`,
-`VFS_TEST_MARIADB_URL`; SQLite needs nothing — it writes
-`vfs_s1_corpus.sqlite` beside the scripts and removes it). From the
-repo root or this directory:
+Containers up (`docker/compose.test.yml`), env exported (`VFS_TEST_POSTGRES_URL`, `VFS_TEST_MSSQL_URL`, `VFS_TEST_ORACLE_URL`, `VFS_TEST_MARIADB_URL`; SQLite needs nothing — it writes `vfs_s1_corpus.sqlite` beside the scripts and removes it). From the repo root or this directory:
 
     cd context/research/studies/2026-09-05-permissions-predicate-at-scale
     uv run --no-sync python probe.py --engine sqlite   --files 75000            # 12 s
@@ -51,12 +31,6 @@ repo root or this directory:
     uv run --no-sync python probe.py --engine postgres --files 800000 --reps 3  # 17 min
     uv run --no-sync python report.py                                           # results.md + memo tables
 
-Most of the wall clock is the membership-subquery groups cell and the
-grouped `HAVING` subject-set cell, the two shapes the memo disqualifies;
-a statement that exceeds 60 s is run once and marked `capped`.
+Most of the wall clock is the membership-subquery groups cell and the grouped `HAVING` subject-set cell, the two shapes the memo disqualifies; a statement that exceeds 60 s is run once and marked `capped`.
 
-`--files N` is the file-row count; directory rows are added on top
-(about a third as many), so `--files 75000` is ~100k entry rows and
-`--files 800000` is ~1M. `--no-plans` skips the plan capture. Every
-run mints its own namespace and drops it; a run killed mid-way leaves
-`vfs_s1_<hex>_*` tables that the next run on that engine drops first.
+`--files N` is the file-row count; directory rows are added on top (about a third as many), so `--files 75000` is ~100k entry rows and `--files 800000` is ~1M. `--no-plans` skips the plan capture. Every run mints its own namespace and drops it; a run killed mid-way leaves `vfs_s1_<hex>_*` tables that the next run on that engine drops first.

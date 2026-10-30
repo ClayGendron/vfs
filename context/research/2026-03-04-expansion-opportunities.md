@@ -150,9 +150,7 @@ grover_snapshot_entries:
   - content_hash (if CAS enabled)
 ```
 
-Branch creation = create snapshot entry + branch record (O(n) files, but metadata only).
-Write on branch = copy-on-write (create branch-specific version).
-Merge = three-way diff between ancestor, source, dest.
+Branch creation = create snapshot entry + branch record (O(n) files, but metadata only). Write on branch = copy-on-write (create branch-specific version). Merge = three-way diff between ancestor, source, dest.
 
 **Effort:** High. New tables, branching logic in VFS, merge algorithm.
 

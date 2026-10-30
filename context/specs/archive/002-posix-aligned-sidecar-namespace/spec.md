@@ -83,8 +83,7 @@ The new namespace must preserve the useful properties of the current model:
    - the source-side path projection is `meta_root(source)/__meta__/edges/out/<type>/<target-without-leading-slash>`
    - the inverse target-side path projection is `meta_root(target)/__meta__/edges/in/<type>/<source-without-leading-slash>`
    - the `type` string is identical on both sides of the same directed edge
-6. Preserve full embedded paths in the user-facing edge namespace. No percent-encoding or single-segment escaping in the public path shape.
-   The embedded target/source path is the full canonical VFS path with the leading slash removed. If the endpoint is itself a metadata path under `/.vfs`, that embedded path includes `.vfs/.../__meta__/...` literally.
+6. Preserve full embedded paths in the user-facing edge namespace. No percent-encoding or single-segment escaping in the public path shape. The embedded target/source path is the full canonical VFS path with the leading slash removed. If the endpoint is itself a metadata path under `/.vfs`, that embedded path includes `.vfs/.../__meta__/...` literally.
 7. Standardize edge parsing so that everything after `.../edges/out/<type>/` or `.../edges/in/<type>/` is treated as the opaque embedded canonical endpoint path, even when that remainder itself contains `/.vfs/.../__meta__/...`.
 8. Preserve canonical edge columns/fields (`source_path`, `target_path`, `type`) for direct one-hop graph queries in database-backed implementations.
 9. Define `edges/out` as the canonical writable edge namespace and `edges/in` as the required inverse readable projection, whether that inverse view is persisted or synthesized.
