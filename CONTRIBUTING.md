@@ -117,8 +117,6 @@ src/vfs/
         └── database/     # The portable SQL backend (SQLAlchemy)
 ```
 
-`src2/` and `tests2/` are archived pre-refactor code kept as a reference quarry — never edit, run, or lint them.
-
 For the design record — decisions, specs, research — see `context/README.md`.
 
 ## Tooling reference

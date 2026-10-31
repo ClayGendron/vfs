@@ -46,8 +46,7 @@ src/vfs/
 
 Tests mirror the shipped modules under `tests/` — for example
 `src/vfs/storage/backends/database/reads.py` is tested in
-`tests/storage/database/test_reads.py`. `src2/` and `tests2/` are an
-archived reference quarry; never edit, run, or lint them.
+`tests/storage/database/test_reads.py`.
 
 ## Docs
 

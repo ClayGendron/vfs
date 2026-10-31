@@ -122,8 +122,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["ANN", "S101", "TC001"]
-"src2/**/*.py" = ["ALL"]  # archived — skip linting
-"tests2/**/*.py" = ["ALL"]  # archived — skip linting
 "context/**/*.py" = ["ALL"]  # story spikes — throwaway benchmark code
 
 [tool.ruff.lint.isort]
@@ -144,7 +142,7 @@ testpaths = ["tests"]
 # the real-engine legs are selected in tests/conftest.py.
 addopts = "-n auto --dist worksteal"
 asyncio_mode = "auto"
-norecursedirs = ["tests/fixtures", "tests2", "src2"]
+norecursedirs = ["tests/fixtures"]
 markers = [
     "slow: marks tests as slow",
     "integration: marks integration tests",

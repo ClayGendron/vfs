@@ -75,15 +75,11 @@ Consequences that bind design work:
   honestly in the docstring and name the future direction; never
   convert the suboptimality into a declared limit.
 
-### Live code vs archived reference: `src/`+`tests/` vs `src2/`+`tests2/`
+### Live code: `src/` and `tests/`
 
-- **`src/` and `tests/` are live.** New and updated code and tests go here;
-  `tests/` is the only suite worth running.
-- **`src2/` and `tests2/` are archived pre-refactor code, kept as a quarry**
-  to mine while building out the live tree. Do **not** run, lint, fix, or
-  port-fix them — they reference names that no longer exist by design, and
-  tooling config already excludes them. When a file has been fully ported or
-  superseded, it can go.
+- **`src/` and `tests/` are the whole live tree.** New and updated code and
+  tests go here. The archived pre-refactor quarry (`src2/`, `tests2/`) was
+  fully mined and deleted on 2026-10-30; git history keeps it.
 
 ## Tooling
 
@@ -94,8 +90,7 @@ Consequences that bind design work:
   `src/` and `tests/`.** They currently pass clean; leave them that way
   after every change. The format gate is not optional: CI runs
   `ruff format --check`, and format drift has reached `main` twice by
-  sessions running only `ruff check`. `src2/` and `tests2/` are excluded
-  in `pyproject.toml` — never chase errors there.
+  sessions running only `ruff check`.
 - **`uv run pytest` is the inner loop, it is parallel, and it runs the
   whole suite** (`-n auto --dist worksteal` in `addopts`, pytest-xdist;
   about 55 s on a ten-core laptop). `tests/conftest.py` deselects the
