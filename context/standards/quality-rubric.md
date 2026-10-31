@@ -69,7 +69,7 @@ Does the code do what it claims, provably?
 Are the constitution's MUSTs true in the live tree?
 
 - **Mechanical:** every enumeration/search verb accepts a limit and reports truncation (Article 2 §3); every public error belongs to the closed taxonomy (`results/kinds.py`); `capabilities()` answers without executing the op (Article 2 §2); every Entry and Candidate carries a revision (Article 1 §1.5).
-- **Judgment:** Plan 9 / Unix deviations recorded in `decisions/` (Article 3); no silent cross-mount behavior (Article 1 §1.4); error-kind vocabulary has no dead entries (a defined-but-unused kind means a promised behavior is unimplemented).
+- **Judgment:** Plan 9 / Unix deviations recorded in the spec that makes them (Article 3); no silent cross-mount behavior (Article 1 §1.4); error-kind vocabulary has no dead entries (a defined-but-unused kind means a promised behavior is unimplemented).
 
 ### 3. Architecture integrity — weight 15
 
@@ -88,7 +88,7 @@ Layering, seams, and chokepoints.
 Does `context/` + the README describe the tree that exists?
 
 - **Mechanical:** README claims match computed facts (test count, coverage, Python versions); no stale project names (`grover`, `tests_old`) in live docs; no tracked generated artifacts (`coverage.json` and friends); `STATUS.md` review date is within its stated cadence.
-- **Judgment:** per-spec `spec.md` status lines match the code (the `STATUS.md` true-up procedure); `open-questions.md` actually holds the open `[NEEDS CLARIFICATION]` items rather than sitting empty; superseded standards are updated, not left describing the previous generation.
+- **Judgment:** per-spec `spec.md` status lines match the code (the `STATUS.md` true-up procedure); an undecided choice is a placeholder research memo, never a marker left in a spec; superseded standards are updated, not left describing the previous generation.
 
 ### 6. Fitness for purpose — weight 15
 
@@ -120,7 +120,7 @@ Weights track the roadmap, not a fixed ideal. As the backend port and MCP surfac
 3. Compute the weighted total by joining the raw scores against this file's weights block: `Σ (score/4 × weight)`, reported as n/100.
 4. Record the review as `context/standards/grades/YYYY-MM-DD-quality-review.md` with raw scores (JSON block + evidence), and note score deltas against the prior review. Baseline: [2026-07-16](grades/2026-07-16-quality-baseline-review.md).
 
-**Cadence:** a scored review **weekly** (the `grades/` series), with a deeper evidence pass at each roadmap inflection (a backend lands, the MCP surface ships, a release cut) — a natural companion to `specs/STATUS.md` true-ups, and reasonably done in the same sitting.
+**Cadence:** a scored review **weekly** (the `grades/` series), with a deeper evidence pass at each roadmap inflection (a backend lands, the MCP surface ships, a release cut) — a natural companion to `specifications/STATUS.md` true-ups, and reasonably done in the same sitting.
 
 **Gating:** only the mechanical layer gates. Judgment scores inform priorities; they never block a landing.
 

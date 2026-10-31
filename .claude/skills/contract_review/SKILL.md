@@ -45,8 +45,8 @@ touched module/function, gather:
 - **Type signatures** — parameter and return types, `Good | Error`
   unions, `None`-ability, declared exceptions. A signature is a contract
   the type checker only partially enforces; read what it *claims*.
-- **Specs and ADRs** — the open spec in `context/specs/` the branch
-  serves, plus any ADR in `context/decisions/` naming this behavior.
+- **Specs** — the open spec in `context/specifications/` the branch
+  serves, and its Decisions section.
 - **Error-classification tables and invariants** — error taxonomies,
   frozensets of accepted values, and repo-wide invariants from
   `CLAUDE.md` (e.g. no statement grows unboundedly with batch size;

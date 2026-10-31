@@ -27,8 +27,8 @@ at most a lead to chase with a script, never a finding.
   path, otherwise the session scratchpad from the system prompt — in a
   subdirectory per dimension, e.g. `<scratchpad>/adversarial/<dimension>/`.
 - **Read intent first.** Module docstrings, the touched code's tests, the
-  relevant spec in `context/specs/` (or `context/stories/*/spec.md`), and
-  ADRs in `context/decisions/`. Intended, documented, or test-pinned
+  relevant spec in `context/specifications/` and its Decisions section.
+  Intended, documented, or test-pinned
   behavior is not a defect, and triage (step 4) is judged against these.
 
 ## Process

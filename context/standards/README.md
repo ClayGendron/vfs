@@ -16,4 +16,4 @@ What every stage of [the pipeline](../README.md) obeys. These pages change rarel
 | [quality-rubric.md](quality-rubric.md) | How the repository's quality is scored, and the [grades/](grades/) time series. |
 | [mutant-ledger.md](mutant-ledger.md) | The replayable one-line mutations each pinned law is proven by. |
 
-A convention that matters enough to write down matters enough to have its own page. Spec-specific design belongs in the spec; historical decisions live in the spec that carried them, and before 2026-10-29 in the frozen [decisions/](../decisions/README.md).
+A convention that matters enough to write down matters enough to have its own page. Spec-specific design belongs in the spec; historical decisions live in the spec that carried them.

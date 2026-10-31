@@ -21,7 +21,7 @@ when that promise breaks?** A promise with no failing-test is an
 unpinned contract, and unpinned contracts drift silently.
 
 Ground rules for this repo: `tests/` is the only live suite (`uv run
-pytest tests/ -q`); contracts live in docstrings and `context/specs/`;
+pytest tests/ -q`); contracts live in docstrings and `context/specifications/`;
 the two storage backends (`src/vfs/storage/backends/memory.py` and
 `src/vfs/storage/backends/database/`) must behave identically, with
 shared behavior pinned in `tests/storage_conformance.py` and only

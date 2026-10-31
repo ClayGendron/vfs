@@ -132,7 +132,7 @@ Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken);
 
 *Story.* As a software developer, I want the kernel's public names and argument families decided and written down once, so that the code I write against `0.1.0b1` keeps working at `0.1.0` and nothing I depend on is renamed under me. *Why.* Eight specs stand on a proposed ADR. Six pins carry a lean Clay has not confirmed; two change public names (pin 3, pin 16). Nothing in K2–K9 can freeze until they are decided. *Depends on.* Nothing. Decisions D4–D8. *Acceptance.*
 1. ADR 087's status line reads "accepted" with a date; *Pending Clay* records each of the six pins and the two spec forks as resolved.
-2. Specs 167, 169 and 171 say `replace=`; a grep over `context/specs/active` for `overwrite=` finds only spec 174's removal note.
+2. Specs 167, 169 and 171 say `replace=`; a grep over `context/specifications/active` for `overwrite=` finds only spec 174's removal note.
 3. Architecture page 02's *Open* list is empty.
 
 #### K2 — Write preconditions and the guarded append · spec 174 · L · gate b
@@ -926,7 +926,7 @@ D6's items 2–3; listed here because it is the lane's final gate.
 #### R7 — Context-pipeline true-up · S · gate b
 
 *Depends on.* K1, H1. *Acceptance.*
-1. Specs 165, 162, 152 (A/B closed; C/D re-cut or tagged 0.2), 173 move to `specs/archive/` with landing notes; their stale "uncommitted" lines are corrected first.
+1. Specs 165, 162, 152 (A/B closed; C/D re-cut or tagged 0.2), 173 move to `specifications/archive/` with landing notes; their stale "uncommitted" lines are corrected first.
 2. Spec 161 is dropped (its write half landed with the tombstone mint; its read half is K8); spec 051 is replaced by H6; spec 102 is closed as overtaken by the tombstone delete or re-cut against `move`/`copy` at 10k; spec 080 is tagged per D3.
 3. `STATUS.md` is replaced by a table of at most 60 lines (spec, status, gate, landing commit) regenerated from the spec status lines; the history moves to a dated research memo or is deleted.
 4. The ten proposed ADRs (022, 058, 069, 081–087) are each ratified, amended or withdrawn; pending leans are zero before `0.1.0b1`.

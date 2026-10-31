@@ -66,7 +66,7 @@ The costs of parity, so the decision is eyes-open:
 ## 6. Sources
 
 - vfs live tree: `src/vfs/storage/backends/database/{descent,writes, reads}.py`, `src/vfs/models/rows.py`, `tests/test_backends_database.py` (cited inline)
-- `context/specs/active/072-database-storage-backend/spec.md` §9; `context/decisions/004-stable-node-identity.md`
+- `context/specifications/active/072-database-storage-backend/spec.md` §9; `context/decisions/004-stable-node-identity.md`
 - `context/research/2026-07-13-database-storage-write-pipeline.md` W6 (trash-reparent resolution and its JuiceFS citations)
 - freedesktop.org Trash specification v1.0; macOS/Windows behavior — from model knowledge, flagged above
 - JuiceFS local checkout — pending section §3

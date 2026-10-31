@@ -32,7 +32,7 @@ One line: **the core works and the read-only gate holds, but the docs overpromis
 
 - **What:** the README says every mutation is "versioned, reversible" (`README.md` L52–55). But no code writes a version row.
   - `write` and `edit` replace the old body in place (`src/vfs/storage/backends/database/writes.py` L1–27).
-  - Spec 152 says it directly: "No write path mints a version row today" (`context/specs/active/152-binary-bodies-and-text-renderings/spec.md` L132–135).
+  - Spec 152 says it directly: "No write path mints a version row today" (`context/specifications/active/152-binary-bodies-and-text-renderings/spec.md` L132–135).
   - The `vfs_versions` table and the `Version` model exist (`src/vfs/models/rows.py` L515–536). The only code that touches them is the trash purge (`topology.py` L713). Tests insert version rows by hand.
 - **Effect:** an overwrite by `write` or `edit` can't be undone. Delete can be undone, through trash and `restore`. Move can be undone with a second move.
 - **Checked:** read.
@@ -233,4 +233,4 @@ Two corrections to the memo itself:
 - "Items 7 and 8 are being fixed now, uncommitted, in this checkout" was not true of the vfs checkout at `06e14b0`; its only uncommitted change was `context/open-questions.md`.
 - One crash the memo missed: mounting a `VirtualFileSystem` node directly with `add_mount` passes the `StorageBackend` structural check, and `read` and `write` route through it, but `glob` raises `TypeError` because the router passes `patterns=` while the node's verb takes `pattern=`. The README's "mounts nest" sentence invites exactly this shape.
 
-The specs cut from this memo are 153–161 under `../specs/active/`.
+The specs cut from this memo are 153–161 under `../specifications/active/`.

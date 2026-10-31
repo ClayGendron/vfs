@@ -121,11 +121,11 @@ The namespace is designed to be an agent's whole toolbox behind one MCP tool: ve
 
 What the tree does not do yet, and where each decision lives.
 
-- **Permissions are enforced at the node.** The mount-level and per-prefix map is checked before dispatch; row-level grants are landed ([spec 058](context/specs/archive/058-row-level-permission-grants/spec.md), [ADR 073](context/decisions/073-the-everyone-level-lives-on-the-row-and-a-callers-rights-are-caller-sized.md)).
-- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it ([ADR 068](context/decisions/068-open-by-default-in-process-anonymous-is-a-name-loud-at-the-edge.md)). Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table ([ADR 080](context/decisions/080-the-ladder-gains-list-and-contribute-and-every-verb-names-its-rung.md)).
-- **`copy` and `move` do not cross a mount boundary.** They come back `cross_mount`; copy a file across mounts with `read` and `write` ([spec 160](context/specs/active/160-cross-mount-copy-as-read-plus-write/spec.md) lifts this for files).
-- **`edit` does not touch a binary body.** It refuses `wrong_kind`; replace the bytes with `write(data=...)` ([spec 154](context/specs/archive/154-errors-are-facts/spec.md)).
-- **A `VirtualFileSystem` is not a storage and cannot be mounted.** `add_mount` takes a storage backend ([spec 156](context/specs/active/156-mount-admission/spec.md) makes the refusal explicit).
+- **Permissions are enforced at the node.** The mount-level and per-prefix map is checked before dispatch; row-level grants are landed ([spec 058](context/specifications/archive/058-row-level-permission-grants/spec.md)).
+- **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
+- **`copy` and `move` do not cross a mount boundary.** They come back `cross_mount`; copy a file across mounts with `read` and `write` ([spec 160](context/specifications/active/160-cross-mount-copy-as-read-plus-write/spec.md) lifts this for files).
+- **`edit` does not touch a binary body.** It refuses `wrong_kind`; replace the bytes with `write(data=...)` ([spec 154](context/specifications/archive/154-errors-are-facts/spec.md)).
+- **A `VirtualFileSystem` is not a storage and cannot be mounted.** `add_mount` takes a storage backend ([spec 156](context/specifications/active/156-mount-admission/spec.md) makes the refusal explicit).
 
 ## Status
 

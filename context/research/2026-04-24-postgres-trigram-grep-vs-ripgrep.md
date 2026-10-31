@@ -2,7 +2,7 @@
 
 > Date: 2026-04-24
 > Scope: local `Git/Repos` corpus loaded into `pg_trgrm_test_git_repos`
-> Notebook: `grep_glob research/live_grep_to_sql.ipynb`
+> Notebook: `grep_glob research/live_grep_to_sql.ipynb` (removed from the tree on 2026-10-30; read it from git history)
 
 ## Executive Summary
 

@@ -18,7 +18,7 @@ skill's job is to make omission safe by keeping a visible plan.
    every part of the journey — each step, each answer to a follow-up —
    reflect on what additional information is needed to fully explain
    it, and go read that first: neighboring modules, the reference
-   implementation, specs, decision records, git history. Never teach a
+   implementation, specs, git history. Never teach a
    step from memory of the artifact alone, and never present a
    reconstructed rationale as the recorded one — label what the repo
    decided, what it recorded, and what you inferred.

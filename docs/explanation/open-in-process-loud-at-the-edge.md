@@ -60,4 +60,4 @@ A per-person deny row would let you exclude one named person from a public place
 
 - [How to run calls as a principal](../how-to/run-calls-as-a-principal.md).
 - [Glossary](../reference/glossary.md) for posture, everyone level, and the anonymous principal.
-- Design record in the repository: `context/decisions/068-open-by-default-in-process-anonymous-is-a-name-loud-at-the-edge.md`; the posture design is `context/specs/active/058-row-level-permission-grants/spec.md`.
+- Design record in the repository: the posture design is `context/specifications/archive/058-row-level-permission-grants/spec.md`.

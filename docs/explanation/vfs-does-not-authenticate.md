@@ -59,4 +59,4 @@ A set of subjects over a foreign mount has no settled answer. An agent working f
 ## Further reading
 
 - [Identity is a value, not a session](identity-is-a-value.md) for why the authority holds what it holds.
-- Design records in the repository: `context/decisions/062-authority-is-subjects-actor-and-narrowing.md` and `context/specs/active/149-serve-auth-token-to-authority/spec.md`; the credential-store direction is recorded in `context/specs/STATUS.md`.
+- Design record in the repository: `context/specifications/active/149-serve-auth-token-to-authority/spec.md`; the credential-store direction is recorded in `context/specifications/STATUS.md`.

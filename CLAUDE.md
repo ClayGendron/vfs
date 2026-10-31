@@ -54,7 +54,7 @@ Consequences that bind design work:
   Before adding a profile constant, check whether SQLAlchemy already
   exposes it.
 - **Unknown dialects are served the core verbs, never the ranked
-  ones** (Clay, 2026-08-27; ADR 059). They resolve to the conservative
+  ones** (Clay, 2026-08-27). They resolve to the conservative
   `GENERIC` floor stamped with their own name and serve read, write,
   the topology verbs, glob and grep exactly as a tuned engine does;
   `glean` and `graph` are withheld from their declared capabilities,
@@ -112,7 +112,7 @@ Consequences that bind design work:
 - **The Rust engine** lives in `crates/vfs-core` (pyo3 binding behind its
   `python` cargo feature; maturin builds it into the wheel as
   `vfs._native`, fronted by the `vfs/native.py` seam). **The extension
-  is required** (ADR 057, 2026-08-27): vfs has one engine, the seam
+  is required** (Clay, 2026-08-27): vfs has one engine, the seam
   fails loudly when it is missing, and there is no pure-Python runtime
   fallback. The readable reference implementations live in
   `tests/support/oracles/` and pin the engine through parity tests.
@@ -122,7 +122,7 @@ Consequences that bind design work:
   bare `uv sync` is exact: without the extras it strips the database
   drivers the engine legs need (this happened, 2026-09-04).
 - **Performance work goes in our own Rust crate; pure Python is a test
-  oracle, not a fallback** (Clay, 2026-08-27; ADR 057).
+  oracle, not a fallback** (Clay, 2026-08-27).
   - *The engine*: when a hot path needs vectorized or compiled speed,
     build a kernel in `crates/vfs-core`. Do not reach for a numeric
     acceleration library (numpy, scipy, numba) as a middle tier — it
@@ -183,8 +183,7 @@ Consequences that bind design work:
   standards — see `context/README.md`. Every change needs a spec; not
   every change needs an intention or research.
 - **Decisions live in the spec that carries them** (Clay, 2026-10-29).
-  There are no decision records: `context/decisions/` froze on
-  2026-10-29 as history. A choice is a numbered entry in the spec's
+  There are no decision records. A choice is a numbered entry in the spec's
   Decisions section with its reason; a choice that cannot be made yet
   becomes a placeholder research memo and the spec waits. No document
   holds an open question: no clarification marker, neither of the two
@@ -219,8 +218,8 @@ Consequences that bind design work:
   2026-08-04): a research memo is produced by actually gathering new
   findings — subagents studying the reference repos, executed experiments,
   benchmarks — that inform a pending decision or spec. Never write a memo
-  that merely records in-session reasoning or restates an ADR; that is
-  bookkeeping, and it belongs in the ADR or spec itself.
+  that merely records in-session reasoning or restates a spec; that is
+  bookkeeping, and it belongs in the spec itself.
 
 ## Reference repos for research
 
@@ -365,7 +364,7 @@ private *types and constants* stay next to what they support.
   "spec 030 §5.2", "Phase 4", "ADR 019") in code comments **or
   docstrings**. The comment gives its reason in words; the document
   cites the code, never the other way round. `tests/lint/` holds this
-  for `src/`; traceability lives in `context/specs/`, not inline.
+  for `src/`; traceability lives in `context/specifications/`, not inline.
 
 ## Code smells
 
@@ -382,8 +381,8 @@ private *types and constants* stay next to what they support.
 - **A smell is a hint to look closer, not a rule to obey blindly.** When you
   spot one, dig in: understand *why* the code took that shape, and decide
   whether it is justified here.
-- **Don't reach for numpy** (Clay, 2026-08-17; tightened 2026-08-27,
-  ADR 057): small sets and lists take stdlib structures, and where
+- **Don't reach for numpy** (Clay, 2026-08-17; tightened 2026-08-27):
+  small sets and lists take stdlib structures, and where
   measured scale justifies more the answer is a kernel in our own Rust
   crate — see *Performance work goes in our own Rust crate* under
   Tooling. The remaining numpy sites (posting decode/intersect, lexical

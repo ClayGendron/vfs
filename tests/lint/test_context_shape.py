@@ -31,7 +31,7 @@ def test_intentions_have_their_sections() -> None:
 
 
 def test_specs_have_their_sections() -> None:
-    specs = shapes.dated_specs("specs/active") + shapes.dated_specs("specs/archive")
+    specs = shapes.dated_specs("specifications/active") + shapes.dated_specs("specifications/archive")
     errors = [e for p in specs for e in shapes.spec_errors(p)]
     assert not errors, report(errors)
 
@@ -47,9 +47,9 @@ def _scanned_documents() -> list[tuple[str, int]]:
         *shapes.direct_documents("intentions"),
         *shapes.direct_documents("research"),
         *shapes.direct_documents("reviews"),
-        *shapes.direct_documents("specs/active"),
-        *shapes.direct_documents("specs/archive"),
-        *shapes.CONTEXT.glob("specs/*/*/spec.md"),
+        *shapes.direct_documents("specifications/active"),
+        *shapes.direct_documents("specifications/archive"),
+        *shapes.CONTEXT.glob("specifications/*/*/spec.md"),
         shapes.CONTEXT / "README.md",
         shapes.REPO / "CLAUDE.md",
     ]
@@ -81,7 +81,7 @@ def test_the_marker_allowlist_only_shrinks() -> None:
 
 
 def test_landed_specs_link_their_reviews() -> None:
-    errors = [e for p in shapes.dated_specs("specs/archive") for e in shapes.landed_spec_errors(p)]
+    errors = [e for p in shapes.dated_specs("specifications/archive") for e in shapes.landed_spec_errors(p)]
     assert not errors, report(errors)
 
 

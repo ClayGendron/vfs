@@ -2,7 +2,7 @@
 
 > **Note (extracted 2026-07-16):** this memo was extracted from story 031's
 > `explanation.md`
-> (`specs/archive/031-unified-entry-creation-chokepoint/explanation.md`,
+> (`specifications/archive/031-unified-entry-creation-chokepoint/explanation.md`,
 > last committed 2026-06-12, `4be7c24`) during the archive mining pass, and
 > is dated to the original work. It preserves the precedent survey — one-door
 > entry creation across Linux, FreeBSD, Plan 9 / 9P, FUSE, and SQLite — that

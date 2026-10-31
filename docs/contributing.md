@@ -56,7 +56,7 @@ The GitHub Pages deployment workflow lives at `.github/workflows/deploy-docs.yml
 
 ## How a change lands
 
-Every change has a specification, one file under `context/specs/active/`, that states the problem, draws the components it touches, decides every choice with its reason, and names the test that will pin each acceptance criterion. Larger work starts earlier, with an intention under `context/intentions/` that says what experience the work enables and why, and with research memos under `context/research/` when there is something to learn.
+Every change has a specification, one file under `context/specifications/active/`, that states the problem, draws the components it touches, decides every choice with its reason, and names the test that will pin each acceptance criterion. Larger work starts earlier, with an intention under `context/intentions/` that says what experience the work enables and why, and with research memos under `context/research/` when there is something to learn.
 
 A specification is reviewed before it is built, and the code is reviewed again before it lands. Both reviews are written by someone who did not write the change and are kept as files under `context/reviews/`; the specification's landing notes link them. The code is written tests first: the test is seen failing before the code that passes it.
 

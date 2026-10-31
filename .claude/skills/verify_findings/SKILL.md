@@ -62,7 +62,7 @@ reviewer's. If your derivation disagrees with theirs, the disagreement
 is the lead — chase it to ground.
 
 **b. Check intent.** Declared intent lives in module docstrings,
-`context/specs/`, and the ADRs in `context/decisions/`. Read the ones
+and the specs in `context/specifications/`. Read the ones
 covering the behavior. A behavior those documents intend is **not a
 defect**, no matter how surprising — at most it is a design note. Be
 precise about what the document actually commits to: "the spec doesn't

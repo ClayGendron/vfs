@@ -33,7 +33,7 @@ vfs's second safety invariant, "every action is scoped to a principal", does not
 
 Columns: the failure class; a concrete example or attack with its source; the vfs surface it would hit; the invariant that must hold to prevent it; the rubric question that governs it. Rows are grouped A to H by the shape of the failure. Citations are `file:line` in this repo or a named external source (URLs in Sources).
 
-Abbreviations: `yolofs` = `2026-09-04-yolofs-agent-native-filesystem-threat-model.md`; `070` = `specs/active/070-principal-scoped-sessions/spec.md`; `058` = `specs/active/058-row-level-permission-grants/spec.md`; `021` = `decisions/021-row-grant-model-spine.md`; `006` = `decisions/006-global-namespace-tenant-permissions.md`; `adr058` = `decisions/058-the-access-layer-for-agents-positioning.md`; `mirage` = `2026-09-04-mirage-design-patterns.md`; `mcp0810` = `2026-08-10-mcp-2026-07-28-stateless-revision.md`; `mcp0419` = `2026-04-19-mcp-specification.md`; `cloud` = `2026-04-22-cloud-permission-models.md`; `race` = `2026-09-04-delete-vs-mkedge-race.md`; `plan` = `2026-09-05-principals-and-permissions-research-plan.md`.
+Abbreviations: `yolofs` = `2026-09-04-yolofs-agent-native-filesystem-threat-model.md`; `070` = `specifications/active/070-principal-scoped-sessions/spec.md`; `058` = `specifications/active/058-row-level-permission-grants/spec.md`; `021` = `decisions/021-row-grant-model-spine.md`; `006` = `decisions/006-global-namespace-tenant-permissions.md`; `adr058` = `decisions/058-the-access-layer-for-agents-positioning.md`; `mirage` = `2026-09-04-mirage-design-patterns.md`; `mcp0810` = `2026-08-10-mcp-2026-07-28-stateless-revision.md`; `mcp0419` = `2026-04-19-mcp-specification.md`; `cloud` = `2026-04-22-cloud-permission-models.md`; `race` = `2026-09-04-delete-vs-mkedge-race.md`; `plan` = `2026-09-05-principals-and-permissions-research-plan.md`.
 
 | # | Failure class | Concrete example or attack (source) | vfs surface | Invariant that must hold | Q |
 |---|---|---|---|---|---|
@@ -327,8 +327,8 @@ Repository files, read 2026-09-05, cited above as `file:line`:
 
 - `context/research/2026-09-05-principals-and-permissions-research-plan.md` (§1, §1.1, §2, §4, §6).
 - `context/research/2026-09-04-yolofs-agent-native-filesystem-threat-model.md` (§2.1 to §2.3, §3.4, §4.2, §5.0, §5.2, §5.3, §5.4, §6).
-- `context/specs/active/070-principal-scoped-sessions/spec.md` (Intent, decisions 1 to 7, the research review's objections 1 to 9, non-goals, open questions).
-- `context/specs/active/058-row-level-permission-grants/spec.md` (Intent).
+- `context/specifications/active/070-principal-scoped-sessions/spec.md` (Intent, decisions 1 to 7, the research review's objections 1 to 9, non-goals, open questions).
+- `context/specifications/active/058-row-level-permission-grants/spec.md` (Intent).
 - `context/decisions/021-row-grant-model-spine.md` (decisions 1 to 4, the groups fork).
 - `context/decisions/006-global-namespace-tenant-permissions.md`.
 - `context/decisions/058-the-access-layer-for-agents-positioning.md` (Context, decisions 1 to 8).

@@ -77,9 +77,9 @@ The context *system* is excellent; the *sync* is leaky. Drift found:
 - `standards/testing.md` still references `grover`, `GroverResult`, and `tests_old/` — describes the previous generation.
 - `CONTRIBUTING.md` is titled "Contributing to Grover".
 - README claims a 1,094-test suite; the tree collects 1,602.
-- `open-questions.md` is an empty placeholder while clarification markers live in spec files (e.g. 072 §4/§5/§8/§9/§12 per `specs/STATUS.md`).
+- `open-questions.md` is an empty placeholder while clarification markers live in spec files (e.g. 072 §4/§5/§8/§9/§12 per `specifications/STATUS.md`).
 - Tracked `coverage.json` is dated 2026-04-23 (~3 months stale).
-- **Credit:** `specs/STATUS.md` true-up procedure is real and recent (2026-07-10/12); decisions and research memos are genuinely maintained.
+- **Credit:** `specifications/STATUS.md` true-up procedure is real and recent (2026-07-10/12); decisions and research memos are genuinely maintained.
 
 ### 6. Fitness for purpose — 2.0
 

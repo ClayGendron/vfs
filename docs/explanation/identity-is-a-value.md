@@ -66,4 +66,3 @@ Identity is not ownership. Ownership is a column on a row, set once, and it mean
 
 - [Authority and Principal](../reference/authority.md), the fields, doors, and rules.
 - [How to run calls as a principal](../how-to/run-calls-as-a-principal.md).
-- Design records in the repository: `context/decisions/062-authority-is-subjects-actor-and-narrowing.md` and `context/decisions/063-a-session-never-widens-itself.md`.

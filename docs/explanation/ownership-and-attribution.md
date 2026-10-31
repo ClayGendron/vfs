@@ -52,4 +52,3 @@ The versions table has carried this shape since the schema format moved to thirt
 
 - [Authority and Principal](../reference/authority.md), including the owner table.
 - [How to bulk load as the system actor](../how-to/bulk-load-as-the-system-actor.md), the one path where a declared owner is honored.
-- Design record in the repository: `context/decisions/064-every-version-row-names-actor-and-subjects.md`.

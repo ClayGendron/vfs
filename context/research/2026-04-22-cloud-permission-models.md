@@ -1,7 +1,7 @@
 # Research — Cloud permission models: Drive, SharePoint, Dropbox
 
 > **Note (extracted 2026-07-16):** this memo was extracted from story 009's
-> spec (`specs/archive/009-cloud-style-sharing-and-access-control/spec.md`,
+> spec (`specifications/archive/009-cloud-style-sharing-and-access-control/spec.md`,
 > §"Research — how the cloud systems do it") during the archive mining pass,
 > and is dated to the original work. The spec cited
 > `learnings/2026-04-22-cloud-permission-models.md` as its research source,

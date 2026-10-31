@@ -31,7 +31,7 @@ FENCE_RE: re.Pattern[str] = unwrap_context.FENCE_RE
 
 # Direct files in the dated folders that are not documents of the process.
 FIXED_NAMES = frozenset({"README.md", "STATUS.md", "MINING.md"})
-DATED_FOLDERS = ("intentions", "specs/active", "specs/archive", "reviews", "research")
+DATED_FOLDERS = ("intentions", "specifications/active", "specifications/archive", "reviews", "research")
 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 DATED_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
@@ -327,7 +327,7 @@ def link_errors(path: Path) -> list[str]:
         if "://" in target or target.startswith(("#", "mailto:")):
             continue
         resolved = (path.parent / target.split("#")[0]).resolve()
-        moved = Path(str(resolved).replace("/specs/active/", "/specs/archive/"))
+        moved = Path(str(resolved).replace("/specifications/active/", "/specifications/archive/"))
         if REPO not in resolved.parents:
             errors.append(f"{relative(path)}: dead link (outside the repository) {target}")
         elif not resolved.exists() and not moved.exists():
@@ -358,9 +358,6 @@ def process_page_errors() -> list[str]:
         for t in ("# Spec review:", "# Code review of")
         if t not in templates
     ]
-    errors += [
-        f"context/{frozen}: first paragraph does not say it froze"
-        for frozen in ("decisions/README.md", "specs/STATUS.md", "open-questions.md")
-        if "froze" not in first_paragraph((CONTEXT / frozen).read_text())
-    ]
+    if "froze" not in first_paragraph((CONTEXT / "specifications/STATUS.md").read_text()):
+        errors.append("context/specifications/STATUS.md: first paragraph does not say it froze")
     return errors

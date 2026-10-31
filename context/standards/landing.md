@@ -1,12 +1,12 @@
 # Landing: how a change reaches main
 
-This page says how a built change becomes one commit on `main`. It is the last stage of [the development process](../specs/active/2026-10-29-the-development-process.md): the spec was reviewed, the tests were written first, the code was reviewed, and now it lands. It expands the "Git workflow" section of [CLAUDE.md](../../CLAUDE.md) and never contradicts it: commit to the current branch, `main` included; push only when Clay asks; no worktrees; no restore-shaped command on a file that carries uncommitted work. The two reviews it names are described in [the reviews README](../reviews/README.md); the coding patterns the diff is held to are in [how we code](how-we-code.md); the release that follows a run of landings is [release.md](release.md).
+This page says how a built change becomes one commit on `main`. It is the last stage of [the development process](../specifications/active/2026-10-29-the-development-process.md): the spec was reviewed, the tests were written first, the code was reviewed, and now it lands. It expands the "Git workflow" section of [CLAUDE.md](../../CLAUDE.md) and never contradicts it: commit to the current branch, `main` included; push only when Clay asks; no worktrees; no restore-shaped command on a file that carries uncommitted work. The two reviews it names are described in [the reviews README](../reviews/README.md); the coding patterns the diff is held to are in [how we code](how-we-code.md); the release that follows a run of landings is [release.md](release.md).
 
 Terms. A **landing** is the commit that puts a change on `main`. A **trailer** is a `Key: value` line at the end of a commit message that git reads by key (`git log --format='%(trailers:key=Spec,valueonly)'`). The **landing notes** are the spec's own section of that name, filled in at the landing. The **standing verdict** of a review is the last line of its Verdict section that begins with a date, or the section's first line when no line does.
 
 ## The commit
 
-One commit by default. It carries the code, its tests, the docs it changes, both review files, the landing notes, the `git mv` of the spec to `context/specs/archive/`, and the architecture page. One `git show` is then the whole record, and `git bisect` lands on a spec, not on a slice of one.
+One commit by default. It carries the code, its tests, the docs it changes, both review files, the landing notes, the `git mv` of the spec to `context/specifications/archive/`, and the architecture page. One `git show` is then the whole record, and `git bisect` lands on a spec, not on a slice of one.
 
 ### The subject
 
@@ -28,7 +28,7 @@ The body never restates the diff and never names a spec by number. It may name t
 
 Four, in this order, each a line git reads by key:
 
-- `Spec:` the spec's path after this commit, under `context/specs/archive/`, because the commit moves it there.
+- `Spec:` the spec's path after this commit, under `context/specifications/archive/`, because the commit moves it there.
 - `Spec-review:` the spec review file under `context/reviews/`.
 - `Code-review:` the code review file under `context/reviews/`, whose standing verdict begins "Lands".
 - `Co-Authored-By:` the model that wrote the change, not the session that briefed it. A sub-agent's commit names the sub-agent's model.
@@ -60,7 +60,7 @@ with the precondition step.
 The engine legs ran on Postgres and SQL Server; MariaDB and Oracle did
 not run on this machine.
 
-Spec: context/specs/archive/2026-11-03-the-guarded-append.md
+Spec: context/specifications/archive/2026-11-03-the-guarded-append.md
 Spec-review: context/reviews/2026-11-03-the-guarded-append-spec-review.md
 Code-review: context/reviews/2026-11-06-the-guarded-append-code-review.md
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
@@ -74,7 +74,7 @@ In order. "Green" means every step passes with nothing skipped by hand.
 2. **The engine legs ran** when the change touched `storage/backends/database/`, `models/rows.py`, a dialect profile, a builder or a loop over batch input: the [db_test](../../.claude/skills/db_test/SKILL.md) cycle over Postgres, MariaDB, SQL Server and Oracle. A leg that could not run is named in the commit body and in the landing notes, never reported as clean.
 3. **The code review file is present** at `context/reviews/YYYY-MM-DD-<spec-slug>-code-review.md`, written by a reviewer who did not write the change, with a standing verdict beginning "Lands"; the spec review file is present beside it. A standing verdict that does not begin "Lands" stops the checklist here. What follows is a code fix and the reviewer's re-read, never a verdict written by the author.
 4. **The landing notes are written** in the spec's Landing notes section: what landed per acceptance criterion, the numbers reproduced (statement counts, row counts, test counts), each deviation from the spec with its reason, what was flagged to Clay, what did not run. They link both review files by relative path. They end with one line `**Changelog:** Added — …` (or Changed, Fixed, Security, or `**Changelog:** None — internal`); the release assembles `CHANGELOG.md` from these lines.
-5. **The spec moves** with `git mv context/specs/active/<name>.md context/specs/archive/<name>.md`, so the move is one rename in the diff and history follows the file. Links to the active path keep resolving: the lint counts a link to `specs/active/<name>` as resolved when `specs/archive/<name>` exists.
+5. **The spec moves** with `git mv context/specifications/active/<name>.md context/specifications/archive/<name>.md`, so the move is one rename in the diff and history follows the file. Links to the active path keep resolving: the lint counts a link to `specifications/active/<name>` as resolved when `specifications/archive/<name>` exists.
 6. **The architecture page is touched** when the spec's diagram changed what a page under [context/architecture/](../architecture/README.md) draws: the diagram redrawn, the page dated against this commit, the glossary updated. When no page changed, the landing notes say "Architecture pages: unchanged." in one line.
 7. **The docs are updated**: README claims, the `docs/` pages, and the doc fences `scripts/ci.sh` runs. The README ships in the wheel, so a README claim is a product claim.
 8. **`git diff --cached --stat` is read** before the commit. The staged set is the code, its tests, the docs, the two review files, the spec move, the landing notes and the architecture page, and nothing else.

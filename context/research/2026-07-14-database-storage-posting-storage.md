@@ -1,7 +1,7 @@
 # 072 research — posting persistence across engines, from source
 
 > **Note (2026-07-16 reorg):** this memo moved here from
-> `specs/072-database-storage-backend/research-posting-storage.md`. Sibling citations resolve
+> `specifications/072-database-storage-backend/research-posting-storage.md`. Sibling citations resolve
 > in this directory: `research.md` → `2026-07-13-database-storage-backend.md` ·
 > `research-grep-index.md` → `2026-07-13-database-storage-grep-index.md` ·
 > `research-pipelines-brief.md` → `2026-07-13-database-storage-pipelines-brief.md` ·
