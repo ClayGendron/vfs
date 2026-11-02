@@ -117,7 +117,6 @@
           <div class="terminal">
             <div class="terminal-head">
               <span class="terminal-title">Terminal</span>
-              <span class="terminal-hint">One shell for people and agents. Every command goes through the same gate.</span>
             </div>
             <Shell bind:this={shell} onchanged={refreshTree} />
           </div>
@@ -174,7 +173,6 @@
     background: var(--background);
   }
   .terminal-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
-  .terminal-hint { color: var(--muted-foreground); font-size: 0.85rem; }
   .terminal :global(.shell) { flex: 1; height: auto !important; }
   .terminal :global(.grip) { display: none; }
   .agent { min-height: 0; min-width: 0; }
@@ -205,7 +203,7 @@
     .list.open { display: flex; }
     .agent { position: fixed; inset: 0 0 56px; z-index: 5; background: var(--background); order: 2; }
     .agent :global(.chat) { border-left: 0; }
-    .foot, .terminal-hint { display: none; }
+    .foot { display: none; }
     .terminal-head { padding: 0.75rem 1rem 0.5rem; }
   }
 </style>

@@ -72,7 +72,6 @@
         <button type="button" class="crumb" class:current={crumb.path === folder} onclick={() => go(crumb.path)}>{crumb.name}</button>
       {/each}
     </nav>
-    <span class="who">as {workspace.current?.name ?? "…"}</span>
     <div class="views" role="group" aria-label="View">
       <button type="button" class="view" class:active={view === "icons"} aria-pressed={view === "icons"} title="Icons" onclick={() => (view = "icons")}>
         <SquaresFour size={18} weight={view === "icons" ? "fill" : "regular"} />
@@ -107,7 +106,6 @@
         <p class="empty">Nothing here that you can see.</p>
       {/if}
     </div>
-    <p class="hint">Double-click a folder to open it, or a file to open it in its app.</p>
   {:else}
     <div class="tree">
       {#if node}
@@ -157,8 +155,8 @@
     outline-offset: var(--focus-offset);
   }
   .sep { display: inline-flex; color: var(--muted-foreground); }
-  .who { margin-left: auto; color: var(--muted-foreground); font-size: 0.8rem; white-space: nowrap; }
   .views {
+    margin-left: auto;
     display: inline-flex;
     padding: 2px;
     border-radius: var(--radius);
@@ -213,13 +211,6 @@
     overflow-wrap: anywhere;
   }
   .kind { color: var(--muted-foreground); font-size: 0.7rem; }
-  .hint {
-    margin: 0;
-    padding: 0.5rem 1.25rem;
-    border-top: var(--line-width) solid var(--border);
-    color: var(--muted-foreground);
-    font-size: 0.78rem;
-  }
   .tree {
     flex: 1;
     min-height: 0;
@@ -229,7 +220,6 @@
   .empty { grid-column: 1 / -1; margin: 0; padding: 1rem; color: var(--muted-foreground); font-size: 0.9rem; }
   @media (max-width: 900px) {
     .bar { padding: 0.5rem 0.75rem; }
-    .who { display: none; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); padding: 0.75rem; }
   }
 </style>

@@ -1,7 +1,27 @@
 <script lang="ts">
-  import { Code, FileText, Folders, Moon, PresentationChart, Sparkle, Sun, Table, Terminal } from "phosphor-svelte";
+  import { Check, Code, FileText, Folders, Moon, PresentationChart, Sparkle, Sun, Table, Terminal } from "phosphor-svelte";
   import FourDot from "./FourDot.svelte";
   import { APPS, workspace, type AppId } from "../state.svelte";
+
+  let accountsOpen = $state(false);
+  let switching = $state(false);
+  const people = $derived(workspace.principals.filter((p) => p.kind === "user"));
+  const initials = $derived((workspace.current?.name ?? "").split(" ").map((w) => w[0]).join("").slice(0, 2));
+
+  async function choose(id: string) {
+    accountsOpen = false;
+    if (id === workspace.principal) return;
+    switching = true;
+    try {
+      await workspace.switchPrincipal(id);
+    } finally {
+      switching = false;
+    }
+  }
+
+  function onWindowKey(e: KeyboardEvent) {
+    if (e.key === "Escape") accountsOpen = false;
+  }
 
   const icons = { files: Folders, docs: FileText, sheets: Table, slides: PresentationChart, code: Code, terminal: Terminal } as const;
 </script>
@@ -50,8 +70,41 @@
         {#if workspace.theme === "dark"}<Sun size={20} />{:else}<Moon size={20} />{/if}
       </span>
     </button>
+    <div class="account">
+      <button
+        type="button"
+        class="avatar"
+        class:busy={switching}
+        aria-haspopup="menu"
+        aria-expanded={accountsOpen}
+        aria-label="Account: {workspace.current?.name ?? ''}"
+        title={workspace.current?.name}
+        onclick={() => (accountsOpen = !accountsOpen)}
+      >
+        {initials}
+      </button>
+      {#if accountsOpen}
+        <div class="menu" role="menu" aria-label="Switch account">
+          {#each people as p (p.id)}
+            <button type="button" class="person" role="menuitemradio" aria-checked={p.id === workspace.principal} onclick={() => choose(p.id)}>
+              <span class="person-avatar" aria-hidden="true">{p.name.split(" ").map((w) => w[0]).join("").slice(0, 2)}</span>
+              <span class="person-text">
+                <span class="person-name">{p.name}</span>
+                <span class="person-role">{p.role}</span>
+              </span>
+              {#if p.id === workspace.principal}<span class="check"><Check size={14} weight="bold" /></span>{/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
 </nav>
+
+<svelte:window onkeydown={onWindowKey} />
+{#if accountsOpen}
+  <button type="button" class="scrim" aria-label="Close account menu" onclick={() => (accountsOpen = false)}></button>
+{/if}
 
 <style>
   .ribbon {
@@ -91,6 +144,74 @@
   .icon { position: relative; display: grid; place-items: center; height: 24px; }
   .label { font-size: 0.65rem; line-height: 1; }
   .theme { padding-block: 0.5rem; }
+  .account { position: relative; display: flex; justify-content: center; padding-block: 0.35rem 0.25rem; }
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: opacity var(--motion-micro);
+  }
+  .avatar.busy { opacity: 0.6; }
+  .avatar:focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: var(--focus-offset); }
+  .scrim { position: fixed; inset: 0; z-index: 30; border: 0; background: transparent; cursor: default; }
+  .menu {
+    position: absolute;
+    left: calc(100% + 8px);
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 15rem;
+    padding: 0.35rem;
+    border: var(--line-width) solid var(--elevation-line);
+    border-radius: calc(var(--radius) * 1.5);
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 8px 24px var(--elevation-shadow);
+  }
+  .person {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .person:hover { background: var(--accent); }
+  .person:focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: calc(-1 * var(--focus-width)); }
+  .person-avatar {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--muted);
+    color: var(--foreground);
+    font-size: 0.65rem;
+    font-weight: 600;
+  }
+  .person-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+  .person-name { font-size: 0.875rem; font-weight: 500; }
+  .person-role { color: var(--muted-foreground); font-size: 0.75rem; }
+  .check { margin-left: auto; display: inline-flex; color: var(--primary); }
   .count {
     position: absolute;
     top: -4px;
@@ -116,7 +237,8 @@
     }
     .mark { display: none; }
     .apps { flex-direction: row; flex: 1; padding: 0; }
-    .bottom { flex-direction: row; margin-top: 0; width: auto; padding: 0; }
+    .bottom { flex-direction: row; margin-top: 0; width: auto; padding: 0; align-items: center; }
+    .menu { left: auto; right: 0; bottom: calc(100% + 8px); }
     .app { padding-block: 0.3rem; }
   }
   @media (prefers-reduced-motion: reduce) {

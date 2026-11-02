@@ -63,7 +63,6 @@
 <aside class="list" aria-label="{title} files">
   <div class="head">
     <span class="title">{title}</span>
-    <span class="who">as {workspace.current?.name ?? "…"}</span>
   </div>
   {#if children}
     <div class="actions">{@render children()}</div>
@@ -121,7 +120,6 @@
     padding: 0.85rem 1rem 0.5rem;
   }
   .title { font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
-  .who { color: var(--muted-foreground); font-size: 0.75rem; }
   .actions { padding: 0 1rem 0.5rem; }
   .where {
     display: flex;

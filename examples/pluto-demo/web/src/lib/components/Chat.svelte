@@ -109,7 +109,7 @@
     <span class="avatar" aria-hidden="true">A</span>
     <div class="head-text">
       <span class="name">Atlas</span>
-      <span class="sub">Works for {workspace.current?.name ?? "you"} through the shell</span>
+      <span class="sub">Workspace agent</span>
     </div>
     {#if onclose}
       <button type="button" class="close" onclick={onclose} aria-label="Close Atlas">×</button>
@@ -119,7 +119,6 @@
   <div class="list" bind:this={scroller}>
     {#if messages.length === 0}
       <div class="suggest">
-        <p class="suggest-lead">Ask about anything in the workspace. Atlas finds it with the same shell you have.</p>
         {#each suggestions as s (s)}
           <button type="button" class="chip" onclick={() => send(s)}>{s}</button>
         {/each}
@@ -153,9 +152,6 @@
         {/each}
         {#if m.error}
           <p class="error">{m.error}</p>
-        {/if}
-        {#if m.role === "assistant" && m.mode === "scripted"}
-          <p class="note">Scripted replay. Set ANTHROPIC_API_KEY for a live agent.</p>
         {/if}
       </div>
     {/each}

@@ -21,7 +21,7 @@ class Person(NamedTuple):
 
 PEOPLE: tuple[Person, ...] = (
     Person(Principal("clay"), "Clay Gendron", "Founder"),
-    Person(Principal("sam"), "Sam Reyes", "Engineer, joined last week"),
+    Person(Principal("sam"), "Sam Reyes", "Engineer"),
 )
 
 AGENT = Principal("atlas", kind="service")

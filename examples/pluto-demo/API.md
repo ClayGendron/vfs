@@ -7,7 +7,7 @@ The server (`server/pluto_demo`) serves the built web app at `/` and this API un
 {
   "principal": "clay",
   "principals": [{"id": "clay", "name": "Clay Gendron", "role": "Founder", "kind": "user"},
-                 {"id": "sam", "name": "Sam Reyes", "role": "Engineer, joined last week", "kind": "user"},
+                 {"id": "sam", "name": "Sam Reyes", "role": "Engineer", "kind": "user"},
                  {"id": "atlas", "name": "Atlas", "role": "Workspace agent", "kind": "service"}],
   "embedder": "model2vec" | "lexical",
   "tree": {"name": "/", "path": "/", "kind": "directory", "children": [ ...nodes... ]}
