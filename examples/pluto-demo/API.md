@@ -19,12 +19,12 @@ A tree node is `{"name","path","kind":"directory"|"file","children"?}`, listed a
 
 ## POST /api/shell  `{"command": "grep -i runway /finance"}`
 ```json
-{"command": "...", "principal": "clay", "actor": "clay", "verb": "grep", "ok": true,
+{"ts": 1730000000.1, "command": "...", "principal": "clay", "actor": "clay", "verb": "grep", "ok": true,
  "output": "rendered text", "elapsed_ms": 3.2, "paths": ["/finance/board-update.md"]}
 ```
 `verb` is one of ls, tree, cat, find, grep, glean, graph, write, edit, mkdir, rm, link, grant, revoke, grants, whoami, su, help. `su <id>` switches the principal server-side and the response's `principal` reflects it. Every call is appended to the log.
 
-## GET /api/log → `[{"ts": 1730000000.1, "principal": "clay", "actor": "atlas", "command": "...", "verb": "glean", "ok": true, "elapsed_ms": 4.1}]`
+## GET /api/log → `[{"ts": 1730000000.1, "principal": "clay", "actor": "atlas", "command": "...", "verb": "glean", "ok": true, "elapsed_ms": 4.1, "output": "..."}]`
 `actor` is `atlas` when the agent ran it on the principal's behalf, else the principal.
 
 ## GET /api/file?path=/docs/handbook.md → `{"path", "content", "kind": "file"}`

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Halyard workspace</title>
+    <script>
+      try {
+        const theme = localStorage.getItem("pluto-theme");
+        if (theme === "dark") document.documentElement.classList.add("dark");
+        if (theme === "light") document.documentElement.classList.add("light");
+      } catch {}
+    </script>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

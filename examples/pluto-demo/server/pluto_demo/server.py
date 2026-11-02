@@ -90,6 +90,7 @@ async def post_shell(body: ShellBody, request: Request) -> dict:
     out = await ws.run(body.command)
     entry = ws.log[-1]
     return {
+        "ts": entry.ts,
         "command": body.command,
         "principal": ws.principal,
         "actor": entry.actor,

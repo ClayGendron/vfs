@@ -188,12 +188,13 @@ DEFAULT_SCRIPT: list[Step] = [
 ]
 
 
-def _pick_script(workspace: Workspace, message: str) -> list[Step]:
+async def _pick_script(workspace: Workspace, message: str) -> list[Step]:
     lower = message.lower()
     if "gripper" in lower or "firmware" in lower:
         return SCRIPTS["gripper"]
     if "runway" in lower or "burn" in lower or "cash" in lower:
-        return SCRIPTS["runway"] if workspace.principal == "clay" else SCRIPTS["runway-refused"]
+        sees_finance = (await workspace.fs.session(workspace.authority()).stat("/finance")).success
+        return SCRIPTS["runway"] if sees_finance else SCRIPTS["runway-refused"]
     if "onboard" in lower or "welcome" in lower:
         return SCRIPTS["onboarding"]
     if "recall" in lower or "actuator" in lower or "affected" in lower:
@@ -203,7 +204,7 @@ def _pick_script(workspace: Workspace, message: str) -> list[Step]:
 
 
 async def _scripted(workspace: Workspace, message: str) -> AsyncIterator[str]:
-    for narration, command in _pick_script(workspace, message):
+    for narration, command in await _pick_script(workspace, message):
         if narration:
             for piece in narration.split(" "):
                 yield event("text", delta=piece + " ")

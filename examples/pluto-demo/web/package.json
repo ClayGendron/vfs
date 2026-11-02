@@ -1,0 +1,35 @@
+{
+  "name": "pluto-demo-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite dev",
+    "build": "bun --bun vite build",
+    "preview": "bun --bun vite preview",
+    "check": "bun --bun svelte-kit sync && bun --bun svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@sveltejs/adapter-static": "4.0.0",
+    "@sveltejs/kit": "3.1.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/turndown": "^5.0.5",
+    "marked": "^15.0.0",
+    "svelte": "5.57.3",
+    "svelte-check": "4.7.7",
+    "turndown": "^7.2.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  },
+  "imports": {
+    "#lib": "./src/lib",
+    "#lib/*": [
+      "./src/lib/*",
+      "./src/lib/*.ts",
+      "./src/lib/*/index.ts"
+    ]
+  }
+}
