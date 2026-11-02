@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from anthropic import AsyncAnthropic
 
+from pluto_demo import seed
 from pluto_demo.shell import HELP
 
 if TYPE_CHECKING:
@@ -108,7 +109,7 @@ async def _live(workspace: Workspace, message: str, history: list[dict[str, str]
             command = str(dict(use.input).get("command", ""))
             call_id = uuid.uuid4().hex[:8]
             yield event("tool", id=call_id, command=command)
-            out = await workspace.run(command, as_agent=True)
+            out = await workspace.run(command, actor=seed.AGENT)
             elapsed = workspace.log[-1].elapsed_ms if workspace.log else 0.0
             yield event("result", id=call_id, output=out.output, ok=out.ok, verb=out.verb, elapsed_ms=elapsed)
             results.append({"type": "tool_result", "tool_use_id": use.id, "content": out.output or "(no output)"})
@@ -216,7 +217,7 @@ async def _scripted(workspace: Workspace, message: str) -> AsyncIterator[str]:
             call_id = uuid.uuid4().hex[:8]
             yield event("tool", id=call_id, command=command)
             await asyncio.sleep(0.35)
-            out = await workspace.run(command, as_agent=True)
+            out = await workspace.run(command, actor=seed.AGENT)
             elapsed = workspace.log[-1].elapsed_ms if workspace.log else 0.0
             yield event("result", id=call_id, output=out.output, ok=out.ok, verb=out.verb, elapsed_ms=elapsed)
             await asyncio.sleep(0.25)

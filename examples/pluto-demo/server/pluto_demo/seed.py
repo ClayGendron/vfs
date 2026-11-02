@@ -28,6 +28,10 @@ AGENT = Principal("atlas", kind="service")
 AGENT_NAME = "Atlas"
 AGENT_ROLE = "Workspace agent"
 
+CLAUDE_CODE = Principal("claude-code", kind="service")
+CLAUDE_CODE_NAME = "Claude Code"
+CLAUDE_CODE_ROLE = "Over MCP"
+
 RESTRICTED_PREFIX = "/finance"
 RESTRICTED_GRANTS: tuple[tuple[str, str], ...] = (("clay", "read_write"),)
 

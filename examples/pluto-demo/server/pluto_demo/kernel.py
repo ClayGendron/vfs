@@ -92,6 +92,14 @@ class Workspace:
             for p in self.people.values()
         ]
         people.append({"id": seed.AGENT.sub, "name": seed.AGENT_NAME, "role": seed.AGENT_ROLE, "kind": seed.AGENT.kind})
+        people.append(
+            {
+                "id": seed.CLAUDE_CODE.sub,
+                "name": seed.CLAUDE_CODE_NAME,
+                "role": seed.CLAUDE_CODE_ROLE,
+                "kind": seed.CLAUDE_CODE.kind,
+            }
+        )
         return people
 
     def switch(self, principal: str) -> bool:
@@ -100,31 +108,32 @@ class Workspace:
         self.principal = principal
         return True
 
-    def authority(self, *, as_agent: bool = False) -> Authority:
+    def authority(self, *, actor: Principal | None = None) -> Authority:
+        """The signed-in person acting as themselves, or a service *actor* acting on their behalf."""
         subject = self.people[self.principal].principal
-        if as_agent:
-            return Authority.on_behalf_of({subject}, actor=seed.AGENT)
+        if actor is not None:
+            return Authority.on_behalf_of({subject}, actor=actor)
         return Authority.of(subject)
 
     # -------------------------------------------------------------------
     # Running commands
     # -------------------------------------------------------------------
 
-    async def run(self, command: str, *, as_agent: bool = False) -> ShellOutput:
-        """Run one shell line as the signed-in principal, logging it; the agent runs on their behalf."""
-        session = self.fs.session(self.authority(as_agent=as_agent))
-        actor = seed.AGENT.sub if as_agent else self.principal
+    async def run(self, command: str, *, actor: Principal | None = None) -> ShellOutput:
+        """Run one shell line as the signed-in principal, logging it; a service *actor* runs on their behalf."""
+        session = self.fs.session(self.authority(actor=actor))
+        actor_name = actor.sub if actor is not None else self.principal
         started = time.perf_counter()
         out = await run_line(session, command, principal=self.principal)
         elapsed = (time.perf_counter() - started) * 1000
         if out.switched_to is not None:
-            if as_agent:
-                out = ShellOutput("su", False, "ERROR the agent cannot sign in as someone else")
+            if actor is not None:
+                out = ShellOutput("su", False, "ERROR an agent cannot sign in as someone else")
             elif not self.switch(out.switched_to):
                 names = ", ".join(sorted(self.people))
                 out = ShellOutput("su", False, f"ERROR no principal named {out.switched_to!r}; try one of {names}")
         self.log.append(
-            LogEntry(time.time(), self.principal, actor, command, out.verb, out.ok, round(elapsed, 2), out.output)
+            LogEntry(time.time(), self.principal, actor_name, command, out.verb, out.ok, round(elapsed, 2), out.output)
         )
         del self.log[:-MAX_LOG]
         return out

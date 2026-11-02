@@ -6,13 +6,16 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.routing import Route
 
 from pluto_demo import agent
 from pluto_demo.kernel import Workspace
+from pluto_demo.mcp_server import build_mcp
 
 WEB_BUILD = Path(__file__).resolve().parents[2] / "web" / "build"
 
@@ -42,9 +45,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await workspace.seed()
     app.state.workspace = workspace
     logging.getLogger("pluto").info(
-        "Halyard workspace ready: %d files, search index %s", len(_seed_count()), workspace.embedder_name
+        "Halyard workspace ready: %d files, search index %s, MCP at /mcp", len(_seed_count()), workspace.embedder_name
     )
-    yield
+    # The mounted MCP app has its own lifespan (its session manager); Starlette does not run a mount's, so we do.
+    async with mcp_app.router.lifespan_context(mcp_app):
+        yield
     await workspace.close()
 
 
@@ -55,6 +60,9 @@ def _seed_count() -> dict[str, str]:
 
 
 app = FastAPI(title="Pluto Systems demo", lifespan=lifespan)
+# The MCP endpoint is a route, not a mount, so the bare /mcp that Claude Code is given answers directly.
+mcp_app = build_mcp(lambda: app.state.workspace).streamable_http_app(streamable_http_path="/mcp", stateless_http=True)
+app.router.routes.insert(0, Route("/mcp", endpoint=cast("Route", mcp_app.routes[0]).endpoint))
 
 
 def _ws(request: Request) -> Workspace:

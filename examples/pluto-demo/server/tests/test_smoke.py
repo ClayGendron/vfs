@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pluto_demo import agent
+from pluto_demo import agent, seed
 from pluto_demo.kernel import Workspace
 
 
@@ -85,4 +85,12 @@ async def test_the_agent_runs_on_behalf_of_the_signed_in_person(workspace: Works
     assert events[-1].startswith("event: done")
     assert workspace.log[-1].actor == "atlas"
     assert workspace.log[-1].principal == "sam"
-    assert not (await workspace.run("su clay", as_agent=True)).ok
+    assert not (await workspace.run("su clay", actor=seed.AGENT)).ok
+
+
+async def test_claude_code_runs_over_mcp_as_its_own_actor(workspace: Workspace) -> None:
+    out = await workspace.run("ls /", actor=seed.CLAUDE_CODE)
+    assert out.ok
+    assert workspace.log[-1].actor == "claude-code"
+    assert workspace.log[-1].principal == "clay"
+    assert "claude-code" in [p["id"] for p in workspace.principals()]

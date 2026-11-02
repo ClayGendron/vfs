@@ -30,6 +30,9 @@ A tree node is `{"name","path","kind":"directory"|"file","children"?}`, listed a
 ## GET /api/file?path=/docs/handbook.md → `{"path", "content", "kind": "file"}`
 ## PUT /api/file  `{"path": "/docs/new.md", "content": "# ..."}` → `{"ok": true, "output": "write success: 1 file ..."}`
 
+## /mcp
+A Model Context Protocol server over streamable HTTP with one tool, `shell(command)`, run as the service principal `claude-code` on behalf of the signed-in person; its calls appear in the log with `actor: "claude-code"`.
+
 ## POST /api/chat  `{"message": "...", "history": [{"role": "user"|"assistant", "content": "..."}]}`
 Server-sent events, each `event: <name>` with a JSON `data:` line:
 - `text`   `{"delta": "..."}`           assistant prose, streamed

@@ -89,6 +89,7 @@ demo = [
     "uvicorn>=0.30",
     "anthropic>=0.40",
     "model2vec>=0.5",
+    "mcp>=2.0",
 ]
 
 [tool.ruff]

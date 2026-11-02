@@ -15,6 +15,16 @@ Open http://127.0.0.1:8765. The first run builds the web app with Bun and downlo
 
 Requirements: `uv`, `bun`, and the Rust toolchain the vfs wheel is built with (`uv sync` builds it).
 
+## Call it from Claude Code over MCP
+
+The running workspace is also an MCP server at `/mcp` (streamable HTTP). It exposes exactly one tool, `shell`, the same shell Atlas has. Add it to Claude Code with:
+
+```bash
+claude mcp add --transport http halyard http://127.0.0.1:8765/mcp
+```
+
+Then ask Claude Code anything about Halyard. Its commands run on behalf of whoever is signed in to the web app, the kernel judges them by that person's rights, and every call lands in the Terminal tagged "run by Claude Code". Switch the web app to Sam and Claude Code loses the finance folder too. `su` is refused over MCP: an agent cannot sign in as someone else.
+
 ## What is on the screen
 
 A workspace suite, not an IDE. The ribbon on the left holds the apps; each one is a different face of the same files.
@@ -63,7 +73,8 @@ examples/pluto-demo/
 │   ├── shell.py           the bare-unix grammar over the vfs verbs
 │   ├── kernel.py          one vfs kernel, the signed-in principal, the shared log
 │   ├── agent.py           Atlas: Claude with one tool, or the scripted replay
-│   └── server.py          FastAPI: the API and the built web app
+│   ├── mcp_server.py      the same shell as one MCP tool, for Claude Code
+│   └── server.py          FastAPI: the API, the MCP endpoint and the built web app
 ├── server/tests/          the smoke test: every verb, both principals, the gate, the agent
 └── web/                   the SvelteKit app on the Pluto design tokens: the ribbon, five apps, Atlas
 ```
