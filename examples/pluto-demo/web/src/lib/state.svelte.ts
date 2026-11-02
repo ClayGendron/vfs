@@ -3,6 +3,44 @@ import { api, type LogEntry, type Principal, type State, type TreeNode } from ".
 
 export type LogLine = LogEntry & { key: string; fresh: boolean };
 
+export type AppId = "docs" | "sheets" | "slides" | "code" | "terminal";
+
+export const APPS: { id: AppId; name: string }[] = [
+  { id: "docs", name: "Docs" },
+  { id: "sheets", name: "Sheets" },
+  { id: "slides", name: "Slides" },
+  { id: "code", name: "Code" },
+  { id: "terminal", name: "Terminal" },
+];
+
+/** Which app a file opens in: slides decks, sheets for csv, code under /code, docs for the rest. */
+export function appFor(path: string): AppId | null {
+  if (path.startsWith("/slides/") && path.endsWith(".md")) return "slides";
+  if (path.endsWith(".csv")) return "sheets";
+  if (path.startsWith("/code/")) return "code";
+  if (path.endsWith(".md")) return "docs";
+  return null;
+}
+
+export type FileGroup = { folder: string; files: { name: string; path: string }[] };
+
+/** The files an app lists, grouped by their folder, in tree order. */
+export function filesFor(tree: TreeNode | null, app: AppId): FileGroup[] {
+  const groups = new Map<string, FileGroup>();
+  const walk = (node: TreeNode, folder: string) => {
+    for (const child of node.children ?? []) {
+      if (child.kind === "directory") walk(child, child.path);
+      else if (appFor(child.path) === app) {
+        const key = folder || "/";
+        if (!groups.has(key)) groups.set(key, { folder: key, files: [] });
+        groups.get(key)!.files.push({ name: child.name, path: child.path });
+      }
+    }
+  };
+  if (tree) walk(tree, "");
+  return [...groups.values()];
+}
+
 class Workspace {
   principal = $state("");
   principals = $state<Principal[]>([]);
@@ -10,6 +48,10 @@ class Workspace {
   tree = $state<TreeNode | null>(null);
   log = $state<LogLine[]>([]);
   openPath = $state<string | null>(null);
+  app = $state<AppId>("docs");
+  atlasOpen = $state(true);
+  /** Commands Atlas ran while the person was in another app, cleared on visiting Terminal. */
+  agentRuns = $state(0);
   shellOpen = $state(true);
   theme = $state<"light" | "dark">("light");
   loading = $state(true);
@@ -50,11 +92,9 @@ class Workspace {
       const key = `${entry.ts}:${entry.actor}:${entry.command}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      added.push({
-        ...entry,
-        key,
-        fresh: options.highlight === true && entry.actor !== entry.principal,
-      });
+      const byAgent = entry.actor !== entry.principal;
+      added.push({ ...entry, key, fresh: options.highlight === true && byAgent });
+      if (byAgent && options.highlight && this.app !== "terminal") this.agentRuns += 1;
     }
     if (added.length === 0) return;
     this.log = [...this.log, ...added].sort((a, b) => a.ts - b.ts);
@@ -71,6 +111,11 @@ class Workspace {
     } catch {
       // The server is restarting or away; the next poll will catch up.
     }
+  }
+
+  openApp(app: AppId) {
+    this.app = app;
+    if (app === "terminal") this.agentRuns = 0;
   }
 
   setTheme(theme: "light" | "dark") {

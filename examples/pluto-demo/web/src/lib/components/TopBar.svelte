@@ -1,6 +1,5 @@
 <script lang="ts">
-  import FourDot from "./FourDot.svelte";
-  import { workspace } from "../state.svelte";
+  import { APPS, workspace } from "../state.svelte";
 
   let switching = $state(false);
 
@@ -15,10 +14,10 @@
 </script>
 
 <header class="topbar">
-  <a class="brand" href="/" aria-label="Halyard workspace">
-    <FourDot entrance label="Pluto Systems" />
+  <div class="brand">
     <span class="wordmark">Halyard</span>
-  </a>
+    <span class="app-name">{APPS.find((a) => a.id === workspace.app)?.name}</span>
+  </div>
 
   <div class="who" role="group" aria-label="Signed in as">
     <span class="who-label">Working as</span>
@@ -44,18 +43,6 @@
       <span class="index-dot" class:semantic={workspace.embedder === "model2vec"}></span>
       {workspace.embedder === "model2vec" ? "Semantic index ready" : "Lexical index only"}
     </span>
-    <button
-      type="button"
-      class="theme"
-      onclick={() => workspace.setTheme(workspace.theme === "dark" ? "light" : "dark")}
-      aria-label={workspace.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-    >
-      {#if workspace.theme === "dark"}
-        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.3 4.3l1.4 1.4M14.3 14.3l1.4 1.4M4.3 15.7l1.4-1.4M14.3 5.7l1.4-1.4"/></g></svg>
-      {:else}
-        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M15.5 12.5A6.5 6.5 0 0 1 7.5 4.5a6.5 6.5 0 1 0 8 8z" fill="currentColor"/></svg>
-      {/if}
-    </button>
   </div>
 </header>
 
@@ -64,7 +51,7 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
-    height: 3.25rem;
+    height: 3rem;
     padding-inline: max(16px, env(safe-area-inset-left, 0px)) max(16px, env(safe-area-inset-right, 0px));
     border-bottom: var(--line-width) solid var(--border);
     background: var(--background);
@@ -72,16 +59,14 @@
   }
   .brand {
     display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
+    align-items: baseline;
+    gap: 0.5rem;
     color: var(--foreground);
-    text-decoration: none;
-    font-size: 1.05rem;
+    font-size: 0.95rem;
   }
-  .wordmark {
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
+  .wordmark { font-weight: 600; letter-spacing: -0.01em; }
+  .app-name { color: var(--muted-foreground); }
+  .app-name::before { content: "/ "; }
   .who {
     display: flex;
     align-items: center;
@@ -144,18 +129,7 @@
     background: var(--caution);
   }
   .index-dot.semantic { background: var(--success-fill); }
-  .theme {
-    display: inline-grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    border: var(--line-width) solid var(--border);
-    border-radius: var(--radius);
-    background: var(--raised);
-    color: var(--foreground);
-    cursor: pointer;
-  }
-  .seg:focus-visible, .theme:focus-visible, .brand:focus-visible {
+  .seg:focus-visible {
     outline: var(--focus-width) solid var(--ring);
     outline-offset: var(--focus-offset);
   }

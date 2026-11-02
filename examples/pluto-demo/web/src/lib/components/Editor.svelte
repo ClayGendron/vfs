@@ -26,7 +26,8 @@
       try {
         const body = await api.file(path);
         const html = await marked.parse(body.content);
-        docs = [...docs, { path, html, dirty: false }];
+        // A second open of the same path may have landed while we awaited; never push a duplicate tab.
+        if (!docs.find((d) => d.path === path)) docs = [...docs, { path, html, dirty: false }];
         loadError = null;
       } catch (e) {
         loadError = `Could not open ${path}. ${e instanceof Error ? e.message : ""}`;

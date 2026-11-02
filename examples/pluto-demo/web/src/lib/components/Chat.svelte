@@ -4,8 +4,6 @@
   import { api, verbOf, verbTone, type ChatTurn } from "../api";
   import { workspace } from "../state.svelte";
 
-  let { onchanged }: { onchanged: () => void } = $props();
-
   type ToolCall = { id: string; command: string; output: string; ok: boolean; verb: string; elapsed_ms: number; done: boolean; open: boolean };
   type Block = { kind: "text"; text: string } | { kind: "tool"; call: ToolCall };
   type Message = { id: number; role: "user" | "assistant"; blocks: Block[]; mode?: "live" | "scripted"; error?: string };
@@ -15,6 +13,8 @@
   let thinking = $state(false);
   let scroller = $state<HTMLElement | null>(null);
   let seq = 0;
+
+  let { onchanged, onclose }: { onchanged: () => void; onclose?: () => void } = $props();
 
   const suggestions = [
     "What did we decide about the gripper firmware?",
@@ -111,6 +111,9 @@
       <span class="name">Atlas</span>
       <span class="sub">Works for {workspace.current?.name ?? "you"} through the shell</span>
     </div>
+    {#if onclose}
+      <button type="button" class="close" onclick={onclose} aria-label="Close Atlas">×</button>
+    {/if}
   </header>
 
   <div class="list" bind:this={scroller}>
@@ -163,6 +166,12 @@
     {/if}
   </div>
 
+  {#if workspace.agentRuns > 0 && workspace.app !== "terminal"}
+    <button type="button" class="ran" onclick={() => workspace.openApp("terminal")}>
+      {workspace.agentRuns} {workspace.agentRuns === 1 ? "command" : "commands"} ran in Terminal
+    </button>
+  {/if}
+
   <form class="composer" onsubmit={(e) => { e.preventDefault(); send(draft); }}>
     <textarea
       id="chat-draft"
@@ -207,6 +216,8 @@
     font-size: 0.85rem;
     font-weight: 600;
   }
+  .close { margin-left: auto; padding: 0.2rem 0.5rem; border: 0; background: transparent; color: var(--muted-foreground); font: inherit; font-size: 1.2rem; cursor: pointer; }
+  .close:focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: var(--focus-offset); }
   .head-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
   .name { font-weight: 600; font-size: 0.9rem; }
   .sub { color: var(--muted-foreground); font-size: 0.75rem; }
@@ -313,6 +324,20 @@
   .thinking span:nth-child(2) { animation-delay: 0.2s; }
   .thinking span:nth-child(3) { animation-delay: 0.4s; }
   @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+  .ran {
+    margin: 0 1rem 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius);
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font: inherit;
+    font-size: 0.78rem;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ran:hover { color: var(--foreground); }
+  .ran:focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: var(--focus-offset); }
   .composer {
     display: flex;
     gap: 0.5rem;

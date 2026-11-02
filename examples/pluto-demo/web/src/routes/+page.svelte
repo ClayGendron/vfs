@@ -1,16 +1,26 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import "../app.css";
+  import AppList from "#lib/components/AppList.svelte";
   import Chat from "#lib/components/Chat.svelte";
+  import Code from "#lib/components/Code.svelte";
   import Editor from "#lib/components/Editor.svelte";
-  import FileTree from "#lib/components/FileTree.svelte";
+  import Ribbon from "#lib/components/Ribbon.svelte";
+  import Sheets from "#lib/components/Sheets.svelte";
   import Shell from "#lib/components/Shell.svelte";
+  import Slides from "#lib/components/Slides.svelte";
   import TopBar from "#lib/components/TopBar.svelte";
-  import { workspace } from "#lib/state.svelte";
+  import { APPS, appFor, filesFor, workspace, type AppId } from "#lib/state.svelte";
 
   let editor = $state<Editor | null>(null);
+  let sheets = $state<Sheets | null>(null);
+  let slides = $state<Slides | null>(null);
+  let code = $state<Code | null>(null);
   let shell = $state<Shell | null>(null);
-  let pane = $state<"files" | "document" | "agent">("document");
+  let listOpen = $state(false);
+  let mobileAtlas = $state(false);
+
+  const appName = $derived(APPS.find((a) => a.id === workspace.app)?.name ?? "");
 
   onMount(() => {
     workspace.initTheme();
@@ -19,7 +29,6 @@
     (async () => {
       await workspace.refresh();
       await workspace.pollLog();
-      if (workspace.tree && !workspace.openPath) await editor?.open("/docs/handbook.md");
       timer = setInterval(() => workspace.pollLog(), 2000);
     })();
     return () => {
@@ -27,19 +36,39 @@
     };
   });
 
+  // Each app remembers the file it had open; switching apps reopens the first file when it has none.
+  const lastOpen: Partial<Record<AppId, string>> = { docs: "/docs/handbook.md" };
+
+  async function openFile(path: string) {
+    const app = appFor(path);
+    if (!app) return;
+    if (workspace.app !== app) workspace.openApp(app);
+    lastOpen[app] = path;
+    listOpen = false;
+    await Promise.resolve();
+    if (app === "docs") await editor?.open(path);
+    else if (app === "sheets") await sheets?.open(path);
+    else if (app === "slides") await slides?.open(path);
+    else if (app === "code") await code?.open(path);
+  }
+
+  $effect(() => {
+    const app = workspace.app;
+    if (app === "terminal") return;
+    const remembered = lastOpen[app];
+    const first = filesFor(workspace.tree, app)[0]?.files[0]?.path;
+    const target = remembered ?? first;
+    if (target && workspace.openPath !== target) openFile(target);
+  });
+
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     const typing = target && (target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(target.tagName));
     if (e.key === "`" && !typing) {
       e.preventDefault();
-      workspace.shellOpen = !workspace.shellOpen;
-      if (workspace.shellOpen) setTimeout(() => shell?.focus(), 0);
+      workspace.openApp("terminal");
+      setTimeout(() => shell?.focus(), 0);
     }
-  }
-
-  function openFile(path: string) {
-    editor?.open(path);
-    pane = "document";
   }
 
   function refreshTree() {
@@ -49,64 +78,58 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="app">
-  <TopBar />
+<div class="app" class:atlas={workspace.atlasOpen}>
+  <Ribbon />
 
-  {#if workspace.error}
-    <div class="offline" role="alert">
-      The workspace server is not answering. Start it with <code>examples/pluto-demo/run.sh</code>, then reload.
-      <span class="offline-detail">{workspace.error}</span>
-    </div>
-  {/if}
+  <div class="main">
+    <TopBar />
 
-  <nav class="panes" aria-label="Panes">
-    <button type="button" class:active={pane === "files"} onclick={() => (pane = "files")}>Files</button>
-    <button type="button" class:active={pane === "document"} onclick={() => (pane = "document")}>Document</button>
-    <button type="button" class:active={pane === "agent"} onclick={() => (pane = "agent")}>Atlas</button>
-  </nav>
-
-  <main class="work" data-pane={pane}>
-    <aside class="files" aria-label="Files">
-      <div class="files-head">
-        <span>Files</span>
-        <span class="files-who">as {workspace.current?.name ?? "…"}</span>
+    {#if workspace.error}
+      <div class="offline" role="alert">
+        The workspace server is not answering. Start it with <code>examples/pluto-demo/run.sh</code>, then reload.
+        <span class="offline-detail">{workspace.error}</span>
       </div>
-      <div class="tree">
-        {#if workspace.tree}
-          <FileTree node={workspace.tree} onopen={openFile} />
-        {:else if workspace.loading}
-          <p class="muted">Loading the workspace</p>
+    {/if}
+
+    <div class="work">
+      {#if workspace.app !== "terminal"}
+        <button type="button" class="list-toggle" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen}>
+          {appName} files
+        </button>
+        <div class="list" class:open={listOpen}>
+          <AppList title={appName} onopen={openFile} />
+        </div>
+      {/if}
+
+      <div class="content">
+        {#if workspace.app === "docs"}
+          <Editor bind:this={editor} onsaved={refreshTree} />
+        {:else if workspace.app === "sheets"}
+          <Sheets bind:this={sheets} />
+        {:else if workspace.app === "slides"}
+          <Slides bind:this={slides} />
+        {:else if workspace.app === "code"}
+          <Code bind:this={code} />
+        {:else}
+          <div class="terminal">
+            <div class="terminal-head">
+              <span class="terminal-title">Terminal</span>
+              <span class="terminal-hint">One shell for people and agents. Every command goes through the same gate.</span>
+            </div>
+            <Shell bind:this={shell} onchanged={refreshTree} />
+          </div>
         {/if}
       </div>
+    </div>
+
+    <footer class="foot">A Pluto Systems product</footer>
+  </div>
+
+  {#if workspace.atlasOpen}
+    <aside class="agent" class:mobile-open={mobileAtlas}>
+      <Chat onchanged={refreshTree} onclose={() => (workspace.atlasOpen = false)} />
     </aside>
-
-    <section class="center">
-      <div class="doc-area">
-        <Editor bind:this={editor} onsaved={refreshTree} />
-      </div>
-      <div class="shell-bar">
-        <button
-          type="button"
-          class="shell-toggle"
-          aria-expanded={workspace.shellOpen}
-          onclick={() => (workspace.shellOpen = !workspace.shellOpen)}
-        >
-          Shell
-          <kbd>`</kbd>
-        </button>
-        <span class="shell-hint">One shell for people and agents. Every command goes through the same gate.</span>
-      </div>
-      {#if workspace.shellOpen}
-        <Shell bind:this={shell} onchanged={refreshTree} />
-      {/if}
-    </section>
-
-    <aside class="agent">
-      <Chat onchanged={refreshTree} />
-    </aside>
-  </main>
-
-  <footer class="foot">A Pluto Systems product</footer>
+  {/if}
 </div>
 
 <style>
@@ -120,122 +143,66 @@
   }
   :global(*), :global(*::before), :global(*::after) { box-sizing: border-box; }
   .app {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
     height: 100%;
     overflow: hidden;
   }
+  .app.atlas { grid-template-columns: 64px minmax(0, 1fr) 380px; }
+  .main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .offline {
-    padding: 0.6rem max(16px, env(safe-area-inset-right, 0px)) 0.6rem max(16px, env(safe-area-inset-left, 0px));
+    padding: 0.6rem 1rem;
     background: var(--caution);
     color: var(--caution-foreground);
     font-size: 0.85rem;
   }
   .offline code { font-family: "JetBrains Mono Variable", ui-monospace, monospace; }
   .offline-detail { display: block; opacity: 0.7; font-size: 0.75rem; }
-  .panes { display: none; }
-  .work {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: 260px minmax(0, 1fr) 380px;
-  }
-  .files {
+  .work { flex: 1; min-height: 0; display: flex; }
+  .list-toggle { display: none; }
+  .list { display: flex; min-height: 0; }
+  .content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .terminal { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .terminal-head {
     display: flex;
-    flex-direction: column;
-    min-height: 0;
-    min-width: 0;
-    border-right: var(--line-width) solid var(--sidebar-border);
-    background: var(--sidebar);
-  }
-  .files-head {
-    display: flex;
-    justify-content: space-between;
     align-items: baseline;
-    padding: 0.7rem 1rem 0.4rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-  }
-  .files-who { color: var(--muted-foreground); font-weight: 400; font-size: 0.75rem; }
-  .tree {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 0 0.5rem 1rem;
-  }
-  .muted { color: var(--muted-foreground); font-size: 0.85rem; padding: 0.5rem; }
-  .center {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    min-width: 0;
-  }
-  .doc-area { flex: 1; min-height: 0; }
-  .shell-bar {
-    display: flex;
-    align-items: center;
     gap: 0.75rem;
-    padding: 0.25rem 0.75rem;
-    border-top: var(--line-width) solid var(--border);
+    padding: 1.25rem 2rem 0.75rem;
     background: var(--background);
   }
-  .shell-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.25rem 0.55rem;
-    border: 0;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--foreground);
-    font: inherit;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .shell-toggle:hover { background: var(--accent); }
-  .shell-toggle:focus-visible { outline: var(--focus-width) solid var(--ring); outline-offset: var(--focus-offset); }
-  .shell-toggle kbd {
-    padding: 0 0.35rem;
-    border: var(--line-width) solid var(--border);
-    border-radius: 4px;
-    background: var(--muted);
-    font-family: "JetBrains Mono Variable", ui-monospace, monospace;
-    font-size: 0.7rem;
-  }
-  .shell-hint { color: var(--muted-foreground); font-size: 0.75rem; }
+  .terminal-title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; }
+  .terminal-hint { color: var(--muted-foreground); font-size: 0.85rem; }
+  .terminal :global(.shell) { flex: 1; height: auto !important; }
+  .terminal :global(.grip) { display: none; }
   .agent { min-height: 0; min-width: 0; }
   .foot {
-    padding: 0.35rem max(16px, env(safe-area-inset-right, 0px)) max(0.35rem, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+    padding: 0.3rem 1rem;
     border-top: var(--line-width) solid var(--border);
     color: var(--muted-foreground);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
   }
   @media (max-width: 900px) {
-    .panes {
-      display: flex;
-      gap: 0.25rem;
-      padding: 0.35rem max(16px, env(safe-area-inset-right, 0px)) 0.35rem max(16px, env(safe-area-inset-left, 0px));
-      border-bottom: var(--line-width) solid var(--border);
-    }
-    .panes button {
-      padding: 0.35rem 0.7rem;
-      border: 0;
+    .app, .app.atlas { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+    .app :global(.ribbon) { order: 3; }
+    .main { order: 1; }
+    .work { flex-direction: column; }
+    .list-toggle {
+      display: block;
+      margin: 0.5rem 1rem 0;
+      padding: 0.4rem 0.7rem;
+      border: var(--line-width) solid var(--border);
       border-radius: var(--radius);
-      background: transparent;
-      color: var(--muted-foreground);
+      background: var(--raised);
+      color: var(--foreground);
       font: inherit;
       font-size: 0.85rem;
-      cursor: pointer;
+      text-align: left;
     }
-    .panes button.active { background: var(--muted); color: var(--foreground); font-weight: 500; }
-    .work { grid-template-columns: minmax(0, 1fr); }
-    .files, .center, .agent { display: none; }
-    .work[data-pane="files"] .files { display: flex; border-right: 0; }
-    .work[data-pane="document"] .center { display: flex; }
-    .work[data-pane="agent"] .agent { display: block; }
+    .list { display: none; max-height: 45vh; border-bottom: var(--line-width) solid var(--border); }
+    .list.open { display: flex; }
+    .agent { position: fixed; inset: 0 0 56px; z-index: 5; background: var(--background); order: 2; }
     .agent :global(.chat) { border-left: 0; }
-    .shell-hint { display: none; }
-    .foot { display: none; }
+    .foot, .terminal-hint { display: none; }
+    .terminal-head { padding: 0.75rem 1rem 0.5rem; }
   }
 </style>
