@@ -21,8 +21,8 @@ A workspace suite, not an IDE. The ribbon on the left holds the apps; each one i
 
 | App | What it shows |
 | --- | --- |
-| Files | The whole workspace as a tree, as the signed-in person sees it. Open a file and it lands in its app. |
-| Docs | Every document, grouped by folder, in a WYSIWYG editor. Save writes through vfs, which reindexes the file: it is greppable and gleanable the moment it lands. |
+| Files | The workspace as a Finder: an icon grid of one folder at a time with a path bar, or a list view. Double-click a file and it lands in its app. |
+| Docs | Documents in a WYSIWYG editor, with a folder browser beside it that shows one folder at a time. Save writes through vfs, which reindexes the file: it is greppable and gleanable the moment it lands. |
 | Sheets | The CSV files as editable grids: the runway model, vendor payments, headcount. |
 | Slides | Markdown decks as 16:9 slides: the November all hands, the Tandem quarterly review. |
 | Code | The firmware limits and estimator, in a plain code editor. |
