@@ -145,7 +145,6 @@
       {#each tools as tool (tool.label)}
         <button type="button" class="tool" onmousedown={(e) => e.preventDefault()} onclick={tool.run}>{tool.label}</button>
       {/each}
-      <span class="path">{active.path}</span>
       <span class="status" class:ok={status === "saved"} class:bad={status === "error"} aria-live="polite">
         {status === "saving" ? "Saving" : status === "idle" ? "" : statusText}
       </span>
@@ -291,13 +290,8 @@
     cursor: pointer;
   }
   .tool:hover { background: var(--accent); }
-  .path {
-    margin-left: auto;
-    color: var(--muted-foreground);
-    font-family: "JetBrains Mono Variable", ui-monospace, monospace;
-    font-size: 0.75rem;
-  }
   .status {
+    margin-left: auto;
     min-width: 3rem;
     color: var(--muted-foreground);
     font-size: 0.8rem;

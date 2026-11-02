@@ -38,12 +38,6 @@
     </div>
   </div>
 
-  <div class="right">
-    <span class="index" title="Which legs glean can rank with">
-      <span class="index-dot" class:semantic={workspace.embedder === "model2vec"}></span>
-      {workspace.embedder === "model2vec" ? "Semantic index ready" : "Lexical index only"}
-    </span>
-  </div>
 </header>
 
 <style>
@@ -109,32 +103,12 @@
   }
   .seg-name { font-size: 0.85rem; font-weight: 500; }
   .seg-role { font-size: 0.7rem; color: var(--muted-foreground); }
-  .right {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-  }
-  .index {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    font-size: 0.8rem;
-    color: var(--muted-foreground);
-  }
-  .index-dot {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 999px;
-    background: var(--caution);
-  }
-  .index-dot.semantic { background: var(--success-fill); }
   .seg:focus-visible {
     outline: var(--focus-width) solid var(--ring);
     outline-offset: var(--focus-offset);
   }
   @media (max-width: 900px) {
-    .who-label, .seg-role, .index { display: none; }
+    .who-label, .seg-role { display: none; }
     .topbar { gap: 0.75rem; }
   }
 </style>

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import "../app.css";
   import AppList from "#lib/components/AppList.svelte";
+  import Files from "#lib/components/Files.svelte";
   import Chat from "#lib/components/Chat.svelte";
   import Code from "#lib/components/Code.svelte";
   import Editor from "#lib/components/Editor.svelte";
@@ -54,7 +55,7 @@
 
   $effect(() => {
     const app = workspace.app;
-    if (app === "terminal") return;
+    if (app === "terminal" || app === "files") return;
     const remembered = lastOpen[app];
     const first = filesFor(workspace.tree, app)[0]?.files[0]?.path;
     const target = remembered ?? first;
@@ -92,7 +93,7 @@
     {/if}
 
     <div class="work">
-      {#if workspace.app !== "terminal"}
+      {#if workspace.app !== "terminal" && workspace.app !== "files"}
         <button type="button" class="list-toggle" onclick={() => (listOpen = !listOpen)} aria-expanded={listOpen}>
           {appName} files
         </button>
@@ -102,7 +103,9 @@
       {/if}
 
       <div class="content">
-        {#if workspace.app === "docs"}
+        {#if workspace.app === "files"}
+          <Files onopen={openFile} />
+        {:else if workspace.app === "docs"}
           <Editor bind:this={editor} onsaved={refreshTree} />
         {:else if workspace.app === "sheets"}
           <Sheets bind:this={sheets} />

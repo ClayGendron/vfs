@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Code, FileText, Moon, PresentationChart, Sparkle, Sun, Table, Terminal } from "phosphor-svelte";
+  import { Code, FileText, Folders, Moon, PresentationChart, Sparkle, Sun, Table, Terminal } from "phosphor-svelte";
   import FourDot from "./FourDot.svelte";
   import { APPS, workspace, type AppId } from "../state.svelte";
 
-  const icons = { docs: FileText, sheets: Table, slides: PresentationChart, code: Code, terminal: Terminal } as const;
+  const icons = { files: Folders, docs: FileText, sheets: Table, slides: PresentationChart, code: Code, terminal: Terminal } as const;
 </script>
 
 <nav class="ribbon" aria-label="Apps">

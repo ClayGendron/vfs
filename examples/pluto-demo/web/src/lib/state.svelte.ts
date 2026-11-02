@@ -3,9 +3,10 @@ import { api, type LogEntry, type Principal, type State, type TreeNode } from ".
 
 export type LogLine = LogEntry & { key: string; fresh: boolean };
 
-export type AppId = "docs" | "sheets" | "slides" | "code" | "terminal";
+export type AppId = "files" | "docs" | "sheets" | "slides" | "code" | "terminal";
 
 export const APPS: { id: AppId; name: string }[] = [
+  { id: "files", name: "Files" },
   { id: "docs", name: "Docs" },
   { id: "sheets", name: "Sheets" },
   { id: "slides", name: "Slides" },

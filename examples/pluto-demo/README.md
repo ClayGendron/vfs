@@ -11,7 +11,7 @@ export ANTHROPIC_API_KEY=...   # optional: without it Atlas replays a scripted t
 examples/pluto-demo/run.sh
 ```
 
-Open http://127.0.0.1:8765. The first run builds the web app with Bun and downloads a small local embedding model (model2vec `potion-base-8M`) for semantic search; without network the search index falls back to lexical and the top bar says so.
+Open http://127.0.0.1:8765. The first run builds the web app with Bun and downloads a small local embedding model (model2vec `potion-base-8M`) for semantic search; without network, `glean` answers with its lexical leg alone and says so in its output.
 
 Requirements: `uv`, `bun`, and the Rust toolchain the vfs wheel is built with (`uv sync` builds it).
 
@@ -21,6 +21,7 @@ A workspace suite, not an IDE. The ribbon on the left holds the apps; each one i
 
 | App | What it shows |
 | --- | --- |
+| Files | The whole workspace as a tree, as the signed-in person sees it. Open a file and it lands in its app. |
 | Docs | Every document, grouped by folder, in a WYSIWYG editor. Save writes through vfs, which reindexes the file: it is greppable and gleanable the moment it lands. |
 | Sheets | The CSV files as editable grids: the runway model, vendor payments, headcount. |
 | Slides | Markdown decks as 16:9 slides: the November all hands, the Tandem quarterly review. |
