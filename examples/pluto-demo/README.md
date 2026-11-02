@@ -17,32 +17,38 @@ Requirements: `uv`, `bun`, and the Rust toolchain the vfs wheel is built with (`
 
 ## What is on the screen
 
-| Region | What it shows |
-| --- | --- |
-| File tree | The namespace as the signed-in person sees it. Switch to Sam and the finance folder is simply not there. |
-| Document | A WYSIWYG editor. Save writes through vfs, which reindexes the file: it is greppable and gleanable the moment it lands. |
-| Shell | Bare unix names over the vfs verbs: `ls`, `tree`, `cat`, `find`, `grep`, plus `glean` (meaning), `graph` (connection) and `grant` (governance). Every call from a person or the agent lands in this one log, tagged by who ran it. |
-| Atlas | Claude with exactly one tool, the shell, acting on behalf of the signed-in person. Its commands appear in the shell log as it runs them. |
+A workspace suite, not an IDE. The ribbon on the left holds the apps; each one is a different face of the same files.
 
-The shell grammar is in `server/pluto_demo/shell.py`; type `help` in the drawer.
+| App | What it shows |
+| --- | --- |
+| Docs | Every document, grouped by folder, in a WYSIWYG editor. Save writes through vfs, which reindexes the file: it is greppable and gleanable the moment it lands. |
+| Sheets | The CSV files as editable grids: the runway model, vendor payments, headcount. |
+| Slides | Markdown decks as 16:9 slides: the November all hands, the Tandem quarterly review. |
+| Code | The firmware limits and estimator, in a plain code editor. |
+| Terminal | Bare unix names over the vfs verbs: `ls`, `tree`, `cat`, `find`, `grep`, plus `glean` (meaning), `graph` (connection) and `grant` (governance). Every call from a person or the agent lands in this one log, tagged by who ran it. |
+| Atlas | Claude with exactly one tool, the shell, acting on behalf of the signed-in person. A side panel open over any app; its commands appear in the Terminal as it runs them. |
+
+The principal switcher in the top bar is the governance moment: switch to Sam and the finance sheet, the board update and the whole finance folder leave every app at once.
+
+The shell grammar is in `server/pluto_demo/shell.py`; type `help` in the Terminal.
 
 ## The five-minute walkthrough
 
-The order below is built for a screen recording: product first, the insight in the first fifteen seconds, the governance gate on camera, no slides.
+The order below is built for a screen recording: product first, the insight in the first fifteen seconds, the governance gate on camera, no slides about slides.
 
-1. **The namespace.** Signed in as Clay. Type `tree / -L 2` in the shell. "Everything at this company is a file. Docs, meeting notes, customer accounts, finance sheets. One namespace."
-2. **The four search verbs.** `grep -i overshoot /meetings`, then `glean 'what did we decide about the gripper firmware'`, then `graph out /meetings/2026-10-14-firmware-review.md`. "Where it sits, what it says, what it means, how it connects. Four verbs, one result type, any scale, on the SQL database you already run."
-3. **The agent uses the same shell.** Ask Atlas: *Which customers are affected by the actuator recall?* Watch its `graph` and `grep` calls land in the shell log as it runs them. "The agent gets one tool. It already knows how to use it. No schema per data type, no retrieval pipeline to pick."
-4. **The gate.** Switch to Sam in the top bar. The finance folder leaves the tree. Ask Atlas: *How much runway do we have?* It searches, finds nothing it may see, and says so. Switch back to Clay, type `grant /finance sam read`, switch to Sam, ask again. "One kernel enforces every permission for every product and every agent. The agent is judged by the rights of the person it works for."
-5. **Work product.** Ask Atlas: *Draft an onboarding note for Sam from the handbook.* It reads, writes `/docs/onboarding-sam.md` and links it. Open the file in the editor, change a line, save. `grep -i priya /docs` finds the edit immediately. "Humans and agents write to the same place through the same gate, and everything is searchable the moment it lands."
+1. **One workspace, many apps.** Signed in as Clay. Click through Docs, Sheets, Slides and Code. "Documents, sheets, decks, code. At Halyard every one of them is a file in one namespace, on one governed data layer."
+2. **The agent uses a shell.** Open Atlas and ask: *Which customers are affected by the actuator recall?* Switch to Terminal and watch its `graph` and `grep` calls land in the same log you type into. "The agent gets one tool. It already knows how to use it. No schema per data type, no retrieval pipeline to pick."
+3. **Four search verbs.** In Terminal: `grep -i overshoot /meetings`, then `glean 'what did we decide about the gripper firmware'`, then `graph out /meetings/2026-10-14-firmware-review.md`. "Where it sits, what it says, what it means, how it connects. Four verbs, one result type, any scale, on the SQL database you already run."
+4. **The gate.** Switch to Sam in the top bar. Finance leaves Docs and Sheets. Ask Atlas: *How much runway do we have?* It searches, finds nothing it may see, and says so. Switch back to Clay, type `grant /finance sam read` in Terminal, switch to Sam, ask again. "One kernel enforces every permission for every app and every agent. The agent is judged by the rights of the person it works for."
+5. **Work product.** Ask Atlas: *Draft an onboarding note for Sam from the handbook.* It reads, writes `/docs/onboarding-sam.md` and links it. Open the note in Docs, change a line, save. In Terminal, `grep -i priya /docs` finds the edit immediately. "People and agents write to the same place through the same gate, and everything is searchable the moment it lands."
 
-Close on the file tree, the shell log and the chat all visible: three faces of one data layer.
+Close on Slides with Atlas open beside it: the deck, the agent, the same files.
 
 ## What YC will look for, and where it is
 
 - **The product working, on a real screen.** Everything runs on the real engine; record the browser, not slides.
 - **The insight early.** Beat 1 says it in one line: everything is a file, one gate, verbs the agent already knows.
-- **One workflow, not a feature tour.** Beats 3 to 5 are one story: an agent helping a new hire, governed.
+- **One workflow, not a feature tour.** Beats 2 to 5 are one story: an agent helping a new hire, governed.
 - **The gate on camera.** Beat 4 is the thing no competitor shows: the same question, two principals, two kernel verdicts, fixed live with one command.
 
 ## Layout
@@ -58,7 +64,7 @@ examples/pluto-demo/
 │   ├── agent.py           Atlas: Claude with one tool, or the scripted replay
 │   └── server.py          FastAPI: the API and the built web app
 ├── server/tests/          the smoke test: every verb, both principals, the gate, the agent
-└── web/                   the SvelteKit app on the Pluto design tokens
+└── web/                   the SvelteKit app on the Pluto design tokens: the ribbon, five apps, Atlas
 ```
 
 Test the server with:

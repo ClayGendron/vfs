@@ -259,6 +259,129 @@ Field travel,22000,recall
 Cloud,31000,infrastructure
 Payroll,410000,people
 """,
+    "/slides/all-hands-2026-11.md": """# All hands, November 2026
+
+Forty people, one rule: ship what the field can trust.
+
+---
+
+# What happened in October
+
+- GX-2 grip-force overshoot found at Tandem Logistics, fleet rolled back in two days
+- Fixed estimator shipped as firmware 2026.10.2 after nine days on the rig
+- AX-40 seal issue became a recall: 1,900 units, swapped on site
+
+---
+
+# Where the money is
+
+- Annual recurring revenue: 3.4M
+- Tandem Logistics renewed at 1.6M
+- Recall funded from the operating budget, bridge revisited in December
+
+---
+
+# November
+
+- Finish the AX-40 seal swaps at Bellweather and Orinoco
+- Welcome Sam Reyes and Lena Okafor
+- Start the GX-3 vision-guided close on the bench
+
+---
+
+# Thank you
+
+Questions go in /meetings, decisions get written down.
+""",
+    "/slides/tandem-qbr-2026-q4.md": """# Tandem Logistics, Q4 review
+
+Two sites, 1,100 actuators, 340 grippers.
+
+---
+
+# The overshoot, and what we did
+
+- Three units overshot grip force by up to 12% after 2026.9.1
+- Rolled back to 2026.8.3 within two days
+- 2026.10.2 fixes the estimator; Tandem gets it first
+
+---
+
+# Recall progress
+
+- 1,100 AX-40 units, seal swapped on site in about twenty minutes each
+- Site one complete, site two in progress
+
+---
+
+# 2027
+
+- Fleet console pilot: one screen for every unit, firmware rollout by site
+- GX-3 evaluation in Q1
+""",
+    "/code/limits.rs": """//! Every torque, force and speed limit the gripper and actuator firmware enforce.
+//! A limit lives here, named, with the test that proves it; nowhere else.
+
+/// Maximum grip force for the GX-2 parallel gripper, in newtons.
+pub const GX2_MAX_GRIP_FORCE_N: f32 = 180.0;
+
+/// Maximum finger close speed for the GX-2, in millimetres per second.
+pub const GX2_MAX_CLOSE_SPEED_MM_S: f32 = 120.0;
+
+/// A close faster than this must reject stale encoder samples (see `estimator.rs`).
+pub const GX2_FAST_CLOSE_MM_S: f32 = 40.0;
+
+/// Encoder samples older than this are stale during a fast close, in milliseconds.
+pub const GX2_STALE_SAMPLE_MS: u32 = 2;
+
+/// Overshoot tolerance for a release, as a fraction of the configured force.
+pub const RELEASE_OVERSHOOT_TOLERANCE: f32 = 0.02;
+
+/// Continuous torque limit for the AX-40 actuator, in newton metres.
+pub const AX40_MAX_TORQUE_NM: f32 = 42.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gx2_force_is_within_hardware_rating() {
+        assert!(GX2_MAX_GRIP_FORCE_N <= 180.0);
+    }
+
+    #[test]
+    fn fast_close_is_below_max_speed() {
+        assert!(GX2_FAST_CLOSE_MM_S < GX2_MAX_CLOSE_SPEED_MM_S);
+    }
+}
+""",
+    "/code/estimator.rs": """//! The force estimator: motor current fused with the finger encoder.
+//! From 2026.10.2 a stale encoder sample is rejected during a fast close.
+
+use crate::limits::{GX2_FAST_CLOSE_MM_S, GX2_STALE_SAMPLE_MS};
+
+pub struct Sample {
+    pub current_a: f32,
+    pub encoder_mm: f32,
+    pub age_ms: u32,
+}
+
+/// The estimated grip force in newtons, or `None` when the sample cannot be trusted.
+pub fn estimate(sample: &Sample, close_speed_mm_s: f32, torque_constant: f32) -> Option<f32> {
+    if close_speed_mm_s > GX2_FAST_CLOSE_MM_S && sample.age_ms > GX2_STALE_SAMPLE_MS {
+        return None;
+    }
+    Some(sample.current_a * torque_constant)
+}
+""",
+    "/people/headcount.csv": """team,people,open_roles
+Firmware,9,1
+Field engineering,12,2
+Support,5,0
+Product,4,0
+Finance and operations,6,0
+Leadership,4,0
+""",
     "/people/onboarding-buddies.md": """# Onboarding buddies
 
 | New hire | Buddy | Start |
@@ -283,4 +406,9 @@ LINKS: tuple[Link, ...] = (
     Link("/docs/handbook.md", "/docs/time-off-policy.md", "references"),
     Link("/docs/handbook.md", "/product/gripper-firmware-spec.md", "references"),
     Link("/people/onboarding-buddies.md", "/meetings/2026-10-21-leadership.md", "references"),
+    Link("/slides/all-hands-2026-11.md", "/product/ax40-recall-notice.md", "references"),
+    Link("/slides/all-hands-2026-11.md", "/product/gripper-firmware-spec.md", "references"),
+    Link("/slides/tandem-qbr-2026-q4.md", "/customers/tandem-logistics.md", "references"),
+    Link("/code/estimator.rs", "/code/limits.rs", "imports"),
+    Link("/product/gripper-firmware-spec.md", "/code/limits.rs", "references"),
 )
