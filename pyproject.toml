@@ -83,6 +83,13 @@ dev = [
 docs = [
     "mkdocs-material>=9.0",
 ]
+# The Pluto Systems demo under examples/pluto-demo: the HTTP shell, the agent loop, and a local embedder.
+demo = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "anthropic>=0.40",
+    "model2vec>=0.5",
+]
 
 [tool.ruff]
 line-length = 120
@@ -123,9 +130,10 @@ ignore = [
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["ANN", "S101", "TC001"]
 "context/**/*.py" = ["ALL"]  # story spikes — throwaway benchmark code
+"examples/**/*.py" = ["E501", "TC003"]  # the demo: prose corpora and plain imports
 
 [tool.ruff.lint.isort]
-known-first-party = ["vfs"]
+known-first-party = ["vfs", "pluto_demo"]
 
 [tool.ty]
 
