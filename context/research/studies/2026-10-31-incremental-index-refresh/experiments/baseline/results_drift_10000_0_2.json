@@ -1,0 +1,79 @@
+{
+ "vacuum_s": 2.63,
+ "rounds": [
+  {
+   "label": "1% dirty, round 1, after VACUUM",
+   "success": true,
+   "wall_s": 15.617,
+   "phases_s": {
+    "chunk_dirty": 0.204,
+    "build_lexical_epoch (inside build_epoch)": 11.945,
+    "build_epoch": 13.778,
+    "publish_epoch": 0.132,
+    "reclaim_epochs": 0.106
+   },
+   "statements": 350,
+   "statement_kinds": {
+    "BEGIN": 11,
+    "UPDATE": 5,
+    "SELECT": 242,
+    "DELETE": 10,
+    "INSERT": 82
+   },
+   "executemany_rows": 183579,
+   "errors": [],
+   "extras": {},
+   "rss_before_mb": 138.0,
+   "rss_after_mb": 875.5,
+   "db_main_mb": 442.2,
+   "wal_mb": 113.8,
+   "posting_list": 7167,
+   "lex_postings": 102329,
+   "lex_docs": 57690,
+   "lex_df": 15988,
+   "chunks": 57690,
+   "entry": 13719,
+   "not_encoded": 0,
+   "epoch": 8,
+   "posting_mb": 28.58,
+   "lex_posting_mb": 46.61
+  },
+  {
+   "label": "1% dirty, round 2, after VACUUM",
+   "success": true,
+   "wall_s": 12.51,
+   "phases_s": {
+    "chunk_dirty": 0.148,
+    "build_lexical_epoch (inside build_epoch)": 8.331,
+    "build_epoch": 9.107,
+    "publish_epoch": 0.254,
+    "reclaim_epochs": 0.197
+   },
+   "statements": 350,
+   "statement_kinds": {
+    "BEGIN": 11,
+    "UPDATE": 5,
+    "SELECT": 242,
+    "DELETE": 10,
+    "INSERT": 82
+   },
+   "executemany_rows": 183612,
+   "errors": [],
+   "extras": {},
+   "rss_before_mb": 875.9,
+   "rss_after_mb": 1211.9,
+   "db_main_mb": 449.3,
+   "wal_mb": 113.8,
+   "posting_list": 7167,
+   "lex_postings": 102342,
+   "lex_docs": 57700,
+   "lex_df": 15988,
+   "chunks": 57700,
+   "entry": 13719,
+   "not_encoded": 0,
+   "epoch": 9,
+   "posting_mb": 28.59,
+   "lex_posting_mb": 46.61
+  }
+ ]
+}

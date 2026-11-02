@@ -1,0 +1,39 @@
+{
+ "n": 50000,
+ "wall_s": 16.268,
+ "statements": 24,
+ "top": [
+  {
+   "s": 0.284,
+   "sql": "SELECT vfs_entries.id, vfs_entries.entry_id, vfs_entries.name, vfs_entries.mime_type, vfs_entries.content_hash, vfs_entries.size_bytes FROM vfs_entries WHERE vf"
+  },
+  {
+   "s": 0.205,
+   "sql": "SELECT vfs_entries.entry_id, vfs_entries.version, vfs_entries.path, vfs_entries.ext, vfs_entries.content_hash, vfs_entries.chunk_source_hash, vfs_entries.chunk_"
+  },
+  {
+   "s": 0.011,
+   "sql": "SELECT ? AS anon_1 FROM vfs_entries WHERE vfs_entries.chunked = 1 AND (vfs_entries.chunk_generation IS NULL OR vfs_entries.chunk_generation != ? OR vfs_entries."
+  },
+  {
+   "s": 0.009,
+   "sql": "SELECT ? AS anon_1 FROM vfs_entries WHERE vfs_entries.chunked = 1 AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL L"
+  },
+  {
+   "s": 0.008,
+   "sql": "SELECT count(*) AS count_1 FROM vfs_entries WHERE vfs_entries.source = ? AND vfs_entries.deleted_at IS NULL AND vfs_entries.render_status = ?"
+  },
+  {
+   "s": 0.003,
+   "sql": "SELECT vfs_meta.current_gram_epoch FROM vfs_meta WHERE vfs_meta.id = ?"
+  },
+  {
+   "s": 0.003,
+   "sql": "SELECT vfs_gram_epochs.format_version, vfs_gram_epochs.options_hash FROM vfs_gram_epochs WHERE vfs_gram_epochs.epoch = ?"
+  },
+  {
+   "s": 0.003,
+   "sql": "SELECT vfs_segments.segment, vfs_segments.entry_id FROM vfs_segments"
+  }
+ ]
+}

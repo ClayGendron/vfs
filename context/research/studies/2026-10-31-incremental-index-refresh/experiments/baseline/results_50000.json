@@ -1,0 +1,1438 @@
+{
+ "n": 50000,
+ "machine": "Apple M1 Pro, 10 cores, 32 GB, SQLite via aiosqlite",
+ "python": "3.13.11",
+ "write": {
+  "wall_s": 184.19,
+  "entries": 50000,
+  "db_mb_after_write": 520.3
+ },
+ "A_cold": {
+  "label": "cold",
+  "success": true,
+  "wall_s": 135.958,
+  "phases_s": {
+   "chunk_dirty": 59.158,
+   "build_lexical_epoch (inside build_epoch)": 64.365,
+   "build_epoch": 69.341,
+   "publish_epoch": 0.464,
+   "reclaim_epochs": 0.014
+  },
+  "statements": 1225,
+  "statement_kinds": {
+   "BEGIN": 15,
+   "UPDATE": 11,
+   "SELECT": 851,
+   "DELETE": 12,
+   "INSERT": 336
+  },
+  "executemany_rows": 874723,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 572.7,
+  "rss_after_mb": 2820.3,
+  "db_main_mb": 1247.2,
+  "wal_mb": 420.4,
+  "posting_list": 7142,
+  "lex_postings": 384003,
+  "lex_docs": 213799,
+  "lex_df": 55980,
+  "chunks": 213799,
+  "entry": 51021,
+  "not_encoded": 0,
+  "epoch": 1,
+  "posting_mb": 105.89,
+  "lex_posting_mb": 172.36,
+  "db_mb": 1667.9
+ },
+ "A_noop": {
+  "label": "noop",
+  "success": true,
+  "wall_s": 3.758,
+  "phases_s": {
+   "chunk_dirty": 0.032,
+   "build_epoch": 0.012
+  },
+  "statements": 24,
+  "statement_kinds": {
+   "BEGIN": 9,
+   "UPDATE": 2,
+   "SELECT": 11,
+   "DELETE": 2
+  },
+  "executemany_rows": 0,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 2820.3,
+  "rss_after_mb": 2820.3,
+  "db_main_mb": 1247.2,
+  "wal_mb": 420.4,
+  "posting_list": 7142,
+  "lex_postings": 384003,
+  "lex_docs": 213799,
+  "lex_df": 55980,
+  "chunks": 213799,
+  "entry": 51021,
+  "not_encoded": 0,
+  "epoch": 1,
+  "posting_mb": 105.89,
+  "lex_posting_mb": 172.36
+ },
+ "grep": [
+  {
+   "state": "clean",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.067,
+   "statements": 7,
+   "files": 1331,
+   "lines": 1353,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.12,
+   "statements": 7,
+   "files": 1353,
+   "lines": 1372,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.225,
+   "statements": 9,
+   "files": 1271,
+   "lines": 1291,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.895,
+   "statements": 12,
+   "files": 3898,
+   "lines": 4076,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.788,
+   "statements": 9,
+   "files": 11818,
+   "lines": 13913,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.25,
+   "statements": 7,
+   "files": 3840,
+   "lines": 4003,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.321,
+   "statements": 7,
+   "files": 3923,
+   "lines": 4122,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 6.73,
+   "statements": 11,
+   "files": 25000,
+   "lines": 255548,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "clean",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 1.206,
+   "statements": 10,
+   "files": 3926,
+   "lines": 4121,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 2.822,
+   "statements": 12,
+   "files": 20189,
+   "lines": 27985,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget, with the unindexed overlay not consulted; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.135,
+   "statements": 8,
+   "files": 1382,
+   "lines": 1405,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.17,
+   "statements": 8,
+   "files": 1420,
+   "lines": 1440,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.612,
+   "statements": 10,
+   "files": 1326,
+   "lines": 1346,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 1.144,
+   "statements": 13,
+   "files": 4043,
+   "lines": 4230,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.851,
+   "statements": 10,
+   "files": 12286,
+   "lines": 14471,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.225,
+   "statements": 8,
+   "files": 4023,
+   "lines": 4193,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.177,
+   "statements": 8,
+   "files": 4062,
+   "lines": 4266,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 2.466,
+   "statements": 12,
+   "files": 25000,
+   "lines": 255598,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.993,
+   "statements": 11,
+   "files": 4074,
+   "lines": 4275,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 1.244,
+   "statements": 13,
+   "files": 20180,
+   "lines": 27976,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.172,
+   "statements": 8,
+   "files": 1378,
+   "lines": 1401,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.204,
+   "statements": 8,
+   "files": 1424,
+   "lines": 1445,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.543,
+   "statements": 10,
+   "files": 1323,
+   "lines": 1343,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 1.259,
+   "statements": 13,
+   "files": 4054,
+   "lines": 4242,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.974,
+   "statements": 10,
+   "files": 12288,
+   "lines": 14474,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.314,
+   "statements": 8,
+   "files": 4018,
+   "lines": 4189,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.485,
+   "statements": 9,
+   "files": 4064,
+   "lines": 4267,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 2.909,
+   "statements": 12,
+   "files": 25000,
+   "lines": 255642,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 1.096,
+   "statements": 11,
+   "files": 4080,
+   "lines": 4282,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 1.894,
+   "statements": 13,
+   "files": 20141,
+   "lines": 27920,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.813,
+   "statements": 8,
+   "files": 1379,
+   "lines": 1402,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.608,
+   "statements": 8,
+   "files": 1419,
+   "lines": 1440,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 1.275,
+   "statements": 10,
+   "files": 1326,
+   "lines": 1346,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 3.01,
+   "statements": 13,
+   "files": 4053,
+   "lines": 4242,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 2.29,
+   "statements": 10,
+   "files": 12277,
+   "lines": 14460,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 1.248,
+   "statements": 9,
+   "files": 4021,
+   "lines": 4196,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 1.059,
+   "statements": 9,
+   "files": 4054,
+   "lines": 4257,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 8.299,
+   "statements": 12,
+   "files": 25000,
+   "lines": 255748,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 1.645,
+   "statements": 11,
+   "files": 4075,
+   "lines": 4276,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 4.013,
+   "statements": 13,
+   "files": 20102,
+   "lines": 27881,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.841,
+   "statements": 8,
+   "files": 1376,
+   "lines": 1399,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.729,
+   "statements": 8,
+   "files": 1419,
+   "lines": 1440,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 1.701,
+   "statements": 10,
+   "files": 1330,
+   "lines": 1350,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 4.01,
+   "statements": 13,
+   "files": 4060,
+   "lines": 4245,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 3.101,
+   "statements": 11,
+   "files": 12281,
+   "lines": 14470,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 1.21,
+   "statements": 9,
+   "files": 4015,
+   "lines": 4190,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 1.012,
+   "statements": 9,
+   "files": 4056,
+   "lines": 4256,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 11.385,
+   "statements": 12,
+   "files": 24999,
+   "lines": 255942,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.572,
+   "statements": 11,
+   "files": 4092,
+   "lines": 4294,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 1.952,
+   "statements": 13,
+   "files": 19997,
+   "lines": 27737,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.176,
+   "statements": 8,
+   "files": 1384,
+   "lines": 1407,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.555,
+   "statements": 9,
+   "files": 1417,
+   "lines": 1438,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 1.715,
+   "statements": 10,
+   "files": 1314,
+   "lines": 1334,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 3.179,
+   "statements": 13,
+   "files": 4071,
+   "lines": 4259,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 1.759,
+   "statements": 11,
+   "files": 12282,
+   "lines": 14478,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 1.028,
+   "statements": 9,
+   "files": 4028,
+   "lines": 4204,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.598,
+   "statements": 9,
+   "files": 4053,
+   "lines": 4250,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 11.874,
+   "statements": 12,
+   "files": 24990,
+   "lines": 255507,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 1.919,
+   "statements": 11,
+   "files": 4102,
+   "lines": 4305,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 4.069,
+   "statements": 13,
+   "files": 19691,
+   "lines": 27297,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+     "data": null
+    }
+   ]
+  }
+ ],
+ "glean": [
+  {
+   "state": "clean",
+   "query": "gakicato deertepo",
+   "wall_s": 0.219,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.177,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "bish ousar suca",
+   "wall_s": 0.133,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.165,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.194,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.163,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.112,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "query": "bish ousar suca",
+   "wall_s": 0.102,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.107,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (50)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.166,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.259,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.42,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "query": "bish ousar suca",
+   "wall_s": 0.175,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.446,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.396,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.379,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.541,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "query": "bish ousar suca",
+   "wall_s": 0.784,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.826,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.473,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.229,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.651,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "query": "bish ousar suca",
+   "wall_s": 0.48,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.29,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.493,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.784,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.274,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "query": "bish ousar suca",
+   "wall_s": 0.366,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.528,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.252,
+   "statements": 12,
+   "hits": 10,
+   "errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ]
+  }
+ ],
+ "E_clean": [
+  {
+   "state": "clean",
+   "rep": 0,
+   "entries": 500,
+   "wall_s": 1.417,
+   "statements": 16
+  },
+  {
+   "state": "clean",
+   "rep": 1,
+   "entries": 500,
+   "wall_s": 1.06,
+   "statements": 13
+  },
+  {
+   "state": "clean",
+   "rep": 2,
+   "entries": 500,
+   "wall_s": 1.309,
+   "statements": 13
+  }
+ ],
+ "B_new2000": {
+  "label": "2000 new entries dirty",
+  "success": true,
+  "wall_s": 126.643,
+  "phases_s": {
+   "chunk_dirty": 5.847,
+   "build_lexical_epoch (inside build_epoch)": 106.727,
+   "build_epoch": 115.086,
+   "publish_epoch": 0.444,
+   "reclaim_epochs": 0.271
+  },
+  "statements": 1221,
+  "statement_kinds": {
+   "BEGIN": 15,
+   "UPDATE": 8,
+   "SELECT": 885,
+   "DELETE": 10,
+   "INSERT": 303
+  },
+  "executemany_rows": 691595,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 3467.9,
+  "rss_after_mb": 3467.9,
+  "db_main_mb": 1643.0,
+  "wal_mb": 420.4,
+  "posting_list": 7143,
+  "lex_postings": 397387,
+  "lex_docs": 222442,
+  "lex_df": 55980,
+  "chunks": 222442,
+  "entry": 53028,
+  "not_encoded": 0,
+  "epoch": 2,
+  "posting_mb": 110.14,
+  "lex_posting_mb": 179.32
+ },
+ "freshness": [
+  {
+   "state": "dirty 0.1% (50)",
+   "grep_found": true,
+   "grep_wall_s": 0.073,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.119,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 51
+  },
+  {
+   "state": "dirty 0.5% (250)",
+   "grep_found": true,
+   "grep_wall_s": 0.065,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.219,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 251
+  },
+  {
+   "state": "dirty 1.0% (500)",
+   "grep_found": true,
+   "grep_wall_s": 0.157,
+   "grep_statements": 6,
+   "glean_found": false,
+   "glean_wall_s": 0.825,
+   "glean_statements": 8,
+   "glean_errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ],
+   "not_encoded": 501
+  },
+  {
+   "state": "dirty 2.0% (1000)",
+   "grep_found": true,
+   "grep_wall_s": 0.109,
+   "grep_statements": 6,
+   "glean_found": false,
+   "glean_wall_s": 0.621,
+   "glean_statements": 8,
+   "glean_errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ],
+   "not_encoded": 1001
+  },
+  {
+   "state": "dirty 5.0% (2500)",
+   "grep_found": true,
+   "grep_wall_s": 0.273,
+   "grep_statements": 6,
+   "glean_found": false,
+   "glean_wall_s": 0.31,
+   "glean_statements": 8,
+   "glean_errors": [
+    {
+     "kind": "vfs.budget_exhausted.truncated",
+     "severity": "warning",
+     "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+     "data": {
+      "scanned": 500,
+      "budget": 500
+     }
+    }
+   ],
+   "not_encoded": 2501
+  }
+ ],
+ "E_dirty": [
+  {
+   "state": "5% dirty",
+   "rep": 0,
+   "entries": 500,
+   "wall_s": 1.004,
+   "statements": 16
+  },
+  {
+   "state": "5% dirty",
+   "rep": 1,
+   "entries": 500,
+   "wall_s": 1.38,
+   "statements": 13
+  },
+  {
+   "state": "5% dirty",
+   "rep": 2,
+   "entries": 500,
+   "wall_s": 1.327,
+   "statements": 13
+  }
+ ],
+ "B_5pct": {
+  "label": "5% dirty",
+  "success": true,
+  "wall_s": 127.548,
+  "phases_s": {
+   "chunk_dirty": 11.812,
+   "build_lexical_epoch (inside build_epoch)": 101.983,
+   "build_epoch": 109.992,
+   "publish_epoch": 0.513,
+   "reclaim_epochs": 0.256
+  },
+  "statements": 1257,
+  "statement_kinds": {
+   "BEGIN": 15,
+   "UPDATE": 8,
+   "SELECT": 911,
+   "DELETE": 10,
+   "INSERT": 313
+  },
+  "executemany_rows": 716596,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 3467.9,
+  "rss_after_mb": 3467.9,
+  "db_main_mb": 1740.1,
+  "wal_mb": 420.4,
+  "posting_list": 7166,
+  "lex_postings": 407359,
+  "lex_docs": 228917,
+  "lex_df": 55988,
+  "chunks": 228917,
+  "entry": 54535,
+  "not_encoded": 0,
+  "epoch": 3,
+  "posting_mb": 113.31,
+  "lex_posting_mb": 184.72
+ },
+ "B_1pct_dirty_wall_s": 0.62,
+ "B_1pct": {
+  "label": "1% dirty",
+  "success": true,
+  "wall_s": 168.926,
+  "phases_s": {
+   "chunk_dirty": 0.586,
+   "build_lexical_epoch (inside build_epoch)": 127.123,
+   "build_epoch": 130.465,
+   "publish_epoch": 3.411,
+   "reclaim_epochs": 1.024
+  },
+  "statements": 1256,
+  "statement_kinds": {
+   "BEGIN": 16,
+   "UPDATE": 9,
+   "SELECT": 911,
+   "DELETE": 10,
+   "INSERT": 310
+  },
+  "executemany_rows": 701770,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 3467.9,
+  "rss_after_mb": 3467.9,
+  "db_main_mb": 1757.2,
+  "wal_mb": 420.4,
+  "posting_list": 7168,
+  "lex_postings": 407435,
+  "lex_docs": 228981,
+  "lex_df": 55988,
+  "chunks": 228981,
+  "entry": 54535,
+  "not_encoded": 0,
+  "epoch": 4,
+  "posting_mb": 113.32,
+  "lex_posting_mb": 184.81
+ },
+ "B_noop_again": {
+  "label": "noop again",
+  "success": true,
+  "wall_s": 24.127,
+  "phases_s": {
+   "chunk_dirty": 0.188,
+   "build_epoch": 0.004
+  },
+  "statements": 24,
+  "statement_kinds": {
+   "BEGIN": 9,
+   "UPDATE": 2,
+   "SELECT": 11,
+   "DELETE": 2
+  },
+  "executemany_rows": 0,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 3467.9,
+  "rss_after_mb": 3467.9,
+  "db_main_mb": 1757.2,
+  "wal_mb": 420.4,
+  "posting_list": 7168,
+  "lex_postings": 407435,
+  "lex_docs": 228981,
+  "lex_df": 55988,
+  "chunks": 228981,
+  "entry": 54535,
+  "not_encoded": 0,
+  "epoch": 4,
+  "posting_mb": 113.32,
+  "lex_posting_mb": 184.81
+ },
+ "db_mb_final": 2177.9
+}

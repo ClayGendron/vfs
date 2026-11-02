@@ -1,0 +1,22 @@
+[18:58:03] reindex[1% dirty, round 1, before VACUUM] wall=33.878s stmts=350 postings=7166 lex=102374 epoch=5 phases={'chunk_dirty': 0.769, 'build_lexical_epoch (inside build_epoch)': 23.881, 'build_epoch': 28.102, 'publish_epoch': 0.115, 'reclaim_epochs': 0.584} db={'db_main_mb': 452.5, 'wal_mb': 113.4}
+[18:58:33] reindex[1% dirty, round 2, before VACUUM] wall=29.753s stmts=350 postings=7166 lex=102293 epoch=6 phases={'chunk_dirty': 0.327, 'build_lexical_epoch (inside build_epoch)': 21.291, 'build_epoch': 23.29, 'publish_epoch': 0.677, 'reclaim_epochs': 0.459} db={'db_main_mb': 453.2, 'wal_mb': 113.4}
+[18:59:14] reindex[1% dirty, round 3, before VACUUM] wall=39.717s stmts=350 postings=7166 lex=102335 epoch=7 phases={'chunk_dirty': 0.338, 'build_lexical_epoch (inside build_epoch)': 30.21, 'build_epoch': 35.252, 'publish_epoch': 0.397, 'reclaim_epochs': 0.33} db={'db_main_mb': 454.0, 'wal_mb': 113.4}
+Traceback (most recent call last):
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/baseline/epoch_drift.py", line 54, in <module>
+    asyncio.run(main(int(sys.argv[1])))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/claygendron/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/1bff4c75-daaa-4734-82d6-6bf1657ce644/scratchpad/incremental/baseline/epoch_drift.py", line 41, in main
+    await conn.execution_options(isolation_level="AUTOCOMMIT").execute(text("VACUUM"))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'coroutine' object has no attribute 'execute'
+<sys>:0: RuntimeWarning: coroutine 'AsyncConnection.execution_options' was never awaited
+EXIT 1

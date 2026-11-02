@@ -1,0 +1,35 @@
+[18:41:15] writing 50000 entries
+[18:44:20] write done in 184.19s, db=520.3MB
+[18:46:36] reindex[cold] wall=135.958s stmts=1225 postings=7142 lex=384003 epoch=1 phases={'chunk_dirty': 59.158, 'build_lexical_epoch (inside build_epoch)': 64.365, 'build_epoch': 69.341, 'publish_epoch': 0.464, 'reclaim_epochs': 0.014} db={'db_main_mb': 1247.2, 'wal_mb': 420.4}
+[18:46:40] reindex[noop] wall=3.758s stmts=24 postings=7142 lex=384003 epoch=1 phases={'chunk_dirty': 0.032, 'build_epoch': 0.012} db={'db_main_mb': 1247.2, 'wal_mb': 420.4}
+[18:46:54] grep[clean] total wall=13.42s
+[18:46:55] glean[clean] total wall=0.89s
+[18:46:58] write500[clean warm-up (untimed)] walls=[0.9]
+[18:47:08] write500[clean] walls=[1.417, 1.06, 1.309]
+[18:49:16] reindex[2000 new entries dirty] wall=126.643s stmts=1221 postings=7143 lex=397387 epoch=2 phases={'chunk_dirty': 5.847, 'build_lexical_epoch (inside build_epoch)': 106.727, 'build_epoch': 115.086, 'publish_epoch': 0.444, 'reclaim_epochs': 0.271} db={'db_main_mb': 1643.0, 'wal_mb': 420.4}
+[18:49:16] dirtied to 50 (0.1%) in 0.14s
+[18:49:24] grep[dirty 0.1% (50)] total wall=8.02s
+[18:49:25] glean[dirty 0.1% (50)] total wall=0.65s
+[18:49:26] freshness[dirty 0.1% (50)] grep=True glean=True dirty=51
+[18:49:26] dirtied to 250 (0.5%) in 0.39s
+[18:49:36] grep[dirty 0.5% (250)] total wall=9.85s
+[18:49:38] glean[dirty 0.5% (250)] total wall=1.70s
+[18:49:40] freshness[dirty 0.5% (250)] grep=True glean=True dirty=251
+[18:49:40] dirtied to 500 (1.0%) in 0.35s
+[18:50:05] grep[dirty 1.0% (500)] total wall=24.26s
+[18:50:08] glean[dirty 1.0% (500)] total wall=3.00s
+[18:50:10] freshness[dirty 1.0% (500)] grep=True glean=False dirty=501
+[18:50:13] dirtied to 1000 (2.0%) in 3.28s
+[18:50:40] grep[dirty 2.0% (1000)] total wall=26.51s
+[18:50:42] glean[dirty 2.0% (1000)] total wall=2.14s
+[18:50:43] freshness[dirty 2.0% (1000)] grep=True glean=False dirty=1001
+[18:50:46] dirtied to 2500 (5.0%) in 2.34s
+[18:51:13] grep[dirty 5.0% (2500)] total wall=26.87s
+[18:51:15] glean[dirty 5.0% (2500)] total wall=2.20s
+[18:51:17] freshness[dirty 5.0% (2500)] grep=True glean=False dirty=2501
+[18:51:28] write500[5% dirty] walls=[1.004, 1.38, 1.327]
+[18:53:36] reindex[5% dirty] wall=127.548s stmts=1257 postings=7166 lex=407359 epoch=3 phases={'chunk_dirty': 11.812, 'build_lexical_epoch (inside build_epoch)': 101.983, 'build_epoch': 109.992, 'publish_epoch': 0.513, 'reclaim_epochs': 0.256} db={'db_main_mb': 1740.1, 'wal_mb': 420.4}
+[18:56:28] reindex[1% dirty] wall=168.926s stmts=1256 postings=7168 lex=407435 epoch=4 phases={'chunk_dirty': 0.586, 'build_lexical_epoch (inside build_epoch)': 127.123, 'build_epoch': 130.465, 'publish_epoch': 3.411, 'reclaim_epochs': 1.024} db={'db_main_mb': 1757.2, 'wal_mb': 420.4}
+[18:56:53] reindex[noop again] wall=24.127s stmts=24 postings=7168 lex=407435 epoch=4 phases={'chunk_dirty': 0.188, 'build_epoch': 0.004} db={'db_main_mb': 1757.2, 'wal_mb': 420.4}
+[18:56:53] done
+EXIT 0

@@ -1,0 +1,1162 @@
+{
+ "n": 1000,
+ "machine": "Apple M1 Pro, 10 cores, 32 GB, SQLite via aiosqlite",
+ "python": "3.13.11",
+ "write": {
+  "wall_s": 1.24,
+  "entries": 1000,
+  "db_mb_after_write": 11.7
+ },
+ "A_cold": {
+  "label": "cold",
+  "success": true,
+  "wall_s": 1.788,
+  "phases_s": {
+   "chunk_dirty": 1.127,
+   "build_lexical_epoch (inside build_epoch)": 0.43,
+   "build_epoch": 0.522,
+   "publish_epoch": 0.011,
+   "reclaim_epochs": 0.004
+  },
+  "statements": 71,
+  "statement_kinds": {
+   "BEGIN": 11,
+   "UPDATE": 5,
+   "SELECT": 32,
+   "DELETE": 10,
+   "INSERT": 13
+  },
+  "executemany_rows": 33875,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 163.9,
+  "rss_after_mb": 317.6,
+  "posting_list": 7064,
+  "lex_postings": 11013,
+  "lex_docs": 4398,
+  "lex_df": 7002,
+  "chunks": 4398,
+  "entry": 1022,
+  "not_encoded": 0,
+  "epoch": 1,
+  "posting_mb": 2.17,
+  "lex_posting_mb": 3.58,
+  "db_mb": 40.2
+ },
+ "A_noop": {
+  "label": "noop",
+  "success": true,
+  "wall_s": 0.095,
+  "phases_s": {
+   "chunk_dirty": 0.002,
+   "build_epoch": 0.002
+  },
+  "statements": 24,
+  "statement_kinds": {
+   "BEGIN": 9,
+   "UPDATE": 2,
+   "SELECT": 11,
+   "DELETE": 2
+  },
+  "executemany_rows": 0,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 317.6,
+  "rss_after_mb": 317.6,
+  "posting_list": 7064,
+  "lex_postings": 11013,
+  "lex_docs": 4398,
+  "lex_df": 7002,
+  "chunks": 4398,
+  "entry": 1022,
+  "not_encoded": 0,
+  "epoch": 1,
+  "posting_mb": 2.17,
+  "lex_posting_mb": 3.58
+ },
+ "grep": [
+  {
+   "state": "clean",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.014,
+   "statements": 7,
+   "files": 29,
+   "lines": 31,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.016,
+   "statements": 7,
+   "files": 24,
+   "lines": 25,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.017,
+   "statements": 7,
+   "files": 35,
+   "lines": 35,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.02,
+   "statements": 7,
+   "files": 77,
+   "lines": 80,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.026,
+   "statements": 7,
+   "files": 251,
+   "lines": 305,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.021,
+   "statements": 7,
+   "files": 105,
+   "lines": 107,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.014,
+   "statements": 7,
+   "files": 71,
+   "lines": 72,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.09,
+   "statements": 7,
+   "files": 994,
+   "lines": 10642,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.017,
+   "statements": 7,
+   "files": 93,
+   "lines": 94,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.025,
+   "statements": 7,
+   "files": 456,
+   "lines": 632,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.009,
+   "statements": 8,
+   "files": 79,
+   "lines": 82,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.008,
+   "statements": 8,
+   "files": 93,
+   "lines": 95,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.017,
+   "statements": 8,
+   "files": 86,
+   "lines": 86,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.061,
+   "statements": 8,
+   "files": 219,
+   "lines": 231,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.023,
+   "statements": 8,
+   "files": 721,
+   "lines": 862,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.013,
+   "statements": 8,
+   "files": 284,
+   "lines": 293,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.021,
+   "statements": 8,
+   "files": 210,
+   "lines": 216,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.139,
+   "statements": 8,
+   "files": 2979,
+   "lines": 31198,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.022,
+   "statements": 8,
+   "files": 239,
+   "lines": 246,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.043,
+   "statements": 8,
+   "files": 1307,
+   "lines": 1851,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.009,
+   "statements": 8,
+   "files": 79,
+   "lines": 82,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.011,
+   "statements": 8,
+   "files": 93,
+   "lines": 95,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.018,
+   "statements": 8,
+   "files": 86,
+   "lines": 86,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.029,
+   "statements": 8,
+   "files": 219,
+   "lines": 231,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.024,
+   "statements": 8,
+   "files": 720,
+   "lines": 861,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.011,
+   "statements": 8,
+   "files": 284,
+   "lines": 293,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 209,
+   "lines": 215,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.162,
+   "statements": 8,
+   "files": 2979,
+   "lines": 31194,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.029,
+   "statements": 8,
+   "files": 239,
+   "lines": 246,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.043,
+   "statements": 8,
+   "files": 1307,
+   "lines": 1851,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.007,
+   "statements": 8,
+   "files": 79,
+   "lines": 82,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.008,
+   "statements": 8,
+   "files": 93,
+   "lines": 95,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.015,
+   "statements": 8,
+   "files": 87,
+   "lines": 87,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.028,
+   "statements": 8,
+   "files": 219,
+   "lines": 231,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.022,
+   "statements": 8,
+   "files": 720,
+   "lines": 861,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.011,
+   "statements": 8,
+   "files": 282,
+   "lines": 291,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 209,
+   "lines": 215,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.185,
+   "statements": 8,
+   "files": 2979,
+   "lines": 31205,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.023,
+   "statements": 8,
+   "files": 240,
+   "lines": 247,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.04,
+   "statements": 8,
+   "files": 1305,
+   "lines": 1850,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.007,
+   "statements": 8,
+   "files": 79,
+   "lines": 82,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 92,
+   "lines": 94,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.016,
+   "statements": 8,
+   "files": 88,
+   "lines": 88,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.045,
+   "statements": 8,
+   "files": 222,
+   "lines": 234,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.024,
+   "statements": 8,
+   "files": 722,
+   "lines": 863,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.012,
+   "statements": 8,
+   "files": 284,
+   "lines": 294,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 210,
+   "lines": 216,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.175,
+   "statements": 8,
+   "files": 2979,
+   "lines": 31184,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.02,
+   "statements": 8,
+   "files": 241,
+   "lines": 248,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.041,
+   "statements": 8,
+   "files": 1308,
+   "lines": 1853,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "rare word (rank 4992)",
+   "pattern": "lumentfewi",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 81,
+   "lines": 84,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "rare word (rank 4874)",
+   "pattern": "nadination",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 91,
+   "lines": 93,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "rare word (rank 4725)",
+   "pattern": "latachment",
+   "wall_s": 0.015,
+   "statements": 8,
+   "files": 87,
+   "lines": 87,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "mid word (rank 1500)",
+   "pattern": "kolive",
+   "wall_s": 0.028,
+   "statements": 8,
+   "files": 222,
+   "lines": 234,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "mid word (rank 400)",
+   "pattern": "modaki",
+   "wall_s": 0.022,
+   "statements": 8,
+   "files": 721,
+   "lines": 864,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "identifier literal",
+   "pattern": "Buffer::score_1d27",
+   "wall_s": 0.013,
+   "statements": 8,
+   "files": 284,
+   "lines": 294,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "identifier literal 2",
+   "pattern": "index_buffer_341",
+   "wall_s": 0.01,
+   "statements": 8,
+   "files": 211,
+   "lines": 217,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "3-letter common word",
+   "pattern": "was",
+   "wall_s": 0.181,
+   "statements": 8,
+   "files": 2979,
+   "lines": 31112,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "regex, literal core",
+   "pattern": "parse_entry_9\\d\\d",
+   "wall_s": 0.02,
+   "statements": 8,
+   "files": 236,
+   "lines": 243,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "name": "regex, literal core 2",
+   "pattern": "score(Query|Handle)[0-9]+",
+   "wall_s": 0.042,
+   "statements": 8,
+   "files": 1299,
+   "lines": 1839,
+   "errors": []
+  }
+ ],
+ "glean": [
+  {
+   "state": "clean",
+   "query": "gakicato deertepo",
+   "wall_s": 0.011,
+   "statements": 8,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.035,
+   "statements": 8,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "bish ousar suca",
+   "wall_s": 0.032,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.02,
+   "statements": 8,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "clean",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.026,
+   "statements": 9,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.01,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.014,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "query": "bish ousar suca",
+   "wall_s": 0.02,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.019,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.1% (1)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.021,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.01,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.012,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "query": "bish ousar suca",
+   "wall_s": 0.019,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.019,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.021,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.01,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.014,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "query": "bish ousar suca",
+   "wall_s": 0.019,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.018,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.021,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.018,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.019,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "query": "bish ousar suca",
+   "wall_s": 0.025,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.023,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.023,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "query": "gakicato deertepo",
+   "wall_s": 0.018,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "query": "mulefe arse ouspe",
+   "wall_s": 0.025,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "query": "bish ousar suca",
+   "wall_s": 0.03,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "query": "hiousment vien pilaza gakifa",
+   "wall_s": 0.028,
+   "statements": 11,
+   "hits": 10,
+   "errors": []
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "query": "Buffer::score_1d27 sihete",
+   "wall_s": 0.029,
+   "statements": 12,
+   "hits": 10,
+   "errors": []
+  }
+ ],
+ "E_clean": [
+  {
+   "state": "clean",
+   "rep": 0,
+   "entries": 500,
+   "wall_s": 0.17,
+   "statements": 16
+  },
+  {
+   "state": "clean",
+   "rep": 1,
+   "entries": 500,
+   "wall_s": 0.17,
+   "statements": 13
+  },
+  {
+   "state": "clean",
+   "rep": 2,
+   "entries": 500,
+   "wall_s": 0.165,
+   "statements": 13
+  }
+ ],
+ "B_new2000": {
+  "label": "2000 new entries dirty",
+  "success": true,
+  "wall_s": 3.472,
+  "phases_s": {
+   "chunk_dirty": 2.066,
+   "build_lexical_epoch (inside build_epoch)": 0.946,
+   "build_epoch": 1.12,
+   "publish_epoch": 0.029,
+   "reclaim_epochs": 0.009
+  },
+  "statements": 117,
+  "statement_kinds": {
+   "BEGIN": 11,
+   "UPDATE": 5,
+   "SELECT": 67,
+   "DELETE": 10,
+   "INSERT": 24
+  },
+  "executemany_rows": 59498,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 342.2,
+  "rss_after_mb": 505.0,
+  "posting_list": 7079,
+  "lex_postings": 23733,
+  "lex_docs": 13041,
+  "lex_df": 7002,
+  "chunks": 13041,
+  "entry": 3029,
+  "not_encoded": 0,
+  "epoch": 2,
+  "posting_mb": 6.43,
+  "lex_posting_mb": 10.52
+ },
+ "freshness": [
+  {
+   "state": "dirty 0.1% (1)",
+   "grep_found": true,
+   "grep_wall_s": 0.004,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.004,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 2
+  },
+  {
+   "state": "dirty 0.5% (5)",
+   "grep_found": true,
+   "grep_wall_s": 0.004,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.004,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 6
+  },
+  {
+   "state": "dirty 1.0% (10)",
+   "grep_found": true,
+   "grep_wall_s": 0.005,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.006,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 11
+  },
+  {
+   "state": "dirty 2.0% (20)",
+   "grep_found": true,
+   "grep_wall_s": 0.004,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.008,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 21
+  },
+  {
+   "state": "dirty 5.0% (50)",
+   "grep_found": true,
+   "grep_wall_s": 0.004,
+   "grep_statements": 6,
+   "glean_found": true,
+   "glean_wall_s": 0.013,
+   "glean_statements": 8,
+   "glean_errors": [],
+   "not_encoded": 51
+  }
+ ],
+ "E_dirty": [
+  {
+   "state": "5% dirty",
+   "rep": 0,
+   "entries": 500,
+   "wall_s": 0.164,
+   "statements": 16
+  },
+  {
+   "state": "5% dirty",
+   "rep": 1,
+   "entries": 500,
+   "wall_s": 0.163,
+   "statements": 13
+  },
+  {
+   "state": "5% dirty",
+   "rep": 2,
+   "entries": 500,
+   "wall_s": 0.158,
+   "statements": 13
+  }
+ ],
+ "B_5pct": {
+  "label": "5% dirty",
+  "success": true,
+  "wall_s": 4.871,
+  "phases_s": {
+   "chunk_dirty": 1.713,
+   "build_lexical_epoch (inside build_epoch)": 2.221,
+   "build_epoch": 2.542,
+   "publish_epoch": 0.049,
+   "reclaim_epochs": 0.038
+  },
+  "statements": 152,
+  "statement_kinds": {
+   "BEGIN": 11,
+   "UPDATE": 5,
+   "SELECT": 93,
+   "DELETE": 10,
+   "INSERT": 33
+  },
+  "executemany_rows": 74501,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 551.9,
+  "rss_after_mb": 670.4,
+  "posting_list": 7102,
+  "lex_postings": 34202,
+  "lex_docs": 19502,
+  "lex_df": 7010,
+  "chunks": 19502,
+  "entry": 4536,
+  "not_encoded": 0,
+  "epoch": 3,
+  "posting_mb": 9.61,
+  "lex_posting_mb": 15.72
+ },
+ "B_1pct_dirty_wall_s": 0.06,
+ "B_1pct": {
+  "label": "1% dirty",
+  "success": true,
+  "wall_s": 6.468,
+  "phases_s": {
+   "chunk_dirty": 0.063,
+   "build_lexical_epoch (inside build_epoch)": 4.517,
+   "build_epoch": 4.877,
+   "publish_epoch": 0.093,
+   "reclaim_epochs": 0.14
+  },
+  "statements": 151,
+  "statement_kinds": {
+   "BEGIN": 11,
+   "UPDATE": 5,
+   "SELECT": 93,
+   "DELETE": 10,
+   "INSERT": 32
+  },
+  "executemany_rows": 67873,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 670.4,
+  "rss_after_mb": 727.4,
+  "posting_list": 7104,
+  "lex_postings": 34207,
+  "lex_docs": 19507,
+  "lex_df": 7010,
+  "chunks": 19507,
+  "entry": 4536,
+  "not_encoded": 0,
+  "epoch": 4,
+  "posting_mb": 9.61,
+  "lex_posting_mb": 15.73
+ },
+ "B_noop_again": {
+  "label": "noop again",
+  "success": true,
+  "wall_s": 1.62,
+  "phases_s": {
+   "chunk_dirty": 0.017,
+   "build_epoch": 0.017
+  },
+  "statements": 24,
+  "statement_kinds": {
+   "BEGIN": 9,
+   "UPDATE": 2,
+   "SELECT": 11,
+   "DELETE": 2
+  },
+  "executemany_rows": 0,
+  "errors": [],
+  "extras": {},
+  "rss_before_mb": 727.4,
+  "rss_after_mb": 727.4,
+  "posting_list": 7104,
+  "lex_postings": 34207,
+  "lex_docs": 19507,
+  "lex_df": 7010,
+  "chunks": 19507,
+  "entry": 4536,
+  "not_encoded": 0,
+  "epoch": 4,
+  "posting_mb": 9.61,
+  "lex_posting_mb": 15.73
+ },
+ "db_mb_final": 181.8
+}

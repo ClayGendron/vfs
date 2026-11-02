@@ -1,0 +1,4 @@
+[19:02:47] VACUUM took 2.63s db={'db_main_mb': 342.2, 'wal_mb': 0.0}
+[19:03:03] reindex[1% dirty, round 1, after VACUUM] wall=15.617s stmts=350 postings=7167 lex=102329 epoch=8 phases={'chunk_dirty': 0.204, 'build_lexical_epoch (inside build_epoch)': 11.945, 'build_epoch': 13.778, 'publish_epoch': 0.132, 'reclaim_epochs': 0.106} db={'db_main_mb': 442.2, 'wal_mb': 113.8}
+[19:03:16] reindex[1% dirty, round 2, after VACUUM] wall=12.51s stmts=350 postings=7167 lex=102342 epoch=9 phases={'chunk_dirty': 0.148, 'build_lexical_epoch (inside build_epoch)': 8.331, 'build_epoch': 9.107, 'publish_epoch': 0.254, 'reclaim_epochs': 0.197} db={'db_main_mb': 449.3, 'wal_mb': 113.8}
+EXIT 0

@@ -1,0 +1,34 @@
+         11031263 function calls (11020345 primitive calls) in 31.256 seconds
+
+   Ordered by: cumulative time
+   List reduced from 4508 to 101 due to restriction <'vfs/(storage|models|paths)'>
+   List reduced from 101 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        3    0.000    0.000   31.256   10.419 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1485(close)
+      575    0.002    0.000   30.863    0.054 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1118(reindex)
+      513    0.001    0.000   30.734    0.060 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1187(_reindex_phases)
+      344    0.001    0.000   30.438    0.088 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1348(_reconverge)
+   383192    1.062    0.000    9.662    0.000 /Users/claygendron/Git/Repos/vfs/src/vfs/models/rows.py:324(process_result_value)
+      685    0.001    0.000    2.160    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/engine.py:298(with_retry)
+      406    0.000    0.000    1.366    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1650(_rows)
+      406    0.111    0.000    1.357    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1658(attempt)
+      344    0.000    0.000    1.214    0.004 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1631(_execute)
+      144    0.295    0.002    0.616    0.004 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/edges.py:268(collect_edge_drift)
+      109    0.000    0.000    0.552    0.005 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/engine.py:252(ensure_ready)
+        1    0.000    0.000    0.539    0.539 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:187(__init__)
+      198    0.000    0.000    0.481    0.002 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/segments.py:168(collect_segment_drift)
+   165054    0.253    0.000    0.344    0.000 /Users/claygendron/Git/Repos/vfs/src/vfs/models/rows.py:236(process_result_value)
+      177    0.000    0.000    0.265    0.001 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1666(_execute_write)
+      177    0.001    0.000    0.265    0.001 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1718(_mutate)
+   383196    0.201    0.000    0.201    0.000 /Users/claygendron/Git/Repos/vfs/src/vfs/models/rows.py:282(_uuid_native)
+    54535    0.110    0.000    0.199    0.000 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/segments.py:60(path_segments)
+       61    0.000    0.000    0.153    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1250(_render_step)
+      102    0.000    0.000    0.135    0.001 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/engine.py:407(_first_touch)
+       77    0.000    0.000    0.132    0.002 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1368(_gram_phases)
+       39    0.000    0.000    0.114    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/engine.py:429(_apply_file_settings)
+       34    0.000    0.000    0.111    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1152(_held_reindex_lease)
+      177    0.000    0.000    0.075    0.000 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/backend.py:1731(attempt)
+       12    0.000    0.000    0.042    0.003 /Users/claygendron/Git/Repos/vfs/src/vfs/storage/backends/database/engine.py:663(_has_sqlite_vec)
+
+
