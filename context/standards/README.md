@@ -12,7 +12,7 @@ What every stage of [the pipeline](../README.md) obeys. These pages change rarel
 | [python-style.md](python-style.md) | What `ruff` enforces and the conventions it cannot. |
 | [testing.md](testing.md) | The test tiers, pins with their mutant, never mocking the database, the engine legs. |
 | [tooling.md](tooling.md) | uv, ruff, ty, the Rust extension, `scripts/ci.sh`. |
-| [release.md](release.md) | How a release is cut from `main` and how the changelog is assembled from the landed specs. |
+| [release.md](release.md) | How a release is cut from `main` and how the release notes are assembled from the landed specs. |
 | [quality-rubric.md](quality-rubric.md) | How the repository's quality is scored, and the [grades/](grades/) time series. |
 | [mutant-ledger.md](mutant-ledger.md) | The replayable one-line mutations each pinned law is proven by. |
 

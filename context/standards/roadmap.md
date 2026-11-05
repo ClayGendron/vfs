@@ -17,7 +17,7 @@ Short version first. The long version follows.
 - **Gate tags.** `a` = rides any alpha, not a gate item. `b` = must land before the beta freeze. `f` = must land before final. `0.2` = after. The beta freeze is defined in §2: no rename, no removal, no change of meaning; *additive* names are still allowed in a beta and are listed under *Added* (decision D2).
 - **Stories open with a user story** where the heading alone does not say what a person gets: "As an agent / software developer / ETL developer, I want …, so that …". Every kernel story (§4) and every human-in-the-loop story (§5) has one; the functionality enabled is the point, the mechanism is the *why*.
 - **Sizes** are the audits' estimates of agent effort: S ≤ 1 day, M 2–4 days, L 1–2 weeks, XL > 2 weeks. They are not commitments. §14 adds them up.
-- **Acceptance criteria count operations, never clocks.** A criterion names statements issued, rows fetched, calls spied, a classified error kind, an exit code, or an engine leg. This is the repo's own rule (CLAUDE.md, *Performance tests*). A criterion that is CI evidence rather than a test says so.
+- **Acceptance criteria count operations, never clocks.** A criterion names statements issued, rows fetched, calls spied, a classified error kind, an exit code, or an engine leg. This is the repo's own rule (AGENTS.md, *Performance tests*). A criterion that is CI evidence rather than a test says so.
 - **Engine legs.** An *engine leg* is one of the four `VFS_TEST_<ENGINE>_URL` legs — Postgres, MariaDB, SQL Server, Oracle — deselected by `tests/conftest.py` when its URL is unset. SQLite and the in-memory backend always run. "On SQLite and on each engine leg" means all five.
 - **§14 is the sequencing and the capacity arithmetic. §15 is the cut list. §16 is the decision list.**
 
@@ -37,7 +37,7 @@ Each sentence is written to be true on the day `0.1.0` ships. Under each is what
 
 ### 1.2 Who it is for
 
-Three audiences, all first-class (Clay, 2026-10-28; CLAUDE.md's *Production posture* names the first and third and is updated in R7):
+Three audiences, all first-class (Clay, 2026-10-28; AGENTS.md's *Production posture* names the first and third and is updated in R7):
 
 - **Agents** making many small calls in a loop, many at once, through the shell, the verbs or MCP. They care about latency, about never being lied to by a result, and about a question they raise being answered without losing their place.
 - **Software developers** building the host: the application that mounts storage, sets posture, registers tools, writes the policy hook, mounts MCP servers, runs `serve()` and embeds vfs in LangGraph or their own loop. They care about one small public surface, one approval flow for everything an agent can run, a session that carries read-then-write safety for them (K10), a log they can point a dashboard at (H0), and errors that are classified rather than raised. Most of domains B, C, G, H and I are for them.
@@ -264,7 +264,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### L0 — Spike: the cost of logging every call · new study · S · gate a
 
-*Story.* As the owner of 0.1.0, I want to know what one log row per call costs an agent-sized call and a 10,000-row batch before H0 is specified, so that the log's write discipline is a measured choice and not a guess. *Why.* Clay asked for the spike (2026-10-28) and said analytics is a must for 0.1.0; the question is not whether to log but how. CLAUDE.md puts wall-clock in a memo, never a test; this is that memo, and H0's acceptance then counts statements only. *Depends on.* Nothing. Runs through public APIs; lands nothing in `src/`. *Acceptance.*
+*Story.* As the owner of 0.1.0, I want to know what one log row per call costs an agent-sized call and a 10,000-row batch before H0 is specified, so that the log's write discipline is a measured choice and not a guess. *Why.* Clay asked for the spike (2026-10-28) and said analytics is a must for 0.1.0; the question is not whether to log but how. AGENTS.md puts wall-clock in a memo, never a test; this is that memo, and H0's acceptance then counts statements only. *Depends on.* Nothing. Runs through public APIs; lands nothing in `src/`. *Acceptance.*
 1. A dated memo under `context/research/` reports, on SQLite and on Postgres, for one `read`, one `grep`, one `write` and a 10,000-entry `write`, under 1 and under 32 concurrent sessions: statements issued and wall time with no log, with one synchronous row per call, and with write-behind read rows plus synchronous effect rows.
 2. The memo states the bar H0 inherits — write-behind adds zero synchronous statements to a read and the effect path adds exactly two — and the measured overhead against it, with a GO or a NO-GO and, on NO-GO, the shape it recommends instead.
 3. The spike's scripts live under the study directory and use public APIs only; nothing is merged into `src/`.
@@ -434,7 +434,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 | Piece | State |
 |---|---|
-| Five tuned profiles + the generic floor; every op on all five; the floor withholds `glean` only | built (CLAUDE.md, architecture 01, the glossary and spec 171 still say "`glean` and `graph`") |
+| Five tuned profiles + the generic floor; every op on all five; the floor withholds `glean` only | built (AGENTS.md, architecture 01, the glossary and spec 171 still say "`glean` and `graph`") |
 | Every `IN` list chunked by `membership()` | built (nine raw `.in_()` sites, all bounded) |
 | Four engine legs in CI (`test-dialects.yml`) | built; MSSQL leg red on 2026-10-28 at the `apt` step |
 | Schema lifecycle | refuse-and-re-provision only; `SCHEMA_FORMAT_VERSION = 23` vs ADR 020's "stays 1" |
@@ -452,11 +452,11 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 *Depends on.* D3 (MariaDB's tier), D18 (Oracle naming). *Acceptance.*
 1. `README.md` carries one row per `PROFILES` entry plus "any other SQLAlchemy dialect": driver extra, minimum server version, verbs served, vector tier, ANN index provisioned, arbitration, isolation pins, known caps (Oracle `IN` 1,000; SQL Server `membership_budget` = min(2,000, the bind budget); MariaDB packet and row limits; pgvector's dimension cap).
 2. A docs-fence test asserts the matrix's dialect names equal `set(PROFILES) | {"generic"}` and each row's arbitration and vector cells equal the profile's fields.
-3. CLAUDE.md, `architecture/01`, the glossary and spec 171 say `glean` alone is withheld on the floor; `docker/README.md` and the `db_test` skill cite `tests/storage/test_conformance.py`; the dead `scripts/mssql_*.sh` are deleted.
+3. AGENTS.md, `architecture/01`, the glossary and spec 171 say `glean` alone is withheld on the floor; `docker/README.md` and the `db_test` skill cite `tests/storage/test_conformance.py`; the dead `scripts/mssql_*.sh` are deleted.
 
 #### D2 — Schema lifecycle: directional mismatch, a corruption kind, the migration registry · amends ADR 020 · M · gate b
 
-*Why.* Every format bump today strands a real database. 0.1.0 is the commitment point ADR 020 named. The minimum honest story: the refusal says which side is older; a garbage version row is corruption, not mismatch; a registry exists so the first post-0.1.0 bump must ship a path or fail a test. Full `ALTER` migrations are 0.2. The alpha changelog template says that an alpha may bump the format and that a host moving between alphas re-provisions. *Depends on.* D19. *Acceptance.*
+*Why.* Every format bump today strands a real database. 0.1.0 is the commitment point ADR 020 named. The minimum honest story: the refusal says which side is older; a garbage version row is corruption, not mismatch; a registry exists so the first post-0.1.0 bump must ship a path or fail a test. Full `ALTER` migrations are 0.2. The alpha release-notes template says that an alpha may bump the format and that a host moving between alphas re-provisions. *Depends on.* D19. *Acceptance.*
 1. A meta row at `SCHEMA_FORMAT_VERSION + 1` refuses `schema_mismatch` with `data["direction"] == "store_newer"`; at `− 1`, `"store_older"` naming the remedy; on SQLite and on each engine leg.
 2. A meta table present with no row, or a non-integer version, classifies `vfs.unavailable.corrupt` (D19 lean), never `schema_mismatch`.
 3. A migration registry of `(from, to, statements)` exists; a `SCHEMA_FORMAT_VERSION` bump without a matching entry fails a unit test; `migrate()` on a store one version behind applies the entry and the next first touch adopts (DDL statements counted per bump).
@@ -795,7 +795,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 | Docs | 29 pages, 38 Sybil fences pass; 8 stub pages; `api.md` covers identity and graph only; 5 pages off the nav |
 | Examples | 6 of 9 import dead names (`DatabaseFileSystem`, `VFSClient`, `grover.*`); none run in CI |
 | Logging | no `import logging` anywhere in `src/vfs` |
-| Install | `pip install vfs-py` gives 0.0.22; CONTRIBUTING and CLAUDE.md disagree on the setup recipe |
+| Install | `pip install vfs-py` gives 0.0.22; CONTRIBUTING and AGENTS.md disagree on the setup recipe |
 
 ### Stories
 
@@ -854,7 +854,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 ## 13. Domain J — Release engineering and repository hygiene
 
-**Goal.** The lane runs: a version that can be a pre-release, a publish matrix that has been dry-run, yanked dead numbers, a changelog that starts over, a README that tells the truth, standards that describe the tree that exists, and an active-spec set that equals the 0.1.0 work.
+**Goal.** The lane runs: a version that can be a pre-release, a publish matrix that has been dry-run, yanked dead numbers, release notes that start over, a README that tells the truth, standards that describe the tree that exists, and an active-spec set that equals the 0.1.0 work.
 
 ### State today
 
@@ -865,7 +865,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 | `publish.yml` seven-platform matrix | never run; no `workflow_dispatch`; no tag check; `macos-13` (retired) |
 | PyPI | 0.0.20–0.0.22 present, none yanked; `pyproject` 0.0.22; `__init__` a literal copy; `uv.lock` 0.0.22 |
 | `scripts/bump_version.py` | cannot emit `0.1.0a1` |
-| `CHANGELOG.md` `[Unreleased]` | pre-rebuild residue |
+| `CHANGELOG.md` | deleted; the GitHub releases are the record |
 | README lines 19 and 135 | say PyPI ships the previous-generation API |
 | Standards | `tooling.md`, `testing.md` *Running*, `release.md`, this page's predecessor all describe a tree that no longer exists; `versioning.md` pending since the constitution; the constitution itself names `Candidate`, `VFSResult`, `if_revision` and seven kinds |
 | `SECURITY.md`, `THREAT_MODEL.md` | absent |
@@ -894,7 +894,7 @@ Spec 166's *Scope* items are numbered: 1 the version source, 2 the bump script, 
 #### R3 — Cut `0.1.0a1` from the tree as it stands · spec 166 scope 5, 6, 8, 9 · S · gate a
 
 *Acceptance.*
-1. `CHANGELOG.md` has no pre-rebuild `[Unreleased]` content; `[0.1.0a1] — <date>` lists the verbs, backends, dialects, the ladder, the graph walk, trash-as-tombstone, binary bodies, with a *Breaking* group saying nothing from 0.0.x carries over, and the alpha template line about schema bumps (D2).
+1. The tree holds no `CHANGELOG.md`; the `v0.1.0a1` GitHub release notes list the verbs, backends, dialects, the ladder, the graph walk, trash-as-tombstone, binary bodies, with a *Breaking* group saying nothing from 0.0.x carries over, and the alpha template line about schema bumps (D2).
 2. README lines 19 and 135 no longer say PyPI ships the old API; pin guidance reads `vfs-py>=0.1.0a1,<0.2` with the one-line reason; the Alpine note is present.
 3. 0.0.20, 0.0.21, 0.0.22 are yanked on PyPI with spec 166's reason; the three GitHub release bodies carry the same line (CI evidence).
 4. On `python:3.13-slim` x86_64 and aarch64: `pip install vfs-py` installs `0.1.0a1` and `import vfs, vfs.native` works; `pip install "vfs-py<0.2"` fails with no matching distribution; `==0.0.22` installs with a yank warning (CI evidence).
@@ -909,15 +909,15 @@ D6's items 2–3; listed here because it is the lane's final gate.
 1. K9's list exists and `docs/reference/api.md` matches it.
 2. ADR 087's pins 3, 12, 16, 17 and spec 174's `overwrite=` question are resolved (K1).
 3. Every active spec is tagged `0.1.0` or `0.2.0+`; none tagged `0.2.0+` renames or removes a frozen name.
-4. Clay's freeze call is a dated line in `release.md` and in the `[0.1.0b1]` changelog section; the classifier reads Beta.
-5. `context/standards/versioning.md` exists: the beta rule (no rename, no removal, no change of meaning; additions listed under *Added*), what a breaking change is in `0.x`, the deprecation window, what the changelog's *Breaking* group must say.
+4. Clay's freeze call is a dated line in `release.md` and in the `v0.1.0b1` release notes; the classifier reads Beta.
+5. `context/standards/versioning.md` exists: the beta rule (no rename, no removal, no change of meaning; additions listed under *Added*), what a breaking change is in `0.x`, the deprecation window, what the release notes' *Breaking* group must say.
 6. The constitution's Art. 1.2, 1.3, 1.5 and 2 §1 are amended to the frozen names (`Entry`, `Observation`, `Result`, `version` and `if_version`, the `ErrorKind` enum) in the same landing.
 7. Every README and docs claim is re-checked against ADR 058 pin 7 at b1.
 
 #### R6 — Repository hygiene · S · gate b
 
 *Acceptance.*
-1. The root holds only `CHANGELOG.md CLAUDE.md CONTRIBUTING.md Cargo.lock Cargo.toml LICENSE README.md SECURITY.md THREAT_MODEL.md conftest.py mkdocs.yml pyproject.toml uv.lock` plus dot-files and directories. Dispositions (D31): delete `ROADMAP-v0.1.0.md`, `write-pipeline.md`, `pr_description.md`, the SQLModel write-up, `coverage.json` (and ignore it); move `grep_glob research/` to `context/research/2026-04-24-grep-glob-pushdown/`; move `business/` under `context/product/` or to a sibling repo; move `vfs-app/`, `vfs-brand/` and `logos/` to their own repo.
+1. The root holds only `AGENTS.md CLAUDE.md CONTRIBUTING.md Cargo.lock Cargo.toml LICENSE README.md SECURITY.md THREAT_MODEL.md conftest.py mkdocs.yml pyproject.toml uv.lock` plus dot-files and directories. Dispositions (D31): delete `ROADMAP-v0.1.0.md`, `write-pipeline.md`, `pr_description.md`, the SQLModel write-up, `coverage.json` (and ignore it); move `grep_glob research/` to `context/research/2026-04-24-grep-glob-pushdown/`; move `business/` under `context/product/` or to a sibling repo; move `vfs-app/`, `vfs-brand/` and `logos/` to their own repo.
 2. `tooling.md`, `testing.md` *Running*, `release.md`, `CONTRIBUTING.md` and `tests/conftest.py`'s docstring describe the maturin / `uv sync` / env-URL tree.
 3. `src2/` and `tests2/` are deleted or shrunk with a dated note of what remains unmined (D32).
 4. The headlines are reconciled to ADR 075's line everywhere a reader lands: README ("Governed data access for AI agents"), `docs/index.md` ("Agentic Search on your Database"), `mission.md` ("the agentic filesystem", and its "local disk" promise is re-worded to 0.2).
@@ -931,7 +931,7 @@ D6's items 2–3; listed here because it is the lane's final gate.
 3. `STATUS.md` is replaced by a table of at most 60 lines (spec, status, gate, landing commit) regenerated from the spec status lines; the history moves to a dated research memo or is deleted.
 4. The ten proposed ADRs (022, 058, 069, 081–087) are each ratified, amended or withdrawn; pending leans are zero before `0.1.0b1`.
 5. `open-questions.md` entries resolved by landed work move to the archive; the "what makes 0.1.0 final" entry is answered by D2.
-6. CLAUDE.md's *Production posture* names three audiences — agents, software developers building the host, ETL developers — in the words of §1.2; `spec 051` is replaced by H6.
+6. AGENTS.md's *Production posture* names three audiences — agents, software developers building the host, ETL developers — in the words of §1.2; `spec 051` is replaced by H6.
 
 #### R8 — `SECURITY.md` and `THREAT_MODEL.md` · S · gate b
 
@@ -942,7 +942,7 @@ D6's items 2–3; listed here because it is the lane's final gate.
 
 #### R9 — One benchmark memo with 0.1.0 · S · gate f
 
-*Why.* Wall-clock belongs in a bench memo, never a test (CLAUDE.md); the README needs a number and the product plan's first gate lists one. *Acceptance.* A dated memo under `context/research/` records agent-sized call latency (one `read`, one `grep`, one `write`) and the 10k-batch wall time on SQLite and each engine leg from the published wheel, with the statement counts beside each number; the README links it.
+*Why.* Wall-clock belongs in a bench memo, never a test (AGENTS.md); the README needs a number and the product plan's first gate lists one. *Acceptance.* A dated memo under `context/research/` records agent-sized call latency (one `read`, one `grep`, one `write`) and the 10k-batch wall time on SQLite and each engine leg from the published wheel, with the statement counts beside each number; the README links it.
 
 ---
 

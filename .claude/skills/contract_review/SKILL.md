@@ -49,7 +49,7 @@ touched module/function, gather:
   serves, and its Decisions section.
 - **Error-classification tables and invariants** — error taxonomies,
   frozensets of accepted values, and repo-wide invariants from
-  `CLAUDE.md` (e.g. no statement grows unboundedly with batch size;
+  `AGENTS.md` (e.g. no statement grows unboundedly with batch size;
   10,000+ file batches are a supported contract).
 
 Build a **contract register**: source (file:line), the promise in its

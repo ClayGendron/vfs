@@ -28,7 +28,7 @@ Test files mirror source structure: `src/vfs/storage/backends/database/reads.py`
 - Markers: `slow` for a deliberately heavy test (a BEIR corpus, a 10k batch, a second backend for a contract already proven on one), `integration`, `needs(*ops)` for a conformance test's required capabilities, and one marker per real engine (`postgres`, `mariadb`, `mssql`, `oracle`). Nothing deselects `slow` by default; `-m "not slow"` is the opt-out while iterating.
 - In-memory SQLite is the default for unit tests (`InMemoryStorage`, a `DatabaseStorage` over a private in-memory file). Disk fixtures only when the behaviour under test is disk-specific.
 - Never mock the database layer. If a test needs a session, give it a real one against in-memory SQLite. Mocked database layers have masked real bugs more than once.
-- Never assert on elapsed time. A performance pin counts work (statements through `before_cursor_execute`, calls to a spied function, rows visited); see [CLAUDE.md](../../CLAUDE.md), "Performance tests".
+- Never assert on elapsed time. A performance pin counts work (statements through `before_cursor_execute`, calls to a spied function, rows visited); see [AGENTS.md](../../AGENTS.md), "Performance tests".
 
 ## Writing a test
 
@@ -53,7 +53,7 @@ A test that exists to pin a law is proven by the mutation it kills, not by the c
 - Record the mutation the test guards in its docstring: the shape, never a spec or finding number.
 - Batch-shaped behaviour gets a batch-width row (a two-target delete, a two-pair move) with the referee that can see the width; mask promises get exact-equality rows (`==`, not `<=`); budgeted paths get budgeted parity rows.
 
-Pinned mutations also land as rows in [mutant-ledger.md](mutant-ledger.md) (intent and anchor, scoped selection, advisory killers), and review campaigns replay them; the `test_review` skill owns the procedure. A replay works in place under the safe-restore rule above, never in a git worktree, which [CLAUDE.md](../../CLAUDE.md) forbids. A replayed row reports killed, survived (a pin regressed) or stale (re-prove or retire); recorded killers are diagnosis, never the assertion.
+Pinned mutations also land as rows in [mutant-ledger.md](mutant-ledger.md) (intent and anchor, scoped selection, advisory killers), and review campaigns replay them; the `test_review` skill owns the procedure. A replay works in place under the safe-restore rule above, never in a git worktree, which [AGENTS.md](../../AGENTS.md) forbids. A replayed row reports killed, survived (a pin regressed) or stale (re-prove or retire); recorded killers are diagnosis, never the assertion.
 
 ## Engine legs are reentrant
 

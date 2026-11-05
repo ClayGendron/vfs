@@ -473,7 +473,7 @@ read, and the records.
 - *The constitution* (`context/standards/constitution.md`): each
   article the diff touches and whether it holds; Article 1's five
   primitives named when the diff composes or manipulates them.
-- *The production posture* (`CLAUDE.md`): never assumes SQLite; no
+- *The production posture* (`AGENTS.md`): never assumes SQLite; no
   statement grows with batch size; budgets from the dialect profile;
   no designed scale cap; no numpy.
 - *The patterns standard* (`context/standards/how-we-code.md`): each

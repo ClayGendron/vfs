@@ -10,14 +10,14 @@ on:
     paths:
       - "context/**"
       - "tests/lint/**"
-      - "CLAUDE.md"
+      - "AGENTS.md"
       - "scripts/unwrap_context.py"
       - ".github/workflows/lint.yml"
   pull_request:
     paths:
       - "context/**"
       - "tests/lint/**"
-      - "CLAUDE.md"
+      - "AGENTS.md"
       - "scripts/unwrap_context.py"
       - ".github/workflows/lint.yml"
 

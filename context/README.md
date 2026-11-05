@@ -17,7 +17,7 @@ flowchart LR
     HWC["standards/how-we-code.md"]
     LAND["standards/landing.md"]
     CONST["standards/constitution.md"]
-    CL["CLAUDE.md"]
+    CL["AGENTS.md"]
   end
   subgraph gate["The gate"]
     LINT["tests/lint/"]

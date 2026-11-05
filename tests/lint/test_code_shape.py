@@ -57,7 +57,7 @@ def test_the_security_skill_is_installed_unchanged() -> None:
 def test_the_lint_workflow_covers_context() -> None:
     assert LINT_WORKFLOW.exists(), "no .github/workflows/lint.yml"
     text = LINT_WORKFLOW.read_text()
-    for needle in ("context/**", "tests/lint/**", "CLAUDE.md", "uv run pytest tests/lint"):
+    for needle in ("context/**", "tests/lint/**", "AGENTS.md", "uv run pytest tests/lint"):
         assert needle in text, f"lint.yml does not mention {needle!r}"
 
 

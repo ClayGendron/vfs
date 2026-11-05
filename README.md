@@ -132,7 +132,7 @@ What the tree does not do yet, and where each decision lives.
 - **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `glean` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 5,266 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
 - **Under review:** row-level grants at scale (specs 058 and 150) and binary bodies (spec 152).
 - **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), the local file backend, the graph engine re-homed behind its protocol family, tools at paths, and a version row on every mutation.
-- **Released:** `vfs-py 0.0.22` on PyPI ships the previous-generation API (sync/async clients, database backends, CLI query engine, BM25 and vector search, graph algorithms). See the [CHANGELOG](CHANGELOG.md).
+- **Released:** `vfs-py 0.0.22` on PyPI ships the previous-generation API (sync/async clients, database backends, CLI query engine, BM25 and vector search, graph algorithms). See the [releases](https://github.com/ClayGendron/vfs/releases).
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 # How we code
 
-The reusable patterns this repository follows, written so a code review can check a change against them line by line. Each rule is one or two sentences and names the file and line that shows it in the live tree (`src/` and `tests/`; `src2/` and `tests2/` are archived and show nothing). Rules that [CLAUDE.md](../../CLAUDE.md) already states are pointers to it, not copies, so each rule has one home.
+The reusable patterns this repository follows, written so a code review can check a change against them line by line. Each rule is one or two sentences and names the file and line that shows it in the live tree (`src/` and `tests/`; `src2/` and `tests2/` are archived and show nothing). Rules that [AGENTS.md](../../AGENTS.md) already states are pointers to it, not copies, so each rule has one home.
 
 Two binding words. **Must** is checked: by a lint test where one exists, by the reviewer otherwise. **Prefer** is the default, and a change that departs from it says why in its docstring.
 
@@ -23,18 +23,18 @@ This group is an instruction of how to code, not a record to produce. The order 
 - **Failures are `Result` rows, not exceptions.** Every op returns a `Result` (`src/vfs/results/envelope.py:316`); an error is built by `classified(kind, ...)` from the kind table (`src/vfs/results/envelope.py:239`), and `success` is derived from the rows, never stored. A raw exception from an in-process backend is a bug (`src/vfs/storage/protocol.py:30`).
 - **Exceptions at two places only.** A constructor argument raises `ValueError` at construction (`src/vfs/storage/backends/database/backend.py:207`), and a caller who wants loud failures wraps with `raise_if_failed` (`src/vfs/exceptions.py:121`). A control-flow signal says so on its class line (`StaleSnapshot`, `src/vfs/storage/backends/database/dialects.py:48`).
 - **Per-target classification on reads; whole-batch refusal on writes.** A missing read target classifies beside the healthy rows (`src/vfs/storage/protocol.py:43`); a bad write target refuses the batch before a statement runs (`src/vfs/storage/backends/database/writes.py:327`).
-- **`assert` narrows, never validates.** See [CLAUDE.md](../../CLAUDE.md), "Code smells".
+- **`assert` narrows, never validates.** See [AGENTS.md](../../AGENTS.md), "Code smells".
 
 ## 3. Contracts: declare, don't sniff
 
 - **One ingress table.** A verb's parameters are rows in `PARAMS` (`src/vfs/params.py:139`); the router gate, the drift test (`tests/test_params.py:28`) and the wire schema read that table and nothing else. A new verb or parameter is a new row first.
 - **Capabilities are declared.** A backend says what it serves through `capabilities()` and nothing reads its method surface (`src/vfs/storage/protocol.py:7`; `src/vfs/storage/backends/database/backend.py:276` withholds `glean` when the profile has no distance function). Tests gate on the declaration with `@needs` (`tests/support/storage_contract.py:58`).
 - **Ports are `Protocol`s; one adapter per technology; specialization is construction-only.** The router depends on the `Supports*` protocols (`src/vfs/storage/protocol.py:113`); `InMemoryStorage` is `DatabaseStorage` pointed at a private file (`src/vfs/storage/backends/memory.py:32`); engine differences live in `DialectProfile` (`src/vfs/storage/backends/database/dialects.py:150`), never in a subclass.
-- **Code names no document.** A comment or docstring gives its reason in words and never cites a spec, a memo, a review or a `context/` path; the document cites the code. See [CLAUDE.md](../../CLAUDE.md), "Code comments".
+- **Code names no document.** A comment or docstring gives its reason in words and never cites a spec, a memo, a review or a `context/` path; the document cites the code. See [AGENTS.md](../../AGENTS.md), "Code comments".
 
 ## 4. Storage: bounded, planned, one transaction
 
-- **Never assume SQLite; design to the tightest cap.** See [CLAUDE.md](../../CLAUDE.md), "Production posture".
+- **Never assume SQLite; design to the tightest cap.** See [AGENTS.md](../../AGENTS.md), "Production posture".
 - **Read facts off the live `Dialect`; a profile field only where SQLAlchemy takes no position.** Every `DialectProfile` field's docstring names the fact SQLAlchemy does not model (`src/vfs/storage/backends/database/dialects.py:150`).
 - **Measure, don't remember.** A per-row bind cost is measured by compiling the statement over one and two probe rows (`statement_budget`, `src/vfs/storage/backends/database/dialects.py:763`), so a declared width that undershoots fails at build, never at an engine cap.
 - **No statement grows with the batch.** Every `IN` list, bulk insert and bulk update must chunk by `membership_budget` (`src/vfs/storage/backends/database/dialects.py:651`) through `chunked` (`:683`) and merge results, as the write path's snapshot read does (`src/vfs/storage/backends/database/writes.py:284`). A reviewer looks for any loop that builds a statement from caller-sized input without a budget.
@@ -46,30 +46,30 @@ This group is an instruction of how to code, not a record to produce. The order 
 
 ## 5. The engine: one seam, oracles referee
 
-- **One Rust engine, no Python fallback.** See [CLAUDE.md](../../CLAUDE.md), "Tooling" and "Code smells".
+- **One Rust engine, no Python fallback.** See [AGENTS.md](../../AGENTS.md), "Tooling" and "Code smells".
 - **The seam imports nothing from vfs; surface owners dispatch.** `vfs.native` checks the protocol version and hands out the handle (`src/vfs/native.py:1`); the owner module of each surface is the only caller of that surface (`src/vfs/native.py:13`).
 - **Every kernel has an oracle, and the oracle never imports the seam.** A readable pure-Python twin in `tests/support/oracles/` pins each kernel by parity (`tests/support/oracles/__init__.py:1`), and a test asserts no oracle touches `vfs.native` (`tests/test_oracles.py:12`).
 
 ## 6. Shape of a module
 
-- **Layout by banner.** See [CLAUDE.md](../../CLAUDE.md), "File organization".
-- **Imports at the top, always.** See [CLAUDE.md](../../CLAUDE.md), "Imports".
+- **Layout by banner.** See [AGENTS.md](../../AGENTS.md), "File organization".
+- **Imports at the top, always.** See [AGENTS.md](../../AGENTS.md), "Imports".
 - **Small named types over bare tuples.** A heterogeneous record is a `NamedTuple` or a frozen model, never `parts[2]` (`ResolvedPath`, `src/vfs/paths.py:352`; `ParamSpec`, `src/vfs/params.py:62`; `_FanoutPlan`, `src/vfs/base.py:279`).
 - **Constants are named, placed and explained.** A derived constant sits directly under the public one it comes from (`src/vfs/paths.py:56`, `:161`), and a reserve or ceiling carries a two-line comment saying what it holds back (`src/vfs/storage/backends/database/dialects.py:642`).
 - **Models are pure.** A domain model never holds a session, a connection or persistence bookkeeping (`src/vfs/models/entry.py:6`); that bookkeeping lives beside the plan that needs it (`src/vfs/storage/backends/database/staging.py:11`).
 - **Algebra is a pure fold; policy stays outside it.** `Result.merge` is the fold and `merge_branches` adds the fan-out demotion (`src/vfs/results/envelope.py:339`).
-- **The docstring says why; the comment is two lines.** See [CLAUDE.md](../../CLAUDE.md), "Code comments".
-- **Reflect on smells after writing.** See [CLAUDE.md](../../CLAUDE.md), "Code smells".
+- **The docstring says why; the comment is two lines.** See [AGENTS.md](../../AGENTS.md), "Code comments".
+- **Reflect on smells after writing.** See [AGENTS.md](../../AGENTS.md), "Code smells".
 
 ## 7. Tests
 
 - **Mirrored files.** A test file sits at the mirrored path of its source module (`src/vfs/storage/backends/database/reads.py` and `tests/storage/database/test_reads.py`); a new module is a new test file.
 - **One contract, zero per-engine conditionals, one subclass per backend.** Behaviour lives in `StorageContract` (`tests/support/storage_contract.py:1`); `test_conformance.py` only wires backends in (`tests/storage/test_conformance.py:1`).
-- **Count operations, never the clock.** See [CLAUDE.md](../../CLAUDE.md), "Performance tests". Record statements with `before_cursor_execute` and assert on the list (`tests/storage/database/test_engine.py:146`; `tests/models/test_rows.py:297`).
+- **Count operations, never the clock.** See [AGENTS.md](../../AGENTS.md), "Performance tests". Record statements with `before_cursor_execute` and assert on the list (`tests/storage/database/test_engine.py:146`; `tests/models/test_rows.py:297`).
 - **Pins land with their mutant.** See [testing.md](testing.md).
 - **Never mock the database.** See [testing.md](testing.md).
 - **Fixtures own what they make; engine legs deselect, never skip.** An autouse fixture closes every `DatabaseStorage` a test built (`tests/conftest.py:33`), and a real-engine leg whose `VFS_TEST_<ENGINE>_URL` is unset is deselected at collection (`tests/conftest.py:73`).
-- **Heavy tests are marked `slow`, never hand-skipped.** See [CLAUDE.md](../../CLAUDE.md), "Tooling".
+- **Heavy tests are marked `slow`, never hand-skipped.** See [AGENTS.md](../../AGENTS.md), "Tooling".
 
 ## When the rules do not say
 

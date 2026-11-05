@@ -51,7 +51,7 @@ def _scanned_documents() -> list[tuple[str, int]]:
         *shapes.direct_documents("specifications/archive"),
         *shapes.CONTEXT.glob("specifications/*/*/spec.md"),
         shapes.CONTEXT / "README.md",
-        shapes.REPO / "CLAUDE.md",
+        shapes.REPO / "AGENTS.md",
     ]
     return [(shapes.relative(p), len(shapes.open_question_hits(p.read_text()))) for p in paths]
 

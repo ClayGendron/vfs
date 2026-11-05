@@ -8,7 +8,7 @@ VFS publishes to PyPI as `vfs-py`. A release is cut from `main` after the local 
 
 - Patch (`X.Y.Z` → `X.Y.Z+1`): bug fixes, internal refactors, doc-only changes that ship something user-visible.
 - Minor (`X.Y.Z` → `X.Y+1.0`): new public methods, new backends, new providers.
-- Major (`X.Y.Z` → `X+1.Y.Z`): breaking changes. (Pre-1.0, breaking changes still bump minor — but call them out clearly in the changelog.)
+- Major (`X.Y.Z` → `X+1.Y.Z`): breaking changes. (Pre-1.0, breaking changes still bump minor — but call them out clearly in the release notes.)
 
 ## Before the first v2 release (verified 2026-10-08, from the dropped spec 158)
 
@@ -20,7 +20,7 @@ No release is planned yet (Clay, 2026-10-08). When one is, these are the facts a
 - **musllinux wheels publish but do not install.** `sqlite-vec`, a core dependency, ships no musl wheel and no sdist, so `pip install vfs-py` on Alpine fails resolution whatever vfs publishes. Say so in the README's install section.
 - **The sdist is not a slim-image path.** `pyproject.toml` admits `maturin>=1.8,<2.0`; 1.8.0–1.8.3 do not bootstrap Rust, so raise the floor to `maturin>=1.8.4`. The tree-sitter crates need a C compiler regardless.
 - **`bump_version.py` touches two files and cannot emit a prerelease.** It rewrites `pyproject.toml` and `src/vfs/__init__.py` with a `\d+\.\d+\.\d+` pattern; `uv.lock` carries the version too, so run `uv lock` and commit it. `crates/vfs-core/Cargo.toml` is independent (maturin reads the project version) and its comment still says `vfs._accel`.
-- **The changelog's `[Unreleased]` section is previous-generation residue** (`VFSObject`, `DatabaseFileSystem`, story links). The first v2 section is written fresh, not renamed.
+- **There is no `CHANGELOG.md`.** The [GitHub releases](https://github.com/ClayGendron/vfs/releases) are the user-facing record of what changed. The first v2 release notes are written fresh; nothing from the 0.0.x notes carries over.
 - **PyPI state.** `vfs-py` has 0.0.20, 0.0.21 and 0.0.22 only; 0.1.0 is unused. Pre-1.0, the v2 rebuild bumps minor to `0.1.0`.
 - **The README ships in the wheel**, so the docs fix (spec 153) lands first.
 
@@ -60,18 +60,18 @@ uv lock
 
 The script updates `pyproject.toml` and `src/vfs/__init__.py`; `uv lock` carries the new version into `uv.lock`. Don't hand-edit version strings.
 
-### 5. Assemble the `CHANGELOG.md` section
+### 5. Draft the release notes
 
-The changelog is written at release, from the landing notes of every spec archived since the last tag. The `Spec:` trailer of each landing commit is the index:
+The release notes are written at release, from the landing notes of every spec archived since the last tag. The `Spec:` trailer of each landing commit is the index:
 
 ```bash
 git log <last-tag>..HEAD --format='%(trailers:key=Spec,valueonly)' | sed '/^$/d'
 ```
 
-Open each spec listed and copy the one `**Changelog:**` line that ends its landing notes under the matching heading of a new section at the top of `CHANGELOG.md`, in [Keep a Changelog](https://keepachangelog.com/) shape; a line that says `None — internal` is left out. Write the section by hand from those lines: a user reads it, so it says what changed for them, not which commits ran.
+Open each spec listed and copy the one `**Changelog:**` line that ends its landing notes under the matching heading of the draft, in [Keep a Changelog](https://keepachangelog.com/) shape; a line that says `None — internal` is left out. The draft is a scratch file, not a file in the tree: it becomes the body of the GitHub release in step 7. Write it by hand from those lines: a user reads it, so it says what changed for them, not which commits ran.
 
 ```
-## [X.Y.Z] — YYYY-MM-DD
+## What's Changed
 
 ### Added
 - ...
@@ -86,11 +86,11 @@ Open each spec listed and copy the one `**Changelog:**` line that ends its landi
 - ...
 ```
 
-No `[Unreleased]` section is kept between releases; the landing notes are the unreleased changelog. The first v2 section replaces the stale `[Unreleased]` residue named above.
+No unreleased list is kept between releases; the landing notes are the unreleased changelog.
 
 ### 6. One commit: `build: release X.Y.Z`
 
-The commit carries the version bump, `uv.lock` and the changelog section, and nothing else. Read `git diff --cached --stat` before committing. Run `uv run ruff format --check src/ tests/` if the bump touched anything beyond version strings.
+The commit carries the version bump and `uv.lock`, and nothing else. Read `git diff --cached --stat` before committing. Run `uv run ruff format --check src/ tests/` if the bump touched anything beyond version strings.
 
 ```
 build: release X.Y.Z
@@ -100,7 +100,7 @@ Push when Clay asks, as for every commit.
 
 ### 7. Create the GitHub release
 
-This creates the `vX.Y.Z` tag on `main` and triggers the PyPI publish workflow. The release body mirrors the changelog section: a `## What's Changed` header, the same sections, and a `**Full Changelog**` link at the bottom. Look at the last releases for tone (`gh release list --limit 3`, `gh release view vX.Y.Z-1`).
+This creates the `vX.Y.Z` tag on `main` and triggers the PyPI publish workflow. The release body is the draft from step 5: a `## What's Changed` header, its sections, and a `**Full Changelog**` link at the bottom. Look at the last releases for tone (`gh release list --limit 3`, `gh release view vX.Y.Z-1`).
 
 ```bash
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "$(cat <<'NOTES'
@@ -126,5 +126,5 @@ If the publish step fails, fix the underlying issue and cut the next patch relea
 
 - No `--no-verify` on commits or pushes during a release. Hooks exist for a reason; if a hook fails, fix the cause.
 - No force-pushes to `main`.
-- No releases without a CHANGELOG section. The CHANGELOG is the user-facing record; the GitHub release notes are derived from it, not the other way round.
+- No release without release notes. The GitHub release is the user-facing record; the tree holds no `CHANGELOG.md`.
 - No release from a tree `scripts/ci.sh` has not passed, and none while a CI leg on `main` is red.

@@ -29,7 +29,7 @@ The reviewer **gets**:
   read it at;
 - the intention it serves, the research memo and studies it cites,
   and the architecture pages it names, by path;
-- `context/standards/constitution.md`, `CLAUDE.md`, and
+- `context/standards/constitution.md`, `AGENTS.md`, and
   `context/reviews/README.md` (the template and the checklist);
 - the live tree, read-only, and the session scratchpad for probes;
 - the author's **questions** — the places the author was least sure —
@@ -112,12 +112,12 @@ the first paragraph, then label each line.
    `IN` list, SQL Server's ~2,100 binds), never SQLite. A 10,000-file
    batch is a supported call. Anything unbounded is a High. A
    suboptimal profile named honestly, with its future direction, is
-   not a finding; a designed scale cap is. Read `CLAUDE.md`'s
+   not a finding; a designed scale cap is. Read `AGENTS.md`'s
    "Production posture" section for the full list.
 9. **The constitution.** Article 1: name which of the five primitives
    (Namespace, Entry, Candidate, Mount, Revision) the spec manipulates
    or composes; a sixth first-class thing is a High. Articles 2 to 5 as
-   touched. `CLAUDE.md`'s rules as touched: no numpy, no designed scale
+   touched. `AGENTS.md`'s rules as touched: no numpy, no designed scale
    cap, no pure-Python fallback for a hot path, imports at the top,
    `assert` narrows and never validates, count never clock, no document
    names in code comments.
