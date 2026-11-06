@@ -70,11 +70,13 @@ Method: throwaway scripts and mutations only, executed repros only, against the 
 
 ## Disposition
 
-- L1: fixed in the fix commit. The kernel `write` docstring reads "*entries* is any iterable of :class:`Entry`, walked once here into a list; each storage then receives its own depth-sorted slice of it, never the iterable."
-- L2: fixed in the fix commit. The sentence after it reads "An exception the iterable raises while it is walked propagates to the caller unchanged; nothing has been dispatched at that point."
-- L3: fixed in the fix commit. `_fresh_interpreter_prints` drops `check=True` and asserts `run.returncode == 0, run.stderr` before returning the output.
-- The two notes: taken. The heartbeat count in `test_embed.py` is outside this diff and is named in the landing notes as a candidate for its own write-up; the formula's import of `rows_per_statement` stands, its call sites pinned by the killed mutant and the helper by its own test.
+- L1: fixed in the fix commit. The kernel `write` docstring reads "*entries* is any iterable of :class:`Entry`, walked once here into a list; each storage then receives its own depth-sorted slice of it, never the iterable." READ, confirmed at `src/vfs/base.py:979-981` on `9637e4a`.
+- L2: fixed in the fix commit. The sentence after it reads "An exception the iterable raises while it is walked propagates to the caller unchanged; nothing has been dispatched at that point." READ, confirmed at `src/vfs/base.py:981-983` on `9637e4a`; the sentence matches what the scratch script showed.
+- L3: fixed in the fix commit. `_fresh_interpreter_prints` drops `check=True` and asserts `run.returncode == 0, run.stderr` before returning the output. READ, confirmed at `tests/test_package.py:47-49` on `9637e4a`; EXECUTED, `uv run pytest tests/test_package.py -q -n 0 -p no:cov` gave 4 passed, and `ruff check`, `ruff format --check` and `ty check` are clean on the two changed files.
+- The two notes: taken. The heartbeat count in `test_embed.py` is outside this diff and is named in the landing notes as a candidate for its own write-up; the formula's import of `rows_per_statement` stands, its call sites pinned by the killed mutant and the helper by its own test. READ, confirmed; a note needs no round.
 
 ## Verdict
 
 Lands: nothing High or Medium stands; the eight criteria are met by executed tests, one red and one killed mutant show the pins bite, no statement or trust boundary changes, and the three Lows carry their fix text. On `fee5e19`.
+
+2026-11-06, re-read on 9637e4a: Lands. The three Lows are applied as the Disposition says, the fix touches two docstring sentences and one test helper and nothing else in `src/` or `tests/`, the package pins pass and the tree is clean at the tip.
