@@ -84,17 +84,19 @@ The problem section: every READ claim about the tree checked true by `path:line`
 
 Filled in by the author on 2026-11-06, each line to be confirmed by the reviewer.
 
-1. M1 — fixed: decision 10 now reads "pins `runs-on: ubuntu-24.04`, and its ODBC step writes Microsoft's two keys into the keyring the sources list names"; the Design's dialect-workflow paragraph spells the step (both keys dearmored into `/usr/share/keyrings/microsoft-prod.gpg`, the `trusted.gpg.d` line gone), the problem section records the `signed-by` fact as EXECUTED, and criterion 8 gains the keyring path, both key names and the absence of `trusted.gpg.d`, under a renamed node id.
-2. L1 — fixed: decision 1 says "overtaken on 2026-11-04, when `1a9a768` deleted `CHANGELOG.md`"; the first paragraph's 2026-11-06 is the date of the re-check against `1a9a768`, not the deletion, and stands.
-3. L2 — fixed: decision 3's reason now limits ordering to the stage letter and names the other refusals as lane rules the table states.
-4. L3 — fixed: the refusal table gains the `0.1.0a1 --minor --pre a` row with the reviewer's words, and the sentence under the table says `--set` is bound by PEP 440 alone and may move backwards.
-5. L4 — fixed: the diagram draws `crates/vfs-core/Cargo.toml` in the planned class with the inert-version edge, and the tag-check edge reads "first step after checkout and setup-uv, every job".
-6. L5 — fixed: decision 6 carries the two sentences on `--no-project` and `python-version: "3.13"`.
-7. L6 — fixed: criterion 7 says PyYAML loads the `on` key as the boolean `True`.
-8. L7 — fixed: criterion 11 reads "the Dialect tests run on the branch that carries this change (a pull request's run, or a `workflow_dispatch` on the branch)".
-9. L8 — fixed: the first paragraph names spec 157's planned edit to the same workflow and the rebase rule.
-10. L9 — fixed: decision 1 names 166's criteria 8, 9, 10 and the `ruff`, `ty` and coverage half of 11 as discharged here.
+1. M1 — fixed: decision 10 now reads "pins `runs-on: ubuntu-24.04`, and its ODBC step writes Microsoft's two keys into the keyring the sources list names"; the Design's dialect-workflow paragraph spells the step (both keys dearmored into `/usr/share/keyrings/microsoft-prod.gpg`, the `trusted.gpg.d` line gone), the problem section records the `signed-by` fact as EXECUTED, and criterion 8 gains the keyring path, both key names and the absence of `trusted.gpg.d`, under a renamed node id. READ, confirmed.
+2. L1 — fixed: decision 1 says "overtaken on 2026-11-04, when `1a9a768` deleted `CHANGELOG.md`"; the first paragraph's 2026-11-06 is the date of the re-check against `1a9a768`, not the deletion, and stands. READ, confirmed; my "twice" was wrong: the first paragraph's 2026-11-06 is the re-check date and stands.
+3. L2 — fixed: decision 3's reason now limits ordering to the stage letter and names the other refusals as lane rules the table states. READ, confirmed.
+4. L3 — fixed: the refusal table gains the `0.1.0a1 --minor --pre a` row with the reviewer's words, and the sentence under the table says `--set` is bound by PEP 440 alone and may move backwards. READ, confirmed.
+5. L4 — fixed: the diagram draws `crates/vfs-core/Cargo.toml` in the planned class with the inert-version edge, and the tag-check edge reads "first step after checkout and setup-uv, every job". READ, confirmed.
+6. L5 — fixed: decision 6 carries the two sentences on `--no-project` and `python-version: "3.13"`. READ, confirmed.
+7. L6 — fixed: criterion 7 says PyYAML loads the `on` key as the boolean `True`. READ, confirmed.
+8. L7 — fixed: criterion 11 reads "the Dialect tests run on the branch that carries this change (a pull request's run, or a `workflow_dispatch` on the branch)". READ, confirmed.
+9. L8 — fixed: the first paragraph names spec 157's planned edit to the same workflow and the rebase rule. READ, confirmed.
+10. L9 — fixed: decision 1 names 166's criteria 8, 9, 10 and the `ruff`, `ty` and coverage half of 11 as discharged here. READ, confirmed.
 
 ## Verdict
 
 Not yet: M1, the ODBC step's reason and the one keyring line that makes the pinned leg true on either image. On `d3bc72d`.
+
+2026-11-06, re-read on d8e65be: Fit to build.
