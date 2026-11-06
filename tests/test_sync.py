@@ -232,7 +232,7 @@ def test_the_constructors_and_the_context_managers_are_twins() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(60, method="thread")
 def test_a_verb_from_the_loop_thread_is_refused_not_hung() -> None:
     """Dropping the loop-thread check in `_result` makes this hang on its own loop; the timeout names it."""
     stage = CallbackStage()
@@ -249,7 +249,7 @@ def test_a_verb_from_the_loop_thread_is_refused_not_hung() -> None:
     assert "loop thread" in refusal.errors[0].message
 
 
-@pytest.mark.timeout(60)
+@pytest.mark.timeout(60, method="thread")
 def test_a_management_call_from_the_loop_thread_raises() -> None:
     """Dropping `_refuse_loop_thread` from the management hop makes this hang; the timeout names it."""
     stage = CallbackStage()
