@@ -44,7 +44,8 @@ def test_importing_vfs_loads_no_numpy() -> None:
 
 
 def _fresh_interpreter_prints(probe: str) -> str:
-    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
     return run.stdout.strip()
 
 
