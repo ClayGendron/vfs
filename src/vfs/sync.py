@@ -29,7 +29,7 @@ from vfs.base import VirtualFileSystem
 from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
-from vfs.session import Session, closed_refusal
+from vfs.session import CLOSED_SESSION_DETAIL, Session, closed_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Sequence
@@ -136,18 +136,20 @@ class SyncVirtualFileSystem:
         return self._closed
 
     def close(self) -> None:
-        """Close the router on the loop, stop the loop, join the thread; idempotent and final.
+        """Cancel what is in flight, close the router on the loop, stop the loop, join the thread.
 
-        The loop thread shuts itself down in its runner, cancelling whatever
-        other threads still had in flight, so nothing here runs a loop on
-        the caller's thread (which may be running a loop of its own).
+        Idempotent and final. The in-flight calls of other threads are
+        cancelled and gathered on the loop before the router closes, so the
+        engine never disposes a pool a verb is still drawing on; the loop
+        thread then shuts itself down in its runner, so nothing here runs a
+        loop on the caller's thread (which may be running a loop of its own).
         """
         self._refuse_loop_thread()
         if self._closed:
             return
         self._closed = True
         try:
-            _wait(asyncio.run_coroutine_threadsafe(self._fs.close(), self._loop))
+            _wait(asyncio.run_coroutine_threadsafe(self._drain_and_close(), self._loop))
         finally:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
@@ -628,6 +630,15 @@ class SyncVirtualFileSystem:
         self._thread = threading.Thread(target=self._serve, name=LOOP_THREAD_NAME, daemon=True)
         self._thread.start()
 
+    async def _drain_and_close(self) -> None:
+        """On the loop: cancel every other task and wait for it, then close the router with nothing in flight."""
+        current = asyncio.current_task()
+        others = [task for task in asyncio.all_tasks() if task is not current]
+        for task in others:
+            task.cancel()
+        await asyncio.gather(*others, return_exceptions=True)
+        await self._fs.close()
+
     def _serve(self) -> None:
         """The loop thread: run until stopped, then shut the loop down here, never on a caller's thread."""
         loop = self._loop
@@ -645,17 +656,17 @@ class SyncVirtualFileSystem:
 
     def _result(self, op: Op, call: Callable[..., Coroutine[Any, Any, Result]], *args: Any, **kwargs: Any) -> Result:
         """The verb hop: refuse as a classified row, else run the coroutine on the loop and wait."""
-        if threading.get_ident() == self._thread.ident:
-            return Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL)])
         if self._closed:
             return Result(ops=(op,), errors=[classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL)])
+        if threading.get_ident() == self._thread.ident:
+            return Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL)])
         return self._submit(call(*args, **kwargs))
 
     def _await(self, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
         """The management hop: refuse by raising, else run the coroutine on the loop and wait."""
-        self._refuse_loop_thread()
         if self._closed:
             raise RuntimeError(CLOSED_MANAGEMENT_DETAIL)
+        self._refuse_loop_thread()
         return self._submit(call(*args, **kwargs))
 
     def _refuse_loop_thread(self) -> None:
@@ -706,8 +717,7 @@ class SyncSession:
 
     def __enter__(self) -> SyncSession:
         if self._session.closed:
-            msg = "the session is closed and cannot reopen; open a new one"
-            raise ValueError(msg)
+            raise ValueError(CLOSED_SESSION_DETAIL)
         return self
 
     def __exit__(

@@ -98,6 +98,18 @@ class HangingReadStorage(RecorderStorage):
         return Result(ops=("read",), observations=[])
 
 
+class RespawningReadStorage(HangingReadStorage):
+    """A read that, when cancelled, leaves a new task behind: the orphan only the runner's own sweep can end."""
+
+    async def read(self, *, authority: Any = None, **kwargs: Any) -> Result:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            asyncio.get_running_loop().create_task(asyncio.Event().wait())
+        return Result(ops=("read",), observations=[])
+
+
 class CallbackStage:
     """A reranker that reaches for the sync handle from the loop thread, the deadlock the facade refuses."""
 
@@ -220,8 +232,9 @@ def test_the_constructors_and_the_context_managers_are_twins() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.timeout(60)
 def test_a_verb_from_the_loop_thread_is_refused_not_hung() -> None:
-    """Blocking the loop thread on its own loop would never return; the facade answers a row instead."""
+    """Dropping the loop-thread check in `_result` makes this hang on its own loop; the timeout names it."""
     stage = CallbackStage()
     with SyncVirtualFileSystem(rerankers=(stage,)) as fs:
         stage.fs = fs
@@ -236,7 +249,9 @@ def test_a_verb_from_the_loop_thread_is_refused_not_hung() -> None:
     assert "loop thread" in refusal.errors[0].message
 
 
+@pytest.mark.timeout(60)
 def test_a_management_call_from_the_loop_thread_raises() -> None:
+    """Dropping `_refuse_loop_thread` from the management hop makes this hang; the timeout names it."""
     stage = CallbackStage()
     with SyncVirtualFileSystem(rerankers=(stage,)) as fs:
         stage.fs = fs
@@ -292,8 +307,9 @@ def test_a_management_call_after_close_raises() -> None:
     assert fs.capabilities() == frozenset()
 
 
+@pytest.mark.timeout(60)
 def test_close_cancels_the_calls_other_threads_are_waiting_on() -> None:
-    """A pooled worker mid-call sees a cancellation, never a wait that nothing ends."""
+    """A pooled worker mid-call sees a cancellation; dropping the drain and the runner's sweep hangs the join."""
     storage = HangingReadStorage()
     fs = SyncVirtualFileSystem(storage=storage)
     outcome: list[BaseException | Result] = []
@@ -312,6 +328,77 @@ def test_close_cancels_the_calls_other_threads_are_waiting_on() -> None:
     assert not thread.is_alive()
     assert _loop_threads() == []
     assert isinstance(outcome[0], concurrent.futures.CancelledError)
+
+
+@pytest.mark.timeout(60)
+def test_the_runner_sweeps_a_task_born_during_shutdown() -> None:
+    """A task spawned as the drain cancels its parent outlives the drain; without the runner's sweep the join hangs."""
+    storage = RespawningReadStorage()
+    fs = SyncVirtualFileSystem(storage=storage)
+    outcome: list[BaseException | Result] = []
+
+    def worker() -> None:
+        try:
+            outcome.append(fs.read("/a.txt"))
+        except BaseException as exc:  # the whole point is which exception arrives
+            outcome.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    assert storage.started.wait(timeout=10)
+    fs.close()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert _loop_threads() == []
+    assert isinstance(outcome[0], concurrent.futures.CancelledError)
+
+
+def test_close_under_load_on_a_real_storage_returns_cleanly() -> None:
+    """The pooled shutdown: in-flight calls are cancelled and gathered before the router closes; close raises nothing.
+
+    Without the drain, the router's close disposes the engine's pool while a worker's call still draws on it,
+    and the pool's own error escapes from `close()` in most trials.
+    """
+    for _ in range(5):
+        fs = SyncVirtualFileSystem(storage=InMemoryStorage())
+        outcomes: list[Result | BaseException] = []
+        served: list[int] = []
+        warm = threading.Event()
+
+        def worker(
+            fs: SyncVirtualFileSystem = fs,
+            outcomes: list[Result | BaseException] = outcomes,
+            served: list[int] = served,
+            warm: threading.Event = warm,
+        ) -> None:
+            while True:
+                try:
+                    result = fs.ls("/")
+                except concurrent.futures.CancelledError as exc:
+                    outcomes.append(exc)
+                    return
+                if not result.success:
+                    outcomes.append(result)
+                    return
+                served.append(1)
+                if len(served) >= 40:
+                    warm.set()
+
+        workers = [threading.Thread(target=worker) for _ in range(4)]
+        for thread in workers:
+            thread.start()
+        assert warm.wait(timeout=30)
+        fs.close()
+        for thread in workers:
+            thread.join(timeout=30)
+        assert not any(thread.is_alive() for thread in workers)
+        assert len(outcomes) == 4
+        for outcome in outcomes:
+            if isinstance(outcome, Result):
+                assert [error.kind for error in outcome.errors] == [ErrorKind.backend_unavailable]
+            else:
+                assert isinstance(outcome, concurrent.futures.CancelledError)
+        assert _loop_threads() == []
 
 
 def test_an_interrupt_in_the_waiting_thread_cancels_the_call(monkeypatch: pytest.MonkeyPatch) -> None:

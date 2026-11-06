@@ -15,7 +15,7 @@ error, and the session never reopens.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
@@ -38,9 +38,13 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+CLOSED_SESSION_DETAIL: Final = "the session is closed and cannot reopen; open a new one"
+"""The one sentence of the closed fact: the refusal's detail and the reopen error's message, in either shape."""
+
+
 def closed_refusal(op: Op) -> Result:
     """The one refusal a closed session answers every verb with, in either shape."""
-    fact = classified(ErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
+    fact = classified(ErrorKind.invalid, detail=CLOSED_SESSION_DETAIL)
     return Result(ops=(op,), errors=[fact])
 
 
@@ -74,8 +78,7 @@ class Session:
 
     async def __aenter__(self) -> Session:
         if self._closed:
-            msg = "the session is closed and cannot reopen; open a new one"
-            raise ValueError(msg)
+            raise ValueError(CLOSED_SESSION_DETAIL)
         return self
 
     async def __aexit__(
