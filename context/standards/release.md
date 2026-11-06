@@ -10,12 +10,12 @@ VFS publishes to PyPI as `vfs-py`. A release is cut from `main` after the local 
 - Minor (`X.Y.Z` → `X.Y+1.0`): new public methods, new backends, new providers.
 - Major (`X.Y.Z` → `X+1.Y.Z`): breaking changes. (Pre-1.0, breaking changes still bump minor — but call them out clearly in the release notes.)
 
-## Before the first v2 release (verified 2026-10-08, from the dropped spec 158)
+## Before the first v2 release (verified 2026-10-08 against `0760fe9`, from the dropped spec 158; the matrix, tag-check and sdist bullets re-verified 2026-11-06)
 
 No release is planned yet (Clay, 2026-10-08). When one is, these are the facts a reviewer established against `0760fe9` and PyPI, so the first run does not rediscover them:
 
 - **The seven-platform matrix in `publish.yml` has never run.** The v0.0.22 publish used a two-job workflow; the matrix (manylinux and musllinux on x86_64 and aarch64, macOS arm64 and x86_64, Windows x64, one wheel per platform on `abi3-py311`, plus an sdist) was added 2026-08-16 and `uv publish --trusted-publishing` on 2026-08-25. The workflow has a `workflow_dispatch` trigger that builds everything and uploads nothing; dispatch it from `main` and see all eight jobs green before cutting a release.
-- **The workflow runs no tests.** It trusts `main` is green (step 2). It does check the tag: the first step of every job runs `scripts/check_release_tag.py`, which fails the release unless the tag equals `v` + the project version, so a release cut before the bump commit cannot rebuild the old number.
+- **The workflow runs no tests.** It trusts `main` is green (step 2). It does check the tag: every job runs `scripts/check_release_tag.py` right after checkout and `setup-uv`, which fails the release unless the tag equals `v` + the project version, so a release cut before the bump commit cannot rebuild the old number.
 - **musllinux wheels publish but do not install.** `sqlite-vec`, a core dependency, ships no musl wheel and no sdist, so `pip install vfs-py` on Alpine fails resolution whatever vfs publishes. Say so in the README's install section.
 - **The sdist is not a slim-image path.** `pyproject.toml` requires `maturin>=1.8.4`, the first version whose sdist build bootstraps Rust, but the tree-sitter crates need a C compiler regardless.
 - **There is no `CHANGELOG.md`.** The [GitHub releases](https://github.com/ClayGendron/vfs/releases) are the user-facing record of what changed. The first v2 release notes are written fresh; nothing from the 0.0.x notes carries over.

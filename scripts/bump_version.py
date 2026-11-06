@@ -18,6 +18,7 @@ nothing is written.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,7 +55,11 @@ class VersionLine(NamedTuple):
 def read_version(text: str) -> Version:
     """The ``[project]`` table's version, parsed."""
     span = _version_line(text)
-    return Version(text[span.start : span.end])
+    found = text[span.start : span.end]
+    try:
+        return Version(found)
+    except InvalidVersion as error:
+        raise BumpRefused(f"{found!r} under [project] is not a PEP 440 version") from error
 
 
 def write_version(path: Path, new: Version) -> None:
@@ -77,7 +82,13 @@ def next_version(
     final: bool = False,
     explicit: str | None = None,
 ) -> Version:
-    """The version after one move along the lane, or ``BumpRefused``."""
+    """The version after one move along the lane, or ``BumpRefused``.
+
+    Versions outside the lane (dev, post, local, epoch, more than three release
+    components) are treated as finals by ``part`` and ``final``; ``--set`` is the
+    only tool that writes them, and the command, not this function, refuses
+    ``--pre`` beside ``--final`` or ``--set``.
+    """
     if explicit is not None:
         try:
             return Version(explicit)
@@ -119,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
     """Apply one move to the project's ``pyproject.toml`` and lock; 0 on success, 2 on a refusal."""
     args = _parser().parse_args(argv)
     if args.pre is not None and (args.final or args.explicit is not None):
-        print("error: --pre combines only with --major, --minor or --patch", file=sys.stderr)
+        print(
+            "error: --pre stands alone or combines with --major, --minor or --patch; not with --final or --set",
+            file=sys.stderr,
+        )
         return 2
     pyproject: Path = args.pyproject
     text = pyproject.read_text()
@@ -130,7 +144,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {refusal}", file=sys.stderr)
         return 2
     write_version(pyproject, new)
-    run(["uv", "lock"], cwd=pyproject.parent, check=True)
+    try:
+        run(["uv", "lock"], cwd=pyproject.parent, check=True)
+    except subprocess.CalledProcessError as failure:
+        print(
+            f"error: uv lock failed (exit {failure.returncode}) after {pyproject} was rewritten to {new}; run uv lock by hand",
+            file=sys.stderr,
+        )
+        return 1
     print(f"{old} → {new}")
     return 0
 
@@ -170,7 +191,7 @@ def _version_line(text: str) -> VersionLine:
         stripped = line.strip()
         if stripped.startswith("["):
             in_project = stripped == "[project]"
-        elif in_project and stripped.startswith("version") and '"' in line:
+        elif in_project and re.match(r'version\s*=\s*"', stripped):
             opening = line.index('"') + 1
             return VersionLine(offset + opening, offset + line.index('"', opening))
         offset += len(line)

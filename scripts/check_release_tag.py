@@ -1,7 +1,7 @@
 """Refuse a release whose tag does not name the project version.
 
-The publish workflow runs this as the first step of every job on a release
-event, before any wheel is built, so a release cut on a tree whose
+The publish workflow runs this in every job on a release event, right after
+checkout and setup-uv and before any wheel is built, so a release cut on a tree whose
 ``pyproject.toml`` still says the previous number fails here instead of at
 PyPI's door seven builds later::
 

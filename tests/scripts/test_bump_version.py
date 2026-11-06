@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -94,8 +95,13 @@ def test_main_rewrites_pyproject_and_locks(
     """Only the [project] version line changes; one `uv lock` runs beside the file; old → new is printed."""
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(SCRATCH_PYPROJECT)
-    calls: list[tuple[list[str], dict[str, object]]] = []
-    monkeypatch.setattr(bump_version, "run", lambda args, **kwargs: calls.append((args, kwargs)))
+    calls: list[tuple[list[str], dict[str, object], str]] = []
+
+    def record(args: list[str], **kwargs: object) -> None:
+        # The file as the lock sees it: the write must already have happened.
+        calls.append((args, kwargs, pyproject.read_text()))
+
+    monkeypatch.setattr(bump_version, "run", record)
 
     status = bump_version.main(["--minor", "--pre", "a", "--pyproject", str(pyproject)])
 
@@ -106,10 +112,43 @@ def test_main_rewrites_pyproject_and_locks(
     assert changed == [('version = "0.0.22"', 'version = "0.1.0a1"')]
     assert tomllib.loads(pyproject.read_text())["tool"]["maturin"]["version"] == "9.9.9"
     assert len(calls) == 1
-    args, kwargs = calls[0]
+    args, kwargs, seen_by_lock = calls[0]
     assert args == ["uv", "lock"]
     assert kwargs["cwd"] == tmp_path
+    assert kwargs["check"] is True
+    assert 'version = "0.1.0a1"' in seen_by_lock
     assert capsys.readouterr().out == "0.0.22 → 0.1.0a1\n"
+
+
+def test_a_failed_lock_is_reported_not_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A swallowed lock failure would print old → new over a stale lock; the exit is 1 and stderr says what to do."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(SCRATCH_PYPROJECT)
+
+    def fail(args: list[str], **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(2, args)
+
+    monkeypatch.setattr(bump_version, "run", fail)
+
+    status = bump_version.main(["--patch", "--pyproject", str(pyproject)])
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert captured.out == ""
+    assert "uv lock failed" in captured.err
+    assert 'version = "0.0.23"' in pyproject.read_text()
+
+
+def test_a_decoy_key_and_a_bad_value_are_refused_not_misread(tmp_path: Path) -> None:
+    """A `versioning` key first under [project] is not the version; a bad value is a refusal, not a traceback."""
+    decoy = SCRATCH_PYPROJECT.replace(
+        '[project]\nname = "vfs-py"\n', '[project]\nversioning = "semver"\nname = "vfs-py"\n'
+    )
+    assert bump_version.read_version(decoy) == Version("0.0.22")
+    with pytest.raises(bump_version.BumpRefused, match="PEP 440"):
+        bump_version.read_version(SCRATCH_PYPROJECT.replace('version = "0.0.22"', 'version = "not-a-version"'))
 
 
 def test_the_lock_carries_the_project_version() -> None:
