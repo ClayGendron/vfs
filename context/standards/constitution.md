@@ -56,7 +56,7 @@ Candidates are the read-side counterpart of Entry: callers search, traverse, and
 
 ### 1.4 Mount
 
-A **Mount** is a named attachment of one `VirtualFileSystem` inside another at a single-segment path (`/data`, never `/data/archive`; enforced at `src/vfs/base.py:86`). Resolution is longest-prefix: the terminal filesystem for a path is found by walking the mount chain and rebasing at each step (`src/vfs/base.py:140–167`).
+A **Mount** is a named attachment of one `AsyncVirtualFileSystem` inside another at a single-segment path (`/data`, never `/data/archive`; enforced at `src/vfs/base.py:86`). Resolution is longest-prefix: the terminal filesystem for a path is found by walking the mount chain and rebasing at each step (`src/vfs/base.py:140–167`).
 
 A Mount **composes** namespaces; it does not create a new world. Callers see one unified tree. A Mount MAY change which filesystem answers a subtree and which capabilities are supported there. A Mount MUST NOT change path semantics, `VFSResult`/`Candidate` shape, or the error taxonomy (Article 2).
 

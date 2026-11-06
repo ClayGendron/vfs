@@ -27,7 +27,7 @@ from tests.support.base_doubles import (
 )
 from vfs import base as base_module
 from vfs.authority import Authority
-from vfs.base import MEASURE_OFFLOAD_BYTES, VirtualFileSystem
+from vfs.base import MEASURE_OFFLOAD_BYTES, AsyncVirtualFileSystem
 from vfs.exceptions import WriteConflictError, raise_if_failed
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
@@ -45,7 +45,7 @@ from vfs.storage.replace import EditOperation
 async def test_write_localizes_path_and_passes_kwargs() -> None:
     # The single form is router sugar: storage receives a localized,
     # validated Entry — raw path/content never cross the storage seam.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.write(path="/m/f.txt", content="x", overwrite=False)
@@ -71,7 +71,7 @@ async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
         return await real_to_thread(fn, *args)
 
     monkeypatch.setattr(base_module.asyncio, "to_thread", counted)
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
 
@@ -95,7 +95,7 @@ async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
 
 
 async def test_edit_wraps_old_new_into_edits_list() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.edit(path="/m/f.txt", old="a", new="b")
@@ -134,7 +134,7 @@ async def test_write_rechecks_the_form_even_if_the_param_gate_drifts(monkeypatch
 async def test_write_data_localizes_a_bytes_entry() -> None:
     # The bytes form is the same sugar: storage receives a bytes-sourced
     # Entry whose text is a rendering, never the raw bytes beside a path.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.write(path="/m/r.pdf", data=b"%PDF-1.4")
@@ -166,7 +166,7 @@ async def test_write_single_form_rejects_invalid_content_before_dispatch() -> No
 
 
 async def test_tree_routes_with_depth_passthrough() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.tree("/m/src", max_depth=2)
@@ -176,7 +176,7 @@ async def test_tree_routes_with_depth_passthrough() -> None:
 async def test_tree_rejects_a_bad_max_depth_before_dispatch() -> None:
     # The depth rule is the router's: sub-one or non-int classifies
     # invalid before any backend sees the call.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     for bad in (0, -1, "2", 1.5):
@@ -192,7 +192,7 @@ async def test_tree_rejects_a_bad_max_depth_before_dispatch() -> None:
 
 
 async def test_move_same_terminal_dispatches_localized_pair() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     result = await root.move(src="/m/a.txt", dest="/m/b.txt")
@@ -204,7 +204,7 @@ async def test_move_same_terminal_dispatches_localized_pair() -> None:
 
 @pytest.mark.parametrize("op", ["move", "copy"])
 async def test_two_path_cross_mount_rejected(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -216,7 +216,7 @@ async def test_two_path_cross_mount_rejected(op: str) -> None:
 
 
 async def test_two_path_batch_one_bad_pair_rejects_all() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -227,7 +227,7 @@ async def test_two_path_batch_one_bad_pair_rejects_all() -> None:
 
 
 async def test_move_gates_both_endpoints() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions=read_write(read=["/frozen"]))
     src_frozen = await root.move(src="/m/frozen/a.txt", dest="/m/b.txt")
@@ -240,7 +240,7 @@ async def test_move_gates_both_endpoints() -> None:
 
 
 async def test_copy_gates_dest_only() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions=read_write(read=["/frozen"]))
     result = await root.copy(src="/m/frozen/a.txt", dest="/m/b.txt")
@@ -254,14 +254,14 @@ async def test_two_path_unrouted_target_is_not_found_from_backend() -> None:
     # No mount catches "/nope" — it routes to the root's own storage, which
     # reports the missing source as not_found (there is no "no mount" state
     # anymore: every path resolves, at worst to the identity entry).
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     result = await root.move(src="/nope/a.txt", dest="/nope/b.txt")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_two_path_capability_gate_blocks() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.move(src="/m/a.txt", dest="/m/b.txt")
@@ -275,7 +275,7 @@ async def test_two_path_capability_gate_blocks() -> None:
 
 
 async def test_delete_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     result = await root.delete("/a")
@@ -287,7 +287,7 @@ async def test_delete_bind_site_is_busy() -> None:
 async def test_restore_addressing_a_bind_site_is_busy() -> None:
     # Restore lands on its address; a live binding there is EBUSY exactly
     # like delete's removal of it.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     result = await root.restore("/a")
@@ -299,7 +299,7 @@ async def test_restore_addressing_a_bind_site_is_busy() -> None:
 async def test_sweep_addressing_a_bind_site_is_busy() -> None:
     # The guard fires on the address before storage's purge arm could
     # accept it — a bound region is never sweep's to destroy.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/m")
     result = await root.sweep("/m")
@@ -311,7 +311,7 @@ async def test_sweep_addressing_a_bind_site_is_busy() -> None:
 async def test_sweep_region_containing_bind_site_is_busy() -> None:
     # The purge arm takes arbitrary addresses, so the subtree form of
     # the guard matters: a bind site inside the target refuses busy.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.sweep("/data")
@@ -321,7 +321,7 @@ async def test_sweep_region_containing_bind_site_is_busy() -> None:
 
 
 async def test_delete_region_containing_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.delete("/data")
@@ -330,7 +330,7 @@ async def test_delete_region_containing_bind_site_is_busy() -> None:
 
 
 async def test_cascade_delete_refused_busy_when_region_holds_a_bind() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/m", parents=True)
     result = await root.delete("/data", cascade=True)
@@ -340,7 +340,7 @@ async def test_cascade_delete_refused_busy_when_region_holds_a_bind() -> None:
 
 
 async def test_grouped_delete_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     result = await root.delete(observations=[Observation(path=Path("/a"))])
@@ -350,7 +350,7 @@ async def test_grouped_delete_bind_site_is_busy() -> None:
 
 
 async def test_move_onto_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -361,7 +361,7 @@ async def test_move_onto_bind_site_is_busy() -> None:
 
 
 async def test_move_source_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     result = await root.move(src="/a", dest="/z")
@@ -371,7 +371,7 @@ async def test_move_source_bind_site_is_busy() -> None:
 
 
 async def test_move_region_containing_bind_site_is_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/data/a", parents=True)
     result = await root.move(src="/data", dest="/moved")
@@ -383,7 +383,7 @@ async def test_move_region_containing_bind_site_is_busy() -> None:
 async def test_copy_from_bind_site_is_not_busy() -> None:
     # Copy never disturbs its source, so copying *from* a bind path is fine;
     # only the destination is guarded — move guards both endpoints.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     result = await root.copy(src="/a", dest="/a/backup")
@@ -399,7 +399,7 @@ async def test_copy_from_bind_site_is_not_busy() -> None:
 
 
 async def test_mkedge_localizes_endpoints_on_shared_terminal() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
@@ -409,7 +409,7 @@ async def test_mkedge_localizes_endpoints_on_shared_terminal() -> None:
 
 
 async def test_mkedge_cross_mount_rejected() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -433,14 +433,14 @@ async def test_mkedge_missing_endpoints_is_not_found() -> None:
         ops=("mkedge",),
         errors=[ResultError(kind=ErrorKind.not_found, message="No such entry: /nope/a.py")],
     )
-    root = VirtualFileSystem(storage=CannedStorage({"mkedge": miss}))
+    root = AsyncVirtualFileSystem(storage=CannedStorage({"mkedge": miss}))
     result = await root.mkedge(source="/nope/a.py", target="/nope/b.py", edge_type="imports")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_mkedge_capability_gate_blocks() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
@@ -492,7 +492,7 @@ async def test_mkedge_refuses_extracted_provenance() -> None:
 async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
     # Endpoint eligibility is a path fact — the same bad endpoint must
     # classify invalid on any topology, never cross_mount.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
     for source in ("/", "/.vfs/ghost.py"):
         result = await root.mkedge(source=source, target="/m/b.py", edge_type="imports")
@@ -503,7 +503,7 @@ async def test_mkedge_invalid_endpoint_beats_cross_mount() -> None:
 async def test_mkedge_gates_the_target_endpoint_path() -> None:
     # An edge write mutates both endpoints' metadata sets, so a
     # region-denied target refuses before any dispatch.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions=read_write(read=["/b.py"]))
     result = await root.mkedge(source="/m/a.py", target="/m/b.py", edge_type="imports")
@@ -561,7 +561,7 @@ async def test_rmedge_requires_edges_or_the_sugar_triple() -> None:
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
 async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -578,7 +578,7 @@ async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
 async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None:
     # The incapable entry is never dispatched, and the gap goes on record
     # as an info-severity coverage entry — never a failure.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = EchoStorage()
     b = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(a, "/a")
@@ -596,7 +596,7 @@ async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
 async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -620,7 +620,7 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
 
 
 async def test_fanout_scoped_incapable_terminal_is_unsupported() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     b = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(b, "/b")
     result = await root.glob("*.py", paths=("/b/src",))
@@ -632,7 +632,7 @@ async def test_fanout_scoped_incapable_terminal_is_unsupported() -> None:
 async def test_fanout_includes_self_storage_before_mounts() -> None:
     # The identity entry at "/" is an ordinary binding: it participates in
     # an unscoped fan-out alongside every mounted entry, self first.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.write(path="/notes.md", content="alpha")
     child = EchoStorage()
     await root.add_mount(child, "/m")
@@ -643,7 +643,7 @@ async def test_fanout_includes_self_storage_before_mounts() -> None:
 async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
     # A root backend that declares no glean, and no mounts: empty
     # success, with the skipped entry on record as info.
-    fs = VirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"})))
+    fs = AsyncVirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"})))
     result = await fs.glean("anything")
     assert result.success is True
     assert len(result) == 0
@@ -657,7 +657,7 @@ async def test_fanout_rebase_overflow_classifies_instead_of_raising() -> None:
     # A child row valid in local coordinates but over 1024 once rebased is
     # loss on record: an `unaddressable` warning with the entry-local path
     # preserved; the sibling row survives and the envelope stays successful.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     mount = "/" + "m" * 30
     await root.add_mount(DeepRowStorage(), mount)
     result = await root.glob("**/*", paths=(mount,))
@@ -697,7 +697,7 @@ async def test_glob_dead_mount_is_never_dispatched_and_mints_no_record() -> None
     # Routing, not capability: a mount the pattern cannot reach gets no
     # dispatch and no skip record — unlike a capability gap, which stays
     # on record whenever the mount is reachable.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     other = RecorderStorage()
     await root.add_mount(other, "/other")
     result = await root.glob("/data/**/*.py")
@@ -707,7 +707,7 @@ async def test_glob_dead_mount_is_never_dispatched_and_mints_no_record() -> None
 
 
 async def test_glob_capability_skip_still_records_when_the_mount_is_reachable() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     incapable = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(incapable, "/data")
     reachable = await root.glob("/data/*.py")
@@ -723,7 +723,7 @@ async def test_glob_capability_skip_survives_a_root_inside_the_entry() -> None:
     # A scope root strictly inside an incapable entry names rows that
     # entry holds, so its skip record must survive even though no
     # residual is ever computed for it.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     incapable = BindableStorage(caps=frozenset({"read", "stat", "ls", "mkdir"}))
     deep = EchoStorage()
     await root.add_mount(incapable, "/data")
@@ -738,7 +738,7 @@ async def test_glob_multi_residual_members_share_one_dispatch() -> None:
     # ** can either span the nested bind segment or stop before it: both
     # derivatives are live, and they cross as one sorted batched call —
     # never a dispatch per member.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data, api = BindableEchoStorage(), EchoStorage()
     await root.add_mount(data, "/data")
     await root.add_mount(api, "/data/api")
@@ -753,7 +753,7 @@ async def test_glob_scoped_composition_equals_the_absolute_idiom() -> None:
     # dispatch the same entry-local pattern; the scoped form additionally
     # probes its root for the existence assertion.
     for scope_paths in (("/data",), ()):
-        root = VirtualFileSystem()
+        root = AsyncVirtualFileSystem()
         data = RecorderStorage()
         await root.add_mount(data, "/data")
         pattern = "src/*.py" if scope_paths else "/data/src/*.py"
@@ -768,7 +768,7 @@ async def test_glob_scope_root_inside_a_mount_reads_root_relative() -> None:
     # The deliberate contract change: a leading slash anchors at the
     # scope root, so "/x/*.py" scoped to /data means /data/x/*.py — and
     # the root's existence assertion rides the entry-local stat probe.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("/x/*.py", paths=("/data/sub",))
@@ -781,7 +781,7 @@ async def test_glob_scope_root_inside_a_mount_reads_root_relative() -> None:
 async def test_glob_disjoint_roots_dispatch_their_own_patterns() -> None:
     # One batch, two roots: each mount receives the pattern anchored
     # under its own root, never its sibling's.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data, logs = RecorderStorage(), RecorderStorage()
     await root.add_mount(data, "/data")
     await root.add_mount(logs, "/logs")
@@ -796,7 +796,7 @@ async def test_many_roots_into_one_entry_produce_one_batched_call() -> None:
     # The scale shape: N roots resolving into one entry are one storage
     # call carrying the deduped pattern tuple plus one grouped probe —
     # zero per-root glob dispatches.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     roots = (*(f"/data/d{i}" for i in range(8)), "/data/d0")
@@ -811,7 +811,7 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
     # The ETL scale row: contract-scale root batches reach storage as
     # exactly one glob call and one probe call — dispatch count never
     # grows with root count.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("*.parquet", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
@@ -828,7 +828,7 @@ async def test_cap_expansion_across_many_roots_stays_one_call() -> None:
     # one probe — the arms multiply members, never statements. The
     # storage-side chunk math is pinned by the 1,100-arm dialect row;
     # this row pins the dispatch shape.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     pattern = "*.{" + ",".join(f"e{i:02}" for i in range(64)) + "}"
@@ -844,7 +844,7 @@ async def test_glob_scoped_to_the_namespace_root_reaches_every_entry() -> None:
     # "/" is a region root covering every mount; it composes spatially
     # like any other root but is exempt from the probe — the namespace
     # root is the namespace itself, never a row to assert.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("*.py", paths=("/",))
@@ -857,7 +857,7 @@ async def test_glob_root_in_a_stat_incapable_entry_is_undeterminable() -> None:
     # The probe's capability-skip posture: inability to answer is its
     # own outcome — a warning on record, never coerced to absent, never
     # a silent pass. The pattern dispatch still serves.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     incapable = RecorderStorage(caps=frozenset({"glob"}))
     await root.add_mount(incapable, "/data")
     result = await root.glob("*.py", paths=("/data/sub",))
@@ -871,7 +871,7 @@ async def test_glob_root_in_a_stat_incapable_entry_is_undeterminable() -> None:
 async def test_glob_missing_scope_root_still_asserts() -> None:
     # Roots are assertions: a pattern matching nothing is clean empty
     # success, but a missing root is a loud per-root error.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     result = await root.glob("**/*.py", paths=("/missing",))
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.not_found
@@ -880,7 +880,7 @@ async def test_glob_missing_scope_root_still_asserts() -> None:
 async def test_glob_name_arm_broadcasts_verbatim() -> None:
     # Slash-free patterns are coordinate-free: no anchoring, no
     # residuation, every mount sees the same text.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("*.py")
@@ -889,7 +889,7 @@ async def test_glob_name_arm_broadcasts_verbatim() -> None:
 
 
 async def test_glob_row_cap_applies_once_across_residual_dispatches() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(BindableEchoStorage(), "/data")
     await root.add_mount(EchoStorage(), "/data/api")
     result = await root.glob("/data/**/api/*", max_count=1)
@@ -912,7 +912,7 @@ async def test_glob_invalid_pattern_refuses_before_any_routing() -> None:
 async def test_glob_observations_filter_rows_in_memory_without_dispatch() -> None:
     # Chaining filters rows in hand: the router applies the pattern to
     # the rows' paths itself, and storage never sees a call.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     rows = [Observation(path=Path("/data/a.txt")), Observation(path=Path("/data/b.md"))]
@@ -931,7 +931,7 @@ async def test_fanout_one_dead_mount_demotes_to_warning() -> None:
     # One dead mount among live ones is loss on record, not failure: live
     # rows ship past the boundary bit, and the dead branch's error demotes
     # to a warning with kind, source, and retry class intact.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/live")
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.glob("*.md")
@@ -945,7 +945,7 @@ async def test_fanout_one_dead_mount_demotes_to_warning() -> None:
 
 async def test_fanout_all_dead_branches_stay_fatal() -> None:
     # Zero progress across the region's branches: nothing demotes.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(TransportFailStorage(), "/r/d1", parents=True)
     await root.add_mount(TransportFailStorage(), "/r/d2", parents=True)
     result = await root.glob("*.md", paths=("/r",))
@@ -955,7 +955,7 @@ async def test_fanout_all_dead_branches_stay_fatal() -> None:
 
 async def test_scoped_dispatch_at_a_dead_mount_never_demotes() -> None:
     # An entry the caller named fails loudly, whatever its siblings produce.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/live")
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.grep("needle", paths=("/dead/src", "/live/src"))
@@ -969,7 +969,7 @@ async def test_named_scope_subsumed_by_a_region_still_fails_loudly() -> None:
     # A sibling region covering a named entry subsumes its dispatch but
     # must not launder its failure into the demotion pool: the caller
     # named /dead/src, so the call fails whatever "/" produced.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/live")
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.grep("needle", paths=("/", "/dead/src"))
@@ -987,7 +987,7 @@ async def test_named_scope_subsumed_by_a_region_still_fails_loudly() -> None:
 async def test_glob_max_count_bounds_the_merged_result() -> None:
     # Two matching mounts, max_count=1: the bound holds after the merge
     # instead of multiplying by mount count.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/a")
     await root.add_mount(EchoStorage(), "/b")
     result = await root.glob("*.md", max_count=1)
@@ -998,7 +998,7 @@ async def test_glob_max_count_bounds_the_merged_result() -> None:
 async def test_observation_shaped_glob_obeys_max_count() -> None:
     # The observations input shape is a filter over rows in hand — the
     # caller's bound caps the filtered sequence.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -1009,7 +1009,7 @@ async def test_observation_shaped_glob_obeys_max_count() -> None:
 
 
 async def test_non_positive_result_bound_is_invalid() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     for result in (await root.glob("*.md", max_count=0), await root.glean("q", limit=-1)):
         assert result.success is False
         assert result.errors[0].kind is ErrorKind.invalid
@@ -1018,7 +1018,7 @@ async def test_non_positive_result_bound_is_invalid() -> None:
 async def test_non_integer_result_bound_is_invalid() -> None:
     # The bound rule is the router's: type garbage classifies before any
     # dispatch instead of raising at the check or the post-merge trim.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     for bad in ("5", 2.5):
@@ -1031,7 +1031,7 @@ async def test_non_integer_result_bound_is_invalid() -> None:
 async def test_glob_trim_keeps_merge_order_despite_scores() -> None:
     # A stray score on a later mount's row must not jump it past earlier
     # rows at the trim — glob's cap is order-preserving, never ranked.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     plain = CannedStorage({"glob": Result(ops=("glob",), observations=[Observation(path=Path("/f1"))])})
     scored = CannedStorage({"glob": Result(ops=("glob",), observations=[Observation(path=Path("/s1"), score=9.9)])})
     await root.add_mount(plain, "/a")
@@ -1043,7 +1043,7 @@ async def test_glob_trim_keeps_merge_order_despite_scores() -> None:
 async def test_grep_observations_match_in_memory_fetching_absent_content() -> None:
     # Chained grep never dispatches grep: content in hand matches in
     # memory, and only a row lacking content reads through its entry.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -1068,7 +1068,7 @@ async def test_grouped_read_partial_rows_and_error_both_surface() -> None:
         observations=[Observation(path=Path("/ok.txt"), kind="file")],
         errors=[ResultError(kind=ErrorKind.not_found, message="gone", path=Path("/missing.txt"))],
     )
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = CannedStorage({"stat": partial})
     await root.add_mount(child, "/m")
     rows = [Observation(path=Path("/m/ok.txt")), Observation(path=Path("/m/missing.txt"))]
@@ -1082,7 +1082,7 @@ async def test_observation_batch_mutation_gates_capability_before_dispatch() -> 
     # A delete batch spanning a capable and a capability-limited terminal
     # must dispatch to NEITHER — the capability check runs before any group
     # executes, like every other chokepoint.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     capable = RecorderStorage()
     limited = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(capable, "/cap")
@@ -1109,7 +1109,7 @@ async def test_graph_rejects_unknown_and_centrality_methods() -> None:
 
 
 async def test_graph_path_routes_to_one_terminal() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.graph("outbound", path="/m/a.py", depth=None)
@@ -1131,7 +1131,7 @@ async def test_graph_path_routes_to_one_terminal() -> None:
 
 
 async def test_graph_observations_group_per_mount() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -1150,7 +1150,7 @@ async def test_graph_observations_group_per_mount() -> None:
 
 
 async def test_write_entries_batch_groups_and_localizes() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
@@ -1165,7 +1165,7 @@ async def test_write_entries_batch_groups_and_localizes() -> None:
 
 async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
     # Parents-before-children dispatch; same-depth entries keep caller order.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     await root.add_mount(a, "/a")
     entries = [
@@ -1181,7 +1181,7 @@ async def test_write_entries_dispatch_is_depth_sorted_and_stable() -> None:
 
 async def test_write_entries_child_before_parent_adjudicates_as_a_set() -> None:
     # No parents flag: the batch supplies its own parent, in any order.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     entries = [
         Entry(path=Path("/data/new.csv"), content="x"),
         Entry(path=Path("/data"), kind="directory"),
@@ -1193,7 +1193,7 @@ async def test_write_entries_child_before_parent_adjudicates_as_a_set() -> None:
 
 
 async def test_write_entries_one_read_only_target_rejects_all() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     a = RecorderStorage()
     b = RecorderStorage()
     await root.add_mount(a, "/a")
@@ -1206,14 +1206,14 @@ async def test_write_entries_one_read_only_target_rejects_all() -> None:
 
 
 async def test_write_entries_missing_parent_is_not_found() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     result = await root.write(entries=[Entry(path=Path("/missing/f.txt"), content="x")])
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.not_found
 
 
 async def test_write_entries_capability_gate_blocks() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = EchoStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m")
     result = await root.write(entries=[Entry(path=Path("/m/f.txt"), content="x")])
@@ -1241,7 +1241,7 @@ async def test_write_entries_meta_root_rejected_but_meta_scope_admitted() -> Non
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
 async def test_fanout_with_zero_hop_budget_is_budget_exhausted(op: str) -> None:
-    root = VirtualFileSystem(hop_budget=0)
+    root = AsyncVirtualFileSystem(hop_budget=0)
     await root.add_mount(EchoStorage(), "/m")
     result = await _fan(root, op)
     assert result.success is False
@@ -1249,7 +1249,7 @@ async def test_fanout_with_zero_hop_budget_is_budget_exhausted(op: str) -> None:
 
 
 async def test_tree_with_zero_hop_budget_is_budget_exhausted() -> None:
-    root = VirtualFileSystem(hop_budget=0)
+    root = AsyncVirtualFileSystem(hop_budget=0)
     result = await root.tree("/")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.budget_exhausted
@@ -1258,7 +1258,7 @@ async def test_tree_with_zero_hop_budget_is_budget_exhausted() -> None:
 async def test_hop_budget_charged_once_per_call_not_per_binding() -> None:
     # A single fan-out request costs one hop regardless of how many entries
     # it fans out to.
-    root = VirtualFileSystem(hop_budget=1)
+    root = AsyncVirtualFileSystem(hop_budget=1)
     await root.add_mount(EchoStorage(), "/a")
     await root.add_mount(EchoStorage(), "/b")
     result = await root.glob("*.md")
@@ -1269,7 +1269,7 @@ async def test_hop_budget_charged_once_per_call_not_per_binding() -> None:
 async def test_hop_budget_resets_between_calls() -> None:
     # The budget is per-request (a context var reset on the way out);
     # consuming it on one call must not starve the next.
-    root = VirtualFileSystem(hop_budget=1)
+    root = AsyncVirtualFileSystem(hop_budget=1)
     await root.add_mount(EchoStorage(), "/m")
     first = await root.glob("*.md")
     second = await root.glob("*.md")
@@ -1283,7 +1283,7 @@ async def test_hop_budget_resets_between_calls() -> None:
 
 
 async def test_transport_error_classifies_backend_unavailable() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.read("/dead/f.txt")
     assert result.success is False
@@ -1292,14 +1292,14 @@ async def test_transport_error_classifies_backend_unavailable() -> None:
 
 
 async def test_transport_error_message_names_the_failure() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.stat("/dead/f.txt")
     assert "peer is gone" in result.errors[0].message
 
 
 async def test_transport_error_at_root_storage_reports_root_path() -> None:
-    fs = VirtualFileSystem(storage=TransportFailStorage())
+    fs = AsyncVirtualFileSystem(storage=TransportFailStorage())
     result = await fs.read("/f.txt")
     assert result.errors[0].kind is ErrorKind.backend_unavailable
     assert result.errors[0].path == "/"
@@ -1308,7 +1308,7 @@ async def test_transport_error_at_root_storage_reports_root_path() -> None:
 async def test_backend_unavailable_keeps_the_binding_bound() -> None:
     # Keep-and-error: a dead backend never auto-unbinds; a second call still
     # reaches it and classifies the same way.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     dead = TransportFailStorage()
     await root.add_mount(dead, "/dead")
     first = await root.read("/dead/f.txt")
@@ -1328,7 +1328,7 @@ async def test_dispatch_reaches_the_backend_method() -> None:
         async def read(self, *, path: Path | None = None, authority: Authority | None = None, **kwargs: Any) -> Result:
             return Result(ops=("read",), observations=[Observation(path=Path(str(path)))])
 
-    result = await VirtualFileSystem(storage=PathEchoStorage()).read("/f.txt")
+    result = await AsyncVirtualFileSystem(storage=PathEchoStorage()).read("/f.txt")
     assert result.paths == ("/f.txt",)
 
 
@@ -1340,7 +1340,7 @@ async def test_funnel_backstop_answers_unsupported_when_capability_overclaims() 
         def capabilities(self) -> frozenset[Op]:
             return ALL_OPS
 
-    fs = VirtualFileSystem(storage=OverclaimingStorage())
+    fs = AsyncVirtualFileSystem(storage=OverclaimingStorage())
     gated = await fs.write(path="/f.txt", content="x")  # passes the gate (caps lie)
     assert gated.success is False
     assert gated.errors[0].kind is ErrorKind.unsupported
@@ -1356,7 +1356,7 @@ async def test_every_guarded_funnel_arm_backstops_a_missing_family(op: str) -> N
         def capabilities(self) -> frozenset[Op]:
             return ALL_OPS
 
-    fs = VirtualFileSystem(storage=OverclaimingStorage())
+    fs = AsyncVirtualFileSystem(storage=OverclaimingStorage())
     binding = fs._bindings[Path("/")]
     result = await fs._call_storage(binding, op)  # ty: ignore[invalid-argument-type]
     assert result.success is False
@@ -1374,7 +1374,7 @@ async def test_run_dispatches_through_the_funnel_to_the_backend() -> None:
 async def test_funnel_fails_loud_on_an_unknown_op() -> None:
     # A string outside the Op vocabulary is a router bug: assert_never
     # raises rather than guessing a dispatch.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     binding = fs._bindings[Path("/")]
     with pytest.raises(AssertionError):
         await fs._call_storage(binding, "bogus")  # ty: ignore[invalid-argument-type]
@@ -1390,7 +1390,7 @@ async def test_route_single_requires_exactly_one_input() -> None:
 
 
 async def test_stat_and_ls_route_and_localize() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     await root.stat("/m/f.txt")
@@ -1416,7 +1416,7 @@ async def test_grouped_observations_mutation_gate_rejects_invalid_target() -> No
 
 
 async def test_grouped_observations_respect_read_only_mount() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions="read")
     result = await root.delete(observations=[Observation(path=Path("/m/f.txt"))])
@@ -1425,7 +1425,7 @@ async def test_grouped_observations_respect_read_only_mount() -> None:
 
 
 async def test_grouped_observations_capability_error_is_rebased() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = EchoStorage(caps=frozenset({"glob"}))
     await root.add_mount(child, "/m")
     result = await root.read(observations=[Observation(path=Path("/m/f.txt"))])
@@ -1467,7 +1467,7 @@ async def test_write_entries_empty_batch_is_empty_success() -> None:
 
 
 async def test_observation_dispatch_unroutable_path_is_not_found() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     single = await fs.read("/nope")
     batch = await fs.read(observations=[Observation(path=Path("/nope"))])
     assert single.errors[0].kind is ErrorKind.not_found
@@ -1477,7 +1477,7 @@ async def test_observation_dispatch_unroutable_path_is_not_found() -> None:
 async def test_gated_denial_is_a_result_until_the_boundary() -> None:
     # A read-only mount denies as a classified Result; only the
     # caller-applied boundary adapter turns it into an exception.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/c", permissions="read")
     denied = await root.write(path="/c/f.txt", content="x")
@@ -1553,7 +1553,7 @@ async def test_two_path_rejects_pair_and_batch_together(op: str) -> None:
 
 @pytest.mark.parametrize("op", ["glob", "grep", "glean"])
 async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/m")
     result = await _fan(root, op, paths=("/m/x",), observations=[Observation(path=Path("/m/y"))])
     assert result.success is False
@@ -1584,7 +1584,7 @@ async def test_non_iterable_batch_arg_is_invalid_not_crash(verb: str, kwargs: di
 
 async def test_generator_observations_are_not_silently_dropped() -> None:
     # A single-use generator must survive the validate + group passes.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     gen = (Observation(path=Path(p)) for p in ("/m/a.txt", "/m/b.txt"))
@@ -1595,7 +1595,7 @@ async def test_generator_observations_are_not_silently_dropped() -> None:
 
 
 async def test_generator_entries_survive() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     gen = (Entry(path=Path(p), content="x") for p in ("/m/a.txt", "/m/b.txt"))
@@ -1620,7 +1620,7 @@ async def test_sibling_writes_settle_before_failure_is_reported() -> None:
     # One terminal fails fast, the other writes slowly: the returned Result
     # must already contain the slow sibling's outcome — never a write that
     # lands behind a caller who has already seen the failure.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     ok, bad = SlowWriteStorage(), FailingWriteStorage()
     await root.add_mount(ok, "/ok")
     await root.add_mount(bad, "/bad")
@@ -1636,7 +1636,7 @@ async def test_sibling_writes_settle_before_failure_is_reported() -> None:
 async def test_impl_bug_propagates_only_after_siblings_settle() -> None:
     # A raw exception is an impl bug: it propagates with its traceback, but
     # only after every sibling group has finished mutating.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     ok, buggy = SlowWriteStorage(), BuggyWriteStorage()
     await root.add_mount(ok, "/ok")
     await root.add_mount(buggy, "/bug")
@@ -1654,14 +1654,14 @@ async def test_cancellation_reraises_untouched() -> None:
         async def write(self, **_: Any) -> Result:
             raise asyncio.CancelledError
 
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(CancelledWriteStorage(), "/c")
     with pytest.raises(asyncio.CancelledError):
         await root.write(entries=[Entry(path=Path("/c/a.txt"), content="A")])
 
 
 async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(BuggyWriteStorage(), "/bug1")
     await root.add_mount(BuggyWriteStorage(), "/bug2")
     with pytest.raises(ExceptionGroup) as exc:
@@ -1700,7 +1700,7 @@ async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
 async def test_closed_filesystem_fails_every_verb_as_backend_unavailable(verb: str, call: Any) -> None:
     # After close(), the table is empty: every verb classifies
     # backend_unavailable and still reports which verb failed.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     await fs.close()
     result = await call(fs)
     assert result.success is False
@@ -1723,7 +1723,7 @@ def _dead(op: str) -> Result:
 
 def test_merge_fanout_pinned_failure_stays_fatal() -> None:
     # A branch the caller also named merges plain — no demotion pool.
-    merged = VirtualFileSystem._merge_fanout(
+    merged = AsyncVirtualFileSystem._merge_fanout(
         [],
         [(Path("/dead"), _dead("grep")), (Path("/live"), _live("grep", "/live/a.txt"))],
         frozenset({Path("/dead")}),
@@ -1735,7 +1735,7 @@ def test_merge_fanout_pinned_failure_stays_fatal() -> None:
 
 
 def test_merge_fanout_unpinned_failure_demotes_beside_live_branches() -> None:
-    merged = VirtualFileSystem._merge_fanout(
+    merged = AsyncVirtualFileSystem._merge_fanout(
         [],
         [(Path("/dead"), _dead("grep")), (Path("/live"), _live("grep", "/live/a.txt"))],
         frozenset(),
@@ -1747,7 +1747,7 @@ def test_merge_fanout_unpinned_failure_demotes_beside_live_branches() -> None:
 
 
 def test_merge_fanout_all_dead_unpinned_stays_loud() -> None:
-    merged = VirtualFileSystem._merge_fanout(
+    merged = AsyncVirtualFileSystem._merge_fanout(
         [],
         [(Path("/d1"), _dead("grep")), (Path("/d2"), _dead("grep"))],
         frozenset(),
@@ -1757,12 +1757,12 @@ def test_merge_fanout_all_dead_unpinned_stays_loud() -> None:
 
 
 def test_merge_fanout_named_results_merge_plain() -> None:
-    merged = VirtualFileSystem._merge_fanout([_dead("grep")], [], frozenset(), "grep")
+    merged = AsyncVirtualFileSystem._merge_fanout([_dead("grep")], [], frozenset(), "grep")
     assert merged.success is False
 
 
 async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/full")
     await root.add_mount(ReadFamilyStorage(), "/thin")
     plan = root._classify_fanout_scopes("glob", ())
@@ -1775,7 +1775,7 @@ async def test_classify_no_paths_sweeps_table_and_skips_incapable() -> None:
 
 
 async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/a/b", parents=True)
     plan = root._classify_fanout_scopes("glob", ("/a",))
     assert plan.refusal is None
@@ -1785,7 +1785,7 @@ async def test_classify_region_scopes_owner_and_unscopes_deeper_binds() -> None:
 
 
 async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
     plan = root._classify_fanout_scopes("glob", ("/m/sub",))
     assert plan.refusal is None
@@ -1795,7 +1795,7 @@ async def test_classify_plain_path_is_scoped_to_its_terminal() -> None:
 
 
 async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     plan = root._classify_fanout_scopes("glob", ("/" + "x" * (MAX_PATH_LENGTH + 1),))
     assert plan.refusal is not None
     assert plan.refusal.errors[0].kind is ErrorKind.invalid
@@ -1803,7 +1803,7 @@ async def test_classify_invalid_path_refuses_with_empty_plan() -> None:
 
 
 async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/thin")
     plan = root._classify_fanout_scopes("glob", ("/thin/sub",))
     assert plan.refusal is not None
@@ -1812,7 +1812,7 @@ async def test_classify_scoped_incapable_refuses_with_empty_plan() -> None:
 
 
 async def test_classify_dedups_skips_across_region_paths() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(ReadFamilyStorage(), "/a/thin", parents=True)
     plan = root._classify_fanout_scopes("glob", ("/", "/a"))
     assert plan.refusal is None
@@ -1820,7 +1820,7 @@ async def test_classify_dedups_skips_across_region_paths() -> None:
 
 
 async def test_hop_grant_exhaustion_refuses_without_token() -> None:
-    fs = VirtualFileSystem(hop_budget=0)
+    fs = AsyncVirtualFileSystem(hop_budget=0)
     grant = fs._enter_hop(op="glob")
     assert grant.token is None
     assert grant.refusal is not None
@@ -1828,7 +1828,7 @@ async def test_hop_grant_exhaustion_refuses_without_token() -> None:
 
 
 async def test_hop_grant_exit_restores_the_callers_budget() -> None:
-    fs = VirtualFileSystem(hop_budget=1)
+    fs = AsyncVirtualFileSystem(hop_budget=1)
     first = fs._enter_hop(op="glob")
     assert first.refusal is None and first.token is not None
     nested = fs._enter_hop(op="glob")
@@ -1840,13 +1840,13 @@ async def test_hop_grant_exit_restores_the_callers_budget() -> None:
 
 
 def test_exit_hop_accepts_none() -> None:
-    VirtualFileSystem._exit_hop(None)
+    AsyncVirtualFileSystem._exit_hop(None)
 
 
 async def test_two_path_invalid_dest_beats_busy_src() -> None:
     # Per-pair precedence is a contract: resolve both endpoints, then
     # busy-guard — a bind-site src with an invalid dest reports invalid.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m")
     result = await root.move(src="/m", dest="/" + "x" * (MAX_PATH_LENGTH + 1))
     assert result.success is False
@@ -1860,7 +1860,7 @@ async def test_two_path_invalid_dest_beats_busy_src() -> None:
 
 async def test_tree_named_target_failure_returns_loud() -> None:
     # The named target itself failing is never demoted — no descents run.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(TransportFailStorage(), "/dead")
     result = await root.tree("/dead")
     assert result.success is False
@@ -1868,7 +1868,7 @@ async def test_tree_named_target_failure_returns_loud() -> None:
 
 
 async def test_closed_filesystem_rejects_an_entry_batch_write() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     await fs.close()
     result = await fs.write(entries=[Entry(path=Path("/f.txt"), content="x")])
     assert result.success is False
@@ -1876,7 +1876,7 @@ async def test_closed_filesystem_rejects_an_entry_batch_write() -> None:
 
 
 async def test_edit_passes_a_native_edits_list_through() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     edits = [EditOperation(old="a", new="b"), EditOperation(old="c", new="d", replace_all=True)]

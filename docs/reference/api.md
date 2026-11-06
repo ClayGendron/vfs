@@ -5,13 +5,15 @@ or explain. Structure MIRRORS the code. Accuracy is the whole job.
 SOURCE TO MIGRATE FROM: docs/api.md
 -->
 
-# API reference
+# `AsyncVirtualFileSystem`: the kernel's API
+
+Module `vfs.base`, re-exported from `vfs`. `AsyncVirtualFileSystem` is the kernel: every verb on it is `async def`. `VirtualFileSystem` is its synchronous face, the same verbs as plain calls for a caller without a loop; see [the synchronous face](sync.md).
 
 ## Identity
 
-`VirtualFileSystem(..., default_authority: Authority | None = None)`. The authority used for any call that passes none. When it is `None`, such calls run as `Authority.anonymous()`.
+`AsyncVirtualFileSystem(..., default_authority: Authority | None = None)`. The authority used for any call that passes none. When it is `None`, such calls run as `Authority.anonymous()`.
 
-`VirtualFileSystem.session(authority: Authority) -> Session`. See [Session](session.md).
+`AsyncVirtualFileSystem.session(authority: Authority) -> AsyncSession`. See [AsyncSession](session.md).
 
 Every verb takes a keyword-only `authority: Authority | None = None`. An explicit value wins over the default. See [Authority and Principal](authority.md).
 
@@ -27,7 +29,7 @@ Every verb takes a keyword-only `authority: Authority | None = None`. An explici
 
 ## graph
 
-`VirtualFileSystem.graph(method, path=None, observations=None, *, depth=1, edge_types=(), edge_types_not=(), minimal=False, limit=128, columns=None, authority=None) -> Result`
+`AsyncVirtualFileSystem.graph(method, path=None, observations=None, *, depth=1, edge_types=(), edge_types_not=(), minimal=False, limit=128, columns=None, authority=None) -> Result`
 
 A frontier walk over the edges `mkedge` authored, one seed path or many seed observations (an observation contributes its `path`). Each hop is one chunked statement per frontier chunk; the application keeps the visited set, so `depth=None` ends when nothing new is reached.
 

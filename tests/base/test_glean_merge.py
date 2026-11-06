@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from tests.support.base_doubles import CannedStorage, RecorderStorage
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Match, Observation
 from vfs.paths import Path
 from vfs.rerank import FANOUT_CAP, BM25Rerank, Candidate
@@ -42,8 +42,8 @@ def _paths(result: Result) -> list[str]:
 
 async def _two_mounts(
     rerankers: tuple[Any, ...] | None = None,
-) -> tuple[VirtualFileSystem, CannedStorage, CannedStorage]:
-    root = VirtualFileSystem() if rerankers is None else VirtualFileSystem(rerankers=rerankers)
+) -> tuple[AsyncVirtualFileSystem, CannedStorage, CannedStorage]:
+    root = AsyncVirtualFileSystem() if rerankers is None else AsyncVirtualFileSystem(rerankers=rerankers)
     low = _mount(
         [_row("/l1", 0.2, "lease lease lease"), _row("/l2", 0.1, "nothing")], lexical_stats=STATS, legs={"m": 1}
     )
@@ -81,7 +81,7 @@ async def test_the_law_holds_through_the_router() -> None:
 
 
 async def test_one_answering_mount_stands_at_the_callers_limit() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     only = _mount([_row("/a", 0.9, "x"), _row("/b", 0.4, "y"), _row("/c", 0.1, "z")], legs={"lexical": {"hits": 3}})
     await root.add_mount(only, "/only")
     result = await root.glean("x", limit=2)
@@ -110,7 +110,7 @@ async def test_observations_across_mounts_merge_the_same_way() -> None:
 
 
 async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     full = _mount([_row(f"/r{i}", 1.0 - i / 300, "lease") for i in range(FANOUT_CAP)])
     other = _mount([_row("/one", 0.5, "lease")])
     await root.add_mount(full, "/full")
@@ -123,7 +123,7 @@ async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
 
 
 async def test_a_dead_mount_among_answering_ones_is_loss_on_record() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     live = _mount([_row("/a", 0.5, "lease")])
     dead = CannedStorage({"glean": Result(ops=("glean",), errors=[])})
     dead.answers["glean"] = Result.model_validate(
@@ -167,7 +167,7 @@ async def test_no_stages_means_the_mounts_scores_under_the_law() -> None:
 
 async def test_a_stage_that_is_not_one_is_refused_at_construction() -> None:
     with pytest.raises(TypeError, match="rerankers must implement rerank"):
-        VirtualFileSystem(rerankers=(object(),))  # ty: ignore[invalid-argument-type]
+        AsyncVirtualFileSystem(rerankers=(object(),))  # ty: ignore[invalid-argument-type]
 
 
 async def test_a_stage_that_changes_the_row_set_is_an_error() -> None:

@@ -30,7 +30,8 @@ Use `uv run ruff check --fix src/ tests/` and `uv run ruff format src/ tests/` w
 
 ```text
 src/vfs/
-├── base.py               # VirtualFileSystem — mounts, dispatch, fan-out
+├── base.py               # AsyncVirtualFileSystem — the kernel: mounts, dispatch, fan-out
+├── sync.py               # VirtualFileSystem and Session — the synchronous face
 ├── paths.py              # Path type, normalization, extension law
 ├── params.py             # Per-verb parameter gates
 ├── permissions.py        # Permission maps and write authorization

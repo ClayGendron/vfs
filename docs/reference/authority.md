@@ -109,7 +109,7 @@ The `owner_id` a new row takes.
 
 ## Where the value is consumed
 
-Every verb on `VirtualFileSystem` and every method on the storage protocol accepts `authority: Authority | None`. The router fills a `None` before dispatch: the call's own value, else the filesystem's `default_authority`, else `Authority.anonymous()`. A value of any other type is refused with the error kind `vfs.invalid` and the message `<op> authority must be an Authority, got <type>`.
+Every verb on `AsyncVirtualFileSystem`, on its synchronous face `VirtualFileSystem`, and every method on the storage protocol accepts `authority: Authority | None`. The router fills a `None` before dispatch: the call's own value, else the filesystem's `default_authority`, else `Authority.anonymous()`. A value of any other type is refused with the error kind `vfs.invalid` and the message `<op> authority must be an Authority, got <type>`.
 
 Mount administration (`add_mount`, `remove_mount`, `locate`, and the bind-site probes) runs as `Authority.system()` regardless of the caller or the default.
 

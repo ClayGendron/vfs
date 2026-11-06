@@ -18,3 +18,8 @@ def test_the_package_states_no_version_literal() -> None:
     """A restored `__version__ = "0.0.22"` literal passes the first test until the next bump; this one fails at once."""
     text = Path(vfs.__file__).read_text()
     assert re.search(r"^__version__\s*=\s*[\"']", text, re.M) is None
+
+
+def test_the_package_ships_its_typing_marker() -> None:
+    """mypy reads an installed package's annotations only when the marker is beside its __init__."""
+    assert (Path(vfs.__file__).parent / "py.typed").is_file()

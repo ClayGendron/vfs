@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Final
 from tests.ranking.corpora import VFS_NATIVE, vfs_native
 from tests.ranking.driver import Loaded, entry_ranking, glean_ranking, load_corpus
 from tests.ranking.merge import halves, merged_ranking
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 
 if TYPE_CHECKING:
     from vfs.storage.backends.database import DatabaseStorage
@@ -90,7 +90,7 @@ async def assert_merge_top10_pin(first: DatabaseStorage, second: DatabaseStorage
     corpus = vfs_native()
     for storage, half in zip((first, second), halves(corpus), strict=True):
         await load_corpus(storage, half)
-    vfs = VirtualFileSystem()
+    vfs = AsyncVirtualFileSystem()
     for storage, mount in zip((first, second), MERGE_MOUNTS, strict=True):
         await vfs.add_mount(storage, mount, owned=False)
     actual = {

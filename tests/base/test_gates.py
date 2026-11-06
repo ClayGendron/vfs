@@ -16,7 +16,7 @@ from tests.support.base_doubles import (
     _mutate,
     _mutate_at_root,
 )
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import (
     NotFoundError,
     UnauthenticatedError,
@@ -57,7 +57,7 @@ def test_exception_for_kind_new_kinds_fall_back_to_base(kind: ErrorKind) -> None
 
 
 def test_error_returns_failed_result_by_default() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     r = fs._error(ErrorKind.not_found, op="read", path=Path("/x"))
     assert r.success is False
     assert r.errors[0].kind is ErrorKind.not_found
@@ -66,7 +66,7 @@ def test_error_returns_failed_result_by_default() -> None:
 
 
 def test_error_attaches_structured_data() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     r = fs._error(ErrorKind.conflict, op="edit", detail="stale", data={"expected": 1})
     assert r.errors[0].data == {"expected": 1}
     assert r.errors[0].message == "Conflict: stale"
@@ -75,14 +75,14 @@ def test_error_attaches_structured_data() -> None:
 def test_error_never_raises_and_carries_the_op() -> None:
     # The router has one failure channel: a returned Result. The op rides
     # the envelope so a wire consumer can tell which verb failed.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     r = fs._error(ErrorKind.not_found, op="read")
     assert r.success is False
     assert r.op == "read"
 
 
 def test_error_severity_defaults_to_error_and_accepts_tiers() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     fatal = fs._error(ErrorKind.not_found, op="read")
     advisory = fs._error(ErrorKind.unsupported, op="grep", severity=Severity.info)
     assert fatal.errors[0].severity is Severity.error
@@ -96,7 +96,7 @@ def test_raise_if_failed_passes_success_through() -> None:
 
 
 def test_raise_if_failed_maps_single_error_to_kind_exception() -> None:
-    failed = VirtualFileSystem()._error(ErrorKind.not_found, op="read")
+    failed = AsyncVirtualFileSystem()._error(ErrorKind.not_found, op="read")
     with pytest.raises(NotFoundError) as exc:
         raise_if_failed(failed)
     # the raised exception still carries the full failed result
@@ -139,16 +139,16 @@ def test_raise_if_failed_passes_warnings_and_info_through() -> None:
 async def test_default_capabilities_derive_from_the_backend() -> None:
     # The default set is computed from what the backend implements — it
     # cannot drift from reality.
-    read_only = VirtualFileSystem(storage=ReadFamilyStorage())
+    read_only = AsyncVirtualFileSystem(storage=ReadFamilyStorage())
     assert read_only.capabilities() == frozenset({"read", "stat", "ls", "tree"})
-    full = VirtualFileSystem(storage=RecorderStorage())
+    full = AsyncVirtualFileSystem(storage=RecorderStorage())
     assert full.capabilities() == ALL_OPS
 
 
 async def test_capabilities_union_across_bindings() -> None:
     # The router's capabilities() is the union of every entry's declared
     # snapshot, self included.
-    root = VirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
+    root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree"})
     await root.bind(BindableStorage(caps=frozenset({"glean"})), "/m")
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "glean"})
@@ -158,7 +158,7 @@ async def test_capability_snapshot_is_pinned_at_bind_not_live() -> None:
     # Decision 2: the gate consults the bind-time snapshot. An in-process
     # backend that later "declares" more never widens what the table sees.
     backend = BindableStorage(caps=frozenset({"read"}))
-    root = VirtualFileSystem(storage=backend)
+    root = AsyncVirtualFileSystem(storage=backend)
     assert root.capabilities() == frozenset({"read"})
     backend._caps = frozenset({"read", "write"})  # the live backend's own set changes
     assert root.capabilities() == frozenset({"read"})  # the router's snapshot does not
@@ -173,14 +173,14 @@ async def test_run_on_default_root_is_unsupported() -> None:
     # The default backend (InMemoryStorage) never declares run — every path
     # answers unsupported at the gate, not not_found: the root entry always
     # resolves, it just cannot execute anything.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     r = await root.run("/nope/tool")
     assert r.success is False
     assert r.errors[0].kind is ErrorKind.unsupported
 
 
 async def test_run_routes_to_child_and_rebases() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     catalog = RunnerStorage()
     await root.add_mount(catalog, "/nonvfs")
     r = await root.run("/nonvfs/clone-repo", arguments={"repo": "org/proj"})
@@ -190,7 +190,7 @@ async def test_run_routes_to_child_and_rebases() -> None:
 
 
 async def test_capabilities_gate_blocks_unsupported_op() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     catalog = RunnerStorage(caps=frozenset({"read"}))
     await root.add_mount(catalog, "/nonvfs")
     blocked = await root.run("/nonvfs/clone-repo")
@@ -200,7 +200,7 @@ async def test_capabilities_gate_blocks_unsupported_op() -> None:
 
 
 async def test_capabilities_gate_allows_supported_op() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     catalog = RunnerStorage(caps=frozenset({"read"}))
     await root.add_mount(catalog, "/nonvfs")
     ok = await root.read("/nonvfs/clone-repo")
@@ -216,7 +216,7 @@ async def test_capabilities_gate_allows_supported_op() -> None:
 
 @pytest.mark.parametrize("op", sorted(MUTATING_OPS))
 async def test_read_only_mount_rejects_every_mutation(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m", permissions="read")
     result = await _mutate(root, op, "/m")
@@ -227,7 +227,7 @@ async def test_read_only_mount_rejects_every_mutation(op: str) -> None:
 
 @pytest.mark.parametrize("op", sorted(MUTATING_OPS))
 async def test_writable_mount_dispatches_every_mutation_once(op: str) -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     result = await _mutate(root, op, "/m")
@@ -266,9 +266,9 @@ async def test_meta_root_is_not_a_write_target_but_the_scope_is() -> None:
 # ----------------------------------------------------------------------
 
 
-async def _gated_namespace() -> VirtualFileSystem:
+async def _gated_namespace() -> AsyncVirtualFileSystem:
     """Router with a read-only mount and a capability-limited mount."""
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/ro", permissions="read")
     await root.add_mount(RecorderStorage(caps=frozenset({"read"})), "/dim")
     return root
@@ -337,7 +337,7 @@ async def test_mkedge_permission_denial_reports_the_endpoint_path() -> None:
 async def test_gate_order_capability_outranks_permission() -> None:
     # A terminal that is simultaneously incapable and read-only fails
     # unsupported: what the terminal cannot do outranks what policy denies.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m", permissions="read")
     result = await root.write(path="/m/f.txt", content="c")
@@ -347,7 +347,7 @@ async def test_gate_order_capability_outranks_permission() -> None:
 async def test_gate_order_busy_outranks_capability_and_permission() -> None:
     # The busy guard runs before the entry is even resolved for gating — a
     # live bind site refuses busy no matter what the terminal would say.
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     child = RecorderStorage(caps=frozenset({"read"}))
     await root.add_mount(child, "/m", permissions="read")
     result = await root.delete("/m")
@@ -359,7 +359,7 @@ async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> Non
     # the most restrictive layer from / to the terminal wins. Add via bind()
     # (the control-plane primitive), since add_mount's own mkdir would itself
     # be gated read_only against a read-only root.
-    root = VirtualFileSystem(storage=BindableStorage(), permissions="read")
+    root = AsyncVirtualFileSystem(storage=BindableStorage(), permissions="read")
     child = RecorderStorage()
     await root.bind(child, "/scratch", permissions="read_write")
     result = await root.write(path="/scratch/f.txt", content="c")
@@ -376,7 +376,7 @@ async def test_read_only_root_makes_writable_child_read_only_end_to_end() -> Non
 async def test_partial_backend_gates_unimplemented_family_as_unsupported() -> None:
     # A read-family-only terminal answers a mutation with unsupported at the
     # gate — before dispatch, on the classified channel.
-    fs = VirtualFileSystem(storage=ReadFamilyStorage())
+    fs = AsyncVirtualFileSystem(storage=ReadFamilyStorage())
     result = await fs.write(path="/f.txt", content="x")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.unsupported

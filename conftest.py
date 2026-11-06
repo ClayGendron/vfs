@@ -21,6 +21,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -28,8 +29,9 @@ from sybil import Sybil
 from sybil.evaluators.python import pad
 from sybil.parsers.markdown import CodeBlockParser, SkipParser
 
-from vfs import VirtualFileSystem
+from vfs import AsyncVirtualFileSystem, VirtualFileSystem
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.sync import LOOP_THREAD_NAME
 
 if TYPE_CHECKING:
     from sybil import Example
@@ -67,16 +69,20 @@ def _setup(namespace: dict[str, Any]) -> None:
     namespace[_CWD] = Path.cwd()
     namespace[_LOOP] = asyncio.new_event_loop()
     namespace["storage"] = storage
-    namespace["fs"] = VirtualFileSystem(storage=storage)
+    namespace["fs"] = AsyncVirtualFileSystem(storage=storage)
     os.chdir(tmp)
 
 
 def _teardown(namespace: dict[str, Any]) -> None:
     loop: asyncio.AbstractEventLoop = namespace[_LOOP]
-    filesystems = {id(v): v for v in namespace.values() if isinstance(v, VirtualFileSystem)}
-    for fs in filesystems.values():
-        loop.run_until_complete(fs.close())
+    kernels = {id(v): v for v in namespace.values() if isinstance(v, AsyncVirtualFileSystem)}
+    for kernel in kernels.values():
+        loop.run_until_complete(kernel.close())
+    faces = {id(v): v for v in namespace.values() if isinstance(v, VirtualFileSystem)}
+    for face in faces.values():
+        face.close()
     loop.close()
+    assert not [t for t in threading.enumerate() if t.name == LOOP_THREAD_NAME]
     os.chdir(namespace[_CWD])
     shutil.rmtree(namespace[_TMP], ignore_errors=True)
 

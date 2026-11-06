@@ -1,15 +1,15 @@
-"""The synchronous twin of the router and the session, for callers without a loop.
+"""The synchronous face of the kernel and its session, for callers without a loop.
 
-``SyncVirtualFileSystem`` owns one asyncio loop on one daemon thread and
-forwards every verb of :class:`~vfs.base.VirtualFileSystem` through it,
+``VirtualFileSystem`` owns one asyncio loop on one daemon thread and
+forwards every verb of :class:`~vfs.base.AsyncVirtualFileSystem` through it,
 so a notebook cell, a plain script or a pipeline worker calls a verb and
 gets its ``Result`` back with no ``asyncio.run`` and no running-loop
-error. ``SyncSession`` does the same for :class:`~vfs.session.Session`.
+error. ``Session`` does the same for :class:`~vfs.session.AsyncSession`.
 
+    from vfs import VirtualFileSystem
     from vfs.storage.backends.memory import InMemoryStorage
-    from vfs.sync import SyncVirtualFileSystem
 
-    with SyncVirtualFileSystem(storage=InMemoryStorage()) as fs:
+    with VirtualFileSystem(storage=InMemoryStorage()) as fs:
         fs.write(path="/a.txt", content="x")
         result = fs.read("/a.txt")
 
@@ -17,19 +17,24 @@ Every twin has the original's exact parameters and returns what the
 original returns; a management method's exception is raised unchanged.
 The facade's loop is the only loop its storage ever sees, which is what
 makes an asyncpg engine safe inside a notebook whose own loop is running.
+A verb called on a thread whose own event loop is running blocks that
+loop until it returns; the first such call on a facade says so once, as
+a ``RuntimeWarning`` pointed at the caller's line, and is served.
 """
 
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
+import warnings
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
-from vfs.session import CLOSED_SESSION_DETAIL, Session, closed_refusal
+from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Sequence
@@ -51,7 +56,7 @@ LOOP_THREAD_NAME: Final = "vfs-sync-loop"
 """The name of every facade's loop thread, so a leak shows in ``threading.enumerate()``."""
 
 LOOP_THREAD_DETAIL: Final = (
-    "called from the facade's own loop thread; a callback running on the loop uses the async filesystem"
+    "called from the facade's own loop thread; a callback running on the loop uses AsyncVirtualFileSystem"
 )
 """The deadlock refusal: a call that would block the loop on a future the same loop must finish."""
 
@@ -61,14 +66,21 @@ CLOSED_DETAIL: Final = "the filesystem is closed"
 CLOSED_MANAGEMENT_DETAIL: Final = "the filesystem is closed; the loop thread has stopped"
 """The closed refusal for a management method, which raises by contract."""
 
+FOREIGN_LOOP_WARNING: Final = (
+    "VirtualFileSystem.{op} called on a thread whose event loop is running; the call blocks that loop until"
+    " it returns. In a notebook cell that is expected and this is the one notice; inside async code use"
+    " AsyncVirtualFileSystem."
+)
+"""The once-per-facade notice: the one mistake no type checker sees, named at the caller's line."""
+
 
 # ---------------------------------------------------------------------------
 # The filesystem twin
 # ---------------------------------------------------------------------------
 
 
-class SyncVirtualFileSystem:
-    """One router, one loop, one thread: the router's verbs as plain calls.
+class VirtualFileSystem:
+    """One kernel, one loop, one thread: the kernel's verbs as plain calls.
 
     Construct it with the router's own parameters, or :meth:`wrap` a router
     already built. Open it with ``with`` or call :meth:`close` yourself;
@@ -78,9 +90,11 @@ class SyncVirtualFileSystem:
     per task and starts fresh for every call, as for a top-level ``await``.
     A verb called from the facade's own loop thread is refused with an
     ``invalid`` row rather than waited on, because that wait never ends.
+    A verb called on a thread whose own loop is running is served and,
+    once per facade, warned about, because it blocks that loop meanwhile.
     """
 
-    __slots__ = ("_closed", "_fs", "_loop", "_thread")
+    __slots__ = ("_closed", "_fs", "_loop", "_thread", "_warned")
 
     def __init__(
         self,
@@ -99,7 +113,7 @@ class SyncVirtualFileSystem:
     ) -> None:
         # Construction binds nothing to a loop, so it runs here and a refused
         # argument raises the router's own error with no thread left behind.
-        router = VirtualFileSystem(
+        router = AsyncVirtualFileSystem(
             name=name,
             title=title,
             description=description,
@@ -115,7 +129,7 @@ class SyncVirtualFileSystem:
         self._attach(router)
 
     @classmethod
-    def wrap(cls, fs: VirtualFileSystem) -> SyncVirtualFileSystem:
+    def wrap(cls, fs: AsyncVirtualFileSystem) -> VirtualFileSystem:
         """The facade over a router the caller already built, and may already have awaited.
 
         Pinned on SQLite, whose driver tolerates a change of loop. Unproven
@@ -154,7 +168,7 @@ class SyncVirtualFileSystem:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join()
 
-    def __enter__(self) -> SyncVirtualFileSystem:
+    def __enter__(self) -> VirtualFileSystem:
         return self
 
     def __exit__(
@@ -180,6 +194,7 @@ class SyncVirtualFileSystem:
         owned: bool = True,
     ) -> None:
         return self._await(
+            "bind",
             self._fs.bind,
             storage,
             path,
@@ -190,7 +205,7 @@ class SyncVirtualFileSystem:
         )
 
     def unbind(self, path: str) -> Binding:
-        return self._await(self._fs.unbind, path)
+        return self._await("unbind", self._fs.unbind, path)
 
     def add_mount(
         self,
@@ -204,6 +219,7 @@ class SyncVirtualFileSystem:
         owned: bool = True,
     ) -> None:
         return self._await(
+            "add_mount",
             self._fs.add_mount,
             storage,
             path,
@@ -215,7 +231,7 @@ class SyncVirtualFileSystem:
         )
 
     def remove_mount(self, path: str) -> None:
-        return self._await(self._fs.remove_mount, path)
+        return self._await("remove_mount", self._fs.remove_mount, path)
 
     def remount(
         self,
@@ -227,6 +243,7 @@ class SyncVirtualFileSystem:
         refresh_caps: bool = False,
     ) -> None:
         return self._await(
+            "remount",
             self._fs.remount,
             path,
             permissions=permissions,
@@ -239,16 +256,16 @@ class SyncVirtualFileSystem:
         return self._fs.mounts()
 
     def locate(self, path: str, *, exists: bool = False, authority: Authority | None = None) -> Location:
-        return self._await(self._fs.locate, path, exists=exists, authority=authority)
+        return self._await("locate", self._fs.locate, path, exists=exists, authority=authority)
 
     def locate_edge(
         self, source: str, target: str, *, exists: bool = False, authority: Authority | None = None
     ) -> EdgeLocation:
-        return self._await(self._fs.locate_edge, source, target, exists=exists, authority=authority)
+        return self._await("locate_edge", self._fs.locate_edge, source, target, exists=exists, authority=authority)
 
-    def session(self, authority: Authority) -> SyncSession:
+    def session(self, authority: Authority) -> Session:
         """An authority-scoped twin of the router's session: the verbs without the identity argument."""
-        return SyncSession(self, authority)
+        return Session(self, authority)
 
     def capabilities(self) -> frozenset[str]:
         return self._fs.capabilities()
@@ -622,10 +639,11 @@ class SyncVirtualFileSystem:
     # Internal helpers
     # -------------------------------------------------------------------
 
-    def _attach(self, fs: VirtualFileSystem) -> None:
+    def _attach(self, fs: AsyncVirtualFileSystem) -> None:
         """Take the router and start the loop thread that will serve it."""
         self._fs = fs
         self._closed = False
+        self._warned = False
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._serve, name=LOOP_THREAD_NAME, daemon=True)
         self._thread.start()
@@ -660,18 +678,31 @@ class SyncVirtualFileSystem:
             return Result(ops=(op,), errors=[classified(ErrorKind.backend_unavailable, detail=CLOSED_DETAIL)])
         if threading.get_ident() == self._thread.ident:
             return Result(ops=(op,), errors=[classified(ErrorKind.invalid, detail=LOOP_THREAD_DETAIL)])
+        self._warn_if_blocking_a_foreign_loop(op)
         return self._submit(call(*args, **kwargs))
 
-    def _await(self, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
+    def _await(self, name: str, call: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
         """The management hop: refuse by raising, else run the coroutine on the loop and wait."""
         if self._closed:
             raise RuntimeError(CLOSED_MANAGEMENT_DETAIL)
         self._refuse_loop_thread()
+        self._warn_if_blocking_a_foreign_loop(name)
         return self._submit(call(*args, **kwargs))
 
     def _refuse_loop_thread(self) -> None:
         if threading.get_ident() == self._thread.ident:
             raise RuntimeError(LOOP_THREAD_DETAIL)
+
+    def _warn_if_blocking_a_foreign_loop(self, op: str) -> None:
+        """After the own-thread check, so any running loop seen here is one this call will block."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        if self._warned:
+            return
+        self._warned = True
+        warnings.warn(FOREIGN_LOOP_WARNING.format(op=op), RuntimeWarning, stacklevel=_caller_stacklevel())
 
     def _submit(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
         """Run one coroutine on the loop and block; an escaping exception cancels what is in flight."""
@@ -688,10 +719,10 @@ class SyncVirtualFileSystem:
 # ---------------------------------------------------------------------------
 
 
-class SyncSession:
+class Session:
     """One authority, one facade, one lifecycle: the session's verbs as plain calls.
 
-    Wraps a :class:`~vfs.session.Session` over the facade's router, so the
+    Wraps a :class:`~vfs.session.AsyncSession` over the facade's kernel, so the
     closed fact and everything a session comes to hold live in one place;
     the twin forwards each verb through the facade's loop. Open it with
     ``with`` or call :meth:`close`; closed is final.
@@ -699,9 +730,9 @@ class SyncSession:
 
     __slots__ = ("_facade", "_session")
 
-    def __init__(self, fs: SyncVirtualFileSystem, authority: Authority) -> None:
+    def __init__(self, fs: VirtualFileSystem, authority: Authority) -> None:
         self._facade = fs
-        self._session = Session(fs._fs, authority)
+        self._session = AsyncSession(fs._fs, authority)
 
     @property
     def authority(self) -> Authority:
@@ -715,7 +746,7 @@ class SyncSession:
         """Close the session — idempotent, and final; no hop, the flag is the wrapped session's."""
         self._session._close_now()
 
-    def __enter__(self) -> SyncSession:
+    def __enter__(self) -> Session:
         if self._session.closed:
             raise ValueError(CLOSED_SESSION_DETAIL)
         return self
@@ -1043,3 +1074,13 @@ class SyncSession:
 def _wait(future: Future[Any]) -> Any:
     """Block the calling thread on the loop's answer; the one seam an interrupt test replaces."""
     return future.result()
+
+
+def _caller_stacklevel() -> int:
+    """The ``stacklevel`` that names the first frame outside this module: the caller's own line."""
+    depth = 1
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_globals.get("__name__") == __name__:
+        depth += 1
+        frame = frame.f_back
+    return depth

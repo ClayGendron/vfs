@@ -7,7 +7,7 @@ private ``sqlite+aiosqlite:///:memory:`` database, so every verb —
 including the trash arc — behaves exactly as the conformance suite
 pins it, on the same code path production engines run.
 
-    fs = VirtualFileSystem(storage=InMemoryStorage())     # tmpfs-like node
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())     # tmpfs-like node
 
 The database lives for the storage object's lifetime and vanishes at
 ``close()``. SQLAlchemy serves ``:memory:`` through a single shared

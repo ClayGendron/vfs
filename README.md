@@ -24,25 +24,40 @@ Your agent has driven Unix through its entire pretraining — it already knows `
 
 ## One namespace, mounted from your stack
 
-A `VirtualFileSystem` node routes a namespace. Give it a storage backend and it serves files; mount other storages into it and it routes across them. Agents see one tree; each subtree is answered by whatever store owns it.
+A `VirtualFileSystem` node routes a namespace. Give it a storage backend and it serves files; mount other storages into it and it routes across them. Agents see one tree; each subtree is answered by whatever store owns it. The same verbs come in two faces with one import line between them: `VirtualFileSystem` is synchronous, for scripts and notebooks; `AsyncVirtualFileSystem` is the async kernel, for servers and agents.
+
+Synchronous, for scripts and notebooks:
+
+```python
+from vfs import VirtualFileSystem
+from vfs.storage.backends import DatabaseStorage
+
+with VirtualFileSystem() as root:
+    root.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge")
+    written = root.write(path="/knowledge/policies/mfa.md", content="All logins require MFA.", parents=True)
+    found = root.grep("MFA", paths=("/knowledge",))
+assert written.success and found.success
+```
+
+Asynchronous, for servers and agents:
 
 ```python
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from vfs import VirtualFileSystem
-from vfs.storage.backends import DatabaseStorage
+from vfs import AsyncVirtualFileSystem
 
 # Your application's engine and session factory — any SQLAlchemy URL works.
 engine = create_async_engine("sqlite+aiosqlite:///enterprise.db")
 sessions = async_sessionmaker(engine, expire_on_commit=False)
 
-root = VirtualFileSystem()
-await root.add_mount(DatabaseStorage(session_factory=sessions), "/enterprise")
-await root.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge", permissions="read")
+kernel = AsyncVirtualFileSystem()
+await kernel.add_mount(DatabaseStorage(session_factory=sessions), "/enterprise")
+await kernel.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge", permissions="read")
 
-await root.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
-result = await root.grep("MFA", paths=("/enterprise",))
-ranked = await root.glean("do logins need a second factor?", limit=10)
+written = await kernel.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
+result = await kernel.grep("MFA", paths=("/enterprise",))
+ranked = await kernel.glean("do logins need a second factor?", limit=10)
+assert written.success and result.success and ranked.success
 ```
 
 A `VirtualFileSystem()` built with no `storage` gets an `InMemoryStorage` at `/`: a `DatabaseStorage` over a private in-process SQLite database. Writes outside every mount land there and live as long as the process; pass `storage=` to put something durable at the root.
@@ -67,10 +82,10 @@ Every family follows the same contract — paths in, one `Result` out.
 A file carries information four ways — where it sits, what it says, what it means, and how it connects. VFS gives each signal its own verb, and all four return the same composable result type, so they combine instead of competing.
 
 ```python
-await root.glob("**/*.md", paths=("/enterprise",))             # where it sits — match names and structure
-await root.grep("logins", ext=(".md",), before_context=2)      # what it says — match content, ripgrep-style
-await root.glean("do logins need a second factor?", limit=10)  # what it means — one fused, ranked list
-await root.graph("inbound", "/enterprise/policies/mfa.md")       # how it connects — what points at this policy
+await kernel.glob("**/*.md", paths=("/enterprise",))             # where it sits — match names and structure
+await kernel.grep("logins", ext=(".md",), before_context=2)      # what it says — match content, ripgrep-style
+await kernel.glean("do logins need a second factor?", limit=10)  # what it means — one fused, ranked list
+await kernel.graph("inbound", "/enterprise/policies/mfa.md")       # how it connects — what points at this policy
 ```
 
 - **`glob`** answers by *location*: names and structure, the shape of the tree.
@@ -105,8 +120,9 @@ A node *holds* its storage rather than *being* it. Backends implement small prot
 ```python
 from vfs.storage.backends import InMemoryStorage
 
-fs = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
-assert {"read", "glob", "grep", "glean", "write"} <= fs.capabilities()
+node = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
+assert {"read", "glob", "grep", "glean", "write"} <= node.capabilities()
+node.close()
 ```
 
 Database backends come in exactly two constructions: give one a URL and it builds and owns its engine, or hand it your application's session factory and it borrows yours — ownership follows construction, never a flag.
@@ -125,7 +141,7 @@ What the tree does not do yet, and where each decision lives.
 - **A fresh storage's posture is `read_write`.** Until its posture changes, an anonymous caller may read and write on it. Row grants and postures take the rungs of one ladder — `none`, `list`, `read`, `add`, `contribute`, `read_write` — and every verb's rung is one entry in a table.
 - **`copy` and `move` do not cross a mount boundary.** They come back `cross_mount`; copy a file across mounts with `read` and `write` ([spec 160](context/specifications/active/160-cross-mount-copy-as-read-plus-write/spec.md) lifts this for files).
 - **`edit` does not touch a binary body.** It refuses `wrong_kind`; replace the bytes with `write(data=...)` ([spec 154](context/specifications/archive/154-errors-are-facts/spec.md)).
-- **A `VirtualFileSystem` is not a storage and cannot be mounted.** `add_mount` takes a storage backend ([spec 156](context/specifications/active/156-mount-admission/spec.md) makes the refusal explicit).
+- **Neither face is a storage and neither can be mounted.** `add_mount` takes a storage backend ([spec 156](context/specifications/active/156-mount-admission/spec.md) makes the refusal explicit).
 
 ## Status
 

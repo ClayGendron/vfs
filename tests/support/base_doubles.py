@@ -2,7 +2,7 @@
 
 Backend fakes satisfy the family protocols from ``vfs.storage`` (plus the
 required identity members); the few FS doubles subclass
-``vfs.base.VirtualFileSystem`` only to pre-wire a backend.  Mount-table
+``vfs.base.AsyncVirtualFileSystem`` only to pre-wire a backend.  Mount-table
 behavior is steered entirely through storage doubles — a mounted thing is
 a storage, never a router.
 """
@@ -13,7 +13,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from vfs.authority import Authority
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Entry, Observation
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, Result, ResultError
@@ -269,7 +269,7 @@ class DictStorage(RecorderStorage):
         return Result(ops=("stat",), observations=rows)
 
 
-class DictStorageFS(VirtualFileSystem):
+class DictStorageFS(AsyncVirtualFileSystem):
     """Node holding a :class:`DictStorage` root entry."""
 
     def __init__(self, entries: dict[str, ObjectKind], **kwargs: Any) -> None:
@@ -337,7 +337,7 @@ class SuspendingStorage(RecorderStorage):
         return self._answer("mkdir", kwargs, authority)
 
 
-class SuspendingStorageFS(VirtualFileSystem):
+class SuspendingStorageFS(AsyncVirtualFileSystem):
     """Node holding a :class:`SuspendingStorage` backend."""
 
     def __init__(self, *, gate: asyncio.Event | None = None, **kwargs: Any) -> None:
@@ -402,7 +402,7 @@ class ScopeSpyStorage(EchoStorage):
         return self._answer("grep", {"globs": globs, **kwargs})
 
 
-class RecorderFS(VirtualFileSystem):
+class RecorderFS(AsyncVirtualFileSystem):
     """Node holding a recording backend; ``calls`` reads through to it."""
 
     def __init__(self, storage: RecorderStorage | None = None, **kwargs: Any) -> None:
@@ -421,7 +421,7 @@ class EchoFS(RecorderFS):
         super().__init__(storage=storage if storage is not None else EchoStorage(echo_path), **kwargs)
 
 
-def _mutate(fs: VirtualFileSystem, op: str, base: str):
+def _mutate(fs: AsyncVirtualFileSystem, op: str, base: str):
     """Invoke the mutating *op* against targets under *base* (no trailing slash)."""
     calls = {
         "write": lambda: fs.write(path=f"{base}/f.txt", content="x"),
@@ -438,7 +438,7 @@ def _mutate(fs: VirtualFileSystem, op: str, base: str):
     return calls[op]()
 
 
-def _mutate_at_root(fs: VirtualFileSystem, op: str, target: str):
+def _mutate_at_root(fs: AsyncVirtualFileSystem, op: str, target: str):
     """Invoke the mutating *op* with *target* (root or reserved) as its write target."""
     calls = {
         "write": lambda: fs.write(path=target, content="x"),
@@ -455,7 +455,7 @@ def _mutate_at_root(fs: VirtualFileSystem, op: str, target: str):
     return calls[op]()
 
 
-def _fan(fs: VirtualFileSystem, op: str, **kwargs: Any):
+def _fan(fs: AsyncVirtualFileSystem, op: str, **kwargs: Any):
     """Invoke the fan-out verb *op* with its required query argument."""
     calls = {
         "glob": lambda: fs.glob("*.py", **kwargs),
@@ -495,7 +495,7 @@ class SlowWriteStorage(RecorderStorage):
         return Result(ops=("write",), observations=rows)
 
 
-class SlowWriteFS(VirtualFileSystem):
+class SlowWriteFS(AsyncVirtualFileSystem):
     """Node over a :class:`SlowWriteStorage`; ``write_log`` reads through."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -511,7 +511,7 @@ class FailingWriteStorage(RecorderStorage):
         return _failed("write", ErrorKind.unavailable, "boom")
 
 
-class FailingWriteFS(VirtualFileSystem):
+class FailingWriteFS(AsyncVirtualFileSystem):
     """Node over a :class:`FailingWriteStorage`."""
 
     def __init__(self, **kwargs: Any) -> None:
@@ -526,7 +526,7 @@ class BuggyWriteStorage(RecorderStorage):
         raise RuntimeError(msg)
 
 
-class BuggyWriteFS(VirtualFileSystem):
+class BuggyWriteFS(AsyncVirtualFileSystem):
     """Node over a :class:`BuggyWriteStorage`."""
 
     def __init__(self, **kwargs: Any) -> None:

@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
 from vfs.params import INT_CEILING
 from vfs.paths import Path
@@ -28,15 +28,15 @@ if TYPE_CHECKING:
 TREE = (("/notes.txt", "needle root"), ("/data/a.txt", "needle a"), ("/data/deep/b.py", "needle b"))
 
 
-async def _plain_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+async def _plain_world() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     for path, content in TREE:
         await fs.write(path=path, content=content, parents=True)
     return fs
 
 
-async def _mounted_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+async def _mounted_world() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.write(path="/notes.txt", content="needle root")
     await fs.add_mount(InMemoryStorage(), "/data")
     await fs.write(path="/data/a.txt", content="needle a")
@@ -58,7 +58,7 @@ INVARIANCE_BATTERY: tuple[dict[str, Any], ...] = (
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def plain_world() -> AsyncIterator[VirtualFileSystem]:
+async def plain_world() -> AsyncIterator[AsyncVirtualFileSystem]:
     """The plain world once per module; the invariance battery only reads it."""
     fs = await _plain_world()
     yield fs
@@ -66,7 +66,7 @@ async def plain_world() -> AsyncIterator[VirtualFileSystem]:
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
+async def mounted_world() -> AsyncIterator[AsyncVirtualFileSystem]:
     """The mounted world once per module; the invariance battery only reads it."""
     fs = await _mounted_world()
     yield fs
@@ -76,7 +76,7 @@ async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
 @pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("kwargs", INVARIANCE_BATTERY)
 async def test_mount_placement_is_invisible_to_grep(
-    kwargs: dict[str, Any], plain_world: VirtualFileSystem, mounted_world: VirtualFileSystem
+    kwargs: dict[str, Any], plain_world: AsyncVirtualFileSystem, mounted_world: AsyncVirtualFileSystem
 ) -> None:
     plain = await plain_world.grep("needle", **kwargs)
     mounted = await mounted_world.grep("needle", **kwargs)
@@ -143,7 +143,7 @@ async def test_metachar_roots_scope_grep_to_their_own_subtree() -> None:
 
 
 async def test_defective_globs_refuse_before_any_dispatch() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     channels: tuple[dict[str, Any], ...] = ({"globs": ("a**b",)}, {"globs_not": ("x/",)})
     for channel in channels:
         result = await fs.grep("needle", **channel)
@@ -154,7 +154,7 @@ async def test_defective_globs_refuse_before_any_dispatch() -> None:
 async def test_unscoped_glob_channels_cross_the_seam_composed() -> None:
     # Name-arm filters broadcast verbatim; path-arm filters residuate
     # into entry coordinates; exclusions ride the same composition.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/m")
     await fs.grep("needle", globs=("*.py", "/m/src/**"), globs_not=("*.log",))
@@ -168,7 +168,7 @@ async def test_unscoped_glob_channels_cross_the_seam_composed() -> None:
 async def test_a_dead_admission_set_is_routing_not_a_skip() -> None:
     # The path-arm glob cannot reach /m: the entry is simply not
     # dispatched, with no record minted — dead residuals are routing.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/m")
     result = await fs.grep("needle", globs=("/elsewhere/**",))
@@ -181,7 +181,7 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
     # The ETL scale row: contract-scale root batches reach storage as
     # exactly one grep call and one probe call — every root contributes
     # its subtree member and its literal to the composed globs batch.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     data = RecorderStorage()
     await fs.add_mount(data, "/data")
     await fs.grep("needle", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
@@ -193,7 +193,7 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
 
 
 async def test_capability_skips_survive_only_where_the_globs_reach() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.add_mount(RecorderStorage(caps=frozenset({"read"})), "/thin")
     reached = await fs.grep("needle")
     assert [e.path for e in reached.errors] == ["/thin"]
@@ -209,7 +209,7 @@ async def test_capability_skips_survive_only_where_the_globs_reach() -> None:
 async def test_chained_grep_matches_held_content_without_storage() -> None:
     # Pure filter posture: the rows' paths exist nowhere in storage,
     # and content in hand still matches — no call, no assertion.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/a.txt"), kind="file", content="a needle here"),
         Observation(path=Path("/b.txt"), kind="file", content="nothing"),
@@ -241,7 +241,7 @@ async def test_chained_grep_skips_contentless_kinds_silently() -> None:
 
 
 async def test_chained_grep_applies_the_glob_and_ext_gates_in_memory() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/x/a.py"), kind="file", content="needle"),
         Observation(path=Path("/x/b.txt"), kind="file", content="needle"),
@@ -253,7 +253,7 @@ async def test_chained_grep_applies_the_glob_and_ext_gates_in_memory() -> None:
 
 
 async def test_chained_grep_ext_members_normalize_dots_and_case() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/x/a.py"), kind="file", content="needle"),
         Observation(path=Path("/x/b.txt"), kind="file", content="needle"),
@@ -267,7 +267,7 @@ async def test_chained_grep_ext_members_normalize_dots_and_case() -> None:
 async def test_chained_grep_never_refuses_on_indexability() -> None:
     # The index tier is not involved: a pattern with no indexable
     # literal matches rows in hand without allow_scan.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [Observation(path=Path("/a.txt"), kind="file", content="alpha")]
     result = await fs.grep(".*", observations=rows)
     assert result.success is True
@@ -275,7 +275,7 @@ async def test_chained_grep_never_refuses_on_indexability() -> None:
 
 
 async def test_chained_grep_never_hides_meta_rows_in_hand() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [Observation(path=Path("/.vfs/state/s.txt"), kind="file", content="needle hidden")]
     result = await fs.grep("needle", observations=rows)
     assert [str(o.path) for o in result.observations] == ["/.vfs/state/s.txt"]
@@ -293,7 +293,7 @@ async def test_chained_grep_attaches_fetched_content_only_when_projected() -> No
 async def test_chained_grep_output_modes_shape_the_held_row() -> None:
     # files mode strips content even when held; count mode reports the
     # hit count on score — same contract as the storage tiers.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [Observation(path=Path("/a.txt"), kind="file", content="needle\nplain\nneedle")]
     files = await fs.grep("needle", observations=rows, output_mode="files")
     assert files.observations[0].content is None

@@ -13,7 +13,7 @@ from typing import get_args
 
 from tests.support.base_doubles import BindableStorage, RecorderFS, RecorderStorage
 from vfs import ops, permissions
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import (
     ALL_OPS,
     DEVELOPER_OPS,
@@ -245,7 +245,7 @@ def test_router_public_verbs_are_exactly_the_registered_ops() -> None:
     """
     verbs = {
         name
-        for name, _member in inspect.getmembers(VirtualFileSystem, inspect.iscoroutinefunction)
+        for name, _member in inspect.getmembers(AsyncVirtualFileSystem, inspect.iscoroutinefunction)
         if not name.startswith("_")
     }
     assert verbs - MANAGEMENT_METHODS == ALL_OPS

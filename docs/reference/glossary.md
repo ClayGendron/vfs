@@ -16,7 +16,7 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **Authority.** The frozen value every call carries: subjects, actor, provenance, narrowing, and source identity. Built only through the four doors. See [Authority and Principal](authority.md).
 
-**Default authority.** The `default_authority` argument to `VirtualFileSystem`. Used for any call that passes no authority. An explicit authority on a call always wins over it.
+**Default authority.** The `default_authority` argument to `AsyncVirtualFileSystem` and to `VirtualFileSystem`. Used for any call that passes no authority. An explicit authority on a call always wins over it.
 
 **Door.** One of the four class methods that construct an authority: `of`, `on_behalf_of`, `system`, `anonymous`. The bare constructor is not a door.
 
@@ -46,7 +46,7 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **Road directory.** A hidden directory with a visible row beneath it. It shows in listings with path and kind only, lists only its visible and road children, and refuses every write beneath it with `permission_denied`.
 
-**Session.** A facade holding one authority and one filesystem. Every verb on it is the filesystem verb with the authority filled in. Closed is final. See [Session](session.md).
+**Session.** A facade holding one authority and one filesystem. Every verb on it is the filesystem verb with the authority filled in. Closed is final. `AsyncSession` is the kernel's, `Session` the synchronous face's. See [AsyncSession](session.md) and [the synchronous face](sync.md).
 
 **Source identity.** The raw edge identity behind an authority, such as an issuer and subject pair. Set once at the edge, stored on version rows, never interpreted by the filesystem.
 
