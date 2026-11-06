@@ -1,0 +1,6 @@
+sqlalchemy 2.0.52
+Engine/AsyncEngine: shared public names=12, async-only=4, of shared that are coroutines on the async side=2 e.g. ['dispose', 'raw_connection']
+Connection/AsyncConnection: shared public names=21, async-only=10, of shared that are coroutines on the async side=10 e.g. ['close', 'commit', 'exec_driver_sql', 'execute', 'execution_options', 'get_isolation_level']
+Session/AsyncSession: shared public names=38, async-only=7, of shared that are coroutines on the async side=16 e.g. ['close', 'close_all', 'commit', 'connection', 'delete', 'execute']
+sync_engine IO outside a greenlet -> MissingGreenlet greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Ba
+AsyncConnection.run_sync(plain sync function) -> 42

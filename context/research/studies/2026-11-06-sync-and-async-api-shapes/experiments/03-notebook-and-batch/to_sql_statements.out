@@ -1,0 +1,6 @@
+pandas 3.0.5 sqlalchemy 2.0.52
+insertmanyvalues_max_parameters: 32700
+chunksize=None method=None: rows=10000 INSERT executes=1 executemany=[True]
+chunksize=1000 method=None: rows=10000 INSERT executes=10 executemany=[True]
+chunksize=None method=multi: rows=10000 INSERT executes=1 executemany=[False]
+chunksize=1000 method=multi: rows=10000 INSERT executes=10 executemany=[False]
