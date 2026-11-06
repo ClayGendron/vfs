@@ -75,12 +75,19 @@ def test_the_standards_agree_with_the_tree() -> None:
         "testing.md": ("--mssql", "fail_under = 99"),
         "tooling.md": ("uvx", "uv pip"),
         "constitution.md": ("context/decisions/", "open-questions.md"),
+        # the bump script rewrites pyproject.toml alone and locks by itself
+        "release.md": ("src/vfs/__init__.py", "macos-13"),
     }
     for page, needles in forbidden.items():
         text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""
         errors += [f"standards/{page} still says {needle!r}" for needle in needles if needle in text]
-    if "fail_under = 100" not in (STANDARDS / "testing.md").read_text():
-        errors.append("standards/testing.md does not say fail_under = 100")
+    required = {
+        "testing.md": ("fail_under = 100",),
+        "release.md": ("--pre", "--final", "--set", "workflow_dispatch"),
+    }
+    for page, needles in required.items():
+        text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""
+        errors += [f"standards/{page} does not say {needle!r}" for needle in needles if needle not in text]
     assert not errors, "\n".join(errors)
 
 

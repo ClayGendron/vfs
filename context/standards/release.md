@@ -14,12 +14,10 @@ VFS publishes to PyPI as `vfs-py`. A release is cut from `main` after the local 
 
 No release is planned yet (Clay, 2026-10-08). When one is, these are the facts a reviewer established against `0760fe9` and PyPI, so the first run does not rediscover them:
 
-- **The seven-platform matrix in `publish.yml` has never run.** The v0.0.22 publish used a two-job workflow; the matrix (manylinux and musllinux on x86_64 and aarch64, macOS arm64 and x86_64, Windows x64, one wheel per platform on `abi3-py311`, plus an sdist) was added 2026-08-16 and `uv publish --trusted-publishing` on 2026-08-25. Add a `workflow_dispatch` trigger and dry-run every leg from `main` before cutting a release.
-- **The macOS x86_64 runner is retired.** `publish.yml` pins `macos-13`, which GitHub retired in December 2025; use `macos-15-intel`.
-- **The workflow runs no tests and never checks the tag.** It trusts `main` is green (step 2). Add a step that fails unless `github.event.release.tag_name` equals `v` + the project version, so a release cut before the bump commit cannot rebuild the old number.
+- **The seven-platform matrix in `publish.yml` has never run.** The v0.0.22 publish used a two-job workflow; the matrix (manylinux and musllinux on x86_64 and aarch64, macOS arm64 and x86_64, Windows x64, one wheel per platform on `abi3-py311`, plus an sdist) was added 2026-08-16 and `uv publish --trusted-publishing` on 2026-08-25. The workflow has a `workflow_dispatch` trigger that builds everything and uploads nothing; dispatch it from `main` and see all eight jobs green before cutting a release.
+- **The workflow runs no tests.** It trusts `main` is green (step 2). It does check the tag: the first step of every job runs `scripts/check_release_tag.py`, which fails the release unless the tag equals `v` + the project version, so a release cut before the bump commit cannot rebuild the old number.
 - **musllinux wheels publish but do not install.** `sqlite-vec`, a core dependency, ships no musl wheel and no sdist, so `pip install vfs-py` on Alpine fails resolution whatever vfs publishes. Say so in the README's install section.
-- **The sdist is not a slim-image path.** `pyproject.toml` admits `maturin>=1.8,<2.0`; 1.8.0–1.8.3 do not bootstrap Rust, so raise the floor to `maturin>=1.8.4`. The tree-sitter crates need a C compiler regardless.
-- **`bump_version.py` touches two files and cannot emit a prerelease.** It rewrites `pyproject.toml` and `src/vfs/__init__.py` with a `\d+\.\d+\.\d+` pattern; `uv.lock` carries the version too, so run `uv lock` and commit it. `crates/vfs-core/Cargo.toml` is independent (maturin reads the project version) and its comment still says `vfs._accel`.
+- **The sdist is not a slim-image path.** `pyproject.toml` requires `maturin>=1.8.4`, the first version whose sdist build bootstraps Rust, but the tree-sitter crates need a C compiler regardless.
 - **There is no `CHANGELOG.md`.** The [GitHub releases](https://github.com/ClayGendron/vfs/releases) are the user-facing record of what changed. The first v2 release notes are written fresh; nothing from the 0.0.x notes carries over.
 - **PyPI state.** `vfs-py` has 0.0.20, 0.0.21 and 0.0.22 only; 0.1.0 is unused. Pre-1.0, the v2 rebuild bumps minor to `0.1.0`.
 - **The README ships in the wheel**, so the docs fix (spec 153) lands first.
@@ -52,13 +50,17 @@ A release runs Cloudflare's security-audit skill in full-audit mode, not the gui
 ### 4. Bump the version
 
 ```bash
-uv run python scripts/bump_version.py --patch   # 0.0.20 → 0.0.21
-uv run python scripts/bump_version.py --minor   # 0.0.20 → 0.1.0
-uv run python scripts/bump_version.py --major   # 0.1.0  → 1.0.0
-uv lock
+uv run python scripts/bump_version.py --patch           # 0.0.22  → 0.0.23
+uv run python scripts/bump_version.py --minor           # 0.0.22  → 0.1.0
+uv run python scripts/bump_version.py --major           # 0.1.0   → 1.0.0
+uv run python scripts/bump_version.py --minor --pre a   # 0.0.22  → 0.1.0a1, opening a pre-release lane
+uv run python scripts/bump_version.py --pre a           # 0.1.0a1 → 0.1.0a2
+uv run python scripts/bump_version.py --pre b           # 0.1.0a4 → 0.1.0b1
+uv run python scripts/bump_version.py --final           # 0.1.0b3 → 0.1.0
+uv run python scripts/bump_version.py --set 0.2.0.dev1  # anything the rules do not cover
 ```
 
-The script updates `pyproject.toml` and `src/vfs/__init__.py`; `uv lock` carries the new version into `uv.lock`. Don't hand-edit version strings.
+`pyproject.toml` is the only file that states the version; `vfs.__version__` reads it from the installed metadata. The script rewrites that one line and runs `uv lock` itself, so `uv.lock` follows. A move the lane does not allow (a stage letter going backwards, `--final` on a final, a part flag on a pre-release) is refused with exit status 2 and nothing is written. Don't hand-edit version strings.
 
 ### 5. Draft the release notes
 
