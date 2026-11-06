@@ -142,7 +142,15 @@ Counts and states, never clocks. Tests are in `tests/test_sync.py` unless their 
 
 ## Landing notes
 
-(Filled in on landing.)
+Landed 2026-11-06 on the branch `claude/two-faces-named`, stacked on the research branch that carries this spec and the facade branch beneath it; the pull request is the chunk's own, as decision 11 asks. The slices, each green on `scripts/ci.sh`: `8ef49a2` (the spec amended after [the spec review](../../reviews/2026-11-06-the-two-faces-named-spec-review.md)), `7dc4cd8` (the review re-signed "Fit to build"), `0457237` (the build: the four renames by import path, the warning with its computed depth, the named management hop, the marker, the root conftest, the docs, the standards and the lint rows), `c1908cd` (after [the code review](../../reviews/2026-11-06-the-two-faces-named-code-review.md): the management hop's notice pinned by a third fresh facade, the kernel's docstring), then the landing commit that moves this file.
+
+Tests first, EXECUTED: the eight new nodes, the inverted `FAMILY` map and the lint rows were written before any rename, and `uv run pytest tests/test_sync.py` stopped at `ImportError: cannot import name 'AsyncVirtualFileSystem' from 'vfs.base'`; the rename and the warning then turned the file green. The code review's surviving mutant (the helper call deleted from `_await`) was reproduced by hand against the new third-facade pin and fails it on the empty record; the module was restored from a scratchpad copy and `git diff` was clean.
+
+The gate on `c1908cd`, EXECUTED: lint, format and types at zero; 4,537 passed, 7 skipped, 100% of 12,291 statements; 43 docs fences green with `-n 0` (the README's two quick-start fences among them); the wheel 9 MB, and its listing holds `vfs/py.typed` (criterion 7). Criterion 10 is held by the root conftest's thread assertion on every docs run, no script.
+
+Differences from the spec as written: `test_the_four_names_are_exported_and_the_old_ones_are_gone` walks text suffixes only (`.py`, `.pyi`, `.md`, `.yml`), because the package directory holds the compiled extension and bytecode; the kernel pin derives the notice's text from `FOREIGN_LOOP_WARNING` after the verb's name, so a changed message fails it rather than passing by accident; criterion 4 gained the third facade during the code review; the README's search fence moved to the async quick start's `kernel`, because the sync face it had been reading through is closed by its `with`.
+
+Follow-ups, none blocking: the Postgres leg of `tests/test_sync.py` carries over by name under the facade review's standing condition and was not run here (no engine URL in this environment); the root conftest's face-closing loop is a net no page needs today, kept for the next page that binds a face without `with`; the roadmap's future stories spell the kernel as `VirtualFileSystem` and are converted on pickup, as decision 9 says.
 
 ## One line
 
