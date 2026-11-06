@@ -355,7 +355,7 @@ def _rebase_grant_rows(result: Result, mount: Path) -> Result:
 
 
 class AsyncVirtualFileSystem:
-    """Async router base class for all VFS filesystems."""
+    """The asynchronous kernel; ``VirtualFileSystem`` is its synchronous face."""
 
     def __init__(
         self,

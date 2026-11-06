@@ -653,7 +653,11 @@ def test_the_plain_name_is_the_synchronous_face() -> None:
 
 
 async def test_a_sync_verb_on_a_foreign_running_loop_warns_once_and_serves() -> None:
-    """The test's own loop is the foreign one; the notice names the caller's file, then falls silent."""
+    """The test's own loop is the foreign one; the notice names the caller's file, then falls silent.
+
+    Three fresh facades, whose first calls are a verb, a session verb and a
+    management method, so each hop is pinned as the first to warn.
+    """
     with VirtualFileSystem(storage=InMemoryStorage()) as fs, warnings.catch_warnings(record=True) as first:
         warnings.simplefilter("always")
         written = fs.write(path="/a.txt", content="x")
@@ -673,6 +677,12 @@ async def test_a_sync_verb_on_a_foreign_running_loop_warns_once_and_serves() -> 
     assert [w.category for w in again] == [RuntimeWarning]
     assert "VirtualFileSystem.ls" in str(again[0].message)
     assert again[0].filename == __file__
+    with VirtualFileSystem(storage=InMemoryStorage()) as third, warnings.catch_warnings(record=True) as managed:
+        warnings.simplefilter("always")
+        third.locate("/")
+    assert [w.category for w in managed] == [RuntimeWarning]
+    assert "VirtualFileSystem.locate" in str(managed[0].message)
+    assert managed[0].filename == __file__
 
 
 def test_no_warning_without_a_running_loop() -> None:
