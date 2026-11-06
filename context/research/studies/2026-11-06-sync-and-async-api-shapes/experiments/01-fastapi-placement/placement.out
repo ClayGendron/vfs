@@ -1,0 +1,22 @@
+fastapi 0.162.0 starlette 1.10.0 anyio thread tokens 40
+is_async_callable: afs.read True sfs.read False dual_read False
+inspect.iscoroutinefunction(afs.read) True
+/a-async-await           n=100 wall= 0.58s peak_inflight=100 heartbeat_ticks=110 worst_gap=  18.1ms statuses={'200': 100} warnings=[]
+/b-def-syncfacade        n=100 wall= 0.63s peak_inflight= 40 heartbeat_ticks=109 worst_gap=  27.8ms statuses={'200': 100} warnings=[]
+/c-async-syncfacade      n=100 wall= 5.68s peak_inflight=  1 heartbeat_ticks=  1 worst_gap=5682.6ms statuses={'200': 100} warnings=[]
+/d-def-asynciorun        n=100 wall= 0.21s peak_inflight= 40 heartbeat_ticks= 36 worst_gap=  15.2ms statuses={'500': 96, '200': 4} warnings=[]
+/g-async-dual            n=100 wall= 0.50s peak_inflight=100 heartbeat_ticks= 95 worst_gap=  20.5ms statuses={'200': 100} warnings=[]
+/h-def-dual              n=100 wall= 0.63s peak_inflight= 40 heartbeat_ticks=110 worst_gap=  15.5ms statuses={'200': 100} warnings=[]
+/i-dep-async             n=100 wall= 0.56s peak_inflight=100 heartbeat_ticks=106 worst_gap=  15.4ms statuses={'200': 100} warnings=[]
+/e-async-forgot-await    n=  2 wall= 0.01s peak_inflight=  0 heartbeat_ticks=  1 worst_gap=   6.0ms statuses={'200': 2} warnings=["coroutine 'Slow.read' was never awaited"]
+/f-async-asynciorun      n=  2 wall= 0.01s peak_inflight=  0 heartbeat_ticks=  1 worst_gap=   5.8ms statuses={'500': 2} warnings=["coroutine 'Slow.read' was never awaited"]
+b served on thread: AnyIO worker thread
+background status 200 {'queued': 5}
+  ran bg_sync:AnyIO worker thread
+  ran bg_async:MainThread
+  ran bg_dual:AnyIO worker thread:Result
+  sync facade wrote /bg-sync.txt ('/bg-sync.txt',)
+  sync facade wrote /bg-bound-sync.txt ('/bg-bound-sync.txt',)
+  async router wrote /bg-async.txt ('/bg-async.txt',)
+  async router wrote /bg-bound.txt ('/bg-bound.txt',)
+live threads named vfs-sync-loop: 1

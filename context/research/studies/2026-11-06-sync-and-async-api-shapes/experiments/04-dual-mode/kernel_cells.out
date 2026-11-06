@@ -1,0 +1,26 @@
+[IPKernelApp] WARNING | Kernel is running over TCP without encryption. All communication (including code and outputs) is sent in plain text and is susceptible to eavesdropping. Use IPC transport or launch with kernel manager-provisioned CurveZMQ keys to enable transport encryption.
+[stdout] cell sees a running loop
+[stdout] detect sync spelling -> coroutine NO .thread
+[stdout] detect await spelling -> Result MainThread
+[stderr] /tmp/ipykernel_19578/2944021460.py:1: RuntimeWarning: coroutine '_aread' was never awaited
+[stderr]   r = await MECHANISMS['detect']().read('a')
+[stdout] prefect_sync_compatible sync spelling -> coroutine NO .thread
+[stdout] prefect_sync_compatible await spelling -> Result MainThread
+[stderr] /tmp/ipykernel_19578/3510714993.py:1: RuntimeWarning: coroutine 'sync_compatible.<locals>.coroutine_wrapper.<locals>.ctx_call' was never awaited
+[stderr]   r = await MECHANISMS['prefect_sync_compatible']().read('a')
+[stdout] prefect_async_dispatch sync spelling -> coroutine NO .thread
+[stdout] prefect_async_dispatch await spelling -> Result MainThread
+[stderr] /tmp/ipykernel_19578/1454956311.py:1: RuntimeWarning: coroutine 'PrefectAsyncDispatch.aread' was never awaited
+[stderr]   r = await MECHANISMS['prefect_async_dispatch']().read('a')
+[stdout] fsspec_sync_flag sync spelling -> Result fsspecIO
+[stdout] twins sync spelling -> Result portal-loop
+[stdout] asgiref_plain sync spelling -> RAISED RuntimeError You cannot use AsyncToSync in the same thread as an async event loop - just await the asyn
+[stdout] greenback sync spelling -> RAISED RuntimeError You must create a greenback portal for this task in order to use 'greenback.await_()'. Try
+[stdout] lazy_portal sync spelling -> LazyHandle portal-loop
+[stdout] lazy_portal await spelling -> Result MainThread
+[stdout] handle_result sync spelling -> Result portal-loop
+[stdout] handle_result await spelling -> Result MainThread
+[stdout] portal made in this cell
+[stdout] greenback next cell -> RAISED RuntimeError You must create a greenback portal for this task in order to use 'greenback.awai
+[stdout] greenback same cell as portal -> Result MainThread
+[stdout] ['Control', 'Heartbeat', 'IOPub', 'IPythonHistorySavingThread', 'MainThread', 'Shell channel', 'Thread-1', 'Thread-2 (', 'Thread-3 (', 'fsspecIO', 'portal-loop']

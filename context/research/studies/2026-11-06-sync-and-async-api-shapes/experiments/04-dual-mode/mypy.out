@@ -1,0 +1,42 @@
+13: error: Skipping analyzing "fsspec.asyn": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+13: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+13: error: Skipping analyzing "fsspec": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+33: error: Missing return statement  [empty-body]
+37: error: Missing return statement  [empty-body]
+38: error: Missing return statement  [empty-body]
+43: error: Missing return statement  [empty-body]
+47: error: Missing return statement  [empty-body]
+50: error: Missing return statement  [empty-body]
+54: error: Missing return statement  [empty-body]
+59: error: Missing return statement  [empty-body]
+63: error: Missing return statement  [empty-body]
+64: error: Missing return statement  [empty-body]
+68: error: Missing return statement  [empty-body]
+81: note: Revealed type is "typecheck_cases.Result | typing.Coroutine[Any, Any, typecheck_cases.Result]"
+82: error: Value of type "Coroutine[Any, Any, R?]" must be used  [unused-coroutine]
+82: note: Are you missing an await?
+82: note: Revealed type is "typing.Coroutine[Any, Any, R?]"
+83: note: Revealed type is "typecheck_cases.Result | typing.Coroutine[Any, Any, typecheck_cases.Result]"
+84: note: Revealed type is "Any"
+85: note: Revealed type is "typecheck_cases.Result"
+86: note: Revealed type is "typecheck_cases.Result"
+87: note: Revealed type is "Any"
+88: note: Revealed type is "typecheck_cases.Result"
+89: error: Item "Coroutine[Any, Any, Result]" of "Result | Coroutine[Any, Any, Result]" has no attribute "success"  [union-attr]
+89: note: Maybe you forgot to use "await"?
+90: error: "Coroutine[Any, Any, R?]" has no attribute "success"  [attr-defined]
+94: error: Incompatible types in "await" (actual type "Result | Coroutine[Any, Any, Result]", expected type "Awaitable[Any]")  [misc]
+94: note: Revealed type is "Any"
+95: note: Revealed type is "R?"
+96: error: Incompatible types in "await" (actual type "Result | Coroutine[Any, Any, Result]", expected type "Awaitable[Any]")  [misc]
+96: note: Revealed type is "Any"
+97: note: Revealed type is "typecheck_cases.Result"
+98: note: Revealed type is "typecheck_cases.Result"
+99: note: Revealed type is "typecheck_cases.Result"
+100: note: Revealed type is "Any"
+106: error: Value of type "Coroutine[Any, Any, Result]" must be used  [unused-coroutine]
+106: note: Are you missing an await?
+108: error: "Coroutine[Any, Any, Result]" has no attribute "success"  [attr-defined]
+108: note: Maybe you forgot to use "await"?
+111: error: Value of type "Coroutine[Any, Any, R?]" must be used  [unused-coroutine]
+111: note: Are you missing an await?

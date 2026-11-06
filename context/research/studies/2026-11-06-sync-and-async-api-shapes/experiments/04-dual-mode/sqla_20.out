@@ -1,0 +1,11 @@
+sqlalchemy 2.0.52
+s1 await_only, no loop -> RAISED MissingGreenlet greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Ba
+/home/user/vfs/.venv/lib/python3.13/site-packages/sqlalchemy/util/_concurrency_py3k.py:241: DeprecationWarning: There is no current event loop
+  return asyncio.get_event_loop_policy().get_event_loop()
+s1 await_fallback, no loop -> value
+s2 await_only on loop thread -> RAISED MissingGreenlet greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Ba
+s2 await_fallback on loop thread -> RAISED MissingGreenlet greenlet_spawn has not been called and asyncio event loop is already running; can't call await_fallback() here
+s2 under greenlet_spawn -> value
+/usr/local/lib/python3.13/asyncio/base_events.py:765: ResourceWarning: unclosed event loop <_UnixSelectorEventLoop running=False closed=False debug=False>
+  _warn(f"unclosed event loop {self!r}", ResourceWarning, source=self)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback

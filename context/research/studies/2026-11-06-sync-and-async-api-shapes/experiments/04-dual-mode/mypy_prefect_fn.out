@@ -1,0 +1,5 @@
+typecheck_prefect_fn.py:14: error: Value of type "Coroutine[Any, Any, R?]" must be used  [unused-coroutine]
+typecheck_prefect_fn.py:14: note: Are you missing an await?
+typecheck_prefect_fn.py:14: note: Revealed type is "typing.Coroutine[Any, Any, R?]"
+typecheck_prefect_fn.py:15: error: Incompatible types in assignment (expression has type "Coroutine[Any, Any, R?]", variable has type "int")  [assignment]
+typecheck_prefect_fn.py:19: note: Revealed type is "R?"

@@ -1,0 +1,34 @@
+33:34: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result | Coroutine[Any, Any, Result]`
+37:34: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+38:41: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+43:40: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+47:41: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+50:34: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+54:28: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Generator[Any, None, Result]`
+59:34: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Lazy`
+63:28: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Generator[Any, None, Result]`
+64:25: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Result`
+68:34: error[empty-body] Function always implicitly returns `None`, which is not assignable to return type `Handle`
+81:17: info[revealed-type] Revealed type: `Result | Coroutine[Any, Any, Result]`
+82:17: info[revealed-type] Revealed type: `Result | Coroutine[Any, Any, Result]`
+83:17: info[revealed-type] Revealed type: `Result | Coroutine[Any, Any, Result]`
+84:17: info[revealed-type] Revealed type: `Any`
+85:17: info[revealed-type] Revealed type: `Result`
+86:17: info[revealed-type] Revealed type: `Result`
+87:17: info[revealed-type] Revealed type: `Unknown`
+88:17: info[revealed-type] Revealed type: `Result`
+89:5: error[unresolved-attribute] Attribute `success` is not defined on `Coroutine[Any, Any, Result]` in union `Result | Coroutine[Any, Any, Result]`
+90:5: error[unresolved-attribute] Attribute `success` is not defined on `Coroutine[Any, Any, Result]` in union `Result | Coroutine[Any, Any, Result]`
+94:17: info[revealed-type] Revealed type: `Unknown`
+94:23: error[invalid-await] `Result | Coroutine[Any, Any, Result]` is not awaitable
+95:17: info[revealed-type] Revealed type: `Unknown`
+95:23: error[invalid-await] `Result | Coroutine[Any, Any, Result]` is not awaitable
+96:17: info[revealed-type] Revealed type: `Unknown`
+96:23: error[invalid-await] `Result | Coroutine[Any, Any, Result]` is not awaitable
+97:17: info[revealed-type] Revealed type: `Result`
+98:17: info[revealed-type] Revealed type: `Result`
+99:17: info[revealed-type] Revealed type: `Result`
+100:17: info[revealed-type] Revealed type: `Unknown`
+106:5: warning[unused-awaitable] Object of type `CoroutineType[Any, Any, Result]` is not awaited
+108:5: error[unresolved-attribute] Object of type `CoroutineType[Any, Any, Result]` has no attribute `success`
+Found 33 diagnostics
