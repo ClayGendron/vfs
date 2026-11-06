@@ -187,7 +187,28 @@ Counts and states, never clocks.
 
 ## Landing notes
 
-(Filled in on landing.)
+Landed 2026-11-06 on the branch `claude/tender-clarke-j01e4i`, as slices each green on its own: the spec (`b2a12f0`, amended in `d8e65be`, its review signed in `d7a6ae5`), the code (`829a7d6`), the code review's fixes (`3ae7937`), and the landing commit that carries these notes, the spec's move and the signed review. Reviewed before the build by [the spec review](../../reviews/2026-11-06-the-release-plumbing-spec-review.md) ("Fit to build" on `d8e65be`, after one Medium and nine Lows were answered) and before the landing by [the code review](../../reviews/2026-11-06-the-release-plumbing-code-review.md) (two Mediums and six Lows; the disposition of every finding is in the file, and its standing verdict is the last dated line there). Everything below is EXECUTED on this branch unless labelled otherwise.
+
+**The gate.** `scripts/ci.sh` on `3ae7937`: lint, format and types clean; 4,374 passed and 7 skipped with coverage at 100% of 12,063 statements; the 38 docs examples passed; the wheel is 9 MB against the 50 MB budget. The engine legs did not run here: no storage code changed, and Docker is not on this machine.
+
+**Tests first.** The four test modules were placed before any code changed and run on `d7a6ae5`: 21 failed and 2 passed (`test_version_is_read_from_distribution_metadata` and `test_the_lock_carries_the_project_version` pass on the base because the literal and the lock both said `0.0.22`), and `tests/scripts/test_check_release_tag.py` could not collect because the script did not exist. Each was made green by the code that pins it.
+
+**The criteria.** 1 to 10 and 12 are met and pinned by the node ids the criteria name; `tests/scripts/` holds 28 tests and `tests/test_version.py` 2. Criterion 11 is pending: the GitHub App this session works through cannot dispatch a workflow (403), and the Dialect tests run on `push` only for `main`; the pull request's run, or a `workflow_dispatch` on the branch from the Actions tab, supplies the run id, which a context-only commit adds here; the code review's condition on this is that the pull request's four Dialect jobs are green before the merge to `main`, and that a red `mssql` job there is a code fix needing a new signature, not a context commit. The fix proved locally against Microsoft's live feed on 2026-11-06: the 24.04 `prod.list` names `signed-by=/usr/share/keyrings/microsoft-prod.gpg`, its `InRelease` verifies under `EB3E94ADBE1229CF`, and the two dearmored keys concatenate into one keyring that GnuPG lists as two public keys.
+
+**A real bump, end to end.** With `pyproject.toml` and `uv.lock` backed up to the session scratchpad, `uv run python scripts/bump_version.py --minor --pre a` printed `0.0.22 → 0.1.0a1`, rewrote the one line, and `uv lock` moved `vfs-py` to `0.1.0a1` in the lock (`Resolved 153 packages`); the tree test passed on the bumped pair; both files were restored from the backup and compared byte for byte. The tag check answered exit 0 for `v0.0.22` and exit 1 for `v0.1.0` against the real file.
+
+**Differences from the text above, each with its reason.**
+
+1. Decision 11 said the fact list in `release.md` loses five facts; two were removed (the bump script, the macOS runner) and three were rewritten to the new tree (the matrix, the tag check, the sdist floor), because the matrix has still never run and the page is truer with them; the heading records the re-verification date (the code review's L2).
+2. The bump script takes a hidden `--pyproject` option, so its test can drive it against a scratch file and so another checkout can use it; the Design named the option only for the tag check.
+3. The commit body of `829a7d6` says the tag check is "the first step of every job"; it is the first step after checkout and `setup-uv`, as the Design says (the code review's L1).
+4. The code review file was committed in `3ae7937` with its Disposition still awaiting the author, because the fix commit staged the whole tree; the Disposition and the reviewer's re-read are carried by the landing commit.
+
+**Follow-ups found, not done here.** `scripts/` is outside the `ruff check src/ tests/` and `ty` gates, as it was before this change; widening the gate is a spec of its own. The tag check and the dialect-workflow test live in `tests/scripts/test_check_release_tag.py` by criterion 8's naming; a later `tests/scripts/test_workflows.py` is the better home. The publish matrix has still never run; spec 166's item 7 is a `workflow_dispatch` of `publish.yml` from `main`, now possible. On signing: PyPI no longer accepts GPG signatures, and `uv publish` with Trusted Publishing uploads PEP 740 attestations; at the first alpha, confirm the Trusted Publisher is configured on the PyPI project and that the file page shows provenance, and add the flag `uv publish` documents if it does not.
+
+**Architecture pages:** none exist since 2026-10-31; nothing to redraw.
+
+**Changelog:** Changed — `vfs.__version__` is read from the installed distribution's metadata; the bump script moves the version along the alpha, beta, release-candidate and final lane and locks after each move; the publish workflow can be dispatched without a release and refuses a tag that does not name the project version; the Intel macOS wheel builds on `macos-15-intel`; the SQL Server engine leg installs its driver from the keyring its sources list names.
 
 ## One line
 
