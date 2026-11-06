@@ -21,7 +21,7 @@ from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from types import TracebackType
 
     from vfs.authority import Authority
@@ -143,7 +143,7 @@ class AsyncSession:
 
     async def write(
         self,
-        entries: Sequence[Entry] | None = None,
+        entries: Iterable[Entry] | None = None,
         *,
         path: str | None = None,
         content: str | None = None,

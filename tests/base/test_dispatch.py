@@ -1599,7 +1599,7 @@ async def test_generator_entries_survive() -> None:
     child = RecorderStorage()
     await root.add_mount(child, "/m")
     gen = (Entry(path=Path(p), content="x") for p in ("/m/a.txt", "/m/b.txt"))
-    result = await root.write(gen)  # ty: ignore[invalid-argument-type]
+    result = await root.write(gen)
     assert result.success is True
     assert len(child.calls[0][1]["entries"]) == 2
 
