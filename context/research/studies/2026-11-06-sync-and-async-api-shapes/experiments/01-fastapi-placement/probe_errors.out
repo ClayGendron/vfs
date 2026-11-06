@@ -1,0 +1,9 @@
+e body: 200 {"text":"<coroutine object Slow.read at 0x7f324a3b8540>"}
+f: asyncio.run() cannot be called from a running event loop
+d, asyncio.run per call, 1 thread(s) at a time over one shared router:
+  40x ok: hello
+d, asyncio.run per call, 8 thread(s) at a time over one shared router:
+   1x ok: hello
+   1x hung (no answer within 5 s)
+   6x RuntimeError: <asyncio.locks.Lock object at 0x7f324a3cef30 [locked, waiters:1]> is bound to a different event loop
+  32x RuntimeError: <asyncio.locks.Lock object at 0x7f324a3cef30 [unlocked, waiters:1]> is bound to a different event loop

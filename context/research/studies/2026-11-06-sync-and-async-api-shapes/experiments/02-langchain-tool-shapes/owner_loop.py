@@ -48,14 +48,20 @@ async def main() -> None:
             ticks += 1
             await asyncio.sleep(0)
 
-    hb = asyncio.create_task(heartbeat())
-    n = 2000
+    n = 500
+    t = time.perf_counter()
+    for _ in range(n):
+        await tool.ainvoke({"path": "/notes/a.txt"})
+    print(f"{n} sequential ainvoke via owner loop: {1e6 * (time.perf_counter() - t) / n:.1f} us/call")
     t = time.perf_counter()
     await asyncio.gather(*(tool.ainvoke({"path": "/notes/a.txt"}) for _ in range(n)))
-    elapsed = time.perf_counter() - t
+    print(f"{n} gathered ainvoke via owner loop: {1e6 * (time.perf_counter() - t) / n:.1f} us/call amortised")
+    hb = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)
+    await asyncio.gather(*(tool.ainvoke({"path": "/notes/a.txt"}) for _ in range(50)))
     stop = True
     await hb
-    print(f"{n} concurrent ainvoke via owner loop: {1e6 * elapsed / n:.1f} us/call amortised, caller-loop heartbeat ticks {ticks}")
+    print(f"caller-loop heartbeat ticks while 50 gathered calls ran: {ticks} (nonzero: the caller loop stayed free)")
     print("distinct threads that ran the verb:", set(seen))
     print("sync invoke from a worker thread ->", (await asyncio.to_thread(tool.invoke, {"path": "/notes/a.txt"})).strip())
 

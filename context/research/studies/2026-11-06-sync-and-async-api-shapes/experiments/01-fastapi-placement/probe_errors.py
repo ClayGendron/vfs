@@ -1,22 +1,40 @@
-"""The bodies and tracebacks behind placements d, e and f of placement.py."""
+"""The bodies and outcomes behind placements d, e and f of placement.py.
+
+d is reproduced without FastAPI: 40 daemon threads, 8 at a time, each calling
+asyncio.run(router.read(...)) on one shared router, each joined with a 5 s cap so a
+hang is counted rather than waited on. Run as placement.py says.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import threading
 import traceback
 import warnings
-from concurrent.futures import ThreadPoolExecutor
-
-from placement import afs, app
 
 import httpx
+from placement import Slow, afs, app
 
 
-def threaded_asyncio_run(i: int) -> str:
+def outcome_of(router: Slow, sink: list[str]) -> None:
     try:
-        return str(asyncio.run(afs.read("/a.txt")))
+        sink.append("ok: " + str(asyncio.run(router.read("/a.txt"))))
     except Exception as exc:  # noqa: BLE001
-        return "".join(traceback.format_exception_only(exc)).strip()[:200]
+        sink.append("".join(traceback.format_exception_only(exc)).strip()[:160])
+
+
+def wave(router: Slow, width: int) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for _ in range(40 // width):
+        sinks = [[] for _ in range(width)]
+        threads = [threading.Thread(target=outcome_of, args=(router, s), daemon=True) for s in sinks]
+        for t in threads:
+            t.start()
+        for t, s in zip(threads, sinks, strict=True):
+            t.join(5)
+            key = s[0] if s else "hung (no answer within 5 s)"
+            counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 async def main() -> None:
@@ -27,20 +45,16 @@ async def main() -> None:
             warnings.simplefilter("ignore")
             r = await client.get("/e-async-forgot-await")
         print("e body:", r.status_code, r.text[:120])
-    with ThreadPoolExecutor(8) as pool:
-        outcomes = list(pool.map(threaded_asyncio_run, range(40)))
-    counts: dict[str, int] = {}
-    for o in outcomes:
-        counts[o] = counts.get(o, 0) + 1
-    print("d, asyncio.run per call from 8 worker threads over one shared async router:")
-    for k, v in counts.items():
-        print(f"  {v:2}x {k}")
     try:
-        async def inside() -> None:
-            asyncio.run(afs.read("/a.txt"))
-        await inside()
+        asyncio.run(afs.read("/a.txt"))
     except RuntimeError as exc:
         print("f:", exc)
 
 
 asyncio.run(main())
+for width in (1, 8):
+    fresh = Slow()
+    asyncio.run(fresh.write(path="/a.txt", content="hello"))
+    print(f"d, asyncio.run per call, {width} thread(s) at a time over one shared router:")
+    for k, v in wave(fresh, width).items():
+        print(f"  {v:2}x {k}")

@@ -1,0 +1,6 @@
+ainvoke -> alpha | ran on vfs-sync-loop
+500 sequential ainvoke via owner loop: 4891.4 us/call
+500 gathered ainvoke via owner loop: 4806.9 us/call amortised
+caller-loop heartbeat ticks while 50 gathered calls ran: 150513 (nonzero: the caller loop stayed free)
+distinct threads that ran the verb: {'vfs-sync-loop'}
+sync invoke from a worker thread -> alpha
