@@ -33,6 +33,17 @@ if TYPE_CHECKING:
     from vfs.storage.replace import EditOperation
 
 
+# ---------------------------------------------------------------------------
+# The closed fact
+# ---------------------------------------------------------------------------
+
+
+def closed_refusal(op: Op) -> Result:
+    """The one refusal a closed session answers every verb with, in either shape."""
+    fact = classified(ErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
+    return Result(ops=(op,), errors=[fact])
+
+
 class Session:
     """One authority, one filesystem, one lifecycle.
 
@@ -59,7 +70,7 @@ class Session:
 
     async def close(self) -> None:
         """Close the session — idempotent, and final."""
-        self._closed = True
+        self._close_now()
 
     async def __aenter__(self) -> Session:
         if self._closed:
@@ -421,9 +432,10 @@ class Session:
     # Internal helpers
     # -------------------------------------------------------------------
 
+    def _close_now(self) -> None:
+        """The one line of closing, synchronous so the sync twin can close without a loop."""
+        self._closed = True
+
     def _refuse_closed(self, op: Op) -> Result | None:
         """The structured refusal a closed session answers every verb with."""
-        if not self._closed:
-            return None
-        fact = classified(ErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
-        return Result(ops=(op,), errors=[fact])
+        return None if not self._closed else closed_refusal(op)
