@@ -6,21 +6,19 @@ no concepts. Title every guide "How to X". It can branch and handle variation.
 
 # How to install and pin vfs
 
-The package on PyPI is `vfs-py`; the module imports as `vfs`.
+The package on PyPI is `vfs-py`; the module imports as `vfs`. vfs is in alpha on the lane to `0.1.0`, and during the alpha stage the install line is also the pin:
 
 ```bash
-pip install vfs-py
+pip install "vfs-py>=0.1.0a1,<0.2"
 ```
 
-## Pin it
+## Why the specifier
 
-vfs is in alpha on the lane to `0.1.0`. A bare install resolves to the newest alpha, because the earlier `0.0.x` releases are yanked and nothing else is on the index. An alpha may change anything between releases: verbs, models, result shapes, the schema. Pin to the lane with the pre-release marker in the specifier:
+The earlier `0.0.x` releases are yanked, so the only versions on the index are alphas. An alpha may change anything between releases: verbs, models, result shapes, the schema, and the `<0.2` bound keeps the next minor out.
 
-```text
-vfs-py>=0.1.0a1,<0.2
-```
+The `a1` in the specifier is what lets pip see an alpha. pip shows a pre-release only to a specifier that names one, or under `--pre`, and it still counts a yanked final when it decides whether pre-releases are allowed, so with `0.0.22` yanked beside the alphas a bare `pip install vfs-py` answers "Ignored the following yanked versions: 0.0.22" and then "No matching distribution", and so does `vfs-py<0.2`. uv resolves the bare line to the newest alpha, because it judges "all versions are pre-release" per package. The pinned line installs the newest alpha under both. When `0.1.0` final ships, the bare line installs it under both and the pre-release marker can go.
 
-The `a1` matters. pip and uv hide pre-releases from any specifier that does not name one, so `vfs-py<0.2` matches no release until `0.1.0` final exists and pip answers "no matching distribution". The same rule means an alpha never reaches a project that pinned a final.
+An exact pin on a yanked version, `vfs-py==0.0.22`, still installs it, with a yank warning; that is the one escape hatch for an old project.
 
 ## Platforms
 

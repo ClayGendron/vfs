@@ -27,22 +27,22 @@ After `0.1.0`, the `0.x` rules:
 
 ## What a bare install gives
 
-These are the resolution rules of `packaging`, the library pip's finder uses (`SpecifierSet.filter` with `prereleases=None`), executed 2026-10-15 and re-executed 2026-11-06. They are why the `0.0.x` finals were yanked before the first alpha, and why the README's pin carries a pre-release marker.
+Executed 2026-11-06 with pip 25.3 and pip 26.3 and uv 0.13.6 against a local PEP 503 index holding a final marked `data-yanked` beside two alphas, the shape PyPI has during the alpha stage. An earlier table modelled with `packaging` alone said a bare install falls back to the alphas; `packaging` does not see yanks, and pip does. These rows are why the install line during the alpha stage carries the specifier, and why the install guide (`docs/how-to/install.md`) explains it.
 
-| Request | Candidates on the index | Result |
-|---|---|---|
-| `pip install vfs-py` | only alphas (finals yanked) | installs the newest alpha: the empty specifier falls back to pre-releases when no final exists |
-| `pip install vfs-py` | a final exists beside alphas | installs the final; alphas hidden |
-| `pip install "vfs-py<0.2"` | only alphas | **fails, no matching distribution**: a non-empty specifier without a pre-release marker never falls back |
-| `pip install "vfs-py>=0.1.0a1,<0.2"` | only alphas | installs the newest alpha: the `a1` in the specifier is the opt-in |
-| `pip install --pre vfs-py` | anything | installs the newest version of any kind |
-| `pip install vfs-py==0.0.22` | 0.0.22 yanked | installs it, with a yank warning: the exact pin is the one escape hatch |
+| Request | Candidates on the index | pip | uv |
+|---|---|---|---|
+| `pip install vfs-py` | alphas beside a yanked final | **fails**: "Ignored the following yanked versions: 0.0.22", then "No matching distribution". pip counts the yanked final when deciding whether pre-releases are allowed, then drops it | installs the newest alpha: uv judges "all versions are pre-release" per package |
+| `pip install vfs-py` | a final exists beside alphas | installs the final; alphas hidden | the same |
+| `pip install "vfs-py<0.2"` | alphas beside a yanked final | **fails** the same way | installs the newest alpha |
+| `pip install "vfs-py>=0.1.0a1,<0.2"` | alphas beside a yanked final | installs the newest alpha: the `a1` in the specifier is the opt-in | the same |
+| `pip install --pre vfs-py` | anything | installs the newest version of any kind | the same |
+| `pip install vfs-py==0.0.22` | 0.0.22 yanked | installs it, with a yank warning: the exact pin is the one escape hatch | the same |
 
-uv's default pre-release strategy is `if-necessary-or-explicit`, which reaches the same answers for the first two rows and the fourth, and resolves the third row too (uv judges "all versions are pre-release" per package, not per specifier). uv skips yanked versions unless the pin is `==`, like pip.
+So, until `0.1.0` final exists, the install line in the README and the guide is `pip install "vfs-py>=0.1.0a1,<0.2"`: it installs and pins in one line under both installers. When the final ships, the bare line works under both and the marker can go.
 
 ## Permanent facts of the lane
 
-- **The publish matrix builds five wheels and an sdist**: manylinux 2_28 on x86_64 and aarch64, macOS arm64 and x86_64, Windows x64, one wheel per platform on `abi3-py311`. No musl wheel: `sqlite-vec`, a core dependency, ships no musl wheel and no sdist, so `pip install vfs-py` on Alpine fails resolution whatever vfs publishes, and the README's install section says so. The two musllinux jobs return when `sqlite-vec` publishes a musl wheel.
+- **The publish matrix builds five wheels and an sdist**: manylinux 2_28 on x86_64 and aarch64, macOS arm64 and x86_64, Windows x64, one wheel per platform on `abi3-py311`. No musl wheel: `sqlite-vec`, a core dependency, ships no musl wheel and no sdist, so `pip install vfs-py` on Alpine fails resolution whatever vfs publishes, and the install guide (`docs/how-to/install.md`) says so. The two musllinux jobs return when `sqlite-vec` publishes a musl wheel.
 - **No release after a change to `publish.yml` without a `workflow_dispatch` run of it from `main` first.** The dispatch builds every wheel and the sdist and uploads nothing, so the matrix is proven before a tag exists. The first such run, `42326517501` on 2026-11-06, found a grammar crate that could not build under MSVC and a cache step that failed four green builds; the fixes landed before any tag.
 - **The workflow runs no tests.** It trusts `main` is green (step 2). It does check the tag: every job runs `scripts/check_release_tag.py` right after checkout and `setup-uv`, which fails the release unless the tag equals `v` + the project version, so a release cut before the bump commit cannot rebuild the old number.
 - **The sdist is not a slim-image path.** `pyproject.toml` requires `maturin>=1.8.4`, the first version whose sdist build bootstraps Rust, but the tree-sitter crates need a C compiler regardless.

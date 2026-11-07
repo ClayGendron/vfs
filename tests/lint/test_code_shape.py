@@ -98,6 +98,9 @@ def test_the_readme_tells_the_truth_after_the_yank() -> None:
     readme = (REPO / "README.md").read_text()
     assert "previous-generation API" not in readme, "the README still says PyPI ships the previous-generation API"
     assert "0.0.22" not in readme, "the README still names the yanked release"
+    # Under pip a bare install fails while a yanked final sits beside the alphas; the install line is the pin.
+    assert 'pip install "vfs-py>=0.1.0a1,<0.2"' in readme, "the README's install line lacks the pre-release marker"
+    assert "pip install vfs-py\n" not in readme, "the README shows the bare install line, which fails under pip"
     guide = (REPO / "docs" / "how-to" / "install.md").read_text()
     assert "vfs-py>=0.1.0a1,<0.2" in guide, "the install guide gives no pin with a pre-release marker"
     assert "python:3.13-slim" in guide, "the install guide does not name a glibc image for the Alpine note"

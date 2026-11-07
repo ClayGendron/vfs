@@ -47,7 +47,7 @@ def _workflow(name: str) -> dict[str, Any]:
 
 
 def test_the_publish_workflow_runs_the_check_first_in_every_job() -> None:
-    """Removing the step from one job, or ordering it after a build step, or restoring macos-13, fails here."""
+    """A job without the check, a check after a build, macos-13 back, or the uv cache back on: each fails here."""
     workflow = _workflow("publish.yml")
     # PyYAML reads the bare key `on` as the boolean True.
     triggers = workflow.get("on", workflow.get(True))
