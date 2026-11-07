@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
@@ -111,6 +113,9 @@ from vfs.storage import (
     TransportError,
 )
 from vfs.storage.backends.database.descent import TRASHED_KEY
+from vfs.storage.backends.database.dialects import byte_chunked
+from vfs.storage.backends.database.grep import CONTENT_BYTE_BUDGET, WALL_TIME_BUDGET, WALL_TIME_CAUSE
+from vfs.storage.backends.database.offload import OFFLOAD_WORKERS, call_offloaded
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
@@ -119,7 +124,7 @@ if TYPE_CHECKING:
 
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
-    from vfs.pattern_matching import GrepHit
+    from vfs.pattern_matching import ContentMatcher, GrepHit
     from vfs.permissions import PermissionsPayload
     from vfs.storage.grants import GrantLevel, Posture
 
@@ -134,6 +139,9 @@ _BUSY_GUARDED_OPS: frozenset[Op] = frozenset({"delete", "restore", "sweep"})
 # The router's own control-plane storage calls (bind-site probes, the
 # mount-point mkdir and rmdir) run as the system actor, not as any caller.
 _ADMIN_AUTHORITY: Final = Authority.system()
+
+# Chained grep's truncation advice: a chained call cannot take paths, so it never says to scope with them.
+_CHAINED_REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or send fewer rows"
 
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
@@ -396,6 +404,7 @@ class AsyncVirtualFileSystem:
         self._default_authority = default_authority
         self._mount_lock = asyncio.Lock()
         self._stranded_disposals: dict[int, StorageBackend] = {}
+        self._verify_pool: ThreadPoolExecutor | None = None
         root_meta = MountMeta(
             permission_map=coerce_permissions(permissions),
             no_overlay=no_overlay,
@@ -673,6 +682,10 @@ class AsyncVirtualFileSystem:
             bindings = list(self._bindings.values())
             self._bindings = {}
             self._sorted_mount_paths = []
+            # Shut before any await: a grep holding the pool serves its remaining batches inline.
+            if self._verify_pool is not None:
+                self._verify_pool.shutdown(wait=False)
+                self._verify_pool = None
 
         targets = dict(self._stranded_disposals)
         for binding in bindings:
@@ -1398,7 +1411,10 @@ class AsyncVirtualFileSystem:
         each row's own entry, classifying loudly) only for rows that
         lack it, and a row whose known kind carries no content never
         matches. The index tier is not involved, so *allow_scan* and
-        the refusal gate do not apply.
+        the refusal gate do not apply. Each distinct body is matched
+        once, in batches on the router's own worker pool, under the
+        storage tier's wall-time budget; a call that reaches it returns
+        the matches found so far and one ``truncated`` warning.
 
         *max_count* caps matches **per file** (ripgrep's ``-m``), not the
         row count — a fan-out returns one row per matching file regardless.
@@ -1901,6 +1917,8 @@ class AsyncVirtualFileSystem:
         index tier is never involved, so the refusal gate and
         ``allow_scan`` have no meaning on this path.
         """
+        # Taken before any await, so a close() landing later can never leave a fresh pool behind.
+        pool = self._verify_executor()
         rows, invalid = self._observation_rows("grep", observations)
         if invalid is not None:
             return invalid
@@ -1926,21 +1944,82 @@ class AsyncVirtualFileSystem:
             text = row.content if row.content is not None else contents.get(str(row.path))
             if text is not None:
                 texted.append((row, text))
-        hits = match_texts(
-            [(row.path, text) for row, text in texted],
+        unique: dict[tuple[str, str], int] = {}
+        bodies: list[tuple[Path, str]] = []
+        for row, text in texted:
+            key = (str(row.path), text)
+            if key not in unique:
+                unique[key] = len(bodies)
+                bodies.append((row.path, text))
+        hits, truncation = await self._match_in_hand(
+            bodies,
             verifier,
+            pool,
             invert=invert_match,
             before=before_context,
             after=after_context,
             mode=output_mode,
             cap=max_count,
         )
-        matched = [
-            self._hit_row(row, text, hit, mode=output_mode, columns=columns)
-            for (row, text), hit in zip(texted, hits, strict=True)
-            if hit is not None
-        ]
+        matched = []
+        for row, text in texted:
+            hit = hits[unique[(str(row.path), text)]]
+            if hit is not None:
+                matched.append(self._hit_row(row, text, hit, mode=output_mode, columns=columns))
+        errors.extend(truncation)
         return Result(ops=("grep",), observations=matched, errors=errors)
+
+    def _verify_executor(self) -> ThreadPoolExecutor:
+        """The router's chained-grep verify pool, made on first use and shut by :meth:`close`."""
+        if self._verify_pool is None:
+            self._verify_pool = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-verify")
+        return self._verify_pool
+
+    @staticmethod
+    async def _match_in_hand(
+        bodies: list[tuple[Path, str]],
+        verifier: ContentMatcher,
+        pool: ThreadPoolExecutor,
+        *,
+        invert: bool,
+        before: int,
+        after: int,
+        mode: GrepOutputMode,
+        cap: int | None,
+    ) -> tuple[list[GrepHit | None], list[ResultError]]:
+        """Each distinct body's hit, in byte batches on the router's pool, under one wall.
+
+        The deadline is absolute and the budget is cut at worker start, so
+        time queued for a thread shortens it. Batches are metered in
+        characters, an ASCII-dominant proxy, as the reindex batchers are.
+        A wall passed before a batch, or a batch the matcher could not
+        finish, stops matching with one truncation warning.
+        """
+        deadline = monotonic() + WALL_TIME_BUDGET
+        hits: list[GrepHit | None] = []
+        finished = True
+        for batch in byte_chunked(range(len(bodies)), lambda index: len(bodies[index][1]), CONTENT_BYTE_BUDGET):
+            if monotonic() > deadline:
+                finished = False
+                break
+            texts = [bodies[index] for index in batch]
+
+            def work(texts: list[tuple[Path, str]] = texts) -> tuple[list[GrepHit | None], bool]:
+                budget = max(0.0, deadline - monotonic())
+                return match_texts(
+                    texts, verifier, invert=invert, before=before, after=after, mode=mode, cap=cap, budget=budget
+                )
+
+            found, completed = await call_offloaded(pool, work)
+            hits.extend(found)
+            if not completed:
+                finished = False
+                break
+        if finished:
+            return hits, []
+        hits.extend([None] * (len(bodies) - len(hits)))
+        detail = f"at the {WALL_TIME_CAUSE}; {_CHAINED_REFINE_GUIDANCE}"
+        return hits, [classified(ErrorKind.truncated, severity=Severity.warning, detail=detail)]
 
     @staticmethod
     def _hit_row(
@@ -1965,7 +2044,8 @@ class AsyncVirtualFileSystem:
             update["content"] = text
             populated.add("content")
         if hit.matches is not None:
-            update["matches"] = hit.matches
+            # A copy per row: rows sharing one body never share a mutable list.
+            update["matches"] = list(hit.matches)
             populated.add("matches")
         if hit.score is not None:
             update["score"] = hit.score

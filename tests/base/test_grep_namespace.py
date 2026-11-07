@@ -8,17 +8,22 @@ seam as composed pattern text.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
+from vfs import base as base_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
 from vfs.params import INT_CEILING
 from vfs.paths import Path
-from vfs.results import ErrorKind
+from vfs.results import ErrorKind, Result
+from vfs.results.kinds import Severity
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -322,3 +327,283 @@ async def test_the_ceiling_itself_is_served_on_the_live_engine() -> None:
     result = await fs.grep("needle", before_context=INT_CEILING, after_context=INT_CEILING, max_count=INT_CEILING)
     assert result.success is True
     assert sorted(result.paths) == ["/data/a.txt", "/data/deep/b.py", "/notes.txt"]
+
+
+# ----------------------------------------------------------------------
+# Chained verification — once per distinct body, off the loop, under a wall
+# ----------------------------------------------------------------------
+
+
+class _CountingVerifier:
+    """Wraps the real verifier, recording each batch's bodies; can report one batch unfinished."""
+
+    def __init__(self, inner: Any, *, unfinished_batch: int | None = None) -> None:
+        self._inner = inner
+        self.batches: list[list[Any]] = []
+        self._unfinished = unfinished_batch
+
+    def _record(self, texts: Any, answer: tuple[Any, bool]) -> tuple[Any, bool]:
+        self.batches.append(list(texts))
+        if self._unfinished is not None and len(self.batches) - 1 == self._unfinished:
+            return answer[0], False
+        return answer
+
+    def count_lines(self, texts: Any, **kwargs: Any) -> tuple[Any, bool]:
+        return self._record(texts, self._inner.count_lines(texts, **kwargs))
+
+    def hit_lines(self, texts: Any, **kwargs: Any) -> tuple[Any, bool]:
+        return self._record(texts, self._inner.hit_lines(texts, **kwargs))
+
+
+def _counting_verifiers(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> list[_CountingVerifier]:
+    made: list[_CountingVerifier] = []
+    real = base_module.compile_verifier
+
+    def compile_counted(*args: Any, **kw: Any) -> _CountingVerifier:
+        verifier = _CountingVerifier(real(*args, **kw), **kwargs)
+        made.append(verifier)
+        return verifier
+
+    monkeypatch.setattr(base_module, "compile_verifier", compile_counted)
+    return made
+
+
+def _counted_hops(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    pools: list[Any] = []
+    real = base_module.call_offloaded
+
+    async def counted(executor: Any, work: Any) -> Any:
+        pools.append(executor)
+        return await real(executor, work)
+
+    monkeypatch.setattr(base_module, "call_offloaded", counted)
+    return pools
+
+
+def _held(*pairs: tuple[str, str]) -> list[Observation]:
+    return [Observation(path=Path(path), kind="file", content=content) for path, content in pairs]
+
+
+async def test_chained_grep_verifies_each_distinct_body_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    made = _counting_verifiers(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=_held(*[("/a.txt", "x\n")] * 1_000))
+    assert len(result.observations) == 1_000
+    [verifier] = made
+    assert sum(len(batch) for batch in verifier.batches) == 1
+
+
+async def test_chained_grep_matches_in_byte_batches_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 10)
+    pools = _counted_hops(monkeypatch)
+    default = _CountingExecutor()
+    asyncio.get_running_loop().set_default_executor(default)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    rows = _held(*[(f"/{i}.txt", f"x{i:07d}") for i in range(5)])
+    result = await fs.grep("x", observations=rows)
+    assert len(result.observations) == 5
+    assert len(pools) == 5
+    assert all(pool is fs._verify_pool for pool in pools)
+    assert default.submitted == 0
+    await fs.close()
+
+
+async def test_chained_grep_truncates_at_the_wall(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    pools = _counted_hops(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=_held(("/a", "x"), ("/b", "x"), ("/c", "x")))
+    assert result.observations == []
+    [error] = result.errors
+    assert error.kind is ErrorKind.truncated and error.severity is Severity.warning
+    assert error.message == (
+        "Truncated: at the wall-time budget; narrow the pattern, add globs or ext filters, or send fewer rows"
+    )
+    assert pools == []
+
+
+async def test_a_batch_the_matcher_could_not_finish_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 1)
+    made = _counting_verifiers(monkeypatch, unfinished_batch=0)
+    pools = _counted_hops(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=_held(("/a", "x"), ("/b", "x")))
+    assert [str(o.path) for o in result.observations] == ["/a"]
+    assert [e.kind for e in result.errors] == [ErrorKind.truncated]
+    assert len(pools) == 1 and len(made[0].batches) == 1
+    await fs.close()
+
+
+async def test_chained_grep_dedupes_without_reordering_or_aliasing(monkeypatch: pytest.MonkeyPatch) -> None:
+    made = _counting_verifiers(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    rows = _held(("/a", "x"), ("/b", "y"), ("/a", "x"), ("/a", "xx"))
+    result = await fs.grep("x", observations=rows)
+    assert [str(o.path) for o in result.observations] == ["/a", "/a", "/a"]
+    third = result.observations[2].matches
+    assert third is not None and third[0].content == "xx"
+    assert sum(len(batch) for batch in made[0].batches) == 3
+    lists = [o.matches for o in result.observations]
+    assert len({id(matches) for matches in lists}) == 3
+    await fs.close()
+
+
+async def test_close_shuts_the_verify_pool_and_a_closed_router_makes_none() -> None:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.grep("x", observations=_held(("/a", "x")))
+    pool = fs._verify_pool
+    assert pool is not None
+    await fs.close()
+    assert fs._verify_pool is None
+    with pytest.raises(RuntimeError):
+        pool.submit(int)
+    closed = await fs.grep("x", observations=_held(("/a", "x")))
+    assert [e.kind for e in closed.errors] == [ErrorKind.backend_unavailable]
+    assert fs._verify_pool is None
+
+
+async def test_close_shuts_the_verify_pool_with_nothing_to_dispose() -> None:
+    # RecorderStorage exposes no close, so close() finds nothing to dispose and returns early.
+    fs = AsyncVirtualFileSystem(storage=RecorderStorage())
+    await fs.grep("x", observations=_held(("/a", "x")))
+    pool = fs._verify_pool
+    assert pool is not None
+    await fs.close()
+    assert fs._verify_pool is None
+    with pytest.raises(RuntimeError):
+        pool.submit(int)
+
+
+async def test_a_chained_grep_racing_close_makes_no_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 1)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    pools: list[Any] = []
+    real = base_module.call_offloaded
+
+    async def close_after_first(executor: Any, work: Any) -> Any:
+        pools.append(executor)
+        answer = await real(executor, work)
+        if len(pools) == 1:
+            await fs.close()
+        return answer
+
+    monkeypatch.setattr(base_module, "call_offloaded", close_after_first)
+    result = await fs.grep("x", observations=_held(("/a", "x"), ("/b", "x")))
+    assert [str(o.path) for o in result.observations] == ["/a", "/b"]
+    assert len(pools) == 2 and pools[0] is pools[1]
+    assert fs._verify_pool is None
+
+
+async def test_a_chained_grep_closed_during_its_read_makes_no_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+
+    async def closing_read(*args: Any, **kwargs: Any) -> Result:
+        await fs.close()
+        return Result(ops=("read",))
+
+    monkeypatch.setattr(fs, "read", closing_read)
+    rows = [*_held(("/a", "x")), Observation(path=Path("/b"), kind="file")]
+    result = await fs.grep("x", observations=rows)
+    assert [str(o.path) for o in result.observations] == ["/a"]
+    assert fs._verify_pool is None
+
+
+@pytest.mark.parametrize("mode", ["lines", "files"])
+async def test_each_batch_gets_the_wall_budget_cut_at_worker_start(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    # A fake clock: the deadline is read at 100, the batch check at 101, the worker starts at 103.
+    ticks = iter([100.0, 101.0, 103.0])
+    monkeypatch.setattr(base_module, "monotonic", lambda: next(ticks))
+    budgets: list[float | None] = []
+
+    class Recording:
+        def count_lines(self, texts: Any, **kwargs: Any) -> tuple[list[int], bool]:
+            budgets.append(kwargs["budget"])
+            return [1 for _ in texts], True
+
+        def hit_lines(self, texts: Any, **kwargs: Any) -> tuple[list[list[Any]], bool]:
+            budgets.append(kwargs["budget"])
+            return [[(1, 1, 1, "x")] for _ in texts], True
+
+    monkeypatch.setattr(base_module, "compile_verifier", lambda *a, **k: Recording())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=_held(("/a", "x")), output_mode=mode)  # ty: ignore[invalid-argument-type]
+    assert len(result.observations) == 1
+    assert budgets == [base_module.WALL_TIME_BUDGET - 3.0]
+    await fs.close()
+
+
+async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    started, release = threading.Event(), threading.Event()
+    finished: list[bool] = []
+    real = base_module.compile_verifier
+
+    class Held:
+        def __init__(self) -> None:
+            self._inner = real("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+
+        def hit_lines(self, texts: Any, **kwargs: Any) -> tuple[Any, bool]:
+            started.set()
+            release.wait()
+            finished.append(True)
+            return self._inner.hit_lines(texts, **kwargs)
+
+    monkeypatch.setattr(base_module, "compile_verifier", lambda *a, **k: Held())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    task = asyncio.create_task(fs.grep("x", observations=_held(("/a", "x"))))
+    await asyncio.to_thread(started.wait)
+    # A safety release, so a close() that waits on the worker fails this test instead of hanging it.
+    safety = threading.Timer(5.0, release.set)
+    safety.start()
+    await fs.close()
+    assert finished == []
+    release.set()
+    safety.cancel()
+    result = await task
+    assert [str(o.path) for o in result.observations] == ["/a"]
+
+
+async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One worker: grep a's batch holds it, grep b's batch waits in the queue when close() lands.
+    monkeypatch.setattr(base_module, "OFFLOAD_WORKERS", 1)
+    started, release = threading.Event(), threading.Event()
+    real = base_module.compile_verifier
+
+    class HeldOnce:
+        def __init__(self, pattern: str, **kwargs: Any) -> None:
+            self._inner = real(pattern, **kwargs)
+            self._hold = pattern == "a"
+
+        def hit_lines(self, texts: Any, **kwargs: Any) -> tuple[Any, bool]:
+            if self._hold:
+                started.set()
+                release.wait()
+            return self._inner.hit_lines(texts, **kwargs)
+
+    monkeypatch.setattr(base_module, "compile_verifier", HeldOnce)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    first = asyncio.create_task(fs.grep("a", observations=_held(("/a", "a"))))
+    await asyncio.to_thread(started.wait)
+    second = asyncio.create_task(fs.grep("b", observations=_held(("/b", "b"))))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    # A safety release, so a close() that waits on the worker fails this test instead of hanging it.
+    safety = threading.Timer(5.0, release.set)
+    safety.start()
+    await fs.close()
+    assert not release.is_set()
+    release.set()
+    safety.cancel()
+    results = await asyncio.gather(first, second)
+    assert [[str(o.path) for o in r.observations] for r in results] == [["/a"], ["/b"]]
+
+
+class _CountingExecutor(ThreadPoolExecutor):
+    """The loop's default executor, counting what reaches it."""
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=2)
+        self.submitted = 0
+
+    def submit(self, *args: Any, **kwargs: Any) -> Any:
+        self.submitted += 1
+        return super().submit(*args, **kwargs)

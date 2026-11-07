@@ -22,8 +22,8 @@ The readable ``re``-based reference matcher is a test oracle
 
     verifier = compile_verifier("needle", fixed_strings=False,
                                 word_regexp=False, case_mode="smart")
-    hits = match_texts(texts, verifier, invert=False, before=0,
-                       after=0, mode="lines", cap=None)
+    hits, completed = match_texts(texts, verifier, invert=False, before=0,
+                                  after=0, mode="lines", cap=None)
 """
 
 from __future__ import annotations
@@ -238,31 +238,36 @@ def match_texts(
     after: int,
     mode: GrepOutputMode,
     cap: int | None,
-) -> list[GrepHit | None]:
+    budget: float | None = None,
+) -> tuple[list[GrepHit | None], bool]:
     """Verify each ``(path, text)`` pair; aligned with *texts*, ``None`` per miss.
 
     The batch form of :func:`verify` for callers holding content rather
     than enumerating storage — one engine call for the whole batch, so
     the core parallelizes across bodies. Alignment (not hits-only) is
     deliberate: duplicate paths with differing texts stay unambiguous.
+    *budget* is wall seconds handed to the matcher, which skips bodies
+    started past it; the flag says whether every body was verified.
     """
     bodies = [text for _, text in texts]
     results: list[GrepHit | None] = []
     if mode in ("files", "count"):
-        counts, _ = verifier.count_lines(bodies, cap=1 if mode == "files" else cap, invert=invert, budget=None)
+        counts, completed = verifier.count_lines(
+            bodies, cap=1 if mode == "files" else cap, invert=invert, budget=budget
+        )
         for (path, _), count in zip(texts, counts, strict=True):
             if not count:
                 results.append(None)
             else:
                 results.append(GrepHit(path, None, float(count) if mode == "count" else None))
-        return results
-    rows, _ = verifier.hit_lines(bodies, before=before, after=after, cap=cap, invert=invert, budget=None)
+        return results, completed
+    rows, completed = verifier.hit_lines(bodies, before=before, after=after, cap=cap, invert=invert, budget=budget)
     for (path, _), spans in zip(texts, rows, strict=True):
         if not spans:
             results.append(None)
         else:
             results.append(GrepHit(path, [Match(start=s, end=e, match=m, content=c) for s, e, m, c in spans], None))
-    return results
+    return results, completed
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@ alignment guarantee.
 
 from __future__ import annotations
 
+from typing import Any
+
 from vfs.paths import Path
 from vfs.pattern_matching import ContentMatcher, compile_verifier, filter_candidates, match_texts, split_lines, verify
 
@@ -65,14 +67,41 @@ class TestVerifyAndMatchTexts:
         # texts stay unambiguous because misses hold their slot.
         verifier = compile_verifier("needle", fixed_strings=False, word_regexp=False, case_mode="sensitive")
         texts = [(Path("/a"), "no hit"), (Path("/a"), "a needle"), (Path("/b"), "needle")]
-        results = match_texts(texts, verifier, invert=False, before=0, after=0, mode="files", cap=None)
+        results, _completed = match_texts(texts, verifier, invert=False, before=0, after=0, mode="files", cap=None)
         assert results[0] is None
         assert results[1] is not None and results[1].path == "/a"
         assert results[2] is not None and results[2].path == "/b"
 
+    def test_match_texts_reports_whether_it_finished(self) -> None:
+        verifier = compile_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+        texts = [(Path("/a"), "x"), (Path("/b"), "x")]
+        assert match_texts(texts, verifier, invert=False, before=0, after=0, mode="lines", cap=None)[1] is True
+        seen: list[float | None] = []
+
+        class Spy:
+            def hit_lines(self, bodies: Any, **kwargs: Any) -> tuple[list[list[Any]], bool]:
+                seen.append(kwargs["budget"])
+                return [[] for _ in bodies], False
+
+        hits, completed = match_texts(texts, Spy(), invert=False, before=0, after=0, mode="lines", cap=None, budget=0.5)  # ty: ignore[invalid-argument-type]
+        assert (hits, completed, seen) == ([None, None], False, [0.5])
+
+        class CountSpy:
+            def count_lines(self, bodies: Any, **kwargs: Any) -> tuple[list[int], bool]:
+                seen.append(kwargs["budget"])
+                return [1 for _ in bodies], False
+
+        spy: Any = CountSpy()
+        counted, finished = match_texts(
+            texts, spy, invert=False, before=0, after=0, mode="files", cap=None, budget=0.25
+        )
+        assert finished is False and seen[-1] == 0.25 and all(hit is not None for hit in counted)
+
     def test_count_mode_reports_the_capped_hit_count_on_score(self) -> None:
         verifier = compile_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
-        [hit] = match_texts([(Path("/a"), "x\nx\nx")], verifier, invert=False, before=0, after=0, mode="count", cap=2)
+        [hit], _completed = match_texts(
+            [(Path("/a"), "x\nx\nx")], verifier, invert=False, before=0, after=0, mode="count", cap=2
+        )
         assert hit is not None
         assert (hit.matches, hit.score) == (None, 2.0)
 

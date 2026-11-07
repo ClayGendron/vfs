@@ -121,6 +121,9 @@ CANDIDATE_BUDGET: Final = 25_000
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
 WALL_TIME_BUDGET: Final = 10.0
 
+# The wall's cause in a truncation record, shared with the router's chained grep.
+WALL_TIME_CAUSE: Final = "wall-time budget"
+
 # Bytes of candidate bodies resident at once: content is fetched,
 # verified, and released in batches sized by the entries' size_bytes.
 CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
@@ -261,8 +264,8 @@ async def grep_rows(
                 view is None or view.holds(mapping, view.need)
             ):
                 candidates[mapping["path"]] = mapping
-    if monotonic() > deadline and "wall-time budget" not in truncations:
-        truncations.append("wall-time budget")
+    if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
+        truncations.append(WALL_TIME_CAUSE)
 
     skip_verified = False
     if not truncations or truncations == ["candidate budget"]:
@@ -303,8 +306,8 @@ async def grep_rows(
                         view is None or view.holds(mapping, view.need)
                     ):
                         candidates.setdefault(mapping["path"], mapping)
-    if monotonic() > deadline and "wall-time budget" not in truncations:
-        truncations.append("wall-time budget")
+    if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
+        truncations.append(WALL_TIME_CAUSE)
     if not scan_all and not skip_verified and await current_epoch(session, tables) != epoch:
         # A rival publish+reclaim landed mid-call: the tiers this call
         # read are a mix of epochs. Redrive whole from a fresh session.
@@ -328,8 +331,8 @@ async def grep_rows(
     verify = VerifyOffload(verifier, executor)
     for batch in byte_chunked(ordered, _content_size, CONTENT_BYTE_BUDGET):
         if monotonic() > deadline:
-            if "wall-time budget" not in truncations:
-                truncations.append("wall-time budget")
+            if WALL_TIME_CAUSE not in truncations:
+                truncations.append(WALL_TIME_CAUSE)
             break
         ids = [m["entry_id"] for m in batch]
         contents = await content_for_entries(session, tables, profile, membership_budget, ids)
@@ -361,8 +364,8 @@ async def grep_rows(
         if not completed:
             # The matcher hit the wall mid-batch: bodies it never reached
             # are unverified, so the record must say so loudly.
-            if "wall-time budget" not in truncations:
-                truncations.append("wall-time budget")
+            if WALL_TIME_CAUSE not in truncations:
+                truncations.append(WALL_TIME_CAUSE)
             break
     for reason in truncations:
         detail = f"at the {reason}; {_REFINE_GUIDANCE}"

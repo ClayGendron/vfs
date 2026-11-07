@@ -12,8 +12,10 @@ hop (submit, await, and the close-window inline fallback), and
 :class:`~vfs.pattern_matching.ContentMatcher` over it so each
 per-batch ``count_lines``/``hit_lines`` call runs on a worker thread
 while the loop keeps ticking. Engines stay synchronous and
-thread-ignorant: this seam and the router's body-measure hop (a large
-write's sha256 on the loop's default executor, ``vfs.base``) are the
+thread-ignorant: this seam, the router's body-measure hop (a large
+write's sha256 on the loop's default executor, ``vfs.base``) and the
+router's chained-grep verify pool (``OFFLOAD_WORKERS`` threads of its
+own, shut by its ``close``, riding :func:`call_offloaded`) are the
 tree's only deliberate threads — declared exceptions, owned there.
 
 Four laws govern the hop:
@@ -32,9 +34,10 @@ Four laws govern the hop:
   (a module constant, 32 MiB) *or one body, whichever is larger* — the
   batcher's singleton exemption sends an oversized body through alone.
   grep meters that budget in exact stored bytes; the reindex batchers
-  riding the same hop meter characters as a declared ASCII-dominant
-  proxy, so an abandoned reindex batch can hold up to 4x the budget
-  in folded bytes on CJK or emoji corpora (measured 3.00x/4.00x).
+  and the router's chained grep riding the same hop meter characters
+  as a declared ASCII-dominant proxy, so an abandoned batch of theirs
+  can hold up to 4x the budget in UTF-8 bytes on CJK or emoji text
+  (measured 3.00x/4.00x).
   write's measurement hop holds the call's own bodies, which its
   caller already holds; an abandoned edit hop finishes matching its
   remaining targets, holding one worker for up to its targets times the
@@ -85,7 +88,7 @@ OFFLOAD_WORKERS: Final = os.cpu_count() or 1
 
 
 async def call_offloaded(executor: Executor, work: Callable[[], T]) -> T:
-    """Run *work* on the backend's pool; the loop keeps ticking meanwhile.
+    """Run *work* on *executor*, a backend's pool or the router's verify pool; the loop keeps ticking.
 
     The one hop every offloaded stage takes. A pool shut by ``close()``
     serves the work inline — and a call that captured the pool serves
