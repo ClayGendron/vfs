@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.8,<2.0"]
+requires = ["maturin>=1.8.4,<2.0"]
 build-backend = "maturin"
 
 # Pendulum-model mixed layout: the complete pure-Python implementation under
@@ -79,6 +79,8 @@ dev = [
     # the root conftest runs the README and docs fences through Sybil
     "sybil>=9",
     "pytest-xdist>=3.6",
+    # scripts/bump_version.py parses and orders versions with it
+    "packaging>=24",
 ]
 docs = [
     "mkdocs-material>=9.0",

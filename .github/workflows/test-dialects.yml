@@ -28,7 +28,9 @@ on:
 
 jobs:
   conformance:
-    runs-on: ubuntu-latest
+    # The ODBC step installs from Microsoft's Ubuntu 24.04 feed; the runner
+    # is pinned to the same release so the two never drift apart.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -59,10 +61,12 @@ jobs:
           docker compose -f docker/compose.test.yml
           up -d --wait --wait-timeout 300 ${{ matrix.dialect }}
 
+      # The feed's list verifies against this one keyring (its signed-by), so
+      # both of Microsoft's signing keys go there, whichever signs the feed.
       - name: Install ODBC driver
         if: matrix.dialect == 'mssql'
         run: |
-          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc >/dev/null
+          { curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor; curl -fsSL https://packages.microsoft.com/keys/microsoft-2025.asc | gpg --dearmor; } | sudo tee /usr/share/keyrings/microsoft-prod.gpg >/dev/null
           curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list >/dev/null
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
