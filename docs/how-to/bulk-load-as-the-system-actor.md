@@ -22,7 +22,7 @@ Keep this filesystem object separate from the one your application serves. The s
 ## Declare the owner on each entry
 
 ```python
-from vfs.models import Entry
+from vfs import Entry
 
 rows = [
     Entry(path="/import/a.md", content="...", owner_id="alice"),
@@ -31,7 +31,12 @@ rows = [
 result = await etl.write(rows, parents=True)
 ```
 
-An entry with no `owner_id` gets no owner. Batches of ten thousand entries in one call are supported; the backend chunks the statements.
+An entry with no `owner_id` gets no owner. Batches of ten thousand entries in one call are supported, and any iterable will do: a generator costs the same statements as a list, because the router walks it once. The backend chunks the statements.
+
+```python
+result = await etl.write((Entry(path=f"/import/row-{i}.md", content="...") for i in range(3)), parents=True)
+assert result.success is True
+```
 
 ## Pass the system authority per call instead
 

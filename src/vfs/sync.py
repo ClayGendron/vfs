@@ -320,7 +320,7 @@ class VirtualFileSystem:
 
     def write(
         self,
-        entries: Sequence[Entry] | None = None,
+        entries: Iterable[Entry] | None = None,
         *,
         path: str | None = None,
         content: str | None = None,
@@ -805,7 +805,7 @@ class Session:
 
     def write(
         self,
-        entries: Sequence[Entry] | None = None,
+        entries: Iterable[Entry] | None = None,
         *,
         path: str | None = None,
         content: str | None = None,

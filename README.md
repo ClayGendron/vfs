@@ -29,8 +29,7 @@ A `VirtualFileSystem` node routes a namespace. Give it a storage backend and it 
 Synchronous, for scripts and notebooks:
 
 ```python
-from vfs import VirtualFileSystem
-from vfs.storage.backends import DatabaseStorage
+from vfs import DatabaseStorage, VirtualFileSystem
 
 with VirtualFileSystem() as root:
     root.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), "/knowledge")
@@ -118,7 +117,7 @@ Chunks, edges, tools, and skills are ordinary entries: `ls` them, `grep` them, `
 A node *holds* its storage rather than *being* it. Backends implement small protocol families — reads, pattern search, ranked search, mutation, graph, run — and a backend claims only the families it genuinely supports. A node's `capabilities()` are derived from what its backend actually declares, so a partial backend (an MCP tool catalog that only does `ls`/`read`/`run`, a store without ranked search) is a first-class citizen, not a liar.
 
 ```python
-from vfs.storage.backends import InMemoryStorage
+from vfs import InMemoryStorage, VirtualFileSystem
 
 node = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
 assert {"read", "glob", "grep", "glean", "write"} <= node.capabilities()

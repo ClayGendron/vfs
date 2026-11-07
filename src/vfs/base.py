@@ -957,7 +957,7 @@ class AsyncVirtualFileSystem:
 
     async def write(
         self,
-        entries: Sequence[Entry] | None = None,
+        entries: Iterable[Entry] | None = None,
         *,
         path: str | None = None,
         content: str | None = None,
@@ -975,6 +975,12 @@ class AsyncVirtualFileSystem:
         the reindex pass derives). The single form is sugar: this gate
         constructs the validated :class:`Entry`, and storage only ever
         receives entries — raw content never crosses the storage seam.
+
+        *entries* is any iterable of :class:`Entry`, walked once here
+        into a list; each storage then receives its own depth-sorted
+        slice of it, never the iterable. An exception the iterable
+        raises while it is walked propagates to the caller unchanged;
+        nothing has been dispatched at that point.
 
         The parent chain must already exist as directories;
         ``parents=True`` mints the missing ancestors, ``mkdir -p`` style,
@@ -2594,7 +2600,7 @@ class AsyncVirtualFileSystem:
 
     async def _route_entry_batch(
         self,
-        entries: Sequence[Entry],
+        entries: Iterable[Entry],
         *,
         overwrite: bool = True,
         parents: bool = False,

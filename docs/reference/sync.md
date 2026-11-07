@@ -9,8 +9,7 @@ or explain. Structure MIRRORS the code. Accuracy is the whole job.
 Module `vfs.sync`, re-exported from `vfs`. Two classes: `VirtualFileSystem`, the synchronous twin of the kernel [`AsyncVirtualFileSystem`](api.md), and `Session`, the twin of [`AsyncSession`](session.md). Each twin method has the original's parameter names, kinds, defaults and order, and returns what the original returns.
 
 ```python
-from vfs import VirtualFileSystem
-from vfs.storage.backends.memory import InMemoryStorage
+from vfs import InMemoryStorage, VirtualFileSystem
 
 sync_fs = VirtualFileSystem(storage=InMemoryStorage())
 written = sync_fs.write(path="/notes/a.txt", content="hello", parents=True)
