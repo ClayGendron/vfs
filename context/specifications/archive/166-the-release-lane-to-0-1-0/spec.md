@@ -123,7 +123,7 @@ The order. The landing commit (the README, the standard, the workflow, the gramm
 
 ### 15. The install is proved on the slim image from the index, and the proof is recorded, not automated
 
-After the publish run, on `python:3.13-slim` for x86_64 and for aarch64 with no compiler and no Rust: `pip install "vfs-py>=0.1.0a1,<0.2"` installs `0.1.0a1` and `python -c "import vfs, vfs.native; print(vfs.__version__)"` prints `0.1.0a1`; `pip install vfs-py` and `pip install "vfs-py<0.2"` fail with the yanked-versions line and no matching distribution; `pip install vfs-py==0.0.22` installs with pip's yank warning; `uv pip install vfs-py` into a fresh venv installs `0.1.0a1`. Each proof runs as `docker run --rm --platform linux/amd64 python:3.13-slim sh -c '...'` and again with `--platform linux/arm64`, so the x86_64 leg runs under emulation on this arm64 machine; the digest recorded is each image's `RepoDigests` entry. The three commands and their last lines go in the landing notes with the image digests. Reason: the resolver table was executed against a local index that imitates PyPI, and the real index can differ from it in one way, a missed yank, so the first alpha checks the index itself; a workflow that installs from PyPI on every push would test the index, not the tree, and is not this spec's to add.
+After the publish run, on `python:3.13-slim` for x86_64 and for aarch64 with no compiler and no Rust: `pip install "vfs-py>=0.1.0a1,<0.2"` installs `0.1.0a1` and `python -c "import vfs, vfs.native; print(vfs.__version__)"` prints `0.1.0a1`; `pip install vfs-py` and `pip install "vfs-py<0.2"` fail with the yanked-versions line and no matching distribution; `pip install vfs-py==0.0.22` installs with pip's yank warning; `uv pip install vfs-py` into a fresh venv installs `0.1.0a1`. Each proof runs as `docker run --rm --platform linux/amd64 python:3.13-slim sh -c '...'` and again with `--platform linux/arm64`, so the x86_64 leg runs under emulation on this arm64 machine; the digest recorded is each image's `RepoDigests` entry. The commands and their last lines go in the landing notes with the image digests. Reason: the resolver table was executed against a local index that imitates PyPI, and the real index can differ from it in one way, a missed yank, so the first alpha checks the index itself; a workflow that installs from PyPI on every push would test the index, not the tree, and is not this spec's to add.
 
 ### 16. The tests pin the words, the matrix and the classifier
 
@@ -178,7 +178,29 @@ Counts and states, never clocks. 1 to 6 are pinned by tests on the tree; 7 to 12
 
 ## Landing notes
 
-Filled in at the landing: the dry-run id and the wheel sizes, the date of the yank, the release and publish run ids, the three install transcripts, and the `Changelog:` line.
+Landed 2026-11-06 on `main`, as slices each green on its own: the spec converted in place and its review (`f2348a3`), the build (`f1be473`), the code review's fixes (`f601f3e`), and the landing commit that carries these notes, the spec's move and both signed reviews. Reviewed before the build by [the spec review](../../../reviews/2026-11-06-the-release-lane-to-0-1-0-spec-review.md) (two Highs, one Medium and seven Lows in the first round; four signatures, the standing verdict "Fit to build" on `f601f3e` after decisions 10, 12 and then 2 and 10 changed on Clay's word) and before the landing by [the code review](../../../reviews/2026-11-06-the-release-lane-to-0-1-0-code-review.md) (one reviewer, lenses in order; one High and three Lows; the standing verdict "Lands" on `f601f3e`). Everything below is EXECUTED on this machine unless labelled otherwise.
+
+**The gate.** `scripts/ci.sh` on `f601f3e`: lint, format and types clean; 4,564 passed with coverage at 100% of 12,294 statements; the 44 docs examples passed; the wheel is 9 MB against the 50 MB budget. `cargo test -p vfs-core`: 62 passed. `vfs.native.structure_grammars()` answers 58 names and no `v`. The engine legs did not run: no storage code changed.
+
+**Tests first.** The four new tests were written and seen red on `4ec3611` before the code moved (the README and standards checks, the matrix shape, the cache flag); the classifier test was green at `0.0.22` by design, as decision 7 requires. The code reviewer reproduced four reds on the base files and killed seven hand mutations.
+
+**What the first dry run taught.** Run `42326517501` (a `workflow_dispatch` of `publish.yml` on `main` at 2026-11-07T01:54Z, before this landing) built six wheels of 8.2 to 8.7 MB and a 0.5 MB sdist and failed five jobs: Windows in `tree-sitter-v 0.0.4`'s build script, and four green builds in `setup-uv`'s cache post-step. Both repairs are decision 9 and landed in `f1be473`.
+
+**What the code review taught.** The resolver facts the spec stood on since 2026-10-15 were modelled with `packaging`, which does not see yanks. Against a local PEP 503 index with a yanked final beside two alphas, pip 25.3 and 26.3 fail a bare install and a `<0.2` specifier ("Ignored the following yanked versions", "No matching distribution"); uv 0.13.6 resolves both to the alpha. The reviewer and the author each reproduced it. Clay chose the install line `pip install "vfs-py>=0.1.0a1,<0.2"` for the alpha stage; decisions 2 and 10, the README, the install guide and the standard carry it.
+
+**Clay's words taken in this landing**, each recorded in the decision that carries it: the full audit before every release, alphas included (decision 12); no README banner and no pin line under the install block (decision 10); drop the V grammar rather than gate it (decision 9); the pinned install line (decision 10).
+
+**The criteria.** 1 to 6 are met at this landing and pinned by the node ids the criteria name (criterion 3 by two tests, where the spec first named one: the matrix rows got a test of their own, `test_the_publish_matrix_builds_the_five_wheels_a_host_can_install`). 7 to 12 are the release itself and are pending at this landing; they are recorded below by a context-only commit when the release is cut, as the code review's verdict allows.
+
+**Differences from the text above, each with its reason.** The matrix-row assertions live in a second test rather than inside the tag-check test, because a test with one subject reads and fails more clearly. The classifier test has a parametrized companion over ten versions beside the tree test, so the threshold rule is pinned independently of what `pyproject.toml` happens to say. The install guide's second section is titled *Why the specifier* rather than *Pin it*, because after the resolver finding the install line and the pin are the same line.
+
+**Follow-ups found, not done here.** The roadmap's section 13 state table and its R2 item 1 ("all eight jobs") read stale now that the matrix has six jobs; the table is a dated snapshot and is trued at R7. The V grammar returns when a version of `tree-sitter-v` builds under MSVC. `scripts/` stays outside the `ruff` and `ty` gates, as the plumbing noted.
+
+**Architecture pages:** none exist since 2026-10-31; nothing to redraw.
+
+**The release, pending.** The dry run after this landing, the full audit, the bump commit, the yank, the release, the publish run, the slim-image proofs and the trusted-publishing confirmation are recorded here when they happen.
+
+**Changelog:** Changed — the publish matrix builds five wheels (no musl; `sqlite-vec` ships none) and disables `setup-uv`'s cache; the `tree-sitter-v` grammar leaves the engine, so `.v` files chunk by the plain splitter; the README loses its banner and its install line carries the pre-release specifier; a how-to page explains how to install and pin during the alpha lane; the release standard carries the three-stage lane, the classifier thresholds, the executed resolver facts, `--prerelease` and the audit rule for pre-releases.
 
 ## One line
 
