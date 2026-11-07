@@ -597,6 +597,17 @@ async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.Monkey
     assert [[str(o.path) for o in r.observations] for r in results] == [["/a"], ["/b"]]
 
 
+async def test_wide_context_returns_each_line_once() -> None:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    body = "x\n" * 2_000
+    await fs.write(path="/w.txt", content=body)
+    result = await fs.grep("x", before_context=2_000, after_context=2_000, allow_scan=True)
+    [row] = result.observations
+    assert row.matches is not None and len(row.matches) == 2_000
+    assert sum(len(m.content or "") for m in row.matches) <= len(body)
+    await fs.close()
+
+
 class _CountingExecutor(ThreadPoolExecutor):
     """The loop's default executor, counting what reaches it."""
 

@@ -25,7 +25,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 10;
+const PROTOCOL_VERSION: u32 = 11;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 

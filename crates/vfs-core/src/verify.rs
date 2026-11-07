@@ -11,8 +11,13 @@
 //! scanned whole, and each match's enclosing line is recovered around it.
 //!
 //! Hits carry 1-based line numbers and the byte span of their context
-//! block (the hit line extended `before`/`after` line boundaries, clamped
-//! to the body). Inverted matching iterates lines and selects the
+//! region: the hit line extended up to `before`/`after` lines, clamped to
+//! the body and clipped at its neighbours, so a region never reaches back
+//! past the previous region's end nor forward into the next hit line. The
+//! regions of one body are disjoint, each holds its hit line, and together
+//! they cover what the unclipped windows would; a body's output is at most
+//! the body. After each hit line the search resumes past that line, so the
+//! hit scan reads each byte a bounded number of times. Inverted matching iterates lines and selects the
 //! non-matching ones — no occurrence scan can find non-matches. Batch
 //! entry points fan bodies across threads and honor a deadline between
 //! bodies, reporting whether every body was verified.
@@ -52,13 +57,22 @@ impl fmt::Display for PatternError {
 impl std::error::Error for PatternError {}
 
 /// One matched (or, inverted, unmatched) line: 1-based line numbers and the
-/// byte span of the context block covering lines `start_line..=end_line`.
+/// byte span of its context region, lines `start_line..=end_line`, clipped
+/// so the regions of one body never overlap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hit {
     pub start_line: u32,
     pub end_line: u32,
     pub match_line: u32,
     pub span: (usize, usize),
+}
+
+/// What one hit scan cost: regex searches run, and bytes scanned backward
+/// for line starts. Read by the tests; the public paths drop it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ScanCost {
+    searches: u64,
+    back_bytes: u64,
 }
 
 /// Batch results plus whether every body was verified before the deadline.
@@ -113,46 +127,67 @@ impl Matcher {
         cap: Option<u64>,
         invert: bool,
     ) -> Vec<Hit> {
-        let mut hits: Vec<Hit> = Vec::new();
+        let mut lines: Vec<(usize, usize, u32)> = Vec::new();
         self.each_hit_line(hay, invert, |ls, le, line_no| {
-            hits.push(extend_context(hay, ls, le, line_no, before, after));
-            cap.is_none_or(|cap| (hits.len() as u64) < cap)
+            lines.push((ls, le, line_no));
+            cap.is_none_or(|cap| (lines.len() as u64) < cap)
         });
+        let mut hits = Vec::with_capacity(lines.len());
+        let mut floor = 0usize;
+        for (index, &(ls, le, line_no)) in lines.iter().enumerate() {
+            // The region stops before the next hit line and starts after the previous region.
+            let ceiling = lines.get(index + 1).map_or(hay.len(), |next| next.0);
+            let hit = extend_context(hay, ls, le, line_no, before, after, floor, ceiling);
+            floor = hit.span.1 + 1;
+            hits.push(hit);
+        }
         hits
     }
 
     /// Drive `emit(line_start, line_end, line_no)` over each hit line in
     /// order; `emit` returns false to stop early.
-    fn each_hit_line(&self, hay: &[u8], invert: bool, mut emit: impl FnMut(usize, usize, u32) -> bool) {
+    fn each_hit_line(&self, hay: &[u8], invert: bool, emit: impl FnMut(usize, usize, u32) -> bool) {
+        self.scan_hit_lines(hay, invert, emit);
+    }
+
+    /// The hit scan with its cost. Each search starts at a line start and
+    /// resumes past the hit line it finds, so the searches cover disjoint
+    /// stretches and each backward scan stays inside its stretch.
+    fn scan_hit_lines(&self, hay: &[u8], invert: bool, mut emit: impl FnMut(usize, usize, u32) -> bool) -> ScanCost {
+        let mut cost = ScanCost::default();
         if invert {
             for (ls, le, line_no) in LineRanges::new(hay) {
+                cost.searches += 1;
                 if !self.regex.is_match(&hay[ls..le]) && !emit(ls, le, line_no) {
-                    return;
+                    break;
                 }
             }
-            return;
+            return cost;
         }
-        let mut last_start = usize::MAX;
+        let mut start = 0usize;
         let mut cursor = 0usize;
         let mut line_no = 1u32;
-        for found in self.regex.find_iter(hay) {
-            let ls = memrchr(b'\n', &hay[..found.start()]).map_or(0, |i| i + 1);
+        while start <= hay.len() {
+            cost.searches += 1;
+            let Some(found) = self.regex.find_at(hay, start) else {
+                break;
+            };
+            cost.back_bytes += (found.start() - start) as u64;
+            let ls = memrchr(b'\n', &hay[start..found.start()]).map_or(start, |i| start + i + 1);
             if ls >= hay.len() {
                 // An empty match after a trailing terminator: the position
                 // is past the last real line (no phantom line exists there).
-                continue;
+                break;
             }
-            if ls == last_start {
-                continue;
-            }
-            last_start = ls;
             let le = memchr(b'\n', &hay[found.end()..]).map_or(hay.len(), |i| found.end() + i);
             line_no += memchr_iter(b'\n', &hay[cursor..ls]).count() as u32;
             cursor = ls;
             if !emit(ls, le, line_no) {
-                return;
+                break;
             }
+            start = le + 1;
         }
+        cost
     }
 }
 
@@ -237,18 +272,29 @@ impl Iterator for LineRanges<'_> {
     }
 }
 
-/// Extend a hit line's bounds by up to `before`/`after` line boundaries,
-/// clamped to the body, and stamp the context's line-number range.
-fn extend_context(hay: &[u8], ls: usize, le: usize, line_no: u32, before: u32, after: u32) -> Hit {
+/// Extend a hit line's bounds by up to `before`/`after` lines, never back
+/// past `floor` (the byte after the previous region) nor forward to
+/// `ceiling` (the next hit line's start), and stamp the line-number range.
+#[allow(clippy::too_many_arguments)]
+fn extend_context(
+    hay: &[u8],
+    ls: usize,
+    le: usize,
+    line_no: u32,
+    before: u32,
+    after: u32,
+    floor: usize,
+    ceiling: usize,
+) -> Hit {
     let mut context_start = ls;
     let mut back = 0u32;
-    while back < before && context_start > 0 {
+    while back < before && context_start > floor {
         context_start = memrchr(b'\n', &hay[..context_start - 1]).map_or(0, |i| i + 1);
         back += 1;
     }
     let mut context_end = le;
     let mut forward = 0u32;
-    while forward < after && context_end + 1 < hay.len() {
+    while forward < after && context_end + 1 < ceiling {
         context_end =
             memchr(b'\n', &hay[context_end + 1..]).map_or(hay.len(), |i| context_end + 1 + i);
         forward += 1;
@@ -531,5 +577,56 @@ mod tests {
         let expired = Instant::now() - std::time::Duration::from_secs(1);
         let outcome = count_batch(&matcher, &bodies, None, false, Some(expired));
         assert!(!outcome.completed);
+    }
+
+    fn regions(pattern: &str, hay: &str, before: u32, after: u32, invert: bool) -> Vec<(u32, u32, u32)> {
+        let matcher = Matcher::new(pattern, false).expect("pattern compiles");
+        matcher
+            .hit_lines(hay.as_bytes(), before, after, None, invert)
+            .iter()
+            .map(|h| (h.start_line, h.end_line, h.match_line))
+            .collect()
+    }
+
+    #[test]
+    fn overlapping_windows_split_at_each_hit_line() {
+        assert_eq!(regions("x", "a\nx\nb\nx\nc\n", 1, 1, false), vec![(1, 3, 2), (4, 5, 4)]);
+    }
+
+    #[test]
+    fn touching_windows_stay_whole() {
+        assert_eq!(regions("x", "a\nx\nb\nc\nx\nd\n", 1, 1, false), vec![(1, 3, 2), (4, 6, 5)]);
+    }
+
+    #[test]
+    fn wide_context_returns_each_line_once() {
+        let body = "x\n".repeat(2_000);
+        let matcher = Matcher::new("x", false).unwrap();
+        let hits = matcher.hit_lines(body.as_bytes(), 2_000, 2_000, None, false);
+        assert_eq!(hits.len(), 2_000);
+        let total: usize = hits.iter().map(|h| h.span.1 - h.span.0).sum();
+        assert!(total <= body.len());
+    }
+
+    #[test]
+    fn inverted_hits_split_alike() {
+        assert_eq!(regions("x", "a\nx\nb\nx\nc\n", 1, 1, true), vec![(1, 2, 1), (3, 4, 3), (5, 5, 5)]);
+    }
+
+    #[test]
+    fn one_long_line_scans_once() {
+        for (pattern, body) in [("x", "x".repeat(100_000)), (".*[^A-Z]|[A-Z]", "A".repeat(40_000))] {
+            let matcher = Matcher::new(pattern, false).unwrap();
+            assert_eq!(matcher.hit_lines(body.as_bytes(), 0, 0, None, false).len(), 1);
+            assert_eq!(matcher.count_lines(body.as_bytes(), None, false), 1);
+            let mut lines = 0;
+            let cost = matcher.scan_hit_lines(body.as_bytes(), false, |_, _, _| {
+                lines += 1;
+                true
+            });
+            assert_eq!(lines, 1);
+            assert!(cost.searches <= 2, "{pattern}: {} searches", cost.searches);
+            assert!(cost.back_bytes <= body.len() as u64);
+        }
     }
 }

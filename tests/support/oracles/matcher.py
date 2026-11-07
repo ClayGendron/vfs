@@ -175,14 +175,27 @@ class _PureMatcher:
         self, text: str, before: int, after: int, cap: int | None, invert: bool, deadline: float | None
     ) -> tuple[list[MatchSpan], bool]:
         lines = split_lines(text)
-        hits: list[MatchSpan] = []
+        numbers: list[int] = []
+        completed = True
         for number, line in enumerate(lines, start=1):
             if deadline is not None and number > 1 and number % _SLICE_LINES == 1 and monotonic() > deadline:
-                return hits, False
+                completed = False
+                break
             if (self._line_rx.search(line) is not None) is not invert:
-                start = max(1, number - before)
-                end = min(len(lines), number + after)
-                hits.append((start, end, number, "\n".join(lines[start - 1 : end])))
-                if cap is not None and len(hits) >= cap:
+                numbers.append(number)
+                if cap is not None and len(numbers) >= cap:
                     break
-        return hits, True
+        return _regions(lines, numbers, before, after), completed
+
+
+def _regions(lines: list[str], numbers: list[int], before: int, after: int) -> list[MatchSpan]:
+    """Each hit's window clipped at its neighbours: after the previous region, before the next hit line."""
+    regions: list[MatchSpan] = []
+    floor = 1
+    for index, number in enumerate(numbers):
+        ceiling = numbers[index + 1] - 1 if index + 1 < len(numbers) else len(lines)
+        start = max(floor, number - before, 1)
+        end = min(ceiling, number + after, len(lines))
+        regions.append((start, end, number, "\n".join(lines[start - 1 : end])))
+        floor = end + 1
+    return regions

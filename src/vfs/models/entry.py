@@ -356,7 +356,7 @@ class Entry(BaseModel):
 
 
 class Match(BaseModel):
-    """One matched region of an entry — a grep window or an indexed-chunk hit.
+    """One matched region of an entry — a grep region or an indexed-chunk hit.
 
     Files are not indexed directly; chunks are. So grep/glean surface
     *regions*: ``start`` / ``end`` are 1-indexed line bounds, ``match`` is
@@ -365,6 +365,9 @@ class Match(BaseModel):
     stays the entry's full content — rendering a match never requires
     fetching the file. ``score`` is the region's own relevance (glean); the
     row-level ``Observation.score`` is the aggregate (max) across regions.
+    A grep entry's regions never overlap and each holds one hit line: a
+    region's context starts after the previous region and stops before the
+    next hit line, so a line shared by two windows appears once.
 
     ``preview`` is glean's query-biased excerpt of the region — a few
     lines, query terms bolded in Markdown, hard-capped — with its own

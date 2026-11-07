@@ -7,10 +7,12 @@ from typing import Any
 
 import pytest
 
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Match, Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.results.render import _verb_for
+from vfs.storage.backends.memory import InMemoryStorage
 
 
 def obs(path: str, **kwargs: Any) -> Observation:
@@ -180,6 +182,13 @@ class TestGrepRendering:
             ],
         )
         assert str(result) == "/a.py-3-ctx1\n/a.py:4:hit\n/a.py-5-ctx2"
+
+    async def test_overlapping_context_renders_each_line_once(self) -> None:
+        fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+        await fs.write(path="/a.md", content="a\nx\nb\nx\nc\n")
+        result = await fs.grep("x", before_context=1, after_context=1, allow_scan=True)
+        assert str(result) == "/a.md-1-a\n/a.md:2:x\n/a.md-3-b\n/a.md:4:x\n/a.md-5-c"
+        await fs.close()
 
     def test_whole_region_match_marks_every_line(self) -> None:
         result = Result(

@@ -48,8 +48,8 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.paths import Path
 
-# One hit line: 1-based context bounds, the hit line number, and the
-# context block's text (hit line extended before/after, newline-joined).
+# One hit line: 1-based region bounds, the hit line number, and the region's
+# text (hit line extended before/after, clipped at its neighbours, newline-joined).
 MatchSpan = tuple[int, int, int, str]
 
 # One candidate body: text, or its UTF-8 bytes fetched straight from
@@ -215,8 +215,8 @@ def verify(
 
     ``files`` short-circuits at the first verified hit and carries
     neither matches nor score; ``count`` reports the (capped) hit count
-    on score; ``lines`` renders one region per hit line, context bounds
-    clamped to the file.
+    on score; ``lines`` renders one region per hit line, its context clamped
+    to the file and clipped at its neighbours, so regions never overlap.
     """
     if mode in ("files", "count"):
         counts, _ = verifier.count_lines([text], cap=1 if mode == "files" else cap, invert=invert, budget=None)

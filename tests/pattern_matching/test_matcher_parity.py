@@ -9,10 +9,12 @@ with the identical messages whichever side compiles them.
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from tests.support.oracles.matcher import _PureMatcher, pure_verifier
-from vfs.pattern_matching import ContentMatcher, PatternError, compile_verifier
+from vfs.pattern_matching import ContentMatcher, PatternError, compile_verifier, split_lines
 
 
 def rust_verifier(pattern: str, **kwargs) -> ContentMatcher:
@@ -256,6 +258,11 @@ class TestEngineParity:
         rows, completed = verifier.hit_lines([body], before=0, after=0, cap=None, invert=True, budget=0.05)
         assert completed is False
         assert 0 < len(rows[0]) < 32
+        # The expiry exit returns clipped regions too: no line in two of them.
+        rows, completed = verifier.hit_lines([body], before=1, after=1, cap=None, invert=True, budget=0.05)
+        assert completed is False
+        covered = [n for start, end, _, _ in rows[0] for n in range(start, end + 1)]
+        assert len(covered) == len(set(covered))
 
     def test_per_line_pure_path_honors_caps(self) -> None:
         # `[^x]y` walks newline-capable, forcing the split path for both
@@ -315,3 +322,32 @@ class TestLanguageGate:
         for pattern in (r"[\nx]y", r"[^\nx]y", "[^ab]y"):
             rust_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
             pure_verifier(pattern, fixed_strings=False, word_regexp=False, case_mode="sensitive")
+
+
+def _today_windows(lines: int, hits: list[int], before: int, after: int) -> set[int]:
+    """The lines today's overlapping windows cover, for the partition check."""
+    return {n for hit in hits for n in range(max(1, hit - before), min(lines, hit + after) + 1)}
+
+
+def test_overlapping_context_regions_partition_the_windows() -> None:
+    rng = random.Random(20261107)
+    engine = rust_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+    oracle = pure_verifier("x", fixed_strings=False, word_regexp=False, case_mode="sensitive")
+    for _ in range(200):
+        body = "\n".join("".join(rng.choice("xy") for _ in range(rng.randint(0, 3))) for _ in range(rng.randint(1, 40)))
+        line_count = len(split_lines(body))
+        for before in range(4):
+            for after in range(4):
+                for cap in (None, 1, 2):
+                    for invert in (False, True):
+                        kwargs = {"before": before, "after": after, "cap": cap, "invert": invert, "budget": None}
+                        [ours], _ = engine.hit_lines([body], **kwargs)
+                        [theirs], _ = oracle.hit_lines([body], **kwargs)
+                        assert ours == theirs, (body, kwargs)
+                        covered: list[int] = []
+                        for start, end, hit, _content in ours:
+                            assert start <= hit <= end
+                            covered.extend(range(start, end + 1))
+                        assert len(covered) == len(set(covered)), (body, kwargs)
+                        windows = _today_windows(line_count, [hit for _, _, hit, _ in ours], before, after)
+                        assert set(covered) == windows, (body, kwargs)
