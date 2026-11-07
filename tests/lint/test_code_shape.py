@@ -71,7 +71,8 @@ def test_the_standards_agree_with_the_tree() -> None:
         f"standards/{page} is missing" for page in ("how-we-code.md", "landing.md") if not (STANDARDS / page).exists()
     ]
     forbidden = {
-        "python-style.md": ("src_old", "there is no sync facade"),
+        "python-style.md": ("src_old", "there is no sync facade", "SyncVirtualFileSystem"),
+        "roadmap.md": ("SyncVirtualFileSystem", "SyncSession"),
         "testing.md": ("--mssql", "fail_under = 99"),
         "tooling.md": ("uvx", "uv pip"),
         "constitution.md": ("context/decisions/", "open-questions.md"),
@@ -84,7 +85,7 @@ def test_the_standards_agree_with_the_tree() -> None:
     required = {
         "testing.md": ("fail_under = 100",),
         "release.md": ("--pre", "--final", "--set", "workflow_dispatch"),
-        "python-style.md": ("vfs.sync",),
+        "python-style.md": ("vfs.sync", "AsyncVirtualFileSystem"),
     }
     for page, needles in required.items():
         text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""

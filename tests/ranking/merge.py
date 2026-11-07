@@ -3,7 +3,7 @@ as a run, and the two floors it must beat.
 
 The floors are the router's former behaviour — one sort over every
 mount's native scores — and interleaving by rank; the real merge is the
-verb through a :class:`VirtualFileSystem` holding one mount per half.
+verb through a :class:`AsyncVirtualFileSystem` holding one mount per half.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tests.ranking.driver import Run
-    from vfs.base import VirtualFileSystem
+    from vfs.base import AsyncVirtualFileSystem
 
 
 def halves(corpus: Corpus) -> list[Corpus]:
@@ -28,7 +28,7 @@ def halves(corpus: Corpus) -> list[Corpus]:
     ]
 
 
-async def merged_glean_run(vfs: VirtualFileSystem, corpus: Corpus, mounts: Sequence[str], k: int = 50) -> Run:
+async def merged_glean_run(vfs: AsyncVirtualFileSystem, corpus: Corpus, mounts: Sequence[str], k: int = 50) -> Run:
     """Every query through the router over *mounts*, rows mapped back to doc ids."""
     doc_of = corpus.doc_of
     run: Run = {}
@@ -37,7 +37,9 @@ async def merged_glean_run(vfs: VirtualFileSystem, corpus: Corpus, mounts: Seque
     return run
 
 
-async def merged_ranking(vfs: VirtualFileSystem, query: str, mounts: Sequence[str], k: int) -> list[tuple[str, float]]:
+async def merged_ranking(
+    vfs: AsyncVirtualFileSystem, query: str, mounts: Sequence[str], k: int
+) -> list[tuple[str, float]]:
     """Top-``k`` entries as ``(mount-local path, score)`` through the router's merge."""
     result = await vfs.glean(query, limit=k)
     assert result.success is True, result.errors

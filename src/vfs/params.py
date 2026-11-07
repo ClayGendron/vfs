@@ -2,7 +2,7 @@
 
 One :class:`ParamSpec` row per public-verb parameter and one
 :class:`ShapeRule` set per op. Three consumers read the table: the router's
-ingress gate (``VirtualFileSystem._gate_params``), the signature drift test,
+ingress gate (``AsyncVirtualFileSystem._gate_params``), the signature drift test,
 and the wire dialect's schema projection. The module is a leaf — stdlib plus
 the ``vfs.ops``, ``vfs.authority``, and ``vfs.storage.grants`` value
 modules — so schema consumers never import the router.

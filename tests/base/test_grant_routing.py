@@ -15,7 +15,7 @@ import pytest
 
 from tests.support.base_doubles import BindableStorage, ReadFamilyStorage, RecorderFS, RecorderStorage
 from vfs.authority import Authority, Principal
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result
@@ -30,9 +30,9 @@ ANN = Authority.of(Principal("ann"))
 
 
 @pytest.fixture
-async def fs() -> AsyncIterator[VirtualFileSystem]:
+async def fs() -> AsyncIterator[AsyncVirtualFileSystem]:
     """A root mount with a grant-capable child at ``/m`` holding ``/m/eng/spec.md``."""
-    fs = VirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage(), default_authority=SYSTEM)
     child = InMemoryStorage()
     await fs.add_mount(child, "/m")
     assert (await fs.write(path="/m/eng/spec.md", content="x", parents=True)).success is True
@@ -60,7 +60,7 @@ async def test_membership_verbs_carry_no_path_to_storage() -> None:
     assert fs.calls[-1] == ("add_member", {"group": "group:eng", "member": "bob"})
 
 
-async def test_listed_grant_rows_come_back_in_router_coordinates(fs: VirtualFileSystem) -> None:
+async def test_listed_grant_rows_come_back_in_router_coordinates(fs: AsyncVirtualFileSystem) -> None:
     granted = await fs.grant("/m/eng", "ann", "read")
     assert granted.success is True
     assert [row["path_prefix"] for row in _granted(granted)] == ["/m/eng"]
@@ -68,13 +68,13 @@ async def test_listed_grant_rows_come_back_in_router_coordinates(fs: VirtualFile
     assert {row["path_prefix"] for row in _granted(listed)} == {"/m", "/m/eng"}
 
 
-async def test_a_grant_on_the_root_mount_needs_no_rebase(fs: VirtualFileSystem) -> None:
+async def test_a_grant_on_the_root_mount_needs_no_rebase(fs: AsyncVirtualFileSystem) -> None:
     result = await fs.posture("/", "read")
     assert result.success is True
     assert _granted(result)[0]["path_prefix"] == "/"
 
 
-async def test_the_grant_takes_effect_for_the_next_routed_read(fs: VirtualFileSystem) -> None:
+async def test_the_grant_takes_effect_for_the_next_routed_read(fs: AsyncVirtualFileSystem) -> None:
     assert (await fs.posture("/m", "none")).success is True
     assert (await fs.read("/m/eng/spec.md", authority=ANN)).errors[0].kind == ErrorKind.not_found
     assert (await fs.grant("/m/eng", "ann", "read")).success is True
@@ -86,7 +86,7 @@ async def test_the_grant_takes_effect_for_the_next_routed_read(fs: VirtualFileSy
 # ---------------------------------------------------------------------------
 
 
-async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: VirtualFileSystem) -> None:
+async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: AsyncVirtualFileSystem) -> None:
     await fs.remount("/m", permissions="read")
     for refused in (
         await fs.grant("/m/eng", "ann", "read"),
@@ -100,13 +100,13 @@ async def test_a_read_only_mount_refuses_grant_writes_but_lists(fs: VirtualFileS
 
 
 async def test_a_backend_without_grants_is_unsupported() -> None:
-    fs = VirtualFileSystem(storage=ReadFamilyStorage())
+    fs = AsyncVirtualFileSystem(storage=ReadFamilyStorage())
     result = await fs.grant("/x", "bob", "read")
     assert result.errors[0].kind == ErrorKind.unsupported
 
 
 async def test_a_closed_filesystem_refuses_grants() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     await fs.close()
     result = await fs.grants("/x")
     assert result.success is False
@@ -145,7 +145,7 @@ async def test_garbage_grant_parameters_are_invalid_with_zero_dispatch(call) -> 
 # ---------------------------------------------------------------------------
 
 
-async def test_grant_rows_render_as_a_table(fs: VirtualFileSystem) -> None:
+async def test_grant_rows_render_as_a_table(fs: AsyncVirtualFileSystem) -> None:
     await fs.grant("/m/eng", "ann", "read")
     text = render_result(await fs.grants("/m/eng"))
     assert "principal_id" in text and "/m/eng" in text and "ann" in text
@@ -165,7 +165,7 @@ def test_a_principal_may_not_take_a_grant_row_name(sub: str) -> None:
         Principal(sub)
 
 
-async def test_writes_through_the_router_stamp_the_caller_as_owner(fs: VirtualFileSystem) -> None:
+async def test_writes_through_the_router_stamp_the_caller_as_owner(fs: AsyncVirtualFileSystem) -> None:
     # Under a private mount, ann's own file stays hers to read.
     assert (await fs.posture("/m", "none")).success is True
     assert (await fs.grant("/m/eng", "ann", "read_write")).success is True

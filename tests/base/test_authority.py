@@ -14,10 +14,10 @@ import pytest
 import vfs.authority
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.authority import Authority, Principal
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import ALL_OPS, Op
 from vfs.results import ErrorKind, Result
-from vfs.session import Session
+from vfs.session import AsyncSession
 from vfs.storage.backends.memory import InMemoryStorage
 
 ALICE = Authority.of(Principal("alice"))
@@ -126,14 +126,14 @@ async def test_unauthenticated_is_its_own_kind_beside_permission_denied() -> Non
 
 async def test_the_default_authority_reaches_storage() -> None:
     storage = RecorderStorage()
-    fs = VirtualFileSystem(storage=storage, default_authority=SYSTEM)
+    fs = AsyncVirtualFileSystem(storage=storage, default_authority=SYSTEM)
     assert (await fs.read("/f.txt")).success is True
     assert seen(storage) == [("read", SYSTEM)]
 
 
 async def test_an_explicit_authority_beats_the_default() -> None:
     storage = RecorderStorage()
-    fs = VirtualFileSystem(storage=storage, default_authority=SYSTEM)
+    fs = AsyncVirtualFileSystem(storage=storage, default_authority=SYSTEM)
     await fs.read("/f.txt", authority=ALICE)
     assert seen(storage) == [("read", ALICE)]
 
@@ -141,7 +141,7 @@ async def test_an_explicit_authority_beats_the_default() -> None:
 async def test_the_authority_is_threaded_not_cached() -> None:
     # Two calls, two authorities: each dispatch carries its own value.
     storage = RecorderStorage()
-    fs = VirtualFileSystem(storage=storage)
+    fs = AsyncVirtualFileSystem(storage=storage)
     bob = Authority.of(Principal("bob"))
     await fs.read("/f.txt", authority=ALICE)
     await fs.read("/f.txt", authority=bob)
@@ -153,7 +153,7 @@ async def test_the_control_plane_runs_as_the_system_actor() -> None:
     # probes and the mount-point mkdir and rmdir run as the system
     # actor, whatever default or caller is configured.
     storage = RecordingMemory()
-    fs = VirtualFileSystem(storage=storage, default_authority=ALICE)
+    fs = AsyncVirtualFileSystem(storage=storage, default_authority=ALICE)
     await fs.add_mount(RecorderStorage(name="child"), "/m", parents=True)
     await fs.remove_mount("/m")
     assert storage.seen and all(authority == SYSTEM for _op, authority in storage.seen)
@@ -165,7 +165,7 @@ async def test_locate_probes_existence_as_the_caller_not_the_system() -> None:
     # A caller must not learn through locate that a row it cannot see
     # exists: the probe runs as the caller, else the default, else anonymous.
     storage = RecordingMemory()
-    fs = VirtualFileSystem(storage=storage, default_authority=ALICE)
+    fs = AsyncVirtualFileSystem(storage=storage, default_authority=ALICE)
     bob = Authority.of(Principal("bob"))
     await fs.locate("/x", exists=True, authority=bob)
     await fs.locate_edge("/x", "/y", exists=True)
@@ -182,8 +182,8 @@ async def test_locate_probes_existence_as_the_caller_not_the_system() -> None:
 @pytest.mark.parametrize("op", sorted(ALL_OPS))
 async def test_a_session_verb_is_the_direct_call_with_the_authority_filled_in(op: Op) -> None:
     direct_storage, session_storage = RecorderStorage(), RecorderStorage()
-    direct = VirtualFileSystem(storage=direct_storage)
-    routed = VirtualFileSystem(storage=session_storage)
+    direct = AsyncVirtualFileSystem(storage=direct_storage)
+    routed = AsyncVirtualFileSystem(storage=session_storage)
     expected = await getattr(direct, op)(**CALLS[op], authority=ALICE)
     async with routed.session(ALICE) as s:
         assert s.authority == ALICE and s.closed is False
@@ -197,8 +197,8 @@ async def test_a_session_verb_is_the_direct_call_with_the_authority_filled_in(op
 def test_session_verbs_take_no_identity_argument(op: Op) -> None:
     # The session signature is the verb's, minus the authority, so the two
     # surfaces cannot drift apart silently.
-    fs_params = dict(inspect.signature(getattr(VirtualFileSystem, op)).parameters)
-    session_params = dict(inspect.signature(getattr(Session, op)).parameters)
+    fs_params = dict(inspect.signature(getattr(AsyncVirtualFileSystem, op)).parameters)
+    session_params = dict(inspect.signature(getattr(AsyncSession, op)).parameters)
     assert "authority" not in session_params
     del fs_params["authority"]
     assert [(n, p.kind, p.default) for n, p in fs_params.items()] == [
@@ -209,7 +209,7 @@ def test_session_verbs_take_no_identity_argument(op: Op) -> None:
 @pytest.mark.parametrize("op", sorted(ALL_OPS))
 async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
     storage = RecorderStorage()
-    fs = VirtualFileSystem(storage=storage)
+    fs = AsyncVirtualFileSystem(storage=storage)
     async with fs.session(ALICE) as s:
         pass
     assert s.closed is True
@@ -221,7 +221,7 @@ async def test_a_closed_session_refuses_and_dispatches_nothing(op: Op) -> None:
 
 
 async def test_closed_is_final() -> None:
-    fs = VirtualFileSystem(storage=RecorderStorage())
+    fs = AsyncVirtualFileSystem(storage=RecorderStorage())
     s = fs.session(ALICE)
     await s.close()
     await s.close()  # idempotent
@@ -232,7 +232,7 @@ async def test_closed_is_final() -> None:
 
 async def test_a_session_needs_no_default_on_the_filesystem() -> None:
     storage = RecorderStorage()
-    fs = VirtualFileSystem(storage=storage)
+    fs = AsyncVirtualFileSystem(storage=storage)
     async with fs.session(ALICE) as s:
         assert (await s.ls("/")).success is True
     assert seen(storage) == [("ls", ALICE)]

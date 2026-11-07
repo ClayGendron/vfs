@@ -16,7 +16,7 @@ import pytest
 import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
 from vfs.paths import Path
 from vfs.results import ErrorKind
@@ -44,15 +44,15 @@ INVARIANCE_BATTERY = (
 )
 
 
-async def _plain_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem()
+async def _plain_world() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem()
     for path, content in TREE:
         await fs.write(path=path, content=content, parents=True)
     return fs
 
 
-async def _mounted_world() -> VirtualFileSystem:
-    fs = VirtualFileSystem()
+async def _mounted_world() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem()
     await fs.write(path="/notes.txt", content="root")
     await fs.add_mount(InMemoryStorage(), "/data")
     await fs.write(path="/data/a.txt", content="a")
@@ -71,7 +71,7 @@ async def test_the_headline_repro_flips() -> None:
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def plain_world() -> AsyncIterator[VirtualFileSystem]:
+async def plain_world() -> AsyncIterator[AsyncVirtualFileSystem]:
     """The plain world once per module; the invariance battery only reads it."""
     fs = await _plain_world()
     yield fs
@@ -79,7 +79,7 @@ async def plain_world() -> AsyncIterator[VirtualFileSystem]:
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
+async def mounted_world() -> AsyncIterator[AsyncVirtualFileSystem]:
     """The mounted world once per module; the invariance battery only reads it."""
     fs = await _mounted_world()
     yield fs
@@ -89,7 +89,7 @@ async def mounted_world() -> AsyncIterator[VirtualFileSystem]:
 @pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("pattern", INVARIANCE_BATTERY)
 async def test_mount_placement_is_invisible_to_patterns(
-    pattern: str, plain_world: VirtualFileSystem, mounted_world: VirtualFileSystem
+    pattern: str, plain_world: AsyncVirtualFileSystem, mounted_world: AsyncVirtualFileSystem
 ) -> None:
     plain = await plain_world.glob(pattern)
     mounted = await mounted_world.glob(pattern)
@@ -128,7 +128,7 @@ async def test_multi_residual_rows_arrive_exactly_once() -> None:
 async def test_bind_point_row_is_served_by_the_parent() -> None:
     # /d* exhausts at the bind point: the match is the parent's stored
     # mount-point directory, and the mount itself is never dispatched.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/data")
     result = await fs.glob("/d*")
@@ -269,7 +269,7 @@ async def test_brace_expansion_past_the_cap_refuses_loudly() -> None:
 async def test_exclusion_refusals_share_one_label_across_verbs() -> None:
     # One channel, one label: the exclusion channel's refusal vocabulary
     # is verb-independent, minted from GLOB_CHANNEL_LABELS everywhere.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     globbed = await fs.glob("*", globs_not=("{a",))
     grepped = await fs.grep("x", globs_not=("{a",))
     assert globbed.success is False and grepped.success is False
@@ -359,7 +359,7 @@ async def test_root_row_service_honors_every_channel() -> None:
 
 
 async def test_chained_glob_applies_exclusions_and_ext_not_in_memory() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/src/a.py")),
         Observation(path=Path("/src/tests/t.py")),
@@ -373,7 +373,7 @@ async def test_chained_glob_applies_exclusions_and_ext_not_in_memory() -> None:
 
 async def test_chained_kind_filters_on_the_held_fact_without_storage() -> None:
     # Rows that carry kind are judged as held — storage sees no call.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/data")
     rows = [
@@ -408,7 +408,7 @@ async def test_chained_kind_on_a_vanished_row_classifies_loudly() -> None:
 
 async def test_chained_without_kind_never_touches_storage() -> None:
     # The fetch exists only for the kind fact; plain chaining stays pure.
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     recorder = RecorderStorage()
     await fs.add_mount(recorder, "/data")
     rows = [Observation(path=Path("/data/a.txt"))]
@@ -418,7 +418,7 @@ async def test_chained_without_kind_never_touches_storage() -> None:
 
 
 async def test_chained_glob_matches_any_brace_arm() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/src/a.ts")),
         Observation(path=Path("/src/b.tsx")),
@@ -431,7 +431,7 @@ async def test_chained_glob_matches_any_brace_arm() -> None:
 async def test_chained_glob_filters_rows_in_hand_without_storage() -> None:
     # Pure filter: rows pass or drop on their held paths alone — the
     # rows here exist nowhere in storage, and duplicates survive.
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/keep/a.txt")),
         Observation(path=Path("/drop/b.md")),
@@ -443,7 +443,7 @@ async def test_chained_glob_filters_rows_in_hand_without_storage() -> None:
 
 
 async def test_chained_glob_path_arm_anchors_and_ext_applies() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [
         Observation(path=Path("/src/a.py")),
         Observation(path=Path("/lib/b.py")),
@@ -456,7 +456,7 @@ async def test_chained_glob_path_arm_anchors_and_ext_applies() -> None:
 
 
 async def test_chained_glob_ext_members_normalize_dots_and_case() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [Observation(path=Path("/src/a.py")), Observation(path=Path("/src/c.txt"))]
     dotted = await fs.glob("*", observations=rows, ext=(".PY",))
     assert [str(o.path) for o in dotted.observations] == ["/src/a.py"]
@@ -465,7 +465,7 @@ async def test_chained_glob_ext_members_normalize_dots_and_case() -> None:
 
 
 async def test_chained_glob_never_hides_meta_rows_in_hand() -> None:
-    fs = VirtualFileSystem(storage=InMemoryStorage())
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = [Observation(path=Path("/.vfs/trash/x"))]
     result = await fs.glob("*", observations=rows)
     assert [str(o.path) for o in result.observations] == ["/.vfs/trash/x"]

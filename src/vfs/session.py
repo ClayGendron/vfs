@@ -1,4 +1,4 @@
-"""Session — an authority-scoped facade over one ``VirtualFileSystem``.
+"""AsyncSession — an authority-scoped facade over one ``AsyncVirtualFileSystem``.
 
 A session holds exactly one :class:`~vfs.authority.Authority` and its own
 lifecycle, nothing more. Every verb delegates into the router's ordinary
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     from vfs.authority import Authority
-    from vfs.base import VirtualFileSystem
+    from vfs.base import AsyncVirtualFileSystem
     from vfs.models import Edge, Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op, TwoPathOperation
     from vfs.paths import ObjectKind
@@ -48,7 +48,7 @@ def closed_refusal(op: Op) -> Result:
     return Result(ops=(op,), errors=[fact])
 
 
-class Session:
+class AsyncSession:
     """One authority, one filesystem, one lifecycle.
 
     Open it as an async context manager or call :meth:`close` yourself;
@@ -59,7 +59,7 @@ class Session:
 
     __slots__ = ("_authority", "_closed", "_fs")
 
-    def __init__(self, fs: VirtualFileSystem, authority: Authority) -> None:
+    def __init__(self, fs: AsyncVirtualFileSystem, authority: Authority) -> None:
         self._fs = fs
         self._authority = authority
         self._closed = False
@@ -76,7 +76,7 @@ class Session:
         """Close the session — idempotent, and final."""
         self._close_now()
 
-    async def __aenter__(self) -> Session:
+    async def __aenter__(self) -> AsyncSession:
         if self._closed:
             raise ValueError(CLOSED_SESSION_DETAIL)
         return self

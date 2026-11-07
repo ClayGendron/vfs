@@ -46,10 +46,10 @@ nav:
     - Run calls as a principal: how-to/run-calls-as-a-principal.md
     - Bulk load as the system actor: how-to/bulk-load-as-the-system-actor.md
   - Reference:
-    - API: reference/api.md
+    - Kernel API (async): reference/api.md
     - Authority and Principal: reference/authority.md
-    - Session: reference/session.md
-    - Synchronous use: reference/sync.md
+    - AsyncSession: reference/session.md
+    - Synchronous face: reference/sync.md
     - Glossary: reference/glossary.md
     - Glob patterns: reference/glob-patterns.md
     - Metadata path format: reference/metadata-paths.md

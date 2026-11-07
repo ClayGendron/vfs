@@ -9,7 +9,7 @@ from typing import get_args
 import pytest
 
 from tests.support.base_doubles import RecorderFS, RecorderStorage
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.ops import ALL_OPS, RUNGS
 from vfs.params import GRANTABLE, INT_CEILING, PARAMS, POSTURES, RULES, param_violation
 from vfs.results import ErrorKind
@@ -27,7 +27,7 @@ def test_table_covers_every_op() -> None:
 
 def test_every_verb_signature_matches_the_table() -> None:
     for op, specs in PARAMS.items():
-        verb = getattr(VirtualFileSystem, op)
+        verb = getattr(AsyncVirtualFileSystem, op)
         sig_names = {name for name in inspect.signature(verb).parameters if name != "self"}
         table_names = {spec.name for spec in specs}
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
@@ -37,7 +37,7 @@ def test_the_graph_signature_defaults_equal_the_table_defaults() -> None:
     # The gate never substitutes a ParamSpec default; the verb's own
     # signature carries it, so the two must agree or the wire and the
     # in-process caller see different walks.
-    signature = inspect.signature(VirtualFileSystem.graph).parameters
+    signature = inspect.signature(AsyncVirtualFileSystem.graph).parameters
     for spec in PARAMS["graph"]:
         if spec.default is not None and spec.name in signature:
             assert signature[spec.name].default == spec.default, spec.name
@@ -173,14 +173,14 @@ async def test_garbage_classifies_invalid_with_zero_dispatch(label: str, call) -
 
 
 async def test_param_gate_beats_closed_table() -> None:
-    fs = VirtualFileSystem()
+    fs = AsyncVirtualFileSystem()
     await fs.close()
     result = await fs.tree("/", max_depth="2")  # ty: ignore[invalid-argument-type]
     assert result.errors[0].kind is ErrorKind.invalid
 
 
 async def test_param_gate_beats_busy() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(RecorderStorage(), "/m/inner", parents=True)
     result = await root.delete("/m", cascade="x")  # ty: ignore[invalid-argument-type]
     assert result.errors[0].kind is ErrorKind.invalid

@@ -28,7 +28,7 @@ from tests.ranking.metrics import METRICS, compare, evaluate
 from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin, rewriting
 from tests.storage.database.test_signals import ENGINE_LEGS
 from tests.support.server_schemas import server_storage
-from vfs.base import VirtualFileSystem
+from vfs.base import AsyncVirtualFileSystem
 from vfs.embedding import EmbeddingProvider, HashEmbeddingProvider, Model2VecEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.memory import InMemoryStorage
@@ -301,7 +301,7 @@ class TestArms:
     async def test_the_router_merge_beats_the_floors(self, mounts: tuple[Loaded, Loaded], golden: Corpus) -> None:
         """The verb over two mounts: the union reranked under the order law, within
         reach of the single-index arm and above both floors."""
-        vfs = VirtualFileSystem()
+        vfs = AsyncVirtualFileSystem()
         for loaded, mount in zip(mounts, MERGE_MOUNTS, strict=True):
             await vfs.add_mount(loaded.storage, mount, owned=False)
         numbers = evaluate(golden.qrels, await merged_glean_run(vfs, golden, MERGE_MOUNTS))

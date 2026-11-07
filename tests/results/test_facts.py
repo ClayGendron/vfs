@@ -12,7 +12,7 @@ from pathlib import Path as FsPath
 
 import pytest
 
-from vfs import VirtualFileSystem
+from vfs import AsyncVirtualFileSystem
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import KIND_CONTRACTS, ErrorKind, Result, Severity, classified, wrong_kind
 from vfs.storage.backends import InMemoryStorage
@@ -129,7 +129,7 @@ def test_a_missing_file_renders_the_acceptance_line() -> None:
 
 
 async def test_a_move_under_a_missing_parent_renders_the_locus_and_the_target() -> None:
-    root = VirtualFileSystem()
+    root = AsyncVirtualFileSystem()
     await root.add_mount(InMemoryStorage(), "/mine")
     await root.write(path="/mine/a.md", content="x")
     result = await root.move(src="/mine/a.md", dest="/mine/gone/a.md")

@@ -53,9 +53,9 @@ assert result.errors[0].kind is ErrorKind.invalid
 For a single-user app, set the identity once.
 
 ```python
-from vfs import VirtualFileSystem
+from vfs import AsyncVirtualFileSystem
 
-fs = VirtualFileSystem(storage=storage, default_authority=alice)
+fs = AsyncVirtualFileSystem(storage=storage, default_authority=alice)
 await fs.write(path="/notes/default.md", content="hi")   # runs as alice
 ```
 

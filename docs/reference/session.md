@@ -4,17 +4,17 @@ THE RULE: Austere, neutral, complete. Describe the machinery; do not instruct
 or explain. Structure MIRRORS the code. Accuracy is the whole job.
 -->
 
-# Session
+# `AsyncSession`
 
-Module `vfs.session`, re-exported from `vfs`. Instances come from `VirtualFileSystem.session(authority)`.
+Module `vfs.session`, re-exported from `vfs`. Instances come from `AsyncVirtualFileSystem.session(authority)`. `Session` is its synchronous twin, from `VirtualFileSystem.session(authority)`; see [the synchronous face](sync.md#session).
 
 ```python
-from vfs import Session
+from vfs import AsyncSession
 ```
 
 ## Construction
 
-`VirtualFileSystem.session(authority: Authority) -> Session`. The session holds the filesystem and the authority and nothing else. The filesystem needs no `default_authority` for a session to work.
+`AsyncVirtualFileSystem.session(authority: Authority) -> AsyncSession`. The session holds the filesystem and the authority and nothing else. The filesystem needs no `default_authority` for a session to work.
 
 ## Attributes
 

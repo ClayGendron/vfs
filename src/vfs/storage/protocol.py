@@ -1,6 +1,6 @@
 """Storage backend protocols — the composed seam beneath the router.
 
-A :class:`~vfs.base.VirtualFileSystem` mounts storage rather than other
+A :class:`~vfs.base.AsyncVirtualFileSystem` mounts storage rather than other
 routers: every mount-table entry binds a :class:`StorageBackend` object,
 and the router's one dispatch funnel calls these methods and nothing else.
 Protocols are grouped by op family so a partial backend implements only
@@ -19,7 +19,7 @@ method surface.
         async def ls(self, ...): ...
         async def tree(self, ...): ...
 
-    fs = VirtualFileSystem(storage=SnapshotStorage())
+    fs = AsyncVirtualFileSystem(storage=SnapshotStorage())
 
 Every path a backend method receives is already gated and terminal-relative,
 and it arrives as a branded :class:`~vfs.paths.Path` — the router resolves,

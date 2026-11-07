@@ -12,9 +12,9 @@ The system actor is the one identity whose writes honor the `owner_id` declared 
 ## Build a filesystem with the system default
 
 ```python
-from vfs import Authority, VirtualFileSystem
+from vfs import AsyncVirtualFileSystem, Authority
 
-etl = VirtualFileSystem(storage=storage, default_authority=Authority.system())
+etl = AsyncVirtualFileSystem(storage=storage, default_authority=Authority.system())
 ```
 
 Keep this filesystem object separate from the one your application serves. The system actor bypasses grants, so it should not be the default anywhere a user's call can reach.

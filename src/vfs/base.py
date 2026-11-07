@@ -1,9 +1,9 @@
-"""VirtualFileSystem — async router over one mount table of storage backends.
+"""AsyncVirtualFileSystem — async router over one mount table of storage backends.
 
 A mount binds a **storage instance**, never another router: the table maps
 ``path -> Binding(path, storage, meta)``, the node's own backend is the
 identity entry at ``/``, and longest-prefix matching resolves every path to
-exactly one entry.  One ``VirtualFileSystem`` = one namespace = one policy
+exactly one entry.  One ``AsyncVirtualFileSystem`` = one namespace = one policy
 layer — the Linux shape, where a mount entry binds a superblock and the VFS
 layer exists once.
 
@@ -87,7 +87,7 @@ from vfs.permissions import (
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
 from vfs.results.kinds import Severity, kind_family
-from vfs.session import Session
+from vfs.session import AsyncSession
 from vfs.storage import (
     ResolvedPair,
     StorageBackend,
@@ -186,7 +186,7 @@ class MountInfo(NamedTuple):
     map; ``None`` when a child bind stored none), *deny_ops* (the stored
     mask, sorted; ``()`` when unmasked), *no_overlay*, *owned* — which is
     what makes the rows replayable: they rebuild the namespace given the
-    storages (see :meth:`VirtualFileSystem.mounts` for the seal-last
+    storages (see :meth:`AsyncVirtualFileSystem.mounts` for the seal-last
     recipe).  *caps* is the **effective** post-mask set, sorted;
     *description* is a live attribute read, everything else is table fact
     or bind-time snapshot.  ``no_overlay=True`` means "no *new* binds
@@ -205,7 +205,7 @@ class MountInfo(NamedTuple):
 
 
 class Location(NamedTuple):
-    """One :meth:`VirtualFileSystem.locate` row — where a path lives, JSON-native.
+    """One :meth:`AsyncVirtualFileSystem.locate` row — where a path lives, JSON-native.
 
     A mount-table fact: the binding that owns *path* by longest prefix
     and the path in that storage's own coordinates. The three trailing
@@ -226,7 +226,7 @@ class Location(NamedTuple):
 
 
 class EdgeLocation(NamedTuple):
-    """One :meth:`VirtualFileSystem.locate_edge` row — two locations and the verdict.
+    """One :meth:`AsyncVirtualFileSystem.locate_edge` row — two locations and the verdict.
 
     ``same_storage`` is the test ``mkedge`` applies before it dispatches:
     both endpoints on one binding. ``reason`` is a sentence for a person
@@ -354,8 +354,8 @@ def _rebase_grant_rows(result: Result, mount: Path) -> Result:
     return result.model_copy(update={"grants": rebased})
 
 
-class VirtualFileSystem:
-    """Async router base class for all VFS filesystems."""
+class AsyncVirtualFileSystem:
+    """The asynchronous kernel; ``VirtualFileSystem`` is its synchronous face."""
 
     def __init__(
         self,
@@ -784,7 +784,7 @@ class VirtualFileSystem:
             reason = f"the target does not exist: {tgt.path}"
         return EdgeLocation(source=src, target=tgt, same_storage=same, reason=reason)
 
-    def session(self, authority: Authority) -> Session:
+    def session(self, authority: Authority) -> AsyncSession:
         """An authority-scoped facade: the verbs without the identity argument.
 
         Sugar over the funnel — every session verb is the same call with
@@ -792,7 +792,7 @@ class VirtualFileSystem:
         at ingress and a session-mediated result equals the direct one.
         Open it with ``async with``; closed is final.
         """
-        return Session(self, authority)
+        return AsyncSession(self, authority)
 
     def capabilities(self) -> frozenset[str]:
         """Operations this namespace answers — the union of entry snapshots.
