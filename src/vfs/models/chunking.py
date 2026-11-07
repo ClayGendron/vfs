@@ -88,7 +88,6 @@ EXTENSION_TO_GRAMMAR: dict[str, str] = {
     "zig": "zig",
     "d": "d",
     "nim": "nim",
-    "v": "v",
     "odin": "odin",
     # jvm / .net
     "java": "java",

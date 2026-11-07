@@ -30,8 +30,8 @@ pub const GRAMMAR_NAMES: &[&str] = &[
     "fish", "fsharp", "gleam", "go", "graphql", "groovy", "haskell", "hcl", "html", "ini", "java",
     "javascript", "json", "julia", "kotlin", "less", "lua", "make", "markdown", "nim", "nix", "ocaml",
     "odin", "perl", "php", "powershell", "proto", "python", "r", "rst", "ruby", "rust", "scala",
-    "scss", "solidity", "sql", "svelte", "swift", "terraform", "toml", "tsx", "typescript", "v",
-    "vim", "xml", "yaml", "zig",
+    "scss", "solidity", "sql", "svelte", "swift", "terraform", "toml", "tsx", "typescript", "vim",
+    "xml", "yaml", "zig",
 ];
 
 /// Split every `(body, grammar)` pair into merged chunk spans, in
@@ -104,7 +104,6 @@ fn language(name: &str) -> Option<Language> {
         "toml" => tree_sitter_toml_ng::LANGUAGE.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        "v" => tree_sitter_v::LANGUAGE.into(),
         "vim" => tree_sitter_vim::language(),
         "xml" => tree_sitter_xml::LANGUAGE_XML.into(),
         "yaml" => tree_sitter_yaml::LANGUAGE.into(),

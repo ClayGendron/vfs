@@ -8,6 +8,7 @@ no concepts. Title every guide "How to X". It can branch and handle variation.
 
 Task-focused recipes for users who already know what VFS is.
 
+- How to install and pin vfs
 - How to provision Postgres search artifacts
 - How to add a backend
 - How to expose VFS over MCP

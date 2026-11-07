@@ -159,6 +159,42 @@ def test_the_lock_carries_the_project_version() -> None:
     assert locked == [project["version"]]
 
 
+def _classifier_for(version: Version) -> str:
+    """The lane's rule: Alpha below the first beta, Beta below 1.0.0, Production from there; PEP 440 orders the rest."""
+    if version < Version("0.1.0b1"):
+        return "Development Status :: 3 - Alpha"
+    if version < Version("1.0.0"):
+        return "Development Status :: 4 - Beta"
+    return "Development Status :: 5 - Production/Stable"
+
+
+@pytest.mark.parametrize(
+    ("version", "status"),
+    [
+        ("0.0.22", "3 - Alpha"),
+        ("0.1.0a1", "3 - Alpha"),
+        ("0.1.0a9", "3 - Alpha"),
+        ("0.1.0b1", "4 - Beta"),
+        ("0.1.0rc1", "4 - Beta"),
+        ("0.1.0", "4 - Beta"),
+        ("0.2.0a1", "4 - Beta"),
+        ("0.2.0.dev1", "4 - Beta"),
+        ("1.0.0a1", "4 - Beta"),
+        ("1.0.0", "5 - Production/Stable"),
+    ],
+)
+def test_the_threshold_rule_places_every_version(version: str, status: str) -> None:
+    """A rule by letter would call 0.2.0a1 Alpha and 1.0.0a1 Production; the thresholds place both as Beta."""
+    assert _classifier_for(Version(version)) == f"Development Status :: {status}"
+
+
+def test_the_classifier_follows_the_version() -> None:
+    """A bump across 0.1.0b1 or 1.0.0 without the hand edit to the classifier fails here."""
+    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    statuses = [c for c in project["classifiers"] if c.startswith("Development Status :: ")]
+    assert statuses == [_classifier_for(Version(project["version"]))]
+
+
 def test_the_manifests_say_what_the_lane_needs() -> None:
     """The maturin floor that bootstraps Rust, packaging declared, and a crate comment that names the module."""
     pyproject = tomllib.loads((REPO / "pyproject.toml").read_text())

@@ -67,11 +67,26 @@ def test_the_publish_workflow_runs_the_check_first_in_every_job() -> None:
             if "maturin-action" in str(step.get("uses", "")) or "download-artifact" in str(step.get("uses", ""))
         ]
         assert builds and min(builds) > checks[0], f"job {name!r}: a build step precedes the tag check"
+        # No job syncs a project, so the action's cache post-step would fail a job that cached nothing.
+        setups = [step for step in steps if "setup-uv" in str(step.get("uses", ""))]
+        assert setups, f"job {name!r} has no setup-uv step"
+        assert all(step.get("with", {}).get("enable-cache") is False for step in setups), (
+            f"job {name!r}: a setup-uv step does not set enable-cache: false"
+        )
         runners.append(str(job["runs-on"]))
     assert "release" in str(jobs["publish"]["if"])
     text = (WORKFLOWS / "publish.yml").read_text()
     assert "macos-13" not in text
     assert "macos-15-intel" in text
+
+
+def test_the_publish_matrix_builds_the_five_wheels_a_host_can_install() -> None:
+    """A musl row back in the matrix, or a Linux row off manylinux 2_28, fails here; sqlite-vec ships no musl wheel."""
+    platforms = _workflow("publish.yml")["jobs"]["wheels"]["strategy"]["matrix"]["platform"]
+    assert len(platforms) == 5, [platform["name"] for platform in platforms]
+    assert not any("musllinux" in str(platform) for platform in platforms)
+    linux = [platform for platform in platforms if platform["name"].startswith("linux-")]
+    assert [platform["manylinux"] for platform in linux] == ["2_28", "2_28"]
 
 
 def test_the_dialect_workflow_pins_its_runner_and_its_keyring() -> None:

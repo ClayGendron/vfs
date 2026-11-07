@@ -40,6 +40,7 @@ nav:
     - Get started: tutorials/getting-started.md
   - How-to guides:
     - Overview: how-to/index.md
+    - Install and pin vfs: how-to/install.md
     - Provision Postgres search: how-to/provision-postgres-search.md
     - Add a backend: how-to/add-a-backend.md
     - Expose over MCP: how-to/expose-over-mcp.md

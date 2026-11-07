@@ -76,21 +76,32 @@ def test_the_standards_agree_with_the_tree() -> None:
         "testing.md": ("--mssql", "fail_under = 99"),
         "tooling.md": ("uvx", "uv pip"),
         "constitution.md": ("context/decisions/", "open-questions.md"),
-        # the bump script rewrites pyproject.toml alone and locks by itself
-        "release.md": ("src/vfs/__init__.py", "macos-13"),
+        # the bump script rewrites pyproject.toml alone and locks by itself; the lane has started
+        "release.md": ("src/vfs/__init__.py", "macos-13", "Before the first v2 release", "No release is planned"),
     }
     for page, needles in forbidden.items():
         text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""
         errors += [f"standards/{page} still says {needle!r}" for needle in needles if needle in text]
     required = {
         "testing.md": ("fail_under = 100",),
-        "release.md": ("--pre", "--final", "--set", "workflow_dispatch"),
+        "release.md": ("--pre", "--final", "--set", "workflow_dispatch", "--prerelease", "0.1.0a1", "0.1.0b1", "musl"),
         "python-style.md": ("vfs.sync", "AsyncVirtualFileSystem"),
     }
     for page, needles in required.items():
         text = (STANDARDS / page).read_text() if (STANDARDS / page).exists() else ""
         errors += [f"standards/{page} does not say {needle!r}" for needle in needles if needle not in text]
     assert not errors, "\n".join(errors)
+
+
+def test_the_readme_tells_the_truth_after_the_yank() -> None:
+    """The README ships in the wheel and names no dead release; the install guide carries the pin and the musl note."""
+    readme = (REPO / "README.md").read_text()
+    assert "previous-generation API" not in readme, "the README still says PyPI ships the previous-generation API"
+    assert "0.0.22" not in readme, "the README still names the yanked release"
+    guide = (REPO / "docs" / "how-to" / "install.md").read_text()
+    assert "vfs-py>=0.1.0a1,<0.2" in guide, "the install guide gives no pin with a pre-release marker"
+    assert "python:3.13-slim" in guide, "the install guide does not name a glibc image for the Alpine note"
+    assert "how-to/install.md" in (REPO / "mkdocs.yml").read_text(), "the install guide is not in the docs nav"
 
 
 def test_the_review_skills_write_review_files() -> None:

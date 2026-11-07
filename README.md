@@ -16,8 +16,6 @@ Frameworks build the agent. Control planes set the policy. Gateways check the to
 pip install vfs-py
 ```
 
-> ⚠️ **Alpha, mid-rebuild.** The core described below is the v2 design landing in this repo now; the current PyPI release (`vfs-py 0.0.22`) still ships the previous-generation API. Pin versions and expect change. **What is built:** the search half — `glob`, `grep`, and `glean` over the database you already run — the router's mount-level and per-prefix permissions, enforced before anything dispatches, and the first layer of the governed half: agent identity (`Authority`, `Principal`) and row-level grants (`grant`, `revoke`, `posture`, `grants`), built and under review. The `graph` verb walks the typed edges between files — `inbound`, `outbound`, `neighborhood` and `meet` — on every database the backend runs on, with the same row-level rights judged on every hop. **What is not:** tools at paths. The `run` verb exists and routes to a storage that declares `SupportsRun`; no shipped storage does. The positioning above says where vfs is going; this banner says what is real today, and [Known limits](#known-limits) lists the edges.
-
 ## Why a file system?
 
 Your agent has driven Unix through its entire pretraining — it already knows `ls`, `grep`, and `cat`. Mount your database as a file system and that training becomes your interface: no tool schemas to design, no prompt engineering to teach. And because the namespace is backed by the database you already run, there is no new infrastructure to stand up either — it works for the agent, and it works for you.
@@ -144,10 +142,10 @@ What the tree does not do yet, and where each decision lives.
 
 ## Status
 
-- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `glean` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 5,266 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
+- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `glean` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 4,564 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
 - **Under review:** row-level grants at scale (specs 058 and 150) and binary bodies (spec 152).
 - **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), the local file backend, the graph engine re-homed behind its protocol family, tools at paths, and a version row on every mutation.
-- **Released:** `vfs-py 0.0.22` on PyPI ships the previous-generation API (sync/async clients, database backends, CLI query engine, BM25 and vector search, graph algorithms). See the [releases](https://github.com/ClayGendron/vfs/releases).
+- **Released:** `vfs-py 0.1.0a1` on PyPI is the newest alpha of this rebuild; the [releases](https://github.com/ClayGendron/vfs/releases) are the changelog. The `0.0.x` releases are yanked.
 
 ## Contributing
 
