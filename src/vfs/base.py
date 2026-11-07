@@ -60,6 +60,7 @@ from vfs.paths import (
     Path,
     check_reserved_path,
     extract_extension,
+    is_trash_path,
     normalize_ext_channel,
     resolve_path,
 )
@@ -105,7 +106,7 @@ from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Sequence
+    from collections.abc import Callable, Coroutine, Mapping, Sequence
 
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
@@ -1747,7 +1748,8 @@ class AsyncVirtualFileSystem:
                 return busy
 
         terminal = self._resolve_terminal(full)
-        err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,))
+        subtree = _reaches_beneath(op, terminal.rel, kwargs)
+        err = self._gate_entry(terminal.binding, op, write_rels=(terminal.rel,), subtree=subtree)
         if err is not None:
             return err
 
@@ -1794,7 +1796,8 @@ class AsyncVirtualFileSystem:
         # All gates run before any dispatch, so a batch touching a bad
         # entry is rejected whole per the facts visible in this table.
         for binding, group in groups.values():
-            err = self._gate_entry(binding, op, write_rels=[o.path for o in group])
+            subtree = any(_reaches_beneath(op, o.path, kwargs) for o in group)
+            err = self._gate_entry(binding, op, write_rels=[o.path for o in group], subtree=subtree)
             if err is not None:
                 return err
 
@@ -2536,7 +2539,10 @@ class AsyncVirtualFileSystem:
                 return self._error(ErrorKind.cross_mount, op=op, path=src_full, target=dest_full)
             write_rels = (src_terminal.rel, dest_terminal.rel) if op == "move" else (dest_terminal.rel,)
             read_rels = () if op == "move" else (src_terminal.rel,)
-            err = self._gate_entry(src_terminal.binding, op, write_rels=write_rels, read_rels=read_rels)
+            subtree = _reaches_beneath(op, dest_terminal.rel, {})
+            err = self._gate_entry(
+                src_terminal.binding, op, write_rels=write_rels, read_rels=read_rels, subtree=subtree
+            )
             if err is not None:
                 return err
 
@@ -2864,6 +2870,7 @@ class AsyncVirtualFileSystem:
         *,
         write_rels: Sequence[Path] = (),
         read_rels: Sequence[Path] = (),
+        subtree: bool = False,
     ) -> Result | None:
         """Capability → grammar → permission, in the pinned order.
 
@@ -2884,6 +2891,9 @@ class AsyncVirtualFileSystem:
         copy's source): they pass the grammar alone, so a transfer out of
         the trash view is ``invalid`` at the path the caller sent, never
         the storage's ``not_found`` at a view head it holds no row for.
+        With *subtree*, a written path is also refused when a ``read``
+        rule of any layer lies beneath it, for a verb whose effect
+        reaches beneath its path.
         """
         if op not in binding.meta.caps:
             return self._error(
@@ -2901,7 +2911,7 @@ class AsyncVirtualFileSystem:
                     return self._error(ErrorKind.invalid, op=op, path=full, detail=reason)
             if not written:
                 continue
-            err = check_writable_composed(self._permission_layers(full), op)
+            err = check_writable_composed(self._permission_layers(full), op, subtree=subtree)
             if err is not None:
                 return err
         return None
@@ -3257,6 +3267,19 @@ class AsyncVirtualFileSystem:
     def _closed_error(self, op: Op) -> Result:
         """Classified answer for a dispatch attempted after ``close()``."""
         return self._error(ErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")
+
+
+def _reaches_beneath(op: Op, rel: Path, kwargs: Mapping[str, Any]) -> bool:
+    """Whether *op* at *rel* acts on every path beneath it: a cascading delete, a live sweep, a move, a copy.
+
+    A strict delete, a restore and a trash-view sweep only finish or undo
+    an earlier delete, so the map judges them at their path alone.
+    """
+    if op in ("move", "copy"):
+        return True
+    if op == "delete":
+        return bool(kwargs.get("cascade", True))
+    return op == "sweep" and not is_trash_path(str(rel))
 
 
 def _is_tombstoned_site(result: Result, path: Path) -> bool:

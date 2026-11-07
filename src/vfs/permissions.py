@@ -26,6 +26,10 @@ To resolve a path:
 2. If one matches, use that override's permission.
 3. Otherwise, use the default.
 4. Then apply the :data:`~vfs.ops.WRITE_GATED_OPS` check.
+5. For a verb that reaches beneath its path (a cascading delete, a sweep
+   outside the trash view, a move or a copy), a path that resolves
+   ``read_write`` is still refused when a ``read`` override lies
+   strictly beneath it.
 
 Sort order is established once at construction time, so resolution is
 a single linear pass.  This is the same algorithm that ``_match_mount``
@@ -252,15 +256,16 @@ class PermissionLayer(NamedTuple):
     mount_prefix: Path
 
 
-def check_writable_composed(layers: Iterable[PermissionLayer], op: str) -> Result | None:
+def check_writable_composed(layers: Iterable[PermissionLayer], op: str, *, subtree: bool = False) -> Result | None:
     """Gate *op* against every entry layer from ``/`` to the terminal.
 
     The most restrictive layer wins: the first denial (walking outermost
     to terminal) is returned, so the reported rule is the shallowest one
-    that forbids the write.  ``None`` when every layer allows.
+    that forbids the write.  ``None`` when every layer allows. With
+    *subtree*, each layer also refuses a read rule beneath its path.
     """
     for layer in layers:
-        denied = check_writable(layer.permission_map, op, layer.rel, mount_prefix=layer.mount_prefix)
+        denied = check_writable(layer.permission_map, op, layer.rel, mount_prefix=layer.mount_prefix, subtree=subtree)
         if denied is not None:
             return denied
     return None
@@ -272,6 +277,7 @@ def check_writable(
     rel: Path,
     *,
     mount_prefix: Path = ROOT,
+    subtree: bool = False,
 ) -> Result | None:
     """Return a classified error result if *op* mutates a read-only path.
 
@@ -282,10 +288,14 @@ def check_writable(
     structured ``path`` — so the caller sees the path they typed, while
     rule resolution stays in mount-relative coordinates.
 
-    Returns ``None`` when the operation is allowed (either because it
-    is not write-gated or because the resolved permission is
-    ``"read_write"``); a failure :class:`Result` when the operation
-    would mutate a read-only path.
+    Returns ``None`` when the operation is allowed: it is not
+    write-gated, or the resolved permission is ``"read_write"`` and,
+    with *subtree*, no ``read`` override lies beneath; a failure
+    :class:`Result` when the operation would mutate a read-only path.
+
+    With *subtree* — a verb whose effect reaches every path beneath
+    *rel* — a path that resolves writable is still refused when a
+    ``read`` override lies strictly beneath it.
 
     The error carries ``kind=read_only`` and reports *op* on the failed
     result's ``ops``; :func:`~vfs.exceptions.exception_for_kind`
@@ -302,9 +312,17 @@ def check_writable(
             continue
         if resolved.rule_prefix is None or len(alternate.rule_prefix) > len(resolved.rule_prefix):
             resolved = alternate
-    if resolved.permission == "read_write":
-        return None
     full = rel.with_mount(mount_prefix)
+    if resolved.permission == "read_write":
+        beneath = _read_rule_beneath(permission_map, (first, *rest)) if subtree else None
+        if beneath is None:
+            return None
+        return Result(
+            ops=(op,),
+            errors=[
+                classified(ErrorKind.read_only, full, detail="by a mount rule beneath", data={"rule_prefix": beneath})
+            ],
+        )
     by_rule = resolved.rule_prefix is not None
     return Result(
         ops=(op,),
@@ -333,3 +351,13 @@ def _permission_candidates(rel: str) -> tuple[str, ...]:
         alias = normalized[len("/.vfs") :]
         return (normalized, alias or "/")
     return (normalized,)
+
+
+def _read_rule_beneath(permission_map: PermissionMap, candidates: tuple[str, ...]) -> str | None:
+    """The first ``read`` override lying strictly beneath any of *candidates*, or ``None``."""
+    for candidate in candidates:
+        base = "" if candidate == "/" else candidate
+        for prefix, permission in permission_map.overrides:
+            if permission == "read" and prefix.startswith(base + "/"):
+                return prefix
+    return None

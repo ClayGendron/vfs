@@ -16,6 +16,8 @@ from tests.support.base_doubles import (
     _mutate,
     _mutate_at_root,
 )
+from vfs import InMemoryStorage
+from vfs.authority import Authority, Principal
 from vfs.base import AsyncVirtualFileSystem
 from vfs.exceptions import (
     NotFoundError,
@@ -29,6 +31,7 @@ from vfs.exceptions import (
 from vfs.models import Entry, Observation
 from vfs.ops import ALL_OPS, MUTATING_OPS
 from vfs.paths import Path
+from vfs.permissions import read_only, read_write
 from vfs.results import ErrorKind, Result, ResultError, Severity
 
 # ----------------------------------------------------------------------
@@ -380,3 +383,91 @@ async def test_partial_backend_gates_unimplemented_family_as_unsupported() -> No
     result = await fs.write(path="/f.txt", content="x")
     assert result.success is False
     assert result.errors[0].kind is ErrorKind.unsupported
+
+
+# ----------------------------------------------------------------------
+# A read rule beneath the path a subtree verb acts on
+# ----------------------------------------------------------------------
+
+BOB = Authority.of(Principal("bob"))
+LOCKED = "/proj/locked/policy.txt"
+
+
+async def _ruled_faces(*rules: str) -> tuple[AsyncVirtualFileSystem, AsyncVirtualFileSystem]:
+    """A face under ``read_write(read=rules)`` and a map-free face over the same storage, seeded through the latter."""
+    store = InMemoryStorage()
+    plain = AsyncVirtualFileSystem(storage=store)
+    for path, content in ((LOCKED, "ORIGINAL"), ("/proj/open.txt", "open"), ("/stage/locked/policy.txt", "staged")):
+        assert (await plain.write(path=path, content=content, parents=True)).success is True
+    return AsyncVirtualFileSystem(storage=store, permissions=read_write(read=list(rules))), plain
+
+
+async def _content(face: AsyncVirtualFileSystem, path: str) -> str | None:
+    return (await face.read(path)).one().content
+
+
+async def test_subtree_verbs_honour_a_read_rule_beneath() -> None:
+    fs, plain = await _ruled_faces("/proj/locked", "/proj2/locked")
+    calls = [
+        ("/proj", lambda: fs.delete("/proj", authority=BOB)),
+        ("/proj", lambda: fs.sweep("/proj", authority=BOB)),
+        ("/proj", lambda: fs.move("/proj", "/x", authority=BOB)),
+    ]
+    for sent, call in calls:
+        result = await call()
+        assert result.success is False
+        assert result.errors[0].kind == ErrorKind.read_only
+        assert result.errors[0].path == Path(sent)
+        assert await _content(plain, LOCKED) == "ORIGINAL"
+    copied = await fs.copy("/stage", "/proj2", authority=BOB)
+    assert copied.errors[0].kind == ErrorKind.read_only
+    assert copied.errors[0].data == {"rule_prefix": "/proj2/locked"}
+    assert (await plain.stat("/proj2")).success is False
+
+
+async def test_subtree_verbs_pass_where_no_read_rule_lies_beneath() -> None:
+    fs, plain = await _ruled_faces("/proj/locked", "/proj2/locked")
+    assert (await plain.mkdir("/proj2")).success is True
+    assert (await fs.delete("/proj/open.txt", authority=BOB)).success is True
+    assert (await fs.delete("/stage/locked/policy.txt", authority=BOB)).success is True
+    assert (await fs.move("/stage", "/elsewhere", authority=BOB)).success is True
+    assert (await fs.delete("/proj2", cascade=False, authority=BOB)).success is True
+    store = InMemoryStorage()
+    seeded = await AsyncVirtualFileSystem(storage=store).write(path="/a/b/x.txt", content="x", parents=True)
+    assert seeded.success is True
+    carved = AsyncVirtualFileSystem(storage=store, permissions=read_only(write=["/a/b"]))
+    assert (await carved.delete("/a/b", authority=BOB)).success is True
+
+
+async def test_a_child_mounts_read_rule_gates_a_subtree_op() -> None:
+    child = InMemoryStorage()
+    assert (
+        await AsyncVirtualFileSystem(storage=child).write(path="/d/frozen/k.txt", content="k", parents=True)
+    ).success
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.add_mount(child, "/m", permissions=read_write(read=["/d/frozen"]))
+    refused = await fs.delete("/m/d", authority=BOB)
+    assert refused.errors[0].kind == ErrorKind.read_only
+    assert refused.errors[0].data == {"rule_prefix": "/d/frozen"}
+    assert refused.errors[0].path == Path("/m/d")
+
+
+async def test_an_observation_delete_honours_a_read_rule_beneath() -> None:
+    fs, plain = await _ruled_faces("/proj/locked")
+    refused = await fs.delete(observations=[Observation(path=Path("/proj"))], authority=BOB)
+    assert refused.errors[0].kind == ErrorKind.read_only
+    assert refused.errors[0].data == {"rule_prefix": "/proj/locked"}
+    assert refused.errors[0].path == Path("/proj")
+    assert await _content(plain, LOCKED) == "ORIGINAL"
+    strict = await fs.delete(observations=[Observation(path=Path("/proj/open.txt"))], cascade=False, authority=BOB)
+    assert strict.success is True
+
+
+async def test_a_trash_view_sweep_keeps_the_point_gate() -> None:
+    for rule in ("/trash/x", "/proj/locked"):
+        fs, _ = await _ruled_faces(rule)
+        swept = await fs.sweep("/.vfs/trash", authority=BOB)
+        assert swept.success is True, rule
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.add_mount(InMemoryStorage(), "/m", permissions=read_write(read=["/trash/x"]))
+    assert (await fs.sweep("/m/.vfs/trash", authority=BOB)).success is True

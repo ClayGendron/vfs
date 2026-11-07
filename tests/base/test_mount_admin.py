@@ -17,6 +17,7 @@ from tests.support.base_doubles import (
     RunnerStorage,
     SuspendingProbeStorage,
 )
+from vfs import InMemoryStorage
 from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem, Location, MountMeta
 from vfs.exceptions import MountError
@@ -606,3 +607,16 @@ async def test_locate_raises_where_no_row_can_answer() -> None:
     await fs.close()
     with pytest.raises(ValueError, match="closed"):
         await fs.locate("/anything.md")
+
+
+async def test_unmount_and_remount_pass_under_a_rule_beneath_the_site() -> None:
+    store = InMemoryStorage()
+    fs = AsyncVirtualFileSystem(storage=store, permissions=read_write(read=["/data/archive", "/d2/x"]))
+    await fs.add_mount(InMemoryStorage(), "/data")
+    await fs.remove_mount("/data")
+    await fs.add_mount(InMemoryStorage(), "/data")
+    plain = AsyncVirtualFileSystem(storage=store)
+    assert (await plain.mkdir("/d2")).success is True
+    assert (await plain.delete("/d2", cascade=False)).success is True
+    restored = await fs.restore("/d2")
+    assert restored.success is True
