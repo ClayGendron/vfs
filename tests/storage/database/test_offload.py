@@ -30,6 +30,7 @@ from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import offload as offload_module
 from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.offload import VerifyOffload
+from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -536,5 +537,32 @@ async def test_a_body_changed_during_the_hop_is_never_stored_under_another_hash(
             assert (row.content_hash, row.size_bytes) == (measure_bytes(stored).content_hash, len(stored))
         handbook = await storage.read(path=Path("/eve/handbook.bin"), columns=frozenset({"data"}))
         assert handbook.one().data == public
+    finally:
+        await storage.close()
+
+
+async def test_an_edit_call_matches_in_one_hop_with_a_budget_per_match(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hops: list[int] = []
+    real = writes_module.call_offloaded
+
+    async def counted(executor: Any, work: Any) -> Any:
+        hops.append(1)
+        return await real(executor, work)
+
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        # ten near-misses of about 500,000 cells each: each fits its own budget
+        body = "a\n" + "x" * 707 + "\nb\n"
+        entries = [Entry(path=Path(f"/e/{n}.txt"), content=body) for n in range(10)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        monkeypatch.setattr(writes_module, "call_offloaded", counted)
+        edit = EditOperation(old="a\n" + "x" * 706 + "y" + "\nb", new="done")
+        result = await storage.edit(edits=[edit], observations=[e.to_observation() for e in entries])
+        assert result.success is True, result.errors
+        assert len(hops) == 1
+        for entry in entries:
+            assert (await storage.read(path=entry.path)).one().content == "done\n"
     finally:
         await storage.close()

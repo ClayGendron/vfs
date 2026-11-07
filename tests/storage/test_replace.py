@@ -9,11 +9,18 @@ sequential threading contract of ``apply_edits``.
 
 from __future__ import annotations
 
+import random
+import tracemalloc
+from typing import Any
+
 import pytest
 
+from vfs.storage import replace as replace_module
 from vfs.storage.replace import (
+    FUZZY_WORK_BUDGET,
     REPLACERS,
     EditOperation,
+    FuzzyBudget,
     apply_edits,
     block_anchor_replacer,
     get_context_lines,
@@ -330,3 +337,164 @@ def test_apply_edits_stops_at_the_first_failure() -> None:
     assert not result.success
     assert result.content is None
     assert result.error == "old_string not found in file content."
+
+
+# ----------------------------------------------------------------------
+# The fuzzy fallback is linear and budgeted
+# ----------------------------------------------------------------------
+
+BUDGET_REFUSAL = (
+    "old_string has no exact match, and the fuzzy fallback reached its work budget. Send the exact text to replace."
+)
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
+    """Count the calls of the module attribute *name* by wrapping it in place."""
+    calls: list[int] = []
+    real = getattr(replace_module, name)
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(replace_module, name, counting)
+    return calls
+
+
+@pytest.mark.parametrize("lines", [1_000, 2_000])
+def test_the_anchor_search_bisects_once_per_first_anchor(monkeypatch: pytest.MonkeyPatch, lines: int) -> None:
+    bisections = _counted(monkeypatch, "bisect_left")
+    result = replace("b\n" + "a\n" * lines, "a\nx\nb", "z")
+    assert result.error == "old_string not found in file content."
+    assert len(bisections) == lines
+
+
+def test_the_fuzzy_fallback_stops_at_its_work_budget() -> None:
+    refused = replace("a\n" + "x" * 2_400 + "\nb\n", "a\n" + "x" * 2_399 + "y" + "\nb", "z")
+    assert refused.success is False
+    assert refused.error == BUDGET_REFUSAL
+    matched = replace("a\n" + "x" * 600 + "\nb\n", "a\n" + "x" * 599 + "y" + "\nb", "z")
+    assert matched.success is True
+    assert matched.method_used == "block_anchor"
+
+
+def test_empty_middle_lines_spend_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    granted: list[int] = []
+    real_spend = FuzzyBudget.spend
+
+    def spend(self: FuzzyBudget, units: int) -> bool:
+        allowed = real_spend(self, units)
+        if allowed:
+            granted.append(units)
+        return allowed
+
+    monkeypatch.setattr(FuzzyBudget, "spend", spend)
+    distances = _counted(monkeypatch, "levenshtein")
+    result = replace("a\n" * 4_000 + "b", "a\n" + "\n" * 4_000 + "b", "z")
+    assert result.error == BUDGET_REFUSAL
+    assert sum(granted) <= FUZZY_WORK_BUDGET
+    assert len(distances) <= 4_000_000
+
+
+def test_the_line_trimmed_scan_spends_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    anchored = _counted(monkeypatch, "_block_anchor")
+    result = replace("a\n" * 5_000, "  a\n" * 2_500 + "b", "z")
+    assert result.error == BUDGET_REFUSAL
+    assert anchored == []
+
+
+def test_a_300_line_near_miss_still_matches() -> None:
+    rng = random.Random(7)
+    alphabet = "abcdefghijklmnopqrstuvwxyz _-()"
+    middle = ["".join(rng.choice(alphabet) for _ in range(60)) for _ in range(298)]
+    content_lines = ["BEGIN " + "s" * 54, *middle, "END " + "e" * 56]
+    find_lines = [
+        content_lines[0],
+        *(line[:-1] + ("!" if line[-1] != "!" else "?") for line in middle),
+        content_lines[-1],
+    ]
+    content = "head\n" + "\n".join(content_lines) + "\ntail\n"
+    result = replace(content, "\n".join(find_lines), "replaced")
+    assert result.success is True
+    assert result.method_used == "block_anchor"
+    assert result.content == "head\nreplaced\ntail\n"
+
+
+def test_a_many_match_failure_lists_three_and_splits_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    splits = _counted(monkeypatch, "_lines_of")
+    result = replace("a\n" * 12_000, "  a", "z")
+    assert result.success is False
+    assert result.error is not None and result.error.startswith("Found 12000 matches")
+    assert result.error.count("Match at line") == 3
+    for line in (1, 2, 3):
+        assert f"Match at line {line}:" in result.error
+    assert result.error.endswith("... and 11997 more matches")
+    assert result.matches is not None and len(result.matches) == 12_000
+    assert len(splits) == 1
+
+
+def _matrix_levenshtein(a: str, b: str) -> int:
+    rows = [list(range(len(b) + 1))]
+    for i, x in enumerate(a, 1):
+        row = [i]
+        for j, y in enumerate(b, 1):
+            row.append(min(rows[-1][j] + 1, row[j - 1] + 1, rows[-1][j - 1] + (x != y)))
+        rows.append(row)
+    return rows[-1][-1]
+
+
+def test_the_two_row_levenshtein_matches_the_matrix() -> None:
+    rng = random.Random(11)
+    for _ in range(200):
+        a = "".join(rng.choice("abc") for _ in range(rng.randint(0, 30)))
+        b = "".join(rng.choice("abc") for _ in range(rng.randint(0, 30)))
+        assert levenshtein(a, b) == _matrix_levenshtein(a, b), (a, b)
+
+
+def test_a_repeated_first_line_costs_one_comparison_per_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    granted: list[int] = []
+    real_spend = FuzzyBudget.spend
+
+    def spend(self: FuzzyBudget, units: int) -> bool:
+        allowed = real_spend(self, units)
+        if allowed:
+            granted.append(units)
+        return allowed
+
+    monkeypatch.setattr(FuzzyBudget, "spend", spend)
+    block = ["},", *(f'"key{n}": {n},' for n in range(99))]
+    content = "\n".join(["},"] * 25_000 + ["    " + line for line in block] + ["},"] * 25_000)
+    result = replace(content, "\n".join(block), "edited")
+    assert result.method_used == "line_trimmed"
+    assert sum(granted) < 200_000
+
+
+def test_tied_block_anchor_candidates_edit_the_first() -> None:
+    result = replace("a\nxx\nb\nq\na\nxx\nb\n", "a\nxy\nb", "z")
+    assert result.content == "z\nq\na\nxx\nb\n"
+
+
+def test_a_step_that_exactly_fits_is_granted() -> None:
+    budget = FuzzyBudget(10)
+    assert budget.spend(10) is True
+    assert budget.left == 0
+    assert budget.exhausted is False
+    assert budget.spend(1) is False
+    assert budget.exhausted is True
+
+
+def test_an_exact_match_is_answered_whatever_the_budget_holds() -> None:
+    budget = FuzzyBudget(0)
+    budget.spend(1)
+    result = replace("abc", "b", "x", budget=budget)
+    assert result.content == "axc"
+
+
+def test_levenshtein_keeps_its_rows_to_the_shorter_string() -> None:
+    tracemalloc.start()
+    try:
+        assert levenshtein("b", "a" * 20_000) == 20_000
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 100_000

@@ -2,8 +2,21 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
+from typing import Final
+
+# Work units one replace call's fuzzy fallback may spend: line comparisons past the
+# linear pass, and Levenshtein cells. Exact matching is never charged.
+FUZZY_WORK_BUDGET: Final = 4_000_000
+
+# The matches a multi-match failure lists with context; the rest are counted.
+_LISTED_MATCHES: Final = 3
+
+BUDGET_REFUSAL: Final = (
+    "old_string has no exact match, and the fuzzy fallback reached its work budget. Send the exact text to replace."
+)
 
 
 @dataclass
@@ -26,6 +39,15 @@ class ReplaceResult:
     error: str | None = None
     matches: list[Match] | None = None
     method_used: str | None = None
+
+
+@dataclass(frozen=True)
+class _Lines:
+    """One content's lines, split once: as written, stripped, and each line's start offset."""
+
+    raw: list[str]
+    stripped: list[str]
+    starts: list[int]
 
 
 @dataclass(frozen=True)
@@ -59,49 +81,55 @@ def _split_dropping_trailing_blank(text: str) -> list[str]:
 
 
 def levenshtein(a: str, b: str) -> int:
-    """Calculate Levenshtein distance between two strings."""
+    """Calculate Levenshtein distance between two strings, keeping two rows of the shorter one."""
     if a == "" or b == "":
         return max(len(a), len(b))
-
-    matrix = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
-
-    for i in range(len(a) + 1):
-        matrix[i][0] = i
-    for j in range(len(b) + 1):
-        matrix[0][j] = j
-
-    for i in range(1, len(a) + 1):
-        for j in range(1, len(b) + 1):
-            cost = 0 if a[i - 1] == b[j - 1] else 1
-            matrix[i][j] = min(
-                matrix[i - 1][j] + 1,
-                matrix[i][j - 1] + 1,
-                matrix[i - 1][j - 1] + cost,
-            )
-
-    return matrix[len(a)][len(b)]
+    if len(a) < len(b):
+        a, b = b, a
+    previous = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        current = [i]
+        for j, y in enumerate(b, 1):
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (x != y)))
+        previous = current
+    return previous[-1]
 
 
 def get_line_number(content: str, position: int) -> int:
     """Get 1-indexed line number for a position in content."""
-    return content[:position].count("\n") + 1
+    return _line_number(_lines_of(content), position)
 
 
 def get_context_lines(content: str, start: int, end: int, context: int = 3) -> str:
     """Get matched text with surrounding context lines."""
-    lines = content.split("\n")
-    start_line = get_line_number(content, start) - 1  # 0-indexed
-    end_line = get_line_number(content, end) - 1
+    return _context(_lines_of(content), start, end, context)
 
-    context_start = max(0, start_line - context)
-    context_end = min(len(lines), end_line + context + 1)
 
-    result_lines = []
-    for i in range(context_start, context_end):
-        prefix = ">" if start_line <= i <= end_line else " "
-        result_lines.append(f"{i + 1:4d} {prefix} {lines[i]}")
+# -----------------------------------------------------------------------------
+# The fuzzy work budget
+# -----------------------------------------------------------------------------
 
-    return "\n".join(result_lines)
+
+class FuzzyBudget:
+    """The work units one ``replace`` call's fuzzy fallback may still spend.
+
+    A unit is one line comparison beyond the first at each content line,
+    or one Levenshtein cell. A block-anchor visit spends before it runs;
+    a line-trimmed window is charged the comparisons it made, so a call
+    overruns the budget by at most one window.
+    """
+
+    def __init__(self, units: int = FUZZY_WORK_BUDGET) -> None:
+        self.left = units
+        self.exhausted = False
+
+    def spend(self, units: int) -> bool:
+        """Take *units* when they fit; otherwise mark the budget exhausted and refuse."""
+        if units > self.left:
+            self.exhausted = True
+            return False
+        self.left -= units
+        return True
 
 
 # -----------------------------------------------------------------------------
@@ -128,35 +156,7 @@ def simple_replacer(content: str, find: str) -> Generator[Match]:
 
 def line_trimmed_replacer(content: str, find: str) -> Generator[Match]:
     """Match lines after stripping whitespace from each line."""
-    content_lines = content.split("\n")
-    find_lines = _split_dropping_trailing_blank(find)
-
-    if not find_lines:
-        return
-
-    for i in range(len(content_lines) - len(find_lines) + 1):
-        matches = True
-        for j in range(len(find_lines)):
-            if content_lines[i + j].strip() != find_lines[j].strip():
-                matches = False
-                break
-
-        if matches:
-            start_pos = sum(len(content_lines[k]) + 1 for k in range(i))
-            end_pos = start_pos
-            for k in range(len(find_lines)):
-                end_pos += len(content_lines[i + k])
-                if k < len(find_lines) - 1:
-                    end_pos += 1
-
-            matched_text = "\n".join(content_lines[i : i + len(find_lines)])
-            yield Match(
-                start=start_pos,
-                end=end_pos,
-                text=matched_text,
-                method="line_trimmed",
-                confidence=0.9,
-            )
+    yield from _line_trimmed(_lines_of(content), find, FuzzyBudget())
 
 
 # Thresholds for BlockAnchorReplacer
@@ -166,83 +166,11 @@ MULTIPLE_CANDIDATES_THRESHOLD = 0.3
 
 def block_anchor_replacer(content: str, find: str) -> Generator[Match]:
     """Match blocks using first/last lines as anchors with fuzzy middle matching."""
-    content_lines = content.split("\n")
-    find_lines = _split_dropping_trailing_blank(find)
-
-    if len(find_lines) < 3:
-        return
-
-    first_line = find_lines[0].strip()
-    last_line = find_lines[-1].strip()
-
-    candidates: list[tuple[int, int]] = []
-    for i in range(len(content_lines)):
-        if content_lines[i].strip() != first_line:
-            continue
-        for j in range(i + 2, len(content_lines)):
-            if content_lines[j].strip() == last_line:
-                candidates.append((i, j))
-                break
-
-    if not candidates:
-        return
-
-    def calculate_similarity(start_line: int, end_line: int) -> float:
-        actual_block_size = end_line - start_line + 1
-        find_block_size = len(find_lines)
-        lines_to_check = min(find_block_size - 2, actual_block_size - 2)
-
-        total_similarity = 0.0
-        for j in range(1, min(find_block_size - 1, actual_block_size - 1)):
-            content_line = content_lines[start_line + j].strip()
-            find_line = find_lines[j].strip()
-            max_len = max(len(content_line), len(find_line))
-            if max_len == 0:
-                continue
-            distance = levenshtein(content_line, find_line)
-            total_similarity += 1 - (distance / max_len)
-
-        return total_similarity / lines_to_check
-
-    def make_match(start_line: int, end_line: int, confidence: float) -> Match:
-        start_pos = sum(len(content_lines[k]) + 1 for k in range(start_line))
-        end_pos = start_pos
-        for k in range(start_line, end_line + 1):
-            end_pos += len(content_lines[k])
-            if k < end_line:
-                end_pos += 1
-
-        matched_text = "\n".join(content_lines[start_line : end_line + 1])
-        return Match(
-            start=start_pos,
-            end=end_pos,
-            text=matched_text,
-            method="block_anchor",
-            confidence=confidence,
-        )
-
-    if len(candidates) == 1:
-        [(start_line, end_line)] = candidates
-        similarity = calculate_similarity(start_line, end_line)
-        if similarity >= SINGLE_CANDIDATE_THRESHOLD:
-            yield make_match(start_line, end_line, similarity)
-        return
-
-    best_match = None
-    best_similarity = -1.0
-
-    for start_line, end_line in candidates:
-        similarity = calculate_similarity(start_line, end_line)
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_match = (start_line, end_line)
-
-    if best_similarity >= MULTIPLE_CANDIDATES_THRESHOLD and best_match:
-        best_start, best_end = best_match
-        yield make_match(best_start, best_end, best_similarity)
+    yield from _block_anchor(_lines_of(content), find, FuzzyBudget())
 
 
-# Replacers in priority order
+# The public replacers in the order `replace` tries its levels; `replace` runs
+# the private budgeted forms in this same order.
 REPLACERS: list[Replacer] = [
     simple_replacer,
     line_trimmed_replacer,
@@ -260,6 +188,7 @@ def replace(
     old_string: str,
     new_string: str,
     replace_all: bool = False,
+    budget: FuzzyBudget | None = None,
 ) -> ReplaceResult:
     """Replace old_string with new_string in content.
 
@@ -267,6 +196,12 @@ def replace(
     1. Exact match (confidence: 1.0)
     2. Line-trimmed match - ignores whitespace per line (confidence: 0.9)
     3. Block anchor match - matches first/last lines, fuzzy middle (confidence: 0.3-0.6)
+
+    The two fuzzy levels share one :class:`FuzzyBudget` (a fresh one
+    when none is given), which only they spend; a fuzzy level that
+    spends it gives no verdict, and the call is refused with the
+    exact-match requirement. An exact match is answered whatever the
+    budget holds.
     """
     if not old_string:
         return ReplaceResult(
@@ -283,9 +218,18 @@ def replace(
     content = normalize_line_endings(content)
     old_string = normalize_line_endings(old_string)
     new_string = normalize_line_endings(new_string)
+    lines = _lines_of(content)
+    spent = budget if budget is not None else FuzzyBudget()
+    levels: list[Callable[[], Generator[Match]]] = [
+        lambda: simple_replacer(content, old_string),
+        lambda: _line_trimmed(lines, old_string, spent),
+        lambda: _block_anchor(lines, old_string, spent),
+    ]
 
-    for replacer in REPLACERS:
-        matches = list(replacer(content, old_string))
+    for fuzzy, level in enumerate(levels):
+        matches = list(level())
+        if fuzzy and spent.exhausted:
+            return ReplaceResult(success=False, error=BUDGET_REFUSAL)
 
         if not matches:
             continue
@@ -318,17 +262,19 @@ def replace(
                 matches=[sole],
             )
 
-        match_info = []
-        for m in matches:
-            line_num = get_line_number(content, m.start)
-            ctx = get_context_lines(content, m.start, m.end)
-            match_info.append(f"Match at line {line_num}:\n{ctx}")
-
+        match_info = [
+            f"Match at line {_line_number(lines, m.start)}:\n{_context(lines, m.start, m.end)}"
+            for m in matches[:_LISTED_MATCHES]
+        ]
+        unlisted = len(matches) - _LISTED_MATCHES
+        more = f"\n\n... and {unlisted} more matches" if unlisted > 0 else ""
         return ReplaceResult(
             success=False,
             error=(
                 f"Found {len(matches)} matches. "
-                "Provide more context in old_string to identify a unique match.\n\n" + "\n\n---\n\n".join(match_info)
+                "Provide more context in old_string to identify a unique match.\n\n"
+                + "\n\n---\n\n".join(match_info)
+                + more
             ),
             matches=matches,
         )
@@ -353,3 +299,102 @@ def apply_edits(content: str, edits: Sequence[EditOperation]) -> ReplaceResult:
             return outcome
         content = outcome.content
     return ReplaceResult(success=True, content=content)
+
+
+# -----------------------------------------------------------------------------
+# Internal helpers
+# -----------------------------------------------------------------------------
+
+
+def _lines_of(content: str) -> _Lines:
+    raw = content.split("\n")
+    starts: list[int] = []
+    position = 0
+    for line in raw:
+        starts.append(position)
+        position += len(line) + 1
+    return _Lines(raw, [line.strip() for line in raw], starts)
+
+
+def _line_number(lines: _Lines, position: int) -> int:
+    return bisect_right(lines.starts, position)
+
+
+def _context(lines: _Lines, start: int, end: int, context: int = 3) -> str:
+    start_line = _line_number(lines, start) - 1
+    end_line = _line_number(lines, end) - 1
+    first = max(0, start_line - context)
+    last = min(len(lines.raw), end_line + context + 1)
+    return "\n".join(
+        f"{i + 1:4d} {'>' if start_line <= i <= end_line else ' '} {lines.raw[i]}" for i in range(first, last)
+    )
+
+
+def _span(lines: _Lines, first: int, last: int) -> tuple[int, int, str]:
+    """The start, end and text of the lines *first* through *last*."""
+    start = lines.starts[first]
+    end = lines.starts[last] + len(lines.raw[last])
+    return start, end, "\n".join(lines.raw[first : last + 1])
+
+
+def _line_trimmed(lines: _Lines, find: str, budget: FuzzyBudget) -> Generator[Match]:
+    """Windows whose stripped lines equal *find*'s, scanned from each first-line hit."""
+    wanted = [line.strip() for line in _split_dropping_trailing_blank(find)]
+    if not wanted:
+        return
+    size = len(wanted)
+    stripped = lines.stripped
+    for i in range(len(stripped) - size + 1):
+        if stripped[i] != wanted[0]:
+            continue
+        j = 1
+        while j < size and stripped[i + j] == wanted[j]:
+            j += 1
+        if not budget.spend(min(j, size - 1)):
+            return
+        if j == size:
+            start, end, text = _span(lines, i, i + size - 1)
+            yield Match(start=start, end=end, text=text, method="line_trimmed", confidence=0.9)
+
+
+def _block_anchor(lines: _Lines, find: str, budget: FuzzyBudget) -> Generator[Match]:
+    """Blocks between a first-anchor line and the next last-anchor line, scored on their middles."""
+    wanted = [line.strip() for line in _split_dropping_trailing_blank(find)]
+    if len(wanted) < 3:
+        return
+    stripped = lines.stripped
+    last_at = [j for j, line in enumerate(stripped) if line == wanted[-1]]
+    candidates: list[tuple[int, int]] = []
+    for i, line in enumerate(stripped):
+        if line != wanted[0]:
+            continue
+        k = bisect_left(last_at, i + 2)
+        if k < len(last_at):
+            candidates.append((i, last_at[k]))
+    if not candidates:
+        return
+
+    def similarity(first: int, last: int) -> float | None:
+        actual = last - first + 1
+        checked = min(len(wanted) - 2, actual - 2)
+        total = 0.0
+        for j in range(1, min(len(wanted) - 1, actual - 1)):
+            have, want = stripped[first + j], wanted[j]
+            if not budget.spend(len(have) * len(want) + 1):
+                return None
+            longest = max(len(have), len(want))
+            if longest:
+                total += 1 - levenshtein(have, want) / longest
+        return total / checked
+
+    scored: list[tuple[float, int, int]] = []
+    for first, last in candidates:
+        score = similarity(first, last)
+        if score is None:
+            return
+        scored.append((score, first, last))
+    threshold = SINGLE_CANDIDATE_THRESHOLD if len(scored) == 1 else MULTIPLE_CANDIDATES_THRESHOLD
+    best, first, last = max(scored, key=lambda item: item[0])
+    if best >= threshold:
+        start, end, text = _span(lines, first, last)
+        yield Match(start=start, end=end, text=text, method="block_anchor", confidence=best)

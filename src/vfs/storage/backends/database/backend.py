@@ -743,6 +743,7 @@ class DatabaseStorage:
                 edits=edits,
                 targets=targets,
                 authority=self._named(authority),
+                executor=host.offload_executor,
             )
 
         return await self._execute_write("edit", run)

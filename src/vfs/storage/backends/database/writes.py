@@ -280,6 +280,7 @@ async def edit_rows(
     edits: list[EditOperation],
     targets: Sequence[Path],
     authority: Authority | None,
+    executor: Executor,
 ) -> Result:
     """Apply the same edit sequence to every target's content.
 
@@ -290,36 +291,15 @@ async def edit_rows(
     Misses are classified by a descent probe (``not_found`` vs
     ``wrong_kind``); a failed or invalid edit fails the whole batch.
     Every update is version-guarded — edits never create and never
-    clobber, so a concurrent rival surfaces as ``conflict``.
+    clobber, so a concurrent rival surfaces as ``conflict``. The
+    per-target matching awaits nothing, so it runs whole in one hop on
+    *executor* and the event loop stays free while it matches.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
     live = {path: row for path, row in committed.items() if row["deleted_at"] is None}
     missing = await miss_errors(session, tables.entry, targets, live, profile, membership_budget)
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
-    for target in targets:
-        row = live.get(str(target))
-        if row is None:
-            plan.errors.append(missing[target])
-            continue
-        if row["source"] == "bytes":
-            plan.errors.append(_binary_target(target))
-            continue
-        kind, current = plan.material_of(target)
-        edited = edited_entry(target, kind=kind, content=current, edits=edits)
-        if isinstance(edited, ResultError):
-            plan.errors.append(edited)
-            continue
-        plan.stage_update(
-            target,
-            kind=edited.kind,
-            content=edited.content,
-            content_hash=edited.content_hash,
-            size_bytes=edited.size_bytes,
-            lines=edited.lines,
-            mime_type=row["mime_type"],
-            owner_id=row["owner_id"],
-        )
-        plan.pending.append((target, "updated"))
+    await call_offloaded(executor, lambda: _stage_edits(plan, live, missing, targets, edits))
     return await _finish(session, tables, profile, parameter_budget, membership_budget, plan, op="edit", overwrite=True)
 
 
@@ -1269,3 +1249,37 @@ def _body(entry: Entry) -> str | bytes | None:
 
 def _measure(body: str | bytes) -> BodyMetrics:
     return measure_text(body) if isinstance(body, str) else measure_bytes(body)
+
+
+def _stage_edits(
+    plan: WritePlan,
+    live: Mapping[str, RowMapping],
+    missing: Mapping[Path, ResultError],
+    targets: Sequence[Path],
+    edits: list[EditOperation],
+) -> None:
+    """Match and stage every target's edit on *plan*: the CPU of an edit, with no statement."""
+    for target in targets:
+        row = live.get(str(target))
+        if row is None:
+            plan.errors.append(missing[target])
+            continue
+        if row["source"] == "bytes":
+            plan.errors.append(_binary_target(target))
+            continue
+        kind, current = plan.material_of(target)
+        edited = edited_entry(target, kind=kind, content=current, edits=edits)
+        if isinstance(edited, ResultError):
+            plan.errors.append(edited)
+            continue
+        plan.stage_update(
+            target,
+            kind=edited.kind,
+            content=edited.content,
+            content_hash=edited.content_hash,
+            size_bytes=edited.size_bytes,
+            lines=edited.lines,
+            mime_type=row["mime_type"],
+            owner_id=row["owner_id"],
+        )
+        plan.pending.append((target, "updated"))

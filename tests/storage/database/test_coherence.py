@@ -184,6 +184,7 @@ class TestWriteVsTopologyCoherence:
                     edits=[EditOperation(old="old", new="new")],
                     targets=[Path("/d/f.txt")],
                     authority=None,
+                    executor=host.offload_executor,
                 )
             await session.rollback()
         assert result.success is False

@@ -1,10 +1,11 @@
 """CPU-bound work leaves the event loop: the backend's offload seam.
 
-Three verbs run real CPU inside their coroutines — grep's verify stage
+Four verbs run real CPU inside their coroutines — grep's verify stage
 (up to a full wall budget of matching per call), reindex's chunk and
-posting stages, and write's measurement of a call's bodies past the
-inline total — and running any inline holds the event loop against
-every concurrent caller on the host. All hop through one
+posting stages, write's measurement of a call's bodies past the inline
+total, and edit's per-target matching — and running any inline holds
+the event loop against every concurrent caller on the host. All hop
+through one
 small executor the backend owns: :func:`call_offloaded` is the shared
 hop (submit, await, and the close-window inline fallback), and
 :class:`VerifyOffload` decorates a compiled
@@ -35,7 +36,9 @@ Four laws govern the hop:
   proxy, so an abandoned reindex batch can hold up to 4x the budget
   in folded bytes on CJK or emoji corpora (measured 3.00x/4.00x).
   write's measurement hop holds the call's own bodies, which its
-  caller already holds. No protocol-level interrupt exists.
+  caller already holds; an abandoned edit hop finishes matching its
+  remaining targets, holding one worker for up to its targets times the
+  per-match budget. No protocol-level interrupt exists.
 - **The pool follows the host's close, and calls survive it.** A call
   that captured its pool before close serves every remaining hop it
   holds inline once the pool is shut — grep its remaining verify
@@ -50,7 +53,10 @@ On the Rust engine the matcher detaches the GIL for the whole batch,
 so the offload removes loop occupancy wholesale; on the pure engine it
 bounds stalls at the longest single ``re`` call — one backtracking
 episode is a single GIL-holding C call no thread can interrupt, a
-disclosed residual settled by engine choice. The hop itself costs
+disclosed residual settled by engine choice. edit's matching is pure
+Python and holds the GIL, so its hop bounds loop stalls at the
+interpreter's switch interval rather than removing them; the Rust
+kernel is the direction. The hop itself costs
 ~40 µs per batch call — noise against a batch's matching work.
 """
 
