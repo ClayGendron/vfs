@@ -28,7 +28,7 @@ mod python;
 
 pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
 pub use grams::{GRAM_SIZE, GramExtractor};
-pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, fold_line, markdown_refs, markdown_refs_batch};
+pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, RefParser, fold_line, markdown_refs, markdown_refs_batch};
 pub use lexical::{
     BLOCK_SIZE, BM25_B, BM25_K1, BlockRow, DrainedLexical, LexicalAccumulator, LexicalError, PYTHON_VERSION,
     ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, competing_blocks, decode_summary, score, select_blocks,

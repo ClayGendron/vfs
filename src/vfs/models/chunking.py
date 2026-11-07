@@ -173,7 +173,7 @@ STRUCTURE_FALLBACK_GRAMMARS: Final = frozenset({"astro", "clojure", "csv", "json
 
 # Bumped deliberately when a grammar crate or walker change alters chunk
 # shapes; the chunk fixtures regenerate in the same landing.
-CHUNK_GENERATION: Final = 1
+CHUNK_GENERATION: Final = 2
 
 NOTEBOOK_EXTENSION = "ipynb"
 

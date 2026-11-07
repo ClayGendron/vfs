@@ -11,6 +11,7 @@ generated the engine's tables.
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -292,6 +293,41 @@ class TestChunkSeam:
     def test_unknown_grammar_rows_are_none(self) -> None:
         good = b"x = 1\n" * 400
         assert chunk_spans([(good, "no_such_grammar"), (good, "python")], chunk_size=64)[0] is None
+
+
+# The nesting depth the Markdown block scanner can save its state for is 254
+# open blocks; each body below opens more, through quotes or list items.
+_DEEP_BODIES: dict[str, str] = {
+    "quotes-300": "> " * 300 + "[l](a.md)\n",
+    "quotes-2000": "> " * 2000 + "[l](a.md)\n",
+    "lists-2000": "- " * 2000 + "[l](a.md)\n",
+}
+_DEEP_CALLS: dict[str, str] = {
+    "markdown_refs": "print(json.dumps([dest for dest, _ in native.markdown_refs([body])[0]]))",
+    "chunk_spans": (
+        "rows = native.chunk_spans([(body, 'markdown')], chunk_size=64)[0]\n"
+        "print(json.dumps([rows[0][0], rows[-1][1], len(body)]))"
+    ),
+}
+
+
+class TestMarkdownNesting:
+    """A body nested past the scanner's cap parses; it never aborts the process."""
+
+    @pytest.mark.parametrize("body_name", sorted(_DEEP_BODIES))
+    @pytest.mark.parametrize("entry", sorted(_DEEP_CALLS))
+    def test_deep_nesting_never_aborts_the_process(self, entry: str, body_name: str) -> None:
+        # An abort kills the interpreter, so the call runs in a child process.
+        body = _DEEP_BODIES[body_name].encode()
+        script = f"import json\nfrom vfs import native\nbody = {body!r}\n{_DEEP_CALLS[entry]}\n"
+        run = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+        assert run.returncode == 0, run.stderr[-400:]
+        answer = json.loads(run.stdout)
+        if entry == "markdown_refs":
+            assert answer == ["a.md"]
+        else:
+            start, end, length = answer
+            assert (start, end) == (0, length)
 
 
 # Lexical parity corpora: the fixture corpus, a shared term that spans

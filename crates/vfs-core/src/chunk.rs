@@ -218,6 +218,15 @@ mod tests {
     }
 
     #[test]
+    fn a_markdown_body_nested_past_the_scanner_cap_chunks() {
+        let body = format!("{}x\n", "> ".repeat(2000));
+        let spans = rows(&body, "markdown", 64);
+        assert_eq!(spans[0].start, 0);
+        assert_eq!(spans[spans.len() - 1].end as usize, body.len());
+        assert!(spans.windows(2).all(|pair| pair[0].end == pair[1].start));
+    }
+
+    #[test]
     fn unknown_grammar_is_none() {
         assert_eq!(split_batch(&[(b"x", "no-such-grammar")], 2048), vec![None]);
     }

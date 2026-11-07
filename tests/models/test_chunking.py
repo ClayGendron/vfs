@@ -210,6 +210,7 @@ class TestSplitCodeBatch:
 class TestChunkGeneration:
     def test_generation_carries_the_engine_stamp_and_the_declared_constant(self) -> None:
         assert chunk_generation() == f"rust:{CHUNK_GENERATION}"
+        assert chunk_generation() == "rust:2"
 
 
 class TestChunkFixtures:

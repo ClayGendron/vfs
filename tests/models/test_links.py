@@ -85,7 +85,7 @@ class TestExtractLinks:
         assert [[ref.dest for ref in refs] for refs in batch] == [["a.md"], [], ["b.md"], []]
 
     def test_the_generation_names_the_extractor(self) -> None:
-        assert link_generation() == "md:1"
+        assert link_generation() == "md:2"
         assert LINK_EDGE_TYPE == "links"
 
 

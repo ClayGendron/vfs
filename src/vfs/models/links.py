@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 # The extractor version stamped beside the body hash on every entry; a bump
 # re-extracts every document once, the chunker's generation law.
-LINK_GENERATION: Final = 1
+LINK_GENERATION: Final = 2
 
 # The edge type the markdown extractor mints — one segment, never ``fs``.
 LINK_EDGE_TYPE: Final = "links"

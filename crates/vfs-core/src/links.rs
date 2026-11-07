@@ -1,11 +1,14 @@
 //! Markdown references off the tree-sitter-markdown trees.
 //!
 //! One batch entry point: UTF-8 document bodies in, per-body references
-//! out, parsed in parallel with one `MarkdownParser` per worker (the
-//! block grammar with the inline grammar spliced in under every
-//! `inline` node). A reference is a link destination — an inline link,
-//! an image, or a reference definition — or a code span shaped like a
-//! path. Each carries the referring line, folded to one bounded line.
+//! out, parsed in parallel with one `RefParser` per worker. The crate
+//! splices the two grammars itself: the block grammar parses the body,
+//! and the inline grammar parses each `inline` or `pipe_table_cell` node
+//! over the node's range minus its block continuation markers, one inline
+//! tree at a time, walked and dropped before the next. A reference is a
+//! link destination — an inline link, an image, or a reference
+//! definition — or a code span shaped like a path. Each carries the
+//! referring line, folded to one bounded line.
 //! Fenced code, indented code and HTML blocks hold no references by
 //! construction: the tree never yields link nodes inside them. The
 //! engine returns raw destination text; the host decides what is an
@@ -19,8 +22,7 @@
 
 use memchr::memchr_iter;
 use rayon::prelude::*;
-use tree_sitter::{Node, Tree};
-use tree_sitter_md::MarkdownParser;
+use tree_sitter::{Node, Parser, Range, Tree};
 
 /// The folded referring line is bounded to this many characters.
 pub const MAX_CONTEXT_CHARS: usize = 256;
@@ -35,16 +37,33 @@ pub struct MarkdownRef {
     pub context: String,
 }
 
+/// The two Markdown grammars, one parser each; build one per worker.
+pub struct RefParser {
+    block: Parser,
+    inline: Parser,
+}
+
+impl Default for RefParser {
+    /// Both grammars load or the build is defective, so a failed load panics.
+    fn default() -> Self {
+        let mut block = Parser::new();
+        block.set_language(&tree_sitter_md::LANGUAGE.into()).expect("the Markdown block grammar loads");
+        let mut inline = Parser::new();
+        inline.set_language(&tree_sitter_md::INLINE_LANGUAGE.into()).expect("the Markdown inline grammar loads");
+        RefParser { block, inline }
+    }
+}
+
 /// References per body, in document order, parsed in parallel.
 pub fn markdown_refs_batch(bodies: &[&[u8]]) -> Vec<Vec<MarkdownRef>> {
     bodies
         .par_iter()
-        .map_init(MarkdownParser::default, |parser, body| markdown_refs(parser, body))
+        .map_init(RefParser::default, |parser, body| markdown_refs(parser, body))
         .collect()
 }
 
 /// References in one body; an unparseable body (a cancelled parse) yields none.
-pub fn markdown_refs(parser: &mut MarkdownParser, body: &[u8]) -> Vec<MarkdownRef> {
+pub fn markdown_refs(parser: &mut RefParser, body: &[u8]) -> Vec<MarkdownRef> {
     walk(parser, body).0
 }
 
@@ -88,26 +107,28 @@ struct WalkCost {
 
 /// The references of one body with the walk's cost.
 ///
-/// The block tree is walked with a `TreeCursor`; at a node with an inline
-/// tree, that tree is walked in place of the node's block children. No
-/// step calls `Node::parent`, which walks down from the root.
-fn walk(parser: &mut MarkdownParser, body: &[u8]) -> (Vec<MarkdownRef>, WalkCost) {
+/// The block tree is walked with a `TreeCursor`; at an inline node, its
+/// inline tree is parsed, walked in place of the node's block children,
+/// and dropped. A failed inline parse skips that node. No step calls
+/// `Node::parent`, which walks down from the root.
+fn walk(parser: &mut RefParser, body: &[u8]) -> (Vec<MarkdownRef>, WalkCost) {
     let mut refs = Vec::new();
     let mut cost = WalkCost::default();
-    let Some(tree) = parser.parse(body, None) else {
+    let Some(tree) = parser.block.parse(body, None) else {
         return (refs, cost);
     };
     let mut lines = LineContexts::new(body);
-    let mut cursor = tree.block_tree().walk();
+    let mut cursor = tree.walk();
     loop {
         let node = cursor.node();
         visit(node, body, &mut lines, &mut refs, &mut cost);
-        let descended = match tree.inline_tree(&node) {
-            Some(inline) => {
-                walk_inline(inline, body, &mut lines, &mut refs, &mut cost);
-                false
+        let descended = if matches!(node.kind(), "inline" | "pipe_table_cell") {
+            if let Some(inline) = parse_inline(&mut parser.inline, node, body) {
+                walk_inline(&inline, body, &mut lines, &mut refs, &mut cost);
             }
-            None => cursor.goto_first_child(),
+            false
+        } else {
+            cursor.goto_first_child()
         };
         if descended {
             continue;
@@ -121,6 +142,35 @@ fn walk(parser: &mut MarkdownParser, body: &[u8]) -> (Vec<MarkdownRef>, WalkCost
             }
         }
     }
+}
+
+/// The inline grammar's tree of one inline node, over its inline ranges.
+fn parse_inline(inline: &mut Parser, node: Node<'_>, body: &[u8]) -> Option<Tree> {
+    inline.set_included_ranges(&inline_ranges(node)).ok()?;
+    inline.parse(body, None)
+}
+
+/// An inline node's range minus the range of every named child, in order.
+///
+/// The named children are block syntax inside the paragraph (continuation
+/// markers, an `ERROR` node in a malformed body), never inline text; an
+/// empty piece between adjacent children is kept.
+fn inline_ranges(node: Node<'_>) -> Vec<Range> {
+    let mut ranges = Vec::new();
+    let mut range = node.range();
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        ranges.push(Range {
+            start_byte: range.start_byte,
+            start_point: range.start_point,
+            end_byte: child.start_byte(),
+            end_point: child.start_position(),
+        });
+        range.start_byte = child.end_byte();
+        range.start_point = child.end_position();
+    }
+    ranges.push(range);
+    ranges
 }
 
 /// One inline tree's nodes below its root, in document order.
@@ -245,7 +295,7 @@ mod tests {
     use super::*;
 
     fn dests(body: &str) -> Vec<String> {
-        markdown_refs(&mut MarkdownParser::default(), body.as_bytes()).into_iter().map(|r| r.dest).collect()
+        markdown_refs(&mut RefParser::default(), body.as_bytes()).into_iter().map(|r| r.dest).collect()
     }
 
     #[test]
@@ -276,10 +326,10 @@ mod tests {
     #[test]
     fn context_is_the_folded_referring_line() {
         let body = "\n\n  a   [x](y.md)\t\tb  \n";
-        let refs = markdown_refs(&mut MarkdownParser::default(), body.as_bytes());
+        let refs = markdown_refs(&mut RefParser::default(), body.as_bytes());
         assert_eq!(refs[0].context, "a [x](y.md) b");
         let long = format!("[x](y.md) {}", "z".repeat(400));
-        let refs = markdown_refs(&mut MarkdownParser::default(), long.as_bytes());
+        let refs = markdown_refs(&mut RefParser::default(), long.as_bytes());
         assert_eq!(refs[0].context.chars().count(), MAX_CONTEXT_CHARS);
     }
 
@@ -295,8 +345,42 @@ mod tests {
         assert_eq!(out.iter().map(Vec::len).collect::<Vec<_>>(), [1, 0, 1]);
     }
 
+    #[test]
+    fn both_markdown_grammars_load() {
+        let mut parser = RefParser::default();
+        assert!(parser.block.parse("x", None).is_some());
+        assert!(parser.inline.parse("x", None).is_some());
+    }
+
+    /// Every named child is cut out, the first included; the 0.5.3 binding kept the first.
+    #[test]
+    fn continuation_markers_are_left_out_of_the_inline_ranges() {
+        let mut parser = RefParser::default();
+        let tree = parser.block.parse("> a\n> b\n> c\n", None).expect("parses");
+        let mut cursor = tree.walk();
+        let inline = loop {
+            if cursor.node().kind() == "inline" {
+                break cursor.node();
+            }
+            assert!(cursor.goto_first_child() || cursor.goto_next_sibling(), "an inline node");
+        };
+        let spans: Vec<(usize, usize)> = inline_ranges(inline).iter().map(|r| (r.start_byte, r.end_byte)).collect();
+        assert_eq!(spans, [(2, 4), (6, 8), (10, 11)]);
+    }
+
+    #[test]
+    fn a_body_nested_past_the_scanner_cap_yields_its_reference() {
+        assert_eq!(dests(&format!("{}[l](a.md)\n", "> ".repeat(2000))), ["a.md"]);
+    }
+
+    #[test]
+    fn nested_list_markers_past_the_cap_parse() {
+        let refs = markdown_refs(&mut RefParser::default(), format!("{}x\n", "- ".repeat(2000)).as_bytes());
+        assert!(refs.is_empty());
+    }
+
     fn costed(body: &str) -> (Vec<MarkdownRef>, WalkCost) {
-        walk(&mut MarkdownParser::default(), body.as_bytes())
+        walk(&mut RefParser::default(), body.as_bytes())
     }
 
     #[test]
