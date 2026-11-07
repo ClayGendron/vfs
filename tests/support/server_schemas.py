@@ -56,6 +56,15 @@ _SCHEMA_DDL: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------------------
 
 
+# One leg per server engine, each marked so an unset URL deselects it.
+ENGINE_LEGS = [
+    pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
+    pytest.param("VFS_TEST_MARIADB_URL", marks=pytest.mark.mariadb, id="mariadb"),
+    pytest.param("VFS_TEST_MSSQL_URL", marks=pytest.mark.mssql, id="mssql"),
+    pytest.param("VFS_TEST_ORACLE_URL", marks=pytest.mark.oracle, id="oracle"),
+]
+
+
 @asynccontextmanager
 async def server_storage(env_var: str, **options: Any) -> AsyncIterator[DatabaseStorage]:
     """A backend on the server named by *env_var*, in a schema of its own.

@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import func, select
 
 from tests.support.database_helpers import _url
-from tests.support.server_schemas import server_storage
+from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.models import Edge, Entry
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
@@ -27,13 +27,6 @@ from vfs.storage.ranking import Log1p, PageRank, PathShape, Ranker, Signal
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
-
-ENGINE_LEGS = [
-    pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
-    pytest.param("VFS_TEST_MARIADB_URL", marks=pytest.mark.mariadb, id="mariadb"),
-    pytest.param("VFS_TEST_MSSQL_URL", marks=pytest.mark.mssql, id="mssql"),
-    pytest.param("VFS_TEST_ORACLE_URL", marks=pytest.mark.oracle, id="oracle"),
-]
 
 CENTRALITY = Signal("centrality", weight=0.5)
 

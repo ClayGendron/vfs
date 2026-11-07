@@ -66,9 +66,12 @@ from vfs.storage.backends.database.embed import (
     EmbedReport,
     cached_vectors,
     clear_embeddings,
+    count_refused,
     count_unembedded,
     embed_page,
     read_identity,
+    refusal_key,
+    refused_paths,
     select_unembedded,
     unit_vector,
     write_vectors,
@@ -1425,9 +1428,11 @@ class DatabaseStorage:
         the configured space. Pages advance by keyset; each page's
         batches embed with no transaction open and land in one short
         write; the lease's ``lost`` flag is checked between pages. A
-        provider failure ends the step with a warning and leaves the
-        rest NULL for the next run; the result's ``embedding`` extra
-        reports the counts, at warning severity when rows remain.
+        transient provider failure ends the step with a warning and
+        leaves the rest NULL for the next run; a text refused for its
+        input is recorded, skipped from then on, and named in one
+        ``invalid`` warning, and the step moves on. The result's
+        ``embedding`` extra reports the counts.
         """
         provider = self._host.embedder
         assert provider is not None
@@ -1440,13 +1445,17 @@ class DatabaseStorage:
                 return cleared
             self._host.embedding_identity = None
         report = EmbedReport()
+        key = refusal_key(provider)
+        refused_entries: list[str] = []
+        listed: set[str] = set()
+        refused_rows = 0
         semaphore = asyncio.Semaphore(self._embed_concurrency)
         known: dict[str, list[float]] = {}
         budget = self._host.membership_budget
         last = 0
         while not lost.is_set():
             page = await self._rows(
-                "reindex", partial(select_unembedded, tables=tables, after=last, limit=EMBED_PAGE_ROWS)
+                "reindex", partial(select_unembedded, tables=tables, after=last, limit=EMBED_PAGE_ROWS, key=key)
             )
             if not page:
                 break
@@ -1460,26 +1469,69 @@ class DatabaseStorage:
             known.update(await self._rows("reindex", lend))
             await seam("reindex:before-embed")
             outcome = await embed_page(page, provider, known, report, semaphore, timeout=self._embed_timeout)
-            stamp = identity if outcome.vectors and self._host.embedding_identity is None else None
-            land = partial(write_vectors, tables=tables, pairs=outcome.vectors, stamp=stamp)
+            # A recorded refusal stamps too: the canary proved the provider answers in its space.
+            answered = bool(outcome.vectors or outcome.refused)
+            stamp = identity if answered and self._host.embedding_identity is None else None
+            land = partial(
+                write_vectors,
+                tables=tables,
+                pairs=outcome.vectors,
+                stamp=stamp,
+                refused=[row.content_hash for row in outcome.refused if row.content_hash is not None],
+                key=key,
+                profile=self._host.profile,
+                membership_budget=budget,
+            )
             written = await self._execute_write("reindex", land)
             if not written.success:
                 return written
-            if outcome.vectors:
+            if answered:
                 self._host.embedding_identity = identity
+            refused_rows += len(outcome.refused)
+            for row in sorted(outcome.refused):
+                if len(refused_entries) >= EMBED_PAGE_ROWS:
+                    break
+                if row.entry_id is not None and row.entry_id not in listed:
+                    listed.add(row.entry_id)
+                    refused_entries.append(row.entry_id)
             if outcome.failure is not None:
                 report.stopped_by = f"{type(outcome.failure).__name__}: {outcome.failure}"
                 break
         if lost.is_set():
             return lease_lost_result()
-        report.unembedded = await self._rows("reindex", lambda session: count_unembedded(session, tables))
+        report.unembedded = await self._rows("reindex", lambda session: count_unembedded(session, tables, key))
+        report.refused = await self._rows("reindex", lambda session: count_refused(session, tables, key))
         errors: list[ResultError] = []
+        if refused_rows:
+            paths = await self._rows(
+                "reindex",
+                partial(
+                    refused_paths,
+                    tables=tables,
+                    entry_ids=refused_entries,
+                    profile=self._host.profile,
+                    membership_budget=budget,
+                ),
+            )
+            detail = (
+                f"the provider refused {refused_rows} chunks; they stay unembedded until their text,"
+                f" the model or its declared caps change: {report.refusal}"
+            )
+            errors.append(
+                classified(
+                    ErrorKind.invalid,
+                    Path(paths[0]) if paths else None,
+                    severity=Severity.warning,
+                    detail=detail,
+                    data={"provider": provider.model_id, "refused": refused_rows, "paths": paths},
+                )
+            )
         if report.stopped_by is not None:
             errors.append(
                 classified(
                     ErrorKind.unavailable,
                     severity=Severity.warning,
-                    detail=f"embedding stopped after {report.requests} requests: {report.stopped_by}",
+                    detail=f"embedding stopped after {report.requests} answered requests: {report.stopped_by}",
                     retryable=True,
                     data={"provider": provider.model_id},
                 )

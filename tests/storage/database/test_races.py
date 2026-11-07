@@ -31,7 +31,7 @@ from sqlalchemy import insert, select, text, update
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
-from tests.support.server_schemas import server_storage, sibling
+from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.models import Edge, Entry
 from vfs.paths import Path
 from vfs.results import ErrorKind
@@ -42,13 +42,6 @@ from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from vfs.results import Result
-
-ENGINE_LEGS = [
-    pytest.param("VFS_TEST_POSTGRES_URL", marks=pytest.mark.postgres, id="postgres"),
-    pytest.param("VFS_TEST_MARIADB_URL", marks=pytest.mark.mariadb, id="mariadb"),
-    pytest.param("VFS_TEST_MSSQL_URL", marks=pytest.mark.mssql, id="mssql"),
-    pytest.param("VFS_TEST_ORACLE_URL", marks=pytest.mark.oracle, id="oracle"),
-]
 
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.

@@ -189,6 +189,7 @@ class TestBuildVFSTables:
             "vfs_memberships",
             "vfs_relabels",
             "vfs_principal_revisions",
+            "vfs_embed_refusals",
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata

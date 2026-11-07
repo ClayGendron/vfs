@@ -14,7 +14,8 @@ import pytest
 from sqlalchemy import event, select, update
 
 from tests.support.database_helpers import _url
-from tests.support.embedding_doubles import RateLimitedError, ScriptedProvider
+from tests.support.embedding_doubles import InputRefusedError, RateLimitedError, ResponseStatusError, ScriptedProvider
+from tests.support.server_schemas import ENGINE_LEGS, server_storage
 from vfs.embedding import Embedded, HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.vector import NativeEmbeddingConfig
@@ -107,6 +108,7 @@ class TestStep:
             "requests": 3,
             "truncated": 0,
             "unembedded": 0,
+            "refused": 0,
         }
         assert await _identity(storage) == ("scripted/fake@4", 4)
         assert storage._host.embedding_identity == ("scripted/fake@4", 4)
@@ -446,3 +448,305 @@ class TestIdentity:
         assert (await none.first_touch()).success is True
         assert none._host.embedding_stale is False  # nothing configured, nothing to compare
         await none.close()
+
+
+# ---------------------------------------------------------------------------
+# Refusals — a batch refused for its input is split, a text refused alone is set aside
+# ---------------------------------------------------------------------------
+
+CJK = "漢" * 200
+LONG_MD = f"# One\n\n{CJK}\n\n# Two\n\n" + "alpha bravo " * 250 + "\n\n# Three\n\n" + "charlie delta " * 200 + "\n"
+
+
+def _non_ascii(text: str) -> int:
+    """The double's real count: one token per non-ASCII character, ASCII free."""
+    return sum(1 for ch in text if ord(ch) > 127)
+
+
+def _sent(provider: ScriptedProvider) -> list[str]:
+    return [text for call in provider.calls for text in call]
+
+
+def _refusal_warnings(result: Result) -> list[ResultError]:
+    return [e for e in result.errors if e.kind is ErrorKind.invalid]
+
+
+async def _refusal_rows(storage: DatabaseStorage) -> list[tuple[str, str, int, int]]:
+    table = storage._host.tables.embed_refusals
+    async with storage._host.engine.connect() as conn:
+        rows = await conn.execute(
+            select(table.c.content_hash, table.c.model_id, table.c.max_input_tokens, table.c.max_batch_tokens)
+        )
+        return [tuple(row) for row in rows]
+
+
+class TestRefusals:
+    async def test_a_batch_refused_for_its_size_is_split_until_it_fits(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=len, real_batch_tokens=300, max_batch_tokens=300, max_batch_inputs=64)
+        files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
+        files.update({f"/bob/{i}.txt": f"bob file {i}" for i in range(10)})
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        assert result.errors == []
+        assert (_extra(result)["unembedded"], _extra(result)["refused"]) == (0, 0)
+        assert all(v is not None for v in (await _vectors(storage)).values())
+        assert embed_module.EMBED_CANARY not in _sent(provider)
+        await storage.close()
+
+    async def test_a_text_refused_alone_is_set_aside_and_never_resent(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        files = {"/w/long.md": CJK + "\n", **{f"/w/{i}.txt": f"plain file {i}\n" for i in range(9)}}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        assert _extra(result)["refused"] == 1 and _extra(result)["unembedded"] == 0
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
+        [warning] = _refusal_warnings(result)
+        assert warning.severity is Severity.warning and warning.retryable is False
+        assert str(warning.path) == "/w/long.md" and warning.data is not None
+        assert warning.data["paths"] == ["/w/long.md"]
+        assert sum(v is not None for v in (await _vectors(storage)).values()) == 9
+        provider.calls.clear()
+        again = await storage.reindex()
+        assert provider.calls == [] and _refusal_warnings(again) == []
+        assert _extra(again)["refused"] == 1
+        await storage.close()
+
+    async def test_a_refusal_survives_the_resplit_and_covers_twins(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        storage = await _fresh(tmp_path, {"/w/long.md": LONG_MD}, embedder=provider)
+        first = await storage.reindex()
+        assert _extra(first)["refused"] == 1
+        refused_text = next(text for text in _sent(provider) if CJK in text)
+        provider.calls.clear()
+        edited = LONG_MD.replace("charlie delta", "echo foxtrot")
+        copy = LONG_MD.replace("alpha bravo", "golf hotel")
+        writes = [Entry(path=Path("/w/long.md"), content=edited), Entry(path=Path("/w/copy.md"), content=copy)]
+        assert (await storage.write(entries=writes, overwrite=True)).success is True
+        second = await storage.reindex()
+        assert second.success is True
+        assert refused_text not in _sent(provider)
+        assert provider.calls != []
+        assert _extra(second)["refused"] == 2 and _extra(second)["unembedded"] == 0
+        await storage.close()
+
+    async def test_a_provider_refusing_the_canary_ends_the_step_and_records_nothing(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(refuse_all=True, max_batch_inputs=8)
+        files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        assert len(provider.calls) == 8 and provider.calls[-1] == [embed_module.EMBED_CANARY]
+        [record] = result.errors
+        assert record.kind is ErrorKind.unavailable and "InputRefusedError" in record.message
+        assert await _refusal_rows(storage) == []
+        assert _extra(result)["unembedded"] == 4
+        await storage.close()
+
+    async def test_a_provider_turning_mid_step_records_nothing(self, tmp_path: Any, monkeypatch) -> None:
+        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 2)
+        provider = ScriptedProvider(refuse_all_after=1, max_batch_inputs=8)
+        files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        assert sum(v is not None for v in (await _vectors(storage)).values()) == 2
+        assert await _refusal_rows(storage) == []
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        await storage.close()
+
+    async def test_an_auth_refusal_is_transient(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(status_error=InputRefusedError(401))
+        storage = await _fresh(tmp_path, embedder=provider)
+        result = await storage.reindex()
+        assert len(provider.calls) == 1
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        assert await _refusal_rows(storage) == []
+        await storage.close()
+
+    async def test_a_model_change_gives_refused_texts_another_try(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        files = {"/w/long.md": CJK + "\n", "/w/a.txt": "plain\n"}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        assert _extra(await storage.reindex())["refused"] == 1
+        provider.model_id, provider.real_input_tokens = "scripted/two@4", None
+        provider.calls.clear()
+        result = await storage.reindex()
+        assert any(CJK in text for text in _sent(provider))
+        assert (_extra(result)["refused"], _extra(result)["unembedded"]) == (0, 0)
+        assert await _refusal_rows(storage) == []
+        await storage.close()
+        lone = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        (tmp_path / "solo").mkdir()
+        solo = await _fresh(tmp_path / "solo", {"/w/long.md": CJK + "\n"}, embedder=lone)
+        assert _extra(await solo.reindex())["refused"] == 1
+        assert await _identity(solo) == ("scripted/fake@4", 4)
+        lone.model_id, lone.real_input_tokens = "scripted/two@4", None
+        assert _extra(await solo.reindex())["refused"] == 0
+        assert all(v is not None for v in (await _vectors(solo)).values())
+        await solo.close()
+
+    @pytest.mark.parametrize("env_var", [pytest.param(None, id="sqlite"), *ENGINE_LEGS])
+    async def test_a_raised_cap_gives_refused_texts_another_try(self, tmp_path: Any, env_var: str | None) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, max_input_tokens=1_000)
+        files = {"/w/long.md": CJK + "\n", "/w/a.txt": "plain\n"}
+        entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+        if env_var is None:
+            storage = await _fresh(tmp_path, files, embedder=provider)
+            await self._raise_the_cap(storage, provider)
+            await storage.close()
+            return
+        async with server_storage(env_var, embedder=provider) as storage:
+            assert (await storage.write(entries=entries, parents=True)).success is True
+            await self._raise_the_cap(storage, provider)
+
+    @staticmethod
+    async def _raise_the_cap(storage: DatabaseStorage, provider: ScriptedProvider) -> None:
+        assert _extra(await storage.reindex())["refused"] == 1
+        provider.max_input_tokens = 2_000
+        provider.calls.clear()
+        again = await storage.reindex()
+        assert any(CJK in text for text in _sent(provider))
+        assert again.success is True and [e.kind for e in again.errors] == [ErrorKind.invalid]
+        rows = await _refusal_rows(storage)
+        assert [(model, cap) for _, model, cap, _ in rows] == [("scripted/fake@4", 2_000)]
+        provider.calls.clear()
+        await storage.reindex()
+        assert provider.calls == []
+
+    async def test_a_transient_failure_beside_a_refusal_records_nothing(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(max_batch_inputs=1, failures=[InputRefusedError(400), RuntimeError("down")])
+        storage = await _fresh(tmp_path, embedder=provider, embed_concurrency=1)
+        result = await storage.reindex()
+        assert embed_module.EMBED_CANARY not in _sent(provider)
+        assert await _refusal_rows(storage) == []
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        await storage.close()
+
+    async def test_a_recorded_refusal_never_stops_the_step(self, tmp_path: Any, monkeypatch) -> None:
+        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 1)
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
+        plain = [Entry(path=Path(f"/w/{i}.txt"), content=f"plain file {i}\n") for i in range(3)]
+        assert (await storage.write(entries=plain)).success is True
+        result = await storage.reindex()
+        vectors = await _vectors(storage)
+        assert vectors[min(vectors)] is None  # the refused chunk is on the first page
+        assert _extra(result)["unembedded"] == 0
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
+        await storage.close()
+
+    async def test_splitting_never_holds_a_slot_at_concurrency_one(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=len, real_batch_tokens=300, max_batch_tokens=300, max_batch_inputs=64)
+        files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
+        storage = await _fresh(tmp_path, files, embedder=provider, embed_concurrency=1)
+        # A hang guard only: a split that held its slot would wait on itself forever.
+        result = await asyncio.wait_for(storage.reindex(), 60)
+        assert result.errors == [] and _extra(result)["unembedded"] == 0
+        await storage.close()
+
+    @pytest.mark.parametrize("status", [400, 413, 422])
+    @pytest.mark.parametrize("shape", ["exception", "response"])
+    async def test_an_input_refusal_is_read_from_either_place(self, tmp_path: Any, status: int, shape: str) -> None:
+        def refusal() -> Exception:
+            return InputRefusedError(status) if shape == "exception" else ResponseStatusError(status)
+
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, refusal_error=refusal)
+        storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n", "/w/a.txt": "plain\n"}, embedder=provider)
+        result = await storage.reindex()
+        assert [e.kind for e in result.errors] == [ErrorKind.invalid]
+        assert len(await _refusal_rows(storage)) == 1
+        await storage.close()
+
+    @pytest.mark.parametrize(
+        "error",
+        [ResponseStatusError(400, {"retry-after": "0"}), ResponseStatusError(404)],
+        ids=["retry-after", "not-found"],
+    )
+    async def test_a_refusal_with_retry_after_or_another_status_is_transient(
+        self, tmp_path: Any, monkeypatch, error: Exception
+    ) -> None:
+        async def instant(delay: float) -> None:
+            return None
+
+        monkeypatch.setattr(embed_module.asyncio, "sleep", instant)
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, refusal_error=lambda: error)
+        storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
+        result = await storage.reindex()
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        assert await _refusal_rows(storage) == []
+        await storage.close()
+
+    async def test_a_raised_batch_cap_gives_refused_texts_another_try(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, max_batch_tokens=8_000)
+        storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
+        assert _extra(await storage.reindex())["refused"] == 1
+        provider.max_batch_tokens = 9_000
+        provider.calls.clear()
+        await storage.reindex()
+        assert any(CJK in text for text in _sent(provider))
+        assert [cap for _, _, _, cap in await _refusal_rows(storage)] == [9_000]
+        await storage.close()
+
+    async def test_the_warning_names_every_refused_entry_in_chunk_order(self, tmp_path: Any) -> None:
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        storage = await _fresh(tmp_path, {"/w/a.md": CJK + "\n"}, embedder=provider)
+        for path, body in (("/w/b.md", CJK + "\n"), ("/w/z.md", "字" * 200 + "\n"), ("/w/p.txt", "plain\n")):
+            assert (await storage.write(entries=[Entry(path=Path(path), content=body)])).success is True
+        result = await storage.reindex()
+        [warning] = result.errors
+        assert warning.kind is ErrorKind.invalid and str(warning.path) == "/w/a.md"
+        assert warning.data is not None and warning.data["refused"] == 3
+        assert warning.data["paths"] == ["/w/a.md", "/w/b.md", "/w/z.md"]
+        await storage.close()
+
+    async def test_the_warning_lists_at_most_a_page_of_paths(self, tmp_path: Any, monkeypatch) -> None:
+        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 2)
+        provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
+        files = {f"/w/{i}.md": chr(0x4E00 + i) * 200 + "\n" for i in range(3)}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        [warning] = result.errors
+        assert warning.data is not None and warning.data["refused"] == 3 and len(warning.data["paths"]) == 2
+        await storage.close()
+
+    async def test_a_half_that_answered_lands_beside_its_siblings_failure(self, tmp_path: Any) -> None:
+        # One batch of four is refused for its size; the left half answers, the right half fails transiently.
+        provider = ScriptedProvider(
+            max_batch_inputs=8, failures=[InputRefusedError(400)], token_of=len, real_batch_tokens=10_000
+        )
+        files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        real = provider.embed_documents
+
+        async def right_half_fails(texts: Sequence[str]) -> Embedded:
+            if len(provider.calls) == 2:
+                provider.calls.append(list(texts))
+                raise RuntimeError("down")
+            return await real(texts)
+
+        provider.embed_documents = right_half_fails  # ty: ignore[invalid-assignment]
+        result = await storage.reindex()
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        assert sum(v is not None for v in (await _vectors(storage)).values()) == 2
+        await storage.close()
+
+    async def test_a_left_half_that_fails_transiently_ends_the_split(self, tmp_path: Any) -> None:
+        # The batch of four is refused; its left half fails transiently, so the right half is never sent.
+        provider = ScriptedProvider(max_batch_inputs=8, failures=[InputRefusedError(400), RuntimeError("down")])
+        files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
+        storage = await _fresh(tmp_path, files, embedder=provider)
+        result = await storage.reindex()
+        assert len(provider.calls) == 2
+        assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
+        assert await _refusal_rows(storage) == []
+        await storage.close()
+
+    async def test_a_provider_answering_too_few_vectors_ends_the_step_classified(self, tmp_path: Any) -> None:
+        class Short(ScriptedProvider):
+            async def embed_documents(self, texts: Sequence[str]) -> Embedded:
+                answer = await super().embed_documents(texts)
+                return Embedded(answer.vectors[:-1], answer.tokens)
+
+        storage = await _fresh(tmp_path, embedder=Short(max_batch_inputs=8))
+        result = await storage.reindex()
+        [record] = result.errors
+        assert record.kind is ErrorKind.unavailable and "ValueError" in record.message
+        await storage.close()

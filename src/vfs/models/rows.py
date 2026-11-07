@@ -136,7 +136,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 23
+SCHEMA_FORMAT_VERSION: Final = 24
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -358,6 +358,7 @@ class VFSTables(NamedTuple):
     signal_epochs: Table
     grants: Table
     memberships: Table
+    embed_refusals: Table
     relabels: Table
     principal_revisions: Table
 
@@ -591,6 +592,18 @@ def build_vfs_tables(
     )
     if native_embedding is not None:
         _attach_pgvector_ddl(metadata, chunks, native_embedding)
+
+    # Embed refusals: a text the provider refused alone, keyed by its hash and
+    # the provider facts the refusal depends on; -1 stands for an undeclared cap.
+    embed_refusals = Table(
+        "vfs_embed_refusals",
+        metadata,
+        Column("content_hash", String(64), primary_key=True),
+        Column("model_id", _string(MAX_MODEL_ID_LENGTH), nullable=False),
+        Column("max_input_tokens", Integer, nullable=False),
+        Column("max_batch_tokens", Integer, nullable=False),
+        schema=schema,
+    )
 
     # Edges: narrow ID triples with both traversal directions indexed. No
     # path columns — liveness and addressing come from joining entries.
@@ -874,6 +887,7 @@ def build_vfs_tables(
         signal_epochs=signal_epochs,
         grants=grants,
         memberships=memberships,
+        embed_refusals=embed_refusals,
         relabels=relabels,
         principal_revisions=principal_revisions,
     )
