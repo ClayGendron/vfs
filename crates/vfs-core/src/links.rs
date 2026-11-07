@@ -10,8 +10,16 @@
 //! construction: the tree never yields link nodes inside them. The
 //! engine returns raw destination text; the host decides what is an
 //! in-mount reference (schemes, anchors, fragments) and resolves it.
+//!
+//! The walk is linear in the body: the block tree and each inline tree
+//! are walked with their own cursors, whose steps cost constant time;
+//! only reference nodes are decoded; and each reference finds its line by
+//! bisection over the body's newline offsets, a line holding many
+//! references folded once.
 
+use memchr::memchr_iter;
 use rayon::prelude::*;
+use tree_sitter::{Node, Tree};
 use tree_sitter_md::MarkdownParser;
 
 /// The folded referring line is bounded to this many characters.
@@ -37,23 +45,71 @@ pub fn markdown_refs_batch(bodies: &[&[u8]]) -> Vec<Vec<MarkdownRef>> {
 
 /// References in one body; an unparseable body (a cancelled parse) yields none.
 pub fn markdown_refs(parser: &mut MarkdownParser, body: &[u8]) -> Vec<MarkdownRef> {
+    walk(parser, body).0
+}
+
+/// Collapse whitespace runs to one space, trim, and cap the character count.
+pub fn fold_line(line: &str) -> String {
+    let mut folded = String::with_capacity(line.len().min(MAX_CONTEXT_CHARS));
+    let mut kept = 0usize;
+    let mut pending_space = false;
+    for ch in line.chars() {
+        if ch.is_whitespace() {
+            pending_space = kept > 0;
+            continue;
+        }
+        if pending_space {
+            if kept == MAX_CONTEXT_CHARS {
+                break;
+            }
+            folded.push(' ');
+            kept += 1;
+            pending_space = false;
+        }
+        if kept == MAX_CONTEXT_CHARS {
+            break;
+        }
+        folded.push(ch);
+        kept += 1;
+    }
+    folded
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// What one walk cost: lines folded, and bytes handed to the decoder.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct WalkCost {
+    folds: usize,
+    decoded_bytes: usize,
+}
+
+/// The references of one body with the walk's cost.
+///
+/// The block tree is walked with a `TreeCursor`; at a node with an inline
+/// tree, that tree is walked in place of the node's block children. No
+/// step calls `Node::parent`, which walks down from the root.
+fn walk(parser: &mut MarkdownParser, body: &[u8]) -> (Vec<MarkdownRef>, WalkCost) {
     let mut refs = Vec::new();
+    let mut cost = WalkCost::default();
     let Some(tree) = parser.parse(body, None) else {
-        return refs;
+        return (refs, cost);
     };
-    let mut cursor = tree.walk();
+    let mut lines = LineContexts::new(body);
+    let mut cursor = tree.block_tree().walk();
     loop {
         let node = cursor.node();
-        let text = String::from_utf8_lossy(&body[node.byte_range()]);
-        let dest = match node.kind() {
-            "link_destination" => Some(strip_angles(&text).to_string()),
-            "code_span" => path_shaped(&text),
-            _ => None,
+        visit(node, body, &mut lines, &mut refs, &mut cost);
+        let descended = match tree.inline_tree(&node) {
+            Some(inline) => {
+                walk_inline(inline, body, &mut lines, &mut refs, &mut cost);
+                false
+            }
+            None => cursor.goto_first_child(),
         };
-        if let Some(dest) = dest {
-            refs.push(MarkdownRef { dest, context: line_context(body, node.start_byte()) });
-        }
-        if cursor.goto_first_child() {
+        if descended {
             continue;
         }
         loop {
@@ -61,35 +117,86 @@ pub fn markdown_refs(parser: &mut MarkdownParser, body: &[u8]) -> Vec<MarkdownRe
                 break;
             }
             if !cursor.goto_parent() {
-                return refs;
+                return (refs, cost);
             }
         }
     }
 }
 
-/// The line holding byte `at`, whitespace runs collapsed, bounded.
-fn line_context(body: &[u8], at: usize) -> String {
-    let start = body[..at].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
-    let end = body[at..].iter().position(|&b| b == b'\n').map_or(body.len(), |i| at + i);
-    fold_line(&String::from_utf8_lossy(&body[start..end]))
-}
-
-/// Collapse whitespace runs to one space, trim, and cap the character count.
-pub fn fold_line(line: &str) -> String {
-    let mut folded = String::with_capacity(line.len().min(MAX_CONTEXT_CHARS));
-    let mut pending_space = false;
-    for ch in line.chars() {
-        if ch.is_whitespace() {
-            pending_space = !folded.is_empty();
+/// One inline tree's nodes below its root, in document order.
+fn walk_inline(tree: &Tree, body: &[u8], lines: &mut LineContexts<'_>, refs: &mut Vec<MarkdownRef>, cost: &mut WalkCost) {
+    let mut cursor = tree.walk();
+    if !cursor.goto_first_child() {
+        return;
+    }
+    // Our own depth: TreeCursor::depth and Node::parent both cost the node's depth.
+    let mut depth = 1usize;
+    loop {
+        visit(cursor.node(), body, lines, refs, cost);
+        if cursor.goto_first_child() {
+            depth += 1;
             continue;
         }
-        if pending_space {
-            folded.push(' ');
-            pending_space = false;
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            cursor.goto_parent();
+            depth -= 1;
+            if depth == 0 {
+                return;
+            }
         }
-        folded.push(ch);
     }
-    folded.chars().take(MAX_CONTEXT_CHARS).collect()
+}
+
+/// Record *node* when it is a reference; only reference nodes are decoded.
+fn visit(node: Node<'_>, body: &[u8], lines: &mut LineContexts<'_>, refs: &mut Vec<MarkdownRef>, cost: &mut WalkCost) {
+    let kind = node.kind();
+    if kind != "link_destination" && kind != "code_span" {
+        return;
+    }
+    let range = node.byte_range();
+    cost.decoded_bytes += range.len();
+    let text = String::from_utf8_lossy(&body[range]);
+    let dest = if kind == "link_destination" {
+        Some(strip_angles(&text).to_string())
+    } else {
+        path_shaped(&text)
+    };
+    if let Some(dest) = dest {
+        refs.push(MarkdownRef { dest, context: lines.context_at(node.start_byte(), cost) });
+    }
+}
+
+/// A body's newline offsets, found once, and the last line folded.
+struct LineContexts<'a> {
+    body: &'a [u8],
+    newlines: Vec<usize>,
+    last: Option<(usize, String)>,
+}
+
+impl<'a> LineContexts<'a> {
+    fn new(body: &'a [u8]) -> Self {
+        Self { body, newlines: memchr_iter(b'\n', body).collect(), last: None }
+    }
+
+    /// The folded line holding byte `at`, found by bisection, folded once per line.
+    fn context_at(&mut self, at: usize, cost: &mut WalkCost) -> String {
+        let index = self.newlines.partition_point(|&newline| newline < at);
+        let start = if index == 0 { 0 } else { self.newlines[index - 1] + 1 };
+        if let Some((cached, folded)) = &self.last
+            && *cached == start
+        {
+            return folded.clone();
+        }
+        let end = self.newlines.get(index).copied().unwrap_or(self.body.len());
+        cost.folds += 1;
+        cost.decoded_bytes += end - start;
+        let folded = fold_line(&String::from_utf8_lossy(&self.body[start..end]));
+        self.last = Some((start, folded.clone()));
+        folded
+    }
 }
 
 /// A destination written as `<...>` without its brackets.
@@ -186,5 +293,69 @@ mod tests {
     fn batches_align_with_their_bodies() {
         let out = markdown_refs_batch(&[b"[a](a.md)".as_slice(), b"plain".as_slice(), b"`b.md`".as_slice()]);
         assert_eq!(out.iter().map(Vec::len).collect::<Vec<_>>(), [1, 0, 1]);
+    }
+
+    fn costed(body: &str) -> (Vec<MarkdownRef>, WalkCost) {
+        walk(&mut MarkdownParser::default(), body.as_bytes())
+    }
+
+    #[test]
+    fn one_line_of_many_references_folds_once() {
+        for count in [2_000, 4_000] {
+            let body = "[x](a.md) ".repeat(count);
+            let (refs, cost) = costed(&body);
+            assert_eq!(refs.len(), count);
+            let folded = fold_line(&body);
+            assert!(refs.iter().all(|r| r.dest == "a.md" && r.context == folded));
+            assert_eq!(cost.folds, 1);
+        }
+    }
+
+    #[test]
+    fn nested_blocks_decode_only_reference_nodes() {
+        let body = format!("{}[x](a.md)\n", "> ".repeat(200));
+        let (refs, cost) = costed(&body);
+        assert_eq!(refs.len(), 1);
+        assert!(cost.decoded_bytes <= 2 * body.len(), "{} decoded of {}", cost.decoded_bytes, body.len());
+    }
+
+    #[test]
+    fn nested_images_yield_every_destination() {
+        let body = format!("{}x{}", "![".repeat(4_000), "](a.md)".repeat(4_000));
+        let (refs, cost) = costed(&body);
+        assert_eq!(refs.len(), 4_000);
+        assert!(refs.iter().all(|r| r.dest == "a.md"));
+        assert!(cost.decoded_bytes <= 2 * body.len(), "{} decoded of {}", cost.decoded_bytes, body.len());
+    }
+
+    #[test]
+    fn references_on_separate_lines_fold_each_line() {
+        let (refs, cost) = costed("one [a](a.md)\ntwo [b](b.md)\nthree [c](c.md)\n");
+        let contexts: Vec<&str> = refs.iter().map(|r| r.context.as_str()).collect();
+        assert_eq!(contexts, ["one [a](a.md)", "two [b](b.md)", "three [c](c.md)"]);
+        assert_eq!(cost.folds, 3);
+    }
+
+    /// Today's fold: collapse, trim, then keep the first MAX_CONTEXT_CHARS characters.
+    fn fold_then_take(line: &str) -> String {
+        let collapsed: Vec<&str> = line.split_whitespace().collect();
+        collapsed.join(" ").chars().take(MAX_CONTEXT_CHARS).collect()
+    }
+
+    #[test]
+    fn fold_line_keeps_the_first_256_characters() {
+        let alphabet = [' ', '\t', 'a', 'Z', 'é', '漢', '\u{3000}'];
+        let mut state: u64 = 20_261_107;
+        for _ in 0..200 {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            let length = (state >> 33) as usize % 1_001;
+            let line: String = (0..length)
+                .map(|_| {
+                    state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+                    alphabet[(state >> 33) as usize % alphabet.len()]
+                })
+                .collect();
+            assert_eq!(fold_line(&line), fold_then_take(&line), "{line:?}");
+        }
     }
 }
