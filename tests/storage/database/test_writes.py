@@ -25,7 +25,7 @@ from ulid import ULID
 
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
 from vfs.authority import Authority, Principal
-from vfs.models import Entry
+from vfs.models import MEASURED_BODY, BodyMetrics, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, ResultError
@@ -1374,4 +1374,19 @@ class TestBytesBodies:
         assert result.errors[0].retryable is False
         small = await storage.write(entries=[Entry(path=Path("/small.bin"), data=b"x" * 100)])
         assert small.success is True
+        await storage.close()
+
+
+async def test_a_vouched_line_count_is_replaced_by_the_stored_bodys(tmp_path) -> None:
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        vouched = Entry.model_validate(
+            {"path": "/two.txt", "content": "one\ntwo"}, context={MEASURED_BODY: BodyMetrics("0" * 64, 1, 7)}
+        )
+        assert (await storage.write(entries=[vouched])).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            lines = (await session.execute(select(entry.c.lines).where(entry.c.path == "/two.txt"))).scalar_one()
+        assert lines == 2
+    finally:
         await storage.close()

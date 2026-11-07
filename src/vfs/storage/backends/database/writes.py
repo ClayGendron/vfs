@@ -48,7 +48,15 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from vfs.authority import owner_for
-from vfs.models import CONTENT_KINDS, Entry, Observation
+from vfs.models import (
+    CONTENT_KINDS,
+    MEASURE_OFFLOAD_BYTES,
+    BodyMetrics,
+    Entry,
+    Observation,
+    measure_bytes,
+    measure_text,
+)
 from vfs.models.rows import ULIDKey
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
@@ -73,6 +81,7 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
@@ -81,6 +90,7 @@ from vfs.storage.editing import edited_entry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from concurrent.futures import Executor
 
     from sqlalchemy import Column, ColumnElement, FromClause, Table, Update
     from sqlalchemy.dialects.postgresql import Insert as PostgresInsert
@@ -93,6 +103,9 @@ if TYPE_CHECKING:
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.replace import EditOperation
+
+# The refusal of a content-kind write that carries no body to measure.
+BODILESS_DETAIL: Final = "a file write needs a body: content or data"
 
 # Columns an overwrite clobbers when arbitration lands on a rival's row:
 # identity stays, version increments SQL-side, material state is ours —
@@ -126,6 +139,38 @@ _CLOBBER_COLUMNS: Final[tuple[str, ...]] = (
 # ---------------------------------------------------------------------------
 
 
+async def measured_entries(entries: list[Entry], executor: Executor) -> tuple[list[Entry], list[ResultError]]:
+    """*entries* with each body's hash, size and lines measured here, and every bodiless file's refusal.
+
+    The body is ``data`` when present, else ``content``; a bytes entry
+    with no ``data`` is bodiless, since a bytes row's text is a rendering
+    only storage makes. Whatever metrics an entry carries are replaced.
+    Each entry is copied before any body is read, so a body the caller
+    changes while the hop runs is never stored under another's hash.
+    The loop measures at most ``MEASURE_OFFLOAD_BYTES`` per call: below
+    that total every body is hashed inline, at or above it every body of
+    the call is hashed in one offloaded hop.
+    """
+    snapshots = [entry.model_copy() for entry in entries]
+    refused = [
+        classified(ErrorKind.invalid, entry.path, detail=BODILESS_DETAIL)
+        for entry in snapshots
+        if entry.kind in CONTENT_KINDS and _body(entry) is None
+    ]
+    if refused:
+        return [], refused
+    bodies = [(index, body) for index, entry in enumerate(snapshots) if (body := _body(entry)) is not None]
+    total = sum(len(body) for _, body in bodies)
+    if total < MEASURE_OFFLOAD_BYTES:
+        metrics = [_measure(body) for _, body in bodies]
+    else:
+        metrics = await call_offloaded(executor, lambda: [_measure(body) for _, body in bodies])
+    measured = list(snapshots)
+    for (index, _), found in zip(bodies, metrics, strict=True):
+        measured[index] = snapshots[index].model_copy(update=found._asdict())
+    return measured, []
+
+
 async def write_rows(
     session: AsyncSession,
     tables: VFSTables,
@@ -148,7 +193,9 @@ async def write_rows(
     (an existing directory is "unchanged", a file at the site is
     ``wrong_kind``); files route through ``put_file`` (a directory at
     the site is ``wrong_kind``; an occupied site needs ``overwrite``).
-    Any error fails the whole batch before a statement runs.
+    Any error fails the whole batch before a statement runs. Its
+    entries are already measured by :func:`measured_entries`; it stores
+    the metrics it is handed.
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, {entry.path for entry in entries})
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget, value_cap=value_cap)
@@ -1209,3 +1256,16 @@ def _entry_values(
 def _update_params(staged: StagedEntry, now: datetime) -> dict[str, object]:
     material = _material_values(staged, now)
     return {"b_id": staged.entry_id} | {f"b_{column}": material[column] for column in _CLOBBER_COLUMNS}
+
+
+def _body(entry: Entry) -> str | bytes | None:
+    """The body storage measures and stores for *entry*: its bytes, else its text, else ``None``."""
+    if entry.data is not None:
+        return entry.data
+    if entry.source == "bytes":
+        return None
+    return entry.content
+
+
+def _measure(body: str | bytes) -> BodyMetrics:
+    return measure_text(body) if isinstance(body, str) else measure_bytes(body)

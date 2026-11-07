@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from typing import NamedTuple
+from typing import Final, NamedTuple
 
 from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
@@ -53,6 +53,11 @@ def line_count(text: str) -> int:
     numbers.
     """
     return text.count("\n") + 1 if text else 0
+
+
+# A body, or a write call's bodies in total, this large is measured (sha256, size, lines) on a
+# worker thread: below it the hop costs more than the hash; above it the hash would hold the loop.
+MEASURE_OFFLOAD_BYTES: Final = 100_000
 
 
 class BodyMetrics(NamedTuple):

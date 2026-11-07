@@ -144,7 +144,7 @@ from vfs.storage.backends.database.signals import (
 )
 from vfs.storage.backends.database.topology import transfer_rows
 from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
-from vfs.storage.backends.database.writes import edit_rows, mkdir_rows, write_rows
+from vfs.storage.backends.database.writes import edit_rows, measured_entries, mkdir_rows, write_rows
 from vfs.storage.protocol import storage_ops, targets_of
 from vfs.storage.ranking import Ranker
 
@@ -692,6 +692,9 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         host = self._host
+        entries, refused = await measured_entries(entries, host.offload_executor)
+        if refused:
+            return Result(ops=("write",), errors=refused)
 
         async def run(session: AsyncSession) -> Result:
             gate = await self._gate(session, authority, VERB_RUNGS["write"])

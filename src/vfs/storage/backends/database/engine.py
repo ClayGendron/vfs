@@ -228,7 +228,7 @@ class EngineHost:
         """The CPU offload pool — lazy on first use, shut and cleared at close.
 
         Serves every offloaded stage (grep verify, reindex's chunk and
-        posting passes). Cleared, not just shut: a call after close
+        posting passes, write's body measurement). Cleared, not just shut: a call after close
         re-mints a fresh pool and serves, the same transparent
         re-establishment every sibling verb already has; any re-minted
         pool is shut by the next close.

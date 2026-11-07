@@ -21,12 +21,13 @@ from vfs.models.entry import (
     Observation,
 )
 from vfs.models.media import RENDER_STATUSES, RENDERED_STATUSES, SOURCES, RenderStatus, Source, sniff_mime
-from vfs.models.version import BodyMetrics, Version, line_count, measure_bytes, measure_text
+from vfs.models.version import MEASURE_OFFLOAD_BYTES, BodyMetrics, Version, line_count, measure_bytes, measure_text
 
 __all__ = [
     "CONTENT_KINDS",
     "ENTRY_OWNED_MIRRORS",
     "MEASURED_BODY",
+    "MEASURE_OFFLOAD_BYTES",
     "OBSERVATION_MIRROR_FIELDS",
     "OBSERVATION_MIRROR_OWNERS",
     "OBSERVATION_QUERY_FIELDS",

@@ -1,9 +1,10 @@
 """CPU-bound work leaves the event loop: the backend's offload seam.
 
-Two verbs run real CPU inside their coroutines — grep's verify stage
-(up to a full wall budget of matching per call) and reindex's chunk
-and posting stages — and running either inline holds the event loop
-against every concurrent caller on the host. Both hop through one
+Three verbs run real CPU inside their coroutines — grep's verify stage
+(up to a full wall budget of matching per call), reindex's chunk and
+posting stages, and write's measurement of a call's bodies past the
+inline total — and running any inline holds the event loop against
+every concurrent caller on the host. All hop through one
 small executor the backend owns: :func:`call_offloaded` is the shared
 hop (submit, await, and the close-window inline fallback), and
 :class:`VerifyOffload` decorates a compiled
@@ -32,8 +33,9 @@ Four laws govern the hop:
   grep meters that budget in exact stored bytes; the reindex batchers
   riding the same hop meter characters as a declared ASCII-dominant
   proxy, so an abandoned reindex batch can hold up to 4x the budget
-  in folded bytes on CJK or emoji corpora (measured 3.00x/4.00x). No
-  protocol-level interrupt exists.
+  in folded bytes on CJK or emoji corpora (measured 3.00x/4.00x).
+  write's measurement hop holds the call's own bodies, which its
+  caller already holds. No protocol-level interrupt exists.
 - **The pool follows the host's close, and calls survive it.** A call
   that captured its pool before close serves every remaining hop it
   holds inline once the pool is shut — grep its remaining verify

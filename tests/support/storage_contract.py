@@ -35,7 +35,7 @@ from tests.support.oracles import graph_walk, meeting_subgraph
 from vfs import _native
 from vfs.authority import Authority, Principal
 from vfs.embedding import EmbeddingProvider
-from vfs.models import Edge, Entry, Observation
+from vfs.models import MEASURED_BODY, BodyMetrics, Edge, Entry, Observation, measure_bytes, measure_text
 from vfs.paths import Path
 from vfs.pattern_matching import escape_glob
 from vfs.results import ErrorKind, Result, Severity
@@ -2782,3 +2782,80 @@ class StorageContract:
             if marker is not None:
                 assert marker in text.splitlines()[: matches[0].match - 1]
             assert (await storage.stat(path=Path(path))).observations[0].render_status == "ok"
+
+    # ------------------------------------------------------------------
+    # Storage measures the body it stores
+    # ------------------------------------------------------------------
+
+    @needs("write", "stat")
+    async def test_a_write_stores_its_own_measurement_not_the_entrys(self, storage: ConformanceBackend) -> None:
+        entry = Entry(path=Path("/a.txt"), content="hello")
+        entry.content_hash = "f" * 64
+        entry.size_bytes = 1
+        assert (await storage.write(entries=[entry])).success is True
+        row = (await storage.stat(path=Path("/a.txt"))).one()
+        assert row.content_hash == measure_text("hello").content_hash
+        assert row.size_bytes == 5
+
+    @needs("write", "stat")
+    async def test_a_vouched_measurement_is_not_trusted_by_storage(self, storage: ConformanceBackend) -> None:
+        vouched = Entry.model_validate(
+            {"path": "/a.txt", "content": "hello"}, context={MEASURED_BODY: BodyMetrics("0" * 64, 1, 1)}
+        )
+        assert (await storage.write(entries=[vouched])).success is True
+        row = (await storage.stat(path=Path("/a.txt"))).one()
+        measured = measure_text("hello")
+        assert (row.content_hash, row.size_bytes) == (measured.content_hash, measured.size_bytes)
+
+    @needs("write", "stat", "read")
+    async def test_a_bodiless_file_write_is_refused_whole(self, storage: ConformanceBackend) -> None:
+        batch = [
+            Entry(path=Path("/a.txt"), content="x"),
+            Entry(path=Path("/b.pdf"), source="bytes"),
+            Entry(path=Path("/d.pdf"), source="bytes", content="hello"),
+        ]
+        refused = await storage.write(entries=batch)
+        assert refused.success is False
+        assert {str(error.path) for error in refused.errors} == {"/b.pdf", "/d.pdf"}
+        assert all(error.kind == ErrorKind.invalid for error in refused.errors)
+        assert all("a file write needs a body: content or data" in error.message for error in refused.errors)
+        for path in ("/a.txt", "/b.pdf", "/d.pdf"):
+            assert (await storage.stat(path=Path(path))).errors[0].kind == ErrorKind.not_found
+        original = b"%PDF-1.4 original"
+        assert (await storage.write(entries=[Entry(path=Path("/c.pdf"), data=original)])).success is True
+        bodiless = Entry(path=Path("/c.pdf"), source="bytes")
+        bodiless.content_hash = "e" * 64
+        assert (await storage.write(entries=[bodiless])).success is False
+        row = (await storage.stat(path=Path("/c.pdf"))).one()
+        assert row.content_hash == measure_bytes(original).content_hash
+        back = await storage.read(path=Path("/c.pdf"), columns=frozenset({"data"}))
+        assert back.observations[0].data == original
+
+    @needs("write", "stat", "mkdir")
+    async def test_each_file_of_a_mixed_batch_stores_its_own_measurement(self, storage: ConformanceBackend) -> None:
+        entries: list[Entry] = []
+        for n in range(5):
+            entries.append(Entry(path=Path(f"/mix/d{n}"), kind="directory"))
+            forged = Entry(path=Path(f"/mix/f{n}.txt"), content=f"body number {n}")
+            forged.content_hash = "a" * 64
+            entries.append(forged)
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        for n in range(5):
+            row = (await storage.stat(path=Path(f"/mix/f{n}.txt"))).one()
+            assert row.content_hash == measure_text(f"body number {n}").content_hash
+
+    @needs("write", "read", "stat")
+    async def test_a_rendering_is_never_lent_across_different_bodies(self, storage: ConformanceBackend) -> None:
+        reindexer = _reindexer_of(storage)
+        carol = pdf_bytes(["carol keeps this page"])
+        dave = pdf_bytes(["dave wrote his own page"])
+        assert (await storage.write(entries=[Entry(path=Path("/carol/n.pdf"), data=carol)], parents=True)).success
+        assert (await reindexer.reindex()).success is True
+        named = Entry(path=Path("/dave/y.pdf"), data=dave)
+        named.content_hash = measure_bytes(carol).content_hash
+        assert (await storage.write(entries=[named], parents=True)).success is True
+        row = (await storage.stat(path=Path("/dave/y.pdf"))).one()
+        assert row.content_hash == measure_bytes(dave).content_hash
+        assert (await reindexer.reindex()).success is True
+        text = (await storage.read(path=Path("/dave/y.pdf"))).one().content
+        assert text is not None and "dave wrote" in text and "carol" not in text

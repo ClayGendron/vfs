@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
-from vfs.models import Entry
+from vfs.models import Entry, measure_bytes
 from vfs.paths import Path
 from vfs.pattern_matching import compile_verifier
 from vfs.storage.backends.database import DatabaseStorage, seams
@@ -28,6 +28,7 @@ from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import offload as offload_module
+from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.offload import VerifyOffload
 
 if TYPE_CHECKING:
@@ -475,3 +476,65 @@ class TestExecutorOwnership:
         await _until(lambda: gated.finished)
         # The queued grep re-touched the disposed engine; the next close owns it.
         await _close_and_collect(storage)
+
+
+async def test_large_bodies_are_measured_in_one_offloaded_hop(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    hops: list[int] = []
+    real = writes_module.call_offloaded
+
+    async def counted(executor: Any, work: Any) -> Any:
+        hops.append(1)
+        return await real(executor, work)
+
+    monkeypatch.setattr(writes_module, "call_offloaded", counted)
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        batches = {
+            "large": [b"a" * 150_000, b"b" * 150_000, b"c" * 10],
+            "small": [bytes([n]) * 1_000 for n in range(10)],
+            "many": [n.to_bytes(2, "big") * 49 + b"z" for n in range(2_000)],
+            "at_total": [bytes([n]) * 10_000 for n in range(10)],
+            "under_total": [bytes([n]) * 9_999 for n in range(10)] + [b"\xff" * 9],
+        }
+        expected = {"large": 1, "small": 0, "many": 1, "at_total": 1, "under_total": 0}
+        for name, bodies in batches.items():
+            hops.clear()
+            entries = [Entry(path=Path(f"/{name}/{n:05}.bin"), data=body) for n, body in enumerate(bodies)]
+            assert (await storage.write(entries=entries, parents=True)).success is True
+            assert len(hops) == expected[name], name
+            for entry, body in zip(entries, bodies, strict=True):
+                row = (await storage.stat(path=entry.path)).one()
+                assert row.content_hash == measure_bytes(body).content_hash
+    finally:
+        await storage.close()
+
+
+async def test_a_body_changed_during_the_hop_is_never_stored_under_another_hash(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The call totals past the inline cap, so it hops; one entry's body is
+    # swapped as the hop starts and another carries a forged measurement.
+    public = b"public body " * 10_000
+    target = Entry(path=Path("/eve/handbook.bin"), data=public)
+    forged = Entry(path=Path("/eve/forged.bin"), data=b"forged " * 20)
+    forged.content_hash = "b" * 64
+    forged.size_bytes = 1
+    real = writes_module.call_offloaded
+
+    async def swapping(executor: Any, work: Any) -> Any:
+        target.data = b"swapped body"
+        return await real(executor, work)
+
+    monkeypatch.setattr(writes_module, "call_offloaded", swapping)
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        assert (await storage.write(entries=[target, forged], parents=True)).success is True
+        for path in ("/eve/handbook.bin", "/eve/forged.bin"):
+            stored = (await storage.read(path=Path(path), columns=frozenset({"data"}))).one().data
+            row = (await storage.stat(path=Path(path))).one()
+            assert stored is not None
+            assert (row.content_hash, row.size_bytes) == (measure_bytes(stored).content_hash, len(stored))
+        handbook = await storage.read(path=Path("/eve/handbook.bin"), columns=frozenset({"data"}))
+        assert handbook.one().data == public
+    finally:
+        await storage.close()

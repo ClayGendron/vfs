@@ -43,7 +43,16 @@ from pydantic import ValidationError
 
 from vfs.authority import Authority
 from vfs.exceptions import MountError, raise_lone_or_group
-from vfs.models import CONTENT_KINDS, MEASURED_BODY, Edge, Entry, Observation, measure_bytes, measure_text
+from vfs.models import (
+    CONTENT_KINDS,
+    MEASURE_OFFLOAD_BYTES,
+    MEASURED_BODY,
+    Edge,
+    Entry,
+    Observation,
+    measure_bytes,
+    measure_text,
+)
 from vfs.ops import (
     GRAPH_DEPTH_DEFAULT,
     GRAPH_LIMIT_DEFAULT,
@@ -132,10 +141,6 @@ _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
 # A call that names nobody runs as the named nobody: it holds only what a
 # mount's posture gives everyone, and the audit still has an actor.
 _ANONYMOUS_AUTHORITY: Final = Authority.anonymous()
-
-# A body this large is measured (sha256, size, lines) on a worker thread:
-# below it the thread hop costs more than the hash; above it the hash would hold the loop.
-MEASURE_OFFLOAD_BYTES: Final = 100_000
 
 
 @dataclass(slots=True)
