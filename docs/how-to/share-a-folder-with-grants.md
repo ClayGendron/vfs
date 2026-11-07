@@ -97,7 +97,7 @@ A group may be a member of another group. Nesting is capped at eight levels, and
 
 ## Let a granted person share onward
 
-A caller holding `read_write` on a path may grant on it, up to its own level.
+A caller holding `read_write` on a path and everywhere beneath it may grant on it, up to its own level. A posture beneath the path below `read_write`, which the caller's own `read_write` grants do not cover, refuses the grant with `permission_denied`.
 
 ```python
 bob = Authority.of(Principal("bob"))

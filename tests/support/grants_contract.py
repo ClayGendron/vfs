@@ -19,12 +19,13 @@ and bob at once, so it holds only what both hold.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pytest
-from sqlalchemy import and_, insert, select, update
+from sqlalchemy import and_, event, insert, select, update
 
 from vfs.authority import EVERYONE_NAME, Authority, Principal
 from vfs.models import Edge, Entry
@@ -47,7 +48,7 @@ from vfs.storage.grants import LEVEL_RANK, MAX_GROUP_DEPTH, GrantLevel, GrantRow
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 
 needs = pytest.mark.needs
 
@@ -857,6 +858,126 @@ class GrantsContract:
         assert result.success is True
         assert [error.severity for error in result.errors] == [Severity.warning]
 
+    @needs("grant", "posture", "read", "grants")
+    async def test_a_grant_over_a_posture_hole_is_refused(self, storage: GrantsBackend) -> None:
+        # dave reaches /open only through its open posture; a row there
+        # would also reach the private /open/closed, which he cannot write.
+        await _holed_world(storage)
+        at_open = await storage.grant(path=Path("/open"), principal="dave", level="read", authority=DAVE)
+        assert _kind(at_open) == ErrorKind.permission_denied
+        assert at_open.errors[0].path == Path("/open")
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
+        at_root = await storage.grant(path=Path("/"), principal="dave", level="read", authority=DAVE)
+        assert _kind(at_root) == ErrorKind.permission_denied
+        assert at_root.errors[0].path == Path("/")
+        for path in ("/", "/open"):
+            listed = await storage.grants(path=Path(path), authority=SYSTEM)
+            assert "dave" not in {row["principal_id"] for row in _granted(listed)}
+        assert _kind(await storage.read(path=Path("/open/closed/k.md"), authority=DAVE)) == ErrorKind.not_found
+
+    @needs("grant", "revoke", "posture", "read", "grants")
+    async def test_a_revoke_over_a_posture_hole_is_refused(self, storage: GrantsBackend) -> None:
+        await _holed_world(storage)
+        granted = await storage.grant(path=Path("/open"), principal="bob", level="read_write", authority=SYSTEM)
+        assert granted.success is True
+        revoked = await storage.revoke(path=Path("/open"), principal="bob", authority=DAVE)
+        assert _kind(revoked) == ErrorKind.permission_denied
+        listed = await storage.grants(path=Path("/open"), authority=SYSTEM)
+        bobs = [row for row in _granted(listed) if row["principal_id"] == "bob" and row["path_prefix"] == "/open"]
+        assert [row["granted_by"] for row in bobs] == ["system"]
+        assert (await storage.read(path=Path("/open/closed/k.md"), authority=BOB)).success is True
+
+    @needs("grant", "posture", "delete", "stat")
+    async def test_an_empty_posture_hole_refuses_a_grant_above_it(self, storage: GrantsBackend) -> None:
+        # A grant row also admits rows written later, so a hole with no row
+        # in it refuses the grant; a delete, which acts on rows, proceeds.
+        await _world(storage)
+        planted = await storage.write(entries=[Entry(path=Path("/open/k.md"), content="x")], parents=True)
+        assert planted.success is True
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/open/empty"), posture="none", authority=SYSTEM)).success
+        refused = await storage.grant(path=Path("/open"), principal="dave", level="read", authority=DAVE)
+        assert _kind(refused) == ErrorKind.permission_denied
+        assert (await storage.delete(path=Path("/open"), authority=DAVE)).success is True
+
+    @needs("grant", "posture")
+    async def test_a_sibling_hole_does_not_refuse_a_grant(self, storage: GrantsBackend) -> None:
+        # /open-x and /open.d sort between /open and /open/, /opener above
+        # /open0: none of them lies beneath /open, so none refuses.
+        await _world(storage)
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        for sibling in ("/open-x", "/open.d", "/opener"):
+            assert (await storage.posture(path=Path(sibling), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)).success
+
+    @needs("grant", "posture")
+    async def test_a_posture_at_the_rung_beneath_does_not_refuse(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        for path in ("/open", "/open/pub"):
+            assert (await storage.posture(path=Path(path), posture="read_write", authority=SYSTEM)).success is True
+        assert (await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)).success
+
+    @needs("grant", "posture")
+    async def test_a_caller_covering_the_hole_may_grant_above_it(self, storage: GrantsBackend) -> None:
+        await _holed_world(storage)
+        assert (await storage.grant(path=Path("/open"), principal="eve", level="read", authority=SYSTEM)).success
+        covering = await storage.grant(
+            path=Path("/open/closed"), principal="dave", level="read_write", authority=SYSTEM
+        )
+        assert covering.success is True
+        assert (await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)).success
+
+    @needs("grant", "posture", "read")
+    async def test_anonymous_cannot_grant_over_a_posture_hole(self, storage: GrantsBackend) -> None:
+        await _holed_world(storage)
+        assert (await storage.posture(path=Path("/"), posture="read_write", authority=SYSTEM)).success is True
+        refused = await storage.grant(path=Path("/open"), principal="eve", level="read", authority=ANON)
+        assert _kind(refused) == ErrorKind.permission_denied
+        eve = Authority.of(Principal("eve"))
+        assert _kind(await storage.read(path=Path("/open/closed/k.md"), authority=eve)) == ErrorKind.not_found
+
+    @needs("grant", "posture")
+    async def test_the_hole_read_pages_past_its_first_page(
+        self, storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(rights, "_POSTURE_PAGE", 2)
+        await _world(storage)
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        for hole in ("/open/a", "/open/b", "/open/c"):
+            assert (await storage.posture(path=Path(hole), posture="none", authority=SYSTEM)).success is True
+        for hole in ("/open/a", "/open/b"):
+            granted = await storage.grant(path=Path(hole), principal="dave", level="read_write", authority=SYSTEM)
+            assert granted.success is True
+        with _grants_selects(storage) as before:
+            refused = await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)
+        assert _kind(refused) == ErrorKind.permission_denied
+        third = await storage.grant(path=Path("/open/c"), principal="dave", level="read_write", authority=SYSTEM)
+        assert third.success is True
+        with _grants_selects(storage) as after:
+            allowed = await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)
+        assert allowed.success is True
+        assert _hole_reads(before) == 2
+        assert _hole_reads(after) == 2
+
+    @needs("grant", "posture", "read")
+    async def test_posture_keeps_its_point_gate(self, storage: GrantsBackend) -> None:
+        await _holed_world(storage)
+        assert (await storage.posture(path=Path("/open"), posture="read", authority=DAVE)).success is True
+        assert _kind(await storage.read(path=Path("/open/closed/k.md"), authority=DAVE)) == ErrorKind.not_found
+
+    @needs("grant", "posture")
+    async def test_the_hole_read_costs_one_statement_and_none_for_covered_callers(self, storage: GrantsBackend) -> None:
+        await _world(storage)
+        assert (await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM)).success is True
+        with _grants_selects(storage) as system_reads:
+            granted = await storage.grant(path=Path("/open"), principal="eve", level="read", authority=SYSTEM)
+        assert granted.success is True
+        with _grants_selects(storage) as dave_reads:
+            granted = await storage.grant(path=Path("/open"), principal="eve", level="read", authority=DAVE)
+        assert granted.success is True
+        assert len(system_reads) == 1
+        assert len(dave_reads) == 3
+
     # ------------------------------------------------------------------
     # Groups
     # ------------------------------------------------------------------
@@ -1160,6 +1281,45 @@ async def _labels(storage: GrantsBackend) -> dict[str, int]:
     async with host.session_factory() as session:
         rows = (await session.execute(select(entry.c.path, entry.c.everyone_level))).all()
     return {row.path: row.everyone_level for row in rows}
+
+
+async def _holed_world(storage: GrantsBackend) -> None:
+    """The world plus an open /open over a private /open/closed holding one file."""
+    await _world(storage)
+    steps = [
+        await storage.write(entries=[Entry(path=Path("/open/closed/k.md"), content="x")], parents=True),
+        await storage.posture(path=Path("/open"), posture="read_write", authority=SYSTEM),
+        await storage.posture(path=Path("/open/closed"), posture="none", authority=SYSTEM),
+    ]
+    for step in steps:
+        assert step.success is True, step.errors
+
+
+@contextmanager
+def _grants_selects(storage: GrantsBackend) -> Iterator[list[str]]:
+    """The ``SELECT`` statements naming the grants table, issued while the block runs."""
+    host = getattr(storage, "_host", None)
+    if host is None:
+        pytest.skip("backend issues no SQL")
+    seen: list[str] = []
+
+    def listen(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        del conn, cursor, args
+        text = statement.lower()
+        if text.lstrip().startswith("select") and "vfs_grants" in text:
+            seen.append(text)
+
+    engine = host.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", listen)
+    try:
+        yield seen
+    finally:
+        event.remove(engine, "before_cursor_execute", listen)
+
+
+def _hole_reads(statements: list[str]) -> int:
+    """The paged reads of the everyone rows beneath a path, among *statements*."""
+    return sum(1 for text in statements if "order by" in text and "path_prefix >" in text)
 
 
 def _granted(result: Result) -> list[dict[str, object]]:

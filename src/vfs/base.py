@@ -1611,8 +1611,8 @@ class AsyncVirtualFileSystem:
         ``contribute`` (also overwrite and edit anyone's), ``read_write``
         (also trash, move, restore and grant). Grants only widen: there
         is no deny row. The caller must hold
-        ``read_write`` at *path* for every subject it acts for, so nobody
-        grants more than it holds. A grant replaces the principal's
+        ``read_write`` at *path* and everywhere beneath it for every subject
+        it acts for, so nobody grants more than it holds. A grant replaces the principal's
         earlier row at the same path; the answer rides as ``grants=``.
         """
         refusal = self._gate_params("grant", path=path, principal=principal, level=level, authority=authority)
@@ -1624,7 +1624,9 @@ class AsyncVirtualFileSystem:
         """Remove *principal*'s grant at exactly *path*, under the same gate as :meth:`grant`.
 
         A grant on an ancestor is untouched; revoke the row where it was
-        granted. A missing row answers with a warning, not a failure.
+        granted. The caller needs ``read_write`` at *path* and everywhere
+        beneath it, since the row reaches that far. A missing row answers
+        with a warning, not a failure.
         """
         refusal = self._gate_params("revoke", path=path, principal=principal, authority=authority)
         if refusal is not None:

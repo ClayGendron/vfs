@@ -160,6 +160,9 @@ _OWNER_PIECES_PER_UNIT: Final = 50
 # Subtree rows read per page when a subtree mutation must check each row.
 _SUBTREE_PAGE: Final = 1_000
 
+# Everyone rows read per page when a grant or revoke checks beneath its path.
+_POSTURE_PAGE: Final = 1_000
+
 GateMode = Literal["modify", "upsert", "create", "read"]
 """What a mutation needs at a target: an existing row to change (``modify``),
 change-or-create (``upsert``), a new row (``create``), or an existing row
@@ -906,13 +909,16 @@ async def grant_rows(
 ) -> Result:
     """Write or replace *principal*'s row on *path*, stamped with *revision*; *principal* is stamped too.
 
-    The granting authority must hold ``read_write`` on *path* for every
-    subject, so what it grants never exceeds its own level there. *gate*
+    The granting authority must hold ``read_write`` on *path* and
+    everywhere beneath it for every subject, so what it grants never
+    exceeds its own level anywhere the row reaches. *gate*
     was resolved under the admin lock, which *revision* came from, so
     what it holds is what the committed rows say now. The stamp retires
     every cached compile *principal* is a subject or a group of.
     """
-    refusal = await _grant_refusal(session, tables, profile, membership_budget, "grant", gate, path, principal, level)
+    refusal = await _grant_refusal(
+        session, tables, profile, membership_budget, "grant", gate, path, principal, level, subtree=True
+    )
     if refusal is not None:
         return Result(ops=("grant",), errors=[refusal])
     await stamp_principals(session, tables, [principal], revision)
@@ -939,7 +945,9 @@ async def revoke_rows(
     parity: the gate already judged it.
     """
     del authority
-    refusal = await _grant_refusal(session, tables, profile, membership_budget, "revoke", gate, path, principal, "read")
+    refusal = await _grant_refusal(
+        session, tables, profile, membership_budget, "revoke", gate, path, principal, "read", subtree=True
+    )
     if refusal is not None:
         return Result(ops=("revoke",), errors=[refusal])
     grants = tables.grants
@@ -1025,7 +1033,7 @@ async def set_posture(
     posture alone.
     """
     refusal = await _grant_refusal(
-        session, tables, profile, membership_budget, "posture", gate, path, None, "read_write"
+        session, tables, profile, membership_budget, "posture", gate, path, None, "read_write", subtree=False
     )
     if refusal is not None:
         return Result(ops=("posture",), errors=[refusal])
@@ -1312,12 +1320,18 @@ async def _grant_refusal(
     path: Path,
     principal: str | None,
     level: GrantLevel,
+    *,
+    subtree: bool,
 ) -> ResultError | None:
     """The shared gate of the grant verbs: a lawful principal and level, and ``read_write`` on *path*.
 
     *path* need not hold a row, so its everyone level comes from the
     posture rows on its chain, as a creation's does; anonymous is judged
-    there too.
+    there too. With *subtree* (grant and revoke, whose row reaches every
+    path beneath), an everyone row beneath *path* narrower than the rung
+    refuses unless the caller's own spans cover it; a posture changes
+    labels only down to the next deeper everyone row, so it is judged at
+    *path* alone.
     """
     if principal is not None and not _lawful_principal(principal):
         return classified(ErrorKind.invalid, detail=f"{op}: {principal!r} is not a grantable principal id")
@@ -1329,11 +1343,51 @@ async def _grant_refusal(
     refusal = unauthenticated_at(gate.authority, postures, str(path), gate.needs.primary)
     if refusal is not None:
         return refusal
-    if gate.resolution.at(gate.needs.primary).reaches(str(path), label):
+    rights = gate.resolution.at(gate.needs.primary)
+    if rights.reaches(str(path), label):
+        if subtree and await _hole_beneath(session, tables, rights, path):
+            return denied(path)
         return None
     if gate.resolution.at("list").reaches(str(path), label):
         return denied(path)
     return classified(ErrorKind.not_found, path)
+
+
+async def _hole_beneath(session: AsyncSession, tables: VFSTables, rights: Rights, path: Path) -> bool:
+    """Whether an everyone row strictly beneath *path* stands below *rights*' rung where its spans do not reach.
+
+    Nothing is read when the spans cover *path*'s subtree whole. Otherwise
+    the everyone rows below the rung are paged by prefix over the bytewise
+    range ``(path/, path0)`` — every row but the root's, at the root — and
+    the first one the spans do not cover whole answers true.
+    """
+    if rights.whole or rights.covers_subtree(str(path)):
+        return False
+    grants = tables.grants
+    lower = [rung for rung, rank in LEVEL_RANK.items() if rank < rights.need]
+    if path == ROOT:
+        beneath = grants.c.path_prefix != str(ROOT)
+    else:
+        beneath = and_(grants.c.path_prefix > str(path) + "/", grants.c.path_prefix < str(path) + "0")
+    last = str(path)
+    while True:
+        stmt = (
+            select(grants.c.path_prefix)
+            .where(
+                grants.c.principal_id == EVERYONE_NAME,
+                grants.c.level.in_(lower),
+                beneath,
+                grants.c.path_prefix > last,
+            )
+            .order_by(grants.c.path_prefix)
+            .limit(_POSTURE_PAGE)
+        )
+        prefixes = list((await session.execute(stmt)).scalars())
+        if any(not rights.covers_subtree(prefix) for prefix in prefixes):
+            return True
+        if len(prefixes) < _POSTURE_PAGE:
+            return False
+        last = prefixes[-1]
 
 
 def _membership_refusal(op: str, group: str, member: str, authority: Authority) -> ResultError | None:
