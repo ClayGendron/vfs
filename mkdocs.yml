@@ -49,6 +49,7 @@ nav:
     - API: reference/api.md
     - Authority and Principal: reference/authority.md
     - Session: reference/session.md
+    - Synchronous use: reference/sync.md
     - Glossary: reference/glossary.md
     - Glob patterns: reference/glob-patterns.md
     - Metadata path format: reference/metadata-paths.md

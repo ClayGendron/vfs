@@ -9,6 +9,9 @@ never tear each other down.
     async with server_storage("VFS_TEST_POSTGRES_URL") as storage:
         await storage.mkdir(path=Path("/docs"))
 
+    with server_schema("VFS_TEST_POSTGRES_URL") as (url, schema):   # a caller that owns its own loop
+        ...
+
 What a schema is differs by engine. On Postgres and SQL Server it is a
 schema; on MariaDB it is a database; on Oracle it is a user, created
 schema-only (no password, no login). Names are lowercase ascii and
@@ -17,8 +20,9 @@ digits, so no engine needs them quoted; Oracle folds them to uppercase.
 
 from __future__ import annotations
 
+import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -30,7 +34,7 @@ from vfs.models.rows import build_vfs_tables
 from vfs.storage.backends.database import DatabaseStorage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
     from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -71,6 +75,26 @@ async def server_storage(env_var: str, **options: Any) -> AsyncIterator[Database
     finally:
         await storage.close()
         await _apply(url, schema, create=False)
+
+
+@contextmanager
+def server_schema(env_var: str) -> Iterator[tuple[str, str]]:
+    """A schema of its own on the server named by *env_var*, for a caller that owns its loop.
+
+    Skips when *env_var* is unset. Yields the URL and the schema name; the
+    caller builds and closes its own backend on whatever loop it runs. Each
+    schema statement runs under its own ``asyncio.run`` on a short-lived
+    engine, so nothing here binds to the caller's loop.
+    """
+    url = os.environ.get(env_var)
+    if url is None:
+        pytest.skip(f"{env_var} is not set")
+    schema = f"vfs_t_{uuid4().hex[:12]}"
+    asyncio.run(_apply(url, schema, create=True))
+    try:
+        yield url, schema
+    finally:
+        asyncio.run(_apply(url, schema, create=False))
 
 
 def sibling(env_var: str, storage: DatabaseStorage, **options: Any) -> DatabaseStorage:

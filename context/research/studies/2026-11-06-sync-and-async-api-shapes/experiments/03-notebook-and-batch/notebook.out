@@ -1,0 +1,38 @@
+Downloading polars-runtime-32 (51.4MiB)
+ Downloaded polars-runtime-32
+Installed 18 packages in 11ms
+--- cell 1
+running loop: _UnixSelectorEventLoop True MainThread
+--- cell 2
+asyncio.run -> RuntimeError asyncio.run() cannot be called from a running event loop
+/tmp/ipykernel_18293/2616266578.py:4: RuntimeWarning: coroutine 'sleep' was never awaited
+  print('asyncio.run ->', type(e).__name__, e)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+--- cell 3
+await write ok: True | await read: x
+--- cell 4
+forgotten await gives: coroutine
+next line -> AttributeError 'coroutine' object has no attribute 'one'
+--- cell 5
+sync write list: True 10000
+sync write generator: True 10000 []
+sync read: row 1
+--- cell 6
+kernel-loop ticks during the blocking call: 0
+ticks after yielding once: True
+--- cell 7
+fsspec.asyn.sync ran on thread: fsspecIO
+--- cell 8
+to_sql chunksize=None method=None: rows=10000 cursor executes=4
+to_sql chunksize=1000 method=None: rows=10000 cursor executes=28
+to_sql chunksize=1000 method=multi: rows=10000 cursor executes=28
+read_sql chunksize returns: generator [2500, 2500, 2500, 2500]
+--- cell 9
+pandas read_sql(AsyncEngine) -> AttributeError 'AsyncEngine' object has no attribute 'cursor'
+warnings: ['pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or ']
+--- cell 10
+polars 2.1.0 read_database(AsyncEngine) -> [{'x': 1}]
+loop patched by nest_asyncio: True
+asyncio.run after polars -> now allowed
+--- cell 11
+200 reads from 8 threads: 200 ['row 0', 'row 1']

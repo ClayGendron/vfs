@@ -15,7 +15,7 @@ error, and the session never reopens.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
@@ -31,6 +31,21 @@ if TYPE_CHECKING:
     from vfs.paths import ObjectKind
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
+
+
+# ---------------------------------------------------------------------------
+# The closed fact
+# ---------------------------------------------------------------------------
+
+
+CLOSED_SESSION_DETAIL: Final = "the session is closed and cannot reopen; open a new one"
+"""The one sentence of the closed fact: the refusal's detail and the reopen error's message, in either shape."""
+
+
+def closed_refusal(op: Op) -> Result:
+    """The one refusal a closed session answers every verb with, in either shape."""
+    fact = classified(ErrorKind.invalid, detail=CLOSED_SESSION_DETAIL)
+    return Result(ops=(op,), errors=[fact])
 
 
 class Session:
@@ -59,12 +74,11 @@ class Session:
 
     async def close(self) -> None:
         """Close the session — idempotent, and final."""
-        self._closed = True
+        self._close_now()
 
     async def __aenter__(self) -> Session:
         if self._closed:
-            msg = "the session is closed and cannot reopen; open a new one"
-            raise ValueError(msg)
+            raise ValueError(CLOSED_SESSION_DETAIL)
         return self
 
     async def __aexit__(
@@ -421,9 +435,10 @@ class Session:
     # Internal helpers
     # -------------------------------------------------------------------
 
+    def _close_now(self) -> None:
+        """The one line of closing, synchronous so the sync twin can close without a loop."""
+        self._closed = True
+
     def _refuse_closed(self, op: Op) -> Result | None:
         """The structured refusal a closed session answers every verb with."""
-        if not self._closed:
-            return None
-        fact = classified(ErrorKind.invalid, detail="the session is closed and cannot reopen; open a new one")
-        return Result(ops=(op,), errors=[fact])
+        return None if not self._closed else closed_refusal(op)

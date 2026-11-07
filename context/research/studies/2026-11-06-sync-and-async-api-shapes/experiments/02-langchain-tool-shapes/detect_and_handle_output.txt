@@ -1,0 +1,10 @@
+== plain script, .invoke
+  detect_tool.invoke                           -> contents of /a
+  handle_tool.invoke (no .result())            -> <__main__.Handle object at 0x7f4d727ad160>
+== async agent, .ainvoke (LangChain runs the sync body in an executor thread)
+  detect_tool.ainvoke                          -> contents of /a
+== sync body run on the loop thread (a node or callback calling .invoke inside async code)
+/home/user/vfs/context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/02-langchain-tool-shapes/detect_and_handle.py:53: RuntimeWarning: coroutine '_read' was never awaited
+  return str(detecting_read(path))
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+  detect_tool.invoke on loop thread            -> <coroutine object _read at 0x7f4d7288b1c0>

@@ -1,0 +1,6 @@
+fastapi: LICENSE: The MIT License (MIT)  Copyright (c) 2018 Sebastián Ramírez 
+langchain: LICENSE: MIT License  Copyright (c) LangChain, Inc. 
+pandas: LICENSE: BSD 3-Clause License  Copyright (c) 2008-2011, AQR Capital Management, LLC, Lambda Foundry, Inc. and PyData Development 
+prefect: LICENSE:                                  Apache License                            Version 2.0, January 2004                    
+filesystem_spec: LICENSE: BSD 3-Clause License  Copyright (c) 2018, Martin Durant 
+langgraph: LICENSE: MIT License  Copyright (c) 2024 LangChain, Inc. (cloned by researcher 02)

@@ -1,0 +1,53 @@
+
+== 1 sync @tool over SyncVirtualFileSystem: invoke
+  -> alpha beta
+   seen: ('sync tool body', 'MainThread', 'caller-sync', 't-sync')
+
+== 1c inside the verb's own task on the facade loop thread
+   seen: ('probe tool body', 'MainThread', 'caller-probe', 't-probe')
+   seen: ('facade loop task', 'vfs-sync-loop', 'caller-probe', 't-probe')
+   seen: ('probe tool body', 'asyncio_0', 'caller-probe-async', 't-probe-async')
+   seen: ('facade loop task', 'vfs-sync-loop', 'caller-probe-async', 't-probe-async')
+
+== 1b same sync tool: ainvoke from a running loop (executor round trip)
+  -> alpha beta
+   seen: ('sync tool body', 'asyncio_0', 'caller-async', 't-async')
+
+== 2 async @tool over VirtualFileSystem: ainvoke, then invoke
+  ainvoke -> alpha beta
+   seen: ('async tool body', 'MainThread', 'caller-probe', 't-a')
+  invoke  -> NotImplementedError : StructuredTool does not support sync invocation.
+
+== 3 StructuredTool.from_function(func=sync facade, coroutine=async router)
+   seen: ('coroutine', 'MainThread', 'caller-probe', '')
+   seen: ('func', 'asyncio_0', 'caller-probe', '')
+
+== 4 sync tool that calls asyncio.run(async_fs.read(...))
+  invoke (no loop) -> alpha beta
+  ainvoke (executor thread) -> alpha beta
+  invoke on the loop thread -> RuntimeError : asyncio.run() cannot be called from a running event loop
+
+== 5 sync facade call made on the event-loop thread: loop starvation count
+/home/user/vfs/.venv/lib/python3.13/site-packages/sqlalchemy/sql/compiler.py:3323: RuntimeWarning: coroutine 'read_naive.<locals>.go' was never awaited
+  def _literal_execute_expanding_parameter(self, name, parameter, values):
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+  heartbeat ticks during 200 blocking facade reads on the loop: 0
+  heartbeat ticks during 200 offloaded facade reads:            680934
+
+== 6 ToolNode-shaped fan-out of 8 calls
+  async agent, sync-only tool: 8 calls on 8 distinct worker threads
+  async agent, tool with coroutine: 8 calls on 1 distinct threads {'MainThread'}
+  sync agent (ToolNode executor, max_concurrency=4): 8 calls on 4 threads
+
+== 7 per-call cost, 2000 reads each, microseconds per call
+  await router.read             4197.8
+  to_thread(facade.read)        4712.7
+  async tool .ainvoke           4875.2
+  sync tool .ainvoke            5153.9
+  facade.read (no loop)         4399.4
+  sync tool .invoke             5026.0
+
+== 8 10,000-entry write via the facade
+  success: True rows: 10000
+  RunnableLambda.abatch over 50 facade reads -> True
+  threads alive named vfs-sync-loop: 1

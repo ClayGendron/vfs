@@ -20,6 +20,7 @@ from vfs.ops import (
     EXEC_OPS,
     GRANT_OPS,
     GRANT_WRITE_OPS,
+    MANAGEMENT_METHODS,
     MUTATING_OPS,
     READ_OPS,
     RUNGS,
@@ -30,14 +31,6 @@ from vfs.ops import (
 )
 from vfs.results import projection
 from vfs.storage.grants import LEVEL_RANK
-
-# Public router methods that manage the mount tree rather than route an op.
-# A new public coroutine on VirtualFileSystem must be a registered op or a
-# deliberate addition here.
-MANAGEMENT_METHODS = frozenset(
-    {"add_mount", "remove_mount", "bind", "unbind", "remount", "close", "locate", "locate_edge"}
-)
-
 
 # ---------------------------------------------------------------------------
 # Set invariants

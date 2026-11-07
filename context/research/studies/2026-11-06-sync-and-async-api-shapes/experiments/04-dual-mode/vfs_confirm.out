@@ -1,0 +1,13 @@
+warning: The `UV_NATIVE_TLS` environment variable is deprecated and will be removed in a future release. Use `UV_SYSTEM_CERTS` instead.
+(a) fresh asyncio.run per call: write.success=True read.success=True
+(b) private loop thread (vfs.sync): write.success=True read.success=True
+(a') loop A then loop B on another thread: write on loop A=True, read on loop B in another thread success=True
+/usr/local/lib/python3.13/asyncio/events.py:89: RuntimeWarning: coroutine 'VirtualFileSystem.read' was never awaited
+  self._context.run(self._callback, *self._args)
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+(c) sync spelling inside a running loop: returned coroutine, has .success: False
+threads: ['MainThread', 'Thread-1 (_connection_worker_thread)', 'Thread-3 (_connection_worker_thread)']
+/home/user/vfs/.venv/lib/python3.13/site-packages/aiosqlite/core.py:102: ResourceWarning: <aiosqlite.core.Connection object at 0x7f66ae2da510> was deleted before being closed. Please use 'async with' or '.close()' to close the connection properly.
+  warn(
+/home/user/vfs/.venv/lib/python3.13/site-packages/aiosqlite/core.py:102: ResourceWarning: <aiosqlite.core.Connection object at 0x7f66ae022d50> was deleted before being closed. Please use 'async with' or '.close()' to close the connection properly.
+  warn(

@@ -1,0 +1,29 @@
+== cost
+detect: threads_that_ran_work=1 distinct_loops=4 threads_left_alive=[]
+twins: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+prefect_sync_compatible: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=['RunSyncEventLoopThread']
+prefect_async_dispatch: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+fsspec_sync_flag: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+sqla_await_only: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+greenback: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+asgiref_plain: threads_that_ran_work=200 distinct_loops=5 threads_left_alive=['ThreadPoolExecutor-200_0']
+lazy_portal: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+handle_result: threads_that_ran_work=1 distinct_loops=1 threads_left_alive=[]
+== lazy_worker
+lazy_portal: forced in worker on portal-loop
+lazy_greenback: forced in worker on ThreadPoolExecutor-1_0
+== loop_bound
+loop A (asyncio.run): ok
+loop B (private thread): RAISED RuntimeError: <asyncio.locks.Event object at 0x7fdf2a8fd400 [unset]> is bound to a different event loop
+== reentrant twins
+twins: HANG (no result in 5 s; the private loop waits on itself)
+== reentrant prefect_async_dispatch
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+prefect_async_dispatch: coroutine
+== reentrant handle_result
+handle_result: HANG (no result in 5 s; the private loop waits on itself)
+== reentrant fsspec_sync_flag
+fsspec_sync_flag: RAISED NotImplementedError: Calling sync() from within a running loop
+== reentrant prefect_sync_compatible
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+prefect_sync_compatible: coroutine

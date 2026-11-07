@@ -1,0 +1,5 @@
+typecheck_prefect_fn.py:14:17: info[revealed-type] Revealed type: `int | Coroutine[Any, Any, int]`
+typecheck_prefect_fn.py:15:14: error[invalid-assignment] Object of type `int | Coroutine[Any, Any, int]` is not assignable to `int`
+typecheck_prefect_fn.py:19:17: info[revealed-type] Revealed type: `Unknown`
+typecheck_prefect_fn.py:19:23: error[invalid-await] `int | Coroutine[Any, Any, int]` is not awaitable
+Found 4 diagnostics

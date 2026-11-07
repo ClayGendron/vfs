@@ -1,0 +1,17 @@
+== mypy (installed package, as a user sees it)
+context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/01-fastapi-placement/forgot_await.py:5: error: Skipping analyzing "vfs": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/01-fastapi-placement/forgot_await.py:5: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+Found 1 error in 1 file (checked 1 source file)
+== mypy with MYPYPATH=src, reading vfs as source
+context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/01-fastapi-placement/forgot_await.py:9: error: Value of type "Coroutine[Any, Any, Result]" must be used  [unused-coroutine]
+context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/01-fastapi-placement/forgot_await.py:9: note: Are you missing an await?
+Found 1 error in 1 file (checked 1 source file)
+== ty
+warning[unused-awaitable]: Object of type `CoroutineType[Any, Any, Result]` is not awaited
+ --> context/research/studies/2026-11-06-sync-and-async-api-shapes/experiments/01-fastapi-placement/forgot_await.py:9:5
+  |
+9 |     fs.read("/a.txt")
+  |     ^^^^^^^^^^^^^^^^^
+  |
+
+Found 1 diagnostic

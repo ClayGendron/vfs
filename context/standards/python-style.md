@@ -50,7 +50,8 @@ Per-file ignores:
 
 ## Async
 
-- `VirtualFileSystem` is the async router (`src/vfs/base.py:357`); every verb on it is `async def`, and there is no sync facade.
+- `VirtualFileSystem` is the async router (`src/vfs/base.py:357`); every verb on it is `async def`.
+- `vfs.sync` is the synchronous twin for a caller without a loop (a notebook cell, a script, a pipeline worker): `SyncVirtualFileSystem` and `SyncSession` own one loop on one daemon thread and forward every verb through it (`src/vfs/sync.py`). The twins carry the originals' exact parameters, and `tests/test_sync.py` holds them to the router and the session by signature.
 - Backend protocol methods are `async def`; a builder beneath them is a plain `async` function that takes the op's live session.
 - Never call `asyncio.run` inside library code. The caller owns the loop.
 
