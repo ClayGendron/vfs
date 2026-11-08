@@ -43,6 +43,7 @@ its live neighbours: every relabel statement runs once, over ``path``.
 from __future__ import annotations
 
 import json
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import and_, delete, func, insert, or_, select, text, update
@@ -114,6 +115,33 @@ async def posture_rows(
     grants = tables.grants
     postures: dict[str, GrantLevel] = {}
     for chunk in chunked(sorted(set(prefixes)), membership_budget):
+        stmt = select(grants.c.path_prefix, grants.c.level).where(
+            grants.c.principal_id == EVERYONE_NAME, membership(grants.c.path_prefix, chunk, profile)
+        )
+        postures.update({row.path_prefix: row.level for row in await session.execute(stmt)})
+    return postures
+
+
+async def posture_rows_for_chunks(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    chunks: Sequence[Sequence[str]],
+    *,
+    deadline: float | None,
+) -> dict[str, GrantLevel] | None:
+    """The posture rows among pre-sorted, pre-chunked *chunks*, issued as given; ``None`` past *deadline*.
+
+    The read half of an off-loop posture gate: the chain was deduplicated,
+    sorted and cut on a worker, so the loop holds one statement's build
+    at a time and never the chain's sort. The deadline is read before
+    each chunk, and a read that reaches it stops whole.
+    """
+    grants = tables.grants
+    postures: dict[str, GrantLevel] = {}
+    for chunk in chunks:
+        if deadline is not None and monotonic() > deadline:
+            return None
         stmt = select(grants.c.path_prefix, grants.c.level).where(
             grants.c.principal_id == EVERYONE_NAME, membership(grants.c.path_prefix, chunk, profile)
         )

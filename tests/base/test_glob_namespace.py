@@ -12,23 +12,40 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import pathlib
 import warnings
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 
-from tests.support.base_doubles import RecorderStorage
+from tests.support.base_doubles import BindableStorage, RecorderStorage
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles import glob as oracle
+from tests.support.scope_worlds import (
+    DIRECTORIES,
+    METACHAR_DIRECTORIES,
+    NESTED_HOST,
+    POSTURE_DIRECTORIES,
+    TRASH_ROOTS,
+    ShapeCall,
+    ShapeWorlds,
+    build_world_files,
+    open_worlds,
+)
+from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
+from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem
-from vfs.models import Observation
+from vfs.models import Entry, Observation
 from vfs.paths import Path
 from vfs.pattern_matching import canonical_pattern
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
+from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -652,6 +669,8 @@ async def test_a_root_probe_past_its_wall_warns(monkeypatch: pytest.MonkeyPatch)
 
 async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the residual walk run inline on the loop, which then cannot turn."""
+    # Composition kept at every size, so the walk residuates every root's arms.
+    monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", 10**9)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     assert (await fs.mkdir(path="/m")).success is True
     await fs.add_mount(RecorderStorage(), "/m/n")
@@ -770,3 +789,110 @@ async def test_a_close_during_the_planning_hop_answers_a_result(verb: str, yield
     assert isinstance(result, Result), result
     assert result.success or [e.kind for e in result.errors] == [ErrorKind.backend_unavailable]
     assert not [w for w in caught if "never awaited" in str(w.message)]
+
+
+# ----------------------------------------------------------------------
+# The scope channel — past the composition limit, roots ride beside the arms
+# ----------------------------------------------------------------------
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> list[tuple[Any, ...]]:
+    """Every call to *module*'s *name*, its arguments recorded."""
+    calls: list[tuple[Any, ...]] = []
+    real = getattr(module, name)
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, counted)
+    return calls
+
+
+@pytest.mark.slow
+async def test_a_wide_scoped_glob_builds_roots_plus_arms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the router composing every arm under every root past the limit,
+    so storage builds one pattern arm per product element."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    data = InMemoryStorage()
+    await fs.add_mount(data, "/data")
+    rows = [Entry(path=Path(f"/data/d{i:05}/x.zz"), content="x") for i in range(10_000)]
+    assert (await fs.write(entries=[*rows, Entry(path=Path("/data/d00007/x.e05"), content="x")], parents=True)).success
+    # Without planner statistics SQLite seeks the tombstone index per root clause, a defect of its own.
+    async with data._host.session_factory() as session:
+        await session.execute(text("ANALYZE"))
+        await session.commit()
+    root_arms = _counted(monkeypatch, reads_module, "scope_root_arm")
+    facts = _counted(monkeypatch, reads_module, "channel_facts")
+    pattern_arms = _counted(monkeypatch, reads_module, "pattern_arm")
+    paths = tuple(f"/data/d{i:05}" for i in range(10_000))
+    result = await fs.glob("*." + _arms("e"), paths=paths, authority=Authority.system())
+    assert result.paths == ("/data/d00007/x.e05",)
+    assert len(root_arms) == 10_000
+    assert [len(call[2].arms) for call in facts] == [64]
+    assert pattern_arms == []
+    await fs.close()
+
+
+async def test_planning_composes_only_the_bounded_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: planning composing every owned root's arms past the limit, the
+    product the scope channel exists to avoid."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.add_mount(BindableStorage(), "/data")
+    await fs.add_mount(RecorderStorage(), "/data/part00007/inner")
+    composed = _counted(monkeypatch, base_module, "composed_pattern")
+    result = await fs.glob("*." + _arms("e"), paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
+    assert result.ops == ("glob",)
+    assert len(composed) == 64
+    assert {str(root) for root, _arm in composed} == {"/data/part00007"}
+    await fs.close()
+
+
+SCOPED_GLOB_CALLS = (
+    ShapeCall("name-arm", "glob", "*.py", DIRECTORIES),
+    ShapeCall("path-arm", "glob", "src/**", DIRECTORIES),
+    ShapeCall("brace-arms", "glob", "{a,b}/*.txt", DIRECTORIES[:120]),
+    ShapeCall("exclusion", "glob", "*.py", DIRECTORIES, options=(("globs_not", ("**/test_*",)),)),
+    ShapeCall("ext", "glob", "**", DIRECTORIES, options=(("ext", ("md",)),)),
+    ShapeCall("whole-side-root", "glob", "*.py", ("/m", *DIRECTORIES)),
+    ShapeCall("nested-mount", "glob", "*.py", (NESTED_HOST, *DIRECTORIES[1:])),
+    ShapeCall("trash-view", "glob", "*", ("/.vfs/trash", *TRASH_ROOTS)),
+    ShapeCall("nested-roots", "glob", "*.py", tuple(p for d in DIRECTORIES[:125] for p in (d, f"{d}/src"))),
+    ShapeCall("metachar-roots", "glob", "[ab]*", METACHAR_DIRECTORIES),
+    ShapeCall("anonymous-private-roots", "glob", "src/**", POSTURE_DIRECTORIES, world="private_roots"),
+    ShapeCall("anonymous-private-src", "glob", "src/**", POSTURE_DIRECTORIES, world="private_src"),
+)
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[ShapeWorlds]:
+    """The both-shapes worlds, built once per session, opened from copies per module; the rows only read them."""
+    shared = shared_directory(tmp_path_factory)
+    source = await asyncio.to_thread(build_once, shared, "scope-worlds", build_world_files)
+    worlds = await open_worlds(pathlib.Path(source), tmp_path_factory.mktemp("shape-worlds"))
+    yield worlds
+    for fs in worlds:
+        await fs.close()
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.parametrize("call", SCOPED_GLOB_CALLS, ids=[call.name for call in SCOPED_GLOB_CALLS])
+async def test_both_shapes_answer_alike(
+    call: ShapeCall, shape_worlds: ShapeWorlds, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards: any row, refusal or record that differs between composing every
+    arm under every root and sending the roots beside the arms."""
+    answers: list[Result] = []
+    scopes: list[int] = []
+    for limit in (0, 10**9):
+        monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", limit)
+        admitted = _counted(monkeypatch, backend_module, "admit_scope")
+        answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
+        scopes.append(sum(scope is not None for scope, _channel in admitted))
+    channel, composed = answers
+    assert scopes[0] > 0 and scopes[1] == 0, scopes
+    assert channel.observations == composed.observations
+    assert channel.errors == composed.errors
+    assert composed.observations or composed.errors
+    assert not any(error.kind is ErrorKind.truncated for error in composed.errors)

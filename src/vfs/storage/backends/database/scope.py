@@ -1,8 +1,10 @@
 """The structural scope every content search shares — grep's and glean's.
 
 Scoping crosses the storage seam as pattern text on the ``globs``
-channels (the router composes scope roots into them) plus the two
-``ext`` channels. This module holds the pieces both verbs stand on:
+channels (the router composes scope roots into them), or past the
+router's composition limit as roots beside the arms (an admitted
+scope channel, :func:`scope_channels`), plus the two ``ext``
+channels. This module holds the pieces both verbs stand on:
 the authoritative per-row gate (:func:`passes_gates`), the SQL terms a
 candidate fetch may ride beside its id chunk (:func:`pushdown_terms`,
 with true bind accounting), and the scan side's bounded, structurally
@@ -18,18 +20,23 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
-from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError
-from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
+from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, escape_glob
+from vfs.storage.backends.database.descent import liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
+from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
+    NO_SCOPE_FACTS,
+    ScopeFacts,
     address_channel,
+    channel_facts,
     ext_membership,
     kind_membership,
     pattern_arm,
+    scope_fan,
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
@@ -41,12 +48,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
-    from vfs.pattern_matching import GlobFilter, GlobGates
+    from vfs.paths import Path
+    from vfs.pattern_matching import GlobFilter, GlobGates, ScopeChannel
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.backends.database.pathterms import ChannelTerms
-
-# Ceiling of one channel arm's bind slots: the ext pair and the name fact.
-CHANNEL_ARM_BINDS: Final = 3
+    from vfs.storage.backends.database.reads import AdmittedScope
 
 # Columns every candidate fetch rides beside the caller's mask: the row-gate
 # facts, size_bytes (prices the content read), the tombstone, and what a
@@ -97,19 +102,51 @@ def passes_gates(mapping: RowMapping, gates: GlobGates, verdict: int | None, *, 
     return gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"]))
 
 
-def trash_scope(globs: Sequence[str]) -> tuple[tuple[str, ...], bool]:
-    """The admitted ``globs`` channel with the trash head stripped, and whether it addresses the trash view.
+def trash_scope(globs: Sequence[str], scope: AdmittedScope | None = None) -> tuple[tuple[str, ...], bool]:
+    """The admitted ``globs`` channel with the trash head stripped, and whether the search addresses the trash view.
 
     Every pattern under ``/.vfs/trash`` names the tombstoned rows at the
-    path beneath the head; a channel that mixes the view with live
-    patterns refuses, because one search runs on one side of the
-    tombstone. An empty channel searches the live namespace.
+    path beneath the head, and so does every *scope* root beneath it; a
+    search whose patterns and roots, across both channels, mix the view
+    with live ones refuses, because one search runs on one side of the
+    tombstone. An empty channel and no scope search the live namespace.
     """
     addresses = address_channel("globs", globs)
     sides = {address.trashed for address in addresses}
+    if scope is not None:
+        sides |= {trashed for trashed in (False, True) if scope.roots(trashed=trashed)}
     if len(sides) > 1:
         raise PatternError(f"a scope under {TRASH_ROOT!r} cannot mix with live paths")
     return tuple(address.stored for address in addresses), sides == {True}
+
+
+class SearchChannels(NamedTuple):
+    """A content search's compiled channels: what nominates, what narrows the fetch, and the scope's roots.
+
+    ``allowed`` feeds the segment allow-list: the ``globs`` plus one
+    ``root/**`` arm per scope root, a superset of every admitted row,
+    linear in the roots, and void past the channel fan like any channel.
+    The arms' own segment terms are relative to the roots, so they never
+    join it. ``facts`` feeds the pushdown: the ``globs`` and the scope's
+    arms together, sound because every admitted row matches a glob or an
+    arm's leaf. ``roots`` and ``arms`` are the scope's on the search's
+    side, for the scan side's root fan.
+    """
+
+    allowed: ChannelTerms
+    facts: ChannelTerms
+    roots: tuple[Path, ...]
+    arms: tuple[str, ...]
+
+
+def scope_channels(admissions: Sequence[str], scope: ScopeChannel | None) -> SearchChannels:
+    """The search's channels over its admitted ``globs`` and its side's *scope* (stored roots)."""
+    if scope is None:
+        channel = compile_channel(admissions)
+        return SearchChannels(channel, channel, (), ())
+    allowed = compile_channel([*admissions, *(escape_glob(str(root)) + "/**" for root in scope.roots)])
+    facts = compile_channel([*admissions, *scope.arms])
+    return SearchChannels(allowed, facts, scope.roots, scope.arms)
 
 
 def scope_exclusions(globs_not: Sequence[str], *, trashed: bool) -> tuple[str, ...]:
@@ -168,39 +205,6 @@ def pushdown_terms(
     return Pushdown(tuple(terms), binds)
 
 
-def channel_facts(
-    entry: Table, profile: DialectProfile, channel: ChannelTerms
-) -> tuple[ColumnElement[bool] | None, int]:
-    """The channel's ``ext``/``name`` facts as one OR over arms, with binds.
-
-    The channel is an OR, so the predicate is sound only when *every*
-    arm pins at least one fact — an arm with none admits everything and
-    makes the disjunction vacuous; the void returns ``(None, 0)``. Each
-    ext fact carries the dotfile rescue (a stored NULL ext with the
-    dot-suffix name), mirroring the scan tier's arm law.
-    """
-    arms: list[ColumnElement[bool]] = []
-    binds = 0
-    for arm in channel.arms:
-        facts: list[ColumnElement[bool]] = []
-        if arm.ext is not None:
-            facts.append(or_(entry.c.ext == arm.ext.ext, entry.c.name == arm.ext.dot_suffix))
-            binds += 2
-        if arm.name is not None:
-            if arm.name.prefix:
-                prefix = escape_like(arm.name.text, profile) + "%"
-                facts.append(entry.c.name.like(prefix, escape=LIKE_ESCAPE))
-            else:
-                facts.append(entry.c.name == arm.name.text)
-            binds += 1
-        if not facts:
-            return None, 0
-        arms.append(and_(*facts))
-    if not arms:
-        return None, 0
-    return or_(*arms), binds
-
-
 def static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
     """Executed parameter count of non-expanding predicates.
 
@@ -234,15 +238,19 @@ async def entries_for_scan(
     limit: int,
     deadline: float,
     trashed: bool = False,
+    scope_roots: Sequence[str] = (),
+    scope_facts: ScopeFacts = NO_SCOPE_FACTS,
 ) -> ScanNominees:
     """Scan-tier candidate entry rows in path order, capped at *limit*.
 
     Serves three callers with one executor: the permanent ``NOT
     encoded`` overlay (*everything* false), the ``allow_scan`` opt-out,
     and ``invert_match`` (*everything* true). Structural narrowing rides
-    the same LIKE-superset arms as glob; the flag partition and the
-    content-kind gate ride beside the fan — the id-bounded fetch, not
-    the fan plan, is what the budget protects here. The merge is pruned
+    the same LIKE-superset arms as glob, and a scope's stored
+    *scope_roots* ride glob's root fan beside them, with *scope_facts*
+    beside each root OR; the flag partition and the content-kind gate
+    ride beside the fan — the id-bounded fetch, not the fan plan, is
+    what the budget protects here. The merge is pruned
     to the lowest ``limit + 1`` paths as arm chunks arrive (per-chunk
     top-``limit + 1`` is a correct merge input), and the deadline is
     consulted between chunks — an expired loop stops, and the caller's
@@ -256,17 +264,29 @@ async def entries_for_scan(
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
     merged: dict[str, RowMapping] = {}
     overflow = False
-    if gates:
+    if gates or scope_roots:
         built = (pattern_arm(entry, gate, wanted, profile, membership_budget, trashed=trashed) for gate in gates)
         arms = [arm for arm in built if arm is not None]
-        if not arms:
-            return ScanNominees([], False)
         ride = ext_membership(entry, wanted, membership_budget)
         chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + kinds.binds)
-        for chunk in chunked(arms, chunk_size):
+        wheres = [or_(*chunk) for chunk in chunked(arms, chunk_size)]
+        wheres += scope_fan(
+            entry,
+            profile,
+            parameter_budget,
+            membership_budget,
+            scope_roots,
+            scope_facts,
+            wanted,
+            trashed=trashed,
+            reserved=kinds.binds,
+        )
+        if not wheres:
+            return ScanNominees([], False)
+        for where in wheres:
             if monotonic() > deadline:
                 break
-            stmt = select(*columns).where(*base, or_(*chunk)).order_by(entry.c.path).limit(limit + 1)
+            stmt = select(*columns).where(*base, where).order_by(entry.c.path).limit(limit + 1)
             fetched_rows = list((await session.execute(stmt)).mappings())
             overflow = overflow or len(fetched_rows) > limit
             merged.update({mapping["path"]: mapping for mapping in fetched_rows})

@@ -810,14 +810,18 @@ async def test_many_roots_into_one_entry_produce_one_batched_call() -> None:
 async def test_ten_thousand_roots_stay_two_calls() -> None:
     # The ETL scale row: contract-scale root batches reach storage as
     # exactly one glob call and one probe call — dispatch count never
-    # grows with root count.
+    # grows with root count. Past the composition limit the roots ride
+    # beside the arm, uncomposed.
     root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     await root.glob("*.parquet", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
     assert [op for op, _ in data.calls] == ["stat", "glob"]
     [glob_call] = [kw for op, kw in data.calls if op == "glob"]
-    assert len(glob_call["patterns"]) == 10_000
+    assert glob_call["patterns"] == ()
+    scope = glob_call["scope"]
+    assert len(scope.roots) == 10_000
+    assert scope.arms == ("*.parquet",)
     [probe] = [kw for op, kw in data.calls if op == "stat"]
     assert len(probe["observations"]) == 10_000
 
@@ -825,7 +829,8 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
 async def test_cap_expansion_across_many_roots_stays_one_call() -> None:
     # The scale pin for brace expansion: a cap-sized arm fan crossed
     # with a large scope still reaches storage as one glob call plus
-    # one probe — the arms multiply members, never statements. The
+    # one probe — the arms never multiply by the roots: past the
+    # composition limit both ride the scope channel side by side. The
     # storage-side chunk math is pinned by the 1,100-arm dialect row;
     # this row pins the dispatch shape.
     root = AsyncVirtualFileSystem()
@@ -835,7 +840,8 @@ async def test_cap_expansion_across_many_roots_stays_one_call() -> None:
     await root.glob(pattern, paths=tuple(f"/data/part{i:04}" for i in range(1_000)))
     assert [op for op, _ in data.calls] == ["stat", "glob"]
     [glob_call] = [kw for op, kw in data.calls if op == "glob"]
-    assert len(glob_call["patterns"]) == 64 * 1_000
+    assert glob_call["patterns"] == ()
+    assert (len(glob_call["scope"].roots), len(glob_call["scope"].arms)) == (1_000, 64)
     [probe] = [kw for op, kw in data.calls if op == "stat"]
     assert len(probe["observations"]) == 1_000
 

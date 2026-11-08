@@ -14,8 +14,9 @@ from the content table; ``ls`` is ``parent_id`` equality only, never a
 prefix scan; ``tree`` prefilters with one sargable escaped ``LIKE`` on
 the path cache. Glob executes the batched pattern contract: every
 pattern contributes one self-contained OR-arm (its sargable ``LIKE``
-prefilter with all ext and liveness facts inside the arm), arms chunk
-by the dialect's budgets in one snapshot, and the compiled
+prefilter with all ext and liveness facts inside the arm), every scope
+root one root clause (its strict-descendant ``LIKE``), arms and clauses
+chunk by the dialect's budgets in one snapshot, and the compiled
 segment-aware patterns (``vfs.pattern_matching``) verify every candidate
 authoritatively. Listings order by the binary-collated ``name`` column
 and subtrees by ``path`` — byte-identical across engines.
@@ -32,6 +33,7 @@ stored row — ``ls`` of it lists the tombstoned roots at every depth.
 
 from __future__ import annotations
 
+from itertools import product
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
@@ -55,7 +57,9 @@ from vfs.pattern_matching import (
     GlobFilter,
     GlobGates,
     PatternError,
+    ScopeChannel,
     compile_gates,
+    composed_pattern,
     derive_ext,
     expand_channel,
 )
@@ -73,7 +77,8 @@ from vfs.storage.backends.database.descent import (
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, judge_rows
-from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied
+from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
+from vfs.storage.backends.database.rights import POSTURE_PATHS_PER_CHECK, RIGHTS_FIELDS, denied
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -300,6 +305,13 @@ async def tree_rows(
 # kind fact.
 ARM_FIXED_BINDS: Final = 7
 
+# Ceiling of one scope root clause's fixed bind slots: the root-row
+# exclusion, the strict-descendant LIKE, the kind fact, the meta-liveness pair.
+ROOT_ARM_BINDS: Final = 5
+
+# Ceiling of one channel arm's bind slots: the ext pair and the name fact.
+CHANNEL_ARM_BINDS: Final = 3
+
 # What shrinks a storage glob that reached its wall.
 GLOB_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions, add ext filters, or scope with paths"
 
@@ -321,11 +333,20 @@ async def glob_rows(
     columns: frozenset[str] | None,
     wall_seconds: float = WALL_TIME_BUDGET,
     view: Visibility | None = None,
+    scope: AdmittedScope | None = None,
 ) -> Result:
     """Rows matching **any** pattern, one snapshot, statements chunked by budget.
 
-    Scoping arrives purely as pattern text — the router composes and
-    residuates scope upstream; no path channel crosses this seam. The
+    Scoping arrives in one of two shapes. Below the router's composition
+    limit it is pattern text: the router composes and residuates each
+    scope root into *patterns* and *globs_not*. Past it, the roots ride
+    beside the arms as *scope*, already admitted at the seam (see
+    :func:`admit_scope`): one root clause per root, chunked, each fetching
+    the rows strictly beneath its root, with the arms' leaf facts beside
+    the OR where the profile declares ``scope_facts_beside_fan``. Both
+    shapes run in this one call and snapshot, their candidates merged by
+    path, and the arms are judged once against each row's remainder under
+    every covering root. Root assertions stay the router's. The
     seam admits the full pattern language through the shared admission
     call (a brace pattern arriving unexpanded alternates, never a
     silent literal), and one refusable pattern refuses the whole call
@@ -357,7 +378,12 @@ async def glob_rows(
     wanted = normalize_ext_channel(ext)
     # A pattern under the trash head gates the tombstoned rows at the paths
     # beneath it, every other the live rows; exclusions side the same way.
-    sides = {trashed: _side_gates(addresses, excluded, ext, ext_not, trashed=trashed) for trashed in (False, True)}
+    sides = {
+        trashed: _side_gates(
+            addresses, excluded, ext, ext_not, trashed=trashed, scope=side_scope(scope, trashed=trashed)
+        )
+        for trashed in (False, True)
+    }
     built = (
         pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed)
         for trashed, gates in sides.items()
@@ -366,18 +392,33 @@ async def glob_rows(
     arms = [arm for arm in built if arm is not None]
     ride = ext_membership(entry, wanted, membership_budget)
     chunk = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds)
+    clauses: list[ColumnElement[bool]] = []
+    if scope is not None and (scope.live or scope.trashed):
+        facts = scope_facts(entry, profile, parameter_budget, membership_budget, scope.channel.arms)
+        for trashed in (False, True):
+            clauses += scope_fan(
+                entry,
+                profile,
+                parameter_budget,
+                membership_budget,
+                scope.roots(trashed=trashed),
+                facts,
+                wanted,
+                kind=kind,
+                trashed=trashed,
+            )
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
     queried = fetched | ROW_GATE_FIELDS | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
     candidates: dict[bool, list[RowMapping]] = {False: [], True: []}
-    for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
+    for mapping in await _pattern_candidates(session, entry, chunk, arms, queried, clauses):
         candidates[mapping["deleted_at"] is not None].append(mapping)
     matched: dict[str, RowMapping] = {}
     hidden: dict[bool, list[str]] = {False: [], True: []}
     finished = True
     for trashed, side in candidates.items():
         gates = sides[trashed]
-        if not side or not gates.admissions:
+        if not side or not (gates.admissions or gates.scoped):
             continue
         rows = [(mapping["path"], mapping["name"]) for mapping in side]
         verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
@@ -423,6 +464,159 @@ def address_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[Addr
             raise PatternError(f"{label} {pattern!r}: {detail}")
         addresses.append(address)
     return tuple(addresses)
+
+
+# ---------------------------------------------------------------------------
+# The scope channel — roots beside the arms, admitted at the seam
+# ---------------------------------------------------------------------------
+
+
+class AdmittedScope(NamedTuple):
+    """A scope admitted at the seam: its arms expanded, its roots addressed to their side of the tombstone.
+
+    ``channel`` keeps the roots in entry coordinates, the trash head
+    included, with the expanded arms; ``live`` and ``trashed`` hold the
+    stored roots of each side, distinct, in the caller's order.
+    """
+
+    channel: ScopeChannel
+    live: tuple[Path, ...]
+    trashed: tuple[Path, ...]
+
+    def roots(self, *, trashed: bool) -> tuple[Path, ...]:
+        """The stored roots on one side of the tombstone."""
+        return self.trashed if trashed else self.live
+
+
+def admit_scope(scope: ScopeChannel | None, arms_channel: GlobChannel) -> AdmittedScope | None:
+    """*scope* admitted whole, or :class:`PatternError`: the arms gated, every root strictly beneath its side.
+
+    The arms pass the same admission as the caller's entry-wide channel
+    (*arms_channel*), the exclusion arms the ``globs_not`` one. A root
+    whose stored form is ``/`` (the entry's root, or the trash view's
+    head) has nothing beneath it to cut a remainder from, and its
+    patterns already ride the entry-wide channel, so it is refused.
+    """
+    if scope is None:
+        return None
+    arms = expand_channel(arms_channel, scope.arms)
+    arms_not = expand_channel("globs_not", scope.arms_not)
+    roots = tuple(dict.fromkeys(scope.roots))
+    sides: dict[bool, list[Path]] = {False: [], True: []}
+    for root in roots:
+        address = address_of(str(root))
+        if address.stored == "/":
+            detail = "addresses the whole entry; send its patterns on the entry-wide channel"
+            raise PatternError(f"scope root {str(root)!r} {detail}")
+        sides[address.trashed].append(root.without_mount(TRASH_ROOT) if address.trashed else root)
+    channel = ScopeChannel(roots=roots, arms=arms, arms_not=arms_not)
+    return AdmittedScope(channel, tuple(dict.fromkeys(sides[False])), tuple(dict.fromkeys(sides[True])))
+
+
+def side_scope(scope: AdmittedScope | None, *, trashed: bool) -> ScopeChannel | None:
+    """The scope's channel on one side of the tombstone, its roots stored; ``None`` where no root sits there."""
+    if scope is None:
+        return None
+    roots = scope.roots(trashed=trashed)
+    if not roots:
+        return None
+    return ScopeChannel(roots, scope.channel.arms, scope.channel.arms_not)
+
+
+class ScopeFacts(NamedTuple):
+    """The arms' root-independent facts beside the root OR, paired with their binds; ``(None, 0)`` when declined."""
+
+    predicate: ColumnElement[bool] | None
+    binds: int
+
+
+NO_SCOPE_FACTS: Final = ScopeFacts(None, 0)
+
+
+def scope_facts(
+    entry: Table, profile: DialectProfile, parameter_budget: int, membership_budget: int, arms: Sequence[str]
+) -> ScopeFacts:
+    """The arms' leaf-name and derived-extension facts as one OR, built once per call, or declined.
+
+    A composed pattern's last component is its arm's, so these facts
+    hold under any root. They ride only where the profile declares
+    ``scope_facts_beside_fan`` (its plan pin proved the root OR keeps its
+    index access with them beside it), when every arm pins a fact, when
+    the arms number at most the channel fan, and when their binds fit
+    half the membership budget. A declined statement fetches more
+    candidates, never different rows.
+    """
+    if not profile.scope_facts_beside_fan or not arms:
+        return NO_SCOPE_FACTS
+    channel = compile_channel(arms)
+    if len(channel.arms) > arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS):
+        return NO_SCOPE_FACTS
+    predicate, binds = channel_facts(entry, profile, channel)
+    if predicate is None or binds > membership_budget // 2:
+        return NO_SCOPE_FACTS
+    return ScopeFacts(predicate, binds)
+
+
+def scope_root_arm(
+    entry: Table,
+    root: str,
+    wanted: frozenset[str],
+    profile: DialectProfile,
+    membership_budget: int,
+    *,
+    kind: str | None = None,
+    trashed: bool = False,
+) -> ColumnElement[bool]:
+    """One scope root's clause: the rows strictly beneath *root*, with the call's per-row facts.
+
+    The root-row exclusion, the strict-descendant ``LIKE`` on the
+    escaped root, the kind fact, the caller's wanted-ext membership and
+    the liveness terms, the meta exclusion lifted when the root names
+    the meta subtree: :func:`pattern_arm`'s facts without a pattern to
+    translate. The ``LIKE`` prefix, not a byte range, because bytewise
+    order is not a contract on every engine.
+    """
+    terms: list[ColumnElement[bool]] = [entry.c.path != "/", descendant_filter(entry, root, profile)]
+    if kind is not None:
+        terms.append(entry.c.kind == kind)
+    ride = ext_membership(entry, wanted, membership_budget)
+    if ride.predicate is not None:
+        terms.append(ride.predicate)
+    terms.extend(liveness_filters(entry, profile, include_meta=meta_scoped(root), trashed=trashed))
+    return and_(*terms)
+
+
+def scope_fan(
+    entry: Table,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    roots: Sequence[str],
+    facts: ScopeFacts,
+    wanted: frozenset[str],
+    *,
+    kind: str | None = None,
+    trashed: bool = False,
+    reserved: int = 0,
+) -> list[ColumnElement[bool]]:
+    """One WHERE per statement: an OR of root clauses, chunked by budget, the arms' facts beside each OR.
+
+    The facts' binds are charged once per statement and the root
+    clause's per root, so the chunk is the arm budget over what the
+    facts and the caller's *reserved* binds leave: no statement grows
+    with the roots, on the least generous engine.
+    """
+    if not roots:
+        return []
+    ride = ext_membership(entry, wanted, membership_budget)
+    chunk = arm_budget(profile, parameter_budget - facts.binds - reserved, ROOT_ARM_BINDS + ride.binds)
+    built = [
+        scope_root_arm(entry, root, wanted, profile, membership_budget, kind=kind, trashed=trashed) for root in roots
+    ]
+    fans = [or_(*part) for part in chunked(built, chunk)]
+    if facts.predicate is None:
+        return fans
+    return [and_(fan, facts.predicate) for fan in fans]
 
 
 # ---------------------------------------------------------------------------
@@ -535,8 +729,10 @@ def pattern_arm(
     prefilter LIKE, both ext facts, the liveness scope (the tombstone
     term, flipped under the trash view by *trashed*, and the meta
     exclusion), the kind fact — because the fan's plan survives only as
-    a pure OR of self-contained arms: one conjunct beside the fan
-    demotes every engine's multi-index OR to a scan. The caller's ext
+    a pure OR of self-contained arms: on SQLite, the engine the field
+    study measured, one ``ext IN`` conjunct beside the fan demoted the
+    multi-index OR to a scan (the scope fan's facts conjunct is a
+    different shape, admitted per engine by its own plan pin). The caller's ext
     membership stands down when the empty extension (stored NULL) is
     wanted or the set outgrows one chunk; a derived ext contradicting
     the caller's set makes the arm dead.
@@ -558,6 +754,39 @@ def pattern_arm(
         terms.append(or_(entry.c.ext == derived.ext, entry.c.name == derived.dot_suffix))
     terms.extend(liveness_filters(entry, profile, include_meta=meta_scoped(glob.pattern), trashed=trashed))
     return and_(*terms)
+
+
+def channel_facts(
+    entry: Table, profile: DialectProfile, channel: ChannelTerms
+) -> tuple[ColumnElement[bool] | None, int]:
+    """The channel's ``ext``/``name`` facts as one OR over arms, with binds.
+
+    The channel is an OR, so the predicate is sound only when *every*
+    arm pins at least one fact — an arm with none admits everything and
+    makes the disjunction vacuous; the void returns ``(None, 0)``. Each
+    ext fact carries the dotfile rescue (a stored NULL ext with the
+    dot-suffix name), mirroring the scan tier's arm law.
+    """
+    arms: list[ColumnElement[bool]] = []
+    binds = 0
+    for arm in channel.arms:
+        facts: list[ColumnElement[bool]] = []
+        if arm.ext is not None:
+            facts.append(or_(entry.c.ext == arm.ext.ext, entry.c.name == arm.ext.dot_suffix))
+            binds += 2
+        if arm.name is not None:
+            if arm.name.prefix:
+                prefix = escape_like(arm.name.text, profile) + "%"
+                facts.append(entry.c.name.like(prefix, escape=LIKE_ESCAPE))
+            else:
+                facts.append(entry.c.name == arm.name.text)
+            binds += 1
+        if not facts:
+            return None, 0
+        arms.append(and_(*facts))
+    if not arms:
+        return None, 0
+    return or_(*arms), binds
 
 
 def meta_scoped(pattern: str) -> bool:
@@ -584,13 +813,15 @@ def _side_gates(
     ext_not: tuple[str, ...],
     *,
     trashed: bool,
+    scope: ScopeChannel | None = None,
 ) -> GlobGates:
-    """One side of the tombstone's gates: its addressed patterns and exclusions, with the ext channels."""
+    """One side of the tombstone's gates: its addressed patterns and exclusions, its scope, the ext channels."""
     return compile_gates(
         [address.stored for address in addresses if address.trashed == trashed],
         [address.stored for address in excluded if address.trashed == trashed],
         ext=ext,
         ext_not=ext_not,
+        scope=scope,
     )
 
 
@@ -706,12 +937,47 @@ def addressed_by(patterns: Sequence[str]) -> list[str]:
         addresses = address_channel("pattern", patterns)
     except PatternError:
         return [ROOT]
+    return list(dict.fromkeys(_addressed_paths(addresses)))
+
+
+def scope_addressed(patterns: Sequence[str], scope: ScopeChannel, *, deadline: float) -> list[str] | None:
+    """:func:`addressed_by` over what composition would have sent, or ``None`` past *deadline*.
+
+    That list is the entry-wide *patterns* beside each scope root
+    composed with each arm, sorted as the router sorts an entry's
+    members, so an anonymous caller is judged at the same paths, in the
+    same order, whichever shape crossed the seam. The work is the
+    product of roots and arms, so it runs on a worker, reading the
+    deadline before every 64th composition and every 64th address.
+    """
+    composed: list[str] = []
+    for position, (root, arm) in enumerate(product(scope.roots, scope.arms)):
+        if position % POSTURE_PATHS_PER_CHECK == 0 and monotonic() > deadline:
+            return None
+        composed.append(composed_pattern(root, arm))
+    combined = sorted((*patterns, *composed))
+    if not combined:
+        return [ROOT]
+    addressed: dict[str, None] = {}
+    for start in range(0, len(combined), POSTURE_PATHS_PER_CHECK):
+        if monotonic() > deadline:
+            return None
+        try:
+            addresses = address_channel("pattern", combined[start : start + POSTURE_PATHS_PER_CHECK])
+        except PatternError:
+            return [ROOT]
+        addressed.update(dict.fromkeys(_addressed_paths(addresses)))
+    return list(addressed)
+
+
+def _addressed_paths(addresses: Sequence[Address]) -> list[str]:
+    """Each admitted pattern's addressed path: the deepest directory its literal prefix names."""
     addressed: list[str] = []
     for address in addresses:
         prefix = _literal_prefix(address.stored)
         scope = prefix if prefix.endswith("/") else prefix.rsplit("/", 1)[0] + "/"
         addressed.append(scope.rstrip("/") if scope.startswith("/") and scope != "/" else ROOT)
-    return list(dict.fromkeys(addressed))
+    return addressed
 
 
 async def _screen(
@@ -864,18 +1130,22 @@ async def _pattern_candidates(
     chunk_size: int,
     arms: Sequence[ColumnElement[bool]],
     fetched: frozenset[str],
+    scope_clauses: Sequence[ColumnElement[bool]] = (),
 ) -> list[RowMapping]:
-    """Prefiltered candidates from the chunked OR fan, in path order.
+    """Prefiltered candidates from the chunked OR fan and the scope's root fan, in path order.
 
-    Each chunk's WHERE is the pure OR of its arms — nothing rides
-    beside the fan. Overlapping arms yield a row once per statement;
-    the merge dict dedups across chunks, and one Python sort restores
-    path order — codepoint order equals the binary-collated byte order.
+    Each pattern chunk's WHERE is the pure OR of its arms — nothing
+    rides beside that fan; each scope statement's WHERE is one of
+    *scope_clauses*, already chunked. Overlapping arms yield a row once
+    per statement; the merge dict dedups across statements, and one
+    Python sort restores path order — codepoint order equals the
+    binary-collated byte order.
     """
     columns = _entry_columns(entry, fetched)
     merged: dict[str, RowMapping] = {}
-    for chunk in chunked(list(arms), chunk_size):
-        result = await session.execute(select(*columns).where(or_(*chunk)))
+    wheres = [*(or_(*chunk) for chunk in chunked(list(arms), chunk_size)), *scope_clauses]
+    for where in wheres:
+        result = await session.execute(select(*columns).where(where))
         merged.update({mapping["path"]: mapping for mapping in result.mappings()})
     return [merged[path] for path in sorted(merged)]
 

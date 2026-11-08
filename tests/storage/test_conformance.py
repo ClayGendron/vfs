@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from tests.ranking.pins import assert_top10_pin
 from tests.support.grants_contract import GrantsContract
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
+from tests.support.plan_store import PlanBackend
 from tests.support.server_schemas import server_storage
 from tests.support.storage_contract import StorageContract
 from vfs.embedding import HashEmbeddingProvider
@@ -65,6 +66,8 @@ class TestMemoryConformance(StorageContract, GrantsContract):
     pool shape.
     """
 
+    engine_proven_by = "TestSqliteConformance"
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[InMemoryStorage]:
         storage = InMemoryStorage()
@@ -92,6 +95,8 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
 
 
 class TestSqliteConformance(StorageContract, GrantsContract):
+    plan_backend = PlanBackend("sqlite")
+
     @pytest.fixture
     async def storage(self, tmp_path: pathlib.Path, sqlite_template: pathlib.Path) -> AsyncIterator[DatabaseStorage]:
         db = tmp_path / "vfs.sqlite"
@@ -108,6 +113,8 @@ def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage
 
 @pytest.mark.postgres
 class TestPostgresConformance(StorageContract, GrantsContract):
+    plan_backend = PlanBackend("postgres", "VFS_TEST_POSTGRES_URL")
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
         async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
@@ -167,6 +174,8 @@ class TestPostgresBulkInsertTransaction:
 
 @pytest.mark.mariadb
 class TestMariaDBConformance(StorageContract, GrantsContract):
+    plan_backend = PlanBackend("mariadb", "VFS_TEST_MARIADB_URL")
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
         async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
@@ -175,6 +184,8 @@ class TestMariaDBConformance(StorageContract, GrantsContract):
 
 @pytest.mark.mssql
 class TestMSSQLConformance(StorageContract, GrantsContract):
+    plan_backend = PlanBackend("mssql", "VFS_TEST_MSSQL_URL")
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
         async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
@@ -183,6 +194,8 @@ class TestMSSQLConformance(StorageContract, GrantsContract):
 
 @pytest.mark.oracle
 class TestOracleConformance(StorageContract, GrantsContract):
+    plan_backend = PlanBackend("oracle", "VFS_TEST_ORACLE_URL")
+
     @pytest.fixture
     async def storage(self) -> AsyncIterator[DatabaseStorage]:
         async with _server_storage("VFS_TEST_ORACLE_URL") as storage:

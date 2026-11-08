@@ -31,7 +31,8 @@ import asyncio
 from collections import OrderedDict
 from contextlib import asynccontextmanager, suppress
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from time import monotonic
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 from ulid import ULID
@@ -40,6 +41,7 @@ from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
+from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -95,14 +97,17 @@ from vfs.storage.backends.database.indexing import (
     release_reindex_lease,
     with_notes,
 )
-from vfs.storage.backends.database.labels import Relabel, Relabeller
+from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
 from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, call_offloaded
 from vfs.storage.backends.database.reads import (
+    AdmittedScope,
     addressed_by,
+    admit_scope,
     effective_columns,
     glob_rows,
     ls_rows,
     read_rows,
+    scope_addressed,
     stat_rows,
     tree_rows,
 )
@@ -127,6 +132,9 @@ from vfs.storage.backends.database.rights import (
     denied,
     grant_rows,
     list_grants,
+    posture_chain,
+    posture_refusals,
+    posture_wall_refusal,
     remove_member_rows,
     resolve_authority,
     revoke_rows,
@@ -176,6 +184,20 @@ QUERY_VECTOR_CACHE = 256
 
 PGVECTOR_ITERATIVE_SCAN = "SET LOCAL hnsw.iterative_scan = relaxed_order"
 """pgvector 0.8+: keep scanning the HNSW index until a scoped query's window fills."""
+
+
+class _ScopedGate(NamedTuple):
+    """An anonymous scoped call's posture gate: what composition would have judged, and the verb's wall.
+
+    ``patterns`` is the entry-wide channel, ``scope`` the admitted scope
+    (roots in entry coordinates, arms expanded), ``piped`` the paths of
+    rows piped into the call, judged after the patterns' paths.
+    """
+
+    patterns: tuple[str, ...]
+    scope: ScopeChannel
+    piped: tuple[str, ...]
+    wall_seconds: float
 
 
 class DatabaseStorage:
@@ -473,15 +495,21 @@ class DatabaseStorage:
         kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        try:
+            admitted = admit_scope(scope, "pattern")
+        except PatternError as exc:
+            return Result(ops=("glob",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
         host = self._host
+        gate = self._scoped_gate(authority, patterns, admitted, (), self._glob_wall_seconds)
         return await self._execute(
             "glob",
             self._viewed(
                 "glob",
                 authority,
-                addressed_by(patterns),
+                addressed_by(patterns) if gate is None else (),
                 lambda session, view: glob_rows(
                     session,
                     host.tables,
@@ -498,7 +526,9 @@ class DatabaseStorage:
                     columns=columns,
                     wall_seconds=self._glob_wall_seconds,
                     view=view,
+                    scope=admitted,
                 ),
+                scoped=gate,
             ),
         )
 
@@ -520,15 +550,21 @@ class DatabaseStorage:
         max_count: int | None = None,
         allow_scan: bool = False,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        try:
+            admitted = admit_scope(scope, "globs")
+        except PatternError as exc:
+            return Result(ops=("grep",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
         host = self._host
+        gate = self._scoped_gate(authority, globs, admitted, (), self._grep_wall_seconds)
         return await self._execute(
             "grep",
             self._viewed(
                 "grep",
                 authority,
-                addressed_by(globs),
+                addressed_by(globs) if gate is None else (),
                 lambda session, view: grep_rows(
                     session,
                     host.tables,
@@ -553,7 +589,9 @@ class DatabaseStorage:
                     allow_scan=allow_scan,
                     columns=columns,
                     wall_seconds=self._grep_wall_seconds,
+                    scope=admitted,
                 ),
+                scoped=gate,
             ),
         )
 
@@ -572,20 +610,27 @@ class DatabaseStorage:
         globs_not: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result:
+        try:
+            admitted = admit_scope(scope, "globs")
+        except PatternError as exc:
+            return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
         refusal = await self._host.ensure_ready()
         if refusal is not None:
             return Result(ops=("glean",), errors=[refusal])
-        scoped = bool(ext or ext_not or globs or globs_not or observations)
+        scoped = bool(ext or ext_not or globs or globs_not or observations or scope)
         vector, records = await self._vector_leg_for(query, scoped=scoped)
         host = self._host
+        piped = tuple(str(row.path) for row in observations or ())
+        gate = self._scoped_gate(authority, globs, admitted, piped, self._glean_wall_seconds)
         return await self._execute(
             "glean",
             self._viewed(
                 "glean",
                 authority,
-                [*addressed_by(globs), *(str(row.path) for row in observations or ())],
+                [*addressed_by(globs), *piped] if gate is None else (),
                 lambda session, view: glean_rows(
                     session,
                     host.tables,
@@ -607,7 +652,9 @@ class DatabaseStorage:
                     vector=vector,
                     ranker=self._ranker,
                     records=records,
+                    scope=admitted,
                 ),
+                scoped=gate,
             ),
         )
 
@@ -1577,13 +1624,18 @@ class DatabaseStorage:
         authority: Authority | None,
         addressed: Iterable[str],
         build: Callable[[AsyncSession, Visibility | None], Awaitable[Result]],
+        *,
+        scoped: _ScopedGate | None = None,
     ) -> Callable[[AsyncSession], Awaitable[Result]]:
         """A read body run under the call's view — ``None`` when the view is the whole mount.
 
         *addressed* is every path the call names — its targets, or each
         pattern's literal prefix — where an anonymous caller is judged
         against the posture rows at the verb's rung before any row is
-        read; a trash-view path is judged where its row sits. A verb that
+        read; a trash-view path is judged where its row sits. An
+        anonymous call with a scope channel is judged by *scoped* instead,
+        at the paths composition would have judged (:meth:`_scoped_refusals`).
+        A verb that
         declares a ``traverse`` rung (the graph walk) reads at that rung:
         the view narrows at it, the anonymous check judges at it, and the
         body projects a row whole only where the caller holds the primary.
@@ -1598,9 +1650,12 @@ class DatabaseStorage:
             resolution = await self._resolution(session, who)
             if isinstance(resolution, ResultError):
                 return Result(ops=(op,), errors=[resolution])
-            refused = await unauthenticated_refusals(
-                session, host.tables, host.profile, host.membership_budget, who, judged, rung
-            )
+            if scoped is not None:
+                refused = await self._scoped_refusals(session, who, scoped, rung)
+            else:
+                refused = await unauthenticated_refusals(
+                    session, host.tables, host.profile, host.membership_budget, who, judged, rung
+                )
             if refused:
                 return Result(ops=(op,), errors=refused)
             if resolution.at("read").whole:
@@ -1618,6 +1673,63 @@ class DatabaseStorage:
             return await build(session, view)
 
         return run
+
+    def _scoped_gate(
+        self,
+        authority: Authority | None,
+        patterns: tuple[str, ...],
+        scope: AdmittedScope | None,
+        piped: tuple[str, ...],
+        wall_seconds: float,
+    ) -> _ScopedGate | None:
+        """The posture gate of an anonymous call with a scope channel; ``None`` for every other call.
+
+        Only a caller judged by posture needs the scope's judged paths, so
+        a named caller builds none and is judged, as ever, over the
+        entry-wide patterns alone.
+        """
+        if scope is None or not self._named(authority).is_anonymous:
+            return None
+        return _ScopedGate(patterns, scope.channel, piped, wall_seconds)
+
+    async def _scoped_refusals(
+        self, session: AsyncSession, who: Authority, gate: _ScopedGate, rung: Rung
+    ) -> list[ResultError]:
+        """An anonymous scoped call's refusals, judged where composition judges, under the verb's wall.
+
+        The judged paths are :func:`scope_addressed` over the entry-wide
+        patterns and every root composed with every arm — a product of the
+        caller's inputs, so the pure work runs on the offload pool in two
+        hops around the one chunked posture read: the judged paths and
+        their sorted, chunked ancestor chain first, each path's refusal
+        after. Each hop and the read check the wall, read when the gate
+        starts; a gate that reaches it refuses the whole call as
+        ``unauthenticated``, because a rights check never serves part of a
+        call. The direction is judging each root once from the posture in
+        force at it and the posture rows beneath it, linear in the roots.
+        """
+        host = self._host
+        deadline = monotonic() + gate.wall_seconds
+        budget = host.membership_budget
+
+        def chained() -> tuple[list[str], list[list[str]]] | None:
+            addressed = scope_addressed(gate.patterns, gate.scope, deadline=deadline)
+            if addressed is None:
+                return None
+            judged = list(dict.fromkeys(address_of(path).stored for path in (*addressed, *gate.piped)))
+            chunks = posture_chain(judged, budget, deadline=deadline)
+            return None if chunks is None else (judged, chunks)
+
+        planned = await call_offloaded(host.offload_executor, chained)
+        if planned is None:
+            return [posture_wall_refusal()]
+        judged, chunks = planned
+        postures = await posture_rows_for_chunks(session, host.tables, host.profile, chunks, deadline=deadline)
+        if postures is None:
+            return [posture_wall_refusal()]
+        judge = partial(posture_refusals, who, postures, judged, rung, deadline=deadline)
+        refusals = await call_offloaded(host.offload_executor, judge)
+        return [posture_wall_refusal()] if refusals is None else refusals
 
     async def _gate(
         self, session: AsyncSession, authority: Authority | None, needs: Needs, *, cached: bool = True

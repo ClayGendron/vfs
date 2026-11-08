@@ -21,6 +21,7 @@ from vfs.storage import TransportError, storage_ops
 
 if TYPE_CHECKING:
     from vfs.ops import Op
+    from vfs.pattern_matching import ScopeChannel
 
 
 def _failed(op: str, kind: ErrorKind, message: str, path: Path | None = None) -> Result:
@@ -32,7 +33,9 @@ class RecorderStorage:
     """Full-family storage double: records every dispatch, answers success.
 
     The base backend double — one method per op, each two lines, so the
-    object satisfies every family protocol.  Subclasses override an op's
+    object satisfies every family protocol. Each call's keywords are
+    recorded whole, a pattern search's ``scope`` channel among them when
+    the router sends one.  Subclasses override an op's
     behavior or ``_answer`` for a different canned reply.  *caps* narrows
     the declared capability set below the (full) derived one — the
     declared-policy knob for read-only-mount and skip tests.
@@ -391,15 +394,23 @@ class BindableEchoStorage(EchoStorage, BindableStorage):
 
 
 class ScopeSpyStorage(EchoStorage):
-    """Echo backend recording the composed glob scope its grep receives."""
+    """Echo backend recording the scope its grep receives: the composed globs, then any scope channel's roots."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.scopes: list[tuple[str, ...]] = []
 
-    async def grep(self, *, globs: tuple[str, ...] = (), authority: Authority | None = None, **kwargs: Any) -> Result:
-        self.scopes.append(tuple(globs))
-        return self._answer("grep", {"globs": globs, **kwargs})
+    async def grep(
+        self,
+        *,
+        globs: tuple[str, ...] = (),
+        scope: ScopeChannel | None = None,
+        authority: Authority | None = None,
+        **kwargs: Any,
+    ) -> Result:
+        roots = () if scope is None else tuple(str(root) for root in scope.roots)
+        self.scopes.append((*globs, *roots))
+        return self._answer("grep", {"globs": globs, "scope": scope, **kwargs})
 
 
 class RecorderFS(AsyncVirtualFileSystem):

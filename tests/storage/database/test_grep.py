@@ -23,7 +23,7 @@ from tests.support.database_helpers import _url
 from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
-from vfs.pattern_matching import compile_filter
+from vfs.pattern_matching import ScopeChannel, compile_filter
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
@@ -354,6 +354,65 @@ class TestGlobChannelScoping:
         storage = await _fresh(tmp_path, {"/data/a.txt": "needle", "/other/b.txt": "needle"})
         result = await storage.grep(pattern="needle", globs=("/data/**",))
         assert _paths(result) == ["/data/a.txt"]
+        await storage.close()
+
+
+class TestScopeChannel:
+    """Grep with the scope's roots beside its arms: every tier reads the roots."""
+
+    async def test_a_meta_root_marks_its_pairs(self, tmp_path) -> None:
+        """Guards: a pair under a meta root judged unmarked, so default
+        enumeration's meta rule hides the very rows the root names."""
+        storage = await _fresh(tmp_path, {"/.vfs/state/s.txt": "needle", "/.vfs/state/s.md": "needle"})
+        for _ in range(2):
+            whole = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/.vfs/state"),), arms=("**",)))
+            assert _paths(whole) == ["/.vfs/state/s.md", "/.vfs/state/s.txt"]
+            leaf = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/.vfs"),), arms=("*.txt",)))
+            assert _paths(leaf) == ["/.vfs/state/s.txt"]
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_scope_roots_join_the_allow_list(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the scope's roots left out of the segment allow-list, so
+        nomination counts every indexed row instead of the scoped ones."""
+        files = {f"/d{i}/f{j}.txt": "needle" for i in range(6) for j in range(4)}
+        storage = await _fresh(tmp_path, files)
+        assert (await storage.reindex()).success is True
+        nominated: list[int] = []
+        real = grep_module.allow_list_ids
+
+        async def counted(*args: Any, **kwargs: Any) -> Any:
+            allow = await real(*args, **kwargs)
+            nominated.append(-1 if allow is None else len(allow))
+            return allow
+
+        monkeypatch.setattr(grep_module, "allow_list_ids", counted)
+        scope = ScopeChannel(roots=(Path("/d1"), Path("/d3"), Path("/d4")), arms=("**",))
+        result = await storage.grep(pattern="needle", scope=scope)
+        assert _paths(result) == [f"/d{i}/f{j}.txt" for i in (1, 3, 4) for j in range(4)]
+        assert nominated == [12]
+        await storage.close()
+
+    async def test_a_scope_with_no_arm_admits_nothing(self, tmp_path) -> None:
+        """Guards: a scoped call left ungated because its channels hold no
+        pattern, serving every nominated row, beneath the roots or not."""
+        storage = await _fresh(tmp_path, {"/a/x.txt": "needle", "/b/y.txt": "needle"})
+        for _ in range(2):
+            result = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/a"),), arms=()))
+            assert result.success is True and _paths(result) == []
+            assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_mixing_the_trash_view_across_channels_refuses(self, tmp_path) -> None:
+        storage = await _fresh(tmp_path, {"/live/a.txt": "needle", "/gone/b.txt": "needle"})
+        assert (await storage.delete(path=Path("/gone/b.txt"))).success is True
+        scope = ScopeChannel(roots=(Path("/.vfs/trash/gone"),), arms=("**",))
+        result = await storage.grep(pattern="needle", globs=("/live/**",), scope=scope)
+        [error] = result.errors
+        assert error.kind is ErrorKind.invalid
+        assert "cannot mix with live paths" in error.message
+        trashed = await storage.grep(pattern="needle", scope=scope)
+        assert _paths(trashed) == ["/gone/b.txt"]
         await storage.close()
 
 

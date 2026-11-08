@@ -2,7 +2,8 @@
 
 The verb is grep's shape with a scorer where grep has a matcher: one
 session, SELECTs only, the backend's redrive around it, scope crossing
-the seam as pattern text on the ``globs`` channels with the ``ext``
+the seam as pattern text on the ``globs`` channels, or past the router's
+composition limit as roots beside the arms (``scope``), with the ``ext``
 channels beside them. A query's terms go through the index's tokenizer;
 **round one** probes their summary rows (``lex_df`` with the epoch's
 statistics) and fetches every term's head blocks (``block_no <
@@ -87,22 +88,25 @@ from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, call_offloaded, judge_rows
-from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
+from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.reads import (
+    CHANNEL_ARM_BINDS,
     content_for_entries,
     effective_columns,
     kind_membership,
     meta_scoped,
     pointer_with_overlay,
+    scope_facts,
+    side_scope,
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 from vfs.storage.backends.database.scope import (
-    CHANNEL_ARM_BINDS,
     FETCH_RIDE,
     entries_for_scan,
     passes_gates,
     pushdown_terms,
+    scope_channels,
     scope_exclusions,
     trash_scope,
 )
@@ -122,6 +126,7 @@ if TYPE_CHECKING:
     from vfs.pattern_matching import Body, GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
+    from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Clause, Visibility
     from vfs.storage.backends.database.scope import Pushdown
 
@@ -243,10 +248,15 @@ async def glean_rows(
     ranker: Ranker | None = None,
     records: Sequence[ResultError] = (),
     view: Visibility | None = None,
+    scope: AdmittedScope | None = None,
 ) -> Result:
     """One row per entry, best first: the legs fused, the index side unioned with the overlay.
 
-    Scoping arrives as pattern text on the ``globs`` channels; piped
+    Scoping arrives in grep's two shapes: pattern text on the ``globs``
+    channels below the router's composition limit, or past it the roots
+    beside the arms as *scope*, in the same one call and snapshot, read
+    by the allow-list, the pushdown, the overlay's root fan and the
+    gates exactly as grep reads them; piped
     *observations* are rows in entry coordinates and admit their own
     paths literally. *limit* counts entries. *wall_seconds* is the
     caller-configured wall-clock budget; the declared default keeps
@@ -270,25 +280,27 @@ async def glean_rows(
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
-        admissions, trashed = trash_scope(globs)
+        admissions, trashed = trash_scope(globs, scope)
         exclusions = scope_exclusions(globs_not, trashed=trashed)
     except PatternError as exc:
         return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
+    side = side_scope(scope, trashed=trashed)
     entry = tables.entry
-    channel = compile_channel(admissions)
+    channels = scope_channels(admissions, side)
+    channel = channels.allowed
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
-    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped)
+    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped, scope=side)
     pushdown = pushdown_terms(
         entry,
         profile,
         fan_arms,
         membership_budget,
-        channel,
+        channels.facts,
         gates.wanted,
-        hide_meta=not gates.admissions,
+        hide_meta=not (gates.admissions or gates.scoped),
         trashed=trashed,
     )
-    scope = _Gates(gates, pushdown, trashed)
+    gated = _Gates(gates, pushdown, trashed)
     fetched = effective_columns(columns, content=False)
     deadline = monotonic() + wall_seconds
     truncations: list[tuple[str, dict[str, Any] | None]] = []
@@ -331,7 +343,7 @@ async def glean_rows(
                     epoch,
                     ranking,
                     fetched,
-                    scope,
+                    gated,
                     profile,
                     membership_budget,
                     executor,
@@ -361,7 +373,7 @@ async def glean_rows(
             allow,
             limit,
             fetched,
-            scope,
+            gated,
             profile,
             membership_budget,
             executor,
@@ -388,21 +400,23 @@ async def glean_rows(
             profile,
             parameter_budget,
             membership_budget,
-            scope.gates.admissions,
-            scope.gates.wanted,
+            gated.gates.admissions,
+            gated.gates.wanted,
             everything=False,
             fetched=fetched,
             limit=OVERLAY_BUDGET,
             deadline=deadline,
-            trashed=scope.trashed,
+            trashed=gated.trashed,
+            scope_roots=channels.roots,
+            scope_facts=scope_facts(entry, profile, parameter_budget, membership_budget, channels.arms),
         )
-        verdicts, completed = await scope.judge(executor, nominees.rows, deadline)
+        verdicts, completed = await gated.judge(executor, nominees.rows, deadline)
         if not completed:
             _record_wall(truncations)
         admitted = [
             m
             for m in nominees.rows
-            if scope.admits(m, verdicts[m["entry_id"]]) and (view is None or view.holds(m, view.need))
+            if gated.admits(m, verdicts[m["entry_id"]]) and (view is None or view.holds(m, view.need))
         ]
         scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
         hits.update(scored)

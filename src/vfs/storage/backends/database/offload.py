@@ -136,6 +136,11 @@ async def judge_rows(
     unjudged (``None``). With no rows, or gates that hold no pattern (the
     ext facts need no engine), no hop is made: the verdicts are ``[]``
     or ``0`` per row, and judging is complete whatever the clock reads.
+
+    Gates with a scope also build its pairs in the same worker, one per
+    covering root, and judge them against the scope's set
+    (:meth:`~vfs.pattern_matching.GlobGates.judge_scope`), the deadline
+    read every 64 rows; a row not reached is unjudged.
     """
     if not rows:
         return [], True
@@ -143,11 +148,18 @@ async def judge_rows(
         return [0] * len(rows), True
 
     def work() -> tuple[list[int | None], bool]:
-        native = gates.native(deadline)
-        if native is None:
-            return [None] * len(rows), False
-        budget = max(0.0, deadline - monotonic())
-        return native.judge(rows, budget=budget)
+        verdicts: list[int | None] = [0] * len(rows)
+        completed = True
+        if gates.has_entry_patterns:
+            native = gates.native(deadline)
+            if native is None:
+                return [None] * len(rows), False
+            budget = max(0.0, deadline - monotonic())
+            verdicts, completed = native.judge(rows, budget=budget)
+        if not gates.scoped:
+            return verdicts, completed
+        joined, paired = gates.judge_scope(rows, verdicts, deadline=deadline)
+        return joined, completed and paired
 
     return await call_offloaded(executor, work)
 

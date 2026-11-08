@@ -78,21 +78,24 @@ from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, by
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, VerifyOffload, judge_rows
-from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
+from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
+    CHANNEL_ARM_BINDS,
     content_for_entries,
     effective_columns,
     kind_membership,
     meta_scoped,
     pointer_with_overlay,
+    scope_facts,
+    side_scope,
 )
 from vfs.storage.backends.database.scope import (
-    CHANNEL_ARM_BINDS,
     FETCH_RIDE,
     Pushdown,
     entries_for_scan,
     passes_gates,
     pushdown_terms,
+    scope_channels,
     scope_exclusions,
     trash_scope,
 )
@@ -111,6 +114,7 @@ if TYPE_CHECKING:
     from vfs.pattern_matching import GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
+    from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Visibility
 
 # Runtime budgets: candidates fetched and verified, and posting bytes
@@ -175,12 +179,19 @@ async def grep_rows(
     columns: frozenset[str] | None,
     wall_seconds: float = WALL_TIME_BUDGET,
     view: Visibility | None = None,
+    scope: AdmittedScope | None = None,
 ) -> Result:
     """One row per matching entry, index side unioned with the scan side.
 
-    Scoping arrives purely as pattern text on the ``globs`` channels —
-    the router composes and residuates scope upstream; no path channel
-    crosses this seam. *wall_seconds* is the caller-configured wall-clock
+    Scoping arrives in one of two shapes. Below the router's composition
+    limit it is pattern text on the ``globs`` channels, which the router
+    composes and residuates. Past it, the roots ride beside the arms as
+    *scope*, admitted at the seam, in the same one call and snapshot:
+    every tier reads them — the segment allow-list gains one
+    ``root/**`` arm per root, the pushdown the arms' facts, the scan side
+    glob's root fan — and the arms are judged once against each row's
+    remainder under every covering root. Root assertions stay the
+    router's. *wall_seconds* is the caller-configured wall-clock
     budget; the declared default keeps direct callers honest. Under a
     partial *view* every candidate passes the view beside the structural
     gates, before any body is fetched, so the matcher never reads a row
@@ -188,10 +199,11 @@ async def grep_rows(
     candidates, so a partial caller can reach it sooner than a whole one.
     """
     try:
-        admissions, trashed = trash_scope(globs)
+        admissions, trashed = trash_scope(globs, scope)
         exclusions = scope_exclusions(globs_not, trashed=trashed)
     except PatternError as exc:
         return Result(ops=("grep",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
+    side = side_scope(scope, trashed=trashed)
     try:
         verifier = compile_verifier(pattern, fixed_strings=fixed_strings, word_regexp=word_regexp, case_mode=case_mode)
     except PatternError as exc:
@@ -207,10 +219,11 @@ async def grep_rows(
     scan_all = invert_match or plan.is_any()
 
     errors: list[ResultError] = []
-    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped)
+    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped, scope=side)
     wanted = gates.wanted
-    channel = compile_channel(admissions)
-    gated = bool(gates.has_patterns or gates.wanted or gates.unwanted)
+    channels = scope_channels(admissions, side)
+    channel = channels.allowed
+    gated = bool(gates.has_patterns or gates.scoped or gates.wanted or gates.unwanted)
     fetched = effective_columns(columns, content=columns is not None)
     deadline = monotonic() + wall_seconds
     # Channel fan in arms: the pruning loop spends one statement per arm
@@ -258,9 +271,9 @@ async def grep_rows(
             profile,
             fan_arms,
             membership_budget,
-            channel,
+            channels.facts,
             wanted,
-            hide_meta=not gates.admissions,
+            hide_meta=not (gates.admissions or gates.scoped),
             trashed=trashed,
         )
         indexed = await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown)
@@ -304,6 +317,8 @@ async def grep_rows(
                     limit=remaining,
                     deadline=deadline,
                     trashed=trashed,
+                    scope_roots=channels.roots,
+                    scope_facts=scope_facts(tables.entry, profile, parameter_budget, membership_budget, channels.arms),
                 )
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")

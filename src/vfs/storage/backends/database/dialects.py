@@ -333,6 +333,17 @@ class DialectProfile:
     pgvector's ``CREATE EXTENSION`` as the install. The engines whose
     function is built into every supported server version, and the
     generic floor, declare none.
+
+    ``scope_facts_beside_fan`` declares that the engine keeps an
+    index-served OR of scope root clauses (each a strict-descendant
+    ``LIKE`` on the path index) when one OR of the arms' leaf-name and
+    extension facts rides beside it as a conjunct — a plan-quality fact
+    SQLAlchemy takes no position on, and one a planner could break by
+    making the facts the access path. A profile declares it only where
+    the engine's two plan pins pass on a store with statistics (the
+    roots-alone statement and the statement with the facts beside it,
+    each read by plan operator on the path index); elsewhere the scope
+    fan sends the roots alone, fetching more candidates and the same rows.
     """
 
     name: str
@@ -377,6 +388,7 @@ class DialectProfile:
     # The cosine distance function as a precondition: probe, fix, and the
     # install statement the explicit verb alone runs; ``None`` declares none.
     vector_function: VectorFunction | None = None
+    scope_facts_beside_fan: bool = False
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -425,6 +437,8 @@ SQLITE: Final = DialectProfile(
     range_source="json_each",
     range_join="CROSS JOIN",
     range_fence="MATERIALIZED",
+    # Plan-pinned: after ANALYZE every root clause still seeks the path index with the facts beside the OR.
+    scope_facts_beside_fan=True,
 )
 
 POSTGRESQL: Final = DialectProfile(
@@ -457,6 +471,8 @@ POSTGRESQL: Final = DialectProfile(
     vector_dimension_cap=16_000,
     ann_dimension_cap=2_000,
     ann_honours_scope=True,
+    # Plan-pinned: a BitmapOr of path-index scans with the facts beside the OR, as without them.
+    scope_facts_beside_fan=True,
 )
 
 MSSQL: Final = DialectProfile(
@@ -482,6 +498,8 @@ MSSQL: Final = DialectProfile(
     range_source="openjson",
     range_join="INNER LOOP JOIN",
     vector_dimension_cap=1_998,
+    # Plan-pinned: an Index Seek on the path index with the facts beside the OR, as without them.
+    scope_facts_beside_fan=True,
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
@@ -519,6 +537,8 @@ MARIADB: Final = DialectProfile(
     # drops the connection, so the cap is read up front and refused before sending.
     value_cap_query="SELECT @@max_allowed_packet",
     value_cap_setting="max_allowed_packet",
+    # Plan-pinned: a range access on the path key with the facts beside the OR, as without them.
+    scope_facts_beside_fan=True,
 )
 
 # Budgets stay at the floor Oracle itself defines (ORA-01795's 1,000

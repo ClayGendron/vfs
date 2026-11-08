@@ -22,7 +22,7 @@ from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
 from vfs.models import Entry, measure_bytes
 from vfs.paths import Path
-from vfs.pattern_matching import compile_gates, compile_verifier
+from vfs.pattern_matching import ScopeChannel, compile_gates, compile_verifier
 from vfs.pattern_matching import glob as glob_module
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database import engine as engine_module
@@ -408,6 +408,35 @@ class TestJudgeRows:
         pool.shutdown(wait=True)
         gates = compile_gates(("*.py",))
         assert await judge_rows(pool, gates, _ROWS, deadline=monotonic() + 5.0) == ([1, 0], True)
+
+    async def test_nested_roots_judge_one_pair_per_covering_root(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the pair walk stopping at the deepest covering root, or a
+        root counted as covering a sibling that shares its prefix."""
+        judged: list[list[tuple[str, str]]] = []
+        threads: list[str] = []
+        real = glob_module.glob_set
+
+        class _Recording:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> Any:
+                judged.append(list(rows))
+                threads.append(threading.current_thread().name)
+                return self._inner.judge(rows, budget=budget)
+
+        monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _Recording(real(*args, **kwargs)))
+        scope = ScopeChannel(roots=(Path("/a"), Path("/a/b")), arms=("**",))
+        gates = compile_gates((), scope=scope)
+        rows = [("/a/b/x", "x"), ("/a/c", "c"), ("/ab/y", "y")]
+        verdicts, completed = await judge_rows(pool, gates, rows, deadline=monotonic() + 5.0)
+        assert completed is True
+        assert [gates.admits(verdict, None) for verdict in verdicts] == [True, True, False]
+        [subjects] = judged
+        assert subjects == [("/x", "x"), ("/b/x", "x"), ("/c", "c")]
+        assert threads == ["test-verify_0"]
 
 
 # ---------------------------------------------------------------------------

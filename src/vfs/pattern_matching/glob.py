@@ -42,7 +42,7 @@ from vfs.native import glob_program, glob_set
 from vfs.paths import Path, normalize_ext_channel, normalize_extension
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
 
 # Ceiling on the distinct arms one pattern may expand to; callers
 # refuse an over-cap expansion loudly rather than fan it out.
@@ -108,6 +108,34 @@ class GlobFilter:
 
     pattern: str
     by_path: bool
+
+
+@dataclass(frozen=True)
+class ScopeChannel:
+    """A call's scope as two channels: the roots, and the arms judged beneath them.
+
+    A row is admitted by the scope when a root covers it (its path lies
+    strictly beneath the root) and either its **remainder** (its path
+    with the root's text cut from the front, so it begins with ``/``)
+    matches a path arm, anchored with a leading ``/``, or its leaf name
+    matches a name arm. It is excluded when a covering root's remainder
+    or the name matches an ``arms_not`` arm. Every covering root is read,
+    so nested and overlapping roots answer as their compositions do: the
+    channel is exactly :func:`composed_pattern` over every root and arm,
+    without composing. The roots are paths, never pattern text.
+    """
+
+    roots: tuple[Path, ...]
+    arms: tuple[str, ...]
+    arms_not: tuple[str, ...] = ()
+
+
+class ScopePair(NamedTuple):
+    """One row judged under one covering root: its remainder, its name, and whether the root is marked."""
+
+    remainder: str
+    name: str
+    marked: bool
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +258,22 @@ _UNMARKED: Final = 1 << 0
 _MARKED: Final = 1 << 1
 _EXCLUDED: Final = 1 << 2
 
+# A scope pair's bits in the scope set: an arm matched, an exclusion arm matched.
+_ARM: Final = 1 << 0
+_ARM_NOT: Final = 1 << 1
+
+# Rows the scope's pair walk takes between two reads of its deadline.
+PAIR_ROWS_PER_CHECK: Final = 64
+
+
+class _ScopeGates(NamedTuple):
+    """The scope part of one call's gates: its roots, its marked roots, its arms and exclusion arms."""
+
+    roots: frozenset[str]
+    marked: frozenset[str]
+    arms: tuple[GlobFilter, ...]
+    arms_not: tuple[GlobFilter, ...]
+
 
 class GlobGates:
     """One call's glob channels and ext facts: one native set judges, the law reads its verdicts.
@@ -241,6 +285,12 @@ class GlobGates:
     and the exclusions in group 2, each distinct pattern built once.
     It is built lazily, at most once, by the first hop that asks; the
     hops of one call may run concurrently, so the build holds a lock.
+
+    A call with a :class:`ScopeChannel` holds a second set beside it,
+    built the same way under the same lock: the scope's arms and
+    exclusion arms, each compiled once whatever the number of roots.
+    It judges one pair per covering root (:meth:`pairs`), and a row's
+    verdict is its entry-wide word joined with its pairs' words.
     """
 
     def __init__(
@@ -250,20 +300,35 @@ class GlobGates:
         marked: frozenset[str],
         wanted: frozenset[str],
         unwanted: frozenset[str],
+        scope: _ScopeGates | None = None,
     ) -> None:
         self.admissions = admissions
         self.exclusions = exclusions
         self.wanted = wanted
         self.unwanted = unwanted
+        self.scope_roots = frozenset() if scope is None else scope.roots
         self._marked = marked
+        self._scope = scope
         self._lock = threading.Lock()
         self._built = False
         self._set: GlobSet | None = None
+        self._scope_built = False
+        self._scope_set: GlobSet | None = None
 
     @property
     def has_patterns(self) -> bool:
         """Whether any row needs the engine: the ext facts alone need none."""
+        return self.has_entry_patterns or (self._scope is not None and bool(self._scope.arms or self._scope.arms_not))
+
+    @property
+    def has_entry_patterns(self) -> bool:
+        """Whether the entry-wide channels hold a pattern, so the entry-wide set judges."""
         return bool(self.admissions or self.exclusions)
+
+    @property
+    def scoped(self) -> bool:
+        """Whether the call carries a scope channel: an admission then needs a matching arm."""
+        return self._scope is not None
 
     def native(self, deadline: float | None) -> GlobSet | None:
         """The call's native set, built once; ``None`` once a build reached *deadline*.
@@ -295,21 +360,102 @@ class GlobGates:
             self._set = glob_set(programs, groups, budget=budget)
             return self._set
 
+    def scope_native(self, deadline: float | None) -> GlobSet | None:
+        """The scope's native set, built once: the arms in group 0, the exclusion arms in group 1.
+
+        ``None`` once a build reached *deadline*, never retried, and for
+        gates without a scope. A path arm matches a pair's remainder, a
+        name arm its name; each distinct arm is one program.
+        """
+        scope = self._scope
+        if scope is None:
+            return None
+        with self._lock:
+            if self._scope_built:
+                return self._scope_set
+            self._scope_built = True
+            patterns = list(dict.fromkeys(gate.pattern for gate in (*scope.arms, *scope.arms_not)))
+            programs: list[tuple[list[GlobAtom], bool]] = []
+            for pattern in patterns:
+                if deadline is not None and monotonic() > deadline:
+                    return None
+                programs.append((_program(pattern, recursive=True), "/" in pattern))
+            index = {pattern: position for position, pattern in enumerate(patterns)}
+            groups = [[index[gate.pattern] for gate in scope.arms], [index[gate.pattern] for gate in scope.arms_not]]
+            budget = None if deadline is None else max(0.0, deadline - monotonic())
+            self._scope_set = glob_set(programs, groups, budget=budget)
+            return self._scope_set
+
+    def pairs(self, path: str, name: str) -> Iterator[ScopePair]:
+        """One pair per scope root strictly above *path*, deepest root first.
+
+        The walk visits the path's ancestors, at most its segments, and
+        looks each up among the hashed roots. A pair is marked when its
+        root is one the caller's predicate marks.
+        """
+        roots = self.scope_roots
+        cut = path.rfind("/")
+        while cut > 0:
+            root = path[:cut]
+            if root in roots:
+                yield ScopePair(path[cut:], name, self._scope is not None and root in self._scope.marked)
+            cut = path.rfind("/", 0, cut)
+
+    def judge_scope(
+        self, rows: Sequence[GlobRow], verdicts: Sequence[int | None], *, deadline: float | None
+    ) -> tuple[list[int | None], bool]:
+        """*verdicts* (the entry-wide words) joined with each row's pairs' words, and whether every pair was judged.
+
+        The pairs are built here, the deadline read before every 64th
+        row; a row the walk did not reach, or a pair the set did not
+        judge, is unjudged. A pair's arm match is a marked admission
+        under a marked root and an unmarked one otherwise; its exclusion
+        arm match is an exclusion. Gates without a scope answer
+        *verdicts* unchanged.
+        """
+        joined = list(verdicts)
+        if self._scope is None:
+            return joined, True
+        native = self.scope_native(deadline)
+        if native is None:
+            return [None] * len(rows), False
+        subjects: list[GlobRow] = []
+        owners: list[tuple[int, bool]] = []
+        reached = len(rows)
+        for position, (path, name) in enumerate(rows):
+            if position % PAIR_ROWS_PER_CHECK == 0 and deadline is not None and monotonic() > deadline:
+                reached = position
+                break
+            for pair in self.pairs(path, name):
+                subjects.append((pair.remainder, pair.name))
+                owners.append((position, pair.marked))
+        judged: list[int | None] = []
+        completed = True
+        if subjects:
+            budget = None if deadline is None else max(0.0, deadline - monotonic())
+            judged, completed = native.judge(subjects, budget=budget)
+        for (position, marked), word in zip(owners, judged, strict=True):
+            current = joined[position]
+            if current is not None:
+                joined[position] = None if word is None else current | _pair_bits(word, marked=marked)
+        joined[reached:] = [None] * (len(rows) - reached)
+        return joined, completed and reached == len(rows)
+
     def admits(self, verdict: int | None, ext: str | None, *, marked_only: bool = False) -> bool:
         """Whether a row with this *verdict* and derived extension passes the law.
 
         An unjudged row (``None``) never passes: it may match no
         admission, or an exclusion. Under *marked_only* (storage's row
         beneath the meta root) only a marked admission admits; otherwise
-        any admission does, when the gates hold one. Any exclusion
-        rejects; then the wanted and unwanted extensions apply.
+        any admission does, when the gates hold one or a scope. Any
+        exclusion rejects; then the wanted and unwanted extensions apply.
         """
         if verdict is None:
             return False
         if marked_only:
             if not verdict & _MARKED:
                 return False
-        elif self.admissions and not verdict & (_UNMARKED | _MARKED):
+        elif (self.admissions or self._scope is not None) and not verdict & (_UNMARKED | _MARKED):
             return False
         if verdict & _EXCLUDED:
             return False
@@ -326,17 +472,27 @@ def compile_gates(
     ext: tuple[str, ...] = (),
     ext_not: tuple[str, ...] = (),
     marked: Callable[[str], bool] | None = None,
+    scope: ScopeChannel | None = None,
 ) -> GlobGates:
     """One call's gates: the channels canonicalized and deduped, the ext sets normalized.
 
     *marked* is the caller's predicate over a canonical admission (the
     pattern layer knows nothing of storage's meta subtree); with none,
-    no admission is marked. No program is built here.
+    no admission is marked. A *scope* is compiled beside the entry-wide
+    channels: its arms as given, a path arm anchored, and its roots
+    hashed, a root marked when the predicate marks its text. No program
+    is built here.
     """
-    admitted = tuple(compile_filter(pattern) for pattern in dict.fromkeys(_canonical(p) for p in admissions))
-    excluded = tuple(compile_filter(pattern) for pattern in dict.fromkeys(_canonical(p) for p in exclusions))
+    admitted = _filters(admissions)
+    excluded = _filters(exclusions)
     flagged = frozenset(gate.pattern for gate in admitted if marked is not None and marked(gate.pattern))
-    return GlobGates(admitted, excluded, flagged, normalize_ext_channel(ext), normalize_ext_channel(ext_not))
+    part: _ScopeGates | None = None
+    if scope is not None:
+        roots = frozenset(str(root) for root in scope.roots)
+        marked_roots = frozenset(root for root in roots if marked is not None and marked(root))
+        part = _ScopeGates(roots, marked_roots, _filters(scope.arms), _filters(scope.arms_not))
+    wanted, unwanted = normalize_ext_channel(ext), normalize_ext_channel(ext_not)
+    return GlobGates(admitted, excluded, flagged, wanted, unwanted, part)
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +613,21 @@ def render_residual(components: tuple[str, ...]) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _filters(patterns: Sequence[str]) -> tuple[GlobFilter, ...]:
+    """A channel's distinct canonical filters, in first-appearance order."""
+    return tuple(compile_filter(pattern) for pattern in dict.fromkeys(_canonical(p) for p in patterns))
+
+
+def _pair_bits(word: int, *, marked: bool) -> int:
+    """A scope pair's set word as the call's verdict bits: an arm admits, marked under a marked root."""
+    bits = 0
+    if word & _ARM:
+        bits |= _MARKED if marked else _UNMARKED
+    if word & _ARM_NOT:
+        bits |= _EXCLUDED
+    return bits
 
 
 def _component_defect(pattern: str) -> str | None:

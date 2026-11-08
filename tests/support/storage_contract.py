@@ -26,18 +26,21 @@ any required op — partial backends are first-class.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from functools import partial
+from typing import Any, ClassVar, NamedTuple, Protocol, cast
 
 import pytest
 
 from tests.support.documents import docx_bytes, pdf_bytes, pptx_bytes, xlsx_bytes
 from tests.support.oracles import graph_walk, meeting_subgraph
+from tests.support.plan_store import FACTS_CONJUNCT, PlanBackend, PlanReadings, decoded, plan_readings
+from tests.support.shared_builds import build_once, shared_directory
 from vfs import _native
 from vfs.authority import Authority, Principal
 from vfs.embedding import EmbeddingProvider
 from vfs.models import MEASURED_BODY, BodyMetrics, Edge, Entry, Observation, measure_bytes, measure_text
 from vfs.paths import Path
-from vfs.pattern_matching import escape_glob
+from vfs.pattern_matching import ScopeChannel, composed_pattern, escape_glob
 from vfs.results import ErrorKind, Result, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import (
@@ -187,6 +190,82 @@ def _edges(result: Result) -> set[tuple[str, str, str]]:
     return {
         (str(o.path), str(o.edge_target), str(o.edge_type)) for o in result.observations if o.edge_target is not None
     }
+
+
+# The scope channel's equivalence battery: each root, one at a time, under
+# every arm set and exclusion set, against the same patterns composed.
+SCOPE_ROOTS: tuple[str, ...] = ("/a", "/a/b", "/[x]", "/a*", "/é", "/.vfs/state")
+SCOPE_ARM_SETS: tuple[tuple[str, ...], ...] = (
+    ("**",),
+    ("*.py",),
+    ("src/**",),
+    ("*.py", "src/*.md"),
+    ("**/y.txt",),
+    ("[ab]*",),
+    ("b/**",),
+    ("x/*", "*.md"),
+)
+SCOPE_EXCLUSION_SETS: tuple[tuple[str, ...], ...] = ((), ("*.md",), ("b/**",))
+SCOPE_TRASH_ROOTS: tuple[str, ...] = ("/.vfs/trash/t", "/.vfs/trash/t/b")
+SCOPE_FILES: tuple[str, ...] = ("x.py", "src/y.md", "src/z.py", "b/y.txt", "x/q.md", "a1.txt", "b2.py")
+SCOPE_DECOYS: tuple[str, ...] = ("/ab/x.py", "/x/x.py", "/e/x.py", "/aa/src/z.py")
+
+
+class ScopeCase(NamedTuple):
+    """One equivalence case: the roots, the arms and the exclusion arms, uncomposed."""
+
+    roots: tuple[str, ...]
+    arms: tuple[str, ...]
+    arms_not: tuple[str, ...]
+
+    def composed(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """The same scope as the router composes it: every root joined with every arm and exclusion arm."""
+        roots = [Path(root) for root in self.roots]
+        return (
+            tuple(composed_pattern(root, arm) for root in roots for arm in self.arms),
+            tuple(composed_pattern(root, arm) for root in roots for arm in self.arms_not),
+        )
+
+    def channel(self) -> ScopeChannel:
+        return ScopeChannel(roots=tuple(Path(root) for root in self.roots), arms=self.arms, arms_not=self.arms_not)
+
+
+SCOPE_CASES: tuple[ScopeCase, ...] = tuple(
+    ScopeCase((root,), arms, arms_not)
+    for root in SCOPE_ROOTS
+    for arms in SCOPE_ARM_SETS
+    for arms_not in SCOPE_EXCLUSION_SETS
+)
+# Several roots in one scope: one OR of root clauses, merged by path, nested and metacharacter roots together.
+SCOPE_MULTI_ROOT_CASES: tuple[ScopeCase, ...] = (
+    ScopeCase(("/a", "/a/b"), ("*.py",), ("b/**",)),
+    ScopeCase(("/a", "/[x]", "/é", "/a*"), ("src/**",), ()),
+    ScopeCase(SCOPE_ROOTS, ("**",), ("*.md",)),
+)
+SCOPE_TRASH_CASES: tuple[ScopeCase, ...] = tuple(
+    ScopeCase((root,), arms, ()) for root in SCOPE_TRASH_ROOTS for arms in SCOPE_ARM_SETS
+)
+
+
+async def _scope_world(storage: ConformanceBackend) -> None:
+    """The battery's tree: every root holds every scope file, decoys sit beside, and ``/t`` is deleted whole."""
+    roots = [*SCOPE_ROOTS, "/t", "/t/b"]
+    paths = [f"{root}/{name}" for root in roots for name in SCOPE_FILES] + list(SCOPE_DECOYS)
+    entries = [Entry(path=Path(path), content=f"needle {path}") for path in dict.fromkeys(paths)]
+    assert (await storage.write(entries=entries, parents=True)).success is True
+    assert (await storage.delete(path=Path("/t"))).success is True
+
+
+def _skip_a_proven_engine(contract: StorageContract) -> None:
+    """Skip an engine-proof battery on a leg whose engine another leg already proves."""
+    proven = type(contract).engine_proven_by
+    if proven is not None:
+        pytest.skip(f"the engine is proven by {proven}; this leg re-runs the same SQL")
+
+
+def _scoped_paths(result: Result) -> list[str]:
+    assert result.success is True, result.errors
+    return [str(row.path) for row in result.observations]
 
 
 class StorageContract:
@@ -1227,6 +1306,90 @@ class StorageContract:
         assert result.success is False
         assert result.observations == []
         assert [e.kind for e in result.errors] == [ErrorKind.invalid]
+
+    # ------------------------------------------------------------------
+    # The scope channel — roots beside the arms answer as composition does
+    # ------------------------------------------------------------------
+
+    @pytest.mark.slow
+    @needs("write", "delete", "glob")
+    async def test_scope_channel_answers_as_composition(self, storage: ConformanceBackend) -> None:
+        """Guards: any row the scope channel admits or excludes differently from
+        the same roots and arms composed into pattern text."""
+        _skip_a_proven_engine(self)
+        await _scope_world(storage)
+        for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
+            patterns, globs_not = case.composed()
+            composed = _scoped_paths(await storage.glob(patterns=patterns, globs_not=globs_not))
+            channel = _scoped_paths(await storage.glob(patterns=(), scope=case.channel()))
+            assert channel == composed, case
+        assert len(SCOPE_CASES) == 144 and len(SCOPE_TRASH_CASES) == 16
+
+    @pytest.mark.slow
+    @needs("write", "delete", "grep")
+    async def test_scope_channel_greps_as_composition(self, storage: ConformanceBackend) -> None:
+        """Guards: a grep tier (allow-list, pushdown, scan fan, gates) reading
+        the scope channel differently from the composed globs."""
+        _skip_a_proven_engine(self)
+        await _scope_world(storage)
+        reindexer = _reindexer_of(storage)
+        for _world in ("overlay", "indexed"):
+            for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
+                globs, globs_not = case.composed()
+                composed = _scoped_paths(await storage.grep(pattern="needle", globs=globs, globs_not=globs_not))
+                channel = _scoped_paths(await storage.grep(pattern="needle", scope=case.channel()))
+                assert channel == composed, case
+            assert (await reindexer.reindex()).success is True
+
+    @pytest.mark.slow
+    @needs("write", "delete", "glean")
+    async def test_scope_channel_gleans_as_composition(self, storage: ConformanceBackend) -> None:
+        """Guards: glean's rungs reading the scope channel differently from the
+        composed globs."""
+        _skip_a_proven_engine(self)
+        await _scope_world(storage)
+        reindexer = _reindexer_of(storage)
+        for _world in ("overlay", "indexed"):
+            for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
+                globs, globs_not = case.composed()
+                composed = await storage.glean(query="needle", limit=100, globs=globs, globs_not=globs_not)
+                channel = await storage.glean(query="needle", limit=100, scope=case.channel())
+                assert _scoped_paths(channel) == _scoped_paths(composed), case
+            assert (await reindexer.reindex()).success is True
+
+    plan_backend: ClassVar[PlanBackend | None] = None
+    """Where this leg's plan store lives; ``None`` for a leg that plan-pins no engine of its own."""
+
+    engine_proven_by: ClassVar[str | None] = None
+    """The leg that already proves this one's engine, so the engine-proof batteries skip here; ``None``: run them."""
+
+    @pytest.fixture(scope="class")
+    def plan_store(self, tmp_path_factory: pytest.TempPathFactory) -> PlanReadings:
+        """The plan pins' readings of the 50,000-file store on this leg's engine, built once per session."""
+        backend = type(self).plan_backend
+        if backend is None:
+            pytest.skip("the in-memory backend runs the SQLite engine the file-backed leg already plan-pins")
+        shared = shared_directory(tmp_path_factory)
+        return decoded(build_once(shared, f"plan-store-{backend.key}", partial(plan_readings, backend)))
+
+    @pytest.mark.slow
+    @needs("write", "glob")
+    def test_the_roots_alone_plan_is_index_served(self, plan_store: PlanReadings) -> None:
+        """Guards: a profile declaring the facts conjunct on an engine whose
+        root OR of strict-descendant LIKEs is not even index-served alone."""
+        reading = plan_store.roots_alone
+        assert reading.served or not plan_store.declares, reading.plan
+
+    @pytest.mark.slow
+    @needs("write", "glob")
+    def test_the_scope_fan_plan_is_index_served(self, plan_store: PlanReadings) -> None:
+        """Guards: the facts conjunct riding beside the root OR on an engine
+        whose planner then stops serving the OR from the path index."""
+        if plan_store.declares:
+            assert plan_store.with_facts.served, plan_store.with_facts.plan
+            return
+        assert plan_store.statements
+        assert not any(FACTS_CONJUNCT.search(statement) for statement in plan_store.statements)
 
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak

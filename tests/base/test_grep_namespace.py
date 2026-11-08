@@ -9,6 +9,7 @@ seam as composed pattern text.
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,17 @@ import pytest
 import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
+from tests.support.scope_worlds import (
+    DIRECTORIES,
+    NESTED_HOST,
+    POSTURE_DIRECTORIES,
+    TRASH_ROOTS,
+    ShapeCall,
+    ShapeWorlds,
+    build_world_files,
+    open_worlds,
+)
+from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
@@ -25,6 +37,7 @@ from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -186,14 +199,19 @@ async def test_a_dead_admission_set_is_routing_not_a_skip() -> None:
 async def test_ten_thousand_roots_stay_two_calls() -> None:
     # The ETL scale row: contract-scale root batches reach storage as
     # exactly one grep call and one probe call — every root contributes
-    # its subtree member and its literal to the composed globs batch.
+    # its literal to the entry-wide globs, and rides the scope beside
+    # the one arm past the composition limit.
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     data = RecorderStorage()
     await fs.add_mount(data, "/data")
     await fs.grep("needle", paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
     assert [op for op, _ in data.calls] == ["stat", "grep"]
     [grep_call] = [kw for op, kw in data.calls if op == "grep"]
-    assert len(grep_call["globs"]) == 20_000
+    assert len(grep_call["globs"]) == 10_000
+    assert all("*" not in glob for glob in grep_call["globs"])
+    scope = grep_call["scope"]
+    assert len(scope.roots) == 10_000
+    assert scope.arms == ("**",)
     [probe] = [kw for op, kw in data.calls if op == "stat"]
     assert len(probe["observations"]) == 10_000
 
@@ -761,3 +779,78 @@ async def test_a_planning_stop_keeps_every_undecided_skip(monkeypatch: pytest.Mo
         [(ErrorKind.truncated, Severity.warning, None), (ErrorKind.unsupported, Severity.info, "/thin")]
     )
     await fs.close()
+
+
+# ----------------------------------------------------------------------
+# Both shapes — composed globs against the scope channel, one answer
+# ----------------------------------------------------------------------
+
+SCOPED_GREP_CALLS = (
+    ShapeCall("plain", "grep", "needle", DIRECTORIES),
+    ShapeCall("globs", "grep", "needle", DIRECTORIES, options=(("globs", ("*.py",)),)),
+    ShapeCall("exclusion", "grep", "needle", DIRECTORIES, options=(("globs_not", ("*.md",)),)),
+    ShapeCall("nested-mount", "grep", "needle", (NESTED_HOST, *DIRECTORIES[1:])),
+    ShapeCall("whole-side-root", "grep", "needle", ("/m", *DIRECTORIES)),
+    ShapeCall("trash-view", "grep", "needle", TRASH_ROOTS),
+    ShapeCall("files-mode", "grep", "needle", DIRECTORIES, options=(("output_mode", "files"),)),
+    ShapeCall("nested-roots", "grep", "needle", tuple(p for d in DIRECTORIES[:125] for p in (d, f"{d}/src"))),
+    ShapeCall("anonymous-private-roots", "grep", "needle", POSTURE_DIRECTORIES, world="private_roots"),
+    ShapeCall("anonymous-private-src", "grep", "needle", POSTURE_DIRECTORIES, world="private_src"),
+    ShapeCall(
+        "anonymous-path-arm-private-src",
+        "grep",
+        "needle",
+        POSTURE_DIRECTORIES,
+        world="private_src",
+        options=(("globs", ("src/**",)),),
+    ),
+    ShapeCall(
+        "anonymous-path-arm-private-roots",
+        "grep",
+        "needle",
+        POSTURE_DIRECTORIES,
+        world="private_roots",
+        options=(("globs", ("src/**",)),),
+    ),
+)
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[ShapeWorlds]:
+    """The both-shapes worlds, built once per session, opened from copies per module; the rows only read them."""
+    shared = shared_directory(tmp_path_factory)
+    source = await asyncio.to_thread(build_once, shared, "scope-worlds", build_world_files)
+    worlds = await open_worlds(pathlib.Path(source), tmp_path_factory.mktemp("shape-worlds"))
+    yield worlds
+    for fs in worlds:
+        await fs.close()
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio(loop_scope="module")
+@pytest.mark.parametrize("call", SCOPED_GREP_CALLS, ids=[call.name for call in SCOPED_GREP_CALLS])
+async def test_both_shapes_answer_alike(
+    call: ShapeCall, shape_worlds: ShapeWorlds, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards: any row, refusal or record that differs between composing every
+    root's globs and literal into the batch and sending the roots beside the arms."""
+    answers: list[Result] = []
+    scopes: list[int] = []
+    for limit in (0, 10**9):
+        monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", limit)
+        admitted: list[object] = []
+        real = backend_module.admit_scope
+
+        def counted(scope: Any, channel: Any, real: Any = real, admitted: list[object] = admitted) -> Any:
+            admitted.append(scope)
+            return real(scope, channel)
+
+        monkeypatch.setattr(backend_module, "admit_scope", counted)
+        answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
+        scopes.append(sum(scope is not None for scope in admitted))
+    channel, composed = answers
+    assert scopes[0] > 0 and scopes[1] == 0, scopes
+    assert channel.observations == composed.observations
+    assert channel.errors == composed.errors
+    assert composed.observations or composed.errors
+    assert not any(error.kind is ErrorKind.truncated for error in composed.errors)

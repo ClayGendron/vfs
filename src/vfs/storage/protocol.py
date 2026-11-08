@@ -43,10 +43,13 @@ literal prefix in a pattern) serves its own subtree, never the whole
 scope; and **per-target
 classification** — a missing target in a batch classifies through the
 descent ladder beside the healthy targets' rows (partial results,
-per-target errors, never all-or-nothing).  Scope never crosses this
-seam as paths: the pattern-search verbs receive scope only as
-composed pattern text, and chained rows are filtered by the router
-without reaching storage at all.
+per-target errors, never all-or-nothing).  Scope crosses this seam
+in one of two shapes: as composed pattern text, or, past the router's
+composition limit, as roots beside the arms (a ``scope=``
+:class:`~vfs.pattern_matching.ScopeChannel`) — either way in the
+same one call and snapshot per entry, with root assertions on the
+router's probe. Chained rows are filtered by the router without
+reaching storage at all.
 """
 
 from __future__ import annotations
@@ -62,6 +65,7 @@ if TYPE_CHECKING:
     from vfs.models import Edge, Entry, Observation
     from vfs.ops import CaseMode, GrepOutputMode, Op
     from vfs.paths import ObjectKind, Path
+    from vfs.pattern_matching import ScopeChannel
     from vfs.results import Result
     from vfs.storage.grants import GrantLevel, Posture
     from vfs.storage.replace import EditOperation
@@ -249,10 +253,16 @@ class SupportsMutation(Protocol):
 class SupportsPatternSearch(Protocol):
     """The pattern-search family: literal/regex matching over names and content.
 
-    Namespace-wide queries.  Scoping crosses this seam only as pattern
-    text: the router composes scope roots into glob's *patterns* batch
-    and into grep's ``globs``/``globs_not`` channels, answered in one
-    transaction and one snapshot per call.  Glob returns rows matching
+    Namespace-wide queries.  Scoping crosses this seam in one of two
+    shapes.  Below the router's composition limit it is pattern text:
+    the router composes scope roots into glob's *patterns* batch and
+    into grep's ``globs``/``globs_not`` channels.  Past it, the roots
+    ride beside the arms as *scope* (a
+    :class:`~vfs.pattern_matching.ScopeChannel`): a row is admitted by
+    an entry-wide pattern, or by a root strictly above it whose
+    remainder or name matches an arm.  Either way the call is answered
+    in one transaction and one snapshot, with root assertions on the
+    router's probe.  Glob returns rows matching
     **any** pattern, one refusable pattern refusing the call whole;
     grep's ``pattern`` is content-only and never a path.  Split from
     ranked search (:class:`SupportsGlean`) because a lexical scan needs
@@ -270,6 +280,7 @@ class SupportsPatternSearch(Protocol):
         kind: ObjectKind | None = None,
         max_count: int | None = None,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 
@@ -291,6 +302,7 @@ class SupportsPatternSearch(Protocol):
         max_count: int | None = None,
         allow_scan: bool = False,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 
@@ -303,8 +315,10 @@ class SupportsGlean(Protocol):
     graph) a backend may not have even when it can glob/grep. Scoping
     crosses this seam exactly as grep's does — as pattern text on the
     ``globs``/``globs_not`` channels the router composes per scope root,
-    with the ``ext`` channels verbatim; piped rows arrive as
-    ``observations`` in entry coordinates.
+    or past the router's composition limit as roots beside the arms
+    (*scope*), in the same one call and snapshot, with the ``ext``
+    channels verbatim; piped rows arrive as ``observations`` in entry
+    coordinates.
     """
 
     async def glean(
@@ -318,6 +332,7 @@ class SupportsGlean(Protocol):
         globs_not: tuple[str, ...] = (),
         observations: list[Observation] | None = None,
         columns: frozenset[str] | None = None,
+        scope: ScopeChannel | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
 

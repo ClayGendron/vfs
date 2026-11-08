@@ -18,12 +18,14 @@ import pytest
 
 from tests.support.oracles import glob as oracle
 from vfs.base import AsyncVirtualFileSystem
-from vfs.paths import ROOT, Path, extract_extension
+from vfs.paths import ROOT, Path, address_of, extract_extension
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
     DerivedExt,
+    GlobGates,
     PatternError,
+    ScopeChannel,
     canonical_pattern,
     compile_filter,
     compile_gates,
@@ -922,6 +924,171 @@ class TestGlobGates:
     def test_rows_keep_input_order_with_duplicates(self) -> None:
         paths = [Path("/b.txt"), Path("/a.md"), Path("/a.txt"), Path("/b.txt")]
         assert _kept(paths, globs=("*.txt",)) == ["/b.txt", "/a.txt", "/b.txt"]
+
+
+def _scoped_verdicts(gates: GlobGates, rows: list[tuple[str, str]]) -> list[int | None]:
+    """Every row's verdict through the call's gates, the scope's pairs included, with no budget."""
+    verdicts: list[int | None] = [0] * len(rows)
+    if gates.has_entry_patterns:
+        native = gates.native(None)
+        assert native is not None
+        verdicts, completed = native.judge(rows, budget=None)
+        assert completed
+    joined, completed = gates.judge_scope(rows, verdicts, deadline=None)
+    assert completed
+    return joined
+
+
+class TestScopeChannel:
+    """The scope's two channels: a row strictly beneath a root, its remainder or its name against the arms."""
+
+    ROOTS = (
+        "/a",
+        "/a/b",
+        "/ab",
+        "/[x]",
+        "/a*",
+        "/{a,b}",
+        "/a]b",
+        "/!x",
+        "/-",
+        "/é",
+        "/a/**",
+        "/.vfs/state",
+        "/.vfs/trash/a",
+        "/.vfs/trash/a/b",
+    )
+    ARMS = (
+        "x",
+        "x/*",
+        "**/y",
+        "/**",
+        "*/z",
+        "[ab]/*",
+        "**",
+        "*",
+        "y*",
+        "?",
+        "b/x",
+        "/b",
+        "**/**/x",
+        "[!a]",
+        "*.py",
+        "b/**/x",
+    )
+    SEGMENTS = ("a", "b", "x", "y", "z", "ab", "[x]", "a*", "{a,b}", "a]b", "!x", "-", "é", "**", ".vfs", "state")
+    SEGMENTS += ("trash", "m.py")
+
+    def test_the_scope_channel_is_exported(self) -> None:
+        channel = ScopeChannel(roots=(Path("/a"),), arms=("*.py",))
+        assert (channel.roots, channel.arms, channel.arms_not) == (("/a",), ("*.py",), ())
+
+    @pytest.mark.slow
+    def test_the_scope_law_agrees_with_composition(self) -> None:
+        """Guards: a pair's remainder cut one character off, a name arm judged
+        against the remainder, a root counted as covering itself, or a meta
+        root's pair left unmarked."""
+        shallow = {"/" + "/".join(steps) for size in (1, 2, 3) for steps in product(self.SEGMENTS, repeat=size)}
+        deep = {
+            f"{base}/{first}/{second}"
+            for base in ("/a/b", "/a/**", "/.vfs/state")
+            for first, second in product(self.SEGMENTS, repeat=2)
+        }
+        paths = sorted(shallow | deep)
+        assert len(paths) == 7_146
+        rows = [(path, path.rsplit("/", 1)[1]) for path in paths]
+        verdicts = 0
+        for root, arm in product(self.ROOTS, self.ARMS):
+            stored = address_of(composed_pattern(Path(root), arm)).stored
+            composed = compile_gates((stored,), marked=_is_marked)
+            expected = _scoped_verdicts(composed, rows)
+            scope = ScopeChannel(roots=(Path(address_of(root).stored),), arms=(arm,))
+            law = compile_gates((), marked=_is_marked, scope=scope)
+            actual = _scoped_verdicts(law, rows)
+            matched = 0
+            for path, want, got in zip(paths, expected, actual, strict=True):
+                admitted = composed.admits(want, None), composed.admits(want, None, marked_only=True)
+                assert (law.admits(got, None), law.admits(got, None, marked_only=True)) == admitted, (root, arm, path)
+                matched += admitted[0]
+                verdicts += 1
+            assert matched > 0, (root, arm)
+        assert verdicts == 1_600_704
+
+    def test_an_exclusion_arm_refuses_beneath_every_covering_root(self) -> None:
+        """Guards: an exclusion read only under the deepest covering root."""
+        scope = ScopeChannel(roots=(Path("/a"), Path("/a/b")), arms=("**",), arms_not=("/b/*",))
+        gates = compile_gates((), scope=scope)
+        rows = [("/a/b/x", "x"), ("/a/c/x", "c"), ("/a/c", "c")]
+        verdicts = _scoped_verdicts(gates, rows)
+        assert [gates.admits(verdict, None) for verdict in verdicts] == [False, True, True]
+
+    def test_a_row_beneath_no_root_is_not_admitted_by_the_scope(self) -> None:
+        gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("**",)))
+        verdicts = _scoped_verdicts(gates, [("/a", "a"), ("/ab/x", "x"), ("/a/x", "x")])
+        assert [gates.admits(verdict, None) for verdict in verdicts] == [False, False, True]
+
+    def test_the_entry_wide_channel_admits_beside_the_scope(self) -> None:
+        gates = compile_gates(("/z/*",), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
+        verdicts = _scoped_verdicts(gates, [("/z/q", "q"), ("/a/m.py", "m.py"), ("/a/m.md", "m.md")])
+        assert [gates.admits(verdict, None) for verdict in verdicts] == [True, True, False]
+
+    def test_the_scope_set_is_built_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sets = _Counted(glob_module.glob_set)
+        monkeypatch.setattr(glob_module, "glob_set", sets)
+        gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py", "*.py"), arms_not=("*.py",)))
+        first = gates.scope_native(None)
+        assert first is not None and gates.scope_native(None) is first
+        assert len(sets.calls) == 1
+        assert len(sets.calls[0][0]) == 1
+
+    def test_gates_without_a_scope_judge_no_pairs(self) -> None:
+        gates = compile_gates(("*.py",))
+        assert (gates.scoped, gates.scope_native(None), gates.scope_roots) == (False, None, frozenset())
+        assert list(gates.pairs("/a/m.py", "m.py")) == []
+        assert gates.judge_scope([("/a/m.py", "m.py")], [1], deadline=None) == ([1], True)
+
+    def test_an_unjudged_pair_or_row_stays_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: a pair the set did not judge read as no match, or a pair's
+        word joined into a row the entry-wide set left unjudged."""
+
+        class _Unjudged:
+            def judge(self, rows: Any, *, budget: float | None) -> Any:
+                return [None, 1], False
+
+        monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _Unjudged())
+        gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
+        rows = [("/a/x.py", "x.py"), ("/a/y.py", "y.py")]
+        assert gates.judge_scope(rows, [0, None], deadline=None) == ([None, None], False)
+
+    def test_a_scope_build_past_the_deadline_leaves_every_row_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(glob_module, "monotonic", lambda: 2.0)
+        gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
+        assert gates.judge_scope([("/a/m.py", "m.py")], [0], deadline=1.0) == ([None], False)
+
+    def test_pairs_not_reached_before_the_deadline_are_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the pair walk's deadline read dropped, or read once per call
+        instead of every 64 rows."""
+        judged: list[int] = []
+        real = glob_module.glob_set
+
+        class _Unbudgeted:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def judge(self, rows: Any, *, budget: float | None) -> Any:
+                judged.append(len(rows))
+                return self._inner.judge(rows, budget=None)
+
+        monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _Unbudgeted(real(*args, **kwargs)))
+        gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
+        assert gates.scope_native(None) is not None
+        clock = iter([0.0, 2.0])
+        monkeypatch.setattr(glob_module, "monotonic", lambda: next(clock, 2.0))
+        rows = [("/a/m.py", "m.py")] * 65
+        verdicts, completed = gates.judge_scope(rows, [0] * 65, deadline=1.0)
+        assert (completed, judged) == (False, [64])
+        assert verdicts[64] is None
+        assert all(verdict is not None for verdict in verdicts[:64])
 
 
 # =========================================================================

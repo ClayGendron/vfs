@@ -74,6 +74,7 @@ from __future__ import annotations
 import sys
 from collections import OrderedDict
 from datetime import UTC, datetime
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, cast
 
 from sqlalchemy import and_, delete, insert, or_, select, text, update
@@ -98,6 +99,7 @@ from vfs.storage.backends.database.labels import (
     label_of,
     mark_relabel,
     posture_rows,
+    posture_rows_for_chunks,
 )
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.ranges import hole_free, visible_entries
@@ -162,6 +164,14 @@ _SUBTREE_PAGE: Final = 1_000
 
 # Everyone rows read per page when a grant or revoke checks beneath its path.
 _POSTURE_PAGE: Final = 1_000
+
+# Judged paths the posture gate's pure steps take between two reads of their deadline.
+POSTURE_PATHS_PER_CHECK: Final = 64
+
+# Why an anonymous scoped call is refused whole when its posture gate reaches the wall.
+POSTURE_WALL_DETAIL: Final = (
+    "the anonymous posture check reached the wall-time budget; narrow the roots or the arms, or authenticate"
+)
 
 GateMode = Literal["modify", "upsert", "create", "read"]
 """What a mutation needs at a target: an existing row to change (``modify``),
@@ -403,14 +413,60 @@ async def unauthenticated_refusals(
     paths: Iterable[str],
     rung: Rung,
 ) -> list[ResultError]:
-    """The anonymous refusals for a read addressing *paths* at *rung* — one chunked read of the posture rows."""
+    """The anonymous refusals for a read addressing *paths* at *rung* — one chunked read of the posture rows.
+
+    The two pure steps around the read, :func:`posture_chain` and
+    :func:`posture_refusals`, run here inline with no deadline; a caller
+    that judges a large set runs them off the loop under a wall instead.
+    """
     wanted = list(dict.fromkeys(paths))
     if not authority.is_anonymous or not wanted:
         return []
-    chain = {ancestor for path in wanted for ancestor in ancestors_and_self(path)}
-    postures = await posture_rows(session, tables, profile, membership_budget, chain)
-    found = (unauthenticated_at(authority, postures, path, rung) for path in wanted)
-    return [refusal for refusal in found if refusal is not None]
+    chunks = posture_chain(wanted, membership_budget, deadline=None)
+    assert chunks is not None
+    postures = await posture_rows_for_chunks(session, tables, profile, chunks, deadline=None)
+    assert postures is not None
+    refusals = posture_refusals(authority, postures, wanted, rung, deadline=None)
+    assert refusals is not None
+    return refusals
+
+
+def posture_chain(paths: Sequence[str], membership_budget: int, *, deadline: float | None) -> list[list[str]] | None:
+    """Every judged path's ancestor chain, deduplicated, sorted and chunked; ``None`` past *deadline*.
+
+    The posture read's input, built whole before any statement so the
+    read in the session only issues the chunks as given. The deadline is
+    read before every 64th path.
+    """
+    chain: set[str] = set()
+    for position, path in enumerate(paths):
+        if _past(deadline, position):
+            return None
+        chain.update(ancestors_and_self(path))
+    return [list(chunk) for chunk in chunked(sorted(chain), membership_budget)]
+
+
+def posture_refusals(
+    authority: Authority, postures: PostureRows, paths: Sequence[str], rung: Rung, *, deadline: float | None
+) -> list[ResultError] | None:
+    """The anonymous refusals among *paths* under the chain's *postures*, in order; ``None`` past *deadline*.
+
+    The rule is :func:`unauthenticated_at`'s, path by path, the deadline
+    read before every 64th.
+    """
+    refusals: list[ResultError] = []
+    for position, path in enumerate(paths):
+        if _past(deadline, position):
+            return None
+        refusal = unauthenticated_at(authority, postures, path, rung)
+        if refusal is not None:
+            refusals.append(refusal)
+    return refusals
+
+
+def posture_wall_refusal() -> ResultError:
+    """The one record of an anonymous posture gate that reached its wall: the call refused whole."""
+    return classified(ErrorKind.unauthenticated, detail=POSTURE_WALL_DETAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1191,11 @@ def posture_row(posture: Posture, now: datetime) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _past(deadline: float | None, position: int) -> bool:
+    """Whether the posture gate's pure step at *position* has passed *deadline*, read every 64th path."""
+    return deadline is not None and position % POSTURE_PATHS_PER_CHECK == 0 and monotonic() > deadline
 
 
 async def _closures(

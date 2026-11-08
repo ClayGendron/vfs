@@ -9,12 +9,15 @@ verbs that have not landed.
 
 from __future__ import annotations
 
+import math
 import threading
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, insert, select, text, update
+from sqlalchemy.dialects import mssql
 from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
@@ -23,19 +26,31 @@ from tests.support.loop_ticks import LoopTicker
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
+from vfs.pattern_matching import ScopeChannel, composed_pattern
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.dialects import StaleSnapshot
+from vfs.storage.backends.database import reads as reads_module
+from vfs.storage.backends.database.dialects import SQLITE, StaleSnapshot, arm_budget, membership_budget
 from vfs.storage.backends.database.engine import EngineHost
+from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.reads import (
+    CHANNEL_ARM_BINDS,
     ENTRY_OBSERVATION_FIELDS,
+    NO_SCOPE_FACTS,
+    ROOT_ARM_BINDS,
     _glob_like,
+    addressed_by,
+    admit_scope,
+    channel_facts,
     effective_columns,
     ext_membership,
     render_notes,
+    scope_addressed,
+    scope_facts,
+    side_scope,
 )
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import LEVEL_RANK
@@ -1017,3 +1032,200 @@ class TestGlobWall:
         [error] = result.errors
         assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# The scope channel — roots beside the arms, one root clause per root
+# ---------------------------------------------------------------------------
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, name: str) -> list[tuple[Any, ...]]:
+    """Every call to the reads module's *name*, its arguments recorded."""
+    calls: list[tuple[Any, ...]] = []
+    real = getattr(reads_module, name)
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(reads_module, name, counted)
+    return calls
+
+
+def _recorded(storage: DatabaseStorage) -> list[tuple[str, Any]]:
+    """Every statement *storage* issues from here on, with its parameters."""
+    statements: list[tuple[str, Any]] = []
+
+    @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        statements.append((statement, parameters))
+
+    return statements
+
+
+def _scope_statements(statements: list[tuple[str, Any]]) -> list[tuple[str, Any]]:
+    """The recorded root-clause fan statements: each strict-descendant LIKE of a scope root."""
+    return [(s, p) for s, p in statements if s.startswith("SELECT") and "vfs_entries.path LIKE" in s]
+
+
+def _literal(statement: str, parameters: Sequence[Any]) -> str:
+    """*statement* with its positional binds spelled inline, for ``EXPLAIN QUERY PLAN``."""
+    literal = statement
+    for value in parameters:
+        literal = literal.replace("?", "'" + str(value).replace("'", "''") + "'", 1)
+    return literal
+
+
+class TestScopeChannel:
+    """Storage glob with a scope: root clauses linear in the roots, the arms judged once off the loop."""
+
+    @pytest.mark.slow
+    async def test_ten_thousand_roots_and_64_arms_build_10064_sql_arms(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a root clause per root and arm, or the arms composed back into
+        pattern arms under each root."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/d00007/x.e05", "file", "x"), ("/d00007/x.zz", "file", "x")])
+        roots = tuple(Path(f"/d{i:05}") for i in range(10_000))
+        arms = tuple(f"*.e{i:02}" for i in range(64))
+        root_arms = _counted(monkeypatch, "scope_root_arm")
+        facts = _counted(monkeypatch, "channel_facts")
+        pattern_arms = _counted(monkeypatch, "pattern_arm")
+        result = await storage.glob(patterns=(), scope=ScopeChannel(roots=roots, arms=arms))
+        assert [str(o.path) for o in result.observations] == ["/d00007/x.e05"]
+        assert len(root_arms) == 10_000
+        assert [len(call[2].arms) for call in facts] == [64]
+        assert pattern_arms == []
+        await storage.close()
+
+    async def test_the_scope_fan_keeps_the_multi_index_or(self, tmp_path) -> None:
+        """Guards: the arms' facts conjunct turned into the access path, demoting
+        the root OR to a scan, before or after the planner has statistics."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        rows: list[tuple[str, str, str | None]] = [
+            (f"/d{i:03}/{side}/f{j}.{ext}", "file", "x")
+            for i in range(60)
+            for side in "ab"
+            for j, ext in enumerate(("py", "md"))
+        ]
+        await _seed(storage, rows)
+        assert storage._host.profile.scope_facts_beside_fan is True
+        scope = ScopeChannel(roots=tuple(Path(f"/d{i:03}") for i in range(0, 60, 3)), arms=("*.py", "b/*.md"))
+        statements = _recorded(storage)
+        for analyzed in (False, True):
+            if analyzed:
+                async with storage._host.session_factory() as session:
+                    await session.execute(text("ANALYZE"))
+                    await session.commit()
+            statements.clear()
+            result = await storage.glob(patterns=(), scope=scope)
+            assert len(result.observations) == 60
+            [(statement, parameters)] = _scope_statements(statements)
+            assert ") AND (" in statement
+            async with storage._host.session_factory() as session:
+                plan = (await session.execute(text("EXPLAIN QUERY PLAN " + _literal(statement, parameters)))).all()
+            details = [row[-1] for row in plan]
+            assert any("MULTI-INDEX OR" in detail for detail in details), details
+            assert not any(detail.startswith("SCAN") for detail in details), details
+            if analyzed:
+                branches = [detail for detail in details if detail.startswith("SEARCH")]
+                assert len(branches) == 20, details
+                assert all("ix_vfs_entries_path" in detail for detail in branches), details
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_every_scope_statement_fits_the_budget(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the root clause's binds charged per statement instead of per
+        root, or the facts' binds left out of the budget."""
+        budget = mssql.dialect().insertmanyvalues_max_parameters
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda self: budget))
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/d00042/mb.py", "file", "x")])
+        ext = ("py", "md", "txt", "rs", "ts", "go", "c", "h", "js", "rb")
+        arms = tuple(f"m{stem}*.{suffix}" for stem in "abcd" for suffix in ("py", "md"))
+        profile = storage._host.profile
+        entry = storage._host.tables.entry
+        _facts, fact_binds = channel_facts(entry, profile, compile_channel(arms))
+        ride = ext_membership(entry, frozenset(ext), membership_budget(profile, budget))
+        chunk = arm_budget(profile, budget - fact_binds, ROOT_ARM_BINDS + ride.binds)
+        assert fact_binds == 24 and chunk < arm_budget(profile, budget, ROOT_ARM_BINDS + ride.binds) < 200
+        statements = _recorded(storage)
+        roots = tuple(Path(f"/d{i:05}") for i in range(10_000))
+        result = await storage.glob(patterns=(), ext=ext, kind="file", scope=ScopeChannel(roots=roots, arms=arms))
+        assert [str(o.path) for o in result.observations] == ["/d00042/mb.py"]
+        fan = _scope_statements(statements)
+        assert len(fan) == math.ceil(10_000 / chunk)
+        assert all(len(parameters) <= budget for _statement, parameters in fan)
+        assert (
+            max(len(parameters) for _statement, parameters in fan) == chunk * (ROOT_ARM_BINDS + ride.binds) + fact_binds
+        )
+        await storage.close()
+
+    @pytest.mark.parametrize("root", ["/", "/.vfs/trash"])
+    async def test_a_whole_side_scope_root_is_refused(self, tmp_path, root: str) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a/x.py", "file", "x")])
+        statements = _recorded(storage)
+        result = await storage.glob(patterns=(), scope=ScopeChannel(roots=(Path("/a"), Path(root)), arms=("*.py",)))
+        [error] = result.errors
+        assert error.kind is ErrorKind.invalid
+        assert error.message.endswith(
+            f"scope root {root!r} addresses the whole entry; send its patterns on the entry-wide channel"
+        )
+        assert statements == []
+        await storage.close()
+
+    async def test_a_defective_arm_refuses_before_any_statement(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a/x.py", "file", "x")])
+        statements = _recorded(storage)
+        result = await storage.glob(patterns=(), scope=ScopeChannel(roots=(Path("/a"),), arms=("a**b",)))
+        [error] = result.errors
+        assert error.kind is ErrorKind.invalid
+        assert "glob pattern 'a**b'" in error.message
+        assert statements == []
+        await storage.close()
+
+    def test_the_facts_ride_only_under_their_rules(self) -> None:
+        """Guards: the conjunct riding on an undeclared profile, under an arm
+        with no fact, past the channel fan, or past half the membership budget."""
+        entry = build_vfs_tables().entry
+        budget = 1_000
+        members = membership_budget(SQLITE, budget)
+        assert scope_facts(entry, SQLITE, budget, members, ("*.py", "b/*.md")).binds == 4
+        undeclared = replace(SQLITE, scope_facts_beside_fan=False)
+        assert scope_facts(entry, undeclared, budget, members, ("*.py",)) == NO_SCOPE_FACTS
+        assert scope_facts(entry, SQLITE, budget, members, ()) == NO_SCOPE_FACTS
+        assert scope_facts(entry, SQLITE, budget, members, ("*.py", "src/**")) == NO_SCOPE_FACTS
+        wide = tuple(f"*.e{i:03}" for i in range(201))
+        assert scope_facts(entry, SQLITE, budget, members, wide) == NO_SCOPE_FACTS
+        within_fan = tuple(f"*.e{i:03}" for i in range(100))
+        assert len(within_fan) <= arm_budget(SQLITE, 400, CHANNEL_ARM_BINDS)
+        assert scope_facts(entry, SQLITE, 400, membership_budget(SQLITE, 400), within_fan) == NO_SCOPE_FACTS
+        assert scope_facts(entry, SQLITE, 400, membership_budget(SQLITE, 400), within_fan[:80]).binds == 160
+
+    def test_the_scope_admits_its_roots_per_side(self) -> None:
+        roots = (Path("/a"), Path("/.vfs/trash/t"), Path("/a"), Path("/.vfs/trash/t/b"))
+        admitted = admit_scope(ScopeChannel(roots=roots, arms=("{x,y}.py",)), "pattern")
+        assert admitted is not None
+        assert (admitted.live, admitted.trashed) == (("/a",), ("/t", "/t/b"))
+        assert admitted.channel.arms == ("x.py", "y.py")
+        assert admit_scope(None, "pattern") is None
+        assert side_scope(None, trashed=False) is None
+        assert side_scope(admit_scope(ScopeChannel(roots=(Path("/a"),), arms=("*",)), "pattern"), trashed=True) is None
+
+    def test_scope_addressed_is_addressed_by_over_the_composition(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the sliced addressing dropping first-appearance order, a
+        refused pattern judged anywhere but the root, or a slice's deadline read
+        skipped."""
+        roots = tuple(Path(f"/r{i:03}") for i in range(70))
+        scope = ScopeChannel(roots=roots, arms=("src/**", "*.py"))
+        composed = [composed_pattern(root, arm) for root in roots for arm in scope.arms]
+        expected = addressed_by(sorted(("/z/*.md", *composed)))
+        assert scope_addressed(("/z/*.md",), scope, deadline=math.inf) == expected
+        assert scope_addressed((), ScopeChannel(roots=roots, arms=()), deadline=math.inf) == ["/"]
+        assert scope_addressed(("a**b",), scope, deadline=math.inf) == ["/"]
+        reads = iter([0.0, 0.0, 0.0, 2.0])
+        monkeypatch.setattr(reads_module, "monotonic", lambda: next(reads, 2.0))
+        assert scope_addressed((), ScopeChannel(roots=roots[:64], arms=("*.py", "*.md")), deadline=1.0) is None

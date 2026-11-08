@@ -10,6 +10,7 @@ a starved bind budget, so the chunked fan splits every predicate.
 from __future__ import annotations
 
 import random
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from itertools import pairwise
@@ -26,15 +27,18 @@ from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.ops import VERB_RUNGS
 from vfs.paths import Path
+from vfs.pattern_matching import ScopeChannel, composed_pattern
 from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import rights as rights_module
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.labels import Mark, Relabeller, mark_relabel
 from vfs.storage.backends.database.ranges import visible_entries
+from vfs.storage.backends.database.reads import addressed_by
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
     Resolution,
@@ -42,6 +46,8 @@ from vfs.storage.backends.database.rights import (
     RightsKey,
     WriteGate,
     grant_rows,
+    posture_chain,
+    posture_refusals,
     resolve_authority,
     set_posture,
     visibility_clauses,
@@ -888,3 +894,139 @@ async def _resolution(storage: InMemoryStorage, authority: Authority) -> Resolut
         )
     assert isinstance(resolved, Resolution)
     return resolved
+
+
+# ---------------------------------------------------------------------------
+# The posture gate over a scope — judged where composition judges, off the loop
+# ---------------------------------------------------------------------------
+
+_SCOPE_ROOTS = tuple(Path(f"/r{i:03}") for i in range(201))
+_WALL_DETAIL = "the anonymous posture check reached the wall-time budget; narrow the roots or the arms, or authenticate"
+
+
+class _Spied:
+    """A stand-in recording each call's arguments and thread, then calling through."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.calls: list[tuple[Any, ...]] = []
+        self.threads: list[str] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append(args)
+        self.threads.append(threading.current_thread().name)
+        return self.inner(*args, **kwargs)
+
+
+class TestPostureGate:
+    async def test_an_anonymous_scope_is_judged_where_composition_judges(
+        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a scoped anonymous call judged at the bare roots, at the root
+        for an empty entry-wide channel, or judged inline on the loop."""
+        chain = _Spied(backend_module.posture_chain)
+        refusals = _Spied(backend_module.posture_refusals)
+        monkeypatch.setattr(backend_module, "posture_chain", chain)
+        monkeypatch.setattr(backend_module, "posture_refusals", refusals)
+        anon = Authority.anonymous()
+        arms = ("src/**", "*.py")
+        patterns = ("/z/*.md",)
+        scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=arms)
+        assert (await storage.glob(patterns=patterns, scope=scope, authority=anon)).success is True
+        composed = [composed_pattern(root, arm) for root in _SCOPE_ROOTS for arm in arms]
+        [call] = refusals.calls
+        judged = call[2]
+        assert judged == addressed_by(sorted((*patterns, *composed)))
+        assert set(judged) == {"/z", *(f"{root}/src" for root in _SCOPE_ROOTS), *(str(r) for r in _SCOPE_ROOTS)}
+        assert chain.calls[0][0] == judged
+        assert all(name.startswith("vfs-offload") for name in (*chain.threads, *refusals.threads))
+        assert (await storage.glob(patterns=(), scope=scope, authority=anon)).success is True
+        bare = refusals.calls[1][2]
+        assert "/" not in bare
+        assert set(bare) == set(judged) - {"/z"}
+
+    async def test_a_named_caller_builds_no_scope_paths(
+        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the scope's composed paths built for every caller, as the
+        entry-wide addressed paths are, though a named caller is never judged."""
+        composed = _Spied(reads_module.composed_pattern)
+        addressed = _Spied(backend_module.addressed_by)
+        monkeypatch.setattr(reads_module, "composed_pattern", composed)
+        monkeypatch.setattr(backend_module, "addressed_by", addressed)
+        ann = Authority.of(Principal("ann"))
+        scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**", "*.py"))
+        assert (await storage.glob(patterns=("/z/*.md",), scope=scope, authority=ann)).success is True
+        assert composed.calls == []
+        assert addressed.calls == [(("/z/*.md",),)]
+
+    async def test_a_gate_past_its_wall_refuses_the_call(
+        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the gate's deadline read dropped, or a gate that reached its
+        wall serving part of the call instead of refusing it whole."""
+        read_body = _Spied(backend_module.glob_rows)
+        monkeypatch.setattr(backend_module, "glob_rows", read_body)
+        judged: list[str] = []
+        real = reads_module.composed_pattern
+
+        def counted(root: Path, arm: str) -> str:
+            judged.append(str(root))
+            return real(root, arm)
+
+        monkeypatch.setattr(reads_module, "composed_pattern", counted)
+        monkeypatch.setattr(backend_module, "monotonic", lambda: 0.0)
+        monkeypatch.setattr(reads_module, "monotonic", lambda: 1e9 if judged else 0.0)
+        monkeypatch.setattr(rights_module, "monotonic", lambda: 1e9 if judged else 0.0)
+        scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
+        result = await storage.glob(patterns=(), scope=scope, authority=Authority.anonymous())
+        [error] = result.errors
+        assert (error.kind, error.path) == (ErrorKind.unauthenticated, None)
+        assert error.message.endswith(_WALL_DETAIL)
+        assert result.observations == []
+        assert read_body.calls == []
+        assert 1 <= len(judged) < len(_SCOPE_ROOTS)
+
+    @pytest.mark.parametrize("stage", ["posture_rows_for_chunks", "posture_refusals"])
+    async def test_a_gate_past_its_wall_at_any_stage_refuses_the_call(
+        self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch, stage: str
+    ) -> None:
+        """Guards: the read between the hops, or the second hop, reaching the
+        wall and serving the call anyway."""
+        read_body = _Spied(backend_module.glob_rows)
+        monkeypatch.setattr(backend_module, "glob_rows", read_body)
+        real = getattr(backend_module, stage)
+
+        def expired(*args: Any, **kwargs: Any) -> Any:
+            return real(*args, **{**kwargs, "deadline": -1.0})
+
+        async def expired_read(*args: Any, **kwargs: Any) -> Any:
+            return await real(*args, **{**kwargs, "deadline": -1.0})
+
+        monkeypatch.setattr(backend_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
+        scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
+        for verb in ("glob", "grep", "glean"):
+            if verb == "glob":
+                result = await storage.glob(patterns=(), scope=scope, authority=Authority.anonymous())
+            elif verb == "grep":
+                result = await storage.grep(pattern="needle", scope=scope, authority=Authority.anonymous())
+            else:
+                result = await storage.glean(query="needle", scope=scope, authority=Authority.anonymous())
+            [error] = result.errors
+            assert (error.kind, error.message.endswith(_WALL_DETAIL)) == (ErrorKind.unauthenticated, True), verb
+        assert read_body.calls == []
+
+    def test_the_pure_steps_read_their_deadline_every_64_paths(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: a pure step that never reads its deadline, or reads it once
+        before the first path only."""
+        paths = [f"/r{i:03}/src" for i in range(65)]
+        anon = Authority.anonymous()
+        clock = iter([0.0, 2.0])
+        monkeypatch.setattr(rights_module, "monotonic", lambda: next(clock, 2.0))
+        assert posture_chain(paths, 1_000, deadline=1.0) is None
+        clock = iter([0.0, 2.0])
+        assert posture_refusals(anon, {}, paths, "read", deadline=1.0) is None
+        chunks = posture_chain(paths, 50, deadline=None)
+        assert chunks is not None and [len(chunk) for chunk in chunks] == [50, 50, 31]
+        chain = [path for chunk in chunks for path in chunk]
+        assert chain == sorted({"/", *paths, *(path.removesuffix("/src") for path in paths)})

@@ -70,6 +70,7 @@ from vfs.paths import (
     METADATA_ROOT,
     ROOT,
     Path,
+    address_of,
     check_reserved_path,
     extract_extension,
     is_trash_path,
@@ -77,6 +78,7 @@ from vfs.paths import (
 )
 from vfs.pattern_matching import (
     PatternError,
+    ScopeChannel,
     compile_gates,
     compile_verifier,
     composed_pattern,
@@ -154,6 +156,10 @@ _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patter
 
 # Residuations the planning walk runs between two reads of its deadline.
 _RESIDUATIONS_PER_CHECK: Final = 64
+
+# Past this many composed arms in one entry (owned roots times arms), the roots
+# ride beside the arms as a scope channel; the storage fan's arm ceiling.
+_COMPOSED_ARM_LIMIT: Final = 200
 
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
@@ -325,7 +331,8 @@ class _PathFilters(NamedTuple):
     The one fan-out argument the pattern-search verbs hand the router
     apart from the forwarded keywords. The two glob channels are
     rewritten per entry — composed under each scope root and residuated
-    into entry coordinates before they cross the seam: ``admissions`` is
+    into entry coordinates before they cross the seam, or past the
+    composition limit sent uncomposed beside the roots: ``admissions`` is
     glob's pattern (its brace-expanded arms) or grep's ``globs``,
     ``exclusions`` is ``globs_not`` on both verbs. The two ext channels
     cross verbatim and are read here only by the root probe's gate.
@@ -354,6 +361,9 @@ class _ScopePlan(NamedTuple):
     members, ``skips`` the capability-skip paths whose reach the walk
     found or could not determine, ``roots`` the scope roots planned
     whole, and ``completed`` whether the walk finished before its wall.
+    ``scopes`` maps each entry past the composition limit to its scope
+    channel: its owned roots in entry coordinates beside the uncomposed
+    arms and exclusion arms.
     """
 
     members: dict[Path, set[str] | None]
@@ -361,6 +371,7 @@ class _ScopePlan(NamedTuple):
     skips: frozenset[Path]
     roots: tuple[Path, ...]
     completed: bool
+    scopes: dict[Path, ScopeChannel]
 
 
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
@@ -1340,10 +1351,14 @@ class AsyncVirtualFileSystem:
         slash-free pattern matches leaf names at any depth. A row is
         admitted by *pattern* and rejected by any *globs_not* glob, the
         *ext*/*ext_not* facts, and a *kind* mismatch. Scoping crosses
-        the storage seam only as pattern text: each root composes into
-        one spatial pattern, residuation puts every entry's members in
-        its own coordinates, and each entry answers its whole set in
-        one call — so the match *set* is invariant to mount placement.
+        the storage seam in one of two shapes. As pattern text: each
+        root composes into one spatial pattern and residuation puts every
+        entry's members in its own coordinates. Or, once an entry's
+        composed arms would pass the router's composition limit, as its
+        roots beside the uncomposed arms, so the SQL grows with roots
+        plus arms rather than their product. Either way each entry
+        answers its whole set in one call, and the shapes answer alike —
+        so the match *set* is invariant to mount placement.
         Roots are find operands: a concurrent probe asserts each one
         (missing is a loud per-root error beside the healthy roots'
         rows) and serves the root's own row when the pattern matches it
@@ -1445,8 +1460,9 @@ class AsyncVirtualFileSystem:
         root, slash-free patterns match leaf names. Scoping crosses the
         storage seam the way glob's does — as pattern text on the
         ``globs`` channels, composed per scope root and residuated into
-        each entry's coordinates, with a concurrent probe asserting the
-        roots (a missing root is a loud per-root error beside the
+        each entry's coordinates, or past the composition limit as the
+        roots beside the uncomposed globs — with a concurrent probe
+        asserting the roots (a missing root is a loud per-root error beside the
         healthy roots' rows; a root's own content joins the scan when
         the caller's globs pass its path). *pattern* is content-only
         and never composes with paths.
@@ -2258,7 +2274,8 @@ class AsyncVirtualFileSystem:
         entry dispatches once (unscoped) but its result still merges
         plain.  The pattern-search verbs build their dispatches apart
         (:meth:`_glob_dispatches` / :meth:`_grep_dispatches`): scoping
-        crosses the seam as pattern text, one batched call per entry,
+        crosses the seam as pattern text, or past the composition limit
+        as roots beside the arms, one batched call per entry either way,
         with root assertions on a concurrent probe that no dispatch
         shape can drop.  *row_cap*
         re-applies the caller's result bound after the merge on every
@@ -2379,7 +2396,7 @@ class AsyncVirtualFileSystem:
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
-        """Build glob's dispatches: scoping crosses the seam as pattern text.
+        """Build glob's dispatches: scoping crosses the seam as pattern text, or as roots beside the arms.
 
         The caller's pattern arrives brace-expanded as the filters'
         *admissions* (its arms) and ``globs_not`` as their *exclusions*;
@@ -2392,8 +2409,11 @@ class AsyncVirtualFileSystem:
         entry's members in entry-local coordinates, and each entry
         receives its whole deduped set as one batched call — exclusions
         compose per root identically, so one can never reach another
-        root's subtree. That planning walk runs in one hop on the
-        router's pool under its own wall (:func:`_plan_scope`); a walk
+        root's subtree. An entry whose owned roots times the arms pass
+        :data:`_COMPOSED_ARM_LIMIT` receives those roots beside the
+        uncomposed arms as its ``scope=`` channel instead, in the same
+        one call, and storage reads the same law without composing.
+        That planning walk runs in one hop on the router's pool under its own wall (:func:`_plan_scope`); a walk
         that reaches it dispatches the roots it planned whole and says
         so. Root assertions ride a separate concurrent
         probe grouped by owning entry (:meth:`_root_probe`),
@@ -2432,16 +2452,17 @@ class AsyncVirtualFileSystem:
                 self._dispatch_entry(
                     capable[key],
                     "glob",
-                    patterns=tuple(sorted(live)),
+                    patterns=tuple(sorted(live or ())),
                     globs_not=tuple(sorted(scope.exclusions[key])),
                     ext=ext,
                     ext_not=ext_not,
                     authority=authority,
+                    **_scoped(scope, key),
                     **kwargs,
                 ),
             )
             for key, live in scope.members.items()
-            if live
+            if live or key in scope.scopes
         ]
         return _Dispatches(probes, branches, self._scope_skips(plan, scope, unverifiable))
 
@@ -2455,7 +2476,7 @@ class AsyncVirtualFileSystem:
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
-        """Build grep's dispatches (glean's too): scoping crosses the seam as glob text.
+        """Build grep's dispatches (glean's too): scoping crosses the seam as glob text, or as roots beside the arms.
 
         Glob's dispatch shape on grep's filters (*admissions* is the
         caller's ``globs``, *exclusions* its ``globs_not``, the ext
@@ -2468,8 +2489,10 @@ class AsyncVirtualFileSystem:
         grep the root row joins the scan, not the probe. Those admissions
         are judged once per call, every distinct root in one hop on the
         router's pool; no globs admit every root. Residuation, the owner
-        gate, dead-entry skips, the planning walk and the root probe are
-        the glob machinery; the probe serves no rows, only classifications.
+        gate, dead-entry skips, the planning walk, the switch to a
+        ``scope=`` channel past the composition limit (each root's literal
+        staying on the ``globs`` batch) and the root probe are the glob
+        machinery; the probe serves no rows, only classifications.
         ``None`` answers a ``close()`` that landed during a hop.
         """
         globs, exclusions, ext, ext_not = filters
@@ -2506,7 +2529,7 @@ class AsyncVirtualFileSystem:
             if key not in scope.members:
                 continue
             members = scope.members[key]
-            if members is not None and not members:
+            if members is not None and not members and key not in scope.scopes:
                 continue
             branches.append(
                 (
@@ -2519,6 +2542,7 @@ class AsyncVirtualFileSystem:
                         ext=ext,
                         ext_not=ext_not,
                         authority=authority,
+                        **_scoped(scope, key),
                         **kwargs,
                     ),
                 )
@@ -3468,6 +3492,12 @@ def _wall_record(guidance: str) -> ResultError:
     return classified(ErrorKind.truncated, severity=Severity.warning, detail=f"at the {WALL_TIME_CAUSE}; {guidance}")
 
 
+def _scoped(plan: _ScopePlan, key: Path) -> dict[str, ScopeChannel]:
+    """The ``scope=`` keyword an entry's dispatch carries: its scope channel, or nothing below the limit."""
+    channel = plan.scopes.get(key)
+    return {} if channel is None else {"scope": channel}
+
+
 def _walks(
     roots: tuple[Path, ...], patterns: tuple[str, ...], exclusions: tuple[str, ...], skips: tuple[Path, ...]
 ) -> bool:
@@ -3518,6 +3548,16 @@ def _plan_scope(
     *patterns* at all is unrestricted. A skip is kept where some *reach*
     pattern can reach its entry's rows.
 
+    Composition is the product of an entry's owned roots and the arms,
+    so past :data:`_COMPOSED_ARM_LIMIT` composed arms an entry's owned
+    roots (each rewritten once into its coordinates) ride its scope
+    channel beside the arms instead. Three things still compose at any
+    size, being bounded: an entry's owned roots within the limit, roots
+    that address its whole side (its bind path, the trash head; at most
+    two), and roots above a nested entry (at most its bind depth). A
+    root's literal, under *literals*, stays on the entry-wide channel,
+    one per root.
+
     The deadline is read before every 64th residuation, inside a root as
     well as between roots (between entries when there is no root), so
     the walk overruns its wall by at most 64 residuations. A root, or
@@ -3530,22 +3570,31 @@ def _plan_scope(
     walk = _Walk(deadline)
     members: dict[Path, set[str] | None] = {key: set() for key in keys} if roots else {}
     excluded: dict[Path, set[str]] = {key: set() for key in keys} if roots else {}
+    switched = _switched_entries(owners, roots, len(patterns) + len(exclusions))
+    channeled: dict[Path, list[Path]] = {key: [] for key in switched}
     planned: list[Path] = []
     kept: set[Path] = set()
     decided = 0
     try:
         if roots:
             for root in roots:
-                staged = {
-                    key: _root_members(root, key, owners, patterns, exclusions, literals, walk)
-                    for key in keys
-                    if key == owners[root] or _path_covers(root, key)
-                }
-                for key, (admitted, refused) in staged.items():
+                staged: dict[Path, tuple[set[str], set[str], Path | None]] = {}
+                for key in keys:
+                    if key != owners[root] and not _path_covers(root, key):
+                        continue
+                    if key in switched and key == owners[root] and not _addresses_whole_side(root, key):
+                        literal = _root_literal(root, key, literals, walk)
+                        staged[key] = (literal, set(), root.without_mount(key))
+                        continue
+                    admitted, refused = _root_members(root, key, owners, patterns, exclusions, literals, walk)
+                    staged[key] = (admitted, refused, None)
+                for key, (admitted, refused, rel) in staged.items():
                     entry_members = members[key]
                     assert entry_members is not None
                     entry_members.update(admitted)
                     excluded[key].update(refused)
+                    if rel is not None:
+                        channeled[key].append(rel)
                 planned.append(root)
         else:
             for key in keys:
@@ -3558,8 +3607,47 @@ def _plan_scope(
             decided += 1
     except _WallReached:
         kept.update(skip_paths[decided:])
-        return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=False)
-    return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=True)
+        scopes = _scope_channels(channeled, patterns, exclusions)
+        return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=False, scopes=scopes)
+    scopes = _scope_channels(channeled, patterns, exclusions)
+    return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=True, scopes=scopes)
+
+
+def _switched_entries(owners: Mapping[Path, Path], roots: tuple[Path, ...], arms: int) -> frozenset[Path]:
+    """The entries whose owned roots, times the call's *arms*, compose past :data:`_COMPOSED_ARM_LIMIT`.
+
+    Only owned roots strictly beneath the entry's side count: a root that
+    addresses the whole side composes at any size.
+    """
+    counts: dict[Path, int] = {}
+    for root in roots:
+        key = owners[root]
+        if not _addresses_whole_side(root, key):
+            counts[key] = counts.get(key, 0) + 1
+    return frozenset(key for key, count in counts.items() if count * arms > _COMPOSED_ARM_LIMIT)
+
+
+def _addresses_whole_side(root: Path, key: Path) -> bool:
+    """Whether *root*, owned by the entry bound at *key*, is that entry's root or its trash view's head."""
+    return address_of(str(root.without_mount(key))).stored == "/"
+
+
+def _root_literal(root: Path, key: Path, literals: frozenset[Path], walk: _Walk) -> set[str]:
+    """A root in *literals* as its own literal path in its owning entry's coordinates; nothing otherwise."""
+    if root not in literals:
+        return set()
+    return set(_residual_renders(escape_glob(str(root)), key, walk))
+
+
+def _scope_channels(
+    channeled: Mapping[Path, list[Path]], patterns: tuple[str, ...], exclusions: tuple[str, ...]
+) -> dict[Path, ScopeChannel]:
+    """Each switched entry's scope channel: its planned owned roots beside the call's uncomposed arms."""
+    return {
+        key: ScopeChannel(roots=tuple(dict.fromkeys(rels)), arms=patterns, arms_not=exclusions)
+        for key, rels in channeled.items()
+        if rels
+    }
 
 
 def _root_members(
@@ -3573,8 +3661,8 @@ def _root_members(
 ) -> tuple[set[str], set[str]]:
     """One root's admissions and exclusions in one entry's coordinates, its literal path included."""
     admitted = _composed_members(key, (root,), owners, patterns, walk)
-    if root in literals and owners[root] == key:
-        admitted.update(_residual_renders(escape_glob(str(root)), key, walk))
+    if owners[root] == key:
+        admitted.update(_root_literal(root, key, literals, walk))
     return admitted, _composed_members(key, (root,), owners, exclusions, walk)
 
 
