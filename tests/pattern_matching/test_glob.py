@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import glob as stdlib_glob
 import re
-from itertools import product
+from itertools import combinations, product
+from time import monotonic
+from typing import Any
 
 import pytest
 
 from tests.support.oracles import glob as oracle
 from vfs.base import AsyncVirtualFileSystem
-from vfs.paths import ROOT, Path
+from vfs.paths import ROOT, Path, extract_extension
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
@@ -24,16 +26,14 @@ from vfs.pattern_matching import (
     PatternError,
     canonical_pattern,
     compile_filter,
+    compile_gates,
     compile_glob,
     composed_pattern,
     derive_ext,
     effective_pattern,
     escape_glob,
     expand_pattern,
-    filter_paths,
     glob_defect,
-    passes_filters,
-    passes_row_filters,
     residuals,
 )
 from vfs.pattern_matching import glob as glob_module
@@ -42,9 +42,30 @@ from vfs.results import ErrorKind
 DEMO_TREE = [Path("/notes.txt"), Path("/docs/a.txt"), Path("/docs/deep/nested/b.txt")]
 
 
+def _admits(pattern: str, path: Path, ext: tuple[str, ...] = ()) -> bool:
+    """One row judged through the call's gates, with no budget."""
+    gates = compile_gates((pattern,), ext=ext)
+    native = gates.native(None)
+    assert native is not None
+    (verdict,), completed = native.judge([(str(path), path.name)], budget=None)
+    assert completed
+    return gates.admits(verdict, extract_extension(path))
+
+
 def matched(pattern: str, ext: tuple[str, ...] = ()) -> list[str]:
-    glob = compile_filter(pattern, ext)
-    return [str(path) for path in DEMO_TREE if glob.matches(path)]
+    return [str(path) for path in DEMO_TREE if _admits(pattern, path, ext)]
+
+
+class _Counted:
+    """A stand-in that counts calls to the function it wraps and records their arguments."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.calls: list[tuple[Any, ...]] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append(args)
+        return self.inner(*args, **kwargs)
 
 
 # =========================================================================
@@ -127,13 +148,12 @@ class TestEscapeGlob:
         for text in ("[x]", "{a,b}", "a*b", "c?d", "data [prod]", "*?[]{}", "[!x]", "[]]"):
             escaped = escape_glob(text)
             assert glob_defect(escaped) is None, escaped
-            gate = compile_filter(escaped, ())
-            assert gate.matches(Path(f"/{text}")), escaped
+            assert _admits(escaped, Path(f"/{text}")), escaped
 
     def test_escaped_text_matches_nothing_else(self):
-        assert not compile_filter(escape_glob("a*b"), ()).matches(Path("/ab"))
-        assert not compile_filter(escape_glob("[x]"), ()).matches(Path("/x"))
-        assert not compile_filter(escape_glob("c?d"), ()).matches(Path("/cxd"))
+        assert not _admits(escape_glob("a*b"), Path("/ab"))
+        assert not _admits(escape_glob("[x]"), Path("/x"))
+        assert not _admits(escape_glob("c?d"), Path("/cxd"))
 
     def test_plain_text_is_untouched(self):
         assert escape_glob("/data/plain.txt") == "/data/plain.txt"
@@ -202,6 +222,63 @@ class TestExpandPattern:
         arms = expand_pattern(pattern)
         assert len(arms) == MAX_PATTERN_ARMS
         assert len(set(arms)) == MAX_PATTERN_ARMS
+
+    @pytest.mark.slow
+    def test_the_brace_walk_agrees_with_the_full_product(self):
+        """Guards: a prefix deduped out of first-appearance order, a one-alternative
+        group expanded instead of folded, or a stop before the cap is passed."""
+        alternatives = ("", "a", "b", "ab", "ba", "a/", "/")
+        firsts = [group for size in range(1, 4) for group in product(alternatives, repeat=size)]
+        seconds = [(), *(group for size in range(1, 3) for group in product(alternatives, repeat=size))]
+        thirds = [(), *(group for size in range(1, 3) for group in product(("", "a", "b"), repeat=size))]
+        assert (len(firsts), len(seconds), len(thirds)) == (399, 57, 13)
+        compared = mismatched = 0
+        for first, second, third in product(firsts, seconds, thirds):
+            parts: list[str | tuple[str, ...]] = ["x", first, ""]
+            if second:
+                parts.extend([second, "/"])
+            if third:
+                parts.extend([third, "z"])
+            for limit in (MAX_PATTERN_ARMS, 5):
+                full = oracle.cross_product(parts, limit)
+                walked = glob_module._cross_product(parts, limit)
+                compared += 1
+                mismatched += walked != (None if len(full) > limit else full)
+        assert (compared, mismatched) == (591_318, 0)
+
+    def test_collapsing_groups_expand_a_bounded_number_of_groups(self, monkeypatch: pytest.MonkeyPatch):
+        """Guards: groups whose arms collapse multiplying the walk, or a
+        one-alternative group expanded rather than folded into the literal."""
+        walks = _Counted(glob_module._cross_product)
+        groups = _Counted(glob_module._expand_group)
+        monkeypatch.setattr(glob_module, "_cross_product", walks)
+        monkeypatch.setattr(glob_module, "_expand_group", groups)
+        pattern = "{,a}" * 64 + "b"
+        with pytest.raises(PatternError, match=r"expands past the arm cap \(64\)"):
+            expand_pattern(pattern)
+        assert (len(walks.calls), len(groups.calls)) == (1, 64)
+        walks.calls.clear()
+        groups.calls.clear()
+        arms = expand_pattern("{,a}" * 63 + "{x}" * 10_000)
+        assert len(arms) == MAX_PATTERN_ARMS
+        assert (len(walks.calls), len(groups.calls)) == (1, 63)
+
+    def test_refusal_texts_over_and_under_the_cap(self):
+        cap = ": expands past the arm cap (64) — narrow the alternation or split the call"
+        inside = "'**' inside a component ('x**y') — use '**' as a whole path segment"
+        over_slash = "{" + ",".join(f"a{i}/" for i in range(65)) + "}x"
+        over_defect = "{" + ",".join(f"a{i}" for i in range(65)) + "}/x**y"
+        collapsing = "{,a}" * 64 + "b"
+        for pattern in (over_slash, over_defect, collapsing):
+            assert glob_defect(pattern) is None
+            with pytest.raises(PatternError) as refused:
+                expand_pattern(pattern)
+            assert str(refused.value) == repr(pattern) + cap
+        under = "{a,b}/x**y"
+        assert glob_defect(under) == f"{inside} (expansion arm 'a/x**y')"
+        with pytest.raises(PatternError) as refused:
+            expand_pattern(under)
+        assert str(refused.value) == repr(under) + f": {inside} (expansion arm 'a/x**y')"
 
 
 # =========================================================================
@@ -273,46 +350,38 @@ class TestCompileFilter:
         assert matched("/*.txt") == ["/notes.txt"]
 
     def test_filter_carries_the_anchored_pattern_for_the_prefilter(self):
-        assert compile_filter("docs/*.txt", ()).pattern == "/docs/*.txt"
-        assert compile_filter("/docs/*.txt", ()).pattern == "/docs/*.txt"
-        assert compile_filter("*.txt", ()).pattern == "*.txt"
+        assert compile_filter("docs/*.txt").pattern == "/docs/*.txt"
+        assert compile_filter("/docs/*.txt").pattern == "/docs/*.txt"
+        assert compile_filter("*.txt").pattern == "*.txt"
 
     def test_subject_rule_a_slash_selects_the_path_arm(self):
-        assert compile_filter("*.txt", ()).by_path is False
-        assert compile_filter("docs/*.txt", ()).by_path is True
+        assert compile_filter("*.txt").by_path is False
+        assert compile_filter("docs/*.txt").by_path is True
 
     def test_name_arm_double_star_behaves_as_star(self):
-        glob = compile_filter("**", ())
-        assert all(glob.matches(path) for path in DEMO_TREE)
+        assert all(_admits("**", path) for path in DEMO_TREE)
 
     def test_dotfiles_match_wildcards(self):
-        glob = compile_filter("*", ())
-        assert glob.matches(Path("/.hidden"))
-        anchored = compile_filter("/docs/*", ())
-        assert anchored.matches(Path("/docs/.hidden"))
+        assert _admits("*", Path("/.hidden"))
+        assert _admits("/docs/*", Path("/docs/.hidden"))
 
     def test_matching_stays_case_sensitive(self):
-        glob = compile_filter("a*", ())
-        assert glob.matches(Path("/a.txt"))
-        assert not glob.matches(Path("/A.txt"))
+        assert _admits("a*", Path("/a.txt"))
+        assert not _admits("a*", Path("/A.txt"))
 
     def test_ext_gate_reads_the_path_derived_extension(self):
-        glob = compile_filter("*", ext=(".PY",))
-        assert glob.matches(Path("/x/a.py"))
-        assert not glob.matches(Path("/x/a.txt"))
-        assert glob.matches(Path("/x/dir.py"))  # kind-free: any path with the suffix
+        assert _admits("*", Path("/x/a.py"), (".PY",))
+        assert not _admits("*", Path("/x/a.txt"), (".PY",))
+        assert _admits("*", Path("/x/dir.py"), (".PY",))  # kind-free: any path with the suffix
 
     def test_ext_gate_and_pattern_gate_compose(self):
-        glob = compile_filter("/docs/*", ext=("txt",))
-        assert glob.matches(Path("/docs/a.txt"))
-        assert not glob.matches(Path("/docs/a.py"))
-        assert not glob.matches(Path("/other/a.txt"))
+        assert _admits("/docs/*", Path("/docs/a.txt"), ("txt",))
+        assert not _admits("/docs/*", Path("/docs/a.py"), ("txt",))
+        assert not _admits("/docs/*", Path("/other/a.txt"), ("txt",))
 
     def test_pure_dotfile_has_no_extension_for_the_ext_gate(self):
-        glob = compile_filter("*.txt", ext=("txt",))
-        assert not glob.matches(Path("/.txt"))  # lexical ext is None
-        without_ext = compile_filter("*.txt", ())
-        assert without_ext.matches(Path("/.txt"))
+        assert not _admits("*.txt", Path("/.txt"), ("txt",))  # lexical ext is None
+        assert _admits("*.txt", Path("/.txt"))
 
 
 # =========================================================================
@@ -376,6 +445,27 @@ class TestEffectivePattern:
         regex = compile_glob(composed)
         assert regex.is_match("/data/[x]/src/a.py")
         assert not regex.is_match("/data/x/src/a.py")
+
+    def test_a_path_arm_composed_under_a_root_never_matches_the_root(self):
+        """Why the root probe judges only name arms: a composed path arm is the
+        root's literal text followed by an anchored arm, so it needs one more '/'."""
+        roots = [
+            Path(text)
+            for text in ("/a", "/data", "/a/b", "/[x]", "/a*b", "/**", "/{a,b}", "/]", "/!", "/-", "/é日", "/a/[!]-/z")
+        ]
+        arms = [
+            "".join(chars)
+            for size in range(1, 5)
+            for chars in product("a*?[]!-/", repeat=size)
+            if "/" in chars and glob_defect("".join(chars)) is None
+        ]
+        assert (len(roots), len(arms)) == (12, 1_170)
+        pairs = matches = 0
+        for root, arm in product(roots, arms):
+            source = oracle._translate(canonical_pattern(effective_pattern(root, arm)), recursive=True)
+            pairs += 1
+            matches += re.match(source, str(root)) is not None
+        assert (pairs, matches) == (14_040, 0)
 
 
 # =========================================================================
@@ -488,22 +578,6 @@ class TestResiduals:
     def test_rendering_a_residual_is_an_anchored_entry_local_pattern(self):
         (residual,) = residuals("/data/deep/*.txt", Path("/data"))
         assert "/" + "/".join(residual) == "/deep/*.txt"
-
-
-class TestFilterPaths:
-    """The public path filter — a pure predicate over paths in hand."""
-
-    def test_keeps_matches_in_input_order_with_duplicates(self) -> None:
-        paths = [Path("/b.txt"), Path("/a.md"), Path("/a.txt"), Path("/b.txt")]
-        assert filter_paths(paths, "*.txt") == ["/b.txt", "/a.txt", "/b.txt"]
-
-    def test_ext_and_anchoring_apply_like_every_other_surface(self) -> None:
-        paths = [Path("/src/a.py"), Path("/lib/a.py"), Path("/src/b.txt")]
-        assert filter_paths(paths, "/src/*") == ["/src/a.py", "/src/b.txt"]
-        assert filter_paths(paths, "*", ("py",)) == ["/src/a.py", "/lib/a.py"]
-
-    def test_meta_paths_are_never_hidden(self) -> None:
-        assert filter_paths([Path("/.vfs/trash/x")], "*") == ["/.vfs/trash/x"]
 
 
 class TestChannelLabels:
@@ -631,7 +705,7 @@ def _oracle_verdict(pattern: str, subject: str) -> bool:
 
 
 def _engine_verdict(pattern: str, subject: str) -> bool:
-    return compile_filter(pattern, ()).program.is_match(subject)
+    return compile_glob(pattern).is_match(subject)
 
 
 class TestTranslateParity:
@@ -640,7 +714,7 @@ class TestTranslateParity:
     @_STDLIB_TRANSLATE
     def test_the_oracle_is_the_stdlibs_text(self) -> None:
         for pattern in PARITY_PATTERNS:
-            gate = compile_filter(pattern, ())
+            gate = compile_filter(pattern)
             # The skipif above guards this 3.13+ attribute at runtime.
             expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
                 gate.pattern, recursive=True, include_hidden=True, seps="/"
@@ -662,7 +736,7 @@ class TestTranslateParity:
         ]
         assert len(patterns) == 2_654
         for pattern in patterns:
-            program = compile_filter(pattern, ()).program
+            program = compile_glob(pattern)
             source = re.compile(oracle._translate(canonical_pattern(pattern), recursive=True))
             for subject in subjects:
                 assert program.is_match(subject) is (source.match(subject) is not None), (pattern, subject)
@@ -678,7 +752,7 @@ class TestTranslateParity:
             pattern = "[" + body + "]"
             if glob_defect(pattern) is not None:
                 continue
-            program = compile_filter(pattern, ()).program
+            program = compile_glob(pattern)
             source = re.compile(oracle._translate(canonical_pattern(pattern), recursive=True))
             for subject in subjects:
                 assert program.is_match(subject) is (source.match(subject) is not None), (pattern, subject)
@@ -694,15 +768,38 @@ class TestTranslateParity:
                 pattern = "".join(combo)
                 if glob_defect(pattern) is not None:
                     continue
-                gate = compile_filter(pattern, ())
+                gate = compile_filter(pattern)
                 expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
                     gate.pattern, recursive=True, include_hidden=True, seps="/"
                 )
                 assert oracle._translate(gate.pattern, recursive=True) == expected, pattern
 
 
-class TestRowFactParity:
-    """The string gate answers exactly as the Path gate, fact for fact."""
+def _kept(
+    paths: list[Path],
+    *,
+    globs: tuple[str, ...] = (),
+    globs_not: tuple[str, ...] = (),
+    ext: tuple[str, ...] = (),
+    ext_not: tuple[str, ...] = (),
+) -> list[Path]:
+    """The paths in hand the call's gates admit, order kept, judged in one batch."""
+    gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
+    verdicts: list[int | None] = [0] * len(paths)
+    if gates.has_patterns:
+        native = gates.native(None)
+        assert native is not None
+        verdicts, completed = native.judge([(str(path), path.name) for path in paths], budget=None)
+        assert completed
+    return [path for path, verdict in zip(paths, verdicts, strict=True) if gates.admits(verdict, path.ext)]
+
+
+def _is_marked(pattern: str) -> bool:
+    return pattern.startswith("/.vfs")
+
+
+class TestGlobGates:
+    """The call's gates: one native set judges the rows, the filter law reads the verdicts."""
 
     PARITY_PATHS = (
         "/Makefile",
@@ -727,32 +824,104 @@ class TestRowFactParity:
         "**",
         "/.vfs/**",
     )
+    EXT_CHANNELS = (
+        ((), ()),
+        (("py",), ()),
+        ((), ("md",)),
+        (("py", "txt"), ("md",)),
+    )
 
-    def test_hits_agrees_with_matches_everywhere(self) -> None:
-        for text, pattern in product(self.PARITY_PATHS, self.PARITY_PATTERNS):
-            path = Path(text)
-            gate = compile_filter(pattern, ("py", "md"))
-            bare = compile_filter(pattern, ())
-            for compiled in (gate, bare):
-                assert compiled.hits(str(path), path.name, path.ext) is compiled.matches(path), (
-                    f"{pattern!r} disagrees on {path}"
+    def test_verdicts_agree_with_the_per_row_oracle(self) -> None:
+        """Guards: the marked group's bit read as an unmarked one, an exclusion
+        bit ignored, or the ext facts applied before admission."""
+        paths = [Path(text) for text in self.PARITY_PATHS]
+        rows = [(str(path), path.name) for path in paths]
+        admission_sets = [subset for size in range(3) for subset in combinations(self.PARITY_PATTERNS, size)]
+        exclusion_sets = [subset for size in range(2) for subset in combinations(self.PARITY_PATTERNS, size)]
+        assert (len(admission_sets), len(exclusion_sets)) == (46, 10)
+        compared = 0
+        for admissions, exclusions, (ext, ext_not) in product(admission_sets, exclusion_sets, self.EXT_CHANNELS):
+            gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=_is_marked)
+            native = gates.native(None)
+            assert native is not None
+            verdicts, completed = native.judge(rows, budget=None)
+            assert completed
+            canonical_admissions = [canonical_pattern(pattern) for pattern in admissions]
+            canonical_exclusions = [canonical_pattern(pattern) for pattern in exclusions]
+            for (path, verdict), marked_only in product(zip(paths, verdicts, strict=True), (False, True)):
+                expected = oracle.passes_filters(
+                    str(path),
+                    path.name,
+                    path.ext,
+                    canonical_admissions,
+                    canonical_exclusions,
+                    frozenset(ext),
+                    frozenset(ext_not),
+                    marked=_is_marked,
+                    marked_only=marked_only,
                 )
+                actual = gates.admits(verdict, path.ext, marked_only=marked_only)
+                assert actual is expected, (str(path), admissions, exclusions, ext, ext_not, marked_only)
+                compared += 1
+        assert compared == 36_800
 
-    def test_passes_row_filters_agrees_with_passes_filters(self) -> None:
-        gates = [compile_filter("src/**", ()), compile_filter("*.md", ())]
-        not_gates = [compile_filter("**/app/**", ())]
-        channels = (
-            (gates, [], frozenset(), frozenset()),
-            (gates, not_gates, frozenset({"py"}), frozenset()),
-            ([], not_gates, frozenset(), frozenset({"md"})),
-            ([], [], frozenset({"py", "txt"}), frozenset({"md"})),
-        )
-        for text in self.PARITY_PATHS:
-            path = Path(text)
-            for admit, deny, wanted, unwanted in channels:
-                expected = passes_filters(path, admit, deny, wanted, unwanted)
-                actual = passes_row_filters(str(path), path.name, path.ext, admit, deny, wanted, unwanted)
-                assert actual is expected, f"{text!r} disagrees under {wanted}/{unwanted}"
+    def test_each_distinct_pattern_builds_one_program(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: a pattern shared by two channels, or repeated in one, built
+        twice; or a second native() call building the set again."""
+        sets = _Counted(glob_module.glob_set)
+        programs = _Counted(glob_module.glob_program)
+        monkeypatch.setattr(glob_module, "glob_set", sets)
+        monkeypatch.setattr(glob_module, "glob_program", programs)
+        gates = compile_gates(("*.py", "/src/**", "*.py"), ("*.py", "**/app/**"))
+        deadline = monotonic() + 60.0
+        first = gates.native(deadline)
+        assert first is not None and gates.native(deadline) is first
+        assert len(sets.calls) == 1
+        assert len(sets.calls[0][0]) == 3
+        assert programs.calls == []
+
+    def test_an_unjudged_row_never_passes(self) -> None:
+        for gates in (compile_gates(("*.py",)), compile_gates((), ("*.md",)), compile_gates(())):
+            assert gates.admits(None, "py") is False
+            assert gates.admits(None, "py", marked_only=True) is False
+
+    def test_the_ext_facts_need_no_pattern(self) -> None:
+        paths = [Path("/src/a.py"), Path("/src/b.txt"), Path("/lib/c.py")]
+        gates = compile_gates((), ext=("py",))
+        assert gates.has_patterns is False
+        assert [path for path in paths if gates.admits(0, path.ext)] == ["/src/a.py", "/lib/c.py"]
+        unwanted = compile_gates((), ext_not=("py",))
+        assert unwanted.has_patterns is False
+        assert [path for path in paths if unwanted.admits(0, path.ext)] == ["/src/b.txt"]
+        for ext, ext_not, kept in (((".PY",), (), ["/src/a.py", "/lib/c.py"]), ((), (".PY",), ["/src/b.txt"])):
+            normalized = compile_gates((), ext=ext, ext_not=ext_not)
+            assert normalized.has_patterns is False
+            assert [path for path in paths if normalized.admits(0, path.ext)] == kept
+        everything = [Path("/a"), Path("/.vfs/meta.txt")]
+        bare = compile_gates(())
+        assert bare.has_patterns is False
+        assert [path for path in everything if bare.admits(0, path.ext)] == everything
+
+    def test_glob_channels_and_ext_facts_gate_in_order(self) -> None:
+        paths = [Path("/src/a.py"), Path("/src/b.txt"), Path("/lib/c.py")]
+        assert _kept(paths, globs=("/src/**",)) == ["/src/a.py", "/src/b.txt"]
+        assert _kept(paths, globs_not=("*.txt",)) == ["/src/a.py", "/lib/c.py"]
+        assert _kept(paths, ext=("py",)) == ["/src/a.py", "/lib/c.py"]
+        assert _kept(paths, ext_not=("py",)) == ["/src/b.txt"]
+
+    def test_ext_members_normalize_dots_and_case(self) -> None:
+        paths = [Path("/src/a.py"), Path("/src/b.txt")]
+        assert _kept(paths, ext=(".PY",)) == ["/src/a.py"]
+        assert _kept(paths, ext_not=(".PY",)) == ["/src/b.txt"]
+
+    def test_no_gates_means_everything_passes(self) -> None:
+        paths = [Path("/a"), Path("/.vfs/meta.txt")]
+        assert _kept(paths) == paths  # no meta rule: paths in hand are never hidden
+        assert _kept([Path("/.vfs/trash/x")], globs=("*",)) == ["/.vfs/trash/x"]
+
+    def test_rows_keep_input_order_with_duplicates(self) -> None:
+        paths = [Path("/b.txt"), Path("/a.md"), Path("/a.txt"), Path("/b.txt")]
+        assert _kept(paths, globs=("*.txt",)) == ["/b.txt", "/a.txt", "/b.txt"]
 
 
 # =========================================================================
@@ -784,7 +953,7 @@ class TestGlobProgram:
         counting = _CountingRe()
         monkeypatch.setattr(glob_module, "re", counting)
         shape = "*a" * 12 + "*b"
-        assert compile_filter(shape, ()).matches(Path("/d/" + "a" * 255)) is False
+        assert _admits(shape, Path("/d/" + "a" * 255)) is False
         assert residuals("/x/" + shape, Path("/x/" + "a" * 255)) == frozenset()
         assert counting.calls == 0
 
@@ -793,10 +962,9 @@ class TestGlobProgram:
         assert defect is not None and "lone surrogate: U+DC80" in defect
 
     def test_a_question_mark_matches_one_character_of_any_width(self) -> None:
-        gate = compile_filter("?", ())
         for name in ("é", "日", "😀"):
-            assert gate.matches(Path("/" + name)), name
-        assert not gate.matches(Path("/ab"))
+            assert _admits("?", Path("/" + name)), name
+        assert not _admits("?", Path("/ab"))
 
 
 async def test_a_backtracking_shape_globs_through_the_verb() -> None:

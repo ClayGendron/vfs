@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - pinned by a subprocess test
     )
     raise ImportError(message) from error
 
-EXPECTED_PROTOCOL: Final = 12
+EXPECTED_PROTOCOL: Final = 13
 
 if _ext.PROTOCOL_VERSION != EXPECTED_PROTOCOL:  # pragma: no cover - pinned by a subprocess test
     message = (
@@ -98,6 +98,28 @@ def glob_program(atoms: list[tuple[str, list[tuple[str, str]]]]) -> Any:
     malformed program raises ``ValueError``.
     """
     return _ext.GlobProgram(atoms)
+
+
+def glob_set(
+    programs: list[tuple[list[tuple[str, list[tuple[str, str]]]], bool]],
+    groups: list[list[int]],
+    *,
+    budget: float | None,
+) -> Any:
+    """The engine's matcher for one call's glob programs, in groups.
+
+    Each program is ``(atoms, by_path)``: its atoms in the shape
+    :func:`glob_program` takes, and whether it matches the row's path
+    (otherwise its leaf name). Each group lists program indices, at most
+    64 groups. The set is built off the GIL under *budget*, wall seconds
+    from call start, and ``None`` answers a build that reached it. The
+    set's ``judge(rows, *, budget)`` takes ``(path, name)`` pairs and
+    answers one verdict word per row, bit ``g`` set when a program of
+    group ``g`` matches, with whether every row was judged; rows judged
+    in parallel off the GIL, a row the budget stopped answering ``None``.
+    A malformed program or group raises ``ValueError``.
+    """
+    return _ext.glob_set(programs, groups, budget=budget)
 
 
 # ---------------------------------------------------------------------------

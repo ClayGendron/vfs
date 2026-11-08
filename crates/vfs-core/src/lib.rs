@@ -28,7 +28,7 @@ mod verify;
 mod python;
 
 pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
-pub use glob::{Atom, GlobProgram, ProgramError};
+pub use glob::{Atom, GlobProgram, GlobSet, MAX_GROUPS, ProgramError, judge_batch};
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, RefParser, fold_line, markdown_refs, markdown_refs_batch};
 pub use lexical::{

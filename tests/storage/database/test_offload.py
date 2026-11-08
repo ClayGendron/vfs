@@ -11,7 +11,7 @@ import asyncio
 import gc
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -22,18 +22,20 @@ from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
 from vfs.models import Entry, measure_bytes
 from vfs.paths import Path
-from vfs.pattern_matching import compile_verifier
+from vfs.pattern_matching import compile_gates, compile_verifier
+from vfs.pattern_matching import glob as glob_module
 from vfs.storage.backends.database import DatabaseStorage, seams
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import offload as offload_module
 from vfs.storage.backends.database import writes as writes_module
-from vfs.storage.backends.database.offload import VerifyOffload
+from vfs.storage.backends.database.offload import VerifyOffload, judge_rows
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
+    from concurrent.futures import Future
 
     from vfs.pattern_matching import Body
     from vfs.pattern_matching.grep import MatchSpan
@@ -255,6 +257,157 @@ class TestLoopResponsiveness:
         ticker.stop()
         assert counts == [1] and completed is True
         assert ticker.hops == 1  # the one batch hopped off the loop and saw it turn
+
+
+# ---------------------------------------------------------------------------
+# The judge hop: one native set, built under the wall, judged on a worker
+# ---------------------------------------------------------------------------
+
+_ROWS = [("/src/a.py", "a.py"), ("/src/b.md", "b.md")]
+
+
+class _HoppingSet:
+    """A native set double whose judging waits for the loop to turn."""
+
+    def __init__(self, ticker: LoopTicker) -> None:
+        self._ticker = ticker
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._ticker.hop()
+        return [1] * len(rows), True
+
+
+class _RecordingSet:
+    """A native set double that records the budget it was handed."""
+
+    def __init__(self, events: list[object]) -> None:
+        self._events = events
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._events.append(("judge", budget))
+        return [0] * len(rows), True
+
+
+class _CountingExecutor(Executor):
+    """An executor that counts submissions and records when each task starts."""
+
+    def __init__(self, inner: ThreadPoolExecutor) -> None:
+        self._inner = inner
+        self.submitted = 0
+        self.started = 0
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        self.submitted += 1
+
+        def run() -> Any:
+            self.started += 1
+            return fn(*args, **kwargs)
+
+        return self._inner.submit(run)
+
+
+class TestJudgeRows:
+    async def test_judging_runs_on_a_worker_while_the_loop_turns(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the judge work called inline instead of through the pool."""
+        ticker = LoopTicker().start()
+        gates = compile_gates(("*.py",))
+        monkeypatch.setattr(gates, "native", lambda deadline: _HoppingSet(ticker))
+        verdicts, completed = await judge_rows(pool, gates, _ROWS, deadline=monotonic() + 5.0)
+        ticker.stop()
+        assert (verdicts, completed) == ([1, 1], True)
+        assert ticker.hops == 1
+
+    async def test_the_budget_is_cut_after_the_build(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the budget cut hoisted before the build, so the build's time
+        extends the wall instead of shortening the judging."""
+        events: list[object] = []
+        gates = compile_gates(("*.py",))
+
+        def build(deadline: float | None) -> _RecordingSet:
+            events.append("build")
+            return _RecordingSet(events)
+
+        def clock() -> float:
+            events.append("cut")
+            return 103.0
+
+        monkeypatch.setattr(gates, "native", build)
+        monkeypatch.setattr(offload_module, "monotonic", clock)
+        await judge_rows(pool, gates, _ROWS, deadline=110.0)
+        assert events == ["build", "cut", ("judge", 7.0)]
+
+    async def test_a_build_past_the_deadline_stops(
+        self, pool: ThreadPoolExecutor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the build's deadline check dropped, so a stopped build still
+        walks every pattern, or a later hop on the same gates builds again."""
+        walks: list[str] = []
+        sets: list[object] = []
+        real_walk = glob_module._program
+        real_set = glob_module.glob_set
+
+        def walk(pattern: str, *, recursive: bool) -> Any:
+            walks.append(pattern)
+            return real_walk(pattern, recursive=recursive)
+
+        def built(*args: Any, **kwargs: Any) -> Any:
+            sets.append(args)
+            return real_set(*args, **kwargs)
+
+        monkeypatch.setattr(glob_module, "_program", walk)
+        monkeypatch.setattr(glob_module, "glob_set", built)
+        monkeypatch.setattr(glob_module, "monotonic", lambda: 2.0 if walks else 0.0)
+        gates = compile_gates(("*.py", "/src/**", "*.md"))
+        for _hop in range(2):
+            verdicts, completed = await judge_rows(pool, gates, _ROWS, deadline=1.0)
+            assert (verdicts, completed) == ([None, None], False)
+            assert (len(walks), sets) == (1, [])
+
+    async def test_no_rows_or_no_patterns_make_no_hop(self, pool: ThreadPoolExecutor) -> None:
+        executor = _CountingExecutor(pool)
+        past = monotonic() - 1.0
+        assert await judge_rows(executor, compile_gates(("*.py",)), [], deadline=past) == ([], True)
+        assert await judge_rows(executor, compile_gates((), ext=("py",)), _ROWS, deadline=past) == ([0, 0], True)
+        assert executor.submitted == 0
+
+    async def test_concurrent_hops_build_the_set_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the build lock removed, so two hops racing on one call's gates
+        both build the set."""
+        inner = ThreadPoolExecutor(max_workers=2, thread_name_prefix="test-judge")
+        executor = _CountingExecutor(inner)
+        both_started = threading.Event()
+        calls: list[object] = []
+        real = glob_module.glob_set
+
+        def held(*args: Any, **kwargs: Any) -> Any:
+            calls.append(args)
+            # The first builder waits for the second hop to start, so the two overlap.
+            deadline = time.monotonic() + 5.0
+            while executor.started < 2 and time.monotonic() < deadline:
+                time.sleep(0.001)
+            both_started.set()
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(glob_module, "glob_set", held)
+        gates = compile_gates(("*.py",))
+        deadline = monotonic() + 30.0
+        first, second = await asyncio.gather(
+            judge_rows(executor, gates, _ROWS, deadline=deadline),
+            judge_rows(executor, gates, _ROWS, deadline=deadline),
+        )
+        inner.shutdown(wait=True)
+        assert both_started.is_set() and executor.started == 2
+        assert first == second == ([1, 0], True)
+        assert len(calls) == 1
+
+    async def test_a_shut_pool_judges_inline(self, pool: ThreadPoolExecutor) -> None:
+        pool.shutdown(wait=True)
+        gates = compile_gates(("*.py",))
+        assert await judge_rows(pool, gates, _ROWS, deadline=monotonic() + 5.0) == ([1, 0], True)
 
 
 # ---------------------------------------------------------------------------

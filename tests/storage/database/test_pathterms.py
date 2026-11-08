@@ -20,7 +20,7 @@ from sqlalchemy import select
 from tests.support.database_helpers import _url
 from vfs.models import Entry
 from vfs.paths import Path
-from vfs.pattern_matching import compile_filter, glob_defect
+from vfs.pattern_matching import compile_gates, glob_defect
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database.pathterms import (
     ArmTerms,
@@ -94,6 +94,15 @@ GLOBS = (
     "/deep/er/**",
     "src/{app,app.tests}/**",
 )
+
+
+def _admits(pattern: str, path: Path) -> bool:
+    """The authority's verdict on one path: the call's gates over one native judgement."""
+    gates = compile_gates((pattern,))
+    native = gates.native(None)
+    assert native is not None
+    (verdict,), _completed = native.judge([(str(path), path.name)], budget=None)
+    return gates.admits(verdict, path.ext)
 
 
 def _nominated(arm: ArmTerms, path: Path) -> bool:
@@ -201,10 +210,9 @@ class TestSupersetLaw:
     @pytest.mark.parametrize("pattern", GLOBS)
     def test_term_nomination_covers_the_authority(self, pattern: str) -> None:
         assert glob_defect(pattern) is None
-        authority = compile_filter(pattern, ())
         arms = compile_terms(pattern)
         for path in PATHS:
-            if authority.matches(path):
+            if _admits(pattern, path):
                 assert any(_nominated(arm, path) for arm in arms), f"{pattern!r} matches {path} but no arm nominates it"
 
     def test_directory_positions_nominate_ancestors_not_order(self) -> None:
@@ -212,7 +220,7 @@ class TestSupersetLaw:
         # over-approximate by design, never the other way around.
         (arm,) = compile_terms("a/x/**")
         assert _nominated(arm, Path("/x/a/f.txt")) is True
-        assert compile_filter("a/x/**", ()).matches(Path("/x/a/f.txt")) is False
+        assert _admits("a/x/**", Path("/x/a/f.txt")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +262,7 @@ class TestAllowListSeam:
         assert ids is not None
         by_id = await _paths_by_id(storage)
         admitted = {by_id[doc_id] for doc_id in ids}
-        authority = compile_filter("src/**/*.py", ())
-        matched = {str(path) for path in by_id.values() if authority.matches(Path(path))}
+        matched = {str(path) for path in by_id.values() if _admits("src/**/*.py", Path(path))}
         assert matched <= admitted
 
     async def test_multi_term_arms_intersect(self, storage: DatabaseStorage) -> None:
@@ -375,5 +382,4 @@ class TestAllowListSeam:
         assert ids is not None
         by_id = await _paths_by_id(storage)
         admitted = {by_id[doc_id] for doc_id in ids}
-        excluded_by_caller = compile_filter("src/**/*.py", ())
-        assert any(excluded_by_caller.matches(Path(path)) for path in admitted)
+        assert any(_admits("src/**/*.py", Path(path)) for path in admitted)

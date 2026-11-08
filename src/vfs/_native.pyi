@@ -47,6 +47,16 @@ class GlobProgram:
     def __init__(self, atoms: list[tuple[str, list[tuple[str, str]]]]) -> None: ...
     def is_match(self, subject: str) -> bool: ...
 
+class GlobSet:
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]: ...
+
+def glob_set(
+    programs: list[tuple[list[tuple[str, list[tuple[str, str]]]], bool]],
+    groups: list[list[int]],
+    *,
+    budget: float | None,
+) -> GlobSet | None: ...
+
 class ContentMatcher:
     def __init__(self, pattern: str, case_insensitive: bool) -> None: ...
     def count_lines(

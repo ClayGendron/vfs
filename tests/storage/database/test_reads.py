@@ -9,7 +9,9 @@ verbs that have not landed.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, insert, select, text, update
@@ -17,9 +19,11 @@ from sqlalchemy.exc import DBAPIError
 from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
+from tests.support.loop_ticks import LoopTicker
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
+from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
 from vfs.storage import ResolvedPair
@@ -33,7 +37,11 @@ from vfs.storage.backends.database.reads import (
     ext_membership,
     render_notes,
 )
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import LEVEL_RANK
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -899,4 +907,113 @@ class TestBytesReads:
         [row] = projected.observations
         assert row.data == body and row.content is None and projected.errors == []
         assert row.populated == {"path", "kind", "version", "data", "content_hash"}
+        await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Glob's wall: the candidates judged off the loop, under a deadline
+# ---------------------------------------------------------------------------
+
+
+class _JudgedSet:
+    """A native set wrapped to record each hop's thread, hop the ticker, or leave rows unjudged."""
+
+    def __init__(self, inner: Any, spy: _SetSpy) -> None:
+        self._inner = inner
+        self._spy = spy
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._spy.threads.append(threading.current_thread().name)
+        if self._spy.ticker is not None:
+            self._spy.ticker.hop()
+        verdicts, completed = self._inner.judge(rows, budget=budget)
+        if self._spy.unjudged is not None:
+            verdicts[self._spy.unjudged] = None
+            completed = False
+        return verdicts, completed
+
+
+class _SetSpy:
+    """Stands in for the pattern layer's ``glob_set``: counts builds, wraps each set."""
+
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, *, ticker: LoopTicker | None = None, unjudged: int | None = None
+    ):
+        self._real = glob_module.glob_set
+        self.builds = 0
+        self.threads: list[str] = []
+        self.ticker = ticker
+        self.unjudged = unjudged
+        monkeypatch.setattr(glob_module, "glob_set", self)
+
+    def __call__(self, programs: Any, groups: Any, *, budget: float | None) -> Any:
+        self.builds += 1
+        built = self._real(programs, groups, budget=budget)
+        return None if built is None else _JudgedSet(built, self)
+
+
+class TestGlobWall:
+    async def test_storage_glob_leaves_the_loop(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: storage glob judging its candidates inline on the loop."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a.txt", "file", "x"), ("/b.txt", "file", "x")])
+        ticker = LoopTicker().start()
+        spy = _SetSpy(monkeypatch, ticker=ticker)
+        result = await storage.glob(patterns=("*.txt",))
+        ticker.stop()
+        assert [str(o.path) for o in result.observations] == ["/a.txt", "/b.txt"]
+        assert (ticker.hops, spy.builds) == (1, 1)
+        await storage.close()
+
+    async def test_an_expired_glob_wall_truncates_with_a_warning(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path), glob_wall_seconds=1e-9)
+        await _seed(storage, [("/a.txt", "file", "x"), ("/b.txt", "file", "x"), ("/c.txt", "file", "x")])
+        result = await storage.glob(patterns=("*.txt",))
+        assert result.observations == []
+        [error] = result.errors
+        assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+        assert error.message == (
+            "Truncated: at the wall-time budget; "
+            "narrow the pattern or its exclusions, add ext filters, or scope with paths"
+        )
+        await storage.close()
+
+    @pytest.mark.parametrize("seconds", [0, -1])
+    def test_a_non_positive_glob_wall_refuses_at_construction(self, tmp_path, seconds: float) -> None:
+        with pytest.raises(ValueError, match="glob_wall_seconds"):
+            DatabaseStorage(url=_url(tmp_path), glob_wall_seconds=seconds)
+        with pytest.raises(ValueError, match="glob_wall_seconds"):
+            InMemoryStorage(glob_wall_seconds=seconds)
+
+    async def test_glob_judges_each_side_once_on_the_backend_pool(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: one hop per candidate instead of one per tombstone side, or the
+        judging run off the backend's own pool."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        written = await storage.write(entries=[Entry(path=Path(p), content="x") for p in ("/live.txt", "/gone.txt")])
+        assert written.success is True
+        assert (await storage.delete(path=Path("/gone.txt"))).success is True
+        spy = _SetSpy(monkeypatch)
+        live = await storage.glob(patterns=("*.txt",))
+        assert [str(o.path) for o in live.observations] == ["/live.txt"]
+        assert len(spy.threads) == 1
+        both = await storage.glob(patterns=("/.vfs/trash/*.txt", "*.txt"))
+        assert [str(o.path) for o in both.observations] == ["/gone.txt", "/live.txt"]
+        assert len(spy.threads) == 3
+        assert all(name.startswith("vfs-offload") for name in spy.threads), spy.threads
+        await storage.close()
+
+    async def test_max_count_applies_to_the_rows_judged_in_time(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: max_count cut before the law, or the warning dropped once
+        max_count is met, though the unjudged row may sort first."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/a.txt", "file", "x"), ("/b.txt", "file", "x"), ("/c.txt", "file", "x")])
+        _SetSpy(monkeypatch, unjudged=0)
+        result = await storage.glob(patterns=("*.txt",), max_count=1)
+        assert len(result.observations) == 1
+        [error] = result.errors
+        assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
         await storage.close()

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from vfs.embedding import HashEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.grep import WALL_TIME_BUDGET
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET
 
 if TYPE_CHECKING:
     from vfs.embedding import EmbeddingProvider
@@ -46,6 +46,7 @@ class InMemoryStorage(DatabaseStorage):
         description: str = "In-memory storage",
         trash_days: int = 90,
         grep_wall_seconds: float = WALL_TIME_BUDGET,
+        glob_wall_seconds: float = WALL_TIME_BUDGET,
         embedder: EmbeddingProvider | None = None,
     ) -> None:
         super().__init__(
@@ -54,5 +55,6 @@ class InMemoryStorage(DatabaseStorage):
             description=description,
             trash_days=trash_days,
             grep_wall_seconds=grep_wall_seconds,
+            glob_wall_seconds=glob_wall_seconds,
             embedder=HashEmbeddingProvider() if embedder is None else embedder,
         )

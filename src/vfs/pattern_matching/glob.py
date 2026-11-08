@@ -14,27 +14,35 @@ silent ``*``. Matching runs on the engine's native glob program, which
 never backtracks: one match costs at most a fixed number of word
 operations per character of the subject, whatever the wildcards.
 
+A call's rows are judged in batches, off the event loop: the call's
+patterns become one :class:`GlobGates`, whose native set is built once
+per call on a worker and judges every row of a stage in one hop
+(``judge_rows`` in the storage offload seam), under the stage's wall.
+The filter law then reads each row's verdict here, in Python.
+
     try:
         arms = expand_pattern(pattern)      # gate, brace-expand, cap — or PatternError
     except PatternError as exc:
         ...  # classify invalid, prefixed with the channel label; touch no rows
-    gates = [compile_filter(arm, ext=()) for arm in arms]
-    kept = [p for p in candidates if any(g.matches(p) for g in gates)]
+    gates = compile_gates(arms, globs_not, ext=ext)
+    verdicts, completed = await judge_rows(pool, gates, rows, deadline=deadline)
+    kept = [row for row, verdict in zip(rows, verdicts) if gates.admits(verdict, ext_of(row))]
 """
 
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
-from itertools import product
+from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol
 
-from vfs.native import glob_program
-from vfs.paths import Path, extract_extension, normalize_ext_channel, normalize_extension
+from vfs.native import glob_program, glob_set
+from vfs.paths import Path, normalize_ext_channel, normalize_extension
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
 # Ceiling on the distinct arms one pattern may expand to; callers
 # refuse an over-cap expansion loudly rather than fan it out.
@@ -48,12 +56,15 @@ GLOB_CHANNEL_LABELS: Final[Mapping[GlobChannel, str]] = MappingProxyType(
     {"pattern": "glob pattern", "globs": "grep glob", "globs_not": "glob exclusion"}
 )
 
-# The row facts `passes_row_filters` reads beside the path: storage rides
-# these columns on every candidate fetch so the gate never builds a Path.
+# The row facts `GlobGates` reads beside the path: storage rides these
+# columns on every candidate fetch so the gate never builds a Path.
 ROW_GATE_FIELDS: Final = frozenset({"name", "ext"})
 
 # One program atom: an op and its code-point ranges (see `vfs.native.glob_program`).
 GlobAtom = tuple[str, list[tuple[str, str]]]
+
+# One row a set judges: its path and its leaf name.
+GlobRow = tuple[str, str]
 
 
 class GlobProgram(Protocol):
@@ -61,6 +72,14 @@ class GlobProgram(Protocol):
 
     def is_match(self, subject: str) -> bool:
         """Whether the whole *subject* matches, from its first character."""
+        ...
+
+
+class GlobSet(Protocol):
+    """The engine's matcher for one call's programs in groups (see `vfs.native.glob_set`)."""
+
+    def judge(self, rows: Sequence[GlobRow], *, budget: float | None) -> tuple[list[int | None], bool]:
+        """Each row's verdict word, ``None`` where *budget* stopped it, and whether every row was judged."""
         ...
 
 
@@ -79,36 +98,16 @@ class PatternError(ValueError):
 
 @dataclass(frozen=True)
 class GlobFilter:
-    """The compiled per-candidate predicate; build via :func:`compile_filter`.
+    """One canonical pattern and its subject rule; build via :func:`compile_filter`.
 
     ``pattern`` is the anchored form — the one the SQL prefilter must
-    translate, so prefilter and authority read the same text.
+    translate, so prefilter and authority read the same text; ``by_path``
+    says whether it matches the row's path or its leaf name. Matching
+    is :class:`GlobGates`'s, over every row of a call at once.
     """
 
     pattern: str
     by_path: bool
-    program: GlobProgram
-    wanted_ext: frozenset[str]
-
-    def matches(self, path: Path) -> bool:
-        """Compiled-program authority over the subject, then the path-derived ext gate."""
-        subject = str(path) if self.by_path else path.name
-        if not self.program.is_match(subject):
-            return False
-        return not self.wanted_ext or (extract_extension(path) or "") in self.wanted_ext
-
-    def hits(self, path: str, name: str, ext: str | None) -> bool:
-        """The same verdict as :meth:`matches`, off row facts already in hand.
-
-        *name* and *ext* must be the path's own leaf name and derived
-        extension (storage's stored columns mirror both by invariant) —
-        no ``Path`` is minted on this arm. Parity with :meth:`matches`
-        is pinned by test.
-        """
-        subject = path if self.by_path else name
-        if not self.program.is_match(subject):
-            return False
-        return not self.wanted_ext or (ext or "") in self.wanted_ext
 
 
 # ---------------------------------------------------------------------------
@@ -145,18 +144,12 @@ def glob_defect(pattern: str) -> str | None:
     brace pattern is gated twice: structure on the raw text, then the
     component checks per expansion arm, the refusal naming the arm
     expansion manufactured (``x/{a,}`` yields the empty-component arm
-    ``x/``). Loud refusal beats a false friend.
+    ``x/``). Loud refusal beats a false friend. A pattern that expands
+    past the arm cap has no component defect here: its walk stops on
+    partial arms, which cannot name the defects of whole ones, and
+    :func:`expand_pattern` refuses it by the cap.
     """
-    if "{" in pattern or "}" in pattern:
-        parts, brace_defect = _parse_braces(pattern)
-        if brace_defect is not None:
-            return brace_defect
-        if any(isinstance(part, tuple) for part in parts):
-            for arm in _cross_product(parts, MAX_PATTERN_ARMS):
-                if (defect := _component_defect(arm)) is not None:
-                    return f"{defect} (expansion arm {arm!r})"
-            return None
-    return _component_defect(pattern)
+    return _admit(pattern).defect
 
 
 def expand_pattern(pattern: str) -> tuple[str, ...]:
@@ -168,22 +161,19 @@ def expand_pattern(pattern: str) -> tuple[str, ...]:
     groups cross-product left to right, and duplicates collapse to
     first appearance. A brace-free pattern returns itself, so the call
     is idempotent over its own output — a surface handed pre-expanded
-    arms loses nothing by expanding again. Collection stops one arm
-    past :data:`MAX_PATTERN_ARMS` and refuses, so an over-cap expansion
-    is detected without being materialized. The refusal names the
-    pattern and the defect; the channel label is the caller's.
+    arms loses nothing by expanding again. The walk stops once its
+    distinct partial arms pass :data:`MAX_PATTERN_ARMS` and refuses, so
+    an over-cap expansion is detected without being materialized, and
+    the work is linear in the pattern's text. The refusal names the
+    pattern and the defect, or the cap; the channel label is the caller's.
     """
-    defect = glob_defect(pattern)
-    if defect is not None:
-        raise PatternError(f"{pattern!r}: {defect}")
-    if "{" not in pattern:
-        return (pattern,)
-    parts, _defect = _parse_braces(pattern)
-    arms = _cross_product(parts, MAX_PATTERN_ARMS)
-    if len(arms) > MAX_PATTERN_ARMS:
+    admitted = _admit(pattern)
+    if admitted.defect is not None:
+        raise PatternError(f"{pattern!r}: {admitted.defect}")
+    if admitted.arms is None:
         cap = f"expands past the arm cap ({MAX_PATTERN_ARMS}) — narrow the alternation or split the call"
         raise PatternError(f"{pattern!r}: {cap}")
-    return tuple(arms)
+    return admitted.arms
 
 
 def expand_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[str, ...]:
@@ -225,81 +215,128 @@ def compile_glob(pattern: str) -> GlobProgram:
     return glob_program(_program(_canonical(pattern), recursive=True))
 
 
-def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
-    """Compile the shared filter: subject rule, canonical pattern, normalized ext set."""
+def compile_filter(pattern: str) -> GlobFilter:
+    """The shared filter: the canonical pattern and its subject rule; no program is built."""
     canonical = _canonical(pattern)
-    return GlobFilter(
-        pattern=canonical,
-        by_path="/" in canonical,
-        program=compile_glob(pattern),
-        wanted_ext=normalize_ext_channel(ext),
-    )
+    return GlobFilter(pattern=canonical, by_path="/" in canonical)
 
 
 # ---------------------------------------------------------------------------
-# Path filtering — glob as a pure predicate over paths in hand
+# The call's gates — the filter law over one native set's verdicts
 # ---------------------------------------------------------------------------
 
+# A verdict's bits: an unmarked admission, a marked one, an exclusion.
+_UNMARKED: Final = 1 << 0
+_MARKED: Final = 1 << 1
+_EXCLUDED: Final = 1 << 2
 
-def passes_filters(
-    path: Path,
-    gates: list[GlobFilter],
-    not_gates: list[GlobFilter],
-    wanted: frozenset[str],
-    unwanted: frozenset[str],
-) -> bool:
-    """Glob admission/exclusion and the ext facts, per candidate path.
 
-    Carries no meta rule: enumeration liveness is the enumerating
-    surface's concern (storage layers it on top), and paths already in
-    a caller's hand are never hidden.
+class GlobGates:
+    """One call's glob channels and ext facts: one native set judges, the law reads its verdicts.
+
+    Build via :func:`compile_gates`. ``admissions`` and ``exclusions``
+    are the call's distinct canonical filters (the SQL prefilters read
+    them), ``wanted`` and ``unwanted`` its normalized ext sets. The set
+    puts the unmarked admissions in group 0, the marked ones in group 1
+    and the exclusions in group 2, each distinct pattern built once.
+    It is built lazily, at most once, by the first hop that asks; the
+    hops of one call may run concurrently, so the build holds a lock.
     """
-    if gates and not any(gate.matches(path) for gate in gates):
-        return False
-    if any(gate.matches(path) for gate in not_gates):
-        return False
-    extension = extract_extension(path) or ""
-    if wanted and extension not in wanted:
-        return False
-    return not (unwanted and extension in unwanted)
+
+    def __init__(
+        self,
+        admissions: tuple[GlobFilter, ...],
+        exclusions: tuple[GlobFilter, ...],
+        marked: frozenset[str],
+        wanted: frozenset[str],
+        unwanted: frozenset[str],
+    ) -> None:
+        self.admissions = admissions
+        self.exclusions = exclusions
+        self.wanted = wanted
+        self.unwanted = unwanted
+        self._marked = marked
+        self._lock = threading.Lock()
+        self._built = False
+        self._set: GlobSet | None = None
+
+    @property
+    def has_patterns(self) -> bool:
+        """Whether any row needs the engine: the ext facts alone need none."""
+        return bool(self.admissions or self.exclusions)
+
+    def native(self, deadline: float | None) -> GlobSet | None:
+        """The call's native set, built once; ``None`` once a build reached *deadline*.
+
+        One atom walk per distinct pattern, the clock checked before
+        each, then one native construction under the budget left. A
+        build that reaches the deadline stops and is never retried, so
+        every later hop on these gates answers its rows unjudged. The
+        walk is Python and holds the GIL in turns on its worker; the
+        construction releases it.
+        """
+        with self._lock:
+            if self._built:
+                return self._set
+            self._built = True
+            patterns = list(dict.fromkeys(gate.pattern for gate in (*self.admissions, *self.exclusions)))
+            programs: list[tuple[list[GlobAtom], bool]] = []
+            for pattern in patterns:
+                if deadline is not None and monotonic() > deadline:
+                    return None
+                programs.append((_program(pattern, recursive=True), "/" in pattern))
+            index = {pattern: position for position, pattern in enumerate(patterns)}
+            groups = [
+                [index[gate.pattern] for gate in self.admissions if gate.pattern not in self._marked],
+                [index[gate.pattern] for gate in self.admissions if gate.pattern in self._marked],
+                [index[gate.pattern] for gate in self.exclusions],
+            ]
+            budget = None if deadline is None else max(0.0, deadline - monotonic())
+            self._set = glob_set(programs, groups, budget=budget)
+            return self._set
+
+    def admits(self, verdict: int | None, ext: str | None, *, marked_only: bool = False) -> bool:
+        """Whether a row with this *verdict* and derived extension passes the law.
+
+        An unjudged row (``None``) never passes: it may match no
+        admission, or an exclusion. Under *marked_only* (storage's row
+        beneath the meta root) only a marked admission admits; otherwise
+        any admission does, when the gates hold one. Any exclusion
+        rejects; then the wanted and unwanted extensions apply.
+        """
+        if verdict is None:
+            return False
+        if marked_only:
+            if not verdict & _MARKED:
+                return False
+        elif self.admissions and not verdict & (_UNMARKED | _MARKED):
+            return False
+        if verdict & _EXCLUDED:
+            return False
+        extension = ext or ""
+        if self.wanted and extension not in self.wanted:
+            return False
+        return not (self.unwanted and extension in self.unwanted)
 
 
-def passes_row_filters(
-    path: str,
-    name: str,
-    ext: str | None,
-    gates: list[GlobFilter],
-    not_gates: list[GlobFilter],
-    wanted: frozenset[str],
-    unwanted: frozenset[str],
-) -> bool:
-    """The :func:`passes_filters` law over row facts already in hand.
+def compile_gates(
+    admissions: Sequence[str],
+    exclusions: Sequence[str] = (),
+    *,
+    ext: tuple[str, ...] = (),
+    ext_not: tuple[str, ...] = (),
+    marked: Callable[[str], bool] | None = None,
+) -> GlobGates:
+    """One call's gates: the channels canonicalized and deduped, the ext sets normalized.
 
-    The hot-loop arm: storage passes each candidate's stored path,
-    name, and extension columns — which mirror the path by invariant —
-    so no ``Path`` is constructed per candidate. Same channel order,
-    same verdicts; parity is pinned by test.
+    *marked* is the caller's predicate over a canonical admission (the
+    pattern layer knows nothing of storage's meta subtree); with none,
+    no admission is marked. No program is built here.
     """
-    if gates and not any(gate.hits(path, name, ext) for gate in gates):
-        return False
-    if any(gate.hits(path, name, ext) for gate in not_gates):
-        return False
-    extension = ext or ""
-    if wanted and extension not in wanted:
-        return False
-    return not (unwanted and extension in unwanted)
-
-
-def filter_paths(paths: Sequence[Path], pattern: str, ext: tuple[str, ...] = ()) -> list[Path]:
-    """The paths in *paths* the compiled *pattern* matches, order preserved.
-
-    A pure predicate over paths already in a caller's hand — duplicates
-    pass through, and no liveness rule applies (what a caller holds is
-    never hidden). Callers gate ``glob_defect`` first; searching *under*
-    paths is the scope channel's job, not this filter's.
-    """
-    gate = compile_filter(pattern, ext)
-    return [path for path in paths if gate.matches(path)]
+    admitted = tuple(compile_filter(pattern) for pattern in dict.fromkeys(_canonical(p) for p in admissions))
+    excluded = tuple(compile_filter(pattern) for pattern in dict.fromkeys(_canonical(p) for p in exclusions))
+    flagged = frozenset(gate.pattern for gate in admitted if marked is not None and marked(gate.pattern))
+    return GlobGates(admitted, excluded, flagged, normalize_ext_channel(ext), normalize_ext_channel(ext_not))
 
 
 # ---------------------------------------------------------------------------
@@ -490,15 +527,64 @@ def _class_end(pattern: str, start: int) -> int | None:
     return end if end != -1 else None
 
 
-def _cross_product(parts: Sequence[str | tuple[str, ...]], limit: int) -> list[str]:
-    """Deduped left-to-right cross-product, stopping one arm past *limit*."""
-    pools = [(part,) if isinstance(part, str) else tuple(dict.fromkeys(part)) for part in parts]
-    arms: dict[str, None] = {}
-    for combo in product(*pools):
-        arms["".join(combo)] = None
-        if len(arms) > limit:
-            break
-    return list(arms)
+class _Admitted(NamedTuple):
+    """One pattern's admission walk: its arms (``None`` past the cap) and its defect."""
+
+    arms: tuple[str, ...] | None
+    defect: str | None
+
+
+def _admit(pattern: str) -> _Admitted:
+    """The one admission walk: the brace structure, one expansion, the arms' component defects."""
+    if "{" not in pattern and "}" not in pattern:
+        return _Admitted((pattern,), _component_defect(pattern))
+    parts, brace_defect = _parse_braces(pattern)
+    if brace_defect is not None:
+        return _Admitted(None, brace_defect)
+    if not any(isinstance(part, tuple) for part in parts):
+        return _Admitted((pattern,), _component_defect(pattern))
+    arms = _cross_product(parts, MAX_PATTERN_ARMS)
+    if arms is None:
+        return _Admitted(None, None)
+    for arm in arms:
+        if (defect := _component_defect(arm)) is not None:
+            return _Admitted(None, f"{defect} (expansion arm {arm!r})")
+    return _Admitted(tuple(arms), None)
+
+
+def _cross_product(parts: Sequence[str | tuple[str, ...]], limit: int) -> list[str] | None:
+    """Deduped left-to-right cross-product in first-appearance order, ``None`` past *limit*.
+
+    Expands group by group, keeping only distinct partial arms; a part
+    with one distinct alternative joins a pending literal instead. A
+    fixed suffix keeps distinct arms distinct, so the set never shrinks
+    and a partial set past *limit* already refuses; a group of two
+    distinct alternatives grows it, so at most *limit* groups expand.
+    """
+    arms = [""]
+    pending = ""
+    for part in parts:
+        pool = (part,) if isinstance(part, str) else tuple(dict.fromkeys(part))
+        if len(pool) == 1:
+            pending += pool[0]
+            continue
+        expanded = _expand_group(arms, pending, pool, limit)
+        if expanded is None:
+            return None
+        arms, pending = expanded, ""
+    return [arm + pending for arm in arms]
+
+
+def _expand_group(arms: list[str], pending: str, pool: tuple[str, ...], limit: int) -> list[str] | None:
+    """Each partial arm, the pending literal, then each alternative: distinct, ``None`` past *limit*."""
+    joined: dict[str, None] = {}
+    for arm in arms:
+        head = arm + pending
+        for alternative in pool:
+            joined[head + alternative] = None
+            if len(joined) > limit:
+                return None
+    return list(joined)
 
 
 def _anchor(pattern: str) -> str:

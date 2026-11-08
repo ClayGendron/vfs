@@ -32,6 +32,7 @@ stored row — ``ls`` of it lists the tombstoned roots at every depth.
 
 from __future__ import annotations
 
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
@@ -52,11 +53,11 @@ from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     ROW_GATE_FIELDS,
     GlobFilter,
+    GlobGates,
     PatternError,
-    compile_filter,
+    compile_gates,
     derive_ext,
     expand_channel,
-    passes_row_filters,
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
@@ -71,10 +72,12 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, judge_rows
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from concurrent.futures import Executor
 
     from sqlalchemy import Column, ColumnElement, FromClause, Select, Table
     from sqlalchemy.engine import RowMapping
@@ -297,6 +300,9 @@ async def tree_rows(
 # kind fact.
 ARM_FIXED_BINDS: Final = 7
 
+# What shrinks a storage glob that reached its wall.
+GLOB_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions, add ext filters, or scope with paths"
+
 
 async def glob_rows(
     session: AsyncSession,
@@ -304,6 +310,7 @@ async def glob_rows(
     profile: DialectProfile,
     parameter_budget: int,
     membership_budget: int,
+    executor: Executor,
     *,
     patterns: tuple[str, ...],
     globs_not: tuple[str, ...],
@@ -312,6 +319,7 @@ async def glob_rows(
     kind: str | None,
     max_count: int | None,
     columns: frozenset[str] | None,
+    wall_seconds: float = WALL_TIME_BUDGET,
     view: Visibility | None = None,
 ) -> Result:
     """Rows matching **any** pattern, one snapshot, statements chunked by budget.
@@ -329,29 +337,31 @@ async def glob_rows(
     beside the fan would demote its plan — bare where the caller holds
     only ``list``, and a hidden directory matches as a bare name only
     when it is on the road.
+
+    The candidates of each side of the tombstone are judged in one hop
+    on *executor*, under a wall of *wall_seconds* read when the call
+    starts, so the candidate fetch counts against it. A row the engine
+    did not judge before the wall is dropped, since it may match an
+    exclusion, and the call carries one ``truncated`` warning; which
+    rows are missing then depends on scheduling. *max_count* cuts the
+    judged rows by path order, and the warning stays whatever it cuts.
     """
     try:
         addresses = address_channel("pattern", patterns)
         excluded = address_channel("globs_not", globs_not)
     except PatternError as exc:
         return Result(ops=("glob",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
+    deadline = monotonic() + wall_seconds
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = normalize_ext_channel(ext)
-    unwanted = normalize_ext_channel(ext_not)
-    matched: dict[str, RowMapping] = {}
     # A pattern under the trash head gates the tombstoned rows at the paths
     # beneath it, every other the live rows; exclusions side the same way.
-    gates = [compile_filter(address.stored, ext) for address in addresses]
-    sided: dict[bool, list[GlobFilter]] = {False: [], True: []}
-    for gate, address in zip(gates, addresses, strict=True):
-        sided[address.trashed].append(gate)
-    not_gates: dict[bool, list[GlobFilter]] = {False: [], True: []}
-    for address in excluded:
-        not_gates[address.trashed].append(compile_filter(address.stored, ()))
+    sides = {trashed: _side_gates(addresses, excluded, ext, ext_not, trashed=trashed) for trashed in (False, True)}
     built = (
-        pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=address.trashed)
-        for glob, address in zip(gates, addresses, strict=True)
+        pattern_arm(entry, glob, wanted, profile, membership_budget, kind=kind, trashed=trashed)
+        for trashed, gates in sides.items()
+        for glob in gates.admissions
     )
     arms = [arm for arm in built if arm is not None]
     ride = ext_membership(entry, wanted, membership_budget)
@@ -359,28 +369,40 @@ async def glob_rows(
     # name and ext ride for the row-fact gate; the observation mask stays
     # the caller's `fetched`, so a narrow columns= never leaks the ride.
     queried = fetched | ROW_GATE_FIELDS | {"deleted_at"} | (RIGHTS_FIELDS if view is not None else frozenset())
-    hidden: dict[bool, list[str]] = {False: [], True: []}
+    candidates: dict[bool, list[RowMapping]] = {False: [], True: []}
     for mapping in await _pattern_candidates(session, entry, chunk, arms, queried):
-        # Wanted-ext admission rides inside the gates (compiled with *ext*).
-        path, name, row_ext = mapping["path"], mapping["name"], mapping["ext"]
-        tombstoned = mapping["deleted_at"] is not None
-        side = sided[tombstoned]
-        if not side or not passes_row_filters(path, name, row_ext, side, not_gates[tombstoned], frozenset(), unwanted):
+        candidates[mapping["deleted_at"] is not None].append(mapping)
+    matched: dict[str, RowMapping] = {}
+    hidden: dict[bool, list[str]] = {False: [], True: []}
+    finished = True
+    for trashed, side in candidates.items():
+        gates = sides[trashed]
+        if not side or not gates.admissions:
             continue
-        if view is None or view.shows(mapping):
-            matched.setdefault(mapping["path"], mapping)
-        elif mapping["kind"] == "directory":
-            hidden[tombstoned].append(path)
+        rows = [(mapping["path"], mapping["name"]) for mapping in side]
+        verdicts, completed = await judge_rows(executor, gates, rows, deadline=deadline)
+        finished = finished and completed
+        for mapping, verdict in zip(side, verdicts, strict=True):
+            if not gates.admits(verdict, mapping["ext"]):
+                continue
+            if view is None or view.shows(mapping):
+                matched.setdefault(mapping["path"], mapping)
+            elif mapping["kind"] == "directory":
+                hidden[trashed].append(mapping["path"])
     observed = {path: _observe_for(view, mapping, fetched) for path, mapping in matched.items()}
     if view is not None:
-        for trashed, candidates in hidden.items():
-            if candidates:
-                road = await view.road(session, candidates, trashed=trashed)
+        for trashed, paths in hidden.items():
+            if paths:
+                road = await view.road(session, paths, trashed=trashed)
                 observed |= {path: road_observation(path) for path in road}
-    rows = [observed[path] for path in sorted(observed)]
+    served = [observed[path] for path in sorted(observed)]
     if max_count is not None:
-        rows = rows[:max_count]
-    return Result(ops=("glob",), observations=rows)
+        served = served[:max_count]
+    errors: list[ResultError] = []
+    if not finished:
+        detail = f"at the {WALL_TIME_CAUSE}; {GLOB_REFINE_GUIDANCE}"
+        errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail))
+    return Result(ops=("glob",), observations=served, errors=errors)
 
 
 def address_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[Address, ...]:
@@ -553,6 +575,23 @@ def meta_scoped(pattern: str) -> bool:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _side_gates(
+    addresses: Sequence[Address],
+    excluded: Sequence[Address],
+    ext: tuple[str, ...],
+    ext_not: tuple[str, ...],
+    *,
+    trashed: bool,
+) -> GlobGates:
+    """One side of the tombstone's gates: its addressed patterns and exclusions, with the ext channels."""
+    return compile_gates(
+        [address.stored for address in addresses if address.trashed == trashed],
+        [address.stored for address in excluded if address.trashed == trashed],
+        ext=ext,
+        ext_not=ext_not,
+    )
 
 
 async def _point_rows(

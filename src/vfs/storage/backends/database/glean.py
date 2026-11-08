@@ -21,7 +21,9 @@ unprunable scope scores first and gates the top chunks' entries as
 their rows are fetched (**fetch, then filter**), one deeper probe when
 the first runs short, then a loud record. Either way
 :func:`~vfs.storage.backends.database.scope.passes_gates` is the
-authority on every row that answers.
+authority on every row that answers, over verdicts judged in one hop
+per fetched set on the offload pool, under the call's wall; a row the
+engine did not judge in time is dropped, with one wall record.
 
 Freshness is grep's: ``encoded=True`` means the entry's terms are in
 the current lexical epoch; the ``NOT encoded`` rows the gates admit are
@@ -74,8 +76,8 @@ from vfs.models.lexical import (
     tokenize,
 )
 from vfs.native import extension
-from vfs.paths import Path, normalize_ext_channel
-from vfs.pattern_matching import PatternError, compile_filter, escape_glob
+from vfs.paths import Path
+from vfs.pattern_matching import PatternError, compile_gates, escape_glob
 from vfs.pattern_matching.grep import split_lines
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
@@ -84,13 +86,14 @@ from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import call_offloaded
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, call_offloaded, judge_rows
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.reads import (
     content_for_entries,
     effective_columns,
     kind_membership,
+    meta_scoped,
     pointer_with_overlay,
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
@@ -116,7 +119,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import EntryId, VFSTables
-    from vfs.pattern_matching import Body, GlobFilter
+    from vfs.pattern_matching import Body, GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.rights import Clause, Visibility
@@ -143,24 +146,30 @@ PROBE_DEEPEN: Final = 4
 OVERLAY_BUDGET: Final = 500
 """Unindexed entries the overlay scores per call, in path order."""
 
-WALL_TIME_BUDGET: Final = 10.0
-
 ChunkId = int
 Ranking = list[tuple[ChunkId, float]]
 
 
 class _Gates(NamedTuple):
-    """The call's structural scope: compiled gates, ext sets, the fetch pushdown, and the tombstone side."""
+    """The call's structural scope: its gates (glob and ext channels), the fetch pushdown, the tombstone side."""
 
-    gates: list[GlobFilter]
-    not_gates: list[GlobFilter]
-    wanted: frozenset[str]
-    unwanted: frozenset[str]
+    gates: GlobGates
     pushdown: Pushdown
     trashed: bool
 
-    def admits(self, mapping: RowMapping) -> bool:
-        return passes_gates(mapping, self.gates, self.not_gates, self.wanted, self.unwanted, trashed=self.trashed)
+    def admits(self, mapping: RowMapping, verdict: int | None) -> bool:
+        return passes_gates(mapping, self.gates, verdict, trashed=self.trashed)
+
+    async def judge(
+        self, executor: Executor, rows: Sequence[RowMapping], deadline: float
+    ) -> tuple[dict[EntryId, int | None], bool]:
+        """Each distinct entry's verdict among *rows*, judged in one hop, and whether all were judged.
+
+        An entry's rows (one per chunk) share its path and name, so each entry is judged once.
+        """
+        subjects = {mapping["entry_id"]: (mapping["path"], mapping["name"]) for mapping in rows}
+        verdicts, completed = await judge_rows(executor, self.gates, list(subjects.values()), deadline=deadline)
+        return dict(zip(subjects, verdicts, strict=True)), completed
 
 
 class VectorLeg(NamedTuple):
@@ -268,24 +277,18 @@ async def glean_rows(
     entry = tables.entry
     channel = compile_channel(admissions)
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
-    gates = [compile_filter(glob, ()) for glob in admissions]
-    scope = _Gates(
-        gates,
-        [compile_filter(glob, ()) for glob in exclusions],
-        normalize_ext_channel(ext),
-        normalize_ext_channel(ext_not),
-        pushdown_terms(
-            entry,
-            profile,
-            fan_arms,
-            membership_budget,
-            channel,
-            normalize_ext_channel(ext),
-            hide_meta=not gates,
-            trashed=trashed,
-        ),
-        trashed,
+    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped)
+    pushdown = pushdown_terms(
+        entry,
+        profile,
+        fan_arms,
+        membership_budget,
+        channel,
+        gates.wanted,
+        hide_meta=not gates.admissions,
+        trashed=trashed,
     )
+    scope = _Gates(gates, pushdown, trashed)
     fetched = effective_columns(columns, content=False)
     deadline = monotonic() + wall_seconds
     truncations: list[tuple[str, dict[str, Any] | None]] = []
@@ -322,9 +325,21 @@ async def glean_rows(
                     ranking = await _chunk_ranking(
                         session, tables, epoch, stats, present, depth, candidates, parameter_budget, membership_budget
                     )
-                hits, rows = await _entries_for_chunks(
-                    session, tables, epoch, ranking, fetched, scope, profile, membership_budget, view
+                hits, rows, completed = await _entries_for_chunks(
+                    session,
+                    tables,
+                    epoch,
+                    ranking,
+                    fetched,
+                    scope,
+                    profile,
+                    membership_budget,
+                    executor,
+                    deadline,
+                    view,
                 )
+                if not completed:
+                    _record_wall(truncations)
                 window_full = len(ranking) >= depth
                 short = window_full and len(hits) < limit
                 if not short or candidates is not None or monotonic() > deadline:
@@ -337,7 +352,7 @@ async def glean_rows(
     vector_hits: dict[EntryId, _Hit] = {}
     vector_depth = max(VECTOR_DEPTH_FACTOR * limit, VECTOR_DEPTH_FLOOR)
     if vector is not None and monotonic() <= deadline:
-        vector_hits, vector_rows = await _vector_leg(
+        vector_hits, vector_rows, completed = await _vector_leg(
             session,
             tables,
             dialect_name,
@@ -349,13 +364,17 @@ async def glean_rows(
             scope,
             profile,
             membership_budget,
+            executor,
+            deadline,
             view,
         )
+        if not completed:
+            _record_wall(truncations)
         for entry_id, mapping in vector_rows.items():
             rows.setdefault(entry_id, mapping)
 
     if monotonic() > deadline:
-        truncations.append(("wall-time budget", None))
+        _record_wall(truncations)
     skip_verified = False
     if overlay_empty:
         current, still_empty = await pointer_with_overlay(session, tables)
@@ -369,15 +388,22 @@ async def glean_rows(
             profile,
             parameter_budget,
             membership_budget,
-            scope.gates,
-            scope.wanted,
+            scope.gates.admissions,
+            scope.gates.wanted,
             everything=False,
             fetched=fetched,
             limit=OVERLAY_BUDGET,
             deadline=deadline,
             trashed=scope.trashed,
         )
-        admitted = [m for m in nominees.rows if scope.admits(m) and (view is None or view.holds(m, view.need))]
+        verdicts, completed = await scope.judge(executor, nominees.rows, deadline)
+        if not completed:
+            _record_wall(truncations)
+        admitted = [
+            m
+            for m in nominees.rows
+            if scope.admits(m, verdicts[m["entry_id"]]) and (view is None or view.holds(m, view.need))
+        ]
         scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
         hits.update(scored)
         rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in scored})
@@ -537,15 +563,18 @@ async def _entries_for_chunks(
     scope: _Gates,
     profile: DialectProfile,
     membership_budget: int,
+    executor: Executor,
+    deadline: float,
     view: Visibility | None = None,
-) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping]]:
+) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping], bool]:
     """MaxP: the ranked chunks resolved to their live, encoded, admitted entries' rows.
 
     One join per id chunk — ``lex_docs`` names the chunk's entry and the
     entry row supplies the facts — carrying the content-kind gate,
     ``encoded`` and the scope's pushdown; the authoritative gate then
-    runs on every row. Each entry keeps its best :data:`TOP_CHUNKS`
-    chunks; its score is the best one's.
+    runs on every fetched entry, judged in one hop. Each entry keeps its
+    best :data:`TOP_CHUNKS` chunks; its score is the best one's. The
+    flag says whether every entry was judged before the wall.
     """
     entry, docs = tables.entry, tables.lex_docs
     columns = [
@@ -557,6 +586,7 @@ async def _entries_for_chunks(
     score_of = dict(ranking)
     owner: dict[ChunkId, EntryId] = {}
     rows: dict[EntryId, RowMapping] = {}
+    found: list[RowMapping] = []
     for chunk in chunked([chunk_id for chunk_id, _ in ranking], per_chunk):
         stmt = (
             select(*columns)
@@ -569,14 +599,16 @@ async def _entries_for_chunks(
                 *scope.pushdown.terms,
             )
         )
-        for mapping in (await session.execute(stmt)).mappings():
-            entry_id = mapping["entry_id"]
-            if entry_id not in rows and not (
-                scope.admits(mapping) and (view is None or view.holds(mapping, view.need))
-            ):
-                continue
-            owner[mapping["chunk_id"]] = entry_id
-            rows.setdefault(entry_id, mapping)
+        found.extend((await session.execute(stmt)).mappings())
+    verdicts, completed = await scope.judge(executor, found, deadline)
+    for mapping in found:
+        entry_id = mapping["entry_id"]
+        if entry_id not in rows and not (
+            scope.admits(mapping, verdicts[entry_id]) and (view is None or view.holds(mapping, view.need))
+        ):
+            continue
+        owner[mapping["chunk_id"]] = entry_id
+        rows.setdefault(entry_id, mapping)
     hits: dict[EntryId, _Hit] = {}
     for chunk_id, score in ranking:  # already best first
         entry_id = owner.get(chunk_id)
@@ -587,7 +619,7 @@ async def _entries_for_chunks(
             hits[entry_id] = _Hit(score_of[chunk_id], [(chunk_id, score)])
         elif len(hit.chunks) < TOP_CHUNKS:
             hit.chunks.append((chunk_id, score))
-    return hits, {entry_id: rows[entry_id] for entry_id in hits}
+    return hits, {entry_id: rows[entry_id] for entry_id in hits}, completed
 
 
 # ---------------------------------------------------------------------------
@@ -607,8 +639,10 @@ async def _vector_leg(
     scope: _Gates,
     profile: DialectProfile,
     membership_budget: int,
+    executor: Executor,
+    deadline: float,
     view: Visibility | None = None,
-) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping]]:
+) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping], bool]:
     """The *depth* nearest chunks by cosine, resolved to admitted entries and MaxP'd.
 
     One statement shape on every dialect: the chunk table joined to its
@@ -623,6 +657,8 @@ async def _vector_leg(
     (``1 - distance``), best first. Under a partial *view* each
     statement runs once per visibility clause — the distance is computed
     only on rows a clause admits — and the lists merge by distance.
+    Each ranked set is judged against the gates in one hop, and the
+    flag says whether every hop judged all its entries before the wall.
     """
     chunks, entry = tables.chunks, tables.entry
     if vector.prelude is not None:
@@ -649,10 +685,13 @@ async def _vector_leg(
     statements = [base] if clauses is None else [base.where(clause.predicate) for clause in clauses]
     spend = max((clause.binds for clause in clauses or ()), default=0)
 
+    verdicts: dict[EntryId, int | None] = {}
+
     def passes(mapping: RowMapping) -> bool:
-        return scope.admits(mapping) and (view is None or view.holds(mapping, view.need))
+        return scope.admits(mapping, verdicts[mapping["entry_id"]]) and (view is None or view.holds(mapping, view.need))
 
     ranked: list[RowMapping] = []
+    finished = True
     if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
         per_chunk = max(1, membership_budget - scope.pushdown.binds - kinds.binds - spend)
         for ids in chunked(list(allow), per_chunk):
@@ -660,6 +699,7 @@ async def _vector_leg(
                 stmt = statement.where(membership(entry.c.id, ids, profile)).limit(depth)
                 ranked.extend((await session.execute(stmt)).mappings().all())
         ranked = _nearest(ranked, depth)
+        verdicts, finished = await scope.judge(executor, ranked, deadline)
     else:
         window = depth
         for _probe in range(2):
@@ -667,6 +707,8 @@ async def _vector_leg(
                 list((await session.execute(statement.limit(window))).mappings().all()) for statement in statements
             ]
             ranked = _nearest([mapping for found in lists for mapping in found], window)
+            verdicts, completed = await scope.judge(executor, ranked, deadline)
+            finished = finished and completed
             admitted = {mapping["entry_id"] for mapping in ranked if passes(mapping)}
             if len(admitted) >= limit or all(len(found) < window for found in lists):
                 break
@@ -684,7 +726,7 @@ async def _vector_leg(
             rows[entry_id] = mapping
         else:
             hit.chunks.append((mapping["chunk_id"], similarity))
-    return hits, rows
+    return hits, rows, finished
 
 
 def _nearest(rows: Sequence[RowMapping], depth: int) -> list[RowMapping]:
@@ -1052,3 +1094,14 @@ def _observe(
     values["matches"] = matches
     values["populated"] = mask
     return Observation.model_validate(values)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _record_wall(truncations: list[tuple[str, dict[str, Any] | None]]) -> None:
+    """Note the wall once: every site that reaches it writes the same record, and the first one stands."""
+    if all(reason != WALL_TIME_CAUSE for reason, _data in truncations):
+        truncations.append((WALL_TIME_CAUSE, None))

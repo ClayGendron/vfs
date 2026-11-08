@@ -10,8 +10,9 @@ meets the segment-bounded glob scope's allow-list *before* the
 candidate budget (so the budget counts scoped candidates and
 truncation can never drop in-scope rows), and caps, so doc ids never
 materialize here until capped — apply the structural gates off the
-rows' own stored facts (no per-candidate ``Path``) before any content
-fetch, verify every candidate through the shared matcher (batched per
+rows' own stored facts (no per-candidate ``Path``; each tier's rows
+judged in one hop on the offload pool, under the call's wall) before
+any content fetch, verify every candidate through the shared matcher (batched per
 content batch on the backend-owned offload pool, the absolute wall
 deadline crossing the hop), and union the flag-partitioned scan side
 (``NOT encoded``) so index staleness can never lose a match.
@@ -65,23 +66,24 @@ from vfs.models import Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError
 from vfs.native import extension
-from vfs.paths import Path, normalize_ext_channel
+from vfs.paths import Path
 from vfs.pattern_matching import (
     Body,
     PatternError,
-    compile_filter,
+    compile_gates,
     compile_verifier,
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import VerifyOffload
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, VerifyOffload, judge_rows
 from vfs.storage.backends.database.pathterms import allow_list_ids, compile_channel
 from vfs.storage.backends.database.reads import (
     content_for_entries,
     effective_columns,
     kind_membership,
+    meta_scoped,
     pointer_with_overlay,
 )
 from vfs.storage.backends.database.scope import (
@@ -106,23 +108,20 @@ if TYPE_CHECKING:
     from vfs.models.code_grams import GramKey, GramQuery
     from vfs.models.rows import VFSTables
     from vfs.ops import CaseMode, GrepOutputMode
+    from vfs.pattern_matching import GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.rights import Visibility
 
-# Runtime budgets: candidates fetched and verified, posting bytes
-# decoded, and a wall-time deadline checked between ladder stages and
-# inside the matcher's body loop. A tripped budget truncates with a
-# warning. The candidate budget is re-derived from the linux-scale
-# sweep: candidate cost is ~75 µs each (fetch-dominated), so 25,000
-# bounds a saturated call near ~2 s while un-truncating every
+# Runtime budgets: candidates fetched and verified, and posting bytes
+# decoded; the wall (the offload seam's) is checked between ladder stages
+# and inside the gate's and the matcher's batches. A tripped budget
+# truncates with a warning. The candidate budget is re-derived from the
+# linux-scale sweep: candidate cost is ~75 µs each (fetch-dominated), so
+# 25,000 bounds a saturated call near ~2 s while un-truncating every
 # benchmark row search semantics can justify.
 CANDIDATE_BUDGET: Final = 25_000
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
-WALL_TIME_BUDGET: Final = 10.0
-
-# The wall's cause in a truncation record, shared with the router's chained grep.
-WALL_TIME_CAUSE: Final = "wall-time budget"
 
 # Bytes of candidate bodies resident at once: content is fetched,
 # verified, and released in batches sized by the entries' size_bytes.
@@ -208,12 +207,10 @@ async def grep_rows(
     scan_all = invert_match or plan.is_any()
 
     errors: list[ResultError] = []
-    gates = [compile_filter(glob, ()) for glob in admissions]
-    not_gates = [compile_filter(glob, ()) for glob in exclusions]
-    wanted = normalize_ext_channel(ext)
-    unwanted = normalize_ext_channel(ext_not)
+    gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped)
+    wanted = gates.wanted
     channel = compile_channel(admissions)
-    gated = bool(gates or not_gates or wanted or unwanted)
+    gated = bool(gates.has_patterns or gates.wanted or gates.unwanted)
     fetched = effective_columns(columns, content=columns is not None)
     deadline = monotonic() + wall_seconds
     # Channel fan in arms: the pruning loop spends one statement per arm
@@ -257,12 +254,21 @@ async def grep_rows(
         if nominated_count > CANDIDATE_BUDGET and "candidate budget" not in truncations:
             truncations.append("candidate budget")
         pushdown = pushdown_terms(
-            tables.entry, profile, fan_arms, membership_budget, channel, wanted, hide_meta=not gates, trashed=trashed
+            tables.entry,
+            profile,
+            fan_arms,
+            membership_budget,
+            channel,
+            wanted,
+            hide_meta=not gates.admissions,
+            trashed=trashed,
         )
-        for mapping in await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown):
-            if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
-                view is None or view.holds(mapping, view.need)
-            ):
+        indexed = await _entries_for_docs(session, tables, profile, membership_budget, doc_ids, fetched, pushdown)
+        admitted, completed = await _gated(executor, gates, indexed, gated=gated, trashed=trashed, deadline=deadline)
+        if not completed and WALL_TIME_CAUSE not in truncations:
+            truncations.append(WALL_TIME_CAUSE)
+        for mapping in admitted:
+            if view is None or view.holds(mapping, view.need):
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
@@ -291,7 +297,7 @@ async def grep_rows(
                     profile,
                     parameter_budget,
                     membership_budget,
-                    gates,
+                    gates.admissions,
                     wanted,
                     everything=scan_all,
                     fetched=fetched,
@@ -301,10 +307,13 @@ async def grep_rows(
                 )
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
-                for mapping in nominated:
-                    if (not gated or passes_gates(mapping, gates, not_gates, wanted, unwanted, trashed=trashed)) and (
-                        view is None or view.holds(mapping, view.need)
-                    ):
+                admitted, completed = await _gated(
+                    executor, gates, nominated, gated=gated, trashed=trashed, deadline=deadline
+                )
+                if not completed and WALL_TIME_CAUSE not in truncations:
+                    truncations.append(WALL_TIME_CAUSE)
+                for mapping in admitted:
+                    if view is None or view.holds(mapping, view.need):
                         candidates.setdefault(mapping["path"], mapping)
     if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
@@ -560,6 +569,33 @@ async def _entries_for_docs(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+async def _gated(
+    executor: Executor,
+    gates: GlobGates,
+    rows: Sequence[RowMapping],
+    *,
+    gated: bool,
+    trashed: bool,
+    deadline: float,
+) -> tuple[list[RowMapping], bool]:
+    """The rows that pass the structural gates, judged in one hop, and whether every row was judged.
+
+    An ungated call passes every row as fetched: the pushdown already
+    carries the tombstone side and the meta exclusion.
+    """
+    if not gated:
+        return list(rows), True
+    verdicts, completed = await judge_rows(
+        executor, gates, [(mapping["path"], mapping["name"]) for mapping in rows], deadline=deadline
+    )
+    admitted = [
+        mapping
+        for mapping, verdict in zip(rows, verdicts, strict=True)
+        if passes_gates(mapping, gates, verdict, trashed=trashed)
+    ]
+    return admitted, completed
 
 
 def _content_size(mapping: RowMapping) -> int:

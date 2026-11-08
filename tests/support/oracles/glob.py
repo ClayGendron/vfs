@@ -1,4 +1,4 @@
-"""The glob matcher's oracle: the stdlib-text translator.
+"""The glob matcher's oracle: the stdlib-text translator, the row law and the brace product.
 
 Glob patterns once compiled to these regex sources and matched under
 Python's ``re``; the runtime now matches on the native glob program,
@@ -6,17 +6,72 @@ and this module keeps the text as the reference it is pinned to. The
 text itself is pinned to the stdlib's ``glob.translate`` byte for byte
 wherever that function exists (3.13 and later); the engine is pinned to
 ``re.match`` over this text by verdict, on every interpreter.
+
+:func:`passes_filters` is the per-row filter law as it read before the
+runtime judged rows in native batches, and :func:`cross_product` the
+brace expansion as it read before the walk deduped group by group; each
+pins its runtime successor by parity.
 """
 
 from __future__ import annotations
 
 import re
 import sys
-from typing import Final
+from itertools import product
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 # The stdlib translators switched their end-of-string anchor to \z in 3.14;
 # mirror them exactly (\z is a re.error before 3.14).
 _END_OF_STRING: Final = r"\z" if sys.version_info >= (3, 14) else r"\Z"
+
+
+def passes_filters(
+    path: str,
+    name: str,
+    ext: str | None,
+    admissions: Sequence[str],
+    exclusions: Sequence[str],
+    wanted: frozenset[str],
+    unwanted: frozenset[str],
+    *,
+    marked: Callable[[str], bool],
+    marked_only: bool,
+) -> bool:
+    """One row's verdict under the filter law, over canonical patterns.
+
+    Admission by any admission, rejection by any exclusion, then the
+    wanted and unwanted extensions; under *marked_only* (a row beneath
+    the meta root) only an admission *marked* names may admit it.
+    """
+
+    def hits(pattern: str) -> bool:
+        subject = path if "/" in pattern else name
+        return re.match(_translate(pattern, recursive=True), subject) is not None
+
+    if marked_only and not any(hits(pattern) and marked(pattern) for pattern in admissions):
+        return False
+    if admissions and not any(hits(pattern) for pattern in admissions):
+        return False
+    if any(hits(pattern) for pattern in exclusions):
+        return False
+    extension = ext or ""
+    if wanted and extension not in wanted:
+        return False
+    return not (unwanted and extension in unwanted)
+
+
+def cross_product(parts: Sequence[str | tuple[str, ...]], limit: int) -> list[str]:
+    """Deduped left-to-right cross-product, stopping one arm past *limit*."""
+    pools = [(part,) if isinstance(part, str) else tuple(dict.fromkeys(part)) for part in parts]
+    arms: dict[str, None] = {}
+    for combo in product(*pools):
+        arms["".join(combo)] = None
+        if len(arms) > limit:
+            break
+    return list(arms)
 
 
 def _translate(pattern: str, *, recursive: bool) -> str:

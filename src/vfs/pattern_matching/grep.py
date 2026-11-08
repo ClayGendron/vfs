@@ -38,8 +38,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple, Protocol
 
 from vfs.models import Match
 from vfs.native import extension
-from vfs.paths import normalize_ext_channel
-from vfs.pattern_matching.glob import PatternError, compile_filter, passes_filters
+from vfs.pattern_matching.glob import PatternError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -127,33 +126,6 @@ _NEWLINE_CATEGORIES: Final = frozenset(
 )
 
 _NEWLINE_CODEPOINT: Final = 0x0A
-
-
-# ---------------------------------------------------------------------------
-# Structural filters — grep's batch form of glob's path gates
-# ---------------------------------------------------------------------------
-
-
-def filter_candidates(
-    paths: Sequence[Path],
-    *,
-    ext: tuple[str, ...] = (),
-    ext_not: tuple[str, ...] = (),
-    globs: tuple[str, ...] = (),
-    globs_not: tuple[str, ...] = (),
-) -> list[Path]:
-    """The paths that pass grep's structural gates, order preserved.
-
-    Compiles each glob channel once and applies :func:`passes_filters`
-    per path — the batch form for callers holding paths rather than
-    enumerating storage. Callers gate ``glob_defect`` on the glob
-    channels first.
-    """
-    gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs)]
-    not_gates = [compile_filter(glob, ()) for glob in dict.fromkeys(globs_not)]
-    wanted = normalize_ext_channel(ext)
-    unwanted = normalize_ext_channel(ext_not)
-    return [path for path in paths if passes_filters(path, gates, not_gates, wanted, unwanted)]
 
 
 # ---------------------------------------------------------------------------

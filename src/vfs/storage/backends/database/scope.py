@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 from sqlalchemy import and_, or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
-from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, passes_row_filters
+from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError
 from vfs.storage.backends.database.descent import LIKE_ESCAPE, escape_like, liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.reads import (
@@ -29,7 +29,6 @@ from vfs.storage.backends.database.reads import (
     address_channel,
     ext_membership,
     kind_membership,
-    meta_scoped,
     pattern_arm,
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
@@ -42,7 +41,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.rows import VFSTables
-    from vfs.pattern_matching import GlobFilter
+    from vfs.pattern_matching import GlobFilter, GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.pathterms import ChannelTerms
 
@@ -80,31 +79,22 @@ class Pushdown(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def passes_gates(
-    mapping: RowMapping,
-    gates: list[GlobFilter],
-    not_gates: list[GlobFilter],
-    wanted: frozenset[str],
-    unwanted: frozenset[str],
-    *,
-    trashed: bool = False,
-) -> bool:
-    """The authoritative structural gates, per candidate, off the row's own facts.
+def passes_gates(mapping: RowMapping, gates: GlobGates, verdict: int | None, *, trashed: bool = False) -> bool:
+    """The authoritative structural gates, per candidate, off the row's own facts and its verdict.
 
-    Matches raw strings — the stored ``name`` and ``ext`` columns mirror
-    the path by invariant, so no ``Path`` is minted per candidate. A row
+    *verdict* is the row's judgement against *gates* (``judge_rows``),
+    taken over the stored ``path`` and ``name`` columns, which mirror the
+    path by invariant, so no ``Path`` is minted per candidate. A row
     passes only on the side of the tombstone the scope searches: live
     rows, or the tombstoned ones under the trash view (*trashed*). A
-    meta row is admitted only by a gate whose literal prefix addresses
-    the meta subtree — default enumeration hides ``/.vfs`` even when a
-    wildcard gate would match it. The rest is the shared filter law.
+    meta row is admitted only by a marked admission, one whose literal
+    head addresses the meta subtree — default enumeration hides
+    ``/.vfs`` even when a wildcard gate would match it. The rest is the
+    shared filter law, :meth:`GlobGates.admits`.
     """
     if (mapping["deleted_at"] is not None) != trashed:
         return False
-    path, name, ext = mapping["path"], mapping["name"], mapping["ext"]
-    if _under_meta_root(path) and not any(gate.hits(path, name, ext) and meta_scoped(gate.pattern) for gate in gates):
-        return False
-    return passes_row_filters(path, name, ext, gates, not_gates, wanted, unwanted)
+    return gates.admits(verdict, mapping["ext"], marked_only=_under_meta_root(mapping["path"]))
 
 
 def trash_scope(globs: Sequence[str]) -> tuple[tuple[str, ...], bool]:
@@ -236,7 +226,7 @@ async def entries_for_scan(
     profile: DialectProfile,
     parameter_budget: int,
     membership_budget: int,
-    gates: list[GlobFilter],
+    gates: Sequence[GlobFilter],
     wanted: frozenset[str],
     *,
     everything: bool,

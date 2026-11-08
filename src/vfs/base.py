@@ -38,6 +38,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never, cast
 
@@ -72,20 +73,16 @@ from vfs.paths import (
     check_reserved_path,
     extract_extension,
     is_trash_path,
-    normalize_ext_channel,
     resolve_path,
 )
 from vfs.pattern_matching import (
     PatternError,
-    compile_filter,
+    compile_gates,
     compile_verifier,
     composed_pattern,
-    effective_pattern,
     escape_glob,
     expand_channel,
-    filter_candidates,
     match_texts,
-    passes_filters,
     render_residual,
     residuals,
 )
@@ -114,17 +111,23 @@ from vfs.storage import (
 )
 from vfs.storage.backends.database.descent import TRASHED_KEY
 from vfs.storage.backends.database.dialects import byte_chunked
-from vfs.storage.backends.database.grep import CONTENT_BYTE_BUDGET, WALL_TIME_BUDGET, WALL_TIME_CAUSE
-from vfs.storage.backends.database.offload import OFFLOAD_WORKERS, call_offloaded
+from vfs.storage.backends.database.grep import CONTENT_BYTE_BUDGET
+from vfs.storage.backends.database.offload import (
+    OFFLOAD_WORKERS,
+    WALL_TIME_BUDGET,
+    WALL_TIME_CAUSE,
+    call_offloaded,
+    judge_rows,
+)
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Mapping, Sequence
+    from collections.abc import Coroutine, Mapping, Sequence
 
     from vfs.ops import Op
     from vfs.paths import ObjectKind, ResolvedPath
-    from vfs.pattern_matching import ContentMatcher, GrepHit
+    from vfs.pattern_matching import ContentMatcher, GlobGates, GrepHit
     from vfs.permissions import PermissionsPayload
     from vfs.storage.grants import GrantLevel, Posture
 
@@ -142,6 +145,15 @@ _ADMIN_AUTHORITY: Final = Authority.system()
 
 # Chained grep's truncation advice: a chained call cannot take paths, so it never says to scope with them.
 _CHAINED_REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters, or send fewer rows"
+
+# The truncation advice of the router's glob stages: chained glob's filter,
+# a fan-out's root probe and admissions, and its planning walk.
+_CHAINED_GLOB_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions, or send fewer rows"
+_SCOPED_REFINE_GUIDANCE: Final = "narrow the patterns, or scope with fewer paths"
+_PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patterns or brace arms"
+
+# Residuations the planning walk runs between two reads of its deadline.
+_RESIDUATIONS_PER_CHECK: Final = 64
 
 # The grant verbs that change membership rows: mount-wide, so they carry no path.
 _MEMBERSHIP_OPS: frozenset[Op] = frozenset({"add_member", "remove_member"})
@@ -308,7 +320,7 @@ class _FanoutPlan(NamedTuple):
 
 
 class _PathFilters(NamedTuple):
-    """The caller's structural path filters — the four-channel law of ``passes_filters``.
+    """The caller's structural path filters — the four-channel law of :class:`~vfs.pattern_matching.GlobGates`.
 
     The one fan-out argument the pattern-search verbs hand the router
     apart from the forwarded keywords. The two glob channels are
@@ -323,6 +335,32 @@ class _PathFilters(NamedTuple):
     exclusions: tuple[str, ...]
     ext: tuple[str, ...]
     ext_not: tuple[str, ...]
+
+
+class _Dispatches(NamedTuple):
+    """A pattern-search fan-out's built calls: the root probes, the entry branches, the coverage records."""
+
+    probes: list[Coroutine[Any, Any, Result]]
+    branches: list[tuple[Path, Coroutine[Any, Any, Result]]]
+    skips: list[ResultError]
+
+
+class _ScopePlan(NamedTuple):
+    """A fan-out's planned scope: what the residual walk derived, entry by entry.
+
+    ``members`` maps each planned entry's bind path to its admissions in
+    entry coordinates (``None``: unrestricted); an entry absent from it
+    is not dispatched. ``exclusions`` holds the same entries' exclusion
+    members, ``skips`` the capability-skip paths whose reach the walk
+    found or could not determine, ``roots`` the scope roots planned
+    whole, and ``completed`` whether the walk finished before its wall.
+    """
+
+    members: dict[Path, set[str] | None]
+    exclusions: dict[Path, set[str]]
+    skips: frozenset[Path]
+    roots: tuple[Path, ...]
+    completed: bool
 
 
 async def _authored_entry(path: Path, content: str | None, data: bytes | None) -> Entry:
@@ -1309,13 +1347,20 @@ class AsyncVirtualFileSystem:
         Roots are find operands: a concurrent probe asserts each one
         (missing is a loud per-root error beside the healthy roots'
         rows) and serves the root's own row when the pattern matches it
-        and no exclusion, ext fact, or kind fact rejects it. Row order
+        and no exclusion, ext fact, or kind fact rejects it. Each stage
+        that matches rows (each entry's storage glob, the planning walk,
+        each root probe) runs under the wall-time budget; a stage that
+        reaches it returns what it finished and one ``truncated`` warning
+        naming what shrinks it. Row order
         is merge order, and a *max_count* prefix of it can therefore
         differ across layouts.
 
         With *observations*, glob is a filter over the rows in hand:
-        the path gates run in memory and rows serve exactly as held
-        (columns, staleness, and input order included). Storage is
+        the path gates judge every row in one batch on the router's own
+        worker pool, under the wall-time budget (a call that reaches it
+        returns the rows judged and one ``truncated`` warning), and rows
+        serve exactly as held (columns, staleness, and input order
+        included). Storage is
         touched only when *kind* is asked of a row that does not carry
         it — those rows are statted in one batch, a row that cannot be
         statted classifies loudly beside the healthy rows — chain into
@@ -1411,8 +1456,9 @@ class AsyncVirtualFileSystem:
         each row's own entry, classifying loudly) only for rows that
         lack it, and a row whose known kind carries no content never
         matches. The index tier is not involved, so *allow_scan* and
-        the refusal gate do not apply. Each distinct body is matched
-        once, in batches on the router's own worker pool, under the
+        the refusal gate do not apply. The glob gates judge every row in
+        one batch, and each distinct body is matched once, in batches,
+        both on the router's own worker pool, each stage under the
         storage tier's wall-time budget; a call that reaches it returns
         the matches found so far and one ``truncated`` warning.
 
@@ -1860,29 +1906,34 @@ class AsyncVirtualFileSystem:
     ) -> Result:
         """Chained glob: filter rows in hand, fetching only a missing kind fact.
 
-        The path gates run in memory over the rows as held — admission
-        by any expanded arm, rejection by exclusion globs and the ext
-        facts, no meta rule, duplicates and order preserved. A *kind*
+        The path gates run over the rows as held — admission by any
+        expanded arm, rejection by exclusion globs and the ext facts, no
+        meta rule, duplicates and order preserved — judged in one hop on
+        the router's pool under a wall read at entry; a row the engine
+        did not judge before it is dropped, with one ``truncated``
+        warning. A *kind*
         filter judged against a row that carries no kind stats exactly
         those rows in one batch — the load-bearing fact is fetched,
         never guessed — and a row that cannot be statted classifies
         loudly beside the healthy rows.
         """
+        deadline = monotonic() + WALL_TIME_BUDGET
         rows, invalid = self._observation_rows("glob", observations)
         if invalid is not None:
             return invalid
-        gates = [compile_filter(arm, ()) for arm in arms]
-        not_gates = [compile_filter(glob, ()) for glob in globs_not]
-        wanted = normalize_ext_channel(ext)
-        unwanted = normalize_ext_channel(ext_not)
-        kept = [row for row in rows if passes_filters(row.path, gates, not_gates, wanted, unwanted)]
+        gates = compile_gates(arms, globs_not, ext=ext, ext_not=ext_not)
+        # Taken before any await, so a close() landing later can never leave a fresh pool behind.
+        pool = self._verify_executor() if rows else None
+        kept, completed = await self._judged(pool, gates, rows, deadline)
         errors: list[ResultError] = []
+        if not completed:
+            errors.append(_wall_record(_CHAINED_GLOB_REFINE_GUIDANCE))
         if kind is not None:
             lacking = [row for row in kept if row.kind is None]
             fetched: dict[str, str | None] = {}
             if lacking:
                 stat = await self.stat(observations=lacking, columns=frozenset(), authority=authority)
-                errors = list(stat.errors)
+                errors.extend(stat.errors)
                 fetched = {str(row.path): row.kind for row in stat.observations}
             kept = [row for row in kept if (row.kind if row.kind is not None else fetched.get(str(row.path))) == kind]
         return self._cap_rows(Result(ops=("glob",), observations=kept, errors=errors), "glob", max_count)
@@ -1909,7 +1960,9 @@ class AsyncVirtualFileSystem:
     ) -> Result:
         """Chained grep: filter the rows in hand, fetching only absent content.
 
-        Path gates and the match run in memory over the rows as held. A
+        Path gates and the match run over the rows as held, each stage
+        on the router's pool under its own wall: the gates in one hop,
+        and only the rows they judged are read and matched. A
         row without content is read through its own entry — a row that
         cannot be read classifies loudly beside the healthy rows'
         matches — while a row whose known kind carries no content never
@@ -1928,10 +1981,10 @@ class AsyncVirtualFileSystem:
             )
         except PatternError as exc:
             return self._error(ErrorKind.invalid, op="grep", detail=f"grep pattern {pattern!r}: {exc}")
-        keep = set(
-            filter_candidates([row.path for row in rows], ext=ext, ext_not=ext_not, globs=globs, globs_not=globs_not)
-        )
-        candidates = [row for row in rows if row.path in keep]
+        gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
+        # The filter reads its own wall only when it has a pattern to judge.
+        deadline = monotonic() + WALL_TIME_BUDGET if gates.has_patterns else None
+        candidates, filtered = await self._judged(pool, gates, rows, deadline)
         absent = [row for row in candidates if row.content is None and (row.kind is None or row.kind in CONTENT_KINDS)]
         errors: list[ResultError] = []
         contents: dict[str, str] = {}
@@ -1966,14 +2019,42 @@ class AsyncVirtualFileSystem:
             hit = hits[unique[(str(row.path), text)]]
             if hit is not None:
                 matched.append(self._hit_row(row, text, hit, mode=output_mode, columns=columns))
-        errors.extend(truncation)
+        # An unfinished filter's record stands for the matching stage's identical one.
+        errors.extend(truncation if filtered else [_wall_record(_CHAINED_REFINE_GUIDANCE)])
         return Result(ops=("grep",), observations=matched, errors=errors)
 
     def _verify_executor(self) -> ThreadPoolExecutor:
-        """The router's chained-grep verify pool, made on first use and shut by :meth:`close`."""
+        """The router's verify pool, made on first use and shut by :meth:`close`.
+
+        It serves chained grep's matching, every glob judging the router
+        does (a chained call's filter, a fan-out's root probe and its
+        admissions) and a scoped fan-out's planning walk.
+        """
         if self._verify_pool is None:
             self._verify_pool = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-verify")
         return self._verify_pool
+
+    @staticmethod
+    async def _judged(
+        pool: ThreadPoolExecutor | None, gates: GlobGates, rows: list[Observation], deadline: float | None
+    ) -> tuple[list[Observation], bool]:
+        """The rows in hand *gates* admit, judged in one hop on the router's pool; and whether all were judged.
+
+        Rows keep their order and duplicates, and no meta rule applies:
+        what a caller holds is never hidden. With no rows, or no pattern
+        to judge, no hop is made and *pool* and *deadline* may be ``None``.
+        """
+        if not rows or not gates.has_patterns:
+            return [row for row in rows if gates.admits(0, extract_extension(row.path))], True
+        assert pool is not None and deadline is not None
+        judged = [(str(row.path), row.path.name) for row in rows]
+        verdicts, completed = await judge_rows(pool, gates, judged, deadline=deadline)
+        kept = [
+            row
+            for row, verdict in zip(rows, verdicts, strict=True)
+            if gates.admits(verdict, extract_extension(row.path))
+        ]
+        return kept, completed
 
     @staticmethod
     async def _match_in_hand(
@@ -2018,8 +2099,7 @@ class AsyncVirtualFileSystem:
         if finished:
             return hits, []
         hits.extend([None] * (len(bodies) - len(hits)))
-        detail = f"at the {WALL_TIME_CAUSE}; {_CHAINED_REFINE_GUIDANCE}"
-        return hits, [classified(ErrorKind.truncated, severity=Severity.warning, detail=detail)]
+        return hits, [_wall_record(_CHAINED_REFINE_GUIDANCE)]
 
     @staticmethod
     def _hit_row(
@@ -2206,14 +2286,14 @@ class AsyncVirtualFileSystem:
             if ranked is not None and len({*plan.scoped, *plan.unscoped}) > 1:
                 kwargs = {**kwargs, "limit": ranked.depth}
 
-            if filters is not None and op == "glob":
-                named_coros, branches, skips = self._glob_dispatches(
-                    plan, paths, filters, authority=authority, **kwargs
-                )
-            elif filters is not None:
-                named_coros, branches, skips = self._grep_dispatches(
-                    plan, paths, filters, op=op, authority=authority, **kwargs
-                )
+            if filters is not None:
+                if op == "glob":
+                    built = await self._glob_dispatches(plan, paths, filters, authority=authority, **kwargs)
+                else:
+                    built = await self._grep_dispatches(plan, paths, filters, op=op, authority=authority, **kwargs)
+                if built is None:
+                    return self._closed_error(op)
+                named_coros, branches, skips = built
             else:
                 # Unscoped subsumes a narrower scope into the same entry.
                 named_coros = [
@@ -2290,7 +2370,7 @@ class AsyncVirtualFileSystem:
 
         return _FanoutPlan(scoped=scoped, unscoped=unscoped, skips=list(skipped.values()))
 
-    def _glob_dispatches(
+    async def _glob_dispatches(
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
@@ -2298,11 +2378,7 @@ class AsyncVirtualFileSystem:
         *,
         authority: Authority | None,
         **kwargs: object,
-    ) -> tuple[
-        list[Coroutine[Any, Any, Result]],
-        list[tuple[Path, Coroutine[Any, Any, Result]]],
-        list[ResultError],
-    ]:
+    ) -> _Dispatches | None:
         """Build glob's dispatches: scoping crosses the seam as pattern text.
 
         The caller's pattern arrives brace-expanded as the filters'
@@ -2316,36 +2392,40 @@ class AsyncVirtualFileSystem:
         entry's members in entry-local coordinates, and each entry
         receives its whole deduped set as one batched call — exclusions
         compose per root identically, so one can never reach another
-        root's subtree. Root assertions ride a separate concurrent
+        root's subtree. That planning walk runs in one hop on the
+        router's pool under its own wall (:func:`_plan_scope`); a walk
+        that reaches it dispatches the roots it planned whole and says
+        so. Root assertions ride a separate concurrent
         probe grouped by owning entry (:meth:`_root_probe`),
-        structurally immune to any dispatch optimization; its ``keep``
-        honors every channel, so a root row is never served past a
+        structurally immune to any dispatch optimization; it judges a
+        root's own row against the name arms alone, since a path arm
+        composed under a root needs one more segment than the root has,
+        and honors every channel, so a root row is never served past a
         filter the caller stated. A dead residual set is routing, not a
         capability gap: the entry is not dispatched and no skip is
         minted; capability skips survive only where some arm can reach
-        the entry's rows.
+        the entry's rows. ``None`` answers a ``close()`` that landed
+        during a hop: nothing is read from the cleared table, and nothing
+        is dispatched.
         """
         arms, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
-        members = {key: self._composed_members(key, roots, arms) for key in capable}
+        owners = {root: self._resolve_terminal(root).binding.path for root in roots}
+        skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
+        name_arms = tuple(arm for arm in arms if "/" not in arm)
+        gates = compile_gates(name_arms, exclusions, ext=ext, ext_not=ext_not) if name_arms else None
+        walking = _walks(roots, arms, exclusions, skip_paths)
+        # Taken before any await; any root makes the walk, so a probe or an admission hop always finds the pool.
+        pool = self._verify_executor() if walking else None
+        scope = await self._planned(
+            pool, owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset()
+        )
+        if not self._bindings:
+            return None  # a close() landed during the hop: no table read, no dispatch
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
-        not_gates = [compile_filter(glob, ()) for glob in exclusions]
-        unwanted = normalize_ext_channel(ext_not)
-
-        def keep(row: Observation) -> bool:
-            # Re-spells passes_filters, its authority: each arm composes
-            # per row here, so the gates cannot be compiled once upfront.
-            if not any(compile_filter(effective_pattern(row.path, arm), ext).matches(row.path) for arm in arms):
-                return False
-            if any(gate.matches(row.path) for gate in not_gates):
-                return False
-            if unwanted and (extract_extension(row.path) or "") in unwanted:
-                return False
-            return kind is None or row.kind == kind
-
-        probes, unverifiable = self._root_probes(roots, keep, columns, authority=authority)
+        probes, unverifiable = self._root_probes(roots, gates, pool, kind, columns, authority=authority)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (
                 key,
@@ -2353,25 +2433,19 @@ class AsyncVirtualFileSystem:
                     capable[key],
                     "glob",
                     patterns=tuple(sorted(live)),
-                    globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
+                    globs_not=tuple(sorted(scope.exclusions[key])),
                     ext=ext,
                     ext_not=ext_not,
                     authority=authority,
                     **kwargs,
                 ),
             )
-            for key, live in members.items()
+            for key, live in scope.members.items()
             if live
         ]
-        reach = roots or (ROOT,)
-        skips = [
-            skip
-            for skip in plan.skips
-            if skip.path is None or any(self._glob_reaches(skip.path, reach, arm) for arm in arms)
-        ]
-        return probes, branches, [*skips, *unverifiable]
+        return _Dispatches(probes, branches, self._scope_skips(plan, scope, unverifiable))
 
-    def _grep_dispatches(
+    async def _grep_dispatches(
         self,
         plan: _FanoutPlan,
         paths: tuple[str, ...],
@@ -2380,11 +2454,7 @@ class AsyncVirtualFileSystem:
         op: Op = "grep",
         authority: Authority | None,
         **kwargs: object,
-    ) -> tuple[
-        list[Coroutine[Any, Any, Result]],
-        list[tuple[Path, Coroutine[Any, Any, Result]]],
-        list[ResultError],
-    ]:
+    ) -> _Dispatches | None:
         """Build grep's dispatches (glean's too): scoping crosses the seam as glob text.
 
         Glob's dispatch shape on grep's filters (*admissions* is the
@@ -2393,19 +2463,50 @@ class AsyncVirtualFileSystem:
         root composes into the ``globs`` batch (no caller globs → the
         root composes to ``root/**``), exclusions compose per root so one can
         never reach another root's subtree, and a root whose path passes
-        the caller's globs rides the batch as its own literal path — the
-        content test can only happen at storage, so for grep the root
-        row joins the scan, not the probe. Residuation, the owner gate,
-        dead-entry skips, and the root probe are the glob machinery; the
-        probe serves no rows, only classifications.
+        the caller's globs rides the batch as its own literal path — find's
+        operand law; the content test can only happen at storage, so for
+        grep the root row joins the scan, not the probe. Those admissions
+        are judged once per call, every distinct root in one hop on the
+        router's pool; no globs admit every root. Residuation, the owner
+        gate, dead-entry skips, the planning walk and the root probe are
+        the glob machinery; the probe serves no rows, only classifications.
+        ``None`` answers a ``close()`` that landed during a hop.
         """
         globs, exclusions, ext, ext_not = filters
         roots = tuple(dict.fromkeys(root for raw in paths if (root := resolve_path(raw).path) is not None))
         capable = {**plan.unscoped, **{key: binding for key, (binding, _rels) in plan.scoped.items()}}
+        owners = {root: self._resolve_terminal(root).binding.path for root in roots}
+        skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
+        patterns = (globs or ("**",)) if roots else globs
+        operands = tuple(root for root in roots if root != ROOT)
+        walking = _walks(roots, patterns, exclusions, skip_paths)
+        # Taken before any await; any root makes the walk, so a probe or an admission hop always finds the pool.
+        pool = self._verify_executor() if walking else None
+        records: list[ResultError] = []
+        admitted = operands
+        if globs and operands:
+            assert pool is not None
+            gates = compile_gates(globs)
+            deadline = monotonic() + WALL_TIME_BUDGET
+            judged = [(str(root), root.name) for root in operands]
+            verdicts, completed = await judge_rows(pool, gates, judged, deadline=deadline)
+            admitted = tuple(
+                root for root, verdict in zip(operands, verdicts, strict=True) if gates.admits(verdict, None)
+            )
+            if not completed:
+                records.append(_wall_record(_SCOPED_REFINE_GUIDANCE))
+        reach = globs or ("**",)
+        scope = await self._planned(
+            pool, owners, tuple(capable), skip_paths, roots, patterns, exclusions, reach, frozenset(admitted)
+        )
+        if not self._bindings:
+            return None  # a close() landed during a hop: no table read, no dispatch
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = []
         for key, binding in capable.items():
-            admitted = self._grep_admissions(key, roots, globs)
-            if admitted is not None and not admitted:
+            if key not in scope.members:
+                continue
+            members = scope.members[key]
+            if members is not None and not members:
                 continue
             branches.append(
                 (
@@ -2413,8 +2514,8 @@ class AsyncVirtualFileSystem:
                     self._dispatch_entry(
                         binding,
                         op,
-                        globs=tuple(sorted(admitted)) if admitted else (),
-                        globs_not=tuple(sorted(self._composed_members(key, roots, exclusions))),
+                        globs=tuple(sorted(members)) if members else (),
+                        globs_not=tuple(sorted(scope.exclusions[key])),
                         ext=ext,
                         ext_not=ext_not,
                         authority=authority,
@@ -2422,62 +2523,48 @@ class AsyncVirtualFileSystem:
                     ),
                 )
             )
-        probes, unverifiable = self._root_probes(roots, lambda _row: False, None, authority=authority)
-        reach = roots or (ROOT,)
-        skips = [
-            skip
-            for skip in plan.skips
-            if skip.path is None or any(self._glob_reaches(skip.path, reach, glob) for glob in globs or ("**",))
-        ]
-        return probes, branches, [*skips, *unverifiable]
+        probes, unverifiable = self._root_probes(roots, None, None, None, None, authority=authority)
+        return _Dispatches(probes, branches, self._scope_skips(plan, scope, [*records, *unverifiable]))
 
-    def _grep_admissions(self, key: Path, roots: tuple[Path, ...], globs: tuple[str, ...]) -> set[str] | None:
-        """One entry's admission globs in its own coordinates; ``None`` is unrestricted.
+    @staticmethod
+    async def _planned(
+        pool: ThreadPoolExecutor | None,
+        owners: dict[Path, Path],
+        keys: tuple[Path, ...],
+        skip_paths: tuple[Path, ...],
+        roots: tuple[Path, ...],
+        patterns: tuple[str, ...],
+        exclusions: tuple[str, ...],
+        reach: tuple[str, ...],
+        literals: frozenset[Path],
+    ) -> _ScopePlan:
+        """The fan-out's scope plan: the residual walk in one hop under its wall, or in place when nothing residuates.
 
-        Unscoped with no globs restricts nothing; otherwise the composed
-        members decide, plus find's operand law — a scope root whose own
-        path passes the caller's globs (name-arm by name, path-arm by
-        namespace path; no globs is an automatic hit) joins its owning
-        entry's batch as a literal member. An empty set is a dead entry.
+        A call with no root, no path-arm pattern and no capability skip
+        only copies its name arms to each entry, linear in its arms, so it
+        is planned in place; every other walk leaves the loop.
         """
-        if not roots and not globs:
-            return None
-        members = self._composed_members(key, roots, (globs or ("**",)) if roots else globs)
-        for root in roots:
-            if root == ROOT or self._resolve_terminal(root).binding.path != key:
-                continue
-            if not globs or any(compile_filter(glob, ()).matches(root) for glob in globs):
-                members.update(self._residual_renders(escape_glob(str(root)), key))
-        return members
+        if not _walks(roots, patterns, exclusions, skip_paths):
+            return _plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, None)
+        assert pool is not None
+        deadline = monotonic() + WALL_TIME_BUDGET
+        walk = partial(_plan_scope, owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
+        return await call_offloaded(pool, walk)
 
-    def _composed_members(self, key: Path, roots: tuple[Path, ...], patterns: tuple[str, ...]) -> set[str]:
-        """Entry-local renders of *patterns* under the call's scope shape.
-
-        Unscoped: name-arm patterns broadcast verbatim (coordinate-free),
-        path-arm patterns residuate against the bind path. Scoped: each
-        pattern composes under each root reaching this entry, then
-        residuates; a dead residual set simply contributes nothing.
-        """
-        members: set[str] = set()
-        if not roots:
-            for pattern in patterns:
-                if "/" not in pattern:
-                    members.add(pattern)
-                else:
-                    members.update(self._residual_renders(pattern, key))
-            return members
-        for root in roots:
-            owner = self._resolve_terminal(root).binding.path
-            if key != owner and not _path_covers(root, key):
-                continue
-            for pattern in patterns:
-                members.update(self._residual_renders(composed_pattern(root, pattern), key))
-        return members
+    @staticmethod
+    def _scope_skips(plan: _FanoutPlan, scope: _ScopePlan, records: list[ResultError]) -> list[ResultError]:
+        """The coverage records a fan-out carries: the reached skips, the stage records, and a planning stop."""
+        skips = [skip for skip in plan.skips if skip.path is None or skip.path in scope.skips]
+        if not scope.completed:
+            skips.append(_wall_record(_PLANNING_REFINE_GUIDANCE))
+        return [*skips, *records]
 
     def _root_probes(
         self,
         roots: tuple[Path, ...],
-        keep: Callable[[Observation], bool],
+        gates: GlobGates | None,
+        pool: ThreadPoolExecutor | None,
+        kind: str | None,
         columns: frozenset[str] | None,
         *,
         authority: Authority | None,
@@ -2487,7 +2574,8 @@ class AsyncVirtualFileSystem:
         The namespace root is exempt — it is the namespace itself, never
         a row. An entry that cannot answer ``stat`` leaves its roots
         honestly undeterminable: a warning on record, never coerced to
-        absent, never a silent pass.
+        absent, never a silent pass. *gates* judge the roots' own rows
+        (``None``: no row is served), on *pool*.
         """
         grouped: dict[Path, tuple[Binding, list[Path]]] = {}
         unverifiable: list[ResultError] = []
@@ -2509,7 +2597,8 @@ class AsyncVirtualFileSystem:
             _b, rels = grouped.setdefault(terminal.binding.path, (terminal.binding, []))
             rels.append(terminal.rel)
         coros: list[Coroutine[Any, Any, Result]] = [
-            self._root_probe(binding, rels, keep, columns, authority=authority) for binding, rels in grouped.values()
+            self._root_probe(binding, rels, gates, pool, kind, columns, authority=authority)
+            for binding, rels in grouped.values()
         ]
         return coros, unverifiable
 
@@ -2517,7 +2606,9 @@ class AsyncVirtualFileSystem:
         self,
         binding: Binding,
         rels: list[Path],
-        keep: Callable[[Observation], bool],
+        gates: GlobGates | None,
+        pool: ThreadPoolExecutor | None,
+        kind: str | None,
         columns: frozenset[str] | None,
         *,
         authority: Authority | None,
@@ -2525,33 +2616,27 @@ class AsyncVirtualFileSystem:
         """Assert scope roots with one batched point-read against their entry.
 
         A missing root classifies loud through the entry's own descent
-        ladder; *keep* decides whether a present root's row joins the
-        result — glob serves it on a pattern match (find semantics:
+        ladder; *gates* decide whether a present root's row joins the
+        result — glob serves it when a name arm matches and no
+        exclusion, ext fact or *kind* rejects it (find semantics:
         operands are tested, never exempt), grep serves none (a root's
-        content test can only happen at storage).
+        content test can only happen at storage). The rows are judged in
+        one hop under a wall read when judging starts; a hop that did
+        not finish serves only the rows it judged, with one warning.
         """
         probe = [Observation(path=rel) for rel in dict.fromkeys(rels)]
         result = await self._dispatch_entry(binding, "stat", observations=probe, columns=columns, authority=authority)
-        kept = [row for row in result.observations if keep(row)]
+        kept: list[Observation] = []
+        records: list[ResultError] = []
+        if gates is not None:
+            deadline = monotonic() + WALL_TIME_BUDGET
+            judged, completed = await self._judged(pool, gates, list(result.observations), deadline)
+            kept = [row for row in judged if kind is None or row.kind == kind]
+            if not completed:
+                records.append(_wall_record(_SCOPED_REFINE_GUIDANCE))
         # The probe answers for the caller's verb, not as a verb of its own:
         # an op-less envelope merges without leaking ``stat`` into the result.
-        return result.model_copy(update={"ops": (), "observations": kept})
-
-    @staticmethod
-    def _residual_renders(pattern: str, bind_path: Path) -> list[str]:
-        """Sorted entry-local renders of the pattern's live residuals.
-
-        Empty-tuple residuals are dropped: the bind-point row is the
-        parent's stored directory, never a child dispatch.
-        """
-        return sorted(render_residual(components) for components in residuals(pattern, bind_path) if components)
-
-    @staticmethod
-    def _glob_reaches(bind_path: Path, roots: tuple[Path, ...], pattern: str) -> bool:
-        """Whether any scope root lets the pattern reach rows of this entry."""
-        if any(_path_covers(bind_path, root) for root in roots):
-            return True  # a root inside the entry names rows the entry holds
-        return any(components for root in roots for components in residuals(composed_pattern(root, pattern), bind_path))
+        return result.model_copy(update={"ops": (), "observations": kept, "errors": [*result.errors, *records]})
 
     @staticmethod
     def _merge_fanout(
@@ -3354,6 +3439,11 @@ class AsyncVirtualFileSystem:
         return self._error(ErrorKind.backend_unavailable, op=op, detail="the filesystem is closed")
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
 def _reaches_beneath(op: Op, rel: Path, kwargs: Mapping[str, Any]) -> bool:
     """Whether *op* at *rel* acts on every path beneath it: a cascading delete, a live sweep, a move, a copy.
 
@@ -3371,3 +3461,162 @@ def _is_tombstoned_site(result: Result, path: Path) -> bool:
     """Whether the refused *result* names *path* itself as a deleted row — the one refusal ``restore`` answers."""
     error = result.errors[0]
     return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))
+
+
+def _wall_record(guidance: str) -> ResultError:
+    """One router stage's truncation at its wall, with what shrinks that stage's work."""
+    return classified(ErrorKind.truncated, severity=Severity.warning, detail=f"at the {WALL_TIME_CAUSE}; {guidance}")
+
+
+def _walks(
+    roots: tuple[Path, ...], patterns: tuple[str, ...], exclusions: tuple[str, ...], skips: tuple[Path, ...]
+) -> bool:
+    """Whether planning residuates at all: a root, a path-arm pattern or a capability skip makes it."""
+    return bool(roots or skips or any("/" in pattern for pattern in (*patterns, *exclusions)))
+
+
+class _WallReached(Exception):  # noqa: N818 - a control-flow signal, not an error
+    """A control-flow signal: the planning walk reached its wall; the stage stops there."""
+
+
+class _Walk:
+    """The planning walk's residuations, its deadline read before every 64th one."""
+
+    def __init__(self, deadline: float | None) -> None:
+        self._deadline = deadline
+        self._count = 0
+
+    def residuals(self, pattern: str, bind_path: Path) -> frozenset[tuple[str, ...]]:
+        """:func:`~vfs.pattern_matching.residuals`, or :class:`_WallReached` past the deadline."""
+        if self._deadline is not None and self._count % _RESIDUATIONS_PER_CHECK == 0 and monotonic() > self._deadline:
+            raise _WallReached
+        self._count += 1
+        return residuals(pattern, bind_path)
+
+
+def _plan_scope(
+    owners: Mapping[Path, Path],
+    keys: Sequence[Path],
+    skip_paths: Sequence[Path],
+    roots: tuple[Path, ...],
+    patterns: tuple[str, ...],
+    exclusions: tuple[str, ...],
+    reach: tuple[str, ...],
+    literals: frozenset[Path],
+    deadline: float | None,
+) -> _ScopePlan:
+    """A fan-out's residual walk: every capable entry's members, as plain data in and out.
+
+    A pure function of the mount-table facts the router resolved on the
+    loop (*owners* maps each scope root to its owning entry's bind path,
+    *keys* are the capable entries' bind paths, *skip_paths* the
+    capability skips') and the pattern text, so it runs on a worker.
+    Each root composes *patterns* and *exclusions* under itself into
+    every entry it reaches and residuates them there; a root in
+    *literals* also rides its owning entry as its own literal path. With
+    no root, name arms copy verbatim, path arms residuate, and no
+    *patterns* at all is unrestricted. A skip is kept where some *reach*
+    pattern can reach its entry's rows.
+
+    The deadline is read before every 64th residuation, inside a root as
+    well as between roots (between entries when there is no root), so
+    the walk overruns its wall by at most 64 residuations. A root, or
+    with no root an entry, whose walk is stopped is dropped from the
+    plan whole, its exclusions with it, and every skip not yet decided
+    is kept: a coverage record never hides. Pure Python on its worker,
+    the walk holds the GIL in turns, and the loop serves between them;
+    the native residual walk is the direction.
+    """
+    walk = _Walk(deadline)
+    members: dict[Path, set[str] | None] = {key: set() for key in keys} if roots else {}
+    excluded: dict[Path, set[str]] = {key: set() for key in keys} if roots else {}
+    planned: list[Path] = []
+    kept: set[Path] = set()
+    decided = 0
+    try:
+        if roots:
+            for root in roots:
+                staged = {
+                    key: _root_members(root, key, owners, patterns, exclusions, literals, walk)
+                    for key in keys
+                    if key == owners[root] or _path_covers(root, key)
+                }
+                for key, (admitted, refused) in staged.items():
+                    entry_members = members[key]
+                    assert entry_members is not None
+                    entry_members.update(admitted)
+                    excluded[key].update(refused)
+                planned.append(root)
+        else:
+            for key in keys:
+                admitted = _composed_members(key, (), owners, patterns, walk) if patterns else None
+                refused = _composed_members(key, (), owners, exclusions, walk)
+                members[key], excluded[key] = admitted, refused
+        for path in skip_paths:
+            if any(_glob_reaches(path, roots or (ROOT,), pattern, walk) for pattern in reach):
+                kept.add(path)
+            decided += 1
+    except _WallReached:
+        kept.update(skip_paths[decided:])
+        return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=False)
+    return _ScopePlan(members, excluded, frozenset(kept), tuple(planned), completed=True)
+
+
+def _root_members(
+    root: Path,
+    key: Path,
+    owners: Mapping[Path, Path],
+    patterns: tuple[str, ...],
+    exclusions: tuple[str, ...],
+    literals: frozenset[Path],
+    walk: _Walk,
+) -> tuple[set[str], set[str]]:
+    """One root's admissions and exclusions in one entry's coordinates, its literal path included."""
+    admitted = _composed_members(key, (root,), owners, patterns, walk)
+    if root in literals and owners[root] == key:
+        admitted.update(_residual_renders(escape_glob(str(root)), key, walk))
+    return admitted, _composed_members(key, (root,), owners, exclusions, walk)
+
+
+def _composed_members(
+    key: Path, roots: tuple[Path, ...], owners: Mapping[Path, Path], patterns: tuple[str, ...], walk: _Walk
+) -> set[str]:
+    """Entry-local renders of *patterns* under the call's scope shape.
+
+    Unscoped: name-arm patterns broadcast verbatim (coordinate-free),
+    path-arm patterns residuate against the bind path. Scoped: each
+    pattern composes under each root reaching this entry, then
+    residuates; a dead residual set simply contributes nothing.
+    """
+    members: set[str] = set()
+    if not roots:
+        for pattern in patterns:
+            if "/" not in pattern:
+                members.add(pattern)
+            else:
+                members.update(_residual_renders(pattern, key, walk))
+        return members
+    for root in roots:
+        if key != owners[root] and not _path_covers(root, key):
+            continue
+        for pattern in patterns:
+            members.update(_residual_renders(composed_pattern(root, pattern), key, walk))
+    return members
+
+
+def _residual_renders(pattern: str, bind_path: Path, walk: _Walk) -> list[str]:
+    """Sorted entry-local renders of the pattern's live residuals.
+
+    Empty-tuple residuals are dropped: the bind-point row is the
+    parent's stored directory, never a child dispatch.
+    """
+    return sorted(render_residual(components) for components in walk.residuals(pattern, bind_path) if components)
+
+
+def _glob_reaches(bind_path: Path, roots: tuple[Path, ...], pattern: str, walk: _Walk) -> bool:
+    """Whether any scope root lets the pattern reach rows of this entry."""
+    if any(_path_covers(bind_path, root) for root in roots):
+        return True  # a root inside the entry names rows the entry holds
+    return any(
+        components for root in roots for components in walk.residuals(composed_pattern(root, pattern), bind_path)
+    )

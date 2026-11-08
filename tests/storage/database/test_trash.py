@@ -26,6 +26,7 @@ from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
+from vfs.pattern_matching import compile_gates
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
@@ -840,7 +841,7 @@ class TestTrashView:
         gone = cast("RowMapping", {**live, "deleted_at": datetime(2026, 10, 11, tzinfo=UTC)})
         cases = ((live, False, True), (live, True, False), (gone, False, False), (gone, True, True))
         for mapping, trashed, admitted in cases:
-            assert passes_gates(mapping, [], [], frozenset(), frozenset(), trashed=trashed) is admitted
+            assert passes_gates(mapping, compile_gates(()), 0, trashed=trashed) is admitted
 
     async def test_a_search_scope_cannot_mix_the_view_with_live_paths(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))

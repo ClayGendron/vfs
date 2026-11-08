@@ -9,20 +9,27 @@ in both worlds because the answer must not depend on which side served.
 
 from __future__ import annotations
 
-from typing import Any
+import threading
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import true
 
 from tests.support.database_helpers import _url
+from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.lexical import encode_block
 from vfs.paths import Path
+from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import glean as glean_module
 from vfs.storage.backends.database.lexical import TermStatistics
+from vfs.storage.backends.database.offload import WALL_TIME_CAUSE
 from vfs.storage.backends.database.seams import installed
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 CORPUS = {
     "/src/parser.py": "def parse_tokens(stream):\n    return tokens_from(stream)\n",
@@ -49,6 +56,39 @@ async def _indexed(tmp_path: Any, files: dict[str, str] | None = None, **kwargs:
 
 def _paths(result: Result) -> list[str]:
     return [str(o.path) for o in result.observations]
+
+
+class _JudgedSet:
+    """A native set wrapped to record each hop's thread, or to report every hop unfinished."""
+
+    def __init__(self, inner: Any, spy: _SetSpy) -> None:
+        self._inner = inner
+        self._spy = spy
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._spy.threads.append(threading.current_thread().name)
+        verdicts, completed = self._inner.judge(rows, budget=budget)
+        return verdicts, completed and not self._spy.unfinished
+
+
+class _SetSpy:
+    """Stands in for the pattern layer's ``glob_set``: counts builds, wraps each set."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, unfinished: bool = False) -> None:
+        self._real = glob_module.glob_set
+        self.builds = 0
+        self.threads: list[str] = []
+        self.unfinished = unfinished
+        monkeypatch.setattr(glob_module, "glob_set", self)
+
+    def __call__(self, programs: Any, groups: Any, *, budget: float | None) -> Any:
+        self.builds += 1
+        built = self._real(programs, groups, budget=budget)
+        return None if built is None else _JudgedSet(built, self)
+
+
+def _walls(result: Result) -> list[Any]:
+    return [error for error in result.errors if WALL_TIME_CAUSE in error.message]
 
 
 def _scores(result: Result) -> list[float]:
@@ -447,6 +487,76 @@ class TestBudgets:
         assert result.success is True
         assert any("wall-time budget" in e.message for e in result.errors)
         assert "/fresh.txt" not in _paths(result)
+        await storage.close()
+
+    async def test_glean_gates_judge_on_the_backend_pool(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the gates built once per hop, or judged off the backend's pool."""
+        storage = await _indexed(tmp_path)
+        assert (await storage.write(entries=[Entry(path=Path("/src/fresh.py"), content="tokens late\n")])).success
+        spy = _SetSpy(monkeypatch)
+        result = await storage.glean(query="tokens", globs=("src/**",))
+        assert "/src/fresh.py" in _paths(result) and "/src/lexer.py" in _paths(result)
+        assert spy.builds == 1 and len(spy.threads) >= 2
+        assert all(name.startswith("vfs-offload") for name in spy.threads), spy.threads
+        await storage.close()
+
+    async def test_an_unfinished_gate_judgement_truncates_once(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: an unfinished judgement recorded once per hop, or not at all."""
+        storage = await _indexed(tmp_path)
+        assert (await storage.write(entries=[Entry(path=Path("/src/fresh.py"), content="tokens late\n")])).success
+        spy = _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.glean(query="tokens", globs=("src/**",))
+        assert len(spy.threads) >= 2
+        [wall] = _walls(result)
+        assert (wall.kind, wall.severity) == (ErrorKind.truncated, Severity.warning)
+        await storage.close()
+
+    async def test_an_expired_wall_and_an_unfinished_judgement_record_once(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the wall's two sites each appending their own record."""
+        storage = await _indexed(tmp_path, glean_wall_seconds=1e-9)
+        _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.glean(query="tokens", globs=("src/**",))
+        assert result.success is True
+        assert len(_walls(result)) == 1
+        await storage.close()
+
+    async def test_an_unfinished_chunk_entry_judgement_records_the_wall(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the chunk entries' completion flag ignored: a fully indexed call makes no overlay hop."""
+        storage = await _indexed(tmp_path)
+        spy = _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.glean(query="tokens", globs=("src/**",))
+        assert spy.threads and "/src/lexer.py" in _paths(result)
+        assert len(_walls(result)) == 1
+        await storage.close()
+
+    async def test_an_unfinished_overlay_judgement_records_the_wall(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the overlay's completion flag ignored: a never-indexed store judges only there."""
+        storage = await _fresh(tmp_path)
+        spy = _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.glean(query="tokens", globs=("src/**",))
+        assert len(spy.threads) == 1 and "/src/lexer.py" in _paths(result)
+        assert len(_walls(result)) == 1
+        await storage.close()
+
+    @pytest.mark.parametrize("scope", [{"globs": ("src/**",)}, {"globs_not": ("*.md",)}], ids=["allow", "wide"])
+    async def test_an_unfinished_vector_judgement_records_the_wall(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, scope: dict[str, Any]
+    ) -> None:
+        """Guards: the vector leg's completion flag ignored, on its allow-list branch or its probe loop,
+        or its record dropped: terms the index never saw leave the vector leg the only one judging."""
+        storage = await _indexed(tmp_path, embedder=HashEmbeddingProvider())
+        spy = _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.glean(query="zebra quantum", **scope)
+        assert spy.threads and _paths(result)
+        assert len(_walls(result)) == 1
         await storage.close()
 
     async def test_traits_declare_the_lexical_leg_and_its_overlay(self, tmp_path: Any) -> None:

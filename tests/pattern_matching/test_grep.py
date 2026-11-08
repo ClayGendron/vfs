@@ -11,25 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from vfs.paths import Path
-from vfs.pattern_matching import ContentMatcher, compile_verifier, filter_candidates, match_texts, split_lines, verify
-
-
-class TestFilterCandidates:
-    def test_glob_channels_and_ext_facts_gate_in_order(self) -> None:
-        paths = [Path("/src/a.py"), Path("/src/b.txt"), Path("/lib/c.py")]
-        assert filter_candidates(paths, globs=("/src/**",)) == ["/src/a.py", "/src/b.txt"]
-        assert filter_candidates(paths, globs_not=("*.txt",)) == ["/src/a.py", "/lib/c.py"]
-        assert filter_candidates(paths, ext=("py",)) == ["/src/a.py", "/lib/c.py"]
-        assert filter_candidates(paths, ext_not=("py",)) == ["/src/b.txt"]
-
-    def test_ext_members_normalize_dots_and_case(self) -> None:
-        paths = [Path("/src/a.py"), Path("/src/b.txt")]
-        assert filter_candidates(paths, ext=(".PY",)) == ["/src/a.py"]
-        assert filter_candidates(paths, ext_not=(".PY",)) == ["/src/b.txt"]
-
-    def test_no_gates_means_everything_passes(self) -> None:
-        paths = [Path("/a"), Path("/.vfs/meta.txt")]
-        assert filter_candidates(paths) == paths  # no meta rule: paths in hand are never hidden
+from vfs.pattern_matching import ContentMatcher, compile_verifier, match_texts, split_lines, verify
 
 
 def _matches(verifier: ContentMatcher, text: str) -> bool:

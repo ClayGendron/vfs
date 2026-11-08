@@ -15,7 +15,7 @@ use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::PyBytes;
 
 use crate::chunk::{GRAMMAR_NAMES, split_batch};
-use crate::glob::{Atom, GlobProgram as Program};
+use crate::glob::{Atom, GlobProgram as Program, GlobSet as Set, judge_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
 use crate::links::markdown_refs_batch;
@@ -26,7 +26,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 12;
+const PROTOCOL_VERSION: u32 = 13;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -187,6 +187,59 @@ impl GlobProgram {
     fn is_match(&self, subject: &str) -> bool {
         self.program.is_match(subject)
     }
+}
+
+/// One call's glob programs in groups: rows of `(path, name)` in, one
+/// verdict word per row out, bit `g` set when a program of group `g`
+/// matches. Built by `glob_set`; there is no Python constructor.
+#[pyclass(frozen)]
+struct GlobSet {
+    set: Set,
+}
+
+#[pymethods]
+impl GlobSet {
+    /// Every row's verdict, judged in parallel off the GIL; `budget` is wall
+    /// seconds from call start. A row past it is `None`; returns (verdicts, completed).
+    #[pyo3(signature = (rows, *, budget))]
+    fn judge(&self, py: Python<'_>, rows: Vec<(PyBackedStr, PyBackedStr)>, budget: Option<f64>) -> (Vec<Option<u64>>, bool) {
+        let deadline = deadline_after(budget);
+        let outcome = py.detach(|| judge_batch(&self.set, &rows, deadline));
+        (outcome.results, outcome.completed)
+    }
+}
+
+/// One program of a set as the host sends it: its atoms and whether it reads the path.
+type HostProgram = (Vec<(String, Vec<(char, char)>)>, bool);
+
+/// Build one call's set: `programs` are `(atoms, by_path)` pairs in the
+/// atom shape `GlobProgram` takes, `groups` lists of program indices.
+/// Built off the GIL under `budget`; `None` when the build reached it.
+#[pyfunction]
+#[pyo3(signature = (programs, groups, *, budget))]
+fn glob_set(
+    py: Python<'_>,
+    programs: Vec<HostProgram>,
+    groups: Vec<Vec<usize>>,
+    budget: Option<f64>,
+) -> PyResult<Option<GlobSet>> {
+    let deadline = deadline_after(budget);
+    let programs = programs
+        .into_iter()
+        .map(|(atoms, by_path)| {
+            let atoms = atoms.into_iter().map(|(op, ranges)| glob_atom(&op, ranges)).collect::<Result<Vec<_>, String>>()?;
+            Ok((atoms, by_path))
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(PyValueError::new_err)?;
+    let built = py.detach(|| Set::build(programs, groups, deadline)).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(built.map(|set| GlobSet { set }))
+}
+
+/// The instant *budget* seconds from now; a budget past what an instant can hold is no deadline.
+fn deadline_after(budget: Option<f64>) -> Option<Instant> {
+    let span = Duration::try_from_secs_f64(budget?.max(0.0)).ok()?;
+    Instant::now().checked_add(span)
 }
 
 /// One host atom, refused when its op is unknown or its ranges do not fit the op.
@@ -563,9 +616,11 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(select_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(vector_topk, m)?)?;
     m.add_function(wrap_pyfunction!(centrality_prior, m)?)?;
+    m.add_function(wrap_pyfunction!(glob_set, m)?)?;
     m.add_class::<PostingsBuilder>()?;
     m.add_class::<LexicalBuilder>()?;
     m.add_class::<ContentMatcher>()?;
     m.add_class::<GlobProgram>()?;
+    m.add_class::<GlobSet>()?;
     Ok(())
 }

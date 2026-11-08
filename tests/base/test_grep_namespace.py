@@ -22,6 +22,7 @@ from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
 from vfs.params import INT_CEILING
 from vfs.paths import Path
+from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
 from vfs.storage.backends.memory import InMemoryStorage
@@ -618,3 +619,145 @@ class _CountingExecutor(ThreadPoolExecutor):
     def submit(self, *args: Any, **kwargs: Any) -> Any:
         self.submitted += 1
         return super().submit(*args, **kwargs)
+
+
+# ----------------------------------------------------------------------
+# Off the loop: the router's glob judging runs on its pool
+# ----------------------------------------------------------------------
+
+
+def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The executor each router judge hop ran on."""
+    executors: list[Any] = []
+    real = base_module.judge_rows
+
+    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        executors.append(executor)
+        return await real(executor, gates, rows, deadline=deadline)
+
+    monkeypatch.setattr(base_module, "judge_rows", spied)
+    return executors
+
+
+async def test_chained_grep_filters_once_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the chained filter run inline per row instead of in one hop."""
+    executors = _spy_judges(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    rows = _held(*[(f"/{i}.{'txt' if i % 2 else 'md'}", "x") for i in range(100)])
+    result = await fs.grep("x", observations=rows, globs=("*.txt",))
+    assert len(result.observations) == 50
+    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    await fs.close()
+
+
+async def test_chained_grep_past_the_wall_reads_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: rows the filter never judged read and matched anyway."""
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    reads: list[Any] = []
+
+    async def counted_read(*args: Any, **kwargs: Any) -> Result:
+        reads.append(kwargs)
+        return Result(ops=("read",))
+
+    monkeypatch.setattr(fs, "read", counted_read)
+    rows = [Observation(path=Path(f"/{name}"), kind="file") for name in ("a.txt", "b.txt")]
+    result = await fs.grep("x", observations=rows, globs=("*.txt",))
+    assert result.observations == []
+    assert reads == []
+    [error] = result.errors
+    assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+    await fs.close()
+
+
+async def test_grep_root_admissions_judge_once_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the admissions compiled and matched once per root per glob per entry."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    for mount in ("/a", "/b"):
+        await fs.add_mount(InMemoryStorage(), mount)
+    roots = [f"/{mount}/f{i:02}.txt" for mount in "ab" for i in range(10)]
+    for root in roots:
+        assert (await fs.write(path=root, content="needle")).success is True
+    executors = _spy_judges(monkeypatch)
+    built: list[list[Any]] = []
+    real = glob_module.glob_set
+
+    def spied(programs: list[Any], groups: Any, *, budget: float | None) -> Any:
+        built.append(programs)
+        return real(programs, groups, budget=budget)
+
+    monkeypatch.setattr(glob_module, "glob_set", spied)
+    result = await fs.grep("needle", paths=tuple(roots), globs=("*.txt",))
+    assert sorted(str(o.path) for o in result.observations) == sorted(roots)
+    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    router_sets = [programs for programs in built if not any(by_path for _atoms, by_path in programs)]
+    assert [len(programs) for programs in router_sets] == [1]
+    await fs.close()
+
+
+async def test_an_unfinished_filter_and_matching_stage_record_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the filter's wall record and the matching stage's identical one both carried."""
+
+    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        return [1] * len(rows), False
+
+    monkeypatch.setattr(base_module, "judge_rows", unfinished)
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=_held(("/a.txt", "x"), ("/b.txt", "x")), globs=("*.txt",))
+    assert result.observations == []
+    [error] = result.errors
+    assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+    await fs.close()
+
+
+_SCOPED_GUIDANCE = "Truncated: at the wall-time budget; narrow the patterns, or scope with fewer paths"
+
+
+async def _two_file_roots() -> AsyncVirtualFileSystem:
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    for path in ("/docs/a.md", "/docs/b.txt"):
+        assert (await fs.write(path=path, content="needle", parents=True)).success is True
+    return fs
+
+
+async def test_an_unfinished_root_admission_hop_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the admissions' wall record dropped when its hop did not finish."""
+
+    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        return [1] * len(rows), False
+
+    monkeypatch.setattr(base_module, "judge_rows", unfinished)
+    fs = await _two_file_roots()
+    result = await fs.grep("needle", paths=("/docs/a.md", "/docs/b.txt"), globs=("*.txt",))
+    walls = [error for error in result.errors if error.kind is ErrorKind.truncated]
+    assert [(e.severity, e.message) for e in walls] == [(Severity.warning, _SCOPED_GUIDANCE)]
+    await fs.close()
+
+
+async def test_a_root_never_judged_is_never_admitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: an unjudged root admitted as a literal member, serving a path the caller's globs exclude."""
+
+    async def unjudged(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        return [None] * len(rows), False
+
+    monkeypatch.setattr(base_module, "judge_rows", unjudged)
+    fs = await _two_file_roots()
+    result = await fs.grep("needle", paths=("/docs/a.md", "/docs/b.txt"), globs=("*.txt",))
+    assert result.observations == []
+    [error] = result.errors
+    assert (error.kind, error.severity, error.message) == (ErrorKind.truncated, Severity.warning, _SCOPED_GUIDANCE)
+    await fs.close()
+
+
+async def test_a_planning_stop_keeps_every_undecided_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: a stopped walk dropping the coverage records of the skips it never decided."""
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.add_mount(RecorderStorage(caps=frozenset({"read", "stat"})), "/thin")
+    result = await fs.grep("needle", paths=("/",))
+    by_kind = sorted((e.kind, e.severity, str(e.path) if e.path else None) for e in result.errors)
+    assert by_kind == sorted(
+        [(ErrorKind.truncated, Severity.warning, None), (ErrorKind.unsupported, Severity.info, "/thin")]
+    )
+    await fs.close()

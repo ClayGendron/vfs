@@ -10,20 +10,29 @@ pre-existing contract placement does change.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import gc
+import warnings
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
 
 from tests.support.base_doubles import RecorderStorage
+from tests.support.loop_ticks import LoopTicker
+from tests.support.oracles import glob as oracle
+from vfs import base as base_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Observation
 from vfs.paths import Path
-from vfs.results import ErrorKind
+from vfs.pattern_matching import canonical_pattern
+from vfs.pattern_matching import glob as glob_module
+from vfs.results import ErrorKind, Result
+from vfs.results.kinds import Severity
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Sequence
 
 # The demo tree: /notes.txt at the root, a.txt and deep/b.txt under /data.
 TREE = (("/notes.txt", "root"), ("/data/a.txt", "a"), ("/data/deep/b.txt", "b"))
@@ -469,3 +478,295 @@ async def test_chained_glob_never_hides_meta_rows_in_hand() -> None:
     rows = [Observation(path=Path("/.vfs/trash/x"))]
     result = await fs.glob("*", observations=rows)
     assert [str(o.path) for o in result.observations] == ["/.vfs/trash/x"]
+
+
+# ----------------------------------------------------------------------
+# Off the loop: the router's glob judging and planning run on its pool
+# ----------------------------------------------------------------------
+
+_SCOPED_GUIDANCE = "Truncated: at the wall-time budget; narrow the patterns, or scope with fewer paths"
+_PLANNING_GUIDANCE = "Truncated: at the wall-time budget; scope with fewer paths, or send fewer patterns or brace arms"
+
+
+def _arms(stem: str, count: int = 64) -> str:
+    """One brace pattern of *count* distinct name arms."""
+    return "{" + ",".join(f"{stem}{i:02}" for i in range(count)) + "}"
+
+
+class _HoppingSet:
+    """A native set whose judging waits for the loop to turn."""
+
+    def __init__(self, inner: Any, ticker: LoopTicker) -> None:
+        self._inner = inner
+        self._ticker = ticker
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._ticker.hop()
+        return self._inner.judge(rows, budget=budget)
+
+
+def _spy_sets(monkeypatch: pytest.MonkeyPatch) -> list[list[Any]]:
+    """Each native set built, as its program list; the real set is returned."""
+    built: list[list[Any]] = []
+    real = glob_module.glob_set
+
+    def spied(programs: list[Any], groups: Any, *, budget: float | None) -> Any:
+        built.append(programs)
+        return real(programs, groups, budget=budget)
+
+    monkeypatch.setattr(glob_module, "glob_set", spied)
+    return built
+
+
+def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The executor each router judge hop ran on."""
+    executors: list[Any] = []
+    real = base_module.judge_rows
+
+    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        executors.append(executor)
+        return await real(executor, gates, rows, deadline=deadline)
+
+    monkeypatch.setattr(base_module, "judge_rows", spied)
+    return executors
+
+
+async def test_chained_glob_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: chained glob judging its rows inline on the loop."""
+    ticker = LoopTicker().start()
+    real = glob_module.glob_set
+    monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _HoppingSet(real(*args, **kwargs), ticker))
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.glob("*.txt", observations=[Observation(path=Path("/a.txt")), Observation(path=Path("/b.md"))])
+    ticker.stop()
+    assert [str(o.path) for o in result.observations] == ["/a.txt"]
+    assert ticker.hops == 1
+    await fs.close()
+
+
+async def test_chained_glob_judges_once_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: one hop per row or per arm, or a program built per row."""
+    executors = _spy_judges(monkeypatch)
+    built = _spy_sets(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    dirs = ("src", "src/app", "docs", "lib/app", "x")
+    names = ("a.py", "b.md", "c.txt", "Makefile")
+    rows = [Observation(path=Path(f"/{dirs[i % 5]}/{i}{names[i % 4]}")) for i in range(1_000)]
+    result = await fs.glob("{*.py,src/**,*.md}", observations=rows, globs_not=("**/app/**",))
+    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    assert [len(programs) for programs in built] == [4]
+    arms = [canonical_pattern(arm) for arm in ("*.py", "src/**", "*.md")]
+    expected = [
+        str(row.path)
+        for row in rows
+        if oracle.passes_filters(
+            str(row.path),
+            row.path.name,
+            row.path.ext,
+            arms,
+            [canonical_pattern("**/app/**")],
+            frozenset(),
+            frozenset(),
+            marked=lambda _pattern: False,
+            marked_only=False,
+        )
+    ]
+    assert 0 < len(expected) < len(rows)
+    assert [str(o.path) for o in result.observations] == expected
+    await fs.close()
+
+
+async def test_chained_glob_truncates_at_the_wall(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.glob("*.txt", observations=[Observation(path=Path("/a.txt")), Observation(path=Path("/b.txt"))])
+    assert result.observations == []
+    [error] = result.errors
+    assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+    assert error.message == (
+        "Truncated: at the wall-time budget; narrow the pattern or its exclusions, or send fewer rows"
+    )
+    await fs.close()
+
+
+async def test_the_root_probe_builds_each_name_arm_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the probe composing and building one program per row per arm."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    matching = [f"/{'ab'[i % 2]}{i:02}.txt" for i in range(25)]
+    others = [f"/c{i:02}.txt" for i in range(25)]
+    for root in (*matching, *others):
+        assert (await fs.mkdir(path=root)).success is True
+    built = _spy_sets(monkeypatch)
+    probing = [False]
+    during: list[Any] = []
+    real_program = glob_module.glob_program
+    real_probe = base_module.AsyncVirtualFileSystem._root_probe
+
+    def counted_program(*args: Any, **kwargs: Any) -> Any:
+        if probing[0]:
+            during.append(args)
+        return real_program(*args, **kwargs)
+
+    async def flagged_probe(self: AsyncVirtualFileSystem, *args: Any, **kwargs: Any) -> Any:
+        probing[0] = True
+        try:
+            return await real_probe(self, *args, **kwargs)
+        finally:
+            probing[0] = False
+
+    monkeypatch.setattr(glob_module, "glob_program", counted_program)
+    monkeypatch.setattr(base_module.AsyncVirtualFileSystem, "_root_probe", flagged_probe)
+    result = await fs.glob("{a,b}*.txt", paths=(*matching, *others))
+    assert sorted(result.paths) == sorted(matching)
+    assert during == []
+    probe_sets = [programs for programs in built if not any(by_path for _atoms, by_path in programs)]
+    assert [len(programs) for programs in probe_sets] == [2]
+    await fs.close()
+
+
+async def test_a_path_arm_never_serves_a_scope_roots_own_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    executors = _spy_judges(monkeypatch)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.write(path="/docs/x.txt", content="x", parents=True)
+    served = await fs.glob("/**", paths=("/docs",))
+    assert served.paths == ("/docs/x.txt",)
+    assert executors == []
+    missing = await fs.glob("/**", paths=("/nope",))
+    assert [(e.kind, str(e.path)) for e in missing.errors] == [(ErrorKind.not_found, "/nope")]
+    await fs.close()
+
+
+async def test_a_root_probe_past_its_wall_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def unjudged(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+        return [None] * len(rows), False
+
+    monkeypatch.setattr(base_module, "judge_rows", unjudged)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.write(path="/docs/x.txt", content="x", parents=True)
+    result = await fs.glob("*", paths=("/docs",))
+    assert result.paths == ("/docs/x.txt",)
+    [error] = result.errors
+    assert (error.kind, error.severity, error.message) == (ErrorKind.truncated, Severity.warning, _SCOPED_GUIDANCE)
+    await fs.close()
+
+
+async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the residual walk run inline on the loop, which then cannot turn."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    assert (await fs.mkdir(path="/m")).success is True
+    await fs.add_mount(RecorderStorage(), "/m/n")
+    turns = [0]
+    readings: list[tuple[int, int]] = []
+    real = base_module._plan_scope
+
+    def watched(*args: Any, **kwargs: Any) -> Any:
+        start = turns[0]
+        plan = real(*args, **kwargs)
+        readings.append((start, turns[0]))
+        return plan
+
+    async def count_turns() -> None:
+        while True:
+            await asyncio.sleep(0)
+            turns[0] += 1
+
+    monkeypatch.setattr(base_module, "_plan_scope", watched)
+    counter = asyncio.ensure_future(count_turns())
+    result = await fs.glob(_arms("x") + "*.txt", paths=tuple(f"/m/n/r{i:04}" for i in range(2_000)))
+    counter.cancel()
+    assert result.ops == ("glob",)
+    [(start, end)] = readings
+    assert end > start
+    await fs.close()
+
+
+async def test_planning_past_the_wall_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    roots = [f"/d{i:02}" for i in range(50)]
+    for root in roots:
+        assert (await fs.write(path=f"{root}/a.txt", content="a", parents=True)).success is True
+    composed: list[Any] = []
+    real = base_module.composed_pattern
+
+    def counted(root: Path, pattern: str) -> str:
+        composed.append(root)
+        return real(root, pattern)
+
+    plans: list[Any] = []
+    real_plan = base_module._plan_scope
+
+    def recorded(*args: Any, **kwargs: Any) -> Any:
+        plans.append(real_plan(*args, **kwargs))
+        return plans[-1]
+
+    monkeypatch.setattr(base_module, "composed_pattern", counted)
+    monkeypatch.setattr(base_module, "_plan_scope", recorded)
+    result = await fs.glob("/**/*.txt", paths=tuple(roots))
+    walls = [error for error in result.errors if error.kind is ErrorKind.truncated]
+    assert [(e.severity, e.message) for e in walls] == [(Severity.warning, _PLANNING_GUIDANCE)]
+    assert len(set(composed)) <= 1
+    [plan] = plans
+    assert (plan.roots, plan.completed) == ((), False)
+    await fs.close()
+
+
+async def test_one_large_root_stops_inside_its_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: the planning deadline read only between roots, so one root
+    reaching every entry walks all its arms past the wall."""
+    root = InMemoryStorage()
+    root_globs: list[Any] = []
+
+    async def recorded_glob(**kwargs: Any) -> Any:
+        root_globs.append(kwargs)
+        return Result(ops=("glob",))
+
+    fs = AsyncVirtualFileSystem(storage=root)
+    mounts = [RecorderStorage() for _ in range(20)]
+    for index, mount in enumerate(mounts):
+        await fs.add_mount(mount, f"/m{index:02}")
+    monkeypatch.setattr(root, "glob", recorded_glob)
+    residuations = [0]
+    real_residuals = base_module.residuals
+    real_clock = base_module.monotonic
+
+    def counted(pattern: str, bind_path: Path) -> Any:
+        residuations[0] += 1
+        return real_residuals(pattern, bind_path)
+
+    monkeypatch.setattr(base_module, "residuals", counted)
+    monkeypatch.setattr(base_module, "monotonic", lambda: 1e12 if residuations[0] else real_clock())
+    exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
+    result = await fs.glob(_arms("x"), paths=("/",), globs_not=exclusions)
+    assert residuations[0] <= 64
+    assert root_globs == []
+    for mount in mounts:
+        assert [op for op, _kwargs in mount.calls if op == "glob"] == []
+    walls = [error for error in result.errors if error.kind is ErrorKind.truncated]
+    assert [e.message for e in walls] == [_PLANNING_GUIDANCE]
+    await fs.close()
+
+
+@pytest.mark.parametrize("verb", ["glob", "grep"])
+@pytest.mark.parametrize("yields", [0, 1])
+async def test_a_close_during_the_planning_hop_answers_a_result(verb: str, yields: int) -> None:
+    """Guards: the builders reading the mount table after their hops, so a
+    close() landing during one raises out of the verb or strands a coroutine."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    await fs.write(path="/docs/a.txt", content="needle", parents=True)
+
+    async def closer() -> None:
+        for _ in range(yields):
+            await asyncio.sleep(0)
+        await fs.close()
+
+    call = fs.glob("*.txt", paths=("/docs",)) if verb == "glob" else fs.grep("needle", paths=("/docs",))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        # A liveness bound, so a race that wedges the call fails this test instead of hanging it.
+        result, closed = await asyncio.wait_for(asyncio.gather(call, closer(), return_exceptions=True), 30.0)
+        gc.collect()
+    assert closed is None
+    assert isinstance(result, Result), result
+    assert result.success or [e.kind for e in result.errors] == [ErrorKind.backend_unavailable]
+    assert not [w for w in caught if "never awaited" in str(w.message)]

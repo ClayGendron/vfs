@@ -79,7 +79,7 @@ from vfs.storage.backends.database.embed import (
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.glean import VectorLeg, glean_rows
 from vfs.storage.backends.database.graph import GraphRequest, Site, graph_rows
-from vfs.storage.backends.database.grep import WALL_TIME_BUDGET, grep_rows
+from vfs.storage.backends.database.grep import grep_rows
 from vfs.storage.backends.database.indexing import (
     REINDEX_HEARTBEAT_SECONDS,
     ReindexState,
@@ -96,7 +96,7 @@ from vfs.storage.backends.database.indexing import (
     with_notes,
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller
-from vfs.storage.backends.database.offload import call_offloaded
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, call_offloaded
 from vfs.storage.backends.database.reads import (
     addressed_by,
     effective_columns,
@@ -198,6 +198,7 @@ class DatabaseStorage:
         trash_days: int = 90,
         grep_wall_seconds: float = WALL_TIME_BUDGET,
         glean_wall_seconds: float = WALL_TIME_BUDGET,
+        glob_wall_seconds: float = WALL_TIME_BUDGET,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
         embed_concurrency: int = EMBED_CONCURRENCY,
@@ -212,6 +213,9 @@ class DatabaseStorage:
             raise ValueError(msg)
         if grep_wall_seconds <= 0:
             msg = f"grep_wall_seconds must be positive, got {grep_wall_seconds}"
+            raise ValueError(msg)
+        if glob_wall_seconds <= 0:
+            msg = f"glob_wall_seconds must be positive, got {glob_wall_seconds}"
             raise ValueError(msg)
         if embed_concurrency < 1:
             msg = f"embed_concurrency must be at least 1, got {embed_concurrency}"
@@ -243,6 +247,7 @@ class DatabaseStorage:
             raise ValueError(msg)
         self._grep_wall_seconds = grep_wall_seconds
         self._glean_wall_seconds = glean_wall_seconds
+        self._glob_wall_seconds = glob_wall_seconds
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
         # dialect only at first use, so the default names the schema.
@@ -483,6 +488,7 @@ class DatabaseStorage:
                     host.profile,
                     host.parameter_budget,
                     host.membership_budget,
+                    host.offload_executor,
                     patterns=patterns,
                     globs_not=globs_not,
                     ext=ext,
@@ -490,6 +496,7 @@ class DatabaseStorage:
                     kind=kind,
                     max_count=max_count,
                     columns=columns,
+                    wall_seconds=self._glob_wall_seconds,
                     view=view,
                 ),
             ),

@@ -10,9 +10,10 @@ worlds.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import func, select, update
@@ -23,14 +24,19 @@ from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import compile_filter
+from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
+from vfs.storage.backends.database.offload import WALL_TIME_CAUSE
 from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.seams import installed
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 async def _fresh(tmp_path, files: dict[str, str]) -> DatabaseStorage:
@@ -46,6 +52,35 @@ _VARINT_MAX = bytes([0xFF] * 8 + [0x7F])
 
 def _paths(result: Result) -> list[str]:
     return [str(o.path) for o in result.observations]
+
+
+class _JudgedSet:
+    """A native set wrapped to record each hop's thread, or to report every hop unfinished."""
+
+    def __init__(self, inner: Any, spy: _SetSpy) -> None:
+        self._inner = inner
+        self._spy = spy
+
+    def judge(self, rows: Sequence[tuple[str, str]], *, budget: float | None) -> tuple[list[int | None], bool]:
+        self._spy.threads.append(threading.current_thread().name)
+        verdicts, completed = self._inner.judge(rows, budget=budget)
+        return verdicts, completed and not self._spy.unfinished
+
+
+class _SetSpy:
+    """Stands in for the pattern layer's ``glob_set``: counts builds, wraps each set."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, unfinished: bool = False) -> None:
+        self._real = glob_module.glob_set
+        self.builds = 0
+        self.threads: list[str] = []
+        self.unfinished = unfinished
+        monkeypatch.setattr(glob_module, "glob_set", self)
+
+    def __call__(self, programs: Any, groups: Any, *, budget: float | None) -> Any:
+        self.builds += 1
+        built = self._real(programs, groups, budget=budget)
+        return None if built is None else _JudgedSet(built, self)
 
 
 class TestRefusalGate:
@@ -285,6 +320,30 @@ class TestStructuralGates:
             wildcard = await storage.grep(pattern="needle", globs=("/.v*/**",))
             assert wildcard.observations == []
             assert (await storage.reindex()).success is True
+        await storage.close()
+
+    async def test_the_structural_gate_judges_off_the_loop(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: one hop per candidate row, or the gates built again for the scan side."""
+        storage = await _fresh(tmp_path, {"/indexed.txt": "needle one"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/overlay.txt"), content="needle two")])).success
+        spy = _SetSpy(monkeypatch)
+        result = await storage.grep(pattern="needle", globs=("*.txt",))
+        assert _paths(result) == ["/indexed.txt", "/overlay.txt"]
+        assert (len(spy.threads), spy.builds) == (2, 1)
+        assert all(name.startswith("vfs-offload") for name in spy.threads), spy.threads
+        await storage.close()
+
+    async def test_an_unfinished_gate_judgement_truncates_once(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: an unfinished judgement recorded once per hop, or not at all."""
+        storage = await _fresh(tmp_path, {"/indexed.txt": "needle one"})
+        assert (await storage.reindex()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/overlay.txt"), content="needle two")])).success
+        _SetSpy(monkeypatch, unfinished=True)
+        result = await storage.grep(pattern="needle", globs=("*.txt",))
+        walls = [error for error in result.errors if WALL_TIME_CAUSE in error.message]
+        assert len(walls) == 1
+        assert (walls[0].kind, walls[0].severity) == (ErrorKind.truncated, Severity.warning)
         await storage.close()
 
 
@@ -699,7 +758,7 @@ class TestScanMergeBounds:
         # scan issues no statements and nominates nothing.
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two"})
         host = storage._host
-        gates = [compile_filter("*.txt", ())]
+        gates = [compile_filter("*.txt")]
         async with host.session_factory() as session:
             nominated, overflow = await grep_module.entries_for_scan(
                 session,
@@ -725,7 +784,7 @@ class TestScanMergeBounds:
         files = dict.fromkeys(("/a1.txt", "/a2.txt", "/b1.log", "/b2.log"), "needle body")
         storage = await _fresh(tmp_path, files)
         host = storage._host
-        gates = [compile_filter("*.txt", ()), compile_filter("*.log", ())]
+        gates = [compile_filter("*.txt"), compile_filter("*.log")]
         async with host.session_factory() as session:
             nominated, overflow = await scope_module.entries_for_scan(
                 session,
