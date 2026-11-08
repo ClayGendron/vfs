@@ -269,6 +269,8 @@ Left for later, found by the build or the review and outside this change: `Resul
 
 The gate, EXECUTED on the tree as committed: lint, format, types, docs examples and wheel size PASS; 4,785 passed and 5 skipped (the in-memory class's plan pins and batteries, whose SQLite engine the file-backed leg proves); 100% coverage. The engine legs, EXECUTED by the code review: Postgres 354, MariaDB 345 and 8 skipped (the MySQL-only nodes), Oracle 351, SQL Server 356 run alone.
 
+**Changelog:** Fixed — a scoped `glob`, `grep` or `glean` sends storage its roots and its arms side by side instead of every arm composed under every root, so the SQL grows with roots plus arms, a 10,000-root call no longer reaches the composition limit, and an anonymous caller is judged exactly where it was judged before.
+
 ## One line
 
 Past the router's composition limit, a scoped search sends storage its roots and its arms side by side instead of every arm composed under every root. The SQL a call builds then grows with roots plus arms, each arm is matched once against each row's remainder off the loop, and an anonymous caller is still judged exactly where composition judged it.
