@@ -10,7 +10,9 @@ pins depth one, and the any-depth idiom is an explicit leading ``**/``
 — while a slash-free pattern matches leaf names at any depth. The ext
 filter reads the **path-derived** extension, deliberately never a
 stored column. ``**`` inside a component is a refusable defect, not a
-silent ``*``.
+silent ``*``. Matching runs on the engine's native glob program, which
+never backtracks: one match costs at most a fixed number of word
+operations per character of the subject, whatever the wildcards.
 
     try:
         arms = expand_pattern(pattern)      # gate, brace-expand, cap — or PatternError
@@ -23,12 +25,12 @@ silent ``*``.
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from itertools import product
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol
 
+from vfs.native import glob_program
 from vfs.paths import Path, extract_extension, normalize_ext_channel, normalize_extension
 
 if TYPE_CHECKING:
@@ -49,6 +51,17 @@ GLOB_CHANNEL_LABELS: Final[Mapping[GlobChannel, str]] = MappingProxyType(
 # The row facts `passes_row_filters` reads beside the path: storage rides
 # these columns on every candidate fetch so the gate never builds a Path.
 ROW_GATE_FIELDS: Final = frozenset({"name", "ext"})
+
+# One program atom: an op and its code-point ranges (see `vfs.native.glob_program`).
+GlobAtom = tuple[str, list[tuple[str, str]]]
+
+
+class GlobProgram(Protocol):
+    """The engine's compiled matcher for one glob pattern."""
+
+    def is_match(self, subject: str) -> bool:
+        """Whether the whole *subject* matches, from its first character."""
+        ...
 
 
 class PatternError(ValueError):
@@ -74,13 +87,13 @@ class GlobFilter:
 
     pattern: str
     by_path: bool
-    regex: re.Pattern[str]
+    program: GlobProgram
     wanted_ext: frozenset[str]
 
     def matches(self, path: Path) -> bool:
-        """Compiled-regex authority over the subject, then the path-derived ext gate."""
+        """Compiled-program authority over the subject, then the path-derived ext gate."""
         subject = str(path) if self.by_path else path.name
-        if self.regex.match(subject) is None:
+        if not self.program.is_match(subject):
             return False
         return not self.wanted_ext or (extract_extension(path) or "") in self.wanted_ext
 
@@ -93,7 +106,7 @@ class GlobFilter:
         is pinned by test.
         """
         subject = path if self.by_path else name
-        if self.regex.match(subject) is None:
+        if not self.program.is_match(subject):
             return False
         return not self.wanted_ext or (ext or "") in self.wanted_ext
 
@@ -198,14 +211,18 @@ def canonical_pattern(pattern: str) -> str:
     Any ``/`` anchors the pattern at the root and adjacent ``**``
     components collapse to one — the same form ``GlobFilter.pattern``
     carries, exposed for consumers that derive facts from the pattern
-    text without compiling a regex.
+    text without compiling a program.
     """
     return _canonical(pattern)
 
 
-def compile_glob(pattern: str) -> re.Pattern[str]:
-    """Compile a defect-free pattern to its authoritative regex, canonicalized first."""
-    return re.compile(_translate(_canonical(pattern), recursive=True))
+def compile_glob(pattern: str) -> GlobProgram:
+    """Compile a defect-free pattern to its authoritative native program, canonicalized first.
+
+    The program's ``is_match(subject)`` answers what ``re.match`` over the
+    stdlib's ``glob.translate`` text answers, without backtracking.
+    """
+    return glob_program(_program(_canonical(pattern), recursive=True))
 
 
 def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
@@ -214,7 +231,7 @@ def compile_filter(pattern: str, ext: tuple[str, ...]) -> GlobFilter:
     return GlobFilter(
         pattern=canonical,
         by_path="/" in canonical,
-        regex=compile_glob(pattern),
+        program=compile_glob(pattern),
         wanted_ext=normalize_ext_channel(ext),
     )
 
@@ -407,6 +424,9 @@ def render_residual(components: tuple[str, ...]) -> str:
 
 def _component_defect(pattern: str) -> str | None:
     """The component-shaped defect in a brace-free pattern, or ``None``."""
+    for char in pattern:
+        if 0xD800 <= ord(char) <= 0xDFFF:
+            return f"lone surrogate: U+{ord(char):04X}"
     components = pattern.split("/")
     for index, component in enumerate(components):
         if "**" in component and component != "**":
@@ -507,60 +527,52 @@ def _canonical(pattern: str) -> str:
 
 def _component_matches(component: str, segment: str) -> bool:
     """One non-``**`` pattern component against one bind-path segment."""
-    return re.fullmatch(_translate(component, recursive=False), segment) is not None
+    return glob_program(_program(component, recursive=False)).is_match(segment)
 
 
-# The stdlib translators switched their end-of-string anchor to \z in 3.14;
-# mirror them exactly (\z is a re.error before 3.14).
-_END_OF_STRING: Final = r"\z" if sys.version_info >= (3, 14) else r"\Z"
+def _program(pattern: str, *, recursive: bool) -> list[GlobAtom]:
+    """The engine program for *pattern* — the walk the stdlib's ``glob.translate`` makes.
 
-
-def _translate(pattern: str, *, recursive: bool) -> str:
-    """Regex source for *pattern* — segment-aware, dotfiles ordinary, ``/`` seps.
-
-    An original implementation of the ``glob.translate`` contract (stdlib
-    3.13+, newer than the project floor), fixed to the one call shape every
-    consumer uses: hidden files included, ``/`` the only separator. Input
-    is defect-gated and canonical — no ``**`` inside a component, no
-    adjacent ``**`` — so the stdlib's collapses for both are omitted here.
-    Parity with the stdlib is pinned textually by the differential test
-    wherever the stdlib function exists. ``**`` as a whole component spans
-    zero or more segments only under *recursive*; a bare ``*`` component
-    requires a non-empty segment.
+    Fixed to the one call shape every consumer uses: hidden files
+    included, ``/`` the only separator. Input is defect-gated and
+    canonical — no ``**`` inside a component, no adjacent ``**``. Under
+    *recursive* a whole-component ``**`` is ``mid`` (zero or more whole
+    segments) or, last, ``tail`` (anything); a bare ``*`` component
+    requires a non-empty segment (``one`` then ``star``).
     """
     parts = pattern.split("/")
     last = len(parts) - 1
-    pieces: list[str] = []
+    atoms: list[GlobAtom] = []
     for index, part in enumerate(parts):
         if recursive and part == "**":
-            pieces.append(".*" if index == last else "(?:.+/)?")
+            atoms.append(("tail", []) if index == last else ("mid", []))
             continue
         if part == "*":
-            pieces.append("[^/]+")
+            atoms.extend([("one", []), ("star", [])])
         elif part:
-            pieces.append(_translate_component(part))
+            atoms.extend(_component_atoms(part))
         if index < last:
-            pieces.append("/")
-    return "(?s:" + "".join(pieces) + ")" + _END_OF_STRING
+            atoms.append(("sep", []))
+    return atoms
 
 
-def _translate_component(component: str) -> str:
-    """One component's regex source: wildcards, classes, escaped literals."""
-    pieces: list[str] = []
+def _component_atoms(component: str) -> list[GlobAtom]:
+    """One component's atoms: wildcards, classes, literal characters."""
+    atoms: list[GlobAtom] = []
     index = 0
     while index < len(component):
         char = component[index]
         index += 1
         if char == "*":
-            pieces.append("[^/]*")
+            atoms.append(("star", []))
         elif char == "?":
-            pieces.append("[^/]")
+            atoms.append(("one", []))
         elif char == "[" and (end := _component_class_end(component, index)) is not None:
-            pieces.append(_translate_class(component[index:end]))
+            atoms.append(_class_atom(component[index:end]))
             index = end + 1
         else:
-            pieces.append(re.escape(char))
-    return "".join(pieces)
+            atoms.append(("lit", [(char, char)]))
+    return atoms
 
 
 def _component_class_end(component: str, start: int) -> int | None:
@@ -579,37 +591,71 @@ def _component_class_end(component: str, start: int) -> int | None:
     return end if end != -1 else None
 
 
-def _translate_class(stuff: str) -> str:
-    """One class interior's regex source, empty ranges pruned fnmatch-style."""
+def _class_atom(stuff: str) -> GlobAtom:
+    """One class interior's atom, its members the ones fnmatch's regex class names.
+
+    The fnmatch chunk walk: a ``-`` past the first member splits chunks,
+    and an inverted range (``z-a``) is merged away. The last character
+    of each chunk and the first of the next bound a range; every other
+    character, ``-`` included, is a member alone. The class is negated
+    when the merged text begins with ``!`` — written or exposed by a
+    merge (``[z-a!b]`` is ``[^b]``); when that ``!`` is the whole first
+    chunk, the joining ``-`` is a member and bounds no range
+    (``[--!!-!]`` is ``[^-!]``). An empty class never matches; a bare
+    ``!`` matches any character.
+    """
+    chunks = _class_chunks(stuff)
+    text = "-".join(chunks)
+    if not text:
+        return ("never", [])
+    if text == "!":
+        return ("dot", [])
+    negated = text[0] == "!"
+    if negated:
+        chunks[0] = chunks[0][1:]
+    members: list[tuple[str, str]] = []
+    for k, chunk in enumerate(chunks):
+        first = 0
+        if k > 0:
+            if negated and k == 1 and not chunks[0]:
+                members.append(("-", "-"))
+            else:
+                members.append((chunks[k - 1][-1], chunk[0]))
+                first = 1
+        last = len(chunk) - 1 if k < len(chunks) - 1 else len(chunk)
+        members.extend((char, char) for char in chunk[first:last])
+    return ("nclass" if negated else "class", _merged_ranges(members))
+
+
+def _class_chunks(stuff: str) -> list[str]:
+    """The class interior split at its range dashes, inverted ranges merged away."""
     if "-" not in stuff:
-        body = stuff.replace("\\", r"\\")
+        return [stuff]
+    chunks: list[str] = []
+    start = 0
+    probe = 2 if stuff[0] == "!" else 1
+    while (hit := stuff.find("-", probe)) >= 0:
+        chunks.append(stuff[start:hit])
+        # A range consumes the dash and its bounds; probe past them.
+        start, probe = hit + 1, hit + 3
+    if rest := stuff[start:]:
+        chunks.append(rest)
     else:
-        chunks: list[str] = []
-        start = 0
-        probe = 2 if stuff[0] == "!" else 1
-        while (hit := stuff.find("-", probe)) >= 0:
-            chunks.append(stuff[start:hit])
-            # A range consumes the dash and its bounds; probe past them.
-            start, probe = hit + 1, hit + 3
-        if rest := stuff[start:]:
-            chunks.append(rest)
-        else:
-            chunks[-1] += "-"
-        for k in range(len(chunks) - 1, 0, -1):
-            # An inverted range ([z-a]) is invalid regex; merge it away.
-            if chunks[k - 1][-1] > chunks[k][0]:
-                chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
-                del chunks[k]
-        body = "-".join(s.replace("\\", r"\\").replace("-", r"\-") for s in chunks)
-    body = re.sub(r"([&~|])", r"\\\1", body)
-    if not body:
-        return "(?!)"
-    if body == "!":
-        # A negated empty range matches any character (fnmatch's rule);
-        # falling through would emit the invalid class [^].
-        return "."
-    if body[0] == "!":
-        body = "^" + body[1:]
-    elif body[0] in "^[":
-        body = "\\" + body
-    return "[" + body + "]"
+        chunks[-1] += "-"
+    for k in range(len(chunks) - 1, 0, -1):
+        if chunks[k - 1][-1] > chunks[k][0]:
+            chunks[k - 1] = chunks[k - 1][:-1] + chunks[k][1:]
+            del chunks[k]
+    return chunks
+
+
+def _merged_ranges(members: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Sorted, disjoint ranges covering *members*; touching ranges join."""
+    merged: list[tuple[str, str]] = []
+    for lo, hi in sorted(members):
+        if merged and ord(lo) <= ord(merged[-1][1]) + 1:
+            if hi > merged[-1][1]:
+                merged[-1] = (merged[-1][0], hi)
+            continue
+        merged.append((lo, hi))
+    return merged

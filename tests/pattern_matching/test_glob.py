@@ -14,12 +14,15 @@ from itertools import product
 
 import pytest
 
+from tests.support.oracles import glob as oracle
+from vfs.base import AsyncVirtualFileSystem
 from vfs.paths import ROOT, Path
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
     MAX_PATTERN_ARMS,
     DerivedExt,
     PatternError,
+    canonical_pattern,
     compile_filter,
     compile_glob,
     composed_pattern,
@@ -33,6 +36,8 @@ from vfs.pattern_matching import (
     passes_row_filters,
     residuals,
 )
+from vfs.pattern_matching import glob as glob_module
+from vfs.results import ErrorKind
 
 DEMO_TREE = [Path("/notes.txt"), Path("/docs/a.txt"), Path("/docs/deep/nested/b.txt")]
 
@@ -207,40 +212,40 @@ class TestExpandPattern:
 class TestCompileGlob:
     def test_star_stops_at_the_separator(self):
         regex = compile_glob("/docs/*.txt")
-        assert regex.match("/docs/a.txt")
-        assert regex.match("/docs/deep/b.txt") is None
+        assert regex.is_match("/docs/a.txt")
+        assert not regex.is_match("/docs/deep/b.txt")
 
     def test_double_star_spans_segments_including_zero(self):
         regex = compile_glob("/docs/**/*.txt")
-        assert regex.match("/docs/a.txt")
-        assert regex.match("/docs/deep/nested/b.txt")
+        assert regex.is_match("/docs/a.txt")
+        assert regex.is_match("/docs/deep/nested/b.txt")
 
     def test_unanchored_path_pattern_anchors_at_the_root(self):
         regex = compile_glob("src/*.py")
-        assert regex.match("/src/a.py")
-        assert regex.match("/x/src/a.py") is None
+        assert regex.is_match("/src/a.py")
+        assert not regex.is_match("/x/src/a.py")
 
     def test_star_slash_pins_depth_one(self):
         regex = compile_glob("*/x.py")
-        assert regex.match("/a/x.py")
-        assert regex.match("/a/b/x.py") is None
-        assert regex.match("/x.py") is None
+        assert regex.is_match("/a/x.py")
+        assert not regex.is_match("/a/b/x.py")
+        assert not regex.is_match("/x.py")
 
     def test_explicit_double_star_prefix_reaches_root_level(self):
         regex = compile_glob("**/x.py")
-        assert regex.match("/x.py")
-        assert regex.match("/a/b/x.py")
+        assert regex.is_match("/x.py")
+        assert regex.is_match("/a/b/x.py")
 
     def test_question_mark_matches_one_non_separator_character(self):
         regex = compile_glob("/?.py")
-        assert regex.match("/a.py")
-        assert regex.match("/ab.py") is None
-        assert regex.match("/a/b.py") is None
+        assert regex.is_match("/a.py")
+        assert not regex.is_match("/ab.py")
+        assert not regex.is_match("/a/b.py")
 
     def test_name_arm_pattern_compiles_over_names(self):
         regex = compile_glob("*.txt")
-        assert regex.match("notes.txt")
-        assert regex.match("notes.py") is None
+        assert regex.is_match("notes.txt")
+        assert not regex.is_match("notes.py")
 
     def test_a_class_reducing_to_bare_bang_matches_any_character(self):
         # Inverted-range pruning can leave "!" alone in the class body
@@ -248,8 +253,8 @@ class TestCompileGlob:
         for pattern in ("[!z-a]", "x[!z-a]y"):
             assert glob_defect(pattern) is None
             regex = compile_glob(pattern)
-            assert regex.match(pattern.replace("[!z-a]", "q"))
-            assert regex.match(pattern.replace("[!z-a]", "")) is None
+            assert regex.is_match(pattern.replace("[!z-a]", "q"))
+            assert not regex.is_match(pattern.replace("[!z-a]", ""))
 
 
 # =========================================================================
@@ -369,8 +374,8 @@ class TestEffectivePattern:
         composed = effective_pattern(Path("/data/[x]"), "src/*.py")
         assert composed == "/data/[[]x[]]/src/*.py"
         regex = compile_glob(composed)
-        assert regex.match("/data/[x]/src/a.py")
-        assert regex.match("/data/x/src/a.py") is None
+        assert regex.is_match("/data/[x]/src/a.py")
+        assert not regex.is_match("/data/x/src/a.py")
 
 
 # =========================================================================
@@ -405,9 +410,9 @@ class TestComposedPattern:
         # The named battery case: ** spans zero segments, so the float
         # made spatial loses no direct-child matches.
         regex = compile_glob(composed_pattern(Path("/a/data"), "*.csv"))
-        assert regex.match("/a/data/x.csv")
-        assert regex.match("/a/data/sub/deep/y.csv")
-        assert regex.match("/a/other.csv") is None
+        assert regex.is_match("/a/data/x.csv")
+        assert regex.is_match("/a/data/sub/deep/y.csv")
+        assert not regex.is_match("/a/other.csv")
 
     def test_composition_preserves_well_formedness(self):
         for root, pattern in ((Path("/a"), "*.csv"), (ROOT, "**"), (Path("/a/b"), "src/*.py")):
@@ -421,8 +426,8 @@ class TestComposedPattern:
             composed = composed_pattern(root, "*.csv")
             assert glob_defect(composed) is None, composed
             regex = compile_glob(composed)
-            assert regex.match(f"/{name}/x.csv")
-            assert regex.match("/ab/x.csv") is None
+            assert regex.is_match(f"/{name}/x.csv")
+            assert not regex.is_match("/ab/x.csv")
 
 
 # =========================================================================
@@ -551,24 +556,136 @@ PARITY_PATTERNS = (
     "[\\\\]",
     "x[!0-9]y",
     "{a,b}",
+    "[z-a!b]",
+    "[--!!!]",
+    "[--!!-!]",
+    # Programs past 64 steps: the state spans words, so every carry and
+    # every reach across a word boundary decides a verdict.
+    "/" + "a" * 70,
+    "/" + "a" * 63 + "*b",
+    "/" + "x" * 60 + "/**/*.py",
+    "/" + "x" * 61 + "/**",
+)
+
+# Subjects for the verdict pin: names and paths across dotfiles, the class
+# metacharacters, multi-byte characters, deep paths and the empty string.
+PARITY_SUBJECTS = (
+    "",
+    "a",
+    "x",
+    "q",
+    "ab",
+    "abc",
+    "a.txt",
+    "notes.txt",
+    ".hidden",
+    "[",
+    "]",
+    "!",
+    "-",
+    "^",
+    "&",
+    "\\",
+    "xay",
+    "x5y",
+    "é",
+    "日本",
+    "😀",
+    "/a",
+    "/x",
+    "/a/b",
+    "/a/x/b",
+    "/a/x/y/b",
+    "/src/a.py",
+    "/src/app/a.py",
+    "/x/src/a.py",
+    "/data/a/x.csv",
+    "/data/b/deep/y.csv",
+    "/data/c/x.csv",
+    "/.hidden/x",
+    "/x/.hidden",
+    "/é/日本",
+    "/a/",
+    "//",
+    "/" + "/".join("abcdefghij"),
+    "/" + "x" * 255,
+    "a/b",
+    "/" + "a" * 70,
+    "/" + "a" * 69,
+    "/" + "a" * 63 + "zzb",
+    "/" + "x" * 60 + "/d/e.py",
+    "/" + "x" * 60 + "/e.py",
+    "/" + "x" * 61 + "/",
+    "/" + "x" * 61,
 )
 
 
-@pytest.mark.skipif(not hasattr(stdlib_glob, "translate"), reason="stdlib glob.translate arrives in 3.13")
-class TestTranslateParity:
-    """The in-house translation must be the stdlib's, byte for byte."""
+_STDLIB_TRANSLATE = pytest.mark.skipif(
+    not hasattr(stdlib_glob, "translate"), reason="stdlib glob.translate arrives in 3.13"
+)
 
-    def test_compiled_source_matches_the_stdlib(self) -> None:
+
+def _oracle_verdict(pattern: str, subject: str) -> bool:
+    """Today's matcher: ``re.match`` over the stdlib-text translation."""
+    return re.match(oracle._translate(canonical_pattern(pattern), recursive=True), subject) is not None
+
+
+def _engine_verdict(pattern: str, subject: str) -> bool:
+    return compile_filter(pattern, ()).program.is_match(subject)
+
+
+class TestTranslateParity:
+    """The oracle is the stdlib's text; the engine answers as the oracle does."""
+
+    @_STDLIB_TRANSLATE
+    def test_the_oracle_is_the_stdlibs_text(self) -> None:
         for pattern in PARITY_PATTERNS:
             gate = compile_filter(pattern, ())
             # The skipif above guards this 3.13+ attribute at runtime.
             expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
                 gate.pattern, recursive=True, include_hidden=True, seps="/"
             )
-            assert gate.regex.pattern == expected, pattern
+            assert oracle._translate(gate.pattern, recursive=True) == expected, pattern
+
+    def test_verdicts_match_the_oracle(self) -> None:
+        for pattern, subject in product(PARITY_PATTERNS, PARITY_SUBJECTS):
+            assert _engine_verdict(pattern, subject) is _oracle_verdict(pattern, subject), (pattern, subject)
 
     @pytest.mark.slow
-    def test_exhaustive_class_machinery_fuzz_stays_byte_identical(self) -> None:
+    def test_exhaustive_fuzz_agrees_with_the_oracle(self) -> None:
+        # Every defect-free pattern up to depth 4 against every short subject;
+        # the two multi-byte characters reach the engine's non-ASCII masks.
+        subjects = ["".join(c) for n in range(4) for c in product("[]!-azb/é日", repeat=n)]
+        assert len(subjects) == 1_111
+        patterns = [
+            "".join(c) for n in range(1, 5) for c in product("[]!-az*", repeat=n) if glob_defect("".join(c)) is None
+        ]
+        assert len(patterns) == 2_654
+        for pattern in patterns:
+            program = compile_filter(pattern, ()).program
+            source = re.compile(oracle._translate(canonical_pattern(pattern), recursive=True))
+            for subject in subjects:
+                assert program.is_match(subject) is (source.match(subject) is not None), (pattern, subject)
+
+    @pytest.mark.slow
+    def test_every_short_class_agrees_with_the_oracle(self) -> None:
+        # Class bodies long enough for ranges, inverted-range merges, a merge
+        # that exposes a negating "!", and the "!" chunk before a dash.
+        subjects = list("!-az]^[b/é")
+        bodies = ["".join(c) for n in range(1, 7) for c in product("!-az]^[", repeat=n)]
+        assert len(bodies) == 137_256
+        for body in bodies:
+            pattern = "[" + body + "]"
+            if glob_defect(pattern) is not None:
+                continue
+            program = compile_filter(pattern, ()).program
+            source = re.compile(oracle._translate(canonical_pattern(pattern), recursive=True))
+            for subject in subjects:
+                assert program.is_match(subject) is (source.match(subject) is not None), (pattern, subject)
+
+    @_STDLIB_TRANSLATE
+    @pytest.mark.slow
+    def test_exhaustive_class_machinery_fuzz_keeps_the_oracle_byte_identical(self) -> None:
         # Every defect-free pattern up to depth 6 over the class-machinery
         # alphabet: same bytes as the stdlib, and no pattern ever raises.
         alphabet = "[]!-az*"
@@ -581,7 +698,7 @@ class TestTranslateParity:
                 expected = stdlib_glob.translate(  # ty: ignore[unresolved-attribute]
                     gate.pattern, recursive=True, include_hidden=True, seps="/"
                 )
-                assert gate.regex.pattern == expected, pattern
+                assert oracle._translate(gate.pattern, recursive=True) == expected, pattern
 
 
 class TestRowFactParity:
@@ -636,3 +753,64 @@ class TestRowFactParity:
                 expected = passes_filters(path, admit, deny, wanted, unwanted)
                 actual = passes_row_filters(str(path), path.name, path.ext, admit, deny, wanted, unwanted)
                 assert actual is expected, f"{text!r} disagrees under {wanted}/{unwanted}"
+
+
+# =========================================================================
+# The native glob program — no backtracking, no Python re
+# =========================================================================
+
+
+class _CountingRe:
+    """A stand-in for the glob module's ``re`` that counts matcher calls."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def _counted(self, name: str):
+        def call(*args, **kwargs):
+            self.calls += 1
+            return getattr(re, name)(*args, **kwargs)
+
+        return call
+
+    def __getattr__(self, name: str):
+        if name in {"compile", "match", "fullmatch"}:
+            return self._counted(name)
+        return getattr(re, name)
+
+
+class TestGlobProgram:
+    def test_glob_matching_never_reaches_python_re(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        counting = _CountingRe()
+        monkeypatch.setattr(glob_module, "re", counting)
+        shape = "*a" * 12 + "*b"
+        assert compile_filter(shape, ()).matches(Path("/d/" + "a" * 255)) is False
+        assert residuals("/x/" + shape, Path("/x/" + "a" * 255)) == frozenset()
+        assert counting.calls == 0
+
+    def test_a_lone_surrogate_pattern_is_refused(self) -> None:
+        defect = glob_defect("a\udc80")
+        assert defect is not None and "lone surrogate: U+DC80" in defect
+
+    def test_a_question_mark_matches_one_character_of_any_width(self) -> None:
+        gate = compile_filter("?", ())
+        for name in ("é", "日", "😀"):
+            assert gate.matches(Path("/" + name)), name
+        assert not gate.matches(Path("/ab"))
+
+
+async def test_a_backtracking_shape_globs_through_the_verb() -> None:
+    fs = AsyncVirtualFileSystem()
+    await fs.write(path="/d/" + "a" * 200, content="x", parents=True)
+    miss = await fs.glob("*a" * 12 + "*b")
+    assert miss.success is True and miss.paths == ()
+    hit = await fs.glob("*a*")
+    assert hit.paths == ("/d/" + "a" * 200,)
+
+
+async def test_a_lone_surrogate_pattern_answers_invalid_through_grep() -> None:
+    fs = AsyncVirtualFileSystem()
+    await fs.write(path="/a.txt", content="x")
+    result = await fs.grep("x", globs=("a\udc80",), allow_scan=True)
+    assert result.success is False
+    assert result.errors[0].kind is ErrorKind.invalid

@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - pinned by a subprocess test
     )
     raise ImportError(message) from error
 
-EXPECTED_PROTOCOL: Final = 11
+EXPECTED_PROTOCOL: Final = 12
 
 if _ext.PROTOCOL_VERSION != EXPECTED_PROTOCOL:  # pragma: no cover - pinned by a subprocess test
     message = (
@@ -80,6 +80,24 @@ def chunk_spans(
     leaves.
     """
     return _ext.chunk_spans(bodies, chunk_size=chunk_size)
+
+
+# ---------------------------------------------------------------------------
+# Glob programs
+# ---------------------------------------------------------------------------
+
+
+def glob_program(atoms: list[tuple[str, list[tuple[str, str]]]]) -> Any:
+    """The engine's matcher for one glob pattern, built from its atoms.
+
+    Each atom is ``(op, ranges)`` in pattern order: ``lit`` with its one
+    character as the range ``(c, c)``, ``class`` and ``nclass`` with
+    sorted, disjoint ranges, and ``one``, ``star``, ``dot``, ``never``,
+    ``sep``, ``mid`` and ``tail`` with none. The returned program's
+    ``is_match(subject)`` answers whether the whole subject matches. A
+    malformed program raises ``ValueError``.
+    """
+    return _ext.GlobProgram(atoms)
 
 
 # ---------------------------------------------------------------------------

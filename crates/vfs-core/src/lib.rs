@@ -1,5 +1,5 @@
 //! The vfs engine: byte-trigram extraction, posting-list building, grep
-//! match verification, structure-aware chunk spans, markdown reference
+//! match verification, glob matching, structure-aware chunk spans, markdown reference
 //! extraction, the lexical (BM25) tokenizer, block-posting builder and
 //! scorer, the cosine top-k kernel, and the centrality prior over a
 //! reference graph.
@@ -14,6 +14,7 @@
 //! types; the `python` cargo feature adds the pyo3 module and nothing else.
 
 mod chunk;
+mod glob;
 mod grams;
 mod lexical;
 mod lexical_tables;
@@ -27,6 +28,7 @@ mod verify;
 mod python;
 
 pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
+pub use glob::{Atom, GlobProgram, ProgramError};
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, RefParser, fold_line, markdown_refs, markdown_refs_batch};
 pub use lexical::{
