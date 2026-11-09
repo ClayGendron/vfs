@@ -54,7 +54,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from sqlalchemy import bindparam, delete, func, select, update
+from sqlalchemy import bindparam, case, delete, false, func, select, true, update
 
 from vfs.models import Observation
 from vfs.paths import ROOT, TRASH_ROOT, Path
@@ -443,15 +443,21 @@ async def _tombstone_roots(
     :class:`StaleSnapshot`; the verb redrives whole from a fresh
     snapshot, which is correctness by construction.
 
-    Stamping ``deleted_at`` also demotes ``encoded``: the next index
-    build excludes the row, so leaving the flag up would make the row
-    invisible to both grep tiers when it comes back. Demoted, it is
-    served scan-side immediately — the trash view included — and a
-    restore or revive finds ``chunked & ~encoded``, already pending
-    re-coverage.
+    Stamping ``deleted_at`` also demotes ``encoded`` for the content
+    kinds: the next index build excludes the row, so leaving the flag up
+    would make the row invisible to both grep tiers when it comes back.
+    Demoted, it is served scan-side immediately — the trash view
+    included — and a restore or revive finds ``chunked & ~encoded``,
+    already pending re-coverage. A directory has nothing to re-cover and
+    keeps the flag true.
     """
     claims = [Claim(row["entry_id"], row["version"]) for row in rows]
-    assign = {"deleted_at": now, "trash_root_id": entry.c.entry_id, "encoded": False, "version": entry.c.version + 1}
+    assign = {
+        "deleted_at": now,
+        "trash_root_id": entry.c.entry_id,
+        "encoded": _encoded_once_deleted(entry),
+        "version": entry.c.version + 1,
+    }
     miss = "a rival write moved an entry past the delete's snapshot"
     side = tombstone_side(entry, trashed=False)
     return await claim_rows(
@@ -481,11 +487,20 @@ async def _tombstone_descendants(
     stmt = (
         update(entry)
         .where(entry.c.path.like(bindparam("b_pattern"), escape=LIKE_ESCAPE), tombstone_side(entry, trashed=False))
-        .values(deleted_at=now, trash_root_id=bindparam("b_root"), encoded=False)
+        .values(deleted_at=now, trash_root_id=bindparam("b_root"), encoded=_encoded_once_deleted(entry))
     )
     params = [{"b_pattern": descendant_pattern(row["path"], profile), "b_root": row["entry_id"]} for row in roots]
     for chunk in chunked(params, membership_budget):
         await session.execute(stmt, chunk)
+
+
+def _encoded_once_deleted(entry: Table) -> ColumnElement[bool]:
+    """The ``encoded`` value a delete stamps: a directory keeps true, a content row is demoted.
+
+    A ``CASE`` rather than the predicate itself, because SQL Server has
+    no boolean expression in a value position.
+    """
+    return case((entry.c.kind == "directory", true()), else_=false())
 
 
 async def _revive_roots(

@@ -258,7 +258,8 @@ async def entries_for_scan(
     term wears the profile's rarity hint where one is declared, so a
     planner whose statistics average the column keeps the seek on the
     (encoded, kind) index rather than walking the path index for the
-    few rows awaiting the index.
+    few content rows awaiting the index; a directory never awaits it,
+    and is created ``encoded``.
     """
     entry = tables.entry
     kinds = kind_membership(entry)

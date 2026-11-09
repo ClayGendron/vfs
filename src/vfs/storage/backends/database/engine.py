@@ -72,6 +72,7 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.util.concurrency import await_only
 from ulid import ULID
 
+from vfs.models import encoded_at_creation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
@@ -742,6 +743,8 @@ class EngineHost:
                 name="/",
                 kind="directory",
                 version=1,
+                # The root is created as every other directory is.
+                encoded=encoded_at_creation("directory"),
                 everyone_level=LEVEL_RANK[self.posture],
                 created_at=now,
                 updated_at=now,

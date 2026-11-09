@@ -54,6 +54,7 @@ from vfs.models import (
     BodyMetrics,
     Entry,
     Observation,
+    encoded_at_creation,
     measure_bytes,
     measure_text,
 )
@@ -1192,7 +1193,9 @@ def _material_values(staged: StagedEntry, now: datetime) -> dict[str, object]:
     tombstone too: a write at a deleted path is the revive. The owner
     stays: an overwrite or an edit of another's row is a contribution
     to it, not a taking, so the floor it grants never moves to the
-    last writer.
+    last writer. ``encoded`` is :func:`~vfs.models.entry.encoded_at_creation`
+    for the kind: a directory has nothing awaiting the gram index, a
+    content row starts pending until a publish covers its grams.
     """
     return {
         "kind": staged.kind,
@@ -1202,7 +1205,7 @@ def _material_values(staged: StagedEntry, now: datetime) -> dict[str, object]:
         "lines": staged.lines,
         "size_bytes": staged.size_bytes,
         "chunked": False,
-        "encoded": False,
+        "encoded": encoded_at_creation(staged.kind),
         "indexable": False,
         "source": staged.source,
         "render_status": "pending" if staged.source == "bytes" else None,

@@ -8,9 +8,10 @@ batch completes; then the fixed statistics, the term summaries and the
 block rows, drained in term order and written in row-bounded inserts
 under the epoch being built. Publish and reclaim are the gram epoch's
 own: the one pointer flip makes the lexical rows current, and the epoch
-sweep drops them with the postings. The invariant extends verbatim —
-**``encoded=True`` implies the entry's terms are in the current lexical
-epoch.**
+sweep drops them with the postings. The invariant extends to the
+lexical rows — **``encoded=True`` on a content row implies the entry's
+terms are in the current lexical epoch**; a directory, with no terms to
+index, is always ``encoded``.
 
 The build's CPU — tokenizing each batch, fixing the statistics, and
 assembling every drained row — hops through the backend's offload pool

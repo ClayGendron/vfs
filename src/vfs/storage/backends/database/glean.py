@@ -28,14 +28,15 @@ authority on every row that answers, over verdicts judged in one hop
 per fetched set on the offload pool, under the call's wall; a row the
 engine did not judge in time is dropped, with one wall record.
 
-Freshness is grep's: ``encoded=True`` means the entry's terms are in
-the current lexical epoch; the ``NOT encoded`` rows the gates admit are
-the overlay — their live bodies tokenized and encoded as blocks at
-query time and scored by the same engine with the epoch's statistics,
-so the two sides share one formula, one accumulation order and one
-scale. The pointer read is advisory and re-issued after the fetch (the
-two-read protocol); a moved pointer raises :class:`StaleSnapshot` for
-the backend to redrive.
+Freshness is grep's: ``encoded=True`` on a content row means the
+entry's terms are in the current lexical epoch (a directory, with
+nothing to index, is always ``encoded``); the ``NOT encoded`` rows the
+gates admit are the overlay — their live bodies tokenized and encoded
+as blocks at query time and scored by the same engine with the epoch's
+statistics, so the two sides share one formula, one accumulation order
+and one scale. The pointer read is advisory and re-issued after the
+fetch (the two-read protocol); a moved pointer raises
+:class:`StaleSnapshot` for the backend to redrive.
 
 The **vector leg** is one in-engine statement on every supported
 dialect — ``ORDER BY <cosine distance> LIMIT k`` with the scope

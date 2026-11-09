@@ -29,12 +29,16 @@ gram-saturated, or sub-trigram body is stamped ``NOT indexable`` and
 stays scan-side forever. (Binary bodies need no gate here — the entry
 model refuses NUL content at the one write door.)
 
-The flag algebra's invariant: **``encoded=True`` implies the entry's
-grams are present in the current epoch.** Every coverage exit demotes
-the flag — a content write resets both flags, and the delete claim
-demotes ``encoded`` as it stamps ``deleted_at`` — so no reachable state
-hides a live or trashed row from both tiers: an uncovered row is always
-``NOT encoded``, which is exactly the scan side's partition.
+The flag algebra's invariant: **``encoded=True`` means nothing of the
+row awaits the gram index: for a content row, its grams are present in
+the current epoch; for a directory, which has nothing to index, it is
+always true.** Every coverage exit demotes a content row's flag — a
+content write resets both flags, and the delete claim demotes
+``encoded`` as it stamps ``deleted_at`` — so no reachable state hides a
+live or trashed row from both tiers: an uncovered content row is always
+``NOT encoded``, which is exactly the scan side's partition. A directory
+a store wrote false before this rule is repaired by its next reindex
+(:func:`collect_flag_drift`, :func:`repair_flag_drift`).
 
 One reindex runs at a time, arbitrated by a crash-safe lease on the
 meta row: the verb claims it up front (a live rival refuses loudly,
@@ -524,6 +528,63 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
         return Result(ops=("reindex",))
     for table in tables.epoch_scoped():
         await session.execute(delete(table).where(table.c.epoch == built))
+    return Result(ops=("reindex",))
+
+
+# ---------------------------------------------------------------------------
+# Flag repair — directories a store wrote before they were created encoded
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FlagRebuildState:
+    """Carry-over between the reindex flag phases' separate transactions."""
+
+    ids: list[str] = field(default_factory=list)
+    repaired: int = 0
+
+    @property
+    def clean(self) -> bool:
+        return not self.ids
+
+
+async def collect_flag_drift(session: AsyncSession, tables: VFSTables, state: FlagRebuildState) -> Result:
+    """Find the directory rows still flagged as awaiting the index.
+
+    A plain read — no writer is blocked. On a store this rule wrote it
+    is one seek on the (encoded, kind) index that returns nothing; on an
+    earlier store it returns every directory once, the only time the
+    result grows with the store.
+    """
+    entry = tables.entry
+    scan = select(entry.c.entry_id).where(entry.c.kind == "directory", ~entry.c.encoded)
+    async for row in await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS)):
+        state.ids.append(row.entry_id)
+    return Result(ops=("reindex",))
+
+
+async def repair_flag_drift(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    state: FlagRebuildState,
+) -> Result:
+    """Flip the collected directories true, each guarded on still being an unencoded directory.
+
+    Chunked by the membership budget, so no statement grows with the
+    count. The guard keeps a row whose kind changed under its id from
+    being stamped covered with no grams; the count of rows flipped is
+    what the backend reports.
+    """
+    entry = tables.entry
+    for chunk in chunked(sorted(state.ids), membership_budget):
+        stmt = (
+            update(entry)
+            .where(membership(entry.c.entry_id, chunk, profile), entry.c.kind == "directory", ~entry.c.encoded)
+            .values(encoded=True)
+        )
+        state.repaired += cast("CursorResult[Any]", await session.execute(stmt)).rowcount
     return Result(ops=("reindex",))
 
 

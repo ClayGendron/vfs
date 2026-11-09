@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from vfs.authority import owner_for
+from vfs.models import encoded_at_creation
 from vfs.paths import MAX_PATH_LENGTH, ROOT, Path, byte_length
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified
 from vfs.storage.backends.database.descent import (
@@ -447,6 +448,9 @@ async def _execute_copy(
             "kind": row["kind"],
             "version": 1,
             **{name: row[name] for name in _COPIED_COLUMNS},
+            # A copied content row's grams are not in the epoch under its new
+            # identity, so a copy starts life as a creation does.
+            "encoded": encoded_at_creation(row["kind"]),
             "ext": dest.ext if row["entry_id"] == root_id else row["ext"],
             "size_bytes": row["size_bytes"],
             "owner_id": owner_for(authority),

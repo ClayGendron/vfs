@@ -678,6 +678,62 @@ class TestOracleEncodedKindIndex:
         await _encoded_kind_index_serves_the_overlay("VFS_TEST_ORACLE_URL")
 
 
+async def _a_directory_is_never_awaiting_the_index(storage: DatabaseStorage) -> None:
+    """A directory row holds ``encoded`` true through mkdir, copy, delete and restore on this engine.
+
+    The flag means nothing of the row awaits the gram index, which is
+    true of every directory; the delete's ``CASE`` keeps it so on an
+    engine with no boolean value expression.
+    """
+    entry = storage._host.tables.entry
+
+    async def encoded(path: str) -> bool:
+        async with storage._host.session_factory() as session:
+            return (await session.execute(select(entry.c.encoded).where(entry.c.path == path))).scalar_one()
+
+    assert (await storage.mkdir(path=Path("/d"))).success is True
+    assert await encoded("/d") is True
+    assert (await storage.copy(operations=[ResolvedPair(src=Path("/d"), dest=Path("/e"))])).success is True
+    assert await encoded("/e") is True
+    assert (await storage.delete(path=Path("/d"))).success is True
+    assert await encoded("/d") is True
+    assert (await storage.restore(path=Path("/d"))).success is True
+    assert await encoded("/d") is True
+
+
+async def test_a_directory_is_never_awaiting_the_index_on_sqlite(
+    tmp_path: pathlib.Path, sqlite_template: pathlib.Path
+) -> None:
+    db = tmp_path / "vfs.sqlite"
+    shutil.copy(sqlite_template, db)
+    async with _closing(DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider())) as storage:
+        await _a_directory_is_never_awaiting_the_index(storage)
+
+
+@pytest.mark.postgres
+async def test_a_directory_is_never_awaiting_the_index_on_postgres() -> None:
+    async with _server_storage("VFS_TEST_POSTGRES_URL") as storage:
+        await _a_directory_is_never_awaiting_the_index(storage)
+
+
+@pytest.mark.mariadb
+async def test_a_directory_is_never_awaiting_the_index_on_mariadb() -> None:
+    async with _server_storage("VFS_TEST_MARIADB_URL") as storage:
+        await _a_directory_is_never_awaiting_the_index(storage)
+
+
+@pytest.mark.mssql
+async def test_a_directory_is_never_awaiting_the_index_on_mssql() -> None:
+    async with _server_storage("VFS_TEST_MSSQL_URL") as storage:
+        await _a_directory_is_never_awaiting_the_index(storage)
+
+
+@pytest.mark.oracle
+async def test_a_directory_is_never_awaiting_the_index_on_oracle() -> None:
+    async with _server_storage("VFS_TEST_ORACLE_URL") as storage:
+        await _a_directory_is_never_awaiting_the_index(storage)
+
+
 async def _lexical_fidelity(env_var: str) -> None:
     """The lexical build lands and the stored BM25 weights rank as pure BM25 does."""
     async with _server_storage(env_var) as storage:

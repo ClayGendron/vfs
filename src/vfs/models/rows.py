@@ -439,8 +439,8 @@ def build_vfs_tables(
         # row, zero until rendered — under the one law in ``line_count``.
         Column("lines", Integer, nullable=False, default=0),
         Column("size_bytes", Integer, nullable=False, default=0),
-        # Grep-overlay dirty flags: derived state reflects this content /
-        # the current gram epoch covers it. Content writes reset both.
+        # Overlay flags: `chunked`, derived state reflects this content; `encoded`,
+        # nothing of the row awaits the gram index, so a directory is always true.
         Column("chunked", Boolean, nullable=False, default=False),
         Column("encoded", Boolean, nullable=False, default=False),
         # Gram eligibility: reset by content writes like its siblings,
@@ -482,8 +482,8 @@ def build_vfs_tables(
         Column("trash_root_id", ULIDKey()),
         UniqueConstraint("parent_id", "name", name="uq_vfs_entries_parent_name"),
         Index("ix_vfs_entries_ext_kind", "ext", "kind"),
-        # Serves grep's overlay probe: the encoded=0 seek set is mostly
-        # directories, so kind in the key rejects them without row lookups.
+        # Serves grep's overlay probe: the encoded=0 seek set is the pending
+        # content rows, and kind in the key answers the kind term beside it.
         Index("ix_vfs_entries_encoded_kind", "encoded", "kind"),
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.

@@ -266,6 +266,28 @@ class TestTombstone:
         assert (await storage.read(path=Path("/m/a.txt"))).observations[0].content == "alpha needle"
         await storage.close()
 
+    async def test_a_deleted_directory_keeps_encoded_and_a_deleted_file_loses_it(self, tmp_path) -> None:
+        # Both delete statements, the root claim and the descendants'
+        # stamp, demote the flag for content kinds alone.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.mkdir(path=Path("/d/sub"), parents=True)).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="needle body")])).success is True
+        assert (await storage.reindex()).success is True
+        entry = storage._host.tables.entry
+
+        async def encoded() -> dict[str, bool]:
+            async with storage._host.session_factory() as session:
+                rows = await session.execute(select(entry.c.path, entry.c.encoded).where(entry.c.path.like("/d%")))
+                return {row.path: row.encoded for row in rows}
+
+        assert await encoded() == {"/d": True, "/d/sub": True, "/d/f.txt": True}
+        assert (await storage.delete(path=Path("/d"))).success is True
+        assert all(row.deleted_at is not None for path, row in (await _rows(storage)).items() if path != "/")
+        assert await encoded() == {"/d": True, "/d/sub": True, "/d/f.txt": False}
+        assert (await storage.restore(path=Path("/d"))).success is True
+        assert await encoded() == {"/d": True, "/d/sub": True, "/d/f.txt": False}
+        await storage.close()
+
 
 # ---------------------------------------------------------------------------
 # Restore — the root's set

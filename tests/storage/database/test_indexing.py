@@ -27,7 +27,7 @@ from vfs.models.code_grams import pack_gram
 from vfs.models.postings import encode_postings
 from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
-from vfs.results import ErrorKind, Result, ResultError
+from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database.dialects import GENERIC, POSTGRESQL
@@ -135,6 +135,95 @@ class TestReindex:
                 await conn.execute(select(entry.c.chunked, entry.c.encoded).where(entry.c.deleted_at.isnot(None)))
             ).one()
         assert row._tuple() == (False, False)  # scan-side wherever it resurfaces
+        await storage.close()
+
+    async def test_reindex_repairs_directories_written_before_the_rule(self, tmp_path) -> None:
+        # A store written before directories were created encoded holds
+        # them false; one reindex repairs them and reports the count once.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for name in ("a", "b", "c"):
+            assert (await storage.mkdir(path=Path(f"/{name}"))).success is True
+        entry = storage._host.tables.entry
+        predated = entry.c.path.in_(["/a", "/b", "/c"])
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            await conn.execute(update(entry).where(predated).values(encoded=False))
+            await session.commit()
+
+        async def repairs(result: Result) -> list[ResultError]:
+            return [error for error in result.errors if (error.data or {}).get("directories") is not None]
+
+        first = await storage.reindex()
+        assert first.success is True
+        [warning] = await repairs(first)
+        assert warning.kind == ErrorKind.internal
+        assert warning.severity == Severity.warning
+        assert warning.retryable is False
+        assert warning.path is None
+        assert warning.data == {"directories": 3}
+        async with storage._host.engine.connect() as conn:
+            flags = (await conn.execute(select(entry.c.encoded).where(predated))).scalars().all()
+        assert flags == [True, True, True]
+        second = await storage.reindex()
+        assert second.success is True
+        assert await repairs(second) == []
+        await storage.close()
+
+    async def test_the_flag_repair_skips_a_row_whose_kind_moved_under_it(self, tmp_path, monkeypatch) -> None:
+        # The repair's guard: a collected row that is no longer a directory
+        # when the writer transaction runs is left as found, not stamped covered.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        for name in ("a", "b"):
+            assert (await storage.mkdir(path=Path(f"/{name}"))).success is True
+        entry = storage._host.tables.entry
+        predated = entry.c.path.in_(["/a", "/b"])
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            await conn.execute(update(entry).where(predated).values(encoded=False))
+            await session.commit()
+        collect = indexing.collect_flag_drift
+
+        async def rekinded(session, tables, state) -> Result:
+            result = await collect(session, tables, state)
+            async with storage._host.session_factory() as rival:
+                conn = await rival.connection(execution_options={"vfs_writer": True})
+                await conn.execute(update(entry).where(entry.c.path == "/b").values(kind="file"))
+                await rival.commit()
+            return result
+
+        monkeypatch.setattr(backend_module, "collect_flag_drift", rekinded)
+        result = await storage.reindex()
+        assert result.success is True
+        [warning] = [error for error in result.errors if (error.data or {}).get("directories") is not None]
+        assert warning.data == {"directories": 1}
+        async with storage._host.engine.connect() as conn:
+            rows = await conn.execute(select(entry.c.path, entry.c.encoded).where(predated).order_by(entry.c.path))
+            assert [row._tuple() for row in rows] == [("/a", True), ("/b", False)]
+        await storage.close()
+
+    async def test_a_lease_lost_after_the_flag_collect_stops_before_the_repair(self, tmp_path, monkeypatch) -> None:
+        # The beat proves the lease taken while the collect runs: the run
+        # stops at the boundary and the predated rows are left as found.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.mkdir(path=Path("/a"))).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.session_factory() as session:
+            conn = await session.connection(execution_options={"vfs_writer": True})
+            await conn.execute(update(entry).where(entry.c.path == "/a").values(encoded=False))
+            await session.commit()
+        lost = asyncio.Event()
+        collect = indexing.collect_flag_drift
+
+        async def poisoned(session, tables, state) -> Result:
+            lost.set()
+            return await collect(session, tables, state)
+
+        monkeypatch.setattr(backend_module, "collect_flag_drift", poisoned)
+        result = await storage._reindex_phases(storage._host.tables, lost)
+        assert result.success is False
+        assert "expired mid-run" in result.errors[0].message
+        async with storage._host.engine.connect() as conn:
+            assert (await conn.execute(select(entry.c.encoded).where(entry.c.path == "/a"))).scalar_one() is False
         await storage.close()
 
 

@@ -329,6 +329,25 @@ class TestWriteMechanics:
         assert row._tuple() == (True, True)
         await storage.close()
 
+    async def test_a_directory_is_created_encoded(self, tmp_path) -> None:
+        # The flag means "nothing of this row awaits the gram index": true
+        # of every directory from its creation, the provisioned root included.
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.first_touch()).success is True
+        entry = storage._host.tables.entry
+
+        async def encoded() -> dict[str, bool]:
+            async with storage._host.engine.connect() as conn:
+                rows = await conn.execute(select(entry.c.path, entry.c.encoded))
+                return {row.path: row.encoded for row in rows}
+
+        assert await encoded() == {"/": True}
+        assert (await storage.mkdir(path=Path("/d"))).success is True
+        written = await storage.write(entries=[Entry(path=Path("/e/f.txt"), content="x")], parents=True)
+        assert written.success is True
+        assert await encoded() == {"/": True, "/d": True, "/e": True, "/e/f.txt": False}
+        await storage.close()
+
     async def test_over_key_byte_budget_classifies_unaddressable(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()

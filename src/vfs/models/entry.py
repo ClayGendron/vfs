@@ -42,6 +42,18 @@ from vfs.paths import ObjectKind, Path, is_reserved_directory
 # content reads and edits and surfaces no content metrics.
 CONTENT_KINDS: Final[frozenset[str]] = frozenset({"file", "chunk", "version"})
 
+
+def encoded_at_creation(kind: str) -> bool:
+    """Whether a row of *kind* is created with nothing awaiting the gram index.
+
+    A directory has no body to index, so nothing of it ever awaits the
+    index and it is created ``encoded``; a content row starts pending
+    until a publish covers its grams. One rule for every creation site:
+    the write, the copy and the provisioned root.
+    """
+    return kind == "directory"
+
+
 ContentHash = Annotated[str, "sha-256 hex of the body, 64 lowercase chars"]
 
 

@@ -414,8 +414,8 @@ async def _index_doc_ids(
     """At most ``CANDIDATE_BUDGET`` sorted candidate doc ids for *plan*
     under the caller-read *epoch*, plus the uncapped count.
 
-    No published epoch means no encoded entries: the index side is
-    empty and the scan side owns everything. The caller owns the epoch
+    No published epoch means no content row is encoded: the index side
+    is empty and the scan side owns everything. The caller owns the epoch
     read — its post-ladder re-read is what detects a mid-call publish.
     The posting-byte budget is enforced before any blob fetch via the
     stored ``byte_size``.

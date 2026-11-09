@@ -19,6 +19,7 @@ from vfs.models.entry import (
     Entry,
     Match,
     Observation,
+    encoded_at_creation,
 )
 from vfs.models.media import RENDER_STATUSES, RENDERED_STATUSES, SOURCES, RenderStatus, Source, sniff_mime
 from vfs.models.version import MEASURE_OFFLOAD_BYTES, BodyMetrics, Version, line_count, measure_bytes, measure_text
@@ -44,6 +45,7 @@ __all__ = [
     "RenderStatus",
     "Source",
     "Version",
+    "encoded_at_creation",
     "line_count",
     "measure_bytes",
     "measure_text",

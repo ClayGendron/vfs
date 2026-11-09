@@ -84,10 +84,12 @@ from vfs.storage.backends.database.graph import GraphRequest, Site, graph_rows
 from vfs.storage.backends.database.grep import grep_rows
 from vfs.storage.backends.database.indexing import (
     REINDEX_HEARTBEAT_SECONDS,
+    FlagRebuildState,
     ReindexState,
     build_epoch,
     chunk_dirty,
     claim_reindex_lease,
+    collect_flag_drift,
     heartbeat_reindex_lease,
     lease_lost,
     lease_lost_result,
@@ -95,6 +97,7 @@ from vfs.storage.backends.database.indexing import (
     reclaim_built_epoch,
     reclaim_epochs,
     release_reindex_lease,
+    repair_flag_drift,
     with_notes,
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
@@ -1261,7 +1264,10 @@ class DatabaseStorage:
         table against the recomputed truth, and only found drift opens a
         writer transaction, applied under per-row guards. Their warnings
         (drift is a maintenance bug surfacing) ride on the verb's final
-        Result.
+        Result. The flag pass has the same shape and repairs the
+        directories a store wrote before a directory was created encoded;
+        it is the store predating a rule, not a bug, so it is reported
+        once, as a count, never retryable.
         """
         rendered, report = await self._render_step(tables, lost)
         if rendered is not None:
@@ -1304,6 +1310,28 @@ class DatabaseStorage:
         if isinstance(outcome, Result):
             return outcome
         warnings.extend(outcome)
+        flag_state = FlagRebuildState()
+        outcome = await self._reconverge(
+            lost,
+            lambda session: collect_flag_drift(session, tables, flag_state),
+            lambda session: repair_flag_drift(
+                session, tables, self._host.profile, self._host.membership_budget, flag_state
+            ),
+            lambda: flag_state.clean,
+        )
+        if isinstance(outcome, Result):
+            return outcome
+        if flag_state.repaired:
+            predated = "predated the rule that a directory never awaits the gram index"
+            warnings.append(
+                classified(
+                    ErrorKind.internal,
+                    severity=Severity.warning,
+                    detail=f"{flag_state.repaired} directories {predated}; repaired",
+                    retryable=False,
+                    data={"directories": flag_state.repaired},
+                )
+            )
         outcome = await self._signal_phase(tables, lost)
         if isinstance(outcome, Result):
             return outcome

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 from sqlalchemy.engine.default import DefaultDialect
 
@@ -37,6 +37,7 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.engine import EngineHost, advisory_key
 from vfs.storage.backends.database.seams import clear, install, installed, seam
 from vfs.storage.backends.database.serialized import serialize
+from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -44,6 +45,29 @@ if TYPE_CHECKING:
 
 
 ANN = Authority.of(Principal("ann"))
+
+
+# ---------------------------------------------------------------------------
+# Copy — the rows a copy mints
+# ---------------------------------------------------------------------------
+
+
+class TestCopy:
+    """A copied row starts life like a created one: a directory has nothing awaiting the index, a file does."""
+
+    async def test_a_copied_directory_is_encoded_and_a_copied_file_is_not(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        written = await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="needle body")], parents=True)
+        assert written.success is True
+        assert (await storage.reindex()).success is True
+        copied = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
+        assert copied.success is True
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            rows = await conn.execute(select(entry.c.path, entry.c.encoded).where(entry.c.path.like("/dst%")))
+            flags = {row.path: row.encoded for row in rows}
+        assert flags == {"/dst": True, "/dst/f.txt": False}
+        await storage.close()
 
 
 # ---------------------------------------------------------------------------
