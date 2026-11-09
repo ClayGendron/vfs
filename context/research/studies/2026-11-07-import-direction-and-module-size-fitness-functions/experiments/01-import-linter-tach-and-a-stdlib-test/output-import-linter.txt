@@ -1,0 +1,73 @@
+
+---------
+Contracts
+---------
+
+Analyzed 94 files, 396 dependencies.
+------------------------------------
+
+Only the backends package imports the database adapter BROKEN
+The declared layer order, top first BROKEN
+
+Contracts: 0 kept, 2 broken.
+
+
+----------------
+Broken contracts
+----------------
+
+Only the backends package imports the database adapter
+------------------------------------------------------
+
+Illegal imports of protected package vfs.storage.backends.database:
+
+- vfs -> vfs.storage.backends.database.backend (l.19)
+
+- vfs.base -> vfs.storage.backends.database.descent (l.114)
+
+- vfs.base -> vfs.storage.backends.database.dialects (l.115)
+
+- vfs.base -> vfs.storage.backends.database.grep (l.116)
+
+- vfs.base -> vfs.storage.backends.database.offload (l.117)
+
+
+The declared layer order, top first
+-----------------------------------
+
+vfs.base is not allowed to import vfs.session:
+
+- vfs.base -> vfs.session (l.101)
+
+
+vfs.native is not allowed to import vfs.base:
+
+- vfs.native -> vfs (l.27)
+  vfs -> vfs.base (l.5)
+
+
+vfs.native is not allowed to import vfs.sync:
+
+- vfs.native -> vfs (l.27)
+  vfs -> vfs.sync (l.21)
+
+
+vfs.results is not allowed to import vfs.pattern_matching:
+
+- vfs.results.preview -> vfs.pattern_matching.grep (l.31)
+
+- vfs.results.render -> vfs.pattern_matching.grep (l.21)
+
+
+vfs.native is not allowed to import vfs.storage.backends.database:
+
+- vfs.native -> vfs (l.27)
+  vfs -> vfs.storage.backends.database.backend (l.19)
+
+
+vfs.native is not allowed to import vfs.session:
+
+- vfs.native -> vfs (l.27)
+  vfs -> vfs.session (l.18)
+
+

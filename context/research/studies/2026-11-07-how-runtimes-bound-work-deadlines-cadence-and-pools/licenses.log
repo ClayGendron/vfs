@@ -1,0 +1,13 @@
+sqlite: LICENSE.md: public domain
+postgres: COPYRIGHT: PostgreSQL licence (permissive)
+zoekt: LICENSE: Apache-2.0
+lucene: LICENSE.txt: Apache-2.0
+cpython: LICENSE: PSF licence
+sqlalchemy: LICENSE: MIT
+trio: LICENSE, LICENSE.MIT, LICENSE.APACHE2: dual MIT or Apache-2.0
+anyio: LICENSE: MIT
+tokio: LICENSE: MIT
+grpc-go: LICENSE: Apache-2.0
+go: LICENSE: BSD-3-Clause, with PATENTS grant
+polars: LICENSE: MIT
+rayon-core 1.13.0 (cargo registry, not a clone): MIT or Apache-2.0

@@ -1,0 +1,72 @@
+threads=  1 median=0.0029s aggregate=86.15 GiB/s per-thread=86.15 GiB/s
+threads=  2 median=0.0056s aggregate=88.56 GiB/s per-thread=44.28 GiB/s
+threads=  4 median=0.0103s aggregate=96.88 GiB/s per-thread=24.22 GiB/s
+threads= 10 median=0.0248s aggregate=100.71 GiB/s per-thread=10.07 GiB/s
+threads= 20 median=0.0590s aggregate=84.69 GiB/s per-thread=4.23 GiB/s
+{
+  "pattern": "needle",
+  "machine": "arm64",
+  "processor": "arm",
+  "python": "3.13.11",
+  "cpu_count": 10,
+  "bodies": 256,
+  "body_bytes": 1048576,
+  "rounds": 3,
+  "results": [
+    {
+      "python_threads": 1,
+      "rounds_s": [
+        0.0035,
+        0.0029,
+        0.0026
+      ],
+      "median_s": 0.0029,
+      "aggregate_gib_per_s": 86.15,
+      "per_thread_gib_per_s": 86.15
+    },
+    {
+      "python_threads": 2,
+      "rounds_s": [
+        0.0064,
+        0.0056,
+        0.0053
+      ],
+      "median_s": 0.0056,
+      "aggregate_gib_per_s": 88.56,
+      "per_thread_gib_per_s": 44.28
+    },
+    {
+      "python_threads": 4,
+      "rounds_s": [
+        0.0196,
+        0.0103,
+        0.0098
+      ],
+      "median_s": 0.0103,
+      "aggregate_gib_per_s": 96.88,
+      "per_thread_gib_per_s": 24.22
+    },
+    {
+      "python_threads": 10,
+      "rounds_s": [
+        0.0267,
+        0.0241,
+        0.0248
+      ],
+      "median_s": 0.0248,
+      "aggregate_gib_per_s": 100.71,
+      "per_thread_gib_per_s": 10.07
+    },
+    {
+      "python_threads": 20,
+      "rounds_s": [
+        0.0599,
+        0.059,
+        0.0464
+      ],
+      "median_s": 0.059,
+      "aggregate_gib_per_s": 84.69,
+      "per_thread_gib_per_s": 4.23
+    }
+  ]
+}

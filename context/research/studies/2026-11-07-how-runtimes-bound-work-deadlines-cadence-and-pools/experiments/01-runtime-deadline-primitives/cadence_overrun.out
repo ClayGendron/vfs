@@ -1,0 +1,12 @@
+cost=  1 per-item   clock_reads= 1002 items_run= 1001 overrun_items=   0
+cost=  1 every-64   clock_reads=   17 items_run= 1024 overrun_items=  23
+cost=  1 every-128  clock_reads=    9 items_run= 1024 overrun_items=  23
+cost=  1 timer-flag clock_reads=    0 items_run= 1001 overrun_items=   0
+cost=  7 per-item   clock_reads=  144 items_run=  143 overrun_items=   0
+cost=  7 every-64   clock_reads=    4 items_run=  192 overrun_items=  49
+cost=  7 every-128  clock_reads=    3 items_run=  256 overrun_items= 113
+cost=  7 timer-flag clock_reads=    0 items_run=  143 overrun_items=   0
+cost= 50 per-item   clock_reads=   22 items_run=   21 overrun_items=   0
+cost= 50 every-64   clock_reads=    2 items_run=   64 overrun_items=  43
+cost= 50 every-128  clock_reads=    2 items_run=  128 overrun_items= 107
+cost= 50 timer-flag clock_reads=    0 items_run=   21 overrun_items=   0

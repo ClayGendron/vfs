@@ -1,0 +1,18 @@
+{
+  "iterations": 1000000,
+  "runs": 7,
+  "ns_per_iteration": {
+    "bare": 28.575417,
+    "masked_64": 45.1695,
+    "masked_1024": 47.579583,
+    "chunked_64": 30.639791,
+    "chunked_1024": 27.939166
+  },
+  "ratio_over_bare": {
+    "bare": 1.0,
+    "masked_64": 1.581,
+    "masked_1024": 1.665,
+    "chunked_64": 1.072,
+    "chunked_1024": 0.978
+  }
+}

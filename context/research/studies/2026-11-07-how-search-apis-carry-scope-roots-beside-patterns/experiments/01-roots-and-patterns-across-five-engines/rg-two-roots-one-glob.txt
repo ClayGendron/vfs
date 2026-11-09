@@ -1,0 +1,41 @@
+# rg ripgrep 15.1.0, run 2026-11-07 22:45 EST; cwd is the scratch tree unless stated
+## tree
+./rootA/src/a.py
+./rootA/src/c.txt
+./rootA/src/deep/b.py
+./rootB/e.py
+./rootB/src/d.py
+./rootC/src/f.py
+## rg --files rootA rootB -g '*.py'
+rootA/src/a.py
+rootA/src/deep/b.py
+rootB/e.py
+rootB/src/d.py
+(rg exit 0)
+## rg --files rootA rootB -g 'src/*.py'
+(rg exit 1)
+## rg --files rootA rootB -g '/src/*.py'
+(rg exit 1)
+## rg --files rootA rootB -g '**/src/*.py'
+rootA/src/a.py
+rootB/src/d.py
+(rg exit 0)
+## rg --files rootA rootB -g 'rootA/src/*.py'
+rootA/src/a.py
+(rg exit 0)
+## cd rootA; rg --files . ../rootB -g 'src/*.py'
+./src/a.py
+(rg exit 0)
+## rg -c needle rootA rootB -g '*.py'
+rootA/src/a.py:1
+rootA/src/deep/b.py:1
+rootB/e.py:1
+rootB/src/d.py:1
+## rg --files rootA rootB -g '/src/*.py' --debug, override lines only
+rg: DEBUG|globset|crates/globset/src/lib.rs:515: built glob set; 0 literals, 0 basenames, 0 extensions, 0 prefixes, 0 suffixes, 1 required extensions, 0 regexes
+rg: DEBUG|globset|crates/globset/src/lib.rs:515: built glob set; 1 literals, 1 basenames, 0 extensions, 0 prefixes, 1 suffixes, 0 required extensions, 0 regexes
+rg: DEBUG|ignore::walk|crates/ignore/src/walk.rs:1942: ignoring rootB/e.py: Ignore(IgnoreMatch(Override(Glob(UnmatchedIgnore))))
+rg: DEBUG|ignore::walk|crates/ignore/src/walk.rs:1942: ignoring rootA/src/a.py: Ignore(IgnoreMatch(Override(Glob(UnmatchedIgnore))))
+rg: DEBUG|ignore::walk|crates/ignore/src/walk.rs:1942: ignoring rootA/src/c.txt: Ignore(IgnoreMatch(Override(Glob(UnmatchedIgnore))))
+rg: DEBUG|ignore::walk|crates/ignore/src/walk.rs:1942: ignoring rootB/src/d.py: Ignore(IgnoreMatch(Override(Glob(UnmatchedIgnore))))
+rg: DEBUG|ignore::walk|crates/ignore/src/walk.rs:1942: ignoring rootA/src/deep/b.py: Ignore(IgnoreMatch(Override(Glob(UnmatchedIgnore))))

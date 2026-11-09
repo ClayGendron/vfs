@@ -1,0 +1,24 @@
+modules under src/vfs: 94
+module-level vfs-internal import edges: 558
+  of which under TYPE_CHECKING: 160
+
+imports from vfs.storage.backends.database by modules outside it (allowlist: ['vfs.storage.backends']):
+  src/vfs/__init__.py:19: vfs imports vfs.storage.backends.database.backend
+  src/vfs/base.py:114: vfs.base imports vfs.storage.backends.database.descent
+  src/vfs/base.py:115: vfs.base imports vfs.storage.backends.database.dialects
+  src/vfs/base.py:116: vfs.base imports vfs.storage.backends.database.grep
+  src/vfs/base.py:117: vfs.base imports vfs.storage.backends.database.offload
+  total: 5  (runtime: 5, TYPE_CHECKING: 0)
+
+imports from a lower declared layer to a higher one:
+  src/vfs/base.py:101: vfs.base imports vfs.session
+  src/vfs/results/preview.py:31: vfs.results.preview imports vfs.pattern_matching.grep
+  src/vfs/results/render.py:21: vfs.results.render imports vfs.pattern_matching.grep
+  total: 3
+
+five largest modules by line count (top-level def/class statements):
+    3710 lines   32 top-level defs/classes  vfs.base
+    1922 lines    2 top-level defs/classes  vfs.storage.backends.database.backend
+    1542 lines   43 top-level defs/classes  vfs.storage.backends.database.rights
+    1318 lines   49 top-level defs/classes  vfs.storage.backends.database.reads
+    1285 lines   40 top-level defs/classes  vfs.storage.backends.database.writes

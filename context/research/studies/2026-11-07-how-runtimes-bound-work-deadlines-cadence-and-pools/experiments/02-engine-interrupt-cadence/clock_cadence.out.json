@@ -1,0 +1,27 @@
+{
+  "machine": "arm64",
+  "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+  "python": "3.13.11",
+  "iterations": 1000000,
+  "runs": 7,
+  "monotonic_ns_per_call": 16.992876,
+  "monotonic_resolution_ns": 41.666666666666664,
+  "median_ns": {
+    "bare": 26979834,
+    "every_item": 82668500,
+    "every_64th": 46673625,
+    "every_1024th": 56517375
+  },
+  "ns_per_iteration": {
+    "bare": 26.979834,
+    "every_item": 82.6685,
+    "every_64th": 46.673625,
+    "every_1024th": 56.517375
+  },
+  "ratio_over_bare": {
+    "bare": 1.0,
+    "every_item": 3.0640848272083514,
+    "every_64th": 1.7299448543678957,
+    "every_1024th": 2.0948006944742508
+  }
+}

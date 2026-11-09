@@ -1,0 +1,5 @@
+zoekt: LICENSE: Apache-2.0
+ripgrep: COPYING, UNLICENSE, LICENSE-MIT: dual Unlicense or MIT
+git: COPYING: GPL-2.0-only (studied only, nothing copied)
+lucene: LICENSE.txt: Apache-2.0
+tantivy: LICENSE: MIT

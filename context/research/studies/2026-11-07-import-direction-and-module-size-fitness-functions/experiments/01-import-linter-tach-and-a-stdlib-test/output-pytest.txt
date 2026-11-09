@@ -1,0 +1,30 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_only_the_backends_package_imports_the_database_adapter __________
+
+    def test_only_the_backends_package_imports_the_database_adapter() -> None:
+        hits = offending_imports(import_graph())
+>       assert not hits, "\n".join(describe(e) for e in hits)
+E       AssertionError: src/vfs/__init__.py:19: vfs imports vfs.storage.backends.database.backend
+E         src/vfs/base.py:114: vfs.base imports vfs.storage.backends.database.descent
+E         src/vfs/base.py:115: vfs.base imports vfs.storage.backends.database.dialects
+E         src/vfs/base.py:116: vfs.base imports vfs.storage.backends.database.grep
+E         src/vfs/base.py:117: vfs.base imports vfs.storage.backends.database.offload
+E       assert not [Edge(importer='vfs', imported='vfs.storage.backends.database.backend', path=PosixPath('/Users/claygendron/Git/Repos/v....database.offload', path=PosixPath('/Users/claygendron/Git/Repos/vfs/src/vfs/base.py'), line=117, type_checking=False)]
+
+context/research/studies/2026-11-07-import-direction-and-module-size-fitness-functions/experiments/01-import-linter-tach-and-a-stdlib-test/test_import_direction.py:155: AssertionError
+____________________ test_no_layer_imports_a_layer_above_it ____________________
+
+    def test_no_layer_imports_a_layer_above_it() -> None:
+        hits = upward_imports(import_graph())
+>       assert not hits, "\n".join(describe(e) for e in hits)
+E       AssertionError: src/vfs/base.py:101: vfs.base imports vfs.session
+E         src/vfs/results/preview.py:31: vfs.results.preview imports vfs.pattern_matching.grep
+E         src/vfs/results/render.py:21: vfs.results.render imports vfs.pattern_matching.grep
+E       assert not [Edge(importer='vfs.base', imported='vfs.session', path=PosixPath('/Users/claygendron/Git/Repos/vfs/src/vfs/base.py'),...ing.grep', path=PosixPath('/Users/claygendron/Git/Repos/vfs/src/vfs/results/render.py'), line=21, type_checking=False)]
+
+context/research/studies/2026-11-07-import-direction-and-module-size-fitness-functions/experiments/01-import-linter-tach-and-a-stdlib-test/test_import_direction.py:160: AssertionError
+=========================== short test summary info ============================
+FAILED context/research/studies/2026-11-07-import-direction-and-module-size-fitness-functions/experiments/01-import-linter-tach-and-a-stdlib-test/test_import_direction.py::test_only_the_backends_package_imports_the_database_adapter
+FAILED context/research/studies/2026-11-07-import-direction-and-module-size-fitness-functions/experiments/01-import-linter-tach-and-a-stdlib-test/test_import_direction.py::test_no_layer_imports_a_layer_above_it
+2 failed in 0.38s
