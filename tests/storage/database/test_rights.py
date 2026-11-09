@@ -22,6 +22,7 @@ from sqlalchemy.exc import OperationalError
 
 from tests.support.grant_worlds import DIRECTORIES, LAYOUTS, PATHS, SUBJECT_SETS, Layout, random_world
 from tests.support.oracles.grants import GrantWorld, everyone_rank, set_rank
+from tests.support.statements import is_statistics_statement
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
@@ -599,7 +600,7 @@ async def test_a_cached_caller_costs_its_stamps_and_the_marks_per_call(storage: 
         statements.append(statement)
 
     assert (await storage.stat(path=Path("/d/f.md"), authority=ann)).success is True
-    selects = [s for s in statements if s.startswith("SELECT")]
+    selects = [s for s in statements if s.startswith("SELECT") and not is_statistics_statement(s)]
     tables = storage._host.tables
     assert len(selects) == 3, selects
     assert tables.principal_revisions.name in selects[0] and tables.relabels.name in selects[1]

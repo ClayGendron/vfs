@@ -166,7 +166,7 @@ class TestStep:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, embedder=provider)
         failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="write broke")])
-        real = storage._execute_write
+        real = storage._execute_maintenance
 
         async def failing(op: str, fn: Any) -> Result:
             partial_fn = getattr(fn, "func", None)
@@ -174,7 +174,7 @@ class TestStep:
                 return failure
             return await real(op, fn)
 
-        monkeypatch.setattr(storage, "_execute_write", failing)
+        monkeypatch.setattr(storage, "_execute_maintenance", failing)
         result = await storage.reindex()
         assert result.success is False and result.errors[0].message == "write broke"
         await storage.close()
@@ -185,14 +185,14 @@ class TestStep:
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(model="two"))
         failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="clear broke")])
-        real = other._execute_write
+        real = other._execute_maintenance
 
         async def failing(op: str, fn: Any) -> Result:
             if "clear_embeddings" in getattr(getattr(fn, "__code__", None), "co_names", ()):
                 return failure
             return await real(op, fn)
 
-        monkeypatch.setattr(other, "_execute_write", failing)
+        monkeypatch.setattr(other, "_execute_maintenance", failing)
         result = await other.reindex()
         assert result.success is False and result.errors[0].message == "clear broke"
         await other.close()

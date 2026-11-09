@@ -523,28 +523,28 @@ class TestPatternFan:
             await storage.close()
 
     async def test_multi_index_or_plan_survives_the_ext_facts(self, tmp_path) -> None:
-        # The measured ~350x cliff: one conjunct beside the fan demotes
-        # the whole WHERE to a scan. Every ext fact rides inside its
-        # arm, so the plan must keep the multi-index OR — no table scan.
+        """Guards: one conjunct beside the fan demoting the whole WHERE to a scan,
+        the measured ~350x cliff; every ext fact rides inside its arm, and on the
+        statistics the store's own writes leave, every branch seeks the path index."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        await _seed(storage, [("/a/x.py", "file", "x"), ("/b/y.txt", "file", "x")])
-        recorded: list[tuple[str, tuple[str, ...]]] = []
-
-        @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
-        def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            recorded.append((statement, parameters))
-
-        result = await storage.glob(patterns=("/a/**/*.py", "/b/**/*.txt"), ext=("py", "txt"))
-        assert [str(o.path) for o in result.observations] == ["/a/x.py", "/b/y.txt"]
+        entries = [
+            Entry(path=Path(f"/d{root:03}/f{index:02}.{ext}"), content="x")
+            for root in range(115)
+            for index, ext in enumerate(("py", "txt", "md", "rs", "ts") * 5)
+        ]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        await storage._host.settle_statistics()
+        recorded = _recorded(storage)
+        result = await storage.glob(patterns=("/d000/**/*.py", "/d001/**/*.txt"), ext=("py", "txt"))
+        assert len(result.observations) == 10
         [(fan, params)] = [(s, p) for s, p in recorded if "LIKE" in s and s.startswith("SELECT")]
-        literal = fan
-        for value in params:
-            literal = literal.replace("?", f"'{value}'", 1)
         async with storage._host.session_factory() as session:
-            plan = (await session.execute(text("EXPLAIN QUERY PLAN " + literal))).all()
+            plan = (await session.execute(text("EXPLAIN QUERY PLAN " + _literal(fan, params)))).all()
         details = [row[-1] for row in plan]
         assert any("MULTI-INDEX OR" in detail for detail in details), details
         assert not any("SCAN" in detail for detail in details), details
+        branches = [detail for detail in details if detail.startswith("SEARCH")]
+        assert branches and all("ix_vfs_entries_path" in detail for detail in branches), details
         await storage.close()
 
     @pytest.mark.parametrize(
@@ -1101,22 +1101,25 @@ class TestScopeChannel:
 
     async def test_the_scope_fan_keeps_the_multi_index_or(self, tmp_path) -> None:
         """Guards: the arms' facts conjunct turned into the access path, demoting
-        the root OR to a scan, before or after the planner has statistics."""
+        the root OR to a scan, on the statistics the store's writes leave and on
+        none at all (SQLite before 3.46, or a store whose ``sqlite_stat1`` was emptied)."""
         storage = DatabaseStorage(url=_url(tmp_path))
-        rows: list[tuple[str, str, str | None]] = [
-            (f"/d{i:03}/{side}/f{j}.{ext}", "file", "x")
+        entries = [
+            Entry(path=Path(f"/d{i:03}/{side}/f{j}.{ext}"), content="x")
             for i in range(60)
             for side in "ab"
             for j, ext in enumerate(("py", "md"))
         ]
-        await _seed(storage, rows)
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        await storage._host.settle_statistics()
         assert storage._host.profile.scope_facts_beside_fan is True
         scope = ScopeChannel(roots=tuple(Path(f"/d{i:03}") for i in range(0, 60, 3)), arms=("*.py", "b/*.md"))
         statements = _recorded(storage)
-        for analyzed in (False, True):
-            if analyzed:
+        for analyzed in (True, False):
+            if not analyzed:
                 async with storage._host.session_factory() as session:
-                    await session.execute(text("ANALYZE"))
+                    conn = await session.connection(execution_options={"vfs_writer": True})
+                    await conn.exec_driver_sql("DELETE FROM sqlite_stat1")
                     await session.commit()
             statements.clear()
             result = await storage.glob(patterns=(), scope=scope)

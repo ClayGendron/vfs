@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +37,7 @@ from tests.support.grants_contract import GrantsContract
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.plan_store import PlanBackend
 from tests.support.server_schemas import server_storage
+from tests.support.statements import is_statistics_statement
 from tests.support.storage_contract import StorageContract
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Observation
@@ -109,6 +111,71 @@ class TestSqliteConformance(StorageContract, GrantsContract):
 def _server_storage(env_var: str) -> AbstractAsyncContextManager[DatabaseStorage]:
     """A backend on *env_var*'s server, in a schema of its own, configured for this file."""
     return server_storage(env_var, embedder=HashEmbeddingProvider())
+
+
+class TestStatisticsStatements:
+    """The planner-statistics step is SQLite's alone: the four server engines maintain their own."""
+
+    @pytest.mark.parametrize(
+        "leg",
+        [
+            pytest.param("sqlite", id="sqlite"),
+            pytest.param("VFS_TEST_POSTGRES_URL", id="postgres", marks=pytest.mark.postgres),
+            pytest.param("VFS_TEST_MARIADB_URL", id="mariadb", marks=pytest.mark.mariadb),
+            pytest.param("VFS_TEST_MSSQL_URL", id="mssql", marks=pytest.mark.mssql),
+            pytest.param("VFS_TEST_ORACLE_URL", id="oracle", marks=pytest.mark.oracle),
+        ],
+    )
+    async def test_a_write_issues_only_its_profiles_statistics_statements(
+        self, leg: str, tmp_path: pathlib.Path, sqlite_template: pathlib.Path
+    ) -> None:
+        """Guards: a statistics statement reaching a server engine, whose profile declares no listing."""
+        if leg == "sqlite":
+            db = tmp_path / "vfs.sqlite"
+            shutil.copy(sqlite_template, db)
+            storage_cm = _closing(DatabaseStorage(url=f"sqlite+aiosqlite:///{db}", embedder=HashEmbeddingProvider()))
+        else:
+            storage_cm = _server_storage(leg)
+        async with storage_cm as storage:
+            assert (await storage.first_touch()).success is True
+            traced: list[tuple[str, str]] = []
+            sync = storage._host.engine.sync_engine
+
+            @event.listens_for(sync, "before_cursor_execute")
+            def record(conn, cursor, statement, parameters, context, executemany) -> None:
+                traced.append(("statement", statement))
+
+            @event.listens_for(sync, "begin")
+            def begun(conn) -> None:
+                traced.append(("begin", ""))
+
+            @event.listens_for(sync, "commit")
+            def committed(conn) -> None:
+                traced.append(("commit", ""))
+
+            assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+            # The write's own statements: a crossing's pass runs after it returns and is pinned elsewhere.
+            statistics = [
+                index
+                for index, (kind, sql) in enumerate(traced)
+                if kind == "statement" and is_statistics_statement(sql)
+            ]
+            await storage._host.settle_statistics()
+            if leg != "sqlite":
+                assert statistics == []
+                return
+            assert len(statistics) >= 3
+            begin = next(index for index, (kind, _sql) in enumerate(traced) if kind == "begin")
+            commit = next(index for index, (kind, _sql) in enumerate(traced) if kind == "commit")
+            assert all(begin < index < commit for index in statistics), traced
+
+
+@asynccontextmanager
+async def _closing(storage: DatabaseStorage) -> AsyncIterator[DatabaseStorage]:
+    try:
+        yield storage
+    finally:
+        await storage.close()
 
 
 @pytest.mark.postgres

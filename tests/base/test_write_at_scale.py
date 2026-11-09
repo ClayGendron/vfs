@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from sqlalchemy import event
 
+from tests.support.statements import is_statistics_statement
 from vfs import AsyncVirtualFileSystem, DatabaseStorage, Entry
 from vfs.paths import Path
 from vfs.storage.backends.database.dialects import rows_per_statement
@@ -68,7 +69,7 @@ async def _count(
 
     @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
     def record(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
-        if not armed:
+        if not armed or is_statistics_statement(statement):
             return
         text = " ".join(statement.split())
         family = next((name for name, prefix in FAMILIES if text.startswith(prefix)), f"unnamed: {text[:60]}")

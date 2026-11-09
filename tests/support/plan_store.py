@@ -80,6 +80,8 @@ async def build_plan_store(storage: DatabaseStorage) -> None:
     for start in range(0, len(entries), _BATCH):
         written = await storage.write(entries=entries[start : start + _BATCH], parents=True)
         assert written.success is True, written.errors
+    # SQLite's statistics are vfs's own step, settled here; the server engines take their own command.
+    await storage._host.settle_statistics()
     async with storage._host.session_factory() as session:
         for statement in _statistics(storage):
             await session.execute(text(statement))
@@ -198,7 +200,7 @@ def _statistics(storage: DatabaseStorage) -> list[str]:
     qualified = entry.name if schema is None else f"{schema}.{entry.name}"
     match storage._host.profile.name:
         case "sqlite":
-            return ["ANALYZE"]
+            return []
         case "postgresql":
             return [f"ANALYZE {qualified}"]
         case "mariadb":

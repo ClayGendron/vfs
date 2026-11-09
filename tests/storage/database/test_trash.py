@@ -22,6 +22,7 @@ from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
 from tests.support.database_helpers import _ReturningSession, _url
+from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -59,7 +60,7 @@ if TYPE_CHECKING:
 ANN = Authority.of(Principal("ann"))
 
 # Statements the spy ignores: transaction control, never work.
-_CONTROL = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK")
+_CONTROL = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE", "ROLLBACK", "ANALYZE")
 
 
 class Row(NamedTuple):
@@ -1012,7 +1013,8 @@ class TestEdges:
 
 def _spy(storage: DatabaseStorage, statements: list[str]):
     def record(conn, cursor, statement, parameters, context, executemany) -> None:
-        if not statement.lstrip().upper().startswith(_CONTROL):
+        # The statistics step's statements are left out too: a pass an earlier write asked for may run alongside.
+        if not statement.lstrip().upper().startswith(_CONTROL) and not is_statistics_statement(statement):
             statements.append(statement)
 
     return record
@@ -1147,8 +1149,7 @@ class TestScale:
         assert (await storage.write(entries=crowd, parents=True)).success is True
         assert (await storage.posture(path=Path("/"), posture="read", authority=Authority.system())).success is True
         assert (await storage.delete(path=Path("/d"))).success is True
-        async with storage._host.engine.begin() as conn:
-            await conn.execute(text("ANALYZE"))
+        await storage._host.settle_statistics()
         statements: list[tuple[str, Any]] = []
 
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
@@ -1355,6 +1356,7 @@ class TestPurgeHardening:
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             found = await session.execute(select(entry.c.entry_id).where(entry.c.path.like("/d/%")))
             ids = [row.entry_id for row in found]
             for eid in ids[:20]:

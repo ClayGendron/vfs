@@ -290,6 +290,7 @@ class TestSegmentRebuild:
         tables = storage._host.tables
         entry = tables.entry
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             ghost_host = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b"))).scalar_one()
             # Three drift shapes: a missing posting, an excess posting,
@@ -326,6 +327,7 @@ class TestSegmentRebuild:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             entry = tables.entry
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             state = SegmentRebuildState(
@@ -355,6 +357,7 @@ class TestSegmentRebuild:
 
         monkeypatch.setattr(segments_module, "locked_lookup", spy)
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             entry = tables.entry
             rows = (await session.execute(select(entry.c.entry_id, entry.c.path).where(entry.c.path.in_(paths)))).all()
             by_id = {row.entry_id: row.path for row in rows}
@@ -376,6 +379,7 @@ class TestSegmentRebuild:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             entry = tables.entry
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             await session.execute(

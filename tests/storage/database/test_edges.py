@@ -70,10 +70,11 @@ async def _assert_mirror(storage: DatabaseStorage) -> None:
 
 
 async def _seed_edge(storage: DatabaseStorage, source: str, target: str, *, edge_type: str = "ref") -> None:
-    """Plant one authored edge at the row layer, bypassing ``mkedge``."""
+    """Plant one authored edge at the row layer, bypassing ``mkedge``; a writer, so it waits on the lock as a verb."""
     tables = storage._host.tables
     entry = tables.entry
     async with storage._host.session_factory() as session:
+        await session.connection(execution_options={"vfs_writer": True})
         rows = (
             await session.execute(select(entry.c.path, entry.c.entry_id).where(entry.c.path.in_([source, target])))
         ).all()
@@ -364,6 +365,7 @@ class TestHubBoundedStatements:
             statements.append(statement)
 
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             result = await mkedge_rows(
                 session, tables, storage._host.profile, 64, 6, edges=edges, provenance="user", authority=None
             )
@@ -471,6 +473,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/b/f.txt"))).scalar_one()
             root = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/"))).scalar_one()
             top = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a"))).scalar_one()
@@ -505,6 +508,7 @@ class TestEdgeRebuild:
         tables = storage._host.tables
         entry, edges = tables.entry, tables.edges
         async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
             victim = (await session.execute(select(entry.c.entry_id).where(entry.c.path == "/a/f.txt"))).scalar_one()
             await session.execute(delete(edges).where(edges.c.target_id == victim, edges.c.edge_type == "fs"))
             await session.commit()

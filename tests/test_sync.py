@@ -21,6 +21,7 @@ import vfs.sync as sync_module
 from tests.base.test_authority import ALICE, CALLS, seen
 from tests.support.base_doubles import CannedStorage, RecorderStorage
 from tests.support.server_schemas import server_schema
+from tests.support.statements import is_statistics_statement
 from vfs.base import AsyncVirtualFileSystem
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry, Match, Observation
@@ -513,7 +514,9 @@ def test_a_ten_thousand_entry_write_costs_what_the_async_path_costs(tmp_path: Fs
         def record(
             conn: Any, cursor: Any, statement: Any, parameters: Any, context: Any, executemany: Any, side: str = side
         ) -> None:
-            counts[side] += 1
+            # The write's own statements: how far its statistics pass got before close differs by facade.
+            if not is_statistics_statement(statement):
+                counts[side] += 1
 
     with VirtualFileSystem(storage=sync_storage) as fs:
         assert fs.write(entries=entries, parents=True).success is True

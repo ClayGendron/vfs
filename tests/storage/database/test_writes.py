@@ -24,6 +24,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ulid import ULID
 
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
+from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import MEASURED_BODY, BodyMetrics, Entry
 from vfs.models.rows import build_vfs_tables
@@ -106,9 +107,11 @@ class TestWriteMechanics:
         result = await storage.write(entries=entries)
         assert result.success is True
         assert len(result.observations) == 100
+        await storage._host.settle_statistics()
         # BEGIN + session PRAGMAs + plan select + one insert chunk +
         # content insert + parent bump — O(tables), never O(entries).
-        assert len(statements) <= 10, statements
+        own = [statement for statement in statements if not is_statistics_statement(statement)]
+        assert len(own) <= 10, own
         await storage.close()
 
     async def test_write_statement_counts_are_pinned(self, tmp_path) -> None:
@@ -122,7 +125,7 @@ class TestWriteMechanics:
 
         def mutations() -> list[str]:
             control = ("BEGIN", "COMMIT", "PRAGMA", "SAVEPOINT", "RELEASE")
-            return [s for s in statements if not s.startswith(control)]
+            return [s for s in statements if not s.startswith(control) and not is_statistics_statement(s)]
 
         created = await storage.write(entries=[Entry(path=Path("/pin.txt"), content="a")])
         assert created.success is True
@@ -149,7 +152,8 @@ class TestWriteMechanics:
 
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            statements.append((statement, parameters))
+            if not is_statistics_statement(statement):  # the write's pass may land in the window
+                statements.append((statement, parameters))
 
         edited = await storage.edit(path=Path("/docs/b.md"), edits=[EditOperation(old="y", new="z")])
         assert edited.success is True
@@ -433,7 +437,8 @@ class TestArbitration:
         # rows SELECT that labels the creates, three depth-layer inserts, the
         # segment-posting and fs-mirror inserts riding the creates, the
         # content insert (fresh rows clear no bodies), parent bump.
-        shapes = [s.split(None, 1)[0] for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
+        own = [s for s in statements if not s.startswith(("BEGIN", "SAVEPOINT", "RELEASE"))]
+        shapes = [s.split(None, 1)[0] for s in own if not is_statistics_statement(s)]
         expected = ["SELECT", "SELECT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT", "INSERT"]
         expected.append("UPDATE")
         assert shapes == expected, statements

@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
 
 from tests.support.base_doubles import BindableStorage, RecorderStorage
 from tests.support.loop_ticks import LoopTicker
@@ -818,10 +817,8 @@ async def test_a_wide_scoped_glob_builds_roots_plus_arms(monkeypatch: pytest.Mon
     await fs.add_mount(data, "/data")
     rows = [Entry(path=Path(f"/data/d{i:05}/x.zz"), content="x") for i in range(10_000)]
     assert (await fs.write(entries=[*rows, Entry(path=Path("/data/d00007/x.e05"), content="x")], parents=True)).success
-    # Without planner statistics SQLite seeks the tombstone index per root clause, a defect of its own.
-    async with data._host.session_factory() as session:
-        await session.execute(text("ANALYZE"))
-        await session.commit()
+    # The crossing write's own statistics pass lands before the plans are read.
+    await data._host.settle_statistics()
     root_arms = _counted(monkeypatch, reads_module, "scope_root_arm")
     facts = _counted(monkeypatch, reads_module, "channel_facts")
     pattern_arms = _counted(monkeypatch, reads_module, "pattern_arm")

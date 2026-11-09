@@ -856,7 +856,7 @@ class TestReindexLease:
             beats += 1
             return stalled
 
-        monkeypatch.setattr(storage, "_execute_write", stalled_write)
+        monkeypatch.setattr(storage, "_execute_maintenance", stalled_write)
         lost = asyncio.Event()
         task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
         for _ in range(50):

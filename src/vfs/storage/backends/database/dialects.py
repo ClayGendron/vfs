@@ -344,6 +344,37 @@ class DialectProfile:
     roots-alone statement and the statement with the facts beside it,
     each read by plan operator on the path index); elsewhere the scope
     fan sends the roots alone, fetching more candidates and the same rows.
+
+    ``statistics_listing`` declares the engine's own growth check for
+    planner statistics, which the engine host runs inside every committed
+    mutation and acts on in one background pass: SQLite's ``PRAGMA
+    optimize`` listing with the check-every-table, consider-``ANALYZE``
+    and list-only bits set and no cap bit, formatted with the quoted
+    schema the mount's tables live in. SQLAlchemy takes no position on
+    maintaining statistics, and the server engines need none of ours:
+    PostgreSQL's autovacuum analyzes a table after 50 rows plus a tenth
+    of it change and scales stored estimates to the live size; SQL
+    Server's ``AUTO_UPDATE_STATISTICS`` refreshes after a modification
+    threshold; Oracle gathers missing and stale statistics in its daily
+    maintenance window; MariaDB's InnoDB recalculates persistent
+    statistics after a tenth of a table changes. So only SQLite fills
+    it, and the generic floor runs no step. The pass holds the write
+    lock for one crossing's analysis, measured at 0.9 to 1.5 s at a
+    million entry rows and about 9 to 15 s inferred at ten million,
+    once per sevenfold to tenfold growth; past about five million rows
+    a rival writer may need a second attempt during it, and the named
+    direction, one table per pass above a declared size, has no cap.
+
+    ``rarity_hint`` names the engine's planner hint for a term that is
+    rarely true, a function wrapping the term that costs nothing to
+    evaluate — SQLite's ``unlikely()``. The overlay fetch's ``NOT
+    encoded`` term takes it where it is declared: ``sqlite_stat1`` keeps
+    one average per index column and cannot say that the rows awaiting
+    the index are few among the many encoded ones, so with statistics
+    the planner would walk the path index for them, linear in the store,
+    where the hint keeps the seek on the (encoded, kind) index. The
+    server engines keep the plain term; a partial index over the rows
+    awaiting the index is the direction that serves every engine.
     """
 
     name: str
@@ -389,6 +420,8 @@ class DialectProfile:
     # install statement the explicit verb alone runs; ``None`` declares none.
     vector_function: VectorFunction | None = None
     scope_facts_beside_fan: bool = False
+    statistics_listing: str | None = None
+    rarity_hint: str | None = None
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -412,6 +445,8 @@ SQLITE: Final = DialectProfile(
         "PRAGMA case_sensitive_like = ON",
         "PRAGMA mmap_size = 8589934592",
         "PRAGMA cache_size = -262144",
+        # Uncapped: a sampled analysis understates the low-cardinality columns the trap is about.
+        "PRAGMA analysis_limit = 0",
     ),
     # page_size must precede WAL: a WAL database's page size is frozen.
     file_settings=(
@@ -439,6 +474,9 @@ SQLITE: Final = DialectProfile(
     range_fence="MATERIALIZED",
     # Plan-pinned: after ANALYZE every root clause still seeks the path index with the facts beside the OR.
     scope_facts_beside_fan=True,
+    # Every table checked, ANALYZE considered, list only, no cap bit: SQLite names what grew tenfold.
+    statistics_listing="PRAGMA {schema}.optimize = 0x10003",
+    rarity_hint="unlikely",
 )
 
 POSTGRESQL: Final = DialectProfile(

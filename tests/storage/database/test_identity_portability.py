@@ -32,6 +32,7 @@ async def test_row_copy_survives_integer_renumbering(tmp_path) -> None:
         ],
     )
     assert written.success is True
+    await src._host.settle_statistics()  # the raw inserts below take the lock the first write's pass holds
     expected_tree = [(str(o.path), o.kind, o.version) for o in (await src.tree(path=Path("/"))).observations]
     tables = src._host.tables
 

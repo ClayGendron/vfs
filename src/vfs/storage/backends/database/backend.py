@@ -1198,7 +1198,9 @@ class DatabaseStorage:
         """
         tables = self._host.tables
         token = str(ULID())
-        claimed = await self._execute_write("reindex", lambda session: claim_reindex_lease(session, tables, token))
+        claimed = await self._execute_maintenance(
+            "reindex", lambda session: claim_reindex_lease(session, tables, token)
+        )
         if not claimed.success:
             return claimed
         async with self._held_reindex_lease(tables, token) as lost:
@@ -1226,7 +1228,7 @@ class DatabaseStorage:
             beat.cancel()
             with suppress(asyncio.CancelledError):
                 await beat
-            await self._execute_write("reindex", lambda session: release_reindex_lease(session, tables, token))
+            await self._execute_maintenance("reindex", lambda session: release_reindex_lease(session, tables, token))
 
     async def _beat_reindex_lease(self, tables: VFSTables, token: str, lost: asyncio.Event) -> None:
         """Pulse the lease heartbeat until cancelled or proven taken.
@@ -1240,7 +1242,9 @@ class DatabaseStorage:
         """
         while True:
             await asyncio.sleep(REINDEX_HEARTBEAT_SECONDS)
-            beat = await self._execute_write("reindex", lambda session: heartbeat_reindex_lease(session, tables, token))
+            beat = await self._execute_maintenance(
+                "reindex", lambda session: heartbeat_reindex_lease(session, tables, token)
+            )
             if lease_lost(beat):
                 lost.set()
                 return
@@ -1367,16 +1371,16 @@ class DatabaseStorage:
         """
         host = self._host
         land = partial(land_renderings, tables=tables, profile=host.profile, membership_budget=host.membership_budget)
-        outcome = await self._execute_write("reindex", partial(land, rendered=rendered, report=report))
+        outcome = await self._execute_maintenance("reindex", partial(land, rendered=rendered, report=report))
         if outcome.success or len(rendered) == 0:
             return None
         for item in rendered:
-            single = await self._execute_write("reindex", partial(land, rendered=[item], report=report))
+            single = await self._execute_maintenance("reindex", partial(land, rendered=[item], report=report))
             if single.success:
                 continue
             reason = "; ".join(error.message for error in single.errors) or "the engine refused the row"
             quarantined = item._replace(rendering=failure("failed", f"landing refused: {reason}"), cached=False)
-            fallback = await self._execute_write("reindex", partial(land, rendered=[quarantined], report=report))
+            fallback = await self._execute_maintenance("reindex", partial(land, rendered=[quarantined], report=report))
             if not fallback.success:
                 return fallback
         return None
@@ -1397,11 +1401,11 @@ class DatabaseStorage:
                 values = await compute_signal(self._host.offload_executor, graph, signal)
                 generation = str(ULID())
                 publish = partial(publish_signal, tables=tables, signal=signal, generation=generation, values=values)
-                published = await self._execute_write("reindex", publish)
+                published = await self._execute_maintenance("reindex", publish)
                 if not published.success:
                     return published
         declared = [signal.name for signal in ranker.signals]
-        swept = await self._execute_write(
+        swept = await self._execute_maintenance(
             "reindex", partial(sweep_undeclared_signals, tables=tables, profile=self._host.profile, declared=declared)
         )
         return None if swept.success else swept
@@ -1421,7 +1425,7 @@ class DatabaseStorage:
             return []
         if lost.is_set():
             return lease_lost_result()
-        repaired = await self._execute_write("reindex", repair)
+        repaired = await self._execute_maintenance("reindex", repair)
         if not repaired.success:
             return repaired
         return list(repaired.errors)
@@ -1433,7 +1437,7 @@ class DatabaseStorage:
         count) ride out on whatever Result the phases end with.
         """
         state = ReindexState()
-        result = await self._execute_write(
+        result = await self._execute_maintenance(
             "reindex",
             lambda session: chunk_dirty(
                 session,
@@ -1450,7 +1454,7 @@ class DatabaseStorage:
         notes = list(result.errors)
         if lost.is_set():
             return lease_lost_result()
-        result = await self._execute_write(
+        result = await self._execute_maintenance(
             "reindex", lambda session: build_epoch(session, tables, state, self._host.offload_executor)
         )
         if not result.success or state.epoch is None:
@@ -1459,7 +1463,7 @@ class DatabaseStorage:
         if lost.is_set():
             return lease_lost_result()
         epoch = state.epoch
-        result = await self._execute_write(
+        result = await self._execute_maintenance(
             "reindex",
             lambda session: publish_epoch(
                 session, tables, self._host.profile, self._host.parameter_budget, self._host.membership_budget, state
@@ -1468,10 +1472,10 @@ class DatabaseStorage:
         if not result.success:
             # The lost build's rows are unpublished residue — reclaim them
             # so a rival's next mint is not forced past a dead number.
-            await self._execute_write("reindex", lambda session: reclaim_built_epoch(session, tables, epoch))
+            await self._execute_maintenance("reindex", lambda session: reclaim_built_epoch(session, tables, epoch))
             return result
         await seam("reindex:before-reclaim")
-        reclaimed = await self._execute_write("reindex", lambda session: reclaim_epochs(session, tables))
+        reclaimed = await self._execute_maintenance("reindex", lambda session: reclaim_epochs(session, tables))
         return with_notes(reclaimed, notes)
 
     async def _embed_step(self, tables: VFSTables, lost: asyncio.Event) -> Result:
@@ -1494,7 +1498,7 @@ class DatabaseStorage:
         # Re-read, never trusted from first touch: a rival's run may have stamped or migrated since.
         self._host.embedding_identity = await self._rows("reindex", partial(read_identity, tables=tables))
         if self._host.embedding_identity is not None and self._host.embedding_identity != identity:
-            cleared = await self._execute_write("reindex", lambda session: clear_embeddings(session, tables))
+            cleared = await self._execute_maintenance("reindex", lambda session: clear_embeddings(session, tables))
             if not cleared.success:
                 return cleared
             self._host.embedding_identity = None
@@ -1536,7 +1540,7 @@ class DatabaseStorage:
                 profile=self._host.profile,
                 membership_budget=budget,
             )
-            written = await self._execute_write("reindex", land)
+            written = await self._execute_maintenance("reindex", land)
             if not written.success:
                 return written
             if answered:
@@ -1780,7 +1784,8 @@ class DatabaseStorage:
 
         One chunk per writer transaction, each bounded by the dialect's
         piece and row caps, so no transaction holds a subtree's worth of
-        locks; a chunk that fails leaves its mark for the next call.
+        locks; a chunk that fails leaves its mark for the next call. The
+        warnings *written* carried ride out on the final Result.
         """
         host = self._host
         relabeller = Relabeller(host.tables, host.profile, host.membership_budget)
@@ -1794,14 +1799,14 @@ class DatabaseStorage:
             return Result(ops=("posture",))
 
         while True:
-            outcome = await self._execute_write("posture", chunk)
+            outcome = await self._execute_maintenance("posture", chunk)
             if not outcome.success:
-                return Result(ops=("posture",), grants=grants, errors=outcome.errors)
+                return Result(ops=("posture",), grants=grants, errors=[*written.errors, *outcome.errors])
             if step is None:
                 break
             done = done.plus(step)
             await seam("relabel:after-chunk")
-        return Result(ops=("posture",), grants=grants, relabel=done._asdict())
+        return Result(ops=("posture",), grants=grants, errors=list(written.errors), relabel=done._asdict())
 
     async def _execute(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """One op = one session under retry; failures come back classified.
@@ -1839,11 +1844,26 @@ class DatabaseStorage:
         return await self._host.with_retry(attempt)
 
     async def _execute_write(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
-        """One batch = one writer transaction, committed iff the plan succeeded.
+        """A public verb's batch = one writer transaction, committed iff the plan succeeded.
 
         The connection carries ``vfs_writer`` so SQLite opens the
         transaction ``BEGIN IMMEDIATE`` — the write lock is held from the
-        plan's first read.
+        plan's first read. This is the public verbs' runner, so the
+        Result takes the host's held advisories at its one return; a
+        maintenance commit, whose Result discards its errors, goes
+        through :meth:`_execute_maintenance` and never does.
+        """
+        outcome = await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
+        return self._host.take_advisories(outcome)
+
+    async def _execute_maintenance(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
+        """An internal commit = one writer transaction whose Result is the caller's to fold or discard.
+
+        The reindex phases, the lease heartbeat and release, and the
+        posture verb's relabel chunks commit here. Their Results never
+        carry a held advisory: the phase folds or drops its errors, and
+        a fact about the store's health must reach a caller, so it waits
+        for the public verb that returns next.
         """
         return await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
 
@@ -1886,9 +1906,11 @@ class DatabaseStorage:
 
         Topology options trade the op snapshot for the serialization
         point: the writer marker plus the declared topology-isolation
-        pin, never ``op_isolation``.
+        pin, never ``op_isolation``. Every topology verb is public, so
+        its Result takes the host's held advisories here.
         """
-        return await self._mutate(op, fn, topology_execution_options(self._host.profile))
+        outcome = await self._mutate(op, fn, topology_execution_options(self._host.profile))
+        return self._host.take_advisories(outcome)
 
     async def _mutate(
         self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]], options: dict[str, str | bool]
@@ -1898,21 +1920,34 @@ class DatabaseStorage:
         A retryable outcome discards the session and restarts the whole
         method from its first read; a failed batch returns classified
         errors and the session rolls back on exit.
+
+        Where the engine keeps planner statistics through vfs, a
+        successful batch detects, inside this same transaction and
+        before the commit, whether SQLite's growth listing names one of
+        the mount's indexed tables; the analysis of a crossing runs
+        after the write returns, in the host's own task, out of the
+        caller's reach. The runner never reports a statistics failure;
+        the public runner that returns next does, as an advisory.
         """
         refusal = await self._host.ensure_ready()
         if refusal is not None:
             return Result(ops=(op,), errors=[refusal])
+        due: frozenset[str] | ResultError = frozenset()
 
         async def attempt() -> Result:
+            nonlocal due
+            due = frozenset()
             async with self._host.session_factory() as session:
                 await session.connection(execution_options=options)
                 result = await fn(session)
                 if result.success:
+                    if self._host.statistics_enabled:
+                        due = await self._host.detect_due(await session.connection())
                     await session.commit()
                 return result
 
         try:
-            return await self._host.with_retry(attempt)
+            result = await self._host.with_retry(attempt)
         except StaleSnapshot as exc:
             # Guards kept proving the snapshot stale through every redrive:
             # an honest transient outcome, never a torn commit.
@@ -1920,3 +1955,6 @@ class DatabaseStorage:
             return Result(ops=(op,), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
         except (SQLAlchemyError, OSError) as exc:
             return Result(ops=(op,), errors=[self._host.classify_failure(exc, context=op)])
+        if isinstance(due, frozenset) and due:
+            self._host.request_analysis()
+        return result

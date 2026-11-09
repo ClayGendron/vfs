@@ -17,6 +17,7 @@ from sqlalchemy import event
 from sqlalchemy.dialects import mssql, mysql, sqlite
 
 from tests.support.oracles import graph_walk, meeting_subgraph
+from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import build_vfs_tables
@@ -73,6 +74,8 @@ def recording(storage: InMemoryStorage) -> Iterator[Recorded]:
     recorded = Recorded()
 
     def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        if is_statistics_statement(statement):
+            return
         binds = len(parameters) if isinstance(parameters, (tuple, list, dict)) else 0
         recorded.statements.append((statement, binds))
 

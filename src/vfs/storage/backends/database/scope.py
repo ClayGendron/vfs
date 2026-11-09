@@ -20,7 +20,7 @@ from __future__ import annotations
 from time import monotonic
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
 from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, escape_glob
@@ -254,13 +254,18 @@ async def entries_for_scan(
     to the lowest ``limit + 1`` paths as arm chunks arrive (per-chunk
     top-``limit + 1`` is a correct merge input), and the deadline is
     consulted between chunks — an expired loop stops, and the caller's
-    post-scan check records the truncation loudly.
+    post-scan check records the truncation loudly. The ``NOT encoded``
+    term wears the profile's rarity hint where one is declared, so a
+    planner whose statistics average the column keeps the seek on the
+    (encoded, kind) index rather than walking the path index for the
+    few rows awaiting the index.
     """
     entry = tables.entry
     kinds = kind_membership(entry)
     base = [kinds.predicate]
     if not everything:
-        base.append(~entry.c.encoded)
+        pending = ~entry.c.encoded
+        base.append(pending if profile.rarity_hint is None else getattr(func, profile.rarity_hint)(pending))
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
     merged: dict[str, RowMapping] = {}
     overflow = False
