@@ -63,11 +63,15 @@ async def ordered_top10_via_glean(loaded: Loaded) -> dict[str, list[str]]:
     }
 
 
-async def assert_top10_pin(storage: DatabaseStorage) -> None:
+async def assert_top10_pin(storage: DatabaseStorage, *, analyzed: bool = False) -> None:
     """The ordered top-10 of every golden query equals the recorded pin, through
     the driver (lexical) and through the verb (lexical, or hybrid on a mount with
-    the hashing embedder)."""
+    the hashing embedder). ``analyzed`` gathers the store's planner statistics by
+    hand first: the pin must hold whether or not anyone has analyzed the store."""
     loaded = await load_corpus(storage, vfs_native())
+    if analyzed:
+        async with storage._host.engine.begin() as conn:
+            await conn.exec_driver_sql("ANALYZE")
     actual = await ordered_top10(loaded)
     if rewriting(REPIN_VAR):
         TOP10.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")

@@ -10,20 +10,24 @@ in both worlds because the answer must not depend on which side served.
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import true
+from sqlalchemy.dialects import mssql, sqlite
 
 from tests.support.database_helpers import _url
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.lexical import encode_block
+from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import glean as glean_module
+from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.offload import WALL_TIME_CAUSE
 from vfs.storage.backends.database.seams import installed
@@ -288,21 +292,59 @@ class TestRounds:
         storage = await _indexed(tmp_path, files)
         reference = await storage.glean(query="common anchor", limit=5)
         assert _paths(reference)[0] == "/c/0130.txt"
-        packed: list[int] = []
-        real = glean_module._packed_arms
+        wanted: list[dict[str, list[int]]] = []
+        real = glean_module.tail_block_statements
 
-        def spying(arms, parameter_budget):
-            statements = real(arms, parameter_budget)
-            packed.append(sum(len(statement) for statement in statements))
-            return statements
+        def spying(postings, epoch, asked, *rest):
+            wanted.append({term: list(nos) for term, nos in asked.items()})
+            return real(postings, epoch, asked, *rest)
 
-        monkeypatch.setattr(glean_module, "_packed_arms", spying)
+        monkeypatch.setattr(glean_module, "tail_block_statements", spying)
         monkeypatch.setattr(glean_module, "HEAD_BLOCKS", 1)
         result = await storage.glean(query="common anchor", limit=5)
-        assert packed == [1]  # one arm: the second block of ``common``
+        assert wanted == [{"common": [1]}]  # one term wanting one block: the second block of ``common``
         assert [(str(o.path), o.score) for o in result.observations] == [
             (str(o.path), o.score) for o in reference.observations
         ]
+        await storage.close()
+
+    async def test_the_tail_fetch_returns_every_terms_blocks_under_statistics(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two terms of 300 documents (three blocks each), the anchor in each
+        # term's last block, the later-sorting term asked first.
+        files = {f"/z/{i:04}.txt": f"zeta word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
+        files |= {f"/a/{i:04}.txt": f"alpha word {i}\n" + ("anchor\n" if i == 290 else "") for i in range(300)}
+        storage = await _indexed(tmp_path, files)
+        async with storage._host.engine.begin() as conn:
+            await conn.exec_driver_sql("ANALYZE")
+            stat_rows = (await conn.exec_driver_sql("SELECT count(*) FROM sqlite_stat1")).scalar_one()
+        assert stat_rows > 0
+        selected: list[list[int]] = []
+        scored: list[list[int]] = []
+        real_select, real_score = glean_module.select_blocks, glean_module.score_blocks
+
+        def recording_select(*args: Any, **kwargs: Any) -> Any:
+            chosen = real_select(*args, **kwargs)
+            selected.extend([no for no in competing if no >= glean_module.HEAD_BLOCKS] for competing in chosen)
+            return chosen
+
+        def counting_score(blocks: Any, *args: Any, **kwargs: Any) -> Any:
+            scored.append([block.term for block in blocks])
+            return real_score(blocks, *args, **kwargs)
+
+        monkeypatch.setattr(glean_module, "select_blocks", recording_select)
+        monkeypatch.setattr(glean_module, "score_blocks", counting_score)
+        monkeypatch.setattr(glean_module, "HEAD_BLOCKS", 1)
+        result = await storage.glean(query="zeta alpha anchor", limit=5)
+        assert result.success is True
+        assert [len(tail) for tail in selected] == [2, 2]
+        head, full = scored[0], scored[1]
+        beyond_head = Counter(full)
+        beyond_head.subtract(Counter(head))
+        fetched = sum(beyond_head.values())
+        assert sum(map(len, selected)) - fetched == 0  # every wanted block was scored
+        assert beyond_head == Counter({0: 2, 1: 2})
         await storage.close()
 
 
@@ -336,6 +378,24 @@ class TestProbes:
         packed = glean_module._packed_arms(arms, 6)
         assert [len(statement) for statement in packed] == [2, 1, 1]
         assert glean_module._packed_arms([], 6) == []
+
+    def test_the_tail_fetch_takes_the_tuple_form_where_declared(self) -> None:
+        postings = build_vfs_tables().lex_postings
+        wanted = {"the": [8, 9, 10], "is": [8, 9, 10, 11]}
+
+        def compiled(profile: Any, dialect: Any, parameter_budget: int) -> list[tuple[str, int]]:
+            statements = glean_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
+            rendered = [s.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}) for s in statements]
+            return [(str(c), len(c.params)) for c in rendered]
+
+        tuple_form = compiled(SQLITE, sqlite.dialect(), 8)
+        assert [(binds - 1) // 2 for _, binds in tuple_form] == [2, 2, 2, 1]
+        assert all("IN (VALUES" in text and " OR " not in text for text, _ in tuple_form)
+        arms = compiled(MSSQL, mssql.dialect(), 8)
+        assert [binds for _, binds in arms] == [5, 6]
+        assert all(" OR " not in text and "VALUES" not in text for text, _ in arms)
+        [(packed, binds)] = compiled(MSSQL, mssql.dialect(), 16)
+        assert binds == 11 and " OR " in packed and "VALUES" not in packed
 
 
 class TestOverlay:

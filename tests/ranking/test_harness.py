@@ -185,6 +185,27 @@ class TestDeterminism:
         finally:
             await storage.close()
 
+    async def test_the_ordered_top10_pin_holds_on_sqlite_with_statistics(self, tmp_path: pathlib.Path) -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/analyzed.sqlite")
+        try:
+            await assert_top10_pin(storage, analyzed=True)
+        finally:
+            await storage.close()
+
+    async def test_the_hybrid_ordered_top10_pin_holds_on_sqlite_with_statistics(self, tmp_path: pathlib.Path) -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/hybrid.sqlite", embedder=HashEmbeddingProvider())
+        try:
+            await assert_top10_pin(storage, analyzed=True)
+        finally:
+            await storage.close()
+
+    async def test_the_hybrid_ordered_top10_pin_holds_in_memory_with_statistics(self) -> None:
+        storage = InMemoryStorage()
+        try:
+            await assert_top10_pin(storage, analyzed=True)
+        finally:
+            await storage.close()
+
     async def test_the_merge_ordered_top10_pin_holds_on_two_sqlite_mounts(self, tmp_path: pathlib.Path) -> None:
         stores = [DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{i}.sqlite") for i in range(2)]
         try:

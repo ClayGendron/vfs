@@ -3,8 +3,9 @@
 ``load_corpus`` writes a corpus into a backend and reindexes it;
 ``entry_ranking`` runs one query as two rounds over the block tables —
 the head fetch, the engine's scorer, block selection for the overflowing
-terms, the round-two key fetch with the epoch equality inside every arm,
-the scorer again — then MaxP to entries. Scores are rounded to
+terms, the round-two key fetch through the leg's own builder
+(:func:`~vfs.storage.backends.database.glean.tail_block_statements`), the
+scorer again — then MaxP to entries. Scores are rounded to
 :data:`SCORE_DECIMALS` and ordered ``score DESC, path ASC`` so the
 ordered list is identical on every engine and across rebuilds (entry
 ids are minted per write; paths are not).
@@ -20,12 +21,13 @@ from __future__ import annotations
 from array import array
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 
 from vfs.models import Entry
 from vfs.models.lexical import ScoreBlock, decode_summary, score_blocks, select_blocks, tokenize
 from vfs.paths import Path
 from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.glean import posting_columns, tail_block_statements
 from vfs.storage.backends.database.lexical import lexical_stats
 
 if TYPE_CHECKING:
@@ -133,7 +135,7 @@ async def chunk_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[int, f
     storage, epoch = loaded.storage, loaded.epoch
     tables, budget = storage._host.tables, storage._host.membership_budget
     postings = tables.lex_postings
-    columns = (postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
+    columns = posting_columns(postings)
     terms = list(dict.fromkeys(tokenize(query)))
     async with storage._host.session_factory() as session:
         stats = await lexical_stats(session, tables, epoch, terms, budget)
@@ -169,13 +171,11 @@ async def chunk_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[int, f
         tail = array("d", [score_of[chunk] for chunk in candidates])
         overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
         selected = select_blocks([summaries[term] for term in overflowing], candidates, tail, theta)
-        arms = []
-        for term, competing in zip(overflowing, selected, strict=True):
-            wanted = [no for no in competing if no >= HEAD_BLOCKS]
-            arms.extend(
-                and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(nos)))
-                for nos in chunked(wanted, budget)
-            )
-        if arms:
-            blocks += as_blocks((await session.execute(select(*columns).where(or_(*arms)))).all())
+        wanted = {
+            term: [no for no in competing if no >= HEAD_BLOCKS]
+            for term, competing in zip(overflowing, selected, strict=True)
+        }
+        host = storage._host
+        for statement in tail_block_statements(postings, epoch, wanted, host.profile, host.parameter_budget, budget):
+            blocks += as_blocks((await session.execute(statement)).all())
         return score_blocks(blocks, idfs, stats.avg_dl, k)

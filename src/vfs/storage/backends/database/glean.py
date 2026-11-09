@@ -10,9 +10,11 @@ statistics) and fetches every term's head blocks (``block_no <
 HEAD_BLOCKS``); the engine scores what it has at the fusion depth;
 **round two** asks the engine which later blocks of the overflowing
 terms can still change that top-k (:func:`~vfs.models.lexical.select_blocks`)
-and fetches exactly those by key — the epoch equality inside every arm
-so each is a full primary-key prefix — then scores again. No scoring
-SQL runs on any dialect; every statement is a key fetch.
+and fetches exactly those by key — as one ``(term, block_no)`` tuple
+membership under the epoch equality where the engine accepts the form,
+else as OR arms each a full primary-key prefix
+(:func:`tail_block_statements`) — then scores again. No scoring SQL
+runs on any dialect; every statement is a key fetch.
 
 The ladder has two rungs. The channel's segment-posting allow-list
 (grep's nomination pruning) prices the scope: when it resolves to at
@@ -61,7 +63,7 @@ from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text, tuple_
 
 from vfs.models import Match, Observation
 from vfs.models.lexical import (
@@ -115,10 +117,10 @@ from vfs.storage.backends.database.signals import signal_factors
 from vfs.storage.ranking import REFINE_GUIDANCE, SCORE_DECIMALS, TOP_CHUNKS, Ranker, min_max, unit_cosine
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import ColumnElement
+    from sqlalchemy import Column, ColumnElement, Select, Table
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -335,7 +337,16 @@ async def glean_rows(
                     ranking = score_blocks(lexicon.blocks, lexicon.idfs, stats.avg_dl, depth, candidates=candidates)
                 else:
                     ranking = await _chunk_ranking(
-                        session, tables, epoch, stats, present, depth, candidates, parameter_budget, membership_budget
+                        session,
+                        tables,
+                        epoch,
+                        stats,
+                        present,
+                        depth,
+                        candidates,
+                        profile,
+                        parameter_budget,
+                        membership_budget,
                     )
                 hits, rows, completed = await _entries_for_chunks(
                     session,
@@ -511,12 +522,13 @@ async def _chunk_ranking(
     present: Sequence[str],
     k: int,
     candidates: Sequence[ChunkId] | None,
+    profile: DialectProfile,
     parameter_budget: int,
     membership_budget: int,
 ) -> Ranking:
     """Top-``k`` ``(chunk_id, score)`` from the head fetch plus the selected blocks."""
     postings = tables.lex_postings
-    columns = (postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
+    columns = posting_columns(postings)
     summaries = {term: decode_summary(stats.terms[term].blocks) for term in present}
     idfs = [stats.terms[term].idf for term in present]
     index = {term: position for position, term in enumerate(present)}
@@ -542,15 +554,62 @@ async def _chunk_ranking(
     tail = [score_of[chunk] for chunk in sorted_candidates]
     overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
     selected = select_blocks([summaries[term] for term in overflowing], sorted_candidates, tail, theta)
-    arms: list[tuple[int, ColumnElement[bool]]] = []
-    for term, competing in zip(overflowing, selected, strict=True):
-        wanted = [no for no in competing if no >= HEAD_BLOCKS]
-        for nos in chunked(wanted, membership_budget):
-            arm = and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(nos)))
-            arms.append((len(nos) + 2, arm))
-    for statement in _packed_arms(arms, parameter_budget):
-        blocks += as_blocks((await session.execute(select(*columns).where(or_(*statement)))).all())
+    wanted = {
+        term: [no for no in competing if no >= HEAD_BLOCKS]
+        for term, competing in zip(overflowing, selected, strict=True)
+    }
+    for statement in tail_block_statements(postings, epoch, wanted, profile, parameter_budget, membership_budget):
+        blocks += as_blocks((await session.execute(statement)).all())
     return score_blocks(blocks, idfs, stats.avg_dl, k, candidates=candidates)
+
+
+def tail_block_statements(
+    postings: Table,
+    epoch: Epoch,
+    wanted: Mapping[str, Sequence[int]],
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+) -> list[Select[Any]]:
+    """The tail fetch: the statements that read the ``wanted`` blocks (term → block numbers) by key.
+
+    Two spellings, chosen by the profile. Where the engine accepts a
+    row-value constructor inside ``IN`` (``tuple_in``), every statement
+    is ``epoch = ? AND (term, block_no) IN (pairs)``, the pairs chunked
+    at half the membership budget because each binds two values, and no
+    statement carries an ``OR``. Elsewhere the arms are
+    ``epoch = ? AND term = ? AND block_no IN (...)``, one per term and
+    chunk of block numbers, packed into ``OR`` statements under the
+    parameter budget.
+
+    The tuple form exists because SQLite's planner loses rows from the OR
+    form: over the postings table's ``WITHOUT ROWID`` key, once the store
+    has planner statistics, a ``MULTI-INDEX OR`` whose later arm lists
+    more than one block and names a term that sorts before an earlier
+    arm's returns none of that arm's rows. A statement with no ``OR``
+    cannot take that plan. The ranking harness driver calls this builder
+    too, so the referee and the leg cannot drift apart.
+    """
+    columns = posting_columns(postings)
+    if profile.tuple_in:
+        pairs = [(term, no) for term, nos in wanted.items() for no in nos]
+        return [
+            select(*columns).where(
+                postings.c.epoch == epoch, tuple_(postings.c.term, postings.c.block_no).in_(list(chunk))
+            )
+            for chunk in chunked(pairs, max(1, membership_budget // 2))
+        ]
+    arms: list[tuple[int, ColumnElement[bool]]] = []
+    for term, nos in wanted.items():
+        for chunk in chunked(list(nos), membership_budget):
+            arm = and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(chunk)))
+            arms.append((len(chunk) + 2, arm))
+    return [select(*columns).where(or_(*statement)) for statement in _packed_arms(arms, parameter_budget)]
+
+
+def posting_columns(postings: Table) -> tuple[Column[Any], ...]:
+    """The five posting columns every block fetch projects, in the order the scorer's block reader expects."""
+    return (postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
 
 
 def _packed_arms(
