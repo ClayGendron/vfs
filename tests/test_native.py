@@ -270,6 +270,11 @@ class TestSeamGate:
     def test_the_live_extension_speaks_the_expected_protocol(self) -> None:
         assert _native.PROTOCOL_VERSION == EXPECTED_PROTOCOL
 
+    def test_the_protocol_version_is_14(self) -> None:
+        """Guards: a new binding surface (the overlay counts kernel) added without bumping the seam's constant."""
+        assert _native.PROTOCOL_VERSION == EXPECTED_PROTOCOL == 14
+        assert callable(_native.overlay_postings)
+
     def test_builders_come_from_the_engine(self) -> None:
         assert isinstance(postings_builder(), _native.PostingsBuilder)
         assert isinstance(lexical_builder(), _native.LexicalBuilder)

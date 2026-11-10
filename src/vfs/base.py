@@ -113,7 +113,6 @@ from vfs.storage import (
 )
 from vfs.storage.backends.database.descent import TRASHED_KEY
 from vfs.storage.backends.database.dialects import byte_chunked
-from vfs.storage.backends.database.grep import CONTENT_BYTE_BUDGET
 from vfs.storage.backends.database.offload import (
     OFFLOAD_WORKERS,
     WALL_TIME_BUDGET,
@@ -121,6 +120,7 @@ from vfs.storage.backends.database.offload import (
     call_offloaded,
     judge_rows,
 )
+from vfs.storage.backends.database.scope import CONTENT_BYTE_BUDGET
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 

@@ -47,9 +47,13 @@ enforcement would silently lose index-side matches. The exemption is
 per OR branch, so a wide-alternation union's fetch cost grows with
 its branch count; that width is deliberately uncapped (bulk unions —
 IOC lists, symbol sweeps — are a supported shape) and is bounded by
-the wall-clock deadline instead, consulted between branches. When the
-index side alone saturates ``CANDIDATE_BUDGET`` the scan overlay is
-never consulted, and the truncation record says so by name.
+the wall-clock deadline instead, consulted between branches. The scan
+tier's count, byte and metering laws are the ones glean's overlay reads
+(``SCAN_TIER_BUDGET``, ``CONTENT_BYTE_BUDGET`` and ``stored_size`` in
+``scope.py``); grep spends the count as one pool its index side draws
+from first. When the index side alone saturates it the scan overlay is
+never consulted, and the truncation record says so by name and carries
+what each tier took against the budget.
 
 Every function takes the op's live session and only executes SELECTs;
 none begins or commits — ``backend.py`` owns the transaction.
@@ -90,13 +94,16 @@ from vfs.storage.backends.database.reads import (
     side_scope,
 )
 from vfs.storage.backends.database.scope import (
+    CONTENT_BYTE_BUDGET,
     FETCH_RIDE,
+    SCAN_TIER_BUDGET,
     Pushdown,
     entries_for_scan,
     passes_gates,
     pushdown_terms,
     scope_channels,
     scope_exclusions,
+    stored_size,
     trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
@@ -117,19 +124,11 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Visibility
 
-# Runtime budgets: candidates fetched and verified, and posting bytes
-# decoded; the wall (the offload seam's) is checked between ladder stages
-# and inside the gate's and the matcher's batches. A tripped budget
-# truncates with a warning. The candidate budget is re-derived from the
-# linux-scale sweep: candidate cost is ~75 µs each (fetch-dominated), so
-# 25,000 bounds a saturated call near ~2 s while un-truncating every
-# benchmark row search semantics can justify.
-CANDIDATE_BUDGET: Final = 25_000
+# Posting bytes decoded per call; the candidate count and the body bytes
+# are the scan tier's shared laws (``scope.py``), and the wall (the offload
+# seam's) is checked between ladder stages and inside the gate's and the
+# matcher's batches. A tripped budget truncates with a warning.
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
-
-# Bytes of candidate bodies resident at once: content is fetched,
-# verified, and released in batches sized by the entries' size_bytes.
-CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
 
 # Rarest-first intersection width — selectivity saturates by four grams.
 _INTERSECT_GRAMS: Final = 4
@@ -234,6 +233,7 @@ async def grep_rows(
     truncations: list[str] = []
     epoch: Epoch | None = None
     overlay_empty = False
+    scanned = 0
     if not scan_all:
         epoch, overlay_empty = await pointer_with_overlay(session, tables)
         await seam("grep:after-pointer-read")
@@ -261,10 +261,10 @@ async def grep_rows(
                 # The ladder priced above verifying the whole scope: the
                 # allow-list itself is the candidate set, a lawful superset.
                 assert allow is not None
-                doc_ids, nominated_count = allow[:CANDIDATE_BUDGET], len(allow)
+                doc_ids, nominated_count = allow[:SCAN_TIER_BUDGET], len(allow)
             else:
                 doc_ids, nominated_count = laddered
-        if nominated_count > CANDIDATE_BUDGET and "candidate budget" not in truncations:
+        if nominated_count > SCAN_TIER_BUDGET and "candidate budget" not in truncations:
             truncations.append("candidate budget")
         pushdown = pushdown_terms(
             tables.entry,
@@ -285,10 +285,11 @@ async def grep_rows(
                 candidates[mapping["path"]] = mapping
     if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
+    index_admitted = len(candidates)
 
     skip_verified = False
     if not truncations or truncations == ["candidate budget"]:
-        remaining = CANDIDATE_BUDGET - len(candidates)
+        remaining = SCAN_TIER_BUDGET - index_admitted
         if remaining <= 0:
             # The overlay was never consulted: freshly-written scan-side
             # entries are absent, and the record must say so by name.
@@ -320,6 +321,7 @@ async def grep_rows(
                     scope_roots=channels.roots,
                     scope_facts=scope_facts(tables.entry, profile, parameter_budget, membership_budget, channels.arms),
                 )
+                scanned = len(nominated)
                 if overflow and "candidate budget" not in truncations:
                     truncations.append("candidate budget")
                 admitted, completed = await _gated(
@@ -353,7 +355,7 @@ async def grep_rows(
     # pool, the absolute deadline crossing the hop (queue wait shortens
     # the budget, never the wall). Batches stay sequential by law.
     verify = VerifyOffload(verifier, executor)
-    for batch in byte_chunked(ordered, _content_size, CONTENT_BYTE_BUDGET):
+    for batch in byte_chunked(ordered, stored_size, CONTENT_BYTE_BUDGET):
         if monotonic() > deadline:
             if WALL_TIME_CAUSE not in truncations:
                 truncations.append(WALL_TIME_CAUSE)
@@ -391,9 +393,12 @@ async def grep_rows(
             if WALL_TIME_CAUSE not in truncations:
                 truncations.append(WALL_TIME_CAUSE)
             break
+    # The count record says what each tier took of the pool; the wall's carries nothing.
+    took = {"scanned": scanned, "index": index_admitted, "budget": SCAN_TIER_BUDGET}
     for reason in truncations:
         detail = f"at the {reason}; {_REFINE_GUIDANCE}"
-        errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail))
+        data = None if reason == WALL_TIME_CAUSE else took
+        errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail, data=data))
     return Result(ops=("grep",), observations=rows, errors=errors)
 
 
@@ -411,7 +416,7 @@ async def _index_doc_ids(
     plan: GramQuery,
     allow: DocIds | None,
 ) -> tuple[DocIds, int] | None:
-    """At most ``CANDIDATE_BUDGET`` sorted candidate doc ids for *plan*
+    """At most ``SCAN_TIER_BUDGET`` sorted candidate doc ids for *plan*
     under the caller-read *epoch*, plus the uncapped count.
 
     No published epoch means no content row is encoded: the index side
@@ -446,7 +451,7 @@ async def _index_doc_ids(
     # gramless group — it nominates nothing either way. Both drop here.
     fed = [[blobs[gram] for gram in group_chosen] for group_chosen in chosen if group_chosen]
     try:
-        return extension().candidate_ids(fed, allow, CANDIDATE_BUDGET)
+        return extension().candidate_ids(fed, allow, SCAN_TIER_BUDGET)
     except ValueError as exc:
         raise PostingCorruptionError(str(exc)) from exc
 
@@ -611,11 +616,6 @@ async def _gated(
         if passes_gates(mapping, gates, verdict, trashed=trashed)
     ]
     return admitted, completed
-
-
-def _content_size(mapping: RowMapping) -> int:
-    """The verify batcher's exact metering: the row's stored byte size."""
-    return mapping["size_bytes"] or 0
 
 
 def _observe_hit(

@@ -31,12 +31,18 @@ engine did not judge in time is dropped, with one wall record.
 Freshness is grep's: ``encoded=True`` on a content row means the
 entry's terms are in the current lexical epoch (a directory, with
 nothing to index, is always ``encoded``); the ``NOT encoded`` rows the
-gates admit are the overlay — their live bodies tokenized and encoded
-as blocks at query time and scored by the same engine with the epoch's
-statistics, so the two sides share one formula, one accumulation order
-and one scale. The pointer read is advisory and re-issued after the
-fetch (the two-read protocol); a moved pointer raises
-:class:`StaleSnapshot` for the backend to redrive.
+gates admit are the overlay — nominated in path order up to the scan
+tier's shared count, their live bodies fetched in byte batches under
+the call's wall and counted by the engine's overlay kernel (tokenized
+with the index's own rules, the query terms counted in place, no body
+kept past its batch), the postings encoded as blocks at query time and
+scored by the same engine with the epoch's statistics, so the two
+sides share one formula, one accumulation order and one scale. The
+previews of the overlay entries that answer come from one bounded read
+of those entries' live bodies after the order is settled. The pointer
+read is advisory and re-issued after the fetch (the two-read protocol);
+a moved pointer raises :class:`StaleSnapshot` for the backend to
+redrive.
 
 The **vector leg** is one in-engine statement on every supported
 dialect — ``ORDER BY <cosine distance> LIMIT k`` with the scope
@@ -59,7 +65,6 @@ with their line bounds and text.
 
 from __future__ import annotations
 
-from collections import Counter
 from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
@@ -74,6 +79,7 @@ from vfs.models.lexical import (
     decode_summary,
     encode_block,
     idf,
+    overlay_postings,
     score_blocks,
     select_blocks,
     term_weight,
@@ -85,7 +91,7 @@ from vfs.pattern_matching import PatternError, compile_gates, escape_glob
 from vfs.pattern_matching.grep import split_lines
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
-from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
 from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
@@ -105,12 +111,15 @@ from vfs.storage.backends.database.reads import (
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 from vfs.storage.backends.database.scope import (
+    CONTENT_BYTE_BUDGET,
     FETCH_RIDE,
+    SCAN_TIER_BUDGET,
     entries_for_scan,
     passes_gates,
     pushdown_terms,
     scope_channels,
     scope_exclusions,
+    stored_size,
     trash_scope,
 )
 from vfs.storage.backends.database.seams import seam
@@ -125,6 +134,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.models.lexical import OverlayPostings
     from vfs.models.rows import EntryId, VFSTables
     from vfs.pattern_matching import Body, GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
@@ -150,9 +160,6 @@ SCOPE_ID_BUDGET: Final = 5_000
 
 PROBE_DEEPEN: Final = 4
 """The wide rung's second probe scores this many times the fusion depth."""
-
-OVERLAY_BUDGET: Final = 500
-"""Unindexed entries the overlay scores per call, in path order."""
 
 ChunkId = int
 Ranking = list[tuple[ChunkId, float]]
@@ -208,6 +215,15 @@ class _Sources(NamedTuple):
     chunks: dict[ChunkId, RowMapping]
     bodies: dict[EntryId, str]
     terms: Sequence[str]
+
+
+class _OverlayCount(NamedTuple):
+    """What the overlay's kernel batches counted: per query term, the ``(doc_id, tf, dl)`` postings
+    in arrival order; the bodies reached; their summed token count."""
+
+    postings: list[list[tuple[int, int, int]]]
+    reached: int
+    total_dl: int
 
 
 class _Lexicon(NamedTuple):
@@ -319,7 +335,7 @@ async def glean_rows(
 
     hits: dict[EntryId, _Hit] = {}
     rows: dict[EntryId, RowMapping] = {}
-    bodies: dict[EntryId, str] = {}
+    overlay: dict[EntryId, _Hit] = {}
     allow: list[int] | None = None
     if (epoch is not None and present) or vector is not None:
         allow = await allow_list_ids(
@@ -416,7 +432,7 @@ async def glean_rows(
             gated.gates.wanted,
             everything=False,
             fetched=fetched,
-            limit=OVERLAY_BUDGET,
+            limit=SCAN_TIER_BUDGET,
             deadline=deadline,
             trashed=gated.trashed,
             scope_roots=channels.roots,
@@ -430,11 +446,15 @@ async def glean_rows(
             for m in nominees.rows
             if gated.admits(m, verdicts[m["entry_id"]]) and (view is None or view.holds(m, view.need))
         ]
-        scored, bodies = await _overlay(session, tables, profile, membership_budget, executor, admitted, terms, stats)
-        hits.update(scored)
-        rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in scored})
+        overlay, completed = await _overlay(
+            session, tables, profile, membership_budget, executor, admitted, terms, stats, deadline
+        )
+        if not completed:
+            _record_wall(truncations)
+        hits.update(overlay)
+        rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in overlay})
         if nominees.overflow:
-            truncations.append(("overlay budget", {"scanned": len(nominees.rows), "budget": OVERLAY_BUDGET}))
+            truncations.append(("overlay budget", {"scanned": len(nominees.rows), "budget": SCAN_TIER_BUDGET}))
     if not skip_verified and epoch is not None and await current_epoch(session, tables) != epoch:
         raise StaleSnapshot("the gram-index epoch pointer moved mid-glean")
 
@@ -445,6 +465,11 @@ async def glean_rows(
     ordered = _order(fused.entries, rows)[:limit]
     wanted = [chunk_id for entry_id, _ in ordered for chunk_id, _ in fused.chunks[entry_id]]
     texts = await _chunk_texts(session, tables, wanted, profile, membership_budget)
+    answering = [entry_id for entry_id, _ in ordered if entry_id in overlay]
+    bodies = await _overlay_bodies(session, tables, profile, membership_budget, answering)
+    # An overlay body that did not come back was purged between the count and
+    # the preview read: absent, as grep leaves a body that did not come back.
+    ordered = [(entry_id, score) for entry_id, score in ordered if entry_id not in overlay or entry_id in bodies]
     mask = frozenset(fetched | {"score", "matches"})
     projected = tuple(fetched - {"content"})
     sources = _Sources(texts, bodies, terms)
@@ -967,30 +992,75 @@ async def _overlay(
     admitted: Sequence[RowMapping],
     terms: Sequence[str],
     stats: TermStatistics,
-) -> tuple[dict[EntryId, _Hit], dict[EntryId, str]]:
-    """The admitted ``NOT encoded`` rows scored from their live text on the epoch's scale.
+    deadline: float,
+) -> tuple[dict[EntryId, _Hit], bool]:
+    """The admitted ``NOT encoded`` rows scored from their live text on the epoch's scale, and whether all were counted.
 
-    A term the epoch never saw — a word first written since the last
-    reindex, or every term of a never-indexed store — takes its idf
+    The bodies are fetched and counted in ``CONTENT_BYTE_BUDGET`` batches
+    metered by stored size, sequentially, the deadline consulted before
+    each batch and cut again at worker start inside the kernel hop, so a
+    batch's bodies are the only ones resident and none outlives its
+    batch. A term the epoch never saw — a word first written since the
+    last reindex, or every term of a never-indexed store — takes its idf
     from the overlay itself (its document frequency there, over the
-    epoch's corpus size plus the overlay's); with no epoch at all the
-    overlay is the corpus, mean length included. The scored entries'
-    bodies ride back beside the hits: their previews are cut from the
-    text already fetched here, never from a second read.
+    epoch's corpus size plus the bodies counted); with no epoch at all
+    the overlay is the corpus, mean length included. A wall reached
+    before or inside a batch stops there: the bodies counted so far are
+    scored, the rest are absent, and the flag says so. Hits only come
+    back; the preview of an overlay entry that answers is a second read
+    of its live body (:func:`_overlay_bodies`), so a write landing
+    between the count and that read yields a preview from the newer body.
     """
     if not admitted:
-        return {}, {}
-    surrogate = await _surrogate_ids(
-        session, tables, [mapping["entry_id"] for mapping in admitted], profile, membership_budget
-    )
-    bodies = await content_for_entries(session, tables, profile, membership_budget, list(surrogate))
-    docs = sorted((surrogate[entry_id], _text(body)) for entry_id, body in bodies.items())
-    blocks, idfs, avg_dl = await call_offloaded(executor, partial(_overlay_blocks, docs, terms, stats))
-    by_surrogate = {doc_id: entry_id for entry_id, doc_id in surrogate.items()}
-    ranked = score_blocks(blocks, idfs, avg_dl, OVERLAY_BUDGET)
-    hits = {by_surrogate[doc_id]: _Hit(score, [(-1, score)]) for doc_id, score in ranked}
-    texts = dict(docs)
-    return hits, {entry_id: texts[surrogate[entry_id]] for entry_id in hits}
+        return {}, True
+    counted = _OverlayCount([[] for _ in terms], 0, 0)
+    by_surrogate: dict[int, EntryId] = {}
+    completed = True
+    for batch in byte_chunked(admitted, stored_size, CONTENT_BYTE_BUDGET):
+        if monotonic() > deadline:
+            completed = False
+            break
+        entry_ids = [mapping["entry_id"] for mapping in batch]
+        surrogate = await _surrogate_ids(session, tables, entry_ids, profile, membership_budget)
+        bodies = await content_for_entries(session, tables, profile, membership_budget, entry_ids)
+        present = [entry_id for entry_id in entry_ids if entry_id in bodies and entry_id in surrogate]
+        docs = [(surrogate[entry_id], _text(bodies[entry_id])) for entry_id in present]
+        by_surrogate.update((surrogate[entry_id], entry_id) for entry_id in present)
+        outcome = await call_offloaded(executor, partial(_count_overlay, docs, terms, deadline))
+        for postings, found in zip(counted.postings, outcome.postings, strict=True):
+            postings.extend(found)
+        counted = _OverlayCount(
+            counted.postings, counted.reached + outcome.reached, counted.total_dl + outcome.total_dl
+        )
+        if not outcome.completed:
+            completed = False
+            break
+    blocks, idfs, avg_dl = await call_offloaded(executor, partial(_overlay_blocks, counted, terms, stats))
+    ranked = score_blocks(blocks, idfs, avg_dl, SCAN_TIER_BUDGET)
+    return {by_surrogate[doc_id]: _Hit(score, [(-1, score)]) for doc_id, score in ranked}, completed
+
+
+def _count_overlay(docs: Sequence[tuple[int, str]], terms: Sequence[str], deadline: float) -> OverlayPostings:
+    """One batch through the engine's kernel, the budget cut at worker start so queue time shortens it."""
+    return overlay_postings(docs, terms, budget=max(0.0, deadline - monotonic()))
+
+
+async def _overlay_bodies(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    entry_ids: Sequence[EntryId],
+) -> dict[EntryId, str]:
+    """The live bodies of the overlay entries in the ordered answer, for their previews.
+
+    The caller passes at most its ``limit`` of them; no statement runs
+    when no overlay entry answers.
+    """
+    if not entry_ids:
+        return {}
+    bodies = await content_for_entries(session, tables, profile, membership_budget, entry_ids)
+    return {entry_id: _text(body) for entry_id, body in bodies.items()}
 
 
 def _text(body: Body) -> str:
@@ -1014,30 +1084,26 @@ async def _surrogate_ids(
 
 
 def _overlay_blocks(
-    docs: Sequence[tuple[int, str]], terms: Sequence[str], stats: TermStatistics
+    counted: _OverlayCount, terms: Sequence[str], stats: TermStatistics
 ) -> tuple[list[ScoreBlock], list[float], float]:
-    """Every query term's postings over the overlay documents as blocks, with
-    the idfs and mean length they score under — the offloaded CPU."""
-    per_term: list[list[tuple[int, int, int]]] = [[] for _ in terms]
-    positions = {term: position for position, term in enumerate(terms)}
-    total_dl = 0
-    for doc_id, content in docs:
-        tokens = tokenize(content)
-        total_dl += len(tokens)
-        counts = Counter(tokens)
-        for term, position in positions.items():
-            tf = counts.get(term, 0)
-            if tf:
-                per_term[position].append((doc_id, tf, len(tokens)))
-    n_docs = stats.n_docs + len(docs)
-    avg_dl = stats.avg_dl if stats.n_docs else (total_dl / len(docs) if docs else 0.0)
+    """Every query term's counted postings as blocks, with the idfs and mean
+    length they score under — the offloaded CPU.
+
+    The postings arrive in path order across batches and the codec needs
+    increasing ids within a block, so each term's are sorted by doc id
+    once before paging. The statistics count the bodies the kernel
+    reached: a body a wall left uncounted is in neither ``n_docs`` nor
+    the mean length.
+    """
+    n_docs = stats.n_docs + counted.reached
+    avg_dl = stats.avg_dl if stats.n_docs else (counted.total_dl / counted.reached if counted.reached else 0.0)
     idfs = [
-        stats.terms[term].idf if term in stats.terms else idf(len(per_term[position]), n_docs)
+        stats.terms[term].idf if term in stats.terms else idf(len(counted.postings[position]), n_docs)
         for position, term in enumerate(terms)
     ]
     blocks: list[ScoreBlock] = []
-    for position, postings in enumerate(per_term):
-        for page in chunked(postings, BLOCK_SIZE):
+    for position, postings in enumerate(counted.postings):
+        for page in chunked(sorted(postings), BLOCK_SIZE):
             ids, tfs, dls = zip(*page, strict=True)
             bound = max(term_weight(tf, dl, avg_dl, idfs[position]) for tf, dl in zip(tfs, dls, strict=True))
             blocks.append(ScoreBlock(position, bound, *encode_block(ids, tfs, dls)))
@@ -1133,9 +1199,10 @@ def _observe(
     """One entry row with its best chunks as ``Match`` rows, chunk scores on the entry's scale.
 
     Every region carries its preview, cut from text already in hand: a
-    chunk's own row, or the live body the overlay scored. An overlay
-    entry answers as one whole document — bounds over the whole body,
-    no ``content`` (a file is not a chunk), the preview alone.
+    chunk's own row, or the overlay entry's live body as the bounded
+    preview read returned it. An overlay entry answers as one whole
+    document — bounds over the whole body, no ``content`` (a file is
+    not a chunk), the preview alone.
     """
     values: dict[str, object] = {field: mapping[field] for field in projected}
     values["path"] = Path._brand(mapping["path"])

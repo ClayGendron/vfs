@@ -25,7 +25,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-from tests.support.oracles.lexical import PureLexicalBuilder, pure_score_blocks, pure_tokenize
+from tests.support.oracles.lexical import PureLexicalBuilder, pure_overlay_postings, pure_score_blocks, pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import lexical
 from vfs.models.code_grams import fold_content
@@ -37,6 +37,7 @@ from vfs.models.lexical import (
     MIN_TERM_CHARS,
     TOKENIZER_VERSION,
     BlockSummary,
+    OverlayPostings,
     ScoreBlock,
     decode_summary,
     encode_block,
@@ -44,6 +45,7 @@ from vfs.models.lexical import (
     encode_summary,
     idf,
     options_fingerprint,
+    overlay_postings,
     select_blocks,
     term_weight,
 )
@@ -150,6 +152,60 @@ class TestTokenizer:
 
     def test_the_declared_gates(self) -> None:
         assert (MIN_TERM_CHARS, MAX_TERM_BYTES, TOKENIZER_VERSION, BLOCK_SIZE) == (2, 64, 1, 128)
+
+
+# Bodies on every tokenizer rule: non-ASCII letters and folds, camel case,
+# underscores, digit-led pieces, a term over the byte cap, an empty body.
+_MIXED_BODIES: list[tuple[int, str]] = [
+    (3, "İstanbul ısı STRASSE Straße καλημέρα κόσμε XMLHttpRequest sha256Hash pthread_create"),  # noqa: RUF001
+    (7, "0x1f v2_0xFF getX a_b naïve café " + "x" * (MAX_TERM_BYTES + 1) + " " + "é" * 33 + " Foo_barBaz 1st"),
+    (9, "http request HTTP_REQUEST httpRequest café CAFÉ κόσμε and nothing else"),
+    (12, ""),
+    (40, "sha256Hash sha256hash sha256 pthread create_thread"),
+]
+_TWENTY_TERMS = [
+    "http", "café", "sha256", "request", "κόσμε", "isi", "absent", "xml", "get", "foo",
+    "bar", "baz", "1st", "0xff", "v2", "pthread", "create", "hash", "strasse", "nothing",
+]  # fmt: skip
+
+
+class TestOverlayPostings:
+    """The overlay counts kernel against its oracle: the same postings, no token materialized."""
+
+    @pytest.mark.parametrize("terms", [["http", "café"], _TWENTY_TERMS], ids=["two", "twenty"])
+    def test_the_engine_agrees_with_the_oracle_on_mixed_bodies(self, terms: list[str]) -> None:
+        """Guards: a term matched on something other than its exact fold, a body counted
+        twice or skipped, or the twenty-term set path missing a present term."""
+        engine = overlay_postings(_MIXED_BODIES, terms, budget=None)
+        oracle = pure_overlay_postings(_MIXED_BODIES, terms)
+        assert isinstance(engine, OverlayPostings)
+        assert engine.postings == oracle.postings
+        assert engine.reached == oracle.reached == len(_MIXED_BODIES)
+        assert engine.total_dl == oracle.total_dl
+        assert engine.completed is oracle.completed is True
+        assert any(postings for postings in engine.postings)  # the fixture holds the terms it claims
+
+    def test_the_tokenizer_and_its_fingerprint_are_unchanged(self) -> None:
+        """Guards: the scanner lift changing a token, which would move the epoch's options hash."""
+        assert TOKENIZER_VERSION == 1
+        assert options_fingerprint() == (
+            "bm25=k1:1.2,b:0.75;tokenizer=1;term_bytes=64;block=128;"
+            "codec=ids:count+delta+varint;tfs,dls:varint;summary:delta+varint,le-f64"
+        )
+        for _doc_id, body in _MIXED_BODIES:
+            assert lexical.tokenize(body) == pure_tokenize(body)
+
+    def test_an_exhausted_budget_stops_between_documents(self) -> None:
+        """Guards: a body counted after the deadline, or a stopped batch reported complete."""
+        docs = [(1, "alpha beta"), (2, "alpha")]
+        stopped = overlay_postings(docs, ["alpha"], budget=0.0)
+        assert stopped.completed is False
+        assert stopped.reached == 0 and stopped.total_dl == 0
+        assert stopped.postings == [[]]
+
+    def test_an_empty_batch_counts_nothing_and_completes(self) -> None:
+        assert overlay_postings([], ["alpha", "beta"], budget=None) == OverlayPostings([[], []], 0, 0, True)
+        assert pure_overlay_postings([], ["alpha", "beta"]) == OverlayPostings([[], []], 0, 0, True)
 
 
 class TestFormula:

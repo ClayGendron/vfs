@@ -19,6 +19,14 @@
 //! the same order the host's fallback uses, so sums are bit-identical),
 //! skips blocks that cannot change the top-k, and ranks `score DESC, id ASC`.
 //!
+//! The overlay counts kernel (`overlay_postings`) runs the same scanner as
+//! `tokenize` over a batch of live bodies and counts the query terms as it
+//! goes — each folded term is handed to the counter as a borrowed slice,
+//! so no token is materialized and no dictionary of the body is built; the
+//! match against the query is a linear compare for a short query and a
+//! hash lookup past `LINEAR_MATCH_TERMS`, exact on the folded term either
+//! way. It reads the clock between documents, every `CLOCK_EVERY` of them.
+//!
 //! Wire shapes: `doc_ids` is the gram codec's count-prefixed delta+varint
 //! blob (deltas restart at each block, so a block decodes alone); `tfs` and
 //! `dls` are plain LEB128 varints; a term's summary is, per block, the
@@ -26,6 +34,7 @@
 //! maximum weight as a little-endian `f64`.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::lexical_tables::{ASSIGNED, CASEFOLD, DIGIT, LOWER, UPPER, WORD};
 
@@ -36,6 +45,13 @@ pub const BM25_K1: f64 = 1.2;
 pub const BM25_B: f64 = 0.75;
 const MIN_TERM_CHARS: usize = 2;
 const MAX_TERM_BYTES: usize = 64;
+
+/// Query terms up to which the overlay kernel compares each token linearly;
+/// past it a hash map of the terms is built once per call.
+const LINEAR_MATCH_TERMS: usize = 8;
+
+/// Documents between the overlay kernel's deadline reads.
+const CLOCK_EVERY: usize = 64;
 
 /// Bit flags of `char_classes`, one byte per code point.
 pub const CLASS_WORD: u8 = 1;
@@ -123,10 +139,12 @@ fn fold_into(raw: &[char], out: &mut String) {
     }
 }
 
-fn emit(terms: &mut Vec<String>, raw: &[char], scratch: &mut String) {
+/// Fold `raw` into `scratch` and hand it to `sink` when it passes the two
+/// length rules: at least `MIN_TERM_CHARS` characters, at most `MAX_TERM_BYTES`.
+fn emit(raw: &[char], scratch: &mut String, sink: &mut impl FnMut(&str)) {
     fold_into(raw, scratch);
     if scratch.chars().count() >= MIN_TERM_CHARS && scratch.len() <= MAX_TERM_BYTES {
-        terms.push(scratch.clone());
+        sink(scratch);
     }
 }
 
@@ -161,13 +179,14 @@ fn identifier_parts<'a>(run: &'a [char], parts: &mut Vec<&'a [char]>) {
     }
 }
 
-/// Folded terms in order, duplicates kept: each word run whole, and its
-/// parts when there are more than one.
-pub fn tokenize(content: &str) -> Vec<String> {
-    let chars: Vec<char> = content.chars().collect();
-    let mut terms = Vec::new();
+/// The one scanner every tokenizer surface shares: each word run of
+/// `content` folded and handed to `sink` as a borrowed term, then its parts
+/// when there are more than one. `chars` and `scratch` are the caller's
+/// reusable buffers; a term lives only for its `sink` call.
+fn scan_terms(content: &str, chars: &mut Vec<char>, scratch: &mut String, mut sink: impl FnMut(&str)) {
+    chars.clear();
+    chars.extend(content.chars());
     let mut parts: Vec<&[char]> = Vec::new();
-    let mut scratch = String::new();
     let mut i = 0;
     while i < chars.len() {
         if !is_word(chars[i]) {
@@ -180,14 +199,100 @@ pub fn tokenize(content: &str) -> Vec<String> {
         }
         let run = &chars[start..i];
         identifier_parts(run, &mut parts);
-        emit(&mut terms, run, &mut scratch);
+        emit(run, scratch, &mut sink);
         if parts.len() > 1 {
             for part in parts.iter() {
-                emit(&mut terms, part, &mut scratch);
+                emit(part, scratch, &mut sink);
             }
         }
     }
+}
+
+/// Folded terms in order, duplicates kept: each word run whole, and its
+/// parts when there are more than one.
+pub fn tokenize(content: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    scan_terms(content, &mut Vec::new(), &mut String::new(), |term| terms.push(term.to_owned()));
     terms
+}
+
+/// What one `overlay_postings` call counted: per query term in the caller's
+/// order, the `(doc_id, tf, dl)` postings of the bodies holding it in the
+/// order the bodies were given; the bodies counted; their summed token
+/// count; and whether every body was reached before the deadline.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OverlayOutcome {
+    pub postings: Vec<Vec<(i64, u32, u32)>>,
+    pub reached: u64,
+    pub total_dl: u64,
+    pub completed: bool,
+}
+
+/// The query terms' positions: a linear compare up to `LINEAR_MATCH_TERMS`,
+/// a map built once past it. A term repeated in the query resolves to its
+/// first position; the caller copies that position's tf to the others.
+enum TermIndex<'a> {
+    Linear(&'a [&'a str]),
+    Mapped(HashMap<&'a str, usize>),
+}
+
+impl<'a> TermIndex<'a> {
+    fn new(terms: &'a [&'a str]) -> Self {
+        if terms.len() <= LINEAR_MATCH_TERMS {
+            return Self::Linear(terms);
+        }
+        let mut mapped = HashMap::with_capacity(terms.len());
+        for (position, &term) in terms.iter().enumerate() {
+            mapped.entry(term).or_insert(position);
+        }
+        Self::Mapped(mapped)
+    }
+
+    fn position(&self, token: &str) -> Option<usize> {
+        match self {
+            Self::Linear(terms) => terms.iter().position(|&term| term == token),
+            Self::Mapped(mapped) => mapped.get(token).copied(),
+        }
+    }
+}
+
+/// Tokenize and count a batch of live bodies for `terms`: the overlay's
+/// query-time postings, without materializing a token or a dictionary.
+///
+/// Bodies are counted in the order given; the deadline is read before
+/// every `CLOCK_EVERY`th body, and a batch that reaches it stops there with
+/// `completed` false and the postings of the bodies it did count.
+pub fn overlay_postings(docs: &[(i64, &str)], terms: &[&str], deadline: Option<Instant>) -> OverlayOutcome {
+    let index = TermIndex::new(terms);
+    let first_of: Vec<usize> = terms.iter().map(|term| index.position(term).expect("every term is its own")).collect();
+    let mut postings: Vec<Vec<(i64, u32, u32)>> = vec![Vec::new(); terms.len()];
+    let mut tfs = vec![0u32; terms.len()];
+    let mut reached = 0u64;
+    let mut total_dl = 0u64;
+    let mut chars = Vec::new();
+    let mut scratch = String::new();
+    for (ordinal, &(doc_id, content)) in docs.iter().enumerate() {
+        if ordinal % CLOCK_EVERY == 0 && deadline.is_some_and(|at| Instant::now() > at) {
+            return OverlayOutcome { postings, reached, total_dl, completed: false };
+        }
+        tfs.fill(0);
+        let mut dl = 0u32;
+        scan_terms(content, &mut chars, &mut scratch, |token| {
+            dl += 1;
+            if let Some(position) = index.position(token) {
+                tfs[position] += 1;
+            }
+        });
+        for (position, &first) in first_of.iter().enumerate() {
+            let tf = tfs[first];
+            if tf > 0 {
+                postings[position].push((doc_id, tf, dl));
+            }
+        }
+        reached += 1;
+        total_dl += u64::from(dl);
+    }
+    OverlayOutcome { postings, reached, total_dl, completed: true }
 }
 
 /// The class flags of every code point (surrogates zero), for the host's
@@ -706,6 +811,82 @@ mod tests {
         assert_eq!(tokenize("İstanbul ısı STRASSE"), ["istanbul", "isi", "strasse"]);
         assert_eq!(tokenize(&"x".repeat(65)), Vec::<String>::new());
         assert_eq!(tokenize(&"é".repeat(33)), Vec::<String>::new());
+    }
+
+    // A body on every tokenizer rule: Turkic folds, casefold spellings, Greek,
+    // camel case, digit-led pieces, underscores, over-cap terms, a short part.
+    const MIXED_BODY: &str = "İstanbul ısı STRASSE Straße καλημέρα κόσμε XMLHttpRequest sha256Hash pthread_create \
+        0x1f v2_0xFF getX a_b naïve café xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+        ééééééééééééééééééééééééééééééééé Foo_barBaz 1st";
+
+    #[test]
+    fn tokenize_output_is_unchanged() {
+        let expected = [
+            "istanbul", "isi", "strasse", "strasse", "καλημέρα", "κόσμε", "xmlhttprequest", "xml", "http", "request",
+            "sha256hash", "sha256", "hash", "pthread_create", "pthread", "create", "0x1f", "v2_0xff", "v2", "0xff",
+            "getx", "get", "a_b", "naïve", "café", "foo_barbaz", "foo", "bar", "baz", "1st",
+        ];
+        assert_eq!(tokenize(MIXED_BODY), expected);
+        assert_eq!(tokenize(""), Vec::<String>::new());
+    }
+
+    /// The counting path spelled out: tokenize, count every token, read the query terms out.
+    fn counted(docs: &[(i64, &str)], terms: &[&str]) -> (Vec<Vec<(i64, u32, u32)>>, u64) {
+        let mut postings = vec![Vec::new(); terms.len()];
+        let mut total_dl = 0u64;
+        for &(doc_id, body) in docs {
+            let tokens = tokenize(body);
+            let dl = tokens.len() as u32;
+            total_dl += u64::from(dl);
+            for (position, term) in terms.iter().enumerate() {
+                let tf = tokens.iter().filter(|token| token == term).count() as u32;
+                if tf > 0 {
+                    postings[position].push((doc_id, tf, dl));
+                }
+            }
+        }
+        (postings, total_dl)
+    }
+
+    #[test]
+    fn overlay_postings_agrees_with_tokenize_counts() {
+        let docs = [
+            (7i64, MIXED_BODY),
+            (3, "http request HTTP_REQUEST httpRequest and nothing else"),
+            (90, ""),
+            (12, "sha256Hash sha256hash sha256 café CAFÉ κόσμε"),
+        ];
+        let two = ["http", "café"];
+        let twenty: Vec<&str> = [
+            "http", "café", "sha256", "request", "κόσμε", "isi", "absent", "xml", "get", "foo", "bar", "baz", "1st",
+            "0xff", "v2", "pthread", "create", "hash", "strasse", "nothing",
+        ]
+        .to_vec();
+        for terms in [&two[..], &twenty[..]] {
+            let (expected, total_dl) = counted(&docs, terms);
+            let outcome = overlay_postings(&docs, terms, None);
+            assert_eq!(outcome.postings, expected);
+            assert_eq!((outcome.reached, outcome.total_dl, outcome.completed), (4, total_dl, true));
+        }
+        // The twenty-term query takes the set path and finds every present term.
+        let outcome = overlay_postings(&docs, &twenty, None);
+        assert_eq!(outcome.postings[6], Vec::<(i64, u32, u32)>::new());
+        assert_eq!(outcome.postings[0], vec![(7, 1, 30), (3, 3, 11)]);
+        assert_eq!(overlay_postings(&[], &two, None).postings, vec![Vec::new(), Vec::new()]);
+    }
+
+    #[test]
+    fn overlay_postings_stops_between_documents_at_the_deadline() {
+        let docs: Vec<(i64, &str)> = (1..=70).map(|id| (id, "alpha beta alpha")).collect();
+        let passed = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let stopped = overlay_postings(&docs, &["alpha"], passed);
+        assert_eq!((stopped.reached, stopped.total_dl, stopped.completed), (0, 0, false));
+        assert_eq!(stopped.postings, vec![Vec::new()]);
+        let ahead = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        let finished = overlay_postings(&docs, &["alpha"], ahead);
+        assert_eq!((finished.reached, finished.total_dl, finished.completed), (70, 210, true));
+        assert_eq!(finished.postings[0].len(), 70);
+        assert_eq!(finished.postings[0][69], (70, 2, 3));
     }
 
     #[test]

@@ -424,7 +424,7 @@ class TestScopedNomination:
         # candidates (lower doc ids) and the glob then discarded them —
         # silent recall loss. The allow-list intersects before the cut,
         # so every in-scope row survives and nothing truncates.
-        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 5)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 5)
         files = {f"/bulk/f{i:02}.txt": "needle body" for i in range(10)}
         files |= {f"/scoped/g{i}.txt": "needle body" for i in range(3)}
         storage = await _fresh(tmp_path, files)
@@ -560,7 +560,7 @@ class TestOutputModes:
 
 class TestBudgets:
     async def test_candidate_budget_truncates_with_a_warning(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 1)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 1)
         storage = await _fresh(tmp_path, {"/a.txt": "needle", "/b.txt": "needle"})
         result = await storage.grep(pattern="needle", allow_scan=True, globs=("*.txt",))
         assert result.success is True
@@ -572,7 +572,7 @@ class TestBudgets:
         await storage.close()
 
     async def test_candidate_budget_also_caps_the_index_side(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 1)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 1)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two"})
         assert (await storage.reindex()).success is True
         result = await storage.grep(pattern="needle")
@@ -637,8 +637,9 @@ class TestBudgets:
     async def test_a_saturated_index_side_names_the_skipped_overlay(self, tmp_path, monkeypatch) -> None:
         # Index candidates alone fill the budget: the scan overlay is
         # never consulted, so the fresh dirty file is honestly absent
-        # and the truncation record names the skipped overlay.
-        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 2)
+        # and the truncation record names the skipped overlay and says
+        # the index side took the whole pool.
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two", "/c.txt": "needle three"})
         assert (await storage.reindex()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle four")])).success is True
@@ -647,13 +648,38 @@ class TestBudgets:
         assert "/fresh.txt" not in _paths(result)
         [warning] = [e for e in result.errors if e.kind == ErrorKind.truncated]
         assert "overlay not consulted" in warning.message
+        assert warning.data == {"scanned": 0, "index": 2, "budget": 2}
+        await storage.close()
+
+    async def test_the_candidate_budget_record_says_what_each_tier_took(self, tmp_path, monkeypatch) -> None:
+        """Guards: a count record with no data, or one counting the rows kept instead of the rows nominated."""
+        # No index: the scan tier gets the whole pool, nominates two of
+        # three dirty matches, and the record says so against the budget.
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
+        storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two", "/c.txt": "needle three"})
+        result = await storage.grep(pattern="needle")
+        assert result.success is True
+        assert _paths(result) == ["/a.txt", "/b.txt"]
+        [warning] = [e for e in result.errors if e.kind == ErrorKind.truncated]
+        assert warning.severity is Severity.warning
+        assert "candidate budget" in warning.message and "overlay not consulted" not in warning.message
+        assert warning.data == {"scanned": 2, "index": 0, "budget": 2}
+        await storage.close()
+
+    async def test_the_wall_record_carries_no_data(self, tmp_path) -> None:
+        """Guards: the count record's data riding every truncation reason, the wall's included."""
+        storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=1e-9)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle")], parents=True)).success
+        result = await storage.grep(pattern="needle")
+        [wall] = [e for e in result.errors if WALL_TIME_CAUSE in e.message]
+        assert wall.data is None
         await storage.close()
 
     async def test_the_candidate_budget_record_is_emitted_at_most_once(self, tmp_path, monkeypatch) -> None:
         # Both tiers trip the same budget in one call — the index cut
         # (b.py rides the cut, then falls to the ext gate, leaving scan
         # room) and the scan overflow — yet the seam emits one record.
-        monkeypatch.setattr(grep_module, "CANDIDATE_BUDGET", 2)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.py": "needle two", "/c.txt": "needle three"})
         assert (await storage.reindex()).success is True
         fresh = [Entry(path=Path("/d.txt"), content="needle four"), Entry(path=Path("/e.txt"), content="needle five")]

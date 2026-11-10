@@ -32,9 +32,9 @@ pub use glob::{Atom, GlobProgram, GlobSet, MAX_GROUPS, ProgramError, judge_batch
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, RefParser, fold_line, markdown_refs, markdown_refs_batch};
 pub use lexical::{
-    BLOCK_SIZE, BM25_B, BM25_K1, BlockRow, DrainedLexical, LexicalAccumulator, LexicalError, PYTHON_VERSION,
-    ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, competing_blocks, decode_summary, score, select_blocks,
-    tokenize,
+    BLOCK_SIZE, BM25_B, BM25_K1, BlockRow, DrainedLexical, LexicalAccumulator, LexicalError, OverlayOutcome,
+    PYTHON_VERSION, ScoreBlock, SummaryRow, UNICODE_VERSION, casefolds, char_classes, competing_blocks, decode_summary,
+    overlay_postings, score, select_blocks, tokenize,
 };
 pub use postings::{AddDocError, DrainedPostings, PostingError, PostingRow, PostingsAccumulator, candidate_ids, decode_postings};
 pub use signals::{Measure, NO_PARENT, SignalError, centrality_prior};

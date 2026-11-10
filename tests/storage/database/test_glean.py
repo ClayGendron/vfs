@@ -9,31 +9,44 @@ in both worlds because the answer must not depend on which side served.
 
 from __future__ import annotations
 
+import re
 import threading
 from collections import Counter
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import true
+from sqlalchemy import event, select, true
 from sqlalchemy.dialects import mssql, sqlite
 
 from tests.support.database_helpers import _url
+from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
+from tests.support.statements import is_statistics_statement
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
-from vfs.models.lexical import encode_block
+from vfs.models.lexical import OverlayPostings, encode_block
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import glean as glean_module
+from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
-from vfs.storage.backends.database.offload import WALL_TIME_CAUSE
+from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.storage.backends.database.seams import installed
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
+
+# The overlay's three SQL legs as SQLite spells them: the body fetch (the
+# preview fetch takes the same shape), the surrogate-id fetch and the
+# path-ordered nominee fetch.
+_BODY_FETCH = re.compile(r"\bFROM vfs_content\b")
+_SURROGATE_FETCH = re.compile(r"^SELECT vfs_entries\.entry_id, vfs_entries\.id\s+FROM vfs_entries\b")
+_NOMINEE_FETCH = re.compile(r"\bFROM vfs_entries\b.*\bORDER BY vfs_entries\.path\b", re.S)
 
 CORPUS = {
     "/src/parser.py": "def parse_tokens(stream):\n    return tokens_from(stream)\n",
@@ -99,6 +112,42 @@ def _scores(result: Result) -> list[float]:
     scores = [o.score for o in result.observations]
     assert all(score is not None for score in scores)
     return [score for score in scores if score is not None]
+
+
+def _ranked(result: Result) -> list[tuple[str, float | None]]:
+    return [(str(o.path), o.score) for o in result.observations]
+
+
+@contextmanager
+def _recorded(storage: DatabaseStorage) -> Iterator[list[str]]:
+    """Every statement the store issues inside the block, the planner-statistics step's left out."""
+    recorded: list[str] = []
+
+    def record(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
+        if not is_statistics_statement(statement):
+            recorded.append(statement)
+
+    engine = storage._host.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield recorded
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+
+def _overlay_legs(statements: Sequence[str]) -> tuple[int, int, int]:
+    """``(body fetches, surrogate fetches, nominee fetches)`` among *statements*; a preview fetch is a body fetch."""
+    bodies = sum(1 for sql in statements if _BODY_FETCH.search(sql))
+    surrogates = sum(1 for sql in statements if _SURROGATE_FETCH.search(sql))
+    nominees = sum(1 for sql in statements if _NOMINEE_FETCH.search(sql))
+    return bodies, surrogates, nominees
+
+
+async def _entry_ids(storage: DatabaseStorage, paths: Sequence[str]) -> set[Any]:
+    entry = storage._host.tables.entry
+    stmt = select(entry.c.entry_id).where(entry.c.path.in_(list(paths)))
+    async with storage._host.session_factory() as session:
+        return set((await session.execute(stmt)).scalars().all())
 
 
 class TestRefusals:
@@ -406,7 +455,7 @@ class TestOverlay:
         assert _paths(result)[0] == "/notes.txt"
         [match] = result.observations[0].matches or []
         assert (match.start, match.end, match.content) == (1, 1, None)
-        # The overlay's preview is cut from the body it already scored — no chunk row, no second read.
+        # The overlay's preview is cut from the live body, read once more for the entries that answer — no chunk row.
         assert match.preview == "A stream of **tokens**, **tokens**, **tokens**."
         assert (match.preview_start, match.preview_end) == (1, 1)
         assert result.lexical_stats["n_docs"] == 0  # ty: ignore[unresolved-attribute]
@@ -430,9 +479,9 @@ class TestOverlay:
         admitted_sizes: list[int] = []
         real = glean_module._overlay
 
-        async def spying(session, tables, profile, budget, executor, admitted, terms, stats):
+        async def spying(session, tables, profile, budget, executor, admitted, terms, stats, deadline):
             admitted_sizes.append(len(admitted))
-            return await real(session, tables, profile, budget, executor, admitted, terms, stats)
+            return await real(session, tables, profile, budget, executor, admitted, terms, stats, deadline)
 
         monkeypatch.setattr(glean_module, "_overlay", spying)
         result = await storage.glean(query="tokens", globs=("src/**",))
@@ -440,13 +489,157 @@ class TestOverlay:
         assert admitted_sizes == [0]  # the scan ran and nominated nothing in scope
         await storage.close()
 
+    def test_the_overlay_reads_the_shared_scan_tier_budget(self) -> None:
+        """Guards: either verb cutting the dirty rows at a count of its own, or holding a budget name of its own
+        for the scan tier beside the shared one."""
+        assert scope_module.SCAN_TIER_BUDGET == 25_000
+        assert glean_module.SCAN_TIER_BUDGET == grep_module.SCAN_TIER_BUDGET == scope_module.SCAN_TIER_BUDGET
+        shared = {"SCAN_TIER_BUDGET", "CONTENT_BYTE_BUDGET", "WALL_TIME_BUDGET"}
+        glean_budgets = {name for name in vars(glean_module) if name.endswith("_BUDGET")}
+        grep_budgets = {name for name in vars(grep_module) if name.endswith("_BUDGET")}
+        assert glean_budgets == shared | {"SCOPE_ID_BUDGET"}
+        assert grep_budgets == shared | {"POSTING_BYTE_BUDGET"}
+
     async def test_the_overlay_budget_truncates_loudly(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         storage = await _fresh(tmp_path)
-        monkeypatch.setattr(glean_module, "OVERLAY_BUDGET", 2)
+        monkeypatch.setattr(glean_module, "SCAN_TIER_BUDGET", 2)
         result = await storage.glean(query="tokens")
         assert result.success is True
         [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert record.kind == ErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
+        await storage.close()
+
+    async def test_the_kernel_overlay_scores_as_the_oracle_does(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the kernel counting a term, a length or a body differently from tokenize-and-count,
+        or the batched postings scoring differently from one pass over every body."""
+        indexed = {
+            "/idx/a.txt": "tokens of the parser stream\n",
+            "/idx/b.txt": "a lexer stream\n",
+            "/idx/c.txt": "tokens tokens everywhere\n",
+        }
+        storage = await _indexed(tmp_path, indexed)
+        bodies = [f"{'tokens ' * (i % 4)}stream number {i} {'parser ' * (i % 3)}\n" for i in range(12)]
+        dirty = [Entry(path=Path(f"/dirty/{i:02}.txt"), content=body) for i, body in enumerate(bodies)]
+        assert (await storage.write(entries=dirty, parents=True)).success is True
+        kernel = await storage.glean(query="tokens parser stream", limit=20)
+        assert kernel.success is True and len(kernel.observations) == 15
+
+        def counted(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
+            return pure_overlay_postings(docs, terms)
+
+        monkeypatch.setattr(glean_module, "overlay_postings", counted)
+        monkeypatch.setattr(glean_module, "score_blocks", pure_score_blocks)
+        oracle = await storage.glean(query="tokens parser stream", limit=20)
+        assert _ranked(kernel) == _ranked(oracle)
+        await storage.close()
+
+    async def test_the_overlay_fetches_bodies_in_byte_batches(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: every admitted body fetched in one statement whatever the byte budget,
+        or a batch's surrogate ids fetched for the whole overlay at once."""
+        files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
+        storage = await _fresh(tmp_path, files)
+        with _recorded(storage) as whole:
+            reference = await storage.glean(query="tokens")
+        assert len(reference.observations) == 5
+        # One nominee fetch, one surrogate fetch, one body fetch, plus the preview fetch.
+        assert _overlay_legs(whole) == (2, 1, 1)
+        monkeypatch.setattr(glean_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
+        with _recorded(storage) as batched:
+            result = await storage.glean(query="tokens")
+        # One body and one surrogate fetch per batch of one, plus the preview; the nominee fetch stays one.
+        assert _overlay_legs(batched) == (6, 5, 1)
+        assert _ranked(result) == _ranked(reference)
+        await storage.close()
+
+    async def test_overlay_previews_come_from_one_bounded_fetch_of_the_answer(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the overlay keeping bodies past its batch, or the preview fetch reading
+        every scored body instead of the entries in the answer."""
+        files = {
+            "/d/a.txt": "tokens tokens tokens\n",
+            "/d/b.txt": "tokens tokens filler\n",
+            "/d/c.txt": "tokens filler filler\n",
+            "/d/d.txt": "nothing here\n",
+            "/d/e.txt": "other words\n",
+        }
+        storage = await _fresh(tmp_path, files)
+        returned: list[Any] = []
+        real_overlay = glean_module._overlay
+
+        async def spying_overlay(*args: Any) -> Any:
+            outcome = await real_overlay(*args)
+            returned.append(outcome)
+            return outcome
+
+        fetched: list[list[Any]] = []
+        real_fetch = glean_module.content_for_entries
+
+        async def spying_fetch(session, tables, profile, membership_budget, entry_ids):
+            fetched.append(list(entry_ids))
+            return await real_fetch(session, tables, profile, membership_budget, entry_ids)
+
+        monkeypatch.setattr(glean_module, "_overlay", spying_overlay)
+        monkeypatch.setattr(glean_module, "content_for_entries", spying_fetch)
+        result = await storage.glean(query="tokens", limit=2)
+        assert _paths(result) == ["/d/a.txt", "/d/b.txt"]
+        [(hits, completed)] = returned
+        assert completed is True and set(hits) == await _entry_ids(storage, ["/d/a.txt", "/d/b.txt", "/d/c.txt"])
+        assert all(isinstance(hit, glean_module._Hit) for hit in hits.values())
+        counted, previewed = fetched
+        assert len(counted) == 5
+        assert set(previewed) == await _entry_ids(storage, ["/d/a.txt", "/d/b.txt"])
+        await storage.close()
+
+    async def test_no_preview_fetch_when_the_overlay_does_not_answer(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a preview fetch issued for an answer that holds no overlay entry."""
+        storage = await _indexed(tmp_path)
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="nothing here\n")])).success
+        fetched: list[list[Any]] = []
+        real_fetch = glean_module.content_for_entries
+
+        async def spying_fetch(session, tables, profile, membership_budget, entry_ids):
+            fetched.append(list(entry_ids))
+            return await real_fetch(session, tables, profile, membership_budget, entry_ids)
+
+        monkeypatch.setattr(glean_module, "content_for_entries", spying_fetch)
+        result = await storage.glean(query="tokens")
+        assert set(_paths(result)) == {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
+        assert [len(ids) for ids in fetched] == [1]  # the dirty row was counted; nothing was previewed
+        await storage.close()
+
+    async def test_an_overlay_entry_purged_before_the_preview_read_is_absent(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a body missing from the preview read raising out of the call instead of leaving its
+        entry absent, as grep leaves a body that did not come back."""
+        files = {
+            "/d/a.txt": "tokens tokens tokens\n",
+            "/d/b.txt": "tokens tokens filler\n",
+            "/d/c.txt": "tokens filler filler\n",
+        }
+        storage = await _fresh(tmp_path, files)
+        real_fetch = glean_module.content_for_entries
+        calls = {"n": 0}
+
+        async def purged_before_the_preview(session, tables, profile, membership_budget, entry_ids):
+            calls["n"] += 1
+            bodies = await real_fetch(session, tables, profile, membership_budget, entry_ids)
+            if calls["n"] == 2:  # the preview read: the best entry's body is gone
+                bodies.pop(next(iter(entry_ids)))
+            return bodies
+
+        monkeypatch.setattr(glean_module, "content_for_entries", purged_before_the_preview)
+        result = await storage.glean(query="tokens", limit=2)
+        assert result.success is True, result.errors
+        assert calls["n"] == 2
+        assert _paths(result) == ["/d/b.txt"]
         await storage.close()
 
     async def test_a_rival_publish_between_the_reads_is_redriven(self, tmp_path: Any) -> None:
@@ -515,17 +708,21 @@ class TestOverlay:
         assert result.errors[0].kind == ErrorKind.conflict and result.errors[0].retryable is True
         await storage.close()
 
-    def test_overlay_blocks_take_decoded_bodies_and_local_statistics(self) -> None:
+    def test_overlay_blocks_take_counted_postings_and_local_statistics(self) -> None:
+        """Guards: a block encoded in arrival order (path order) rather than doc-id order,
+        or the local statistics counted over anything but the bodies the kernel reached."""
         assert glean_module._text(b"alpha beta") == glean_module._text("alpha beta") == "alpha beta"
-        docs = [(1, "alpha beta"), (2, "beta beta gamma")]
+        # Two bodies, "alpha beta" (id 1) and "beta beta gamma" (id 2), counted in reverse path order.
+        counted = glean_module._OverlayCount([[(2, 2, 3), (1, 1, 2)], []], 2, 5)
         blocks, idfs, avg_dl = glean_module._overlay_blocks(
-            docs, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75)
+            counted, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75)
         )
         assert [block.term for block in blocks] == [0]  # delta occurs nowhere: no block
         assert blocks[0].doc_ids == encode_block([1, 2], [1, 2], [2, 3])[0]
         assert avg_dl == 2.5 and idfs[0] == pytest.approx(0.1823, abs=1e-3)
         assert idfs[1] > idfs[0]  # the rarer term (absent) takes the higher idf
-        blocks, idfs, avg_dl = glean_module._overlay_blocks([], ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
+        nothing = glean_module._OverlayCount([[]], 0, 0)
+        blocks, idfs, avg_dl = glean_module._overlay_blocks(nothing, ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
         assert blocks == [] and avg_dl == 0.0 and len(idfs) == 1
 
     async def test_an_overlay_hit_spans_its_whole_body_and_previews_the_best_window(self, tmp_path: Any) -> None:
@@ -617,6 +814,66 @@ class TestBudgets:
         result = await storage.glean(query="zebra quantum", **scope)
         assert spy.threads and _paths(result)
         assert len(_walls(result)) == 1
+        await storage.close()
+
+    async def test_a_wall_inside_the_overlay_hop_records_once_and_keeps_what_was_reached(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the kernel's completion flag ignored, a stopped batch's postings dropped,
+        or the wall recorded once per batch instead of once per call."""
+        storage = await _indexed(tmp_path)
+        dirty = [
+            Entry(path=Path("/dirty/a.txt"), content="tokens early\n"),
+            Entry(path=Path("/dirty/b.txt"), content="tokens later\n"),
+        ]
+        assert (await storage.write(entries=dirty, parents=True)).success is True
+        real = glean_module.overlay_postings
+        budgets: list[float | None] = []
+
+        def stopping(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
+            budgets.append(budget)
+            counted = real(docs[:1], terms, budget=budget)
+            return OverlayPostings(counted.postings, 1, counted.total_dl, False)
+
+        monkeypatch.setattr(glean_module, "overlay_postings", stopping)
+        result = await storage.glean(query="tokens")
+        assert result.success is True
+        # The hop's budget is the wall's remainder cut at worker start, never unbounded.
+        [budget] = budgets
+        assert budget is not None and 0.0 <= budget <= WALL_TIME_BUDGET
+        [wall] = _walls(result)
+        assert (wall.kind, wall.severity, wall.data) == (ErrorKind.truncated, Severity.warning, None)
+        indexed = {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
+        assert set(_paths(result)) == indexed | {"/dirty/a.txt"}
+        await storage.close()
+
+    async def test_a_wall_between_overlay_batches_records_once_and_keeps_the_batches_counted(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the deadline unread between batches, so an expired call keeps fetching bodies,
+        or the batches counted before the wall dropped from the answer."""
+        files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
+        storage = await _fresh(tmp_path, files)
+        monkeypatch.setattr(glean_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
+        real_clock, real_kernel = glean_module.monotonic, glean_module.overlay_postings
+        skew = {"seconds": 0.0}
+
+        def skewed_clock() -> float:
+            return real_clock() + skew["seconds"]
+
+        def counting_kernel(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
+            skew["seconds"] = 1e6  # the wall passes, as glean reads it, once the first batch is counted
+            return real_kernel(docs, terms, budget=budget)
+
+        monkeypatch.setattr(glean_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(glean_module, "overlay_postings", counting_kernel)
+        with _recorded(storage) as statements:
+            result = await storage.glean(query="tokens")
+        assert result.success is True
+        assert len(_walls(result)) == 1
+        assert _paths(result) == ["/d/0.txt"]  # the first batch's body, the only one fetched
+        # The first batch's surrogate and body fetch, the preview fetch, the nominee fetch: no second batch ran.
+        assert _overlay_legs(statements) == (2, 1, 1)
         await storage.close()
 
     async def test_traits_declare_the_lexical_leg_and_its_overlay(self, tmp_path: Any) -> None:

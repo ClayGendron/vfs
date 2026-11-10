@@ -121,6 +121,22 @@ class BlockSummary(NamedTuple):
     max_weights: array[float]
 
 
+class OverlayPostings(NamedTuple):
+    """What one overlay count returned: the postings per query term, and what the count covered.
+
+    ``postings`` holds, per query term in the caller's order, the
+    ``(doc_id, tf, dl)`` of the bodies holding it in the order the bodies
+    were given; ``reached`` is how many bodies were counted, ``total_dl``
+    their summed token count, and ``completed`` whether every body was
+    reached before the budget ran out.
+    """
+
+    postings: list[list[tuple[int, int, int]]]
+    reached: int
+    total_dl: int
+    completed: bool
+
+
 # ---------------------------------------------------------------------------
 # Tokenizer
 # ---------------------------------------------------------------------------
@@ -137,6 +153,19 @@ def tokenize(content: str) -> list[str]:
     character classes are the engine's generated tables.
     """
     return extension().tokenize(content)
+
+
+def overlay_postings(docs: Sequence[tuple[int, str]], terms: Sequence[str], *, budget: float | None) -> OverlayPostings:
+    """Tokenize and count a batch of live bodies for *terms* — from the engine.
+
+    The overlay's query-time postings: each body of *docs* (``(doc_id,
+    text)``) is scanned with the tokenizer's own rules and every folded
+    token compared against the query terms in place, so no token list and
+    no dictionary of the body is built. *budget* is wall seconds from
+    call start, read between bodies; a batch that reaches it answers with
+    the bodies it did count and ``completed`` false.
+    """
+    return OverlayPostings(*extension().overlay_postings(list(docs), list(terms), budget=budget))
 
 
 def options_fingerprint() -> str:
@@ -325,6 +354,7 @@ __all__ = [
     "BlockSummary",
     "CorpusStats",
     "LexicalBuilder",
+    "OverlayPostings",
     "ScoreBlock",
     "SummaryRow",
     "decode_summary",
@@ -334,6 +364,7 @@ __all__ = [
     "idf",
     "lexical_builder",
     "options_fingerprint",
+    "overlay_postings",
     "score_blocks",
     "select_blocks",
     "term_weight",

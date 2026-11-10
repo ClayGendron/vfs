@@ -8,7 +8,11 @@ channels. This module holds the pieces both verbs stand on:
 the authoritative per-row gate (:func:`passes_gates`), the SQL terms a
 candidate fetch may ride beside its id chunk (:func:`pushdown_terms`,
 with true bind accounting), and the scan side's bounded, structurally
-prefiltered fetch of the ``NOT encoded`` overlay (:func:`entries_for_scan`).
+prefiltered fetch of the ``NOT encoded`` overlay (:func:`entries_for_scan`)
+with the three laws that bound it: the count at which both verbs cut the
+path-ordered dirty rows (:data:`SCAN_TIER_BUDGET`), the bytes of bodies
+either verb holds at once (:data:`CONTENT_BYTE_BUDGET`) and the metering
+that prices a row for that budget (:func:`stored_size`).
 The gate is the law; every pushdown only narrows toward it. A scope
 under the ``/.vfs/trash`` head searches the tombstoned rows at the
 paths beneath it (:func:`trash_scope`): the head is stripped before
@@ -57,6 +61,18 @@ if TYPE_CHECKING:
 # facts, size_bytes (prices the content read), the tombstone, and what a
 # view judges by.
 FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "deleted_at"} | RIGHTS_FIELDS
+
+# The count at which both verbs cut the path-ordered scan tier: grep's
+# pool of index candidates plus scan rows, glean's overlay whole. Re-derived
+# from the linux-scale sweep: a candidate costs ~75 µs (fetch-dominated), so
+# 25,000 bounds a saturated call near ~2 s while un-truncating every
+# benchmark row search semantics can justify. A tripped budget truncates
+# with a warning that says what each tier took.
+SCAN_TIER_BUDGET: Final = 25_000
+
+# Bytes of scan-tier bodies resident at once: content is fetched, matched
+# or counted, and released in batches sized by the entries' size_bytes.
+CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
 
 
 class ScanNominees(NamedTuple):
@@ -222,6 +238,11 @@ def static_binds(terms: Sequence[ColumnElement[bool]]) -> int:
 # ---------------------------------------------------------------------------
 # The scan side — structural prefilter, bounded fetch, permanent overlay
 # ---------------------------------------------------------------------------
+
+
+def stored_size(mapping: RowMapping) -> int:
+    """The byte batcher's exact metering for a scan-tier row: its stored byte size."""
+    return mapping["size_bytes"] or 0
 
 
 async def entries_for_scan(

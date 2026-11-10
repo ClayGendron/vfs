@@ -1933,6 +1933,24 @@ class StorageContract:
         assert str(fresh.observations[0].path) == "/idx.txt" and fresh.observations[0].score == 1.0
         assert "/fresh.txt" not in [str(o.path) for o in fresh.observations if o.score == 1.0]
 
+    @pytest.mark.slow
+    @needs("write", "grep", "glean")
+    async def test_both_verbs_see_the_six_hundred_and_first_dirty_row(self, storage: ConformanceBackend) -> None:
+        """Guards: either verb cutting the path-ordered dirty rows at a count of its own below the shared one,
+        so a file written past the old overlay count is grepped but not ranked."""
+        reindexer = _reindexer_of(storage)
+        await storage.write(entries=[Entry(path=Path("/a.txt"), content="indexed filler")])
+        assert (await reindexer.reindex()).success is True
+        dirty = [Entry(path=Path(f"/dirty/f{i:03}.txt"), content=f"filler number {i}") for i in range(600)]
+        dirty.append(Entry(path=Path("/dirty/last.txt"), content="the zymurgy sentinel"))
+        assert (await storage.write(entries=dirty, parents=True)).success is True
+        grepped = await storage.grep(pattern="zymurgy")
+        assert [str(o.path) for o in grepped.observations] == ["/dirty/last.txt"]
+        gleaned = await storage.glean(query="zymurgy")
+        # The sentinel ranks first from its live text; a hybrid mount's vector leg may rank neighbours below it.
+        assert str(gleaned.observations[0].path) == "/dirty/last.txt" and gleaned.observations[0].score == 1.0
+        assert not any("overlay budget" in e.message for e in gleaned.errors), gleaned.errors
+
     @needs("write", "glean")
     async def test_default_glean_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])

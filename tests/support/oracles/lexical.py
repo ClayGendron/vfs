@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import struct
 from bisect import bisect_right
+from collections import Counter
 from typing import TYPE_CHECKING, Final
 
 from tests.support.oracles.postings import decode_postings, decode_varints
@@ -22,6 +23,7 @@ from vfs.models.lexical import (
     BLOCK_SIZE,
     MAX_TERM_BYTES,
     MIN_TERM_CHARS,
+    OverlayPostings,
     ScoreBlock,
     SummaryRow,
     encode_summary,
@@ -90,6 +92,30 @@ def _case_boundary(piece: str, index: int) -> bool:
     if previous.islower() or previous.isdigit():
         return True
     return previous.isupper() and index + 1 < len(piece) and piece[index + 1].islower()
+
+
+# ---------------------------------------------------------------------------
+# Overlay counts
+# ---------------------------------------------------------------------------
+
+
+def pure_overlay_postings(docs: Sequence[tuple[int, str]], terms: Sequence[str]) -> OverlayPostings:
+    """The overlay count the slow way: tokenize every body, count every token, read the query terms out.
+
+    Postings per term in the caller's order, each body's in the order the
+    bodies were given; every body is reached, so ``completed`` is always true.
+    """
+    postings: list[list[tuple[int, int, int]]] = [[] for _ in terms]
+    total_dl = 0
+    for doc_id, content in docs:
+        tokens = pure_tokenize(content)
+        counts = Counter(tokens)
+        total_dl += len(tokens)
+        for position, term in enumerate(terms):
+            tf = counts.get(term, 0)
+            if tf:
+                postings[position].append((doc_id, tf, len(tokens)))
+    return OverlayPostings(postings, len(docs), total_dl, True)
 
 
 # ---------------------------------------------------------------------------

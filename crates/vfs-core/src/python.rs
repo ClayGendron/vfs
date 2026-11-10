@@ -26,7 +26,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 13;
+const PROTOCOL_VERSION: u32 = 14;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -326,6 +326,26 @@ fn tokenize(content: &str) -> Vec<String> {
     lexical::tokenize(content)
 }
 
+/// The overlay counts kernel over borrowed bodies, off the GIL: per query
+/// term, the `(doc_id, tf, dl)` postings of the bodies holding it in the
+/// order the bodies were given; then the bodies counted, their summed
+/// token count, and whether every body was reached. `budget` is wall
+/// seconds from call start, read between bodies.
+#[pyfunction]
+#[pyo3(signature = (docs, terms, *, budget))]
+fn overlay_postings(
+    py: Python<'_>,
+    docs: Vec<(i64, PyBackedStr)>,
+    terms: Vec<String>,
+    budget: Option<f64>,
+) -> (Vec<Vec<(i64, u32, u32)>>, u64, u64, bool) {
+    let deadline = deadline_after(budget);
+    let bodies: Vec<(i64, &str)> = docs.iter().map(|(doc_id, text)| (*doc_id, &**text)).collect();
+    let queries: Vec<&str> = terms.iter().map(String::as_str).collect();
+    let outcome = py.detach(|| lexical::overlay_postings(&bodies, &queries, deadline));
+    (outcome.postings, outcome.reached, outcome.total_dl, outcome.completed)
+}
+
 /// One byte of class flags per code point (word 1, upper 2, lower 4,
 /// digit 8, assigned 16) from the generated tables, for the parity check.
 #[pyfunction]
@@ -608,6 +628,7 @@ fn native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chunk_spans, m)?)?;
     m.add_function(wrap_pyfunction!(markdown_refs, m)?)?;
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
+    m.add_function(wrap_pyfunction!(overlay_postings, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_char_classes, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_casefolds, m)?)?;
     m.add_function(wrap_pyfunction!(lexical_score, m)?)?;
