@@ -123,6 +123,12 @@ class TestDialectPolicy:
         assert SQLITE.rarity_hint == "unlikely"
         assert [p.rarity_hint for p in (POSTGRESQL, MARIADB, MSSQL, ORACLE, GENERIC)] == [None] * 5
 
+    def test_the_entry_probe_is_declared_on_sqlite_only(self) -> None:
+        """Guards: SQLite's chunk pages joining the entry table, a Bloom filter rebuilt on every page, or an
+        engine whose planner serves the join, Postgres JIT-compiling the probe, sent the probe unmeasured."""
+        assert SQLITE.probe_entry_filter is True
+        assert [p.probe_entry_filter for p in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC)] == [False] * 5
+
     def test_serialization_sqlstates_are_retryable(self) -> None:
         assert is_retryable(POSTGRESQL, _PgError("40001")) is True
         assert is_retryable(POSTGRESQL, _PgError("40P01")) is True

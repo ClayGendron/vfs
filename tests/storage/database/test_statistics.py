@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import aiosqlite
@@ -26,7 +27,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import QueuePool
 
 from tests.support.database_helpers import _fresh_url, _url
-from tests.support.plan_store import PLAN_ARMS, PLAN_EXTENSIONS
+from tests.support.plan_store import (
+    PLAN_ARMS,
+    PLAN_EXTENSIONS,
+    chunk_entries,
+    chunk_page_plans,
+    shipped_join_plan,
+)
 from tests.support.statements import is_statistics_statement
 from vfs import sync as sync_module
 from vfs.authority import Authority
@@ -100,6 +107,27 @@ def large_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     async def build() -> None:
         storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{target}")
         assert (await storage.write(entries=_entries(LARGE_ROOTS), parents=True)).success is True
+        await storage._host.settle_statistics()
+        await storage.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(asyncio.run, build()).result()
+    return target
+
+
+@pytest.fixture(scope="module")
+def chunk_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
+    """200 long text files of about ten chunks each, written once per module, reindexed, statistics settled.
+
+    Ten chunks per entry, the reference ratio, is past the four to five
+    at which SQLite's planner puts a filter on the chunk page's join.
+    """
+    target = tmp_path_factory.mktemp("chunks") / "vfs.sqlite"
+
+    async def build() -> None:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{target}")
+        assert (await storage.write(entries=chunk_entries(), parents=True)).success is True
+        assert (await storage.reindex()).success is True
         await storage._host.settle_statistics()
         await storage.close()
 
@@ -831,6 +859,38 @@ class TestPlannerStatistics:
             assert entry_details, details
             assert all(detail.startswith("SEARCH vfs_entries") for detail in entry_details), details
             assert all("ix_vfs_entries_encoded_kind" in detail for detail in entry_details), details
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_the_chunk_store_makes_the_shipped_join_build_a_filter(self, tmp_path, chunk_store) -> None:
+        """Guards: a chunk store below the filter's trigger, on which the chunk-page pin could never go red."""
+        storage = DatabaseStorage(url=_copied(chunk_store, tmp_path))
+        plan = await shipped_join_plan(storage)
+        assert sum("BLOOM FILTER" in line for line in plan.splitlines()) == 1, plan
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_the_chunk_pages_build_no_filter_per_page(self, tmp_path, chunk_store) -> None:
+        """Guards: the build's or the embed step's chunk page joining the entry table on SQLite, a Bloom filter
+        over every entry row rebuilt on each page; the mutant is ``probe_entry_filter`` dropped from SQLITE.
+
+        The embed page's refusal term plans as a correlated subquery of its
+        own, so the count is of subqueries whose next step searches the entries.
+        """
+        storage = DatabaseStorage(url=_copied(chunk_store, tmp_path))
+        plans = await chunk_page_plans(storage)
+        assert set(plans) == {"build", "embed"}
+        for page, plan in plans.items():
+            lines = plan.splitlines()
+            probes = [
+                step
+                for step, child in pairwise(lines)
+                if "CORRELATED SCALAR SUBQUERY" in step and child.startswith("SEARCH vfs_entries")
+            ]
+            assert not any("BLOOM FILTER" in line for line in lines), (page, plan)
+            assert len(probes) == 1, (page, plan)
+        build = plans["build"].splitlines()
+        assert sum("CORRELATED SCALAR SUBQUERY" in line for line in build) == 1, build
         await storage.close()
 
     @pytest.mark.slow

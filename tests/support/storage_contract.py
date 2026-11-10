@@ -33,7 +33,14 @@ import pytest
 
 from tests.support.documents import docx_bytes, pdf_bytes, pptx_bytes, xlsx_bytes
 from tests.support.oracles import graph_walk, meeting_subgraph
-from tests.support.plan_store import FACTS_CONJUNCT, PlanBackend, PlanReadings, decoded, plan_readings
+from tests.support.plan_store import (
+    ENTRY_JOIN,
+    FACTS_CONJUNCT,
+    PlanBackend,
+    PlanReadings,
+    decoded,
+    plan_readings,
+)
 from tests.support.shared_builds import build_once, shared_directory
 from vfs import _native
 from vfs.authority import Authority, Principal
@@ -1390,6 +1397,32 @@ class StorageContract:
             return
         assert plan_store.statements
         assert not any(FACTS_CONJUNCT.search(statement) for statement in plan_store.statements)
+
+    @pytest.mark.slow
+    @needs("write", "glean")
+    def test_the_chunk_page_plan_is_the_engines_own(self, plan_store: PlanReadings) -> None:
+        """Guards: an engine's chunk pages taking the other shape than its profile declares — SQLite joining
+        the entries, a per-page filter build, or Postgres taking the probe its JIT turns into a regression.
+
+        A profile that declares the probe reads it and no filter step; one
+        that keeps the join reads the join, Postgres as the chunk primary-key
+        range and no subplan, and the others' plans are what the landing
+        notes read for a per-page build.
+        """
+        assert set(plan_store.chunk_pages) == set(plan_store.chunk_statements) == {"build", "embed"}
+        for page, plan in plan_store.chunk_pages.items():
+            statement = plan_store.chunk_statements[page]
+            lines = plan.splitlines()
+            assert plan.strip(), (page, statement)
+            if plan_store.probes:
+                assert "JOIN" not in statement, statement
+                assert not any("BLOOM FILTER" in line for line in lines), (page, plan)
+                assert any("CORRELATED SCALAR SUBQUERY" in line for line in lines), (page, plan)
+                continue
+            assert ENTRY_JOIN.search(statement), statement
+            if plan_store.engine == "postgresql":
+                assert not any("SubPlan" in line for line in lines), (page, plan)
+                assert sum("Index Scan using vfs_chunks_pkey" in line for line in lines) == 1, (page, plan)
 
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak

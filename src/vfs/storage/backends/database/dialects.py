@@ -375,6 +375,23 @@ class DialectProfile:
     where the hint keeps the seek on the (encoded, kind) index. The
     server engines keep the plain term; a partial index over the rows
     awaiting the index is the direction that serves every engine.
+
+    ``probe_entry_filter`` declares that a keyset page over the chunk
+    table spells its entry filter as a correlated probe on the entry
+    table, a scalar subquery compared to a constant, instead of a join
+    — a plan-shape fact SQLAlchemy takes no position on. SQLite's
+    planner, given statistics and several chunks per entry, puts a Bloom
+    filter on the join's entry side, sized by an estimate that ignores
+    the ``LIMIT`` and rebuilt over every entry row on each execution, so
+    a scan of many pages pays a cost that grows with the entry count on
+    every page; the probe is one unique-index lookup per chunk row and
+    builds nothing. Every other engine keeps the join: Postgres was
+    measured to serve it as a memoized index probe and to JIT-compile
+    the probe into a regression; MariaDB, SQL Server and Oracle serve
+    the join's build page as an index probe per row, Oracle's embed page
+    hashes the entry table per page, and the probe is unmeasured on all
+    three. A SQLite planner that took the ``LIMIT`` into its filter
+    estimate would let the join come back.
     """
 
     name: str
@@ -422,6 +439,7 @@ class DialectProfile:
     scope_facts_beside_fan: bool = False
     statistics_listing: str | None = None
     rarity_hint: str | None = None
+    probe_entry_filter: bool = False
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -477,6 +495,8 @@ SQLITE: Final = DialectProfile(
     # Every table checked, ANALYZE considered, list only, no cap bit: SQLite names what grew tenfold.
     statistics_listing="PRAGMA {schema}.optimize = 0x10003",
     rarity_hint="unlikely",
+    # Plan-pinned: the chunk pages' entry probe plans no per-page Bloom filter where the join builds one.
+    probe_entry_filter=True,
 )
 
 POSTGRESQL: Final = DialectProfile(

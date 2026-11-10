@@ -367,7 +367,9 @@ async def chunk_dirty(
 # ---------------------------------------------------------------------------
 
 
-async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexState, executor: Executor) -> Result:
+async def build_epoch(
+    session: AsyncSession, tables: VFSTables, state: ReindexState, executor: Executor, profile: DialectProfile
+) -> Result:
     """Build the full posting set under a fresh epoch, or no-op.
 
     The no-op check: no live entry awaits encoding and the current
@@ -389,7 +391,8 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     (:mod:`vfs.native`): content streams through in bounded batches in
     ascending row-id order, and the builder's gram-ordered drain feeds
     byte-capped inserts. The lexical index builds under the same epoch
-    after the postings drain, from the chunk rows of the same entries. The build's CPU — the fold-and-feed of each
+    after the postings drain, from the chunk rows of the same entries, read
+    in the page shape *profile* declares. The build's CPU — the fold-and-feed of each
     batch and every drain call — hops through the backend's offload
     pool, so the loop keeps serving while the engine works — except
     across a close that shuts the captured pool, after which the
@@ -447,7 +450,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
                     for gram, blob, doc_count in drained
                 ],
             )
-        await build_lexical_epoch(session, tables, epoch, executor)
+        await build_lexical_epoch(session, tables, epoch, executor, profile)
         await session.execute(
             insert(tables.gram_epochs),
             [{"epoch": epoch, "format_version": INDEX_FORMAT_VERSION, "options_hash": index_options_hash()}],

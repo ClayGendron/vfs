@@ -21,22 +21,25 @@ so the loop keeps serving while it runs.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import insert, select
 
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
 from vfs.storage.backends.database.dialects import ByteBatcher, bulk_insert, chunked
 from vfs.storage.backends.database.offload import call_offloaded
+from vfs.storage.backends.database.pages import covered_chunk_page
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from concurrent.futures import Executor
 
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.lexical import LexicalBuilder
     from vfs.models.rows import VFSTables
+    from vfs.storage.backends.database.dialects import DialectProfile
 
 # One tokenize call's content payload (chars as the byte proxy): bounds a
 # hop's copy and the batch's transient token lists.
@@ -70,7 +73,9 @@ class TermStatistics(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-async def build_lexical_epoch(session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor) -> None:
+async def build_lexical_epoch(
+    session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor, profile: DialectProfile
+) -> None:
     """Stream every covered chunk once and write the epoch's four row sets.
 
     The chunk rows stream in ascending id order into the builder, which
@@ -78,10 +83,11 @@ async def build_lexical_epoch(session: AsyncSession, tables: VFSTables, epoch: i
     fixed statistics then write ``lex_stats``, and the two drains write
     ``lex_df`` and ``lex_postings`` in term order. A rival building the
     same epoch collides on a primary key here exactly as on the postings
-    table, and the caller's stale-snapshot redrive owns that.
+    table, and the caller's stale-snapshot redrive owns that. *profile*
+    shapes the scan's pages.
     """
     builder = lexical_builder()
-    async for batch in _chunk_batches(session, tables):
+    async for batch in _chunk_batches(session, tables, profile):
         docs = [(chunk_id, content) for chunk_id, _entry_id, content in batch]
         lengths = await call_offloaded(executor, partial(builder.add_docs, docs))
         rows = [
@@ -97,6 +103,19 @@ async def build_lexical_epoch(session: AsyncSession, tables: VFSTables, epoch: i
         await bulk_insert(session, tables.lex_df, summaries)
     while (blocks := await call_offloaded(executor, partial(_block_rows, builder, epoch))) is not None:
         await bulk_insert(session, tables.lex_postings, blocks)
+
+
+def lexical_scan_page(tables: VFSTables, profile: DialectProfile, *, after: int) -> Select[Any]:
+    """The build scan's next keyset page past chunk id *after*: the chunks of ``chunked ∧ indexable ∧ live`` entries."""
+    chunks, entry = tables.chunks, tables.entry
+    return covered_chunk_page(
+        tables,
+        profile,
+        [chunks.c.id, chunks.c.entry_id, chunks.c.content],
+        [entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None)],
+        after=after,
+        limit=_SCAN_PAGE_ROWS,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,27 +159,19 @@ async def lexical_stats(
 # ---------------------------------------------------------------------------
 
 
-async def _chunk_batches(session: AsyncSession, tables: VFSTables) -> AsyncIterator[list[tuple[int, str, str]]]:
+async def _chunk_batches(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile
+) -> AsyncIterator[list[tuple[int, str, str]]]:
     """The covered chunk rows — every chunk of a ``chunked ∧ indexable ∧ live``
     entry, ascending id — in byte-bounded batches.
 
-    Read by keyset pages, never a streaming cursor: the caller writes
-    between batches on the same connection, and a driver without
-    multiple active result sets (SQL Server over ODBC) refuses a write
-    while a cursor is open. Each page is fully fetched before the batch
-    it completes is handed out.
+    Read by keyset pages, never a streaming cursor, each fully fetched
+    before the batch it completes is handed out; :mod:`.pages` says why
+    and why the page takes the profile's shape.
     """
-    chunks, entry = tables.chunks, tables.entry
-    scan = (
-        select(chunks.c.id, chunks.c.entry_id, chunks.c.content)
-        .select_from(chunks.join(entry, entry.c.entry_id == chunks.c.entry_id))
-        .where(entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None))
-        .order_by(chunks.c.id)
-        .limit(_SCAN_PAGE_ROWS)
-    )
     batcher: ByteBatcher[tuple[int, str, str]] = ByteBatcher(_doc_size, _TOKENIZE_BATCH_BYTES)
     last = 0
-    while page := (await session.execute(scan.where(chunks.c.id > last))).all():
+    while page := (await session.execute(lexical_scan_page(tables, profile, after=last))).all():
         for row in page:
             full = batcher.add((row.id, row.entry_id, row.content))
             if full is not None:

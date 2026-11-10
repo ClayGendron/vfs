@@ -279,12 +279,14 @@ class TestStep:
             slept.append(delay)
             await real_sleep(0)
 
-        monkeypatch.setattr(embed_module.asyncio, "sleep", recording)
+        # The retry's own sleep, never the loop's: patching asyncio.sleep itself would make the
+        # heartbeat spin without yielding and starve the reindex, which once hung the suite.
+        monkeypatch.setattr(embed_module, "sleep", recording)
         provider = ScriptedProvider(max_batch_inputs=3, failures=[RateLimitedError({"retry-after-ms": "250"})])
         storage = await _fresh(tmp_path, embedder=provider, embed_concurrency=1)
         result = await storage.reindex()
         assert result.success is True and result.errors == []
-        assert [delay for delay in slept if delay != backend_module.REINDEX_HEARTBEAT_SECONDS] == [0.25]
+        assert slept == [0.25]
         assert _extra(result)["requests"] == 2 and _extra(result)["unembedded"] == 0
         await storage.close()
 
@@ -292,7 +294,7 @@ class TestStep:
         async def instant(delay: float) -> None:
             return None
 
-        monkeypatch.setattr(embed_module.asyncio, "sleep", instant)
+        monkeypatch.setattr(embed_module, "sleep", instant)
         provider = ScriptedProvider(fail_after=0, error=RateLimitedError({"retry-after": "1"}))
         storage = await _fresh(tmp_path, embedder=provider)
         result = await storage.reindex()
@@ -666,7 +668,7 @@ class TestRefusals:
         async def instant(delay: float) -> None:
             return None
 
-        monkeypatch.setattr(embed_module.asyncio, "sleep", instant)
+        monkeypatch.setattr(embed_module, "sleep", instant)
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, refusal_error=lambda: error)
         storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
         result = await storage.reindex()

@@ -1483,7 +1483,8 @@ class DatabaseStorage:
         if lost.is_set():
             return lease_lost_result()
         result = await self._execute_maintenance(
-            "reindex", lambda session: build_epoch(session, tables, state, self._host.offload_executor)
+            "reindex",
+            lambda session: build_epoch(session, tables, state, self._host.offload_executor, self._host.profile),
         )
         if not result.success or state.epoch is None:
             return with_notes(result, notes)
@@ -1540,9 +1541,15 @@ class DatabaseStorage:
         budget = self._host.membership_budget
         last = 0
         while not lost.is_set():
-            page = await self._rows(
-                "reindex", partial(select_unembedded, tables=tables, after=last, limit=EMBED_PAGE_ROWS, key=key)
+            unembedded = partial(
+                select_unembedded,
+                tables=tables,
+                after=last,
+                limit=EMBED_PAGE_ROWS,
+                key=key,
+                profile=self._host.profile,
             )
+            page = await self._rows("reindex", unembedded)
             if not page:
                 break
             last = page[-1].id

@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from asyncio import sleep
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
@@ -50,10 +51,12 @@ from sqlalchemy import bindparam, delete, exists, func, insert, select, update
 from vfs.results import Result
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.pages import covered_chunk_page
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
@@ -206,24 +209,27 @@ async def clear_embeddings(session: AsyncSession, tables: VFSTables) -> Result:
 
 
 async def select_unembedded(
-    session: AsyncSession, tables: VFSTables, after: ChunkId, limit: int, key: RefusalKey
+    session: AsyncSession, tables: VFSTables, after: ChunkId, limit: int, key: RefusalKey, profile: DialectProfile
 ) -> list[EmbedRow]:
     """The next *limit* live, chunked entries' rows past *after* with no vector and no refusal, ascending id."""
-    chunks, entry = tables.chunks, tables.entry
-    stmt = (
-        select(chunks.c.id, chunks.c.content_hash, chunks.c.content, chunks.c.entry_id)
-        .select_from(chunks.join(entry, entry.c.entry_id == chunks.c.entry_id))
-        .where(
-            chunks.c.id > after,
-            chunks.c.embedding.is_(None),
-            entry.c.chunked,
-            entry.c.deleted_at.is_(None),
-            ~_refused(tables, key),
-        )
-        .order_by(chunks.c.id)
-        .limit(limit)
-    )
+    stmt = unembedded_page(tables, after, limit, key, profile)
     return [EmbedRow(row.id, row.content_hash, row.content, row.entry_id) for row in await session.execute(stmt)]
+
+
+def unembedded_page(
+    tables: VFSTables, after: ChunkId, limit: int, key: RefusalKey, profile: DialectProfile
+) -> Select[Any]:
+    """The keyset page :func:`select_unembedded` reads, in the shape *profile* declares for a covered chunk page."""
+    chunks, entry = tables.chunks, tables.entry
+    return covered_chunk_page(
+        tables,
+        profile,
+        [chunks.c.id, chunks.c.content_hash, chunks.c.content, chunks.c.entry_id],
+        [entry.c.chunked, entry.c.deleted_at.is_(None)],
+        after=after,
+        limit=limit,
+        chunk_terms=[chunks.c.embedding.is_(None), ~_refused(tables, key)],
+    )
 
 
 async def cached_vectors(
@@ -455,14 +461,18 @@ def unit_vector(vector: Sequence[float]) -> list[float]:
 
 
 async def _embed_with_retry(provider: EmbeddingProvider, texts: list[str], timeout: float) -> Any:
-    """One request under *timeout*; a refusal naming ``Retry-After`` is slept once and retried."""
+    """One request under *timeout*; a refusal naming ``Retry-After`` is slept once and retried.
+
+    The sleep is this module's own name, so a test can make the retry
+    instant without touching the loop's other sleepers (the lease heartbeat).
+    """
     try:
         return await asyncio.wait_for(provider.embed_documents(texts), timeout)
     except Exception as exc:
         delay = _retry_after_seconds(exc)
         if delay is None:
             raise
-        await asyncio.sleep(min(delay, RETRY_AFTER_CAP_SECONDS))
+        await sleep(min(delay, RETRY_AFTER_CAP_SECONDS))
         return await asyncio.wait_for(provider.embed_documents(texts), timeout)
 
 
