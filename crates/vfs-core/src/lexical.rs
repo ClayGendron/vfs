@@ -3,16 +3,47 @@
 //!
 //! The tokenizer is a port of the host's reference tokenizer driven by the
 //! host interpreter's own character classes (`lexical_tables.rs`, generated),
-//! so the two cannot disagree on what a letter, a capital or a fold is. The
-//! builder streams documents once — tokenize, count, append each posting to
+//! so the two cannot disagree on what a letter, a capital or a fold is.
+//!
+//! The builder streams documents once — scan, count, append each posting to
 //! its term's open block, seal a block at `BLOCK_SIZE` — and at `finish`
 //! fixes the corpus statistics, each term's idf and every block's true
 //! maximum weight, then drains summary rows and block rows in term order.
+//! The count is made in place, with one owned copy of each term. The scanner
+//! hands each folded term over as a borrowed slice; an interner maps it to
+//! its term list and clones it the first time the corpus shows it, never
+//! again; the list carries the document being counted and the term's running
+//! count in it; and once the scan has fixed the document's length, each list
+//! the document reached appends one posting. No token is materialized and
+//! no document's terms are sorted. The allocations that remain are the
+//! vocabulary's first-sight cost, one string and three posting streams per
+//! term new to the corpus, amortised over the corpus: a chunk costs what it
+//! adds to the vocabulary, not what it holds. Beside them are the scanner's
+//! parts vector, one a document, a term's block offsets when its first block
+//! seals, the interner's table each time it doubles, a logarithm of the
+//! vocabulary, and the first allocation of the vector of term lists and of
+//! each of the builder's three reused buffers, four a builder. The
+//! reallocations are the posting streams, the block offsets, the vector of
+//! term lists and the three reused buffers growing, and the scanner's parts
+//! vector when one run has more than four parts.
+//!
 //! Sealed blocks stay resident until `finish` (a block's true maximum needs
 //! the final statistics); residency is per-term structure rather than blob
-//! bytes — ~660 B per distinct term measured against ~4.5 B per posting — so
-//! an arena for the term streams is the direction if a vocabulary outgrows
-//! memory, never a corpus limit.
+//! bytes — ~660 B per distinct term measured against ~4.5 B per posting when
+//! each term's list sat in a map under its string — so an arena for the term
+//! streams is the direction if a vocabulary outgrows memory, never a corpus
+//! limit. Counting in place adds 24 B to a term's slot: 16 B for the pending
+//! document and count on its list, 8 B for the slot index beside its string.
+//! Under the growth slack of the list vector and the interner's table that
+//! measured, on vocabularies of 200,000 to 400,000 terms of two postings
+//! each, 31 to 48 B a term more than the map while feeding (80 B less at
+//! 262,144 terms, where the map had doubled and the vector was exactly
+//! full), and a peak in `finish` of 400 B a term while the sorted pairs and
+//! the drained terms both exist, or of 464 while the pairs are built from a
+//! list vector that has just doubled, against the map's 368 and 442.
+//! The three reused buffers stay at their high-water marks until `finish`
+//! returns; the largest is the scanner's, 4 B a character of the longest
+//! document.
 //!
 //! The scorer decodes fetched blocks, accumulates BM25 per document in a
 //! fixed order (terms by descending maximum, block order, posting order —
@@ -474,7 +505,8 @@ pub fn term_weight(tf: f64, dl: f64, avg_dl: f64, term_idf: f64) -> f64 {
 type BlockRange = (u32, std::ops::Range<usize>, std::ops::Range<usize>, std::ops::Range<usize>);
 
 /// One term's postings: three byte streams holding every block back to
-/// back, with each sealed block's end offsets, and the open block's state.
+/// back, with each sealed block's end offsets, the open block's state, and
+/// the term's running count in the document being counted.
 struct TermList {
     df: u32,
     ids: Vec<u8>,
@@ -484,11 +516,42 @@ struct TermList {
     sealed: Vec<(u32, u32, u32, u32)>,
     open_count: u32,
     last_id: i64,
+    // The document being counted and this term's occurrences in it so far.
+    pending_doc: i64,
+    pending_tf: u32,
 }
 
 impl TermList {
+    /// An empty list. `pending_doc` starts at 0, which is no document: the
+    /// builder accepts only positive ids, so a first occurrence always opens.
     fn new() -> Self {
-        Self { df: 0, ids: Vec::new(), tfs: Vec::new(), dls: Vec::new(), sealed: Vec::new(), open_count: 0, last_id: 0 }
+        Self {
+            df: 0,
+            ids: Vec::new(),
+            tfs: Vec::new(),
+            dls: Vec::new(),
+            sealed: Vec::new(),
+            open_count: 0,
+            last_id: 0,
+            pending_doc: 0,
+            pending_tf: 0,
+        }
+    }
+
+    /// Count one occurrence in `doc_id`; true when it is the document's first.
+    fn count(&mut self, doc_id: i64) -> bool {
+        if self.pending_doc == doc_id {
+            self.pending_tf += 1;
+            return false;
+        }
+        self.pending_doc = doc_id;
+        self.pending_tf = 1;
+        true
+    }
+
+    /// Post the counted document once its length is known.
+    fn post_pending(&mut self, dl: u32) {
+        self.push(self.pending_doc, self.pending_tf, dl);
     }
 
     fn push(&mut self, doc_id: i64, tf: u32, dl: u32) {
@@ -524,43 +587,70 @@ impl TermList {
     }
 }
 
+/// The streaming builder. `interner` maps each distinct term to its slot in
+/// `lists` and holds the one owned copy of it; `touched` is the slots the
+/// document being counted reached; `chars` and `scratch` are the scanner's
+/// buffers. The three buffers are reused, so they allocate only to grow.
 pub struct LexicalAccumulator {
-    terms: HashMap<String, TermList>,
+    interner: HashMap<String, u32>,
+    lists: Vec<TermList>,
+    touched: Vec<u32>,
+    chars: Vec<char>,
+    scratch: String,
     n_docs: u64,
     total_dl: u64,
     last_doc_id: i64,
-    counts: Vec<(String, u32)>,
 }
 
 impl LexicalAccumulator {
     pub fn new() -> Self {
-        Self { terms: HashMap::new(), n_docs: 0, total_dl: 0, last_doc_id: 0, counts: Vec::new() }
+        Self {
+            interner: HashMap::new(),
+            lists: Vec::new(),
+            touched: Vec::new(),
+            chars: Vec::new(),
+            scratch: String::new(),
+            n_docs: 0,
+            total_dl: 0,
+            last_doc_id: 0,
+        }
+    }
+
+    /// How many distinct terms the corpus has shown so far.
+    pub fn distinct_terms(&self) -> usize {
+        self.interner.len()
     }
 
     /// Tokenize and post one document; returns its token count (`dl`).
+    ///
+    /// Each term is counted on its own list as the scanner emits it, and a
+    /// term new to the corpus is cloned into the interner then, once. The
+    /// postings wait for the scan to end, because each carries the length.
     pub fn add_doc(&mut self, doc_id: i64, content: &str) -> Result<u32, LexicalError> {
         if doc_id <= self.last_doc_id {
             return Err(LexicalError::NonIncreasingDocId { doc_id, last: self.last_doc_id });
         }
-        let mut tokens = tokenize(content);
-        let dl = tokens.len() as u32;
-        tokens.sort_unstable();
-        self.counts.clear();
-        for term in tokens {
-            match self.counts.last_mut() {
-                Some((last, tf)) if *last == term => *tf += 1,
-                _ => self.counts.push((term, 1)),
-            }
-        }
-        for (term, tf) in self.counts.drain(..) {
-            match self.terms.get_mut(&term) {
-                Some(list) => list.push(doc_id, tf, dl),
+        let Self { interner, lists, touched, chars, scratch, .. } = self;
+        let mut dl = 0u32;
+        scan_terms(content, chars, scratch, |term| {
+            dl += 1;
+            let slot = match interner.get(term) {
+                Some(&slot) => slot,
                 None => {
-                    let mut list = TermList::new();
-                    list.push(doc_id, tf, dl);
-                    self.terms.insert(term, list);
+                    // Loud, never a wrap that would hand two terms one list;
+                    // the lists alone pass 500 GB before this can fire.
+                    let slot = u32::try_from(lists.len()).expect("more distinct terms than a slot index holds");
+                    lists.push(TermList::new());
+                    interner.insert(term.to_owned(), slot);
+                    slot
                 }
+            };
+            if lists[slot as usize].count(doc_id) {
+                touched.push(slot);
             }
+        });
+        for slot in touched.drain(..) {
+            lists[slot as usize].post_pending(dl);
         }
         self.last_doc_id = doc_id;
         self.n_docs += 1;
@@ -572,7 +662,13 @@ impl LexicalAccumulator {
     pub fn finish(self) -> DrainedLexical {
         let n_docs = self.n_docs;
         let avg_dl = if n_docs == 0 { 0.0 } else { self.total_dl as f64 / n_docs as f64 };
-        let mut terms: Vec<(String, TermList)> = self.terms.into_iter().collect();
+        // Lay the terms out by slot, then pair each with its list: the interner's
+        // table is freed before the pairs exist, and both vectors once they are paired.
+        let mut by_slot = vec![String::new(); self.lists.len()];
+        for (term, slot) in self.interner {
+            by_slot[slot as usize] = term;
+        }
+        let mut terms: Vec<(String, TermList)> = by_slot.into_iter().zip(self.lists).collect();
         terms.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let mut scratch = Vec::new();
         let mut tfs = Vec::new();
@@ -914,6 +1010,32 @@ mod tests {
         assert_eq!(summaries[1].max_weight, first_max.max(second_max));
         // Both blocks hold a tf-2 posting, so their maxima agree.
         assert_eq!(first_max, second_max);
+    }
+
+    /// Guards against a term taking a second slot, against a term's running
+    /// count carrying over from one document into the next, and against a
+    /// document's length counting its distinct terms.
+    #[test]
+    fn builder_interns_a_term_once() {
+        let mut acc = LexicalAccumulator::new();
+        acc.add_doc(1, "alpha beta alpha gamma").unwrap();
+        assert_eq!(acc.distinct_terms(), 3);
+        acc.add_doc(2, "gamma beta alpha beta").unwrap();
+        assert_eq!(acc.distinct_terms(), 3);
+        let (_, summaries, rows) = drain(acc);
+        let dfs: Vec<(&str, u32)> = summaries.iter().map(|s| (s.term.as_str(), s.df)).collect();
+        assert_eq!(dfs, [("alpha", 2), ("beta", 2), ("gamma", 2)]);
+        // Each term's one block holds both documents' counts and lengths, in
+        // document order; a length is every token, four in each document.
+        let decoded = |blob: &[u8]| {
+            let mut values = Vec::new();
+            decode_varints(blob, &mut values);
+            values
+        };
+        let tfs: Vec<Vec<u64>> = rows.iter().map(|row| decoded(&row.tfs)).collect();
+        assert_eq!(tfs, [[2, 1], [1, 2], [1, 1]]);
+        let dls: Vec<Vec<u64>> = rows.iter().map(|row| decoded(&row.dls)).collect();
+        assert_eq!(dls, [[4, 4], [4, 4], [4, 4]]);
     }
 
     #[test]
