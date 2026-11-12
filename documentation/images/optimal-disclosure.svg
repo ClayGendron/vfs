@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 524" width="640" height="524" role="img" aria-labelledby="title desc">
+  <title id="title">Tokens Used vs. Tokens Needed</title>
+  <desc id="desc">A chart of tokens used against tokens needed to solve a problem. The diagonal line, where tokens used equals tokens needed, is the line of optimal disclosure. Above the line cost is high because more tokens were used than the problem needed. Below the line performance is low because fewer tokens were used than the problem needed.</desc>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .primary { fill: #0b0b0b; }
+    .secondary { fill: #52514e; }
+    .axis { stroke: #898781; fill: none; }
+    .optimal { stroke: #2a78d6; fill: none; }
+    .title { font-size: 20px; font-weight: 600; }
+    .head { font-size: 16px; font-weight: 600; }
+    .body { font-size: 13px; }
+    .label { font-size: 13px; font-weight: 600; }
+    .axis-title { font-size: 15px; }
+    /* The background is transparent, so the ink follows the reader's theme. */
+    @media (prefers-color-scheme: dark) {
+      .primary { fill: #f0efec; }
+      .secondary { fill: #c3c2b7; }
+      .optimal { stroke: #3987e5; }
+    }
+  </style>
+
+  <text class="title primary" text-anchor="middle" x="320" y="44">Tokens Used vs. Tokens Needed</text>
+
+  <!-- Axes: the plot is the square from (130, 84) to (510, 464). -->
+  <path class="axis" stroke-width="1" d="M130 84 V464 H510"/>
+
+  <!-- The line of optimal disclosure: tokens used equals tokens needed. -->
+  <path class="optimal" stroke-width="2" stroke-linecap="round" d="M130 464 L510 84"/>
+  <text class="label primary" text-anchor="middle" transform="translate(320 274) rotate(-45)" y="-10">Line of optimal disclosure</text>
+
+  <!-- Above the line. -->
+  <text class="head primary" x="152" y="122">High cost</text>
+  <text class="body secondary" x="152" y="144">More tokens used</text>
+  <text class="body secondary" x="152" y="162">than the problem needed</text>
+
+  <!-- Below the line. -->
+  <text class="head primary" text-anchor="end" x="488" y="408">Low performance</text>
+  <text class="body secondary" text-anchor="end" x="488" y="430">Fewer tokens used</text>
+  <text class="body secondary" text-anchor="end" x="488" y="448">than the problem needed</text>
+
+  <!-- Axis titles. -->
+  <text class="axis-title secondary" text-anchor="middle" x="320" y="497">Tokens needed to solve the problem →</text>
+  <text class="axis-title secondary" text-anchor="middle" transform="translate(102 274) rotate(-90)">Tokens used to solve the problem →</text>
+</svg>
