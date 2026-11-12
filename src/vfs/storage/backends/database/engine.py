@@ -59,7 +59,6 @@ import hashlib
 import importlib.util
 import random
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
@@ -91,7 +90,6 @@ from vfs.storage.backends.database.dialects import (
     profile_for,
     topology_execution_options,
 )
-from vfs.storage.backends.database.offload import OFFLOAD_WORKERS
 from vfs.storage.backends.database.rights import posture_row
 from vfs.storage.grants import LEVEL_RANK
 
@@ -239,9 +237,6 @@ class EngineHost:
         # Created lazily on the caller's loop — construction must stay
         # loop-free so construct-here, first-touch-elsewhere works.
         self._lock: asyncio.Lock | None = None
-        # Owned either way (built or borrowed) — connectivity etiquette
-        # never applies to the host's own offload pool.
-        self._offload_executor: ThreadPoolExecutor | None = None
         # Whether the database lives in memory, read once at first touch; a
         # connection to one is never replaced, whatever pool holds it.
         self.in_memory: bool | None = None
@@ -278,21 +273,6 @@ class EngineHost:
     def membership_budget(self) -> int:
         """Elements per ``IN``-list chunk under this dialect's budgets."""
         return membership_budget(self.profile, self.parameter_budget)
-
-    @property
-    def offload_executor(self) -> ThreadPoolExecutor:
-        """The CPU offload pool — lazy on first use, shut and cleared at close.
-
-        Serves every offloaded stage (grep verify, reindex's chunk and
-        posting passes, write's body measurement, edit's per-target matching).
-        Cleared, not just shut: a call after close
-        re-mints a fresh pool and serves, the same transparent
-        re-establishment every sibling verb already has; any re-minted
-        pool is shut by the next close.
-        """
-        if self._offload_executor is None:
-            self._offload_executor = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-offload")
-        return self._offload_executor
 
     @property
     def embedding_stale(self) -> bool:
@@ -555,22 +535,10 @@ class EngineHost:
         it never commits. An interrupted pass loses only its statistics;
         the table stays due and the next write asks again. The dispose
         below runs either way, in a ``finally``.
-
-        The offload pool is the host's own either way and every close
-        shuts whatever pool exists — without waiting: an abandoned
-        worker mid-call finishes into the void rather than holding
-        close hostage. Queued work is never cancelled: its callers are
-        still awaiting, and a served call beats a poisoned one. The
-        slot is cleared so the next offloaded call re-mints (the
-        sibling posture: verbs serve after close), owned by whichever
-        close comes next.
         """
         try:
             await self.stop_analysis()
         finally:
-            if self._offload_executor is not None:
-                self._offload_executor.shutdown(wait=False)
-                self._offload_executor = None
             # The ready latch falls with its connectivity: the next op re-runs
             # the idempotent first touch instead of serving off a stale latch.
             self._ready = False

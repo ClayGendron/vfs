@@ -14,7 +14,13 @@ normative dispatch rule for the hierarchical vocabulary.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import NamedTuple
+from typing import Final, NamedTuple
+
+# The data keys a tombstoned row's refusal carries, so a caller knows ``restore`` applies;
+# the third names the root that restores a tree when the refusal is aimed inside it.
+TRASHED_KEY: Final = "vfs.trashed"
+DELETED_AT_KEY: Final = "vfs.deleted_at"
+TRASH_ROOT_KEY: Final = "vfs.trash_root"
 
 # ---------------------------------------------------------------------------
 # Kind vocabulary

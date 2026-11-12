@@ -1,0 +1,23 @@
+Run on 2026-11-12 over vfs at 280a983 by the spec's author, from the repository root, with
+`uv run python <script> <arguments>`; CPython 3.13.11, macOS-26.5.2-arm64 (Apple M1 Pro, 10 cores),
+rayon-core 1.13.0 (Cargo.lock). The two scripts are the second spec reviewer's, copied unchanged.
+Python's DeprecationWarning for a fork in a multi-threaded process is left out below.
+
+== q3_fork_head.py warm kernel
+parent: 100000
+child killed by signal 14 (SIGALRM is 14): it hung
+== q3_fork_head.py warm storage
+parent: 50
+child killed by signal 14 (SIGALRM is 14): it hung
+== q3_fork_head.py cold kernel
+child: 100000
+child exit code 0
+== q3_fork_head.py cold storage
+child: 50
+child exit code 0
+== q3_fork_write.py
+parent: write ok=True | threads: ['MainThread']
+child write only: write ok=True
+child write only: exit code 0
+child write then grep: write ok=True grep rows=1
+child write then grep: exit code 0

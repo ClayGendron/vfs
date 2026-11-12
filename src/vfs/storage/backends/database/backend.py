@@ -31,14 +31,16 @@ import asyncio
 from collections import OrderedDict
 from contextlib import asynccontextmanager, suppress
 from functools import partial
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 from ulid import ULID
 
 from vfs.authority import Authority
+from vfs.batching import byte_chunked
+from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
+from vfs.offload import call_offloaded, offload_pool
 from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
@@ -50,7 +52,6 @@ from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     PROFILES,
     StaleSnapshot,
-    byte_chunked,
     op_execution_options,
     topology_execution_options,
 )
@@ -99,7 +100,6 @@ from vfs.storage.backends.database.indexing import (
     with_notes,
 )
 from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, call_offloaded
 from vfs.storage.backends.database.reads import (
     AdmittedScope,
     addressed_by,
@@ -521,7 +521,7 @@ class DatabaseStorage:
                     host.profile,
                     host.parameter_budget,
                     host.membership_budget,
-                    host.offload_executor,
+                    offload_pool(),
                     patterns=patterns,
                     globs_not=globs_not,
                     ext=ext,
@@ -576,7 +576,7 @@ class DatabaseStorage:
                     host.profile,
                     host.parameter_budget,
                     host.membership_budget,
-                    host.offload_executor,
+                    offload_pool(),
                     view=view,
                     pattern=pattern,
                     ext=ext,
@@ -642,7 +642,7 @@ class DatabaseStorage:
                     host.profile,
                     host.parameter_budget,
                     host.membership_budget,
-                    host.offload_executor,
+                    offload_pool(),
                     view=view,
                     query=query,
                     limit=limit,
@@ -754,7 +754,7 @@ class DatabaseStorage:
         authority: Authority | None = None,
     ) -> Result:
         host = self._host
-        entries, refused = await measured_entries(entries, host.offload_executor)
+        entries, refused = await measured_entries(entries, offload_pool())
         if refused:
             return Result(ops=("write",), errors=refused)
 
@@ -805,7 +805,7 @@ class DatabaseStorage:
                 edits=edits,
                 targets=targets,
                 authority=self._named(authority),
-                executor=host.offload_executor,
+                executor=offload_pool(),
             )
 
         return await self._execute_write("edit", run)
@@ -1380,7 +1380,7 @@ class DatabaseStorage:
                 blobs = await self._rows("reindex", fetch) if wanted else {}
                 await seam("reindex:before-render")
                 work = partial(render_rows, cut, blobs, registry, limits, cached)
-                rendered = await call_offloaded(self._host.offload_executor, work)
+                rendered = await call_offloaded(offload_pool(), work)
                 await seam("reindex:before-render-land")
                 if lost.is_set():
                     return lease_lost_result(), report
@@ -1428,7 +1428,7 @@ class DatabaseStorage:
             for signal in ranker.signals:
                 if lost.is_set():
                     return lease_lost_result()
-                values = await compute_signal(self._host.offload_executor, graph, signal)
+                values = await compute_signal(offload_pool(), graph, signal)
                 generation = str(ULID())
                 publish = partial(publish_signal, tables=tables, signal=signal, generation=generation, values=values)
                 published = await self._execute_maintenance("reindex", publish)
@@ -1475,7 +1475,7 @@ class DatabaseStorage:
                 self._host.profile,
                 self._host.parameter_budget,
                 self._host.membership_budget,
-                self._host.offload_executor,
+                offload_pool(),
                 carry_embeddings=not self._host.embedding_stale,
             ),
         )
@@ -1486,7 +1486,7 @@ class DatabaseStorage:
             return lease_lost_result()
         result = await self._execute_maintenance(
             "reindex",
-            lambda session: build_epoch(session, tables, state, self._host.offload_executor, self._host.profile),
+            lambda session: build_epoch(session, tables, state, offload_pool(), self._host.profile),
         )
         if not result.success or state.epoch is None:
             return with_notes(result, notes)
@@ -1750,7 +1750,7 @@ class DatabaseStorage:
         force at it and the posture rows beneath it, linear in the roots.
         """
         host = self._host
-        deadline = monotonic() + gate.wall_seconds
+        deadline = Deadline.after(gate.wall_seconds)
         budget = host.membership_budget
 
         def chained() -> tuple[list[str], list[list[str]]] | None:
@@ -1761,7 +1761,7 @@ class DatabaseStorage:
             chunks = posture_chain(judged, budget, deadline=deadline)
             return None if chunks is None else (judged, chunks)
 
-        planned = await call_offloaded(host.offload_executor, chained)
+        planned = await call_offloaded(offload_pool(), chained)
         if planned is None:
             return [posture_wall_refusal()]
         judged, chunks = planned
@@ -1769,7 +1769,7 @@ class DatabaseStorage:
         if postures is None:
             return [posture_wall_refusal()]
         judge = partial(posture_refusals, who, postures, judged, rung, deadline=deadline)
-        refusals = await call_offloaded(host.offload_executor, judge)
+        refusals = await call_offloaded(offload_pool(), judge)
         return [posture_wall_refusal()] if refusals is None else refusals
 
     async def _gate(

@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple, cast
 from sqlalchemy import bindparam, column, delete, func, insert, literal, or_, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
 
+from vfs.batching import ByteBatcher, byte_chunked
 from vfs.models.chunk import Chunk
 from vfs.models.chunking import chunk_generation
 from vfs.models.code_grams import GRAM_SIZE, distinct_gram_count, folded_bytes, normalize_content
@@ -69,13 +70,12 @@ from vfs.models.lexical import options_fingerprint
 from vfs.models.links import link_generation
 from vfs.models.postings import postings_builder
 from vfs.models.rows import ENCODING_DELTA_VARINT
+from vfs.offload import call_offloaded
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import (
-    ByteBatcher,
     StaleSnapshot,
     bulk_insert,
-    byte_chunked,
     chunked,
     statement_budget,
     supports_values_update,
@@ -83,7 +83,6 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.lexical import build_lexical_epoch
 from vfs.storage.backends.database.links import LinkWork, extract_link_work, publish_links
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
@@ -278,10 +277,10 @@ async def chunk_dirty(
     info-severity record; they are never an error.
 
     The pass's CPU — eligibility assessment, the splits, and chunk-row
-    assembly — runs whole on the backend's offload pool
-    (:func:`~vfs.storage.backends.database.offload.call_offloaded`), so
+    assembly — runs whole on the process's offload pool
+    (:func:`~vfs.offload.call_offloaded`), so
     the event loop keeps serving concurrent callers for its duration —
-    except across a close that shuts the captured pool mid-pass, after
+    except across a shutdown of the captured pool mid-pass, after
     which the whole split runs inline, correct and classified.
     Residency profile, honestly: the dirty set's rows (bodies included)
     are materialized before the hop, and the pass peaks at ~6.1x dirty
@@ -393,9 +392,9 @@ async def build_epoch(
     byte-capped inserts. The lexical index builds under the same epoch
     after the postings drain, from the chunk rows of the same entries, read
     in the page shape *profile* declares. The build's CPU — the fold-and-feed of each
-    batch and every drain call — hops through the backend's offload
+    batch and every drain call — hops through the process's offload
     pool, so the loop keeps serving while the engine works — except
-    across a close that shuts the captured pool, after which the
+    across a shutdown of the captured pool, after which the
     remaining feeds and drains run inline, correct and classified.
     Peak build memory is the accumulated posting set — compressed
     delta blobs in the Rust engine, raw id lists in the pure fallback

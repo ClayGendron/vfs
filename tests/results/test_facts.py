@@ -13,8 +13,10 @@ from pathlib import Path as FsPath
 import pytest
 
 from vfs import AsyncVirtualFileSystem
+from vfs import results as results_package
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import KIND_CONTRACTS, ErrorKind, Result, Severity, classified, wrong_kind
+from vfs.results.kinds import DELETED_AT_KEY, TRASH_ROOT_KEY, TRASHED_KEY
 from vfs.storage.backends import InMemoryStorage
 
 SRC = FsPath(__file__).resolve().parents[2] / "src" / "vfs"
@@ -161,3 +163,16 @@ def test_no_constructor_call_passes_a_message() -> None:
         if re.search(r"(?:classified|_error)\([^)]*\bmessage=", file.read_text(), re.DOTALL)
     ]
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# The data vocabulary
+# ---------------------------------------------------------------------------
+
+
+def test_the_tombstone_keys_live_with_the_result() -> None:
+    """Guards: a tombstone key defined in the database adapter again, or added to the public surface."""
+    assert (TRASHED_KEY, DELETED_AT_KEY, TRASH_ROOT_KEY) == ("vfs.trashed", "vfs.deleted_at", "vfs.trash_root")
+    assert not {"TRASHED_KEY", "DELETED_AT_KEY", "TRASH_ROOT_KEY"} & set(results_package.__all__)
+    descent = (SRC / "storage" / "backends" / "database" / "descent.py").read_text()
+    assert not re.search(r"^(?:TRASHED_KEY|DELETED_AT_KEY|TRASH_ROOT_KEY)\b[^\n]*=", descent, re.MULTILINE)

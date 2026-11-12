@@ -9,10 +9,11 @@ the authoritative per-row gate (:func:`passes_gates`), the SQL terms a
 candidate fetch may ride beside its id chunk (:func:`pushdown_terms`,
 with true bind accounting), and the scan side's bounded, structurally
 prefiltered fetch of the ``NOT encoded`` overlay (:func:`entries_for_scan`)
-with the three laws that bound it: the count at which both verbs cut the
-path-ordered dirty rows (:data:`SCAN_TIER_BUDGET`), the bytes of bodies
-either verb holds at once (:data:`CONTENT_BYTE_BUDGET`) and the metering
-that prices a row for that budget (:func:`stored_size`).
+with the laws that bound it: the count at which both verbs cut the
+path-ordered dirty rows (:data:`SCAN_TIER_BUDGET`) and the metering
+that prices a row (:func:`stored_size`) for the bytes of bodies either
+verb holds at once, a budget that lives beside the worker pool as
+:data:`vfs.offload.CONTENT_BYTE_BUDGET`.
 The gate is the law; every pushdown only narrows toward it. A scope
 under the ``/.vfs/trash`` head searches the tombstoned rows at the
 paths beneath it (:func:`trash_scope`): the head is stripped before
@@ -21,7 +22,6 @@ the patterns compile, and the liveness term flips on every tier.
 
 from __future__ import annotations
 
-from time import monotonic
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from sqlalchemy import func, or_, select
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.deadline import Deadline
     from vfs.models.rows import VFSTables
     from vfs.paths import Path
     from vfs.pattern_matching import GlobFilter, GlobGates, ScopeChannel
@@ -69,10 +70,6 @@ FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "deleted_at"} | RIGHTS_FIEL
 # benchmark row search semantics can justify. A tripped budget truncates
 # with a warning that says what each tier took.
 SCAN_TIER_BUDGET: Final = 25_000
-
-# Bytes of scan-tier bodies resident at once: content is fetched, matched
-# or counted, and released in batches sized by the entries' size_bytes.
-CONTENT_BYTE_BUDGET: Final = 32 * 1024 * 1024
 
 
 class ScanNominees(NamedTuple):
@@ -257,7 +254,7 @@ async def entries_for_scan(
     everything: bool,
     fetched: frozenset[str],
     limit: int,
-    deadline: float,
+    deadline: Deadline,
     trashed: bool = False,
     scope_roots: Sequence[str] = (),
     scope_facts: ScopeFacts = NO_SCOPE_FACTS,
@@ -311,7 +308,7 @@ async def entries_for_scan(
         if not wheres:
             return ScanNominees([], False)
         for where in wheres:
-            if monotonic() > deadline:
+            if deadline.expired():
                 break
             stmt = select(*columns).where(*base, where).order_by(entry.c.path).limit(limit + 1)
             fetched_rows = list((await session.execute(stmt)).mappings())

@@ -44,7 +44,6 @@ shows corpus-width scopes under tight budgets.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 from sqlalchemy import func, select
@@ -58,6 +57,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.deadline import Deadline
     from vfs.models.rows import VFSTables
     from vfs.pattern_matching import DerivedExt
     from vfs.storage.backends.database.dialects import DialectProfile
@@ -160,7 +160,7 @@ async def allow_list_ids(
     channel: ChannelTerms,
     *,
     fan_arms: int,
-    deadline: float,
+    deadline: Deadline,
 ) -> DocIds | None:
     """The channel's nomination allow-list, or ``None`` when pruning is void.
 
@@ -195,7 +195,7 @@ async def allow_list_ids(
         counts = await _term_counts(session, tables, profile, membership_budget, terms)
     admitted: set[int] = set()
     for arm in channel.arms:
-        if monotonic() > deadline:
+        if deadline.expired():
             return None
         if counts is not None and not all(counts[term] for term in arm.segments):
             continue

@@ -40,8 +40,9 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
+from vfs.batching import byte_chunked
 from vfs.models.version import measure_bytes, measure_text
-from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, byte_chunked, chunked
+from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, chunked
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.revision import read_revision
 

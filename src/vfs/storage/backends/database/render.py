@@ -46,10 +46,11 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import bindparam, case, delete, func, or_, select, update
 
+from vfs.batching import byte_chunked
 from vfs.models.media import RENDERED_STATUSES, SETTLED_STATUSES
 from vfs.rendering.seam import UNSUPPORTED_GENERATION, Rendering, RenderSource, units_from_json, units_to_json
 from vfs.results import Result
-from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, byte_chunked, chunked
+from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, chunked
 from vfs.storage.backends.database.membership import membership
 
 if TYPE_CHECKING:

@@ -29,12 +29,13 @@ from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import compile_gates
 from vfs.results import ErrorKind
+from vfs.results.kinds import DELETED_AT_KEY, TRASH_ROOT_KEY, TRASHED_KEY
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import trash as trash_module
 from vfs.storage.backends.database import versions as versions_module
-from vfs.storage.backends.database.descent import DELETED_AT_KEY, TRASH_ROOT_KEY, TRASHED_KEY, subtree_filter
+from vfs.storage.backends.database.descent import subtree_filter
 from vfs.storage.backends.database.dialects import (
     POSTGRESQL,
     StaleSnapshot,

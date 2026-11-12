@@ -11,13 +11,13 @@ channels return ``None``, dead terms return honestly empty sets.
 
 from __future__ import annotations
 
-from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import select
 
 from tests.support.database_helpers import _url
+from vfs.deadline import Deadline
 from vfs.models import Entry
 from vfs.paths import Path
 from vfs.pattern_matching import compile_gates, glob_defect
@@ -99,7 +99,7 @@ GLOBS = (
 def _admits(pattern: str, path: Path) -> bool:
     """The authority's verdict on one path: the call's gates over one native judgement."""
     gates = compile_gates((pattern,))
-    native = gates.native(None)
+    native = gates.native(Deadline.never())
     assert native is not None
     (verdict,), _completed = native.judge([(str(path), path.name)], budget=None)
     return gates.admits(verdict, path.ext)
@@ -240,10 +240,10 @@ async def _allow_list(
     patterns: tuple[str, ...],
     *,
     fan_arms: int = 200,
-    deadline: float | None = None,
+    deadline: Deadline | None = None,
 ) -> list[int] | None:
     channel = compile_channel(patterns)
-    horizon = deadline if deadline is not None else monotonic() + 60
+    horizon = deadline if deadline is not None else Deadline.after(60)
     async with storage._host.session_factory() as session:
         return await allow_list_ids(
             session,
@@ -353,7 +353,7 @@ class TestAllowListSeam:
                 budget,
                 channel,
                 fan_arms=200,
-                deadline=monotonic() + 60,
+                deadline=Deadline.after(60),
             )
         assert ids
         anchor_condition = captured[-1].whereclause.clauses[0]
@@ -361,7 +361,7 @@ class TestAllowListSeam:
 
     async def test_an_expired_deadline_voids_pruning_whole(self, storage: DatabaseStorage) -> None:
         # Never a partial union: a partial allow-list under-nominates.
-        assert await _allow_list(storage, ("src/**", "docs/**"), deadline=-1.0) is None
+        assert await _allow_list(storage, ("src/**", "docs/**"), deadline=Deadline(at=-1.0)) is None
 
     async def test_a_channel_wider_than_the_fan_voids_pruning(self, storage: DatabaseStorage) -> None:
         # The loop's statement count is caller-sized: past the fan

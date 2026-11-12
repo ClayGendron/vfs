@@ -23,7 +23,9 @@ from sqlalchemy.exc import OperationalError
 from tests.support.grant_worlds import DIRECTORIES, LAYOUTS, PATHS, SUBJECT_SETS, Layout, random_world
 from tests.support.oracles.grants import GrantWorld, everyone_rank, set_rank
 from tests.support.statements import is_statistics_statement
+from vfs import deadline as deadline_module
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
+from vfs.deadline import Deadline
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.ops import VERB_RUNGS
@@ -976,9 +978,7 @@ class TestPostureGate:
             return real(root, arm)
 
         monkeypatch.setattr(reads_module, "composed_pattern", counted)
-        monkeypatch.setattr(backend_module, "monotonic", lambda: 0.0)
-        monkeypatch.setattr(reads_module, "monotonic", lambda: 1e9 if judged else 0.0)
-        monkeypatch.setattr(rights_module, "monotonic", lambda: 1e9 if judged else 0.0)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 1e9 if judged else 0.0)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
         result = await storage.glob(patterns=(), scope=scope, authority=Authority.anonymous())
         [error] = result.errors
@@ -999,10 +999,10 @@ class TestPostureGate:
         real = getattr(backend_module, stage)
 
         def expired(*args: Any, **kwargs: Any) -> Any:
-            return real(*args, **{**kwargs, "deadline": -1.0})
+            return real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
 
         async def expired_read(*args: Any, **kwargs: Any) -> Any:
-            return await real(*args, **{**kwargs, "deadline": -1.0})
+            return await real(*args, **{**kwargs, "deadline": Deadline(at=-1.0)})
 
         monkeypatch.setattr(backend_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
@@ -1023,11 +1023,11 @@ class TestPostureGate:
         paths = [f"/r{i:03}/src" for i in range(65)]
         anon = Authority.anonymous()
         clock = iter([0.0, 2.0])
-        monkeypatch.setattr(rights_module, "monotonic", lambda: next(clock, 2.0))
-        assert posture_chain(paths, 1_000, deadline=1.0) is None
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: next(clock, 2.0))
+        assert posture_chain(paths, 1_000, deadline=Deadline(at=1.0)) is None
         clock = iter([0.0, 2.0])
-        assert posture_refusals(anon, {}, paths, "read", deadline=1.0) is None
-        chunks = posture_chain(paths, 50, deadline=None)
+        assert posture_refusals(anon, {}, paths, "read", deadline=Deadline(at=1.0)) is None
+        chunks = posture_chain(paths, 50, deadline=Deadline.never())
         assert chunks is not None and [len(chunk) for chunk in chunks] == [50, 50, 31]
         chain = [path for chunk in chunks for path in chunk]
         assert chain == sorted({"/", *paths, *(path.removesuffix("/src") for path in paths)})

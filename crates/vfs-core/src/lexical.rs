@@ -56,7 +56,7 @@
 //! so no token is materialized and no dictionary of the body is built; the
 //! match against the query is a linear compare for a short query and a
 //! hash lookup past `LINEAR_MATCH_TERMS`, exact on the folded term either
-//! way. It reads the clock between documents, every `CLOCK_EVERY` of them.
+//! way. It reads the clock between documents, every `CHECK_EVERY` of them.
 //!
 //! Wire shapes: `doc_ids` is the gram codec's count-prefixed delta+varint
 //! blob (deltas restart at each block, so a block decodes alone); `tfs` and
@@ -65,8 +65,8 @@
 //! maximum weight as a little-endian `f64`.
 
 use std::collections::HashMap;
-use std::time::Instant;
 
+use crate::deadline::{CHECK_EVERY, Deadline};
 use crate::lexical_tables::{ASSIGNED, CASEFOLD, DIGIT, LOWER, UPPER, WORD};
 
 pub use crate::lexical_tables::{PYTHON_VERSION, UNICODE_VERSION};
@@ -80,9 +80,6 @@ const MAX_TERM_BYTES: usize = 64;
 /// Query terms up to which the overlay kernel compares each token linearly;
 /// past it a hash map of the terms is built once per call.
 const LINEAR_MATCH_TERMS: usize = 8;
-
-/// Documents between the overlay kernel's deadline reads.
-const CLOCK_EVERY: usize = 64;
 
 /// Bit flags of `char_classes`, one byte per code point.
 pub const CLASS_WORD: u8 = 1;
@@ -291,9 +288,9 @@ impl<'a> TermIndex<'a> {
 /// query-time postings, without materializing a token or a dictionary.
 ///
 /// Bodies are counted in the order given; the deadline is read before
-/// every `CLOCK_EVERY`th body, and a batch that reaches it stops there with
+/// every `CHECK_EVERY`th body, and a batch that reaches it stops there with
 /// `completed` false and the postings of the bodies it did count.
-pub fn overlay_postings(docs: &[(i64, &str)], terms: &[&str], deadline: Option<Instant>) -> OverlayOutcome {
+pub fn overlay_postings(docs: &[(i64, &str)], terms: &[&str], deadline: Deadline) -> OverlayOutcome {
     let index = TermIndex::new(terms);
     let first_of: Vec<usize> = terms.iter().map(|term| index.position(term).expect("every term is its own")).collect();
     let mut postings: Vec<Vec<(i64, u32, u32)>> = vec![Vec::new(); terms.len()];
@@ -303,7 +300,7 @@ pub fn overlay_postings(docs: &[(i64, &str)], terms: &[&str], deadline: Option<I
     let mut chars = Vec::new();
     let mut scratch = String::new();
     for (ordinal, &(doc_id, content)) in docs.iter().enumerate() {
-        if ordinal % CLOCK_EVERY == 0 && deadline.is_some_and(|at| Instant::now() > at) {
+        if ordinal % CHECK_EVERY == 0 && deadline.past() {
             return OverlayOutcome { postings, reached, total_dl, completed: false };
         }
         tfs.fill(0);
@@ -960,29 +957,43 @@ mod tests {
         .to_vec();
         for terms in [&two[..], &twenty[..]] {
             let (expected, total_dl) = counted(&docs, terms);
-            let outcome = overlay_postings(&docs, terms, None);
+            let outcome = overlay_postings(&docs, terms, Deadline::never());
             assert_eq!(outcome.postings, expected);
             assert_eq!((outcome.reached, outcome.total_dl, outcome.completed), (4, total_dl, true));
         }
         // The twenty-term query takes the set path and finds every present term.
-        let outcome = overlay_postings(&docs, &twenty, None);
+        let outcome = overlay_postings(&docs, &twenty, Deadline::never());
         assert_eq!(outcome.postings[6], Vec::<(i64, u32, u32)>::new());
         assert_eq!(outcome.postings[0], vec![(7, 1, 30), (3, 3, 11)]);
-        assert_eq!(overlay_postings(&[], &two, None).postings, vec![Vec::new(), Vec::new()]);
+        assert_eq!(overlay_postings(&[], &two, Deadline::never()).postings, vec![Vec::new(), Vec::new()]);
     }
 
     #[test]
     fn overlay_postings_stops_between_documents_at_the_deadline() {
         let docs: Vec<(i64, &str)> = (1..=70).map(|id| (id, "alpha beta alpha")).collect();
-        let passed = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let passed = Deadline::at(std::time::Instant::now() - std::time::Duration::from_secs(1));
         let stopped = overlay_postings(&docs, &["alpha"], passed);
         assert_eq!((stopped.reached, stopped.total_dl, stopped.completed), (0, 0, false));
         assert_eq!(stopped.postings, vec![Vec::new()]);
-        let ahead = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        let ahead = Deadline::at(std::time::Instant::now() + std::time::Duration::from_secs(60));
         let finished = overlay_postings(&docs, &["alpha"], ahead);
         assert_eq!((finished.reached, finished.total_dl, finished.completed), (70, 210, true));
         assert_eq!(finished.postings[0].len(), 70);
         assert_eq!(finished.postings[0][69], (70, 2, 3));
+    }
+
+    #[test]
+    fn overlay_postings_reads_the_deadline_before_every_64th_document() {
+        // Guards: the clock read before the first document alone, or before every document.
+        let docs: Vec<(i64, &str)> = (1..=200).map(|id| (id, "alpha beta alpha")).collect();
+        let ahead = Deadline::at(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        let before = crate::deadline::clock_reads();
+        let finished = overlay_postings(&docs, &["alpha"], ahead);
+        assert_eq!((finished.reached, finished.completed), (200, true));
+        let reads = crate::deadline::clock_reads() - before;
+        assert_eq!(reads, 4, "one read before documents 0, 64, 128 and 192");
+        let unbounded = overlay_postings(&docs, &["alpha"], Deadline::never());
+        assert_eq!((unbounded.reached, crate::deadline::clock_reads() - before), (200, 4));
     }
 
     #[test]

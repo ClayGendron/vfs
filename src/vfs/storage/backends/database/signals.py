@@ -32,10 +32,10 @@ from sqlalchemy import delete, insert, select, update
 from vfs.models import CONTENT_KINDS
 from vfs.models.edge import RESERVED_EDGE_TYPE
 from vfs.models.signals import NO_PARENT, centrality_prior
+from vfs.offload import call_offloaded
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.ranking import PathShape
 
 if TYPE_CHECKING:

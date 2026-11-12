@@ -26,7 +26,7 @@ from ulid import ULID
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
-from vfs.models import MEASURED_BODY, BodyMetrics, Entry
+from vfs.models import MEASURED_BODY, BodyMetrics, Entry, measure_bytes
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import ObjectKind, Path
 from vfs.results import ErrorKind, ResultError
@@ -1412,5 +1412,94 @@ async def test_a_vouched_line_count_is_replaced_by_the_stored_bodys(tmp_path) ->
         async with storage._host.session_factory() as session:
             lines = (await session.execute(select(entry.c.lines).where(entry.c.path == "/two.txt"))).scalar_one()
         assert lines == 2
+    finally:
+        await storage.close()
+
+
+async def test_large_bodies_are_measured_in_one_offloaded_hop(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    hops: list[int] = []
+    real = writes_module.call_offloaded
+
+    async def counted(executor: Any, work: Any) -> Any:
+        hops.append(1)
+        return await real(executor, work)
+
+    monkeypatch.setattr(writes_module, "call_offloaded", counted)
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        batches = {
+            "large": [b"a" * 150_000, b"b" * 150_000, b"c" * 10],
+            "small": [bytes([n]) * 1_000 for n in range(10)],
+            "many": [n.to_bytes(2, "big") * 49 + b"z" for n in range(2_000)],
+            "at_total": [bytes([n]) * 10_000 for n in range(10)],
+            "under_total": [bytes([n]) * 9_999 for n in range(10)] + [b"\xff" * 9],
+        }
+        expected = {"large": 1, "small": 0, "many": 1, "at_total": 1, "under_total": 0}
+        for name, bodies in batches.items():
+            hops.clear()
+            entries = [Entry(path=Path(f"/{name}/{n:05}.bin"), data=body) for n, body in enumerate(bodies)]
+            assert (await storage.write(entries=entries, parents=True)).success is True
+            assert len(hops) == expected[name], name
+            for entry, body in zip(entries, bodies, strict=True):
+                row = (await storage.stat(path=entry.path)).one()
+                assert row.content_hash == measure_bytes(body).content_hash
+    finally:
+        await storage.close()
+
+
+async def test_a_body_changed_during_the_hop_is_never_stored_under_another_hash(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The call totals past the inline cap, so it hops; one entry's body is
+    # swapped as the hop starts and another carries a forged measurement.
+    public = b"public body " * 10_000
+    target = Entry(path=Path("/eve/handbook.bin"), data=public)
+    forged = Entry(path=Path("/eve/forged.bin"), data=b"forged " * 20)
+    forged.content_hash = "b" * 64
+    forged.size_bytes = 1
+    real = writes_module.call_offloaded
+
+    async def swapping(executor: Any, work: Any) -> Any:
+        target.data = b"swapped body"
+        return await real(executor, work)
+
+    monkeypatch.setattr(writes_module, "call_offloaded", swapping)
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        assert (await storage.write(entries=[target, forged], parents=True)).success is True
+        for path in ("/eve/handbook.bin", "/eve/forged.bin"):
+            stored = (await storage.read(path=Path(path), columns=frozenset({"data"}))).one().data
+            row = (await storage.stat(path=Path(path))).one()
+            assert stored is not None
+            assert (row.content_hash, row.size_bytes) == (measure_bytes(stored).content_hash, len(stored))
+        handbook = await storage.read(path=Path("/eve/handbook.bin"), columns=frozenset({"data"}))
+        assert handbook.one().data == public
+    finally:
+        await storage.close()
+
+
+async def test_an_edit_call_matches_in_one_hop_with_a_budget_per_match(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hops: list[int] = []
+    real = writes_module.call_offloaded
+
+    async def counted(executor: Any, work: Any) -> Any:
+        hops.append(1)
+        return await real(executor, work)
+
+    storage = DatabaseStorage(url=_url(tmp_path))
+    try:
+        # ten near-misses of about 500,000 cells each: each fits its own budget
+        body = "a\n" + "x" * 707 + "\nb\n"
+        entries = [Entry(path=Path(f"/e/{n}.txt"), content=body) for n in range(10)]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        monkeypatch.setattr(writes_module, "call_offloaded", counted)
+        edit = EditOperation(old="a\n" + "x" * 706 + "y" + "\nb", new="done")
+        result = await storage.edit(edits=[edit], observations=[e.to_observation() for e in entries])
+        assert result.success is True, result.errors
+        assert len(hops) == 1
+        for entry in entries:
+            assert (await storage.read(path=entry.path)).one().content == "done\n"
     finally:
         await storage.close()

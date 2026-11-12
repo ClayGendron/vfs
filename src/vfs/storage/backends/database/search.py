@@ -66,11 +66,12 @@ with their line bounds and text.
 from __future__ import annotations
 
 from functools import partial
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import and_, func, or_, select, text, tuple_
 
+from vfs.batching import byte_chunked
+from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE, Deadline
 from vfs.models import Match, Observation
 from vfs.models.lexical import (
     BLOCK_SIZE,
@@ -86,17 +87,17 @@ from vfs.models.lexical import (
     tokenize,
 )
 from vfs.native import extension
+from vfs.offload import CONTENT_BYTE_BUDGET, call_offloaded, judge_rows, wall_truncation
 from vfs.paths import Path
 from vfs.pattern_matching import PatternError, compile_gates, escape_glob
 from vfs.pattern_matching.grep import split_lines
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
-from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.lexical import TermStatistics, lexical_stats
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, call_offloaded, judge_rows
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.reads import (
@@ -111,7 +112,6 @@ from vfs.storage.backends.database.reads import (
 )
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 from vfs.storage.backends.database.scope import (
-    CONTENT_BYTE_BUDGET,
     FETCH_RIDE,
     SCAN_TIER_BUDGET,
     entries_for_scan,
@@ -176,7 +176,7 @@ class _Gates(NamedTuple):
         return passes_gates(mapping, self.gates, verdict, trashed=self.trashed)
 
     async def judge(
-        self, executor: Executor, rows: Sequence[RowMapping], deadline: float
+        self, executor: Executor, rows: Sequence[RowMapping], deadline: Deadline
     ) -> tuple[dict[EntryId, int | None], bool]:
         """Each distinct entry's verdict among *rows*, judged in one hop, and whether all were judged.
 
@@ -321,7 +321,7 @@ async def search_rows(
     )
     gated = _Gates(gates, pushdown, trashed)
     fetched = effective_columns(columns, content=False)
-    deadline = monotonic() + wall_seconds
+    deadline = Deadline.after(wall_seconds)
     truncations: list[tuple[str, dict[str, Any] | None]] = []
 
     epoch, overlay_empty = await pointer_with_overlay(session, tables)
@@ -382,7 +382,7 @@ async def search_rows(
                     _record_wall(truncations)
                 window_full = len(ranking) >= depth
                 short = window_full and len(hits) < limit
-                if not short or candidates is not None or monotonic() > deadline:
+                if not short or candidates is not None or deadline.expired():
                     break
                 depth *= PROBE_DEEPEN
             if window_full and len(hits) < limit:
@@ -391,7 +391,7 @@ async def search_rows(
 
     vector_hits: dict[EntryId, _Hit] = {}
     vector_depth = max(VECTOR_DEPTH_FACTOR * limit, VECTOR_DEPTH_FLOOR)
-    if vector is not None and monotonic() <= deadline:
+    if vector is not None and not deadline.expired():
         vector_hits, vector_rows, completed = await _vector_leg(
             session,
             tables,
@@ -413,7 +413,7 @@ async def search_rows(
         for entry_id, mapping in vector_rows.items():
             rows.setdefault(entry_id, mapping)
 
-    if monotonic() > deadline:
+    if deadline.expired():
         _record_wall(truncations)
     skip_verified = False
     if overlay_empty:
@@ -421,7 +421,7 @@ async def search_rows(
         if current != epoch:
             raise StaleSnapshot("the gram-index epoch pointer moved mid-search")
         skip_verified = still_empty
-    if not skip_verified and monotonic() <= deadline:
+    if not skip_verified and not deadline.expired():
         nominees = await entries_for_scan(
             session,
             tables,
@@ -481,15 +481,7 @@ async def search_rows(
     errors = [
         *records,
         *signals.records,
-        *(
-            classified(
-                ErrorKind.truncated,
-                severity=Severity.warning,
-                detail=f"at the {reason}; {REFINE_GUIDANCE}",
-                data=data,
-            )
-            for reason, data in truncations
-        ),
+        *(_truncation_record(reason, data) for reason, data in truncations),
     ]
     export = {
         "n_docs": stats.n_docs,
@@ -663,7 +655,7 @@ async def _entries_for_chunks(
     profile: DialectProfile,
     membership_budget: int,
     executor: Executor,
-    deadline: float,
+    deadline: Deadline,
     view: Visibility | None = None,
 ) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping], bool]:
     """MaxP: the ranked chunks resolved to their live, encoded, admitted entries' rows.
@@ -739,7 +731,7 @@ async def _vector_leg(
     profile: DialectProfile,
     membership_budget: int,
     executor: Executor,
-    deadline: float,
+    deadline: Deadline,
     view: Visibility | None = None,
 ) -> tuple[dict[EntryId, _Hit], dict[EntryId, RowMapping], bool]:
     """The *depth* nearest chunks by cosine, resolved to admitted entries and MaxP'd.
@@ -992,7 +984,7 @@ async def _overlay(
     admitted: Sequence[RowMapping],
     terms: Sequence[str],
     stats: TermStatistics,
-    deadline: float,
+    deadline: Deadline,
 ) -> tuple[dict[EntryId, _Hit], bool]:
     """The admitted ``NOT encoded`` rows scored from their live text on the epoch's scale, and whether all were counted.
 
@@ -1017,7 +1009,7 @@ async def _overlay(
     by_surrogate: dict[int, EntryId] = {}
     completed = True
     for batch in byte_chunked(admitted, stored_size, CONTENT_BYTE_BUDGET):
-        if monotonic() > deadline:
+        if deadline.expired():
             completed = False
             break
         entry_ids = [mapping["entry_id"] for mapping in batch]
@@ -1040,9 +1032,9 @@ async def _overlay(
     return {by_surrogate[doc_id]: _Hit(score, [(-1, score)]) for doc_id, score in ranked}, completed
 
 
-def _count_overlay(docs: Sequence[tuple[int, str]], terms: Sequence[str], deadline: float) -> OverlayPostings:
+def _count_overlay(docs: Sequence[tuple[int, str]], terms: Sequence[str], deadline: Deadline) -> OverlayPostings:
     """One batch through the engine's kernel, the budget cut at worker start so queue time shortens it."""
-    return overlay_postings(docs, terms, budget=max(0.0, deadline - monotonic()))
+    return overlay_postings(docs, terms, budget=deadline.remaining())
 
 
 async def _overlay_bodies(
@@ -1246,3 +1238,11 @@ def _record_wall(truncations: list[tuple[str, dict[str, Any] | None]]) -> None:
     """Note the wall once: every site that reaches it writes the same record, and the first one stands."""
     if all(reason != WALL_TIME_CAUSE for reason, _data in truncations):
         truncations.append((WALL_TIME_CAUSE, None))
+
+
+def _truncation_record(reason: str, data: dict[str, Any] | None) -> ResultError:
+    """One truncation cause as its record: the wall's from its one mint, any other with its data."""
+    if reason == WALL_TIME_CAUSE:
+        return wall_truncation(REFINE_GUIDANCE)
+    detail = f"at the {reason}; {REFINE_GUIDANCE}"
+    return classified(ErrorKind.truncated, severity=Severity.warning, detail=detail, data=data)

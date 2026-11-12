@@ -33,6 +33,7 @@ from sqlalchemy.exc import IntegrityError
 from ulid import ULID
 
 from vfs.authority import owner_for
+from vfs.batching import byte_chunked
 from vfs.models import encoded_at_creation
 from vfs.paths import MAX_PATH_LENGTH, ROOT, Path, byte_length
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified
@@ -48,7 +49,6 @@ from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
     StaleSnapshot,
     bulk_insert,
-    byte_chunked,
     chunked,
     rows_per_statement,
 )

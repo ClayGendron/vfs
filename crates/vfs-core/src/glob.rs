@@ -27,12 +27,7 @@
 //! program a row matches, so one batch overruns it by at most 64 matches
 //! a thread.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
-
-use rayon::prelude::*;
-
-use crate::verify::BatchOutcome;
+use crate::deadline::{BatchOutcome, CHECK_EVERY, Deadline, par_batch};
 
 /// One atom of the host's program, in pattern order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,9 +214,6 @@ impl GlobProgram {
 /// The most groups a set holds: one bit each in a verdict word.
 pub const MAX_GROUPS: usize = 64;
 
-/// Programs matched before a row checks its deadline again.
-const PROGRAMS_PER_CHECK: usize = 64;
-
 /// One call's distinct programs and the groups that name them by index.
 ///
 /// A row's verdict has bit `g` set when some program of group `g`
@@ -241,7 +233,7 @@ impl GlobSet {
     pub fn build(
         programs: Vec<(Vec<Atom>, bool)>,
         groups: Vec<Vec<usize>>,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Option<GlobSet>, ProgramError> {
         if groups.len() > MAX_GROUPS {
             return Err(ProgramError(format!("a set holds at most {MAX_GROUPS} groups, got {}", groups.len())));
@@ -251,7 +243,7 @@ impl GlobSet {
         }
         let mut built = Vec::with_capacity(programs.len());
         for (atoms, by_path) in &programs {
-            if past(deadline) {
+            if deadline.past() {
                 return Ok(None);
             }
             built.push((GlobProgram::new(atoms)?, *by_path));
@@ -262,9 +254,10 @@ impl GlobSet {
     /// The row's verdict word, or `None` when *deadline* passed inside its groups.
     ///
     /// Each group stops at its first match; the deadline is checked before
-    /// every 64th program matched, so a row overruns it by at most 64 matches.
-    pub fn verdict(&self, path: &str, name: &str, deadline: Option<Instant>) -> Option<u64> {
-        self.verdict_with(path, name, || past(deadline)).0
+    /// every [`CHECK_EVERY`]th program matched, so a row overruns it by at
+    /// most that many matches.
+    pub fn verdict(&self, path: &str, name: &str, deadline: Deadline) -> Option<u64> {
+        self.verdict_with(path, name, || deadline.past()).0
     }
 
     /// The verdict under an injected deadline check, with the programs matched.
@@ -273,7 +266,7 @@ impl GlobSet {
         let mut matched = 0usize;
         for (bit, group) in self.groups.iter().enumerate() {
             for &index in group {
-                if matched > 0 && matched.is_multiple_of(PROGRAMS_PER_CHECK) && expired() {
+                if matched > 0 && matched.is_multiple_of(CHECK_EVERY) && expired() {
                     return (None, matched);
                 }
                 matched += 1;
@@ -293,30 +286,22 @@ impl GlobSet {
 pub fn judge_batch<S: AsRef<str> + Sync>(
     set: &GlobSet,
     rows: &[(S, S)],
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> BatchOutcome<Option<u64>> {
-    let completed = AtomicBool::new(true);
-    let results = rows
-        .par_iter()
-        .map(|(path, name)| {
-            let verdict = if past(deadline) { None } else { set.verdict(path.as_ref(), name.as_ref(), deadline) };
-            if verdict.is_none() {
-                completed.store(false, Ordering::Relaxed);
-            }
-            verdict
-        })
-        .collect();
-    BatchOutcome { results, completed: completed.load(Ordering::Relaxed) }
+    par_batch(
+        rows,
+        deadline,
+        || None,
+        |(path, name)| {
+            let verdict = set.verdict(path.as_ref(), name.as_ref(), deadline);
+            (verdict, verdict.is_some())
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/// Whether *deadline* has passed; no deadline never passes.
-fn past(deadline: Option<Instant>) -> bool {
-    deadline.is_some_and(|at| Instant::now() > at)
-}
 
 /// The work one match took: characters read, words touched, wide steps read.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -635,7 +620,7 @@ mod tests {
     }
 
     fn set(programs: Vec<(Vec<Atom>, bool)>, groups: Vec<Vec<usize>>) -> GlobSet {
-        GlobSet::build(programs, groups, None).expect("a well-formed set").expect("no deadline")
+        GlobSet::build(programs, groups, Deadline::never()).expect("a well-formed set").expect("no deadline")
     }
 
     /// `*.py` over names, `/src/` + tail over paths, `/` `**/` `app/` tail over paths.
@@ -655,10 +640,10 @@ mod tests {
     #[test]
     fn glob_set_sets_one_bit_per_matching_group() {
         let gates = three_groups();
-        assert_eq!(gates.verdict("/src/app/main.py", "main.py", None), Some(0b111));
-        assert_eq!(gates.verdict("/src/readme.md", "readme.md", None), Some(0b010));
-        assert_eq!(gates.verdict("/lib/a.py", "a.py", None), Some(0b101));
-        assert_eq!(gates.verdict("/lib/a.md", "a.md", None), Some(0));
+        assert_eq!(gates.verdict("/src/app/main.py", "main.py", Deadline::never()), Some(0b111));
+        assert_eq!(gates.verdict("/src/readme.md", "readme.md", Deadline::never()), Some(0b010));
+        assert_eq!(gates.verdict("/lib/a.py", "a.py", Deadline::never()), Some(0b101));
+        assert_eq!(gates.verdict("/lib/a.md", "a.md", Deadline::never()), Some(0));
     }
 
     #[test]
@@ -666,21 +651,21 @@ mod tests {
         let name = lits("x");
         let path = lits("/x");
         let gates = set(vec![entry(name, false), entry(path, true)], vec![vec![0], vec![1]]);
-        assert_eq!(gates.verdict("/x", "x", None), Some(0b11));
-        assert_eq!(gates.verdict("/d/x", "x", None), Some(0b01));
+        assert_eq!(gates.verdict("/x", "x", Deadline::never()), Some(0b11));
+        assert_eq!(gates.verdict("/d/x", "x", Deadline::never()), Some(0b01));
         // A name program never sees the path, a path program never the name.
-        assert_eq!(gates.verdict("/x", "y", None), Some(0b10));
+        assert_eq!(gates.verdict("/x", "y", Deadline::never()), Some(0b10));
     }
 
     #[test]
     fn glob_set_rows_past_the_deadline_are_unjudged() {
         let gates = three_groups();
         let rows: Vec<(&str, &str)> = vec![("/src/a.py", "a.py"), ("/b.md", "b.md"), ("/app/c", "c")];
-        let expired = Instant::now() - std::time::Duration::from_secs(1);
-        let outcome = judge_batch(&gates, &rows, Some(expired));
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let outcome = judge_batch(&gates, &rows, Deadline::at(expired));
         assert_eq!(outcome.results, vec![None, None, None]);
         assert!(!outcome.completed);
-        let outcome = judge_batch(&gates, &rows, None);
+        let outcome = judge_batch(&gates, &rows, Deadline::never());
         assert!(outcome.results.iter().all(Option::is_some));
         assert!(outcome.completed);
     }
@@ -695,7 +680,7 @@ mod tests {
             checks >= 2
         });
         assert_eq!(verdict, None);
-        assert!(matched <= 128, "{matched} programs matched past the deadline");
+        assert_eq!(matched, 128, "the deadline is read every 64 programs");
     }
 
     #[test]
@@ -709,8 +694,8 @@ mod tests {
 
     #[test]
     fn glob_set_build_stops_at_the_deadline() {
-        let expired = Instant::now() - std::time::Duration::from_secs(1);
-        let built = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]], Some(expired));
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let built = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]], Deadline::at(expired));
         assert!(matches!(built, Ok(None)));
     }
 
@@ -724,10 +709,10 @@ mod tests {
                 (format!("/{dir}/{name}"), name)
             })
             .collect();
-        let sequential: Vec<Option<u64>> = rows.iter().map(|(path, name)| gates.verdict(path, name, None)).collect();
+        let sequential: Vec<Option<u64>> = rows.iter().map(|(path, name)| gates.verdict(path, name, Deadline::never())).collect();
         for threads in [1, 8] {
             let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
-            let outcome = pool.install(|| judge_batch(&gates, &rows, None));
+            let outcome = pool.install(|| judge_batch(&gates, &rows, Deadline::never()));
             assert_eq!(outcome.results, sequential);
             assert!(outcome.completed);
         }
@@ -735,12 +720,13 @@ mod tests {
 
     #[test]
     fn glob_set_refuses_an_index_out_of_range_and_a_65th_group() {
-        let out_of_range = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![1]], None);
+        let never = Deadline::never();
+        let out_of_range = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![1]], never);
         assert!(out_of_range.is_err());
-        let too_wide = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS + 1], None);
+        let too_wide = GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS + 1], never);
         assert!(too_wide.is_err());
-        assert!(GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS], None).is_ok());
-        let refused = GlobSet::build(vec![entry(vec![Atom::Star, Atom::Star], false)], vec![vec![0]], None);
+        assert!(GlobSet::build(vec![entry(lits("a"), false)], vec![vec![0]; MAX_GROUPS], never).is_ok());
+        let refused = GlobSet::build(vec![entry(vec![Atom::Star, Atom::Star], false)], vec![vec![0]], never);
         assert!(refused.is_err());
     }
 

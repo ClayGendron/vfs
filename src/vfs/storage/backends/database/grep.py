@@ -13,7 +13,7 @@ materialize here until capped — apply the structural gates off the
 rows' own stored facts (no per-candidate ``Path``; each tier's rows
 judged in one hop on the offload pool, under the call's wall) before
 any content fetch, verify every candidate through the shared matcher (batched per
-content batch on the backend-owned offload pool, the absolute wall
+content batch on the process's offload pool, the absolute wall
 deadline crossing the hop), and union the flag-partitioned scan side
 (``NOT encoded``) so index staleness can never lose a match.
 ``invert_match`` is scan-shaped by construction — no occurrence index
@@ -49,8 +49,8 @@ its branch count; that width is deliberately uncapped (bulk unions —
 IOC lists, symbol sweeps — are a supported shape) and is bounded by
 the wall-clock deadline instead, consulted between branches. The scan
 tier's count, byte and metering laws are the ones search's overlay reads
-(``SCAN_TIER_BUDGET``, ``CONTENT_BYTE_BUDGET`` and ``stored_size`` in
-``scope.py``); grep spends the count as one pool its index side draws
+(``SCAN_TIER_BUDGET`` and ``stored_size`` in ``scope.py``,
+``CONTENT_BYTE_BUDGET`` in ``vfs.offload``); grep spends the count as one pool its index side draws
 from first. When the index side alone saturates it the scan overlay is
 never consulted, and the truncation record says so by name and carries
 what each tier took against the budget.
@@ -61,15 +61,17 @@ none begins or commits — ``backend.py`` owns the transaction.
 
 from __future__ import annotations
 
-from time import monotonic
 from typing import TYPE_CHECKING, Annotated, Final, NamedTuple
 
 from sqlalchemy import select
 
+from vfs.batching import byte_chunked
+from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE, Deadline
 from vfs.models import Match, Observation
 from vfs.models.code_grams import GramOr, build_code_gram_query
 from vfs.models.postings import PostingCorruptionError
 from vfs.native import extension
+from vfs.offload import CONTENT_BYTE_BUDGET, VerifyOffload, judge_rows, wall_truncation
 from vfs.paths import Path
 from vfs.pattern_matching import (
     Body,
@@ -78,10 +80,9 @@ from vfs.pattern_matching import (
     compile_verifier,
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, byte_chunked, chunked
+from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.indexing import current_epoch
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, VerifyOffload, judge_rows
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
     CHANNEL_ARM_BINDS,
@@ -94,7 +95,6 @@ from vfs.storage.backends.database.reads import (
     side_scope,
 )
 from vfs.storage.backends.database.scope import (
-    CONTENT_BYTE_BUDGET,
     FETCH_RIDE,
     SCAN_TIER_BUDGET,
     Pushdown,
@@ -124,10 +124,8 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Visibility
 
-# Posting bytes decoded per call; the candidate count and the body bytes
-# are the scan tier's shared laws (``scope.py``), and the wall (the offload
-# seam's) is checked between ladder stages and inside the gate's and the
-# matcher's batches. A tripped budget truncates with a warning.
+# Posting bytes decoded per call. The candidate count, the body bytes and the
+# wall are shared laws with homes of their own. A tripped budget truncates with a warning.
 POSTING_BYTE_BUDGET: Final = 4 * 1024 * 1024
 
 # Rarest-first intersection width — selectivity saturates by four grams.
@@ -224,7 +222,7 @@ async def grep_rows(
     channel = channels.allowed
     gated = bool(gates.has_patterns or gates.scoped or gates.wanted or gates.unwanted)
     fetched = effective_columns(columns, content=columns is not None)
-    deadline = monotonic() + wall_seconds
+    deadline = Deadline.after(wall_seconds)
     # Channel fan in arms: the pruning loop spends one statement per arm
     # and the fetch one OR branch per arm, so both consumers share it.
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
@@ -283,7 +281,7 @@ async def grep_rows(
         for mapping in admitted:
             if view is None or view.holds(mapping, view.need):
                 candidates[mapping["path"]] = mapping
-    if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
+    if deadline.expired() and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
     index_admitted = len(candidates)
 
@@ -332,7 +330,7 @@ async def grep_rows(
                 for mapping in admitted:
                     if view is None or view.holds(mapping, view.need):
                         candidates.setdefault(mapping["path"], mapping)
-    if monotonic() > deadline and WALL_TIME_CAUSE not in truncations:
+    if deadline.expired() and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
     if not scan_all and not skip_verified and await current_epoch(session, tables) != epoch:
         # A rival publish+reclaim landed mid-call: the tiers this call
@@ -351,12 +349,11 @@ async def grep_rows(
     elif output_mode == "count":
         row_mask = row_mask | {"score"}
     mask = frozenset(row_mask)
-    # Verify leaves the loop: each batch call runs on the backend-owned
-    # pool, the absolute deadline crossing the hop (queue wait shortens
-    # the budget, never the wall). Batches stay sequential by law.
+    # Verify leaves the loop: each batch call runs on the executor, the absolute
+    # deadline crossing the hop. Batches stay sequential by law.
     verify = VerifyOffload(verifier, executor)
     for batch in byte_chunked(ordered, stored_size, CONTENT_BYTE_BUDGET):
-        if monotonic() > deadline:
+        if deadline.expired():
             if WALL_TIME_CAUSE not in truncations:
                 truncations.append(WALL_TIME_CAUSE)
             break
@@ -396,9 +393,11 @@ async def grep_rows(
     # The count record says what each tier took of the pool; the wall's carries nothing.
     took = {"scanned": scanned, "index": index_admitted, "budget": SCAN_TIER_BUDGET}
     for reason in truncations:
-        detail = f"at the {reason}; {_REFINE_GUIDANCE}"
-        data = None if reason == WALL_TIME_CAUSE else took
-        errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail, data=data))
+        if reason == WALL_TIME_CAUSE:
+            errors.append(wall_truncation(_REFINE_GUIDANCE))
+        else:
+            detail = f"at the {reason}; {_REFINE_GUIDANCE}"
+            errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail, data=took))
     return Result(ops=("grep",), observations=rows, errors=errors)
 
 
@@ -598,7 +597,7 @@ async def _gated(
     *,
     gated: bool,
     trashed: bool,
-    deadline: float,
+    deadline: Deadline,
 ) -> tuple[list[RowMapping], bool]:
     """The rows that pass the structural gates, judged in one hop, and whether every row was judged.
 

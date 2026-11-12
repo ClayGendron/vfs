@@ -43,7 +43,6 @@ its live neighbours: every relabel statement runs once, over ``path``.
 from __future__ import annotations
 
 import json
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 
 from sqlalchemy import and_, delete, func, insert, or_, select, text, update
@@ -82,6 +81,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vfs.deadline import Deadline
     from vfs.models.rows import VFSTables
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.grants import GrantLevel, Open, PostureRows, Span
@@ -128,7 +128,7 @@ async def posture_rows_for_chunks(
     profile: DialectProfile,
     chunks: Sequence[Sequence[str]],
     *,
-    deadline: float | None,
+    deadline: Deadline,
 ) -> dict[str, GrantLevel] | None:
     """The posture rows among pre-sorted, pre-chunked *chunks*, issued as given; ``None`` past *deadline*.
 
@@ -140,7 +140,7 @@ async def posture_rows_for_chunks(
     grants = tables.grants
     postures: dict[str, GrantLevel] = {}
     for chunk in chunks:
-        if deadline is not None and monotonic() > deadline:
+        if deadline.expired():
             return None
         stmt = select(grants.c.path_prefix, grants.c.level).where(
             grants.c.principal_id == EVERYONE_NAME, membership(grants.c.path_prefix, chunk, profile)

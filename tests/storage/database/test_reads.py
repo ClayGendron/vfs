@@ -23,6 +23,8 @@ from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
 from tests.support.loop_ticks import LoopTicker
+from vfs import deadline as deadline_module
+from vfs.deadline import Deadline
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
@@ -1000,11 +1002,11 @@ class TestGlobWall:
         with pytest.raises(ValueError, match="glob_wall_seconds"):
             InMemoryStorage(glob_wall_seconds=seconds)
 
-    async def test_glob_judges_each_side_once_on_the_backend_pool(
+    async def test_glob_judges_each_side_once_on_the_process_pool(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Guards: one hop per candidate instead of one per tombstone side, or the
-        judging run off the backend's own pool."""
+        judging run off the process pool."""
         storage = DatabaseStorage(url=_url(tmp_path))
         written = await storage.write(entries=[Entry(path=Path(p), content="x") for p in ("/live.txt", "/gone.txt")])
         assert written.success is True
@@ -1226,9 +1228,19 @@ class TestScopeChannel:
         scope = ScopeChannel(roots=roots, arms=("src/**", "*.py"))
         composed = [composed_pattern(root, arm) for root in roots for arm in scope.arms]
         expected = addressed_by(sorted(("/z/*.md", *composed)))
-        assert scope_addressed(("/z/*.md",), scope, deadline=math.inf) == expected
-        assert scope_addressed((), ScopeChannel(roots=roots, arms=()), deadline=math.inf) == ["/"]
-        assert scope_addressed(("a**b",), scope, deadline=math.inf) == ["/"]
+        never = Deadline.never()
+        assert scope_addressed(("/z/*.md",), scope, deadline=never) == expected
+        assert scope_addressed((), ScopeChannel(roots=roots, arms=()), deadline=never) == ["/"]
+        assert scope_addressed(("a**b",), scope, deadline=never) == ["/"]
         reads = iter([0.0, 0.0, 0.0, 2.0])
-        monkeypatch.setattr(reads_module, "monotonic", lambda: next(reads, 2.0))
-        assert scope_addressed((), ScopeChannel(roots=roots[:64], arms=("*.py", "*.md")), deadline=1.0) is None
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: next(reads, 2.0))
+        stopped = scope_addressed((), ScopeChannel(roots=roots[:64], arms=("*.py", "*.md")), deadline=Deadline(at=1.0))
+        assert stopped is None
+
+    def test_scope_addressed_past_its_deadline_addresses_nothing(self) -> None:
+        """Guards: a composition the deadline stopped short read as the whole
+        scope, so an expired gate is judged at the root alone instead of refused."""
+        scope = ScopeChannel(roots=(Path("/a"), Path("/b")), arms=("*.py",))
+        past = Deadline(at=-1.0)
+        assert scope_addressed((), scope, deadline=past) is None
+        assert scope_addressed(("/z/*.md",), scope, deadline=past) is None

@@ -35,16 +35,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from functools import partial
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, assert_never, cast
 
 from pydantic import ValidationError
 
 from vfs.authority import Authority
+from vfs.batching import byte_chunked
+from vfs.deadline import CHECK_EVERY, WALL_TIME_BUDGET, Deadline
 from vfs.exceptions import MountError, raise_lone_or_group
 from vfs.models import (
     CONTENT_KINDS,
@@ -56,6 +56,7 @@ from vfs.models import (
     measure_bytes,
     measure_text,
 )
+from vfs.offload import CONTENT_BYTE_BUDGET, call_offloaded, judge_rows, offload_pool, wall_truncation
 from vfs.ops import (
     MUTATING_OPS,
     READ_OPS,
@@ -97,7 +98,7 @@ from vfs.permissions import (
 )
 from vfs.rerank import BM25Rerank, Reranker, fanout_depth, merge_ranked
 from vfs.results import ErrorKind, Result, ResultError, classified, validation_message
-from vfs.results.kinds import Severity, kind_family
+from vfs.results.kinds import TRASHED_KEY, Severity, kind_family
 from vfs.session import AsyncSession
 from vfs.storage import (
     ResolvedPair,
@@ -111,16 +112,6 @@ from vfs.storage import (
     SupportsTraversal,
     TransportError,
 )
-from vfs.storage.backends.database.descent import TRASHED_KEY
-from vfs.storage.backends.database.dialects import byte_chunked
-from vfs.storage.backends.database.offload import (
-    OFFLOAD_WORKERS,
-    WALL_TIME_BUDGET,
-    WALL_TIME_CAUSE,
-    call_offloaded,
-    judge_rows,
-)
-from vfs.storage.backends.database.scope import CONTENT_BYTE_BUDGET
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
@@ -153,9 +144,6 @@ _CHAINED_REFINE_GUIDANCE: Final = "narrow the pattern, add globs or ext filters,
 _CHAINED_GLOB_REFINE_GUIDANCE: Final = "narrow the pattern or its exclusions, or send fewer rows"
 _SCOPED_REFINE_GUIDANCE: Final = "narrow the patterns, or scope with fewer paths"
 _PLANNING_REFINE_GUIDANCE: Final = "scope with fewer paths, or send fewer patterns or brace arms"
-
-# Residuations the planning walk runs between two reads of its deadline.
-_RESIDUATIONS_PER_CHECK: Final = 64
 
 # Past this many composed arms in one entry (owned roots times arms), the roots
 # ride beside the arms as a scope channel; the storage fan's arm ceiling.
@@ -379,7 +367,7 @@ async def _authored_entry(path: Path, content: str | None, data: bytes | None) -
 
     The hash of a small body costs less than a thread hop, so it is taken
     inline by the model's own validator. A large body is measured on the
-    loop's default executor first and handed to the validator through its
+    process pool first and handed to the validator through its
     measured-body door, so one caller's 16 MB write never stalls every
     other coroutine on the host for the length of a sha256.
     """
@@ -387,9 +375,9 @@ async def _authored_entry(path: Path, content: str | None, data: bytes | None) -
     if body is None or len(body) < MEASURE_OFFLOAD_BYTES:
         return Entry(path=str(path), content=content, data=data)
     if isinstance(body, bytes):
-        metrics = await asyncio.to_thread(measure_bytes, body)
+        metrics = await call_offloaded(offload_pool(), partial(measure_bytes, body))
     else:
-        metrics = await asyncio.to_thread(measure_text, body)
+        metrics = await call_offloaded(offload_pool(), partial(measure_text, body))
     return Entry.model_validate({"path": str(path), "content": content, "data": data}, context={MEASURED_BODY: metrics})
 
 
@@ -453,7 +441,6 @@ class AsyncVirtualFileSystem:
         self._default_authority = default_authority
         self._mount_lock = asyncio.Lock()
         self._stranded_disposals: dict[int, StorageBackend] = {}
-        self._verify_pool: ThreadPoolExecutor | None = None
         root_meta = MountMeta(
             permission_map=coerce_permissions(permissions),
             no_overlay=no_overlay,
@@ -731,10 +718,6 @@ class AsyncVirtualFileSystem:
             bindings = list(self._bindings.values())
             self._bindings = {}
             self._sorted_mount_paths = []
-            # Shut before any await: a grep holding the pool serves its remaining batches inline.
-            if self._verify_pool is not None:
-                self._verify_pool.shutdown(wait=False)
-                self._verify_pool = None
 
         targets = dict(self._stranded_disposals)
         for binding in bindings:
@@ -1371,7 +1354,7 @@ class AsyncVirtualFileSystem:
         differ across layouts.
 
         With *observations*, glob is a filter over the rows in hand:
-        the path gates judge every row in one batch on the router's own
+        the path gates judge every row in one batch on the process's
         worker pool, under the wall-time budget (a call that reaches it
         returns the rows judged and one ``truncated`` warning), and rows
         serve exactly as held (columns, staleness, and input order
@@ -1474,7 +1457,7 @@ class AsyncVirtualFileSystem:
         matches. The index tier is not involved, so *allow_scan* and
         the refusal gate do not apply. The glob gates judge every row in
         one batch, and each distinct body is matched once, in batches,
-        both on the router's own worker pool, each stage under the
+        both on the process's worker pool, each stage under the
         storage tier's wall-time budget; a call that reaches it returns
         the matches found so far and one ``truncated`` warning.
 
@@ -1925,7 +1908,7 @@ class AsyncVirtualFileSystem:
         The path gates run over the rows as held — admission by any
         expanded arm, rejection by exclusion globs and the ext facts, no
         meta rule, duplicates and order preserved — judged in one hop on
-        the router's pool under a wall read at entry; a row the engine
+        the process pool under a wall read at entry; a row the engine
         did not judge before it is dropped, with one ``truncated``
         warning. A *kind*
         filter judged against a row that carries no kind stats exactly
@@ -1933,17 +1916,15 @@ class AsyncVirtualFileSystem:
         never guessed — and a row that cannot be statted classifies
         loudly beside the healthy rows.
         """
-        deadline = monotonic() + WALL_TIME_BUDGET
+        deadline = Deadline.after(WALL_TIME_BUDGET)
         rows, invalid = self._observation_rows("glob", observations)
         if invalid is not None:
             return invalid
         gates = compile_gates(arms, globs_not, ext=ext, ext_not=ext_not)
-        # Taken before any await, so a close() landing later can never leave a fresh pool behind.
-        pool = self._verify_executor() if rows else None
-        kept, completed = await self._judged(pool, gates, rows, deadline)
+        kept, completed = await self._judged(gates, rows, deadline)
         errors: list[ResultError] = []
         if not completed:
-            errors.append(_wall_record(_CHAINED_GLOB_REFINE_GUIDANCE))
+            errors.append(wall_truncation(_CHAINED_GLOB_REFINE_GUIDANCE))
         if kind is not None:
             lacking = [row for row in kept if row.kind is None]
             fetched: dict[str, str | None] = {}
@@ -1977,7 +1958,7 @@ class AsyncVirtualFileSystem:
         """Chained grep: filter the rows in hand, fetching only absent content.
 
         Path gates and the match run over the rows as held, each stage
-        on the router's pool under its own wall: the gates in one hop,
+        on the process pool under its own wall: the gates in one hop,
         and only the rows they judged are read and matched. A
         row without content is read through its own entry — a row that
         cannot be read classifies loudly beside the healthy rows'
@@ -1986,8 +1967,6 @@ class AsyncVirtualFileSystem:
         index tier is never involved, so the refusal gate and
         ``allow_scan`` have no meaning on this path.
         """
-        # Taken before any await, so a close() landing later can never leave a fresh pool behind.
-        pool = self._verify_executor()
         rows, invalid = self._observation_rows("grep", observations)
         if invalid is not None:
             return invalid
@@ -1999,8 +1978,8 @@ class AsyncVirtualFileSystem:
             return self._error(ErrorKind.invalid, op="grep", detail=f"grep pattern {pattern!r}: {exc}")
         gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
         # The filter reads its own wall only when it has a pattern to judge.
-        deadline = monotonic() + WALL_TIME_BUDGET if gates.has_patterns else None
-        candidates, filtered = await self._judged(pool, gates, rows, deadline)
+        deadline = Deadline.after(WALL_TIME_BUDGET) if gates.has_patterns else Deadline.never()
+        candidates, filtered = await self._judged(gates, rows, deadline)
         absent = [row for row in candidates if row.content is None and (row.kind is None or row.kind in CONTENT_KINDS)]
         errors: list[ResultError] = []
         contents: dict[str, str] = {}
@@ -2023,7 +2002,6 @@ class AsyncVirtualFileSystem:
         hits, truncation = await self._match_in_hand(
             bodies,
             verifier,
-            pool,
             invert=invert_match,
             before=before_context,
             after=after_context,
@@ -2036,35 +2014,21 @@ class AsyncVirtualFileSystem:
             if hit is not None:
                 matched.append(self._hit_row(row, text, hit, mode=output_mode, columns=columns))
         # An unfinished filter's record stands for the matching stage's identical one.
-        errors.extend(truncation if filtered else [_wall_record(_CHAINED_REFINE_GUIDANCE)])
+        errors.extend(truncation if filtered else [wall_truncation(_CHAINED_REFINE_GUIDANCE)])
         return Result(ops=("grep",), observations=matched, errors=errors)
 
-    def _verify_executor(self) -> ThreadPoolExecutor:
-        """The router's verify pool, made on first use and shut by :meth:`close`.
-
-        It serves chained grep's matching, every glob judging the router
-        does (a chained call's filter, a fan-out's root probe and its
-        admissions) and a scoped fan-out's planning walk.
-        """
-        if self._verify_pool is None:
-            self._verify_pool = ThreadPoolExecutor(max_workers=OFFLOAD_WORKERS, thread_name_prefix="vfs-verify")
-        return self._verify_pool
-
     @staticmethod
-    async def _judged(
-        pool: ThreadPoolExecutor | None, gates: GlobGates, rows: list[Observation], deadline: float | None
-    ) -> tuple[list[Observation], bool]:
-        """The rows in hand *gates* admit, judged in one hop on the router's pool; and whether all were judged.
+    async def _judged(gates: GlobGates, rows: list[Observation], deadline: Deadline) -> tuple[list[Observation], bool]:
+        """The rows in hand *gates* admit, judged in one hop on the process pool; and whether all were judged.
 
         Rows keep their order and duplicates, and no meta rule applies:
         what a caller holds is never hidden. With no rows, or no pattern
-        to judge, no hop is made and *pool* and *deadline* may be ``None``.
+        to judge, no hop is made and *deadline* is not read.
         """
         if not rows or not gates.has_patterns:
             return [row for row in rows if gates.admits(0, extract_extension(row.path))], True
-        assert pool is not None and deadline is not None
         judged = [(str(row.path), row.path.name) for row in rows]
-        verdicts, completed = await judge_rows(pool, gates, judged, deadline=deadline)
+        verdicts, completed = await judge_rows(offload_pool(), gates, judged, deadline=deadline)
         kept = [
             row
             for row, verdict in zip(rows, verdicts, strict=True)
@@ -2076,7 +2040,6 @@ class AsyncVirtualFileSystem:
     async def _match_in_hand(
         bodies: list[tuple[Path, str]],
         verifier: ContentMatcher,
-        pool: ThreadPoolExecutor,
         *,
         invert: bool,
         before: int,
@@ -2084,7 +2047,7 @@ class AsyncVirtualFileSystem:
         mode: GrepOutputMode,
         cap: int | None,
     ) -> tuple[list[GrepHit | None], list[ResultError]]:
-        """Each distinct body's hit, in byte batches on the router's pool, under one wall.
+        """Each distinct body's hit, in byte batches on the process pool, under one wall.
 
         The deadline is absolute and the budget is cut at worker start, so
         time queued for a thread shortens it. Batches are metered in
@@ -2092,22 +2055,22 @@ class AsyncVirtualFileSystem:
         A wall passed before a batch, or a batch the matcher could not
         finish, stops matching with one truncation warning.
         """
-        deadline = monotonic() + WALL_TIME_BUDGET
+        deadline = Deadline.after(WALL_TIME_BUDGET)
         hits: list[GrepHit | None] = []
         finished = True
         for batch in byte_chunked(range(len(bodies)), lambda index: len(bodies[index][1]), CONTENT_BYTE_BUDGET):
-            if monotonic() > deadline:
+            if deadline.expired():
                 finished = False
                 break
             texts = [bodies[index] for index in batch]
 
             def work(texts: list[tuple[Path, str]] = texts) -> tuple[list[GrepHit | None], bool]:
-                budget = max(0.0, deadline - monotonic())
+                budget = deadline.remaining()
                 return match_texts(
                     texts, verifier, invert=invert, before=before, after=after, mode=mode, cap=cap, budget=budget
                 )
 
-            found, completed = await call_offloaded(pool, work)
+            found, completed = await call_offloaded(offload_pool(), work)
             hits.extend(found)
             if not completed:
                 finished = False
@@ -2115,7 +2078,7 @@ class AsyncVirtualFileSystem:
         if finished:
             return hits, []
         hits.extend([None] * (len(bodies) - len(hits)))
-        return hits, [_wall_record(_CHAINED_REFINE_GUIDANCE)]
+        return hits, [wall_truncation(_CHAINED_REFINE_GUIDANCE)]
 
     @staticmethod
     def _hit_row(
@@ -2413,7 +2376,7 @@ class AsyncVirtualFileSystem:
         :data:`_COMPOSED_ARM_LIMIT` receives those roots beside the
         uncomposed arms as its ``scope=`` channel instead, in the same
         one call, and storage reads the same law without composing.
-        That planning walk runs in one hop on the router's pool under its own wall (:func:`_plan_scope`); a walk
+        That planning walk runs in one hop on the process pool under its own wall (:func:`_plan_scope`); a walk
         that reaches it dispatches the roots it planned whole and says
         so. Root assertions ride a separate concurrent
         probe grouped by owning entry (:meth:`_root_probe`),
@@ -2435,17 +2398,12 @@ class AsyncVirtualFileSystem:
         skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
         name_arms = tuple(arm for arm in arms if "/" not in arm)
         gates = compile_gates(name_arms, exclusions, ext=ext, ext_not=ext_not) if name_arms else None
-        walking = _walks(roots, arms, exclusions, skip_paths)
-        # Taken before any await; any root makes the walk, so a probe or an admission hop always finds the pool.
-        pool = self._verify_executor() if walking else None
-        scope = await self._planned(
-            pool, owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset()
-        )
+        scope = await self._planned(owners, tuple(capable), skip_paths, roots, arms, exclusions, arms, frozenset())
         if not self._bindings:
             return None  # a close() landed during the hop: no table read, no dispatch
         kind = cast("str | None", kwargs.get("kind"))
         columns = cast("frozenset[str] | None", kwargs.get("columns"))
-        probes, unverifiable = self._root_probes(roots, gates, pool, kind, columns, authority=authority)
+        probes, unverifiable = self._root_probes(roots, gates, kind, columns, authority=authority)
         branches: list[tuple[Path, Coroutine[Any, Any, Result]]] = [
             (
                 key,
@@ -2488,7 +2446,7 @@ class AsyncVirtualFileSystem:
         operand law; the content test can only happen at storage, so for
         grep the root row joins the scan, not the probe. Those admissions
         are judged once per call, every distinct root in one hop on the
-        router's pool; no globs admit every root. Residuation, the owner
+        process pool; no globs admit every root. Residuation, the owner
         gate, dead-entry skips, the planning walk, the switch to a
         ``scope=`` channel past the composition limit (each root's literal
         staying on the ``globs`` batch) and the root probe are the glob
@@ -2502,25 +2460,21 @@ class AsyncVirtualFileSystem:
         skip_paths = tuple(skip.path for skip in plan.skips if skip.path is not None)
         patterns = (globs or ("**",)) if roots else globs
         operands = tuple(root for root in roots if root != ROOT)
-        walking = _walks(roots, patterns, exclusions, skip_paths)
-        # Taken before any await; any root makes the walk, so a probe or an admission hop always finds the pool.
-        pool = self._verify_executor() if walking else None
         records: list[ResultError] = []
         admitted = operands
         if globs and operands:
-            assert pool is not None
             gates = compile_gates(globs)
-            deadline = monotonic() + WALL_TIME_BUDGET
+            deadline = Deadline.after(WALL_TIME_BUDGET)
             judged = [(str(root), root.name) for root in operands]
-            verdicts, completed = await judge_rows(pool, gates, judged, deadline=deadline)
+            verdicts, completed = await judge_rows(offload_pool(), gates, judged, deadline=deadline)
             admitted = tuple(
                 root for root, verdict in zip(operands, verdicts, strict=True) if gates.admits(verdict, None)
             )
             if not completed:
-                records.append(_wall_record(_SCOPED_REFINE_GUIDANCE))
+                records.append(wall_truncation(_SCOPED_REFINE_GUIDANCE))
         reach = globs or ("**",)
         scope = await self._planned(
-            pool, owners, tuple(capable), skip_paths, roots, patterns, exclusions, reach, frozenset(admitted)
+            owners, tuple(capable), skip_paths, roots, patterns, exclusions, reach, frozenset(admitted)
         )
         if not self._bindings:
             return None  # a close() landed during a hop: no table read, no dispatch
@@ -2547,12 +2501,11 @@ class AsyncVirtualFileSystem:
                     ),
                 )
             )
-        probes, unverifiable = self._root_probes(roots, None, None, None, None, authority=authority)
+        probes, unverifiable = self._root_probes(roots, None, None, None, authority=authority)
         return _Dispatches(probes, branches, self._scope_skips(plan, scope, [*records, *unverifiable]))
 
     @staticmethod
     async def _planned(
-        pool: ThreadPoolExecutor | None,
         owners: dict[Path, Path],
         keys: tuple[Path, ...],
         skip_paths: tuple[Path, ...],
@@ -2569,25 +2522,23 @@ class AsyncVirtualFileSystem:
         is planned in place; every other walk leaves the loop.
         """
         if not _walks(roots, patterns, exclusions, skip_paths):
-            return _plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, None)
-        assert pool is not None
-        deadline = monotonic() + WALL_TIME_BUDGET
+            return _plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, Deadline.never())
+        deadline = Deadline.after(WALL_TIME_BUDGET)
         walk = partial(_plan_scope, owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
-        return await call_offloaded(pool, walk)
+        return await call_offloaded(offload_pool(), walk)
 
     @staticmethod
     def _scope_skips(plan: _FanoutPlan, scope: _ScopePlan, records: list[ResultError]) -> list[ResultError]:
         """The coverage records a fan-out carries: the reached skips, the stage records, and a planning stop."""
         skips = [skip for skip in plan.skips if skip.path is None or skip.path in scope.skips]
         if not scope.completed:
-            skips.append(_wall_record(_PLANNING_REFINE_GUIDANCE))
+            skips.append(wall_truncation(_PLANNING_REFINE_GUIDANCE))
         return [*skips, *records]
 
     def _root_probes(
         self,
         roots: tuple[Path, ...],
         gates: GlobGates | None,
-        pool: ThreadPoolExecutor | None,
         kind: str | None,
         columns: frozenset[str] | None,
         *,
@@ -2599,7 +2550,7 @@ class AsyncVirtualFileSystem:
         a row. An entry that cannot answer ``stat`` leaves its roots
         honestly undeterminable: a warning on record, never coerced to
         absent, never a silent pass. *gates* judge the roots' own rows
-        (``None``: no row is served), on *pool*.
+        (``None``: no row is served), on the process pool.
         """
         grouped: dict[Path, tuple[Binding, list[Path]]] = {}
         unverifiable: list[ResultError] = []
@@ -2621,7 +2572,7 @@ class AsyncVirtualFileSystem:
             _b, rels = grouped.setdefault(terminal.binding.path, (terminal.binding, []))
             rels.append(terminal.rel)
         coros: list[Coroutine[Any, Any, Result]] = [
-            self._root_probe(binding, rels, gates, pool, kind, columns, authority=authority)
+            self._root_probe(binding, rels, gates, kind, columns, authority=authority)
             for binding, rels in grouped.values()
         ]
         return coros, unverifiable
@@ -2631,7 +2582,6 @@ class AsyncVirtualFileSystem:
         binding: Binding,
         rels: list[Path],
         gates: GlobGates | None,
-        pool: ThreadPoolExecutor | None,
         kind: str | None,
         columns: frozenset[str] | None,
         *,
@@ -2653,11 +2603,11 @@ class AsyncVirtualFileSystem:
         kept: list[Observation] = []
         records: list[ResultError] = []
         if gates is not None:
-            deadline = monotonic() + WALL_TIME_BUDGET
-            judged, completed = await self._judged(pool, gates, list(result.observations), deadline)
+            deadline = Deadline.after(WALL_TIME_BUDGET)
+            judged, completed = await self._judged(gates, list(result.observations), deadline)
             kept = [row for row in judged if kind is None or row.kind == kind]
             if not completed:
-                records.append(_wall_record(_SCOPED_REFINE_GUIDANCE))
+                records.append(wall_truncation(_SCOPED_REFINE_GUIDANCE))
         # The probe answers for the caller's verb, not as a verb of its own:
         # an op-less envelope merges without leaking ``stat`` into the result.
         return result.model_copy(update={"ops": (), "observations": kept, "errors": [*result.errors, *records]})
@@ -3487,11 +3437,6 @@ def _is_tombstoned_site(result: Result, path: Path) -> bool:
     return error.kind is ErrorKind.not_found and error.path == path and bool((error.data or {}).get(TRASHED_KEY))
 
 
-def _wall_record(guidance: str) -> ResultError:
-    """One router stage's truncation at its wall, with what shrinks that stage's work."""
-    return classified(ErrorKind.truncated, severity=Severity.warning, detail=f"at the {WALL_TIME_CAUSE}; {guidance}")
-
-
 def _scoped(plan: _ScopePlan, key: Path) -> dict[str, ScopeChannel]:
     """The ``scope=`` keyword an entry's dispatch carries: its scope channel, or nothing below the limit."""
     channel = plan.scopes.get(key)
@@ -3510,15 +3455,19 @@ class _WallReached(Exception):  # noqa: N818 - a control-flow signal, not an err
 
 
 class _Walk:
-    """The planning walk's residuations, its deadline read before every 64th one."""
+    """The planning walk's residuations, its deadline read before every ``CHECK_EVERY``th one.
 
-    def __init__(self, deadline: float | None) -> None:
+    The residuations arrive one call at a time, never as a sequence to
+    chunk, so the walk counts them and reads the deadline it holds.
+    """
+
+    def __init__(self, deadline: Deadline) -> None:
         self._deadline = deadline
         self._count = 0
 
     def residuals(self, pattern: str, bind_path: Path) -> frozenset[tuple[str, ...]]:
         """:func:`~vfs.pattern_matching.residuals`, or :class:`_WallReached` past the deadline."""
-        if self._deadline is not None and self._count % _RESIDUATIONS_PER_CHECK == 0 and monotonic() > self._deadline:
+        if self._count % CHECK_EVERY == 0 and self._deadline.expired():
             raise _WallReached
         self._count += 1
         return residuals(pattern, bind_path)
@@ -3533,7 +3482,7 @@ def _plan_scope(
     exclusions: tuple[str, ...],
     reach: tuple[str, ...],
     literals: frozenset[Path],
-    deadline: float | None,
+    deadline: Deadline,
 ) -> _ScopePlan:
     """A fan-out's residual walk: every capable entry's members, as plain data in and out.
 
@@ -3558,9 +3507,10 @@ def _plan_scope(
     root's literal, under *literals*, stays on the entry-wide channel,
     one per root.
 
-    The deadline is read before every 64th residuation, inside a root as
-    well as between roots (between entries when there is no root), so
-    the walk overruns its wall by at most 64 residuations. A root, or
+    The deadline is read before every ``CHECK_EVERY``th residuation,
+    inside a root as well as between roots (between entries when there
+    is no root), so the walk overruns its wall by at most that many
+    residuations. A root, or
     with no root an entry, whose walk is stopped is dropped from the
     plan whole, its exclusions with it, and every skip not yet decided
     is kept: a coverage record never hides. Pure Python on its worker,

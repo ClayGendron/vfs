@@ -21,9 +21,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from vfs.deadline import WALL_TIME_BUDGET
 from vfs.embedding import HashEmbeddingProvider
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET
 
 if TYPE_CHECKING:
     from vfs.embedding import EmbeddingProvider

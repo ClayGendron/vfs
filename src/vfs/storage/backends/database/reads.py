@@ -34,13 +34,14 @@ stored row — ``ls`` of it lists the tombstoned roots at every depth.
 from __future__ import annotations
 
 from itertools import product
-from time import monotonic
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
 
+from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
 from vfs.models.media import FAILURE_STATUSES
+from vfs.offload import judge_rows, wall_truncation
 from vfs.paths import (
     METADATA_ROOT,
     ROOT,
@@ -76,9 +77,8 @@ from vfs.storage.backends.database.descent import (
 )
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE, judge_rows
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
-from vfs.storage.backends.database.rights import POSTURE_PATHS_PER_CHECK, RIGHTS_FIELDS, denied
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS, denied
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -372,7 +372,7 @@ async def glob_rows(
         excluded = address_channel("globs_not", globs_not)
     except PatternError as exc:
         return Result(ops=("glob",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
-    deadline = monotonic() + wall_seconds
+    deadline = Deadline.after(wall_seconds)
     fetched = effective_columns(columns, content=False)
     entry = tables.entry
     wanted = normalize_ext_channel(ext)
@@ -441,8 +441,7 @@ async def glob_rows(
         served = served[:max_count]
     errors: list[ResultError] = []
     if not finished:
-        detail = f"at the {WALL_TIME_CAUSE}; {GLOB_REFINE_GUIDANCE}"
-        errors.append(classified(ErrorKind.truncated, severity=Severity.warning, detail=detail))
+        errors.append(wall_truncation(GLOB_REFINE_GUIDANCE))
     return Result(ops=("glob",), observations=served, errors=errors)
 
 
@@ -940,7 +939,7 @@ def addressed_by(patterns: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(_addressed_paths(addresses)))
 
 
-def scope_addressed(patterns: Sequence[str], scope: ScopeChannel, *, deadline: float) -> list[str] | None:
+def scope_addressed(patterns: Sequence[str], scope: ScopeChannel, *, deadline: Deadline) -> list[str] | None:
     """:func:`addressed_by` over what composition would have sent, or ``None`` past *deadline*.
 
     That list is the entry-wide *patterns* beside each scope root
@@ -948,26 +947,27 @@ def scope_addressed(patterns: Sequence[str], scope: ScopeChannel, *, deadline: f
     members, so an anonymous caller is judged at the same paths, in the
     same order, whichever shape crossed the seam. The work is the
     product of roots and arms, so it runs on a worker, reading the
-    deadline before every 64th composition and every 64th address.
+    deadline between chunks of compositions and of addresses; a walk
+    that reached fewer than it was given answers ``None``.
     """
     composed: list[str] = []
-    for position, (root, arm) in enumerate(product(scope.roots, scope.arms)):
-        if position % POSTURE_PATHS_PER_CHECK == 0 and monotonic() > deadline:
-            return None
-        composed.append(composed_pattern(root, arm))
+    for pairs in deadline.chunks(product(scope.roots, scope.arms)):
+        composed.extend(composed_pattern(root, arm) for root, arm in pairs)
+    if len(composed) < len(scope.roots) * len(scope.arms):
+        return None
     combined = sorted((*patterns, *composed))
     if not combined:
         return [ROOT]
     addressed: dict[str, None] = {}
-    for start in range(0, len(combined), POSTURE_PATHS_PER_CHECK):
-        if monotonic() > deadline:
-            return None
+    reached = 0
+    for chunk in deadline.chunks(combined):
         try:
-            addresses = address_channel("pattern", combined[start : start + POSTURE_PATHS_PER_CHECK])
+            addresses = address_channel("pattern", chunk)
         except PatternError:
             return [ROOT]
         addressed.update(dict.fromkeys(_addressed_paths(addresses)))
-    return list(addressed)
+        reached += len(chunk)
+    return list(addressed) if reached == len(combined) else None
 
 
 def _addressed_paths(addresses: Sequence[Address]) -> list[str]:

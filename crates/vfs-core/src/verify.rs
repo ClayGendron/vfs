@@ -23,16 +23,15 @@
 //! bodies, reporting whether every body was verified.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 
 use memchr::{memchr, memchr_iter, memrchr};
-use rayon::prelude::*;
 use regex::bytes::Regex;
 use regex_syntax::hir::{
     Capture, Class, ClassBytesRange, ClassUnicode, ClassUnicodeRange, Hir, HirKind, Literal,
     Repetition,
 };
+
+use crate::deadline::{BatchOutcome, Deadline, par_batch};
 
 /// Why a pattern was refused: not in the grep pattern language.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,13 +72,6 @@ pub struct Hit {
 struct ScanCost {
     searches: u64,
     back_bytes: u64,
-}
-
-/// Batch results plus whether every body was verified before the deadline.
-#[derive(Debug)]
-pub struct BatchOutcome<T> {
-    pub results: Vec<T>,
-    pub completed: bool,
 }
 
 /// The compiled authority for one pattern.
@@ -198,20 +190,9 @@ pub fn count_batch<B: AsRef<[u8]> + Sync>(
     bodies: &[B],
     cap: Option<u64>,
     invert: bool,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> BatchOutcome<u64> {
-    let completed = AtomicBool::new(true);
-    let results = bodies
-        .par_iter()
-        .map(|body| {
-            if deadline.is_some_and(|at| Instant::now() > at) {
-                completed.store(false, Ordering::Relaxed);
-                return 0;
-            }
-            matcher.count_lines(body.as_ref(), cap, invert)
-        })
-        .collect();
-    BatchOutcome { results, completed: completed.load(Ordering::Relaxed) }
+    par_batch(bodies, deadline, || 0, |body| (matcher.count_lines(body.as_ref(), cap, invert), true))
 }
 
 /// `hit_lines` across bodies in parallel; bodies started after `deadline`
@@ -223,20 +204,9 @@ pub fn hits_batch<B: AsRef<[u8]> + Sync>(
     after: u32,
     cap: Option<u64>,
     invert: bool,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> BatchOutcome<Vec<Hit>> {
-    let completed = AtomicBool::new(true);
-    let results = bodies
-        .par_iter()
-        .map(|body| {
-            if deadline.is_some_and(|at| Instant::now() > at) {
-                completed.store(false, Ordering::Relaxed);
-                return Vec::new();
-            }
-            matcher.hit_lines(body.as_ref(), before, after, cap, invert)
-        })
-        .collect();
-    BatchOutcome { results, completed: completed.load(Ordering::Relaxed) }
+    par_batch(bodies, deadline, Vec::new, |body| (matcher.hit_lines(body.as_ref(), before, after, cap, invert), true))
 }
 
 // ---------------------------------------------------------------------------
@@ -560,9 +530,9 @@ mod tests {
         for threads in [1, 8] {
             let pool =
                 rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("pool builds");
-            let counts = pool.install(|| count_batch(&matcher, &bodies, Some(9), false, None));
+            let counts = pool.install(|| count_batch(&matcher, &bodies, Some(9), false, Deadline::never()));
             assert_eq!(counts.results, sequential_counts);
-            let hits = pool.install(|| hits_batch(&matcher, &bodies, 1, 2, Some(9), false, None));
+            let hits = pool.install(|| hits_batch(&matcher, &bodies, 1, 2, Some(9), false, Deadline::never()));
             assert_eq!(hits.results, sequential_hits);
         }
     }
@@ -571,11 +541,11 @@ mod tests {
     fn batch_reports_counts_and_completion() {
         let matcher = Matcher::new("x", false).unwrap();
         let bodies: Vec<&[u8]> = vec![b"x\n", b"y\n", b"x\nx\n"];
-        let outcome = count_batch(&matcher, &bodies, None, false, None);
+        let outcome = count_batch(&matcher, &bodies, None, false, Deadline::never());
         assert_eq!(outcome.results, vec![1, 0, 2]);
         assert!(outcome.completed);
-        let expired = Instant::now() - std::time::Duration::from_secs(1);
-        let outcome = count_batch(&matcher, &bodies, None, false, Some(expired));
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let outcome = count_batch(&matcher, &bodies, None, false, Deadline::at(expired));
         assert!(!outcome.completed);
     }
 

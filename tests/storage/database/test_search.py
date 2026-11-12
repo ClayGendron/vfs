@@ -22,6 +22,8 @@ from sqlalchemy.dialects import mssql, sqlite
 from tests.support.database_helpers import _url
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
 from tests.support.statements import is_statistics_statement
+from vfs import deadline as deadline_module
+from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
 from vfs.models.lexical import OverlayPostings, encode_block
@@ -35,7 +37,6 @@ from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
-from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.storage.backends.database.seams import installed
 
 if TYPE_CHECKING:
@@ -765,8 +766,8 @@ class TestBudgets:
         assert "/fresh.txt" not in _paths(result)
         await storage.close()
 
-    async def test_search_gates_judge_on_the_backend_pool(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Guards: the gates built once per hop, or judged off the backend's pool."""
+    async def test_search_gates_judge_on_the_process_pool(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the gates built once per hop, or judged off the process pool."""
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/src/fresh.py"), content="tokens late\n")])).success
         spy = _SetSpy(monkeypatch)
@@ -874,7 +875,7 @@ class TestBudgets:
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
         storage = await _fresh(tmp_path, files)
         monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
-        real_clock, real_kernel = search_module.monotonic, search_module.overlay_postings
+        real_clock, real_kernel = deadline_module.monotonic, search_module.overlay_postings
         skew = {"seconds": 0.0}
 
         def skewed_clock() -> float:
@@ -884,7 +885,7 @@ class TestBudgets:
             skew["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
             return real_kernel(docs, terms, budget=budget)
 
-        monkeypatch.setattr(search_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(deadline_module, "monotonic", skewed_clock)
         monkeypatch.setattr(search_module, "overlay_postings", counting_kernel)
         with _recorded(storage) as statements:
             result = await storage.search(query="tokens")

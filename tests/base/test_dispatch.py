@@ -64,13 +64,13 @@ async def test_a_large_body_is_measured_off_the_loop(monkeypatch) -> None:
     # the hash. A body at the threshold hops once, and the entry storage
     # receives carries the same metrics the validator would have measured.
     hops: list[str] = []
-    real_to_thread = asyncio.to_thread
+    real_hop = base_module.call_offloaded
 
-    async def counted(fn: Any, *args: Any) -> Any:
-        hops.append(fn.__name__)
-        return await real_to_thread(fn, *args)
+    async def counted(executor: Any, work: Any) -> Any:
+        hops.append(work.func.__name__)
+        return await real_hop(executor, work)
 
-    monkeypatch.setattr(base_module.asyncio, "to_thread", counted)
+    monkeypatch.setattr(base_module, "call_offloaded", counted)
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")

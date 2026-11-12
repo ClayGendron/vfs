@@ -7,7 +7,6 @@
 
 use std::borrow::Cow;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -15,6 +14,7 @@ use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::PyBytes;
 
 use crate::chunk::{GRAMMAR_NAMES, split_batch};
+use crate::deadline::Deadline;
 use crate::glob::{Atom, GlobProgram as Program, GlobSet as Set, judge_batch};
 use crate::grams::GramExtractor;
 use crate::lexical::{self, DrainedLexical, LexicalAccumulator, ScoreBlock};
@@ -121,7 +121,7 @@ impl ContentMatcher {
         invert: bool,
         budget: Option<f64>,
     ) -> (Vec<u64>, bool) {
-        let deadline = budget.map(|secs| Instant::now() + Duration::from_secs_f64(secs.max(0.0)));
+        let deadline = Deadline::after(budget);
         let slices: Vec<&[u8]> = bodies.iter().map(|body| body.as_ref()).collect();
         let outcome = py.detach(|| count_batch(&self.matcher, &slices, cap, invert, deadline));
         (outcome.results, outcome.completed)
@@ -141,7 +141,7 @@ impl ContentMatcher {
         invert: bool,
         budget: Option<f64>,
     ) -> (Vec<Vec<(u32, u32, u32, Bound<'py, PyBytes>)>>, bool) {
-        let deadline = budget.map(|secs| Instant::now() + Duration::from_secs_f64(secs.max(0.0)));
+        let deadline = Deadline::after(budget);
         let slices: Vec<&[u8]> = bodies.iter().map(|body| body.as_ref()).collect();
         let outcome =
             py.detach(|| hits_batch(&self.matcher, &slices, before, after, cap, invert, deadline));
@@ -203,7 +203,7 @@ impl GlobSet {
     /// seconds from call start. A row past it is `None`; returns (verdicts, completed).
     #[pyo3(signature = (rows, *, budget))]
     fn judge(&self, py: Python<'_>, rows: Vec<(PyBackedStr, PyBackedStr)>, budget: Option<f64>) -> (Vec<Option<u64>>, bool) {
-        let deadline = deadline_after(budget);
+        let deadline = Deadline::after(budget);
         let outcome = py.detach(|| judge_batch(&self.set, &rows, deadline));
         (outcome.results, outcome.completed)
     }
@@ -223,7 +223,7 @@ fn glob_set(
     groups: Vec<Vec<usize>>,
     budget: Option<f64>,
 ) -> PyResult<Option<GlobSet>> {
-    let deadline = deadline_after(budget);
+    let deadline = Deadline::after(budget);
     let programs = programs
         .into_iter()
         .map(|(atoms, by_path)| {
@@ -234,12 +234,6 @@ fn glob_set(
         .map_err(PyValueError::new_err)?;
     let built = py.detach(|| Set::build(programs, groups, deadline)).map_err(|err| PyValueError::new_err(err.to_string()))?;
     Ok(built.map(|set| GlobSet { set }))
-}
-
-/// The instant *budget* seconds from now; a budget past what an instant can hold is no deadline.
-fn deadline_after(budget: Option<f64>) -> Option<Instant> {
-    let span = Duration::try_from_secs_f64(budget?.max(0.0)).ok()?;
-    Instant::now().checked_add(span)
 }
 
 /// One host atom, refused when its op is unknown or its ranges do not fit the op.
@@ -339,7 +333,7 @@ fn overlay_postings(
     terms: Vec<String>,
     budget: Option<f64>,
 ) -> (Vec<Vec<(i64, u32, u32)>>, u64, u64, bool) {
-    let deadline = deadline_after(budget);
+    let deadline = Deadline::after(budget);
     let bodies: Vec<(i64, &str)> = docs.iter().map(|(doc_id, text)| (*doc_id, &**text)).collect();
     let queries: Vec<&str> = terms.iter().map(String::as_str).collect();
     let outcome = py.detach(|| lexical::overlay_postings(&bodies, &queries, deadline));

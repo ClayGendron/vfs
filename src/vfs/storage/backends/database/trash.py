@@ -59,9 +59,9 @@ from sqlalchemy import bindparam, case, delete, false, func, select, true, updat
 from vfs.models import Observation
 from vfs.paths import ROOT, TRASH_ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
+from vfs.results.kinds import TRASH_ROOT_KEY
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
-    TRASH_ROOT_KEY,
     ancestor_chain,
     classify_miss,
     classify_misses,

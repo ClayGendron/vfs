@@ -30,8 +30,12 @@ from tests.support.scope_worlds import (
 )
 from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
+from vfs import deadline as deadline_module
+from vfs import offload as offload_module
 from vfs.base import AsyncVirtualFileSystem
+from vfs.deadline import Deadline
 from vfs.models import Observation
+from vfs.offload import offload_pool, shutdown_offload_pool
 from vfs.params import INT_CEILING
 from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
@@ -41,7 +45,7 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
 # The demo tree: needle sits at every level; decoy never matches.
 TREE = (("/notes.txt", "needle root"), ("/data/a.txt", "needle a"), ("/data/deep/b.py", "needle b"))
@@ -412,7 +416,7 @@ async def test_chained_grep_verifies_each_distinct_body_once(monkeypatch: pytest
     assert sum(len(batch) for batch in verifier.batches) == 1
 
 
-async def test_chained_grep_matches_in_byte_batches_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chained_grep_matches_in_byte_batches_on_the_process_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 10)
     pools = _counted_hops(monkeypatch)
     default = _CountingExecutor()
@@ -422,7 +426,7 @@ async def test_chained_grep_matches_in_byte_batches_on_the_router_pool(monkeypat
     result = await fs.grep("x", observations=rows)
     assert len(result.observations) == 5
     assert len(pools) == 5
-    assert all(pool is fs._verify_pool for pool in pools)
+    assert all(pool is offload_pool() for pool in pools)
     assert default.submitted == 0
     await fs.close()
 
@@ -467,71 +471,20 @@ async def test_chained_grep_dedupes_without_reordering_or_aliasing(monkeypatch: 
     await fs.close()
 
 
-async def test_close_shuts_the_verify_pool_and_a_closed_router_makes_none() -> None:
+async def test_a_closed_router_refuses_a_chained_grep() -> None:
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
-    await fs.grep("x", observations=_held(("/a", "x")))
-    pool = fs._verify_pool
-    assert pool is not None
+    served = await fs.grep("x", observations=_held(("/a", "x")))
+    assert [str(o.path) for o in served.observations] == ["/a"]
     await fs.close()
-    assert fs._verify_pool is None
-    with pytest.raises(RuntimeError):
-        pool.submit(int)
     closed = await fs.grep("x", observations=_held(("/a", "x")))
     assert [e.kind for e in closed.errors] == [ErrorKind.backend_unavailable]
-    assert fs._verify_pool is None
-
-
-async def test_close_shuts_the_verify_pool_with_nothing_to_dispose() -> None:
-    # RecorderStorage exposes no close, so close() finds nothing to dispose and returns early.
-    fs = AsyncVirtualFileSystem(storage=RecorderStorage())
-    await fs.grep("x", observations=_held(("/a", "x")))
-    pool = fs._verify_pool
-    assert pool is not None
-    await fs.close()
-    assert fs._verify_pool is None
-    with pytest.raises(RuntimeError):
-        pool.submit(int)
-
-
-async def test_a_chained_grep_racing_close_makes_no_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 1)
-    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
-    pools: list[Any] = []
-    real = base_module.call_offloaded
-
-    async def close_after_first(executor: Any, work: Any) -> Any:
-        pools.append(executor)
-        answer = await real(executor, work)
-        if len(pools) == 1:
-            await fs.close()
-        return answer
-
-    monkeypatch.setattr(base_module, "call_offloaded", close_after_first)
-    result = await fs.grep("x", observations=_held(("/a", "x"), ("/b", "x")))
-    assert [str(o.path) for o in result.observations] == ["/a", "/b"]
-    assert len(pools) == 2 and pools[0] is pools[1]
-    assert fs._verify_pool is None
-
-
-async def test_a_chained_grep_closed_during_its_read_makes_no_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
-
-    async def closing_read(*args: Any, **kwargs: Any) -> Result:
-        await fs.close()
-        return Result(ops=("read",))
-
-    monkeypatch.setattr(fs, "read", closing_read)
-    rows = [*_held(("/a", "x")), Observation(path=Path("/b"), kind="file")]
-    result = await fs.grep("x", observations=rows)
-    assert [str(o.path) for o in result.observations] == ["/a"]
-    assert fs._verify_pool is None
 
 
 @pytest.mark.parametrize("mode", ["lines", "files"])
 async def test_each_batch_gets_the_wall_budget_cut_at_worker_start(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     # A fake clock: the deadline is read at 100, the batch check at 101, the worker starts at 103.
     ticks = iter([100.0, 101.0, 103.0])
-    monkeypatch.setattr(base_module, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: next(ticks))
     budgets: list[float | None] = []
 
     class Recording:
@@ -581,9 +534,17 @@ async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyP
     assert [str(o.path) for o in result.observations] == ["/a"]
 
 
-async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture
+def one_worker_pool(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The process pool at one worker for the test, shut before and after so no neighbour inherits the narrow one."""
+    monkeypatch.setattr(offload_module, "OFFLOAD_WORKERS", 1)
+    shutdown_offload_pool()
+    yield
+    shutdown_offload_pool()
+
+
+async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.MonkeyPatch, one_worker_pool: None) -> None:
     # One worker: grep a's batch holds it, grep b's batch waits in the queue when close() lands.
-    monkeypatch.setattr(base_module, "OFFLOAD_WORKERS", 1)
     started, release = threading.Event(), threading.Event()
     real = base_module.compile_verifier
 
@@ -649,7 +610,7 @@ def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     executors: list[Any] = []
     real = base_module.judge_rows
 
-    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         executors.append(executor)
         return await real(executor, gates, rows, deadline=deadline)
 
@@ -657,14 +618,14 @@ def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return executors
 
 
-async def test_chained_grep_filters_once_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chained_grep_filters_once_on_the_process_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the chained filter run inline per row instead of in one hop."""
     executors = _spy_judges(monkeypatch)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     rows = _held(*[(f"/{i}.{'txt' if i % 2 else 'md'}", "x") for i in range(100)])
     result = await fs.grep("x", observations=rows, globs=("*.txt",))
     assert len(result.observations) == 50
-    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    assert len(executors) == 1 and executors[0] is offload_pool()
     await fs.close()
 
 
@@ -707,7 +668,7 @@ async def test_grep_root_admissions_judge_once_per_call(monkeypatch: pytest.Monk
     monkeypatch.setattr(glob_module, "glob_set", spied)
     result = await fs.grep("needle", paths=tuple(roots), globs=("*.txt",))
     assert sorted(str(o.path) for o in result.observations) == sorted(roots)
-    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    assert len(executors) == 1 and executors[0] is offload_pool()
     router_sets = [programs for programs in built if not any(by_path for _atoms, by_path in programs)]
     assert [len(programs) for programs in router_sets] == [1]
     await fs.close()
@@ -716,7 +677,7 @@ async def test_grep_root_admissions_judge_once_per_call(monkeypatch: pytest.Monk
 async def test_an_unfinished_filter_and_matching_stage_record_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the filter's wall record and the matching stage's identical one both carried."""
 
-    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         return [1] * len(rows), False
 
     monkeypatch.setattr(base_module, "judge_rows", unfinished)
@@ -742,7 +703,7 @@ async def _two_file_roots() -> AsyncVirtualFileSystem:
 async def test_an_unfinished_root_admission_hop_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the admissions' wall record dropped when its hop did not finish."""
 
-    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+    async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         return [1] * len(rows), False
 
     monkeypatch.setattr(base_module, "judge_rows", unfinished)
@@ -756,7 +717,7 @@ async def test_an_unfinished_root_admission_hop_warns(monkeypatch: pytest.Monkey
 async def test_a_root_never_judged_is_never_admitted(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: an unjudged root admitted as a literal member, serving a path the caller's globs exclude."""
 
-    async def unjudged(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+    async def unjudged(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         return [None] * len(rows), False
 
     monkeypatch.setattr(base_module, "judge_rows", unjudged)

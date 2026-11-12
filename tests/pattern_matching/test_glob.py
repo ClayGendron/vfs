@@ -11,13 +11,14 @@ from __future__ import annotations
 import glob as stdlib_glob
 import re
 from itertools import combinations, product
-from time import monotonic
 from typing import Any
 
 import pytest
 
 from tests.support.oracles import glob as oracle
+from vfs import deadline as deadline_module
 from vfs.base import AsyncVirtualFileSystem
+from vfs.deadline import Deadline
 from vfs.paths import ROOT, Path, address_of, extract_extension
 from vfs.pattern_matching import (
     GLOB_CHANNEL_LABELS,
@@ -47,7 +48,7 @@ DEMO_TREE = [Path("/notes.txt"), Path("/docs/a.txt"), Path("/docs/deep/nested/b.
 def _admits(pattern: str, path: Path, ext: tuple[str, ...] = ()) -> bool:
     """One row judged through the call's gates, with no budget."""
     gates = compile_gates((pattern,), ext=ext)
-    native = gates.native(None)
+    native = gates.native(Deadline.never())
     assert native is not None
     (verdict,), completed = native.judge([(str(path), path.name)], budget=None)
     assert completed
@@ -789,7 +790,7 @@ def _kept(
     gates = compile_gates(globs, globs_not, ext=ext, ext_not=ext_not)
     verdicts: list[int | None] = [0] * len(paths)
     if gates.has_patterns:
-        native = gates.native(None)
+        native = gates.native(Deadline.never())
         assert native is not None
         verdicts, completed = native.judge([(str(path), path.name) for path in paths], budget=None)
         assert completed
@@ -844,7 +845,7 @@ class TestGlobGates:
         compared = 0
         for admissions, exclusions, (ext, ext_not) in product(admission_sets, exclusion_sets, self.EXT_CHANNELS):
             gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=_is_marked)
-            native = gates.native(None)
+            native = gates.native(Deadline.never())
             assert native is not None
             verdicts, completed = native.judge(rows, budget=None)
             assert completed
@@ -875,7 +876,7 @@ class TestGlobGates:
         monkeypatch.setattr(glob_module, "glob_set", sets)
         monkeypatch.setattr(glob_module, "glob_program", programs)
         gates = compile_gates(("*.py", "/src/**", "*.py"), ("*.py", "**/app/**"))
-        deadline = monotonic() + 60.0
+        deadline = Deadline.after(60.0)
         first = gates.native(deadline)
         assert first is not None and gates.native(deadline) is first
         assert len(sets.calls) == 1
@@ -930,11 +931,11 @@ def _scoped_verdicts(gates: GlobGates, rows: list[tuple[str, str]]) -> list[int 
     """Every row's verdict through the call's gates, the scope's pairs included, with no budget."""
     verdicts: list[int | None] = [0] * len(rows)
     if gates.has_entry_patterns:
-        native = gates.native(None)
+        native = gates.native(Deadline.never())
         assert native is not None
         verdicts, completed = native.judge(rows, budget=None)
         assert completed
-    joined, completed = gates.judge_scope(rows, verdicts, deadline=None)
+    joined, completed = gates.judge_scope(rows, verdicts, deadline=Deadline.never())
     assert completed
     return joined
 
@@ -1036,16 +1037,16 @@ class TestScopeChannel:
         sets = _Counted(glob_module.glob_set)
         monkeypatch.setattr(glob_module, "glob_set", sets)
         gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py", "*.py"), arms_not=("*.py",)))
-        first = gates.scope_native(None)
-        assert first is not None and gates.scope_native(None) is first
+        first = gates.scope_native(Deadline.never())
+        assert first is not None and gates.scope_native(Deadline.never()) is first
         assert len(sets.calls) == 1
         assert len(sets.calls[0][0]) == 1
 
     def test_gates_without_a_scope_judge_no_pairs(self) -> None:
         gates = compile_gates(("*.py",))
-        assert (gates.scoped, gates.scope_native(None), gates.scope_roots) == (False, None, frozenset())
+        assert (gates.scoped, gates.scope_native(Deadline.never()), gates.scope_roots) == (False, None, frozenset())
         assert list(gates.pairs("/a/m.py", "m.py")) == []
-        assert gates.judge_scope([("/a/m.py", "m.py")], [1], deadline=None) == ([1], True)
+        assert gates.judge_scope([("/a/m.py", "m.py")], [1], deadline=Deadline.never()) == ([1], True)
 
     def test_an_unjudged_pair_or_row_stays_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: a pair the set did not judge read as no match, or a pair's
@@ -1058,12 +1059,12 @@ class TestScopeChannel:
         monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _Unjudged())
         gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
         rows = [("/a/x.py", "x.py"), ("/a/y.py", "y.py")]
-        assert gates.judge_scope(rows, [0, None], deadline=None) == ([None, None], False)
+        assert gates.judge_scope(rows, [0, None], deadline=Deadline.never()) == ([None, None], False)
 
     def test_a_scope_build_past_the_deadline_leaves_every_row_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(glob_module, "monotonic", lambda: 2.0)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 2.0)
         gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
-        assert gates.judge_scope([("/a/m.py", "m.py")], [0], deadline=1.0) == ([None], False)
+        assert gates.judge_scope([("/a/m.py", "m.py")], [0], deadline=Deadline(at=1.0)) == ([None], False)
 
     def test_pairs_not_reached_before_the_deadline_are_unjudged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the pair walk's deadline read dropped, or read once per call
@@ -1081,11 +1082,11 @@ class TestScopeChannel:
 
         monkeypatch.setattr(glob_module, "glob_set", lambda *args, **kwargs: _Unbudgeted(real(*args, **kwargs)))
         gates = compile_gates((), scope=ScopeChannel(roots=(Path("/a"),), arms=("*.py",)))
-        assert gates.scope_native(None) is not None
+        assert gates.scope_native(Deadline.never()) is not None
         clock = iter([0.0, 2.0])
-        monkeypatch.setattr(glob_module, "monotonic", lambda: next(clock, 2.0))
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: next(clock, 2.0))
         rows = [("/a/m.py", "m.py")] * 65
-        verdicts, completed = gates.judge_scope(rows, [0] * 65, deadline=1.0)
+        verdicts, completed = gates.judge_scope(rows, [0] * 65, deadline=Deadline(at=1.0))
         assert (completed, judged) == (False, [64])
         assert verdicts[64] is None
         assert all(verdict is not None for verdict in verdicts[:64])

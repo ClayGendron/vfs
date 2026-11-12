@@ -48,6 +48,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
 from vfs.authority import owner_for
+from vfs.batching import byte_chunked
 from vfs.models import (
     CONTENT_KINDS,
     MEASURE_OFFLOAD_BYTES,
@@ -59,6 +60,7 @@ from vfs.models import (
     measure_text,
 )
 from vfs.models.rows import ULIDKey
+from vfs.offload import call_offloaded
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
 from vfs.storage.backends.database.descent import (
     miss_errors,
@@ -72,7 +74,6 @@ from vfs.storage.backends.database.dialects import (
     StaleSnapshot,
     ValueCap,
     bulk_insert,
-    byte_chunked,
     chunked,
     rows_per_statement,
     statement_budget,
@@ -82,7 +83,6 @@ from vfs.storage.backends.database.dialects import (
 from vfs.storage.backends.database.edges import insert_fs_rows
 from vfs.storage.backends.database.labels import labels_for
 from vfs.storage.backends.database.membership import membership
-from vfs.storage.backends.database.offload import call_offloaded
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan

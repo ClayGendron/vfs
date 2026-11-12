@@ -35,9 +35,12 @@ from tests.support.scope_worlds import (
 )
 from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
+from vfs import deadline as deadline_module
 from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem
+from vfs.deadline import Deadline
 from vfs.models import Entry, Observation
+from vfs.offload import offload_pool
 from vfs.paths import Path
 from vfs.pattern_matching import canonical_pattern
 from vfs.pattern_matching import glob as glob_module
@@ -539,7 +542,7 @@ def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     executors: list[Any] = []
     real = base_module.judge_rows
 
-    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
+    async def spied(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         executors.append(executor)
         return await real(executor, gates, rows, deadline=deadline)
 
@@ -560,7 +563,7 @@ async def test_chained_glob_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> 
     await fs.close()
 
 
-async def test_chained_glob_judges_once_on_the_router_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chained_glob_judges_once_on_the_process_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: one hop per row or per arm, or a program built per row."""
     executors = _spy_judges(monkeypatch)
     built = _spy_sets(monkeypatch)
@@ -569,7 +572,7 @@ async def test_chained_glob_judges_once_on_the_router_pool(monkeypatch: pytest.M
     names = ("a.py", "b.md", "c.txt", "Makefile")
     rows = [Observation(path=Path(f"/{dirs[i % 5]}/{i}{names[i % 4]}")) for i in range(1_000)]
     result = await fs.glob("{*.py,src/**,*.md}", observations=rows, globs_not=("**/app/**",))
-    assert len(executors) == 1 and executors[0] is fs._verify_pool
+    assert len(executors) == 1 and executors[0] is offload_pool()
     assert [len(programs) for programs in built] == [4]
     arms = [canonical_pattern(arm) for arm in ("*.py", "src/**", "*.md")]
     expected = [
@@ -746,14 +749,14 @@ async def test_one_large_root_stops_inside_its_walk(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(root, "glob", recorded_glob)
     residuations = [0]
     real_residuals = base_module.residuals
-    real_clock = base_module.monotonic
+    real_clock = deadline_module.monotonic
 
     def counted(pattern: str, bind_path: Path) -> Any:
         residuations[0] += 1
         return real_residuals(pattern, bind_path)
 
     monkeypatch.setattr(base_module, "residuals", counted)
-    monkeypatch.setattr(base_module, "monotonic", lambda: 1e12 if residuations[0] else real_clock())
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: 1e12 if residuations[0] else real_clock())
     exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
     result = await fs.glob(_arms("x"), paths=("/",), globs_not=exclusions)
     assert residuations[0] <= 64

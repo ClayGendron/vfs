@@ -20,6 +20,7 @@ from ulid import ULID
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
+from vfs.offload import offload_pool
 from vfs.paths import MAX_PATH_LENGTH, Path
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
@@ -184,7 +185,7 @@ class TestWriteVsTopologyCoherence:
                     edits=[EditOperation(old="old", new="new")],
                     targets=[Path("/d/f.txt")],
                     authority=None,
-                    executor=host.offload_executor,
+                    executor=offload_pool(),
                 )
             await session.rollback()
         assert result.success is False

@@ -40,6 +40,7 @@ from sqlalchemy import or_, select
 
 from vfs.paths import METADATA_ROOT, ROOT, Path
 from vfs.results import ErrorKind, ResultError, classified, wrong_kind
+from vfs.results.kinds import DELETED_AT_KEY, TRASHED_KEY
 from vfs.storage.backends.database.dialects import chunked
 from vfs.storage.backends.database.membership import membership
 
@@ -54,12 +55,6 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
 
 LIKE_ESCAPE: Final = "\\"
-
-# A tombstoned row's refusal carries these so an agent knows ``restore`` applies.
-TRASHED_KEY: Final = "vfs.trashed"
-DELETED_AT_KEY: Final = "vfs.deleted_at"
-# A restore aimed inside a tombstoned tree names the root that restores it.
-TRASH_ROOT_KEY: Final = "vfs.trash_root"
 
 
 # ---------------------------------------------------------------------------

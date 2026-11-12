@@ -10,9 +10,9 @@ worlds.
 
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import replace
-from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -20,8 +20,10 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 
 from tests.support.database_helpers import _url
+from vfs.deadline import WALL_TIME_CAUSE, Deadline
 from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
+from vfs.offload import offload_pool
 from vfs.paths import Path
 from vfs.pattern_matching import ScopeChannel, compile_filter
 from vfs.pattern_matching import glob as glob_module
@@ -31,7 +33,6 @@ from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
-from vfs.storage.backends.database.offload import WALL_TIME_CAUSE
 from vfs.storage.backends.database.pathterms import compile_channel
 from vfs.storage.backends.database.seams import installed
 
@@ -675,6 +676,16 @@ class TestBudgets:
         assert wall.data is None
         await storage.close()
 
+    async def test_an_unbounded_wall_is_no_deadline(self, tmp_path) -> None:
+        """Guards: a budget turned into an instant unchecked, so a wall too large for one panics the kernel."""
+        storage = DatabaseStorage(url=_url(tmp_path), grep_wall_seconds=math.inf, glob_wall_seconds=math.inf)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle")], parents=True)).success
+        grepped = await storage.grep(pattern="needle")
+        assert (grepped.errors, _paths(grepped)) == ([], ["/a.txt"])
+        globbed = await storage.glob(patterns=("*.txt",))
+        assert (globbed.errors, _paths(globbed)) == ([], ["/a.txt"])
+        await storage.close()
+
     async def test_the_candidate_budget_record_is_emitted_at_most_once(self, tmp_path, monkeypatch) -> None:
         # Both tiers trip the same budget in one call — the index cut
         # (b.py rides the cut, then falls to the ext gate, leaving scan
@@ -856,7 +867,7 @@ class TestScanMergeBounds:
                 everything=True,
                 fetched=frozenset({"path"}),
                 limit=10,
-                deadline=-1.0,
+                deadline=Deadline(at=-1.0),
             )
         assert nominated == []
         assert overflow is False
@@ -882,7 +893,7 @@ class TestScanMergeBounds:
                 everything=True,
                 fetched=frozenset({"path"}),
                 limit=1,
-                deadline=monotonic() + 60,
+                deadline=Deadline.after(60),
             )
         assert [m["path"] for m in nominated] == ["/a1.txt"]
         assert overflow is True
@@ -1353,7 +1364,7 @@ class TestPushdownBindAccounting:
                 host.profile,
                 100,
                 40,
-                host.offload_executor,
+                offload_pool(),
                 pattern="needle",
                 ext=tuple(f"x{i:02d}" for i in range(32)),
                 ext_not=(),

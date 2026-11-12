@@ -17,7 +17,7 @@ operations per character of the subject, whatever the wildcards.
 A call's rows are judged in batches, off the event loop: the call's
 patterns become one :class:`GlobGates`, whose native set is built once
 per call on a worker and judges every row of a stage in one hop
-(``judge_rows`` in the storage offload seam), under the stage's wall.
+(``judge_rows`` in ``vfs.offload``), under the stage's wall.
 The filter law then reads each row's verdict here, in Python.
 
     try:
@@ -34,7 +34,6 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass
-from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol
 
@@ -43,6 +42,8 @@ from vfs.paths import Path, normalize_ext_channel, normalize_extension
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
+
+    from vfs.deadline import Deadline
 
 # Ceiling on the distinct arms one pattern may expand to; callers
 # refuse an over-cap expansion loudly rather than fan it out.
@@ -262,9 +263,6 @@ _EXCLUDED: Final = 1 << 2
 _ARM: Final = 1 << 0
 _ARM_NOT: Final = 1 << 1
 
-# Rows the scope's pair walk takes between two reads of its deadline.
-PAIR_ROWS_PER_CHECK: Final = 64
-
 
 class _ScopeGates(NamedTuple):
     """The scope part of one call's gates: its roots, its marked roots, its arms and exclusion arms."""
@@ -330,7 +328,7 @@ class GlobGates:
         """Whether the call carries a scope channel: an admission then needs a matching arm."""
         return self._scope is not None
 
-    def native(self, deadline: float | None) -> GlobSet | None:
+    def native(self, deadline: Deadline) -> GlobSet | None:
         """The call's native set, built once; ``None`` once a build reached *deadline*.
 
         One atom walk per distinct pattern, the clock checked before
@@ -347,7 +345,7 @@ class GlobGates:
             patterns = list(dict.fromkeys(gate.pattern for gate in (*self.admissions, *self.exclusions)))
             programs: list[tuple[list[GlobAtom], bool]] = []
             for pattern in patterns:
-                if deadline is not None and monotonic() > deadline:
+                if deadline.expired():
                     return None
                 programs.append((_program(pattern, recursive=True), "/" in pattern))
             index = {pattern: position for position, pattern in enumerate(patterns)}
@@ -356,11 +354,10 @@ class GlobGates:
                 [index[gate.pattern] for gate in self.admissions if gate.pattern in self._marked],
                 [index[gate.pattern] for gate in self.exclusions],
             ]
-            budget = None if deadline is None else max(0.0, deadline - monotonic())
-            self._set = glob_set(programs, groups, budget=budget)
+            self._set = glob_set(programs, groups, budget=deadline.remaining())
             return self._set
 
-    def scope_native(self, deadline: float | None) -> GlobSet | None:
+    def scope_native(self, deadline: Deadline) -> GlobSet | None:
         """The scope's native set, built once: the arms in group 0, the exclusion arms in group 1.
 
         ``None`` once a build reached *deadline*, never retried, and for
@@ -377,13 +374,12 @@ class GlobGates:
             patterns = list(dict.fromkeys(gate.pattern for gate in (*scope.arms, *scope.arms_not)))
             programs: list[tuple[list[GlobAtom], bool]] = []
             for pattern in patterns:
-                if deadline is not None and monotonic() > deadline:
+                if deadline.expired():
                     return None
                 programs.append((_program(pattern, recursive=True), "/" in pattern))
             index = {pattern: position for position, pattern in enumerate(patterns)}
             groups = [[index[gate.pattern] for gate in scope.arms], [index[gate.pattern] for gate in scope.arms_not]]
-            budget = None if deadline is None else max(0.0, deadline - monotonic())
-            self._scope_set = glob_set(programs, groups, budget=budget)
+            self._scope_set = glob_set(programs, groups, budget=deadline.remaining())
             return self._scope_set
 
     def pairs(self, path: str, name: str) -> Iterator[ScopePair]:
@@ -402,12 +398,12 @@ class GlobGates:
             cut = path.rfind("/", 0, cut)
 
     def judge_scope(
-        self, rows: Sequence[GlobRow], verdicts: Sequence[int | None], *, deadline: float | None
+        self, rows: Sequence[GlobRow], verdicts: Sequence[int | None], *, deadline: Deadline
     ) -> tuple[list[int | None], bool]:
         """*verdicts* (the entry-wide words) joined with each row's pairs' words, and whether every pair was judged.
 
-        The pairs are built here, the deadline read before every 64th
-        row; a row the walk did not reach, or a pair the set did not
+        The pairs are built here, the deadline read between chunks of
+        rows; a row the walk did not reach, or a pair the set did not
         judge, is unjudged. A pair's arm match is a marked admission
         under a marked root and an unmarked one otherwise; its exclusion
         arm match is an exclusion. Gates without a scope answer
@@ -421,19 +417,17 @@ class GlobGates:
             return [None] * len(rows), False
         subjects: list[GlobRow] = []
         owners: list[tuple[int, bool]] = []
-        reached = len(rows)
-        for position, (path, name) in enumerate(rows):
-            if position % PAIR_ROWS_PER_CHECK == 0 and deadline is not None and monotonic() > deadline:
-                reached = position
-                break
-            for pair in self.pairs(path, name):
-                subjects.append((pair.remainder, pair.name))
-                owners.append((position, pair.marked))
+        reached = 0
+        for chunk in deadline.chunks(rows):
+            for position, (path, name) in enumerate(chunk, start=reached):
+                for pair in self.pairs(path, name):
+                    subjects.append((pair.remainder, pair.name))
+                    owners.append((position, pair.marked))
+            reached += len(chunk)
         judged: list[int | None] = []
         completed = True
         if subjects:
-            budget = None if deadline is None else max(0.0, deadline - monotonic())
-            judged, completed = native.judge(subjects, budget=budget)
+            judged, completed = native.judge(subjects, budget=deadline.remaining())
         for (position, marked), word in zip(owners, judged, strict=True):
             current = joined[position]
             if current is not None:

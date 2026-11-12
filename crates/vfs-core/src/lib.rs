@@ -14,6 +14,7 @@
 //! types; the `python` cargo feature adds the pyo3 module and nothing else.
 
 mod chunk;
+mod deadline;
 mod glob;
 mod grams;
 mod lexical;
@@ -28,6 +29,7 @@ mod verify;
 mod python;
 
 pub use chunk::{GRAMMAR_NAMES, SpanRow, split_batch};
+pub use deadline::{BatchOutcome, CHECK_EVERY, Deadline, par_batch};
 pub use glob::{Atom, GlobProgram, GlobSet, MAX_GROUPS, ProgramError, judge_batch};
 pub use grams::{GRAM_SIZE, GramExtractor};
 pub use links::{MAX_CONTEXT_CHARS, MarkdownRef, RefParser, fold_line, markdown_refs, markdown_refs_batch};
@@ -39,4 +41,4 @@ pub use lexical::{
 pub use postings::{AddDocError, DrainedPostings, PostingError, PostingRow, PostingsAccumulator, candidate_ids, decode_postings};
 pub use signals::{Measure, NO_PARENT, SignalError, centrality_prior};
 pub use vectors::{VectorError, cosine_topk};
-pub use verify::{BatchOutcome, Hit, Matcher, PatternError, count_batch, hits_batch};
+pub use verify::{Hit, Matcher, PatternError, count_batch, hits_batch};

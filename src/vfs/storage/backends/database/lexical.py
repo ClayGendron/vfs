@@ -14,7 +14,7 @@ terms are in the current lexical epoch**; a directory, with no terms to
 index, is always ``encoded``.
 
 The build's CPU — tokenizing each batch, fixing the statistics, and
-assembling every drained row — hops through the backend's offload pool
+assembling every drained row — hops through the process's offload pool
 so the loop keeps serving while it runs.
 """
 
@@ -25,9 +25,10 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from sqlalchemy import insert, select
 
+from vfs.batching import ByteBatcher
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
-from vfs.storage.backends.database.dialects import ByteBatcher, bulk_insert, chunked
-from vfs.storage.backends.database.offload import call_offloaded
+from vfs.offload import call_offloaded
+from vfs.storage.backends.database.dialects import bulk_insert, chunked
 from vfs.storage.backends.database.pages import covered_chunk_page
 
 if TYPE_CHECKING:
