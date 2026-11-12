@@ -1,0 +1,21 @@
+Installed 1 package in 1ms
+bodies 2000 bytes 14334854 passes 7
+| call | query | terms | s per pass | us per body | MB/s |
+|---|---|---|---|---|---|
+| vfs tokenize (pyo3, Vec<String> -> list[str]) | (no terms) | 0 | 0.1648 | 82.4 | 87 |
+| status quo: tokenize + Counter + get | 2 words (ranks 300, 3000) | 2 | 0.2914 | 145.7 | 49 |
+| kernel overlay_postings, one call per batch | 2 words (ranks 300, 3000) | 2 | 0.0818 | 40.9 | 175 |
+| kernel count_terms, one call per document | 2 words (ranks 300, 3000) | 2 | 0.0826 | 41.3 | 173 |
+| status quo: tokenize + Counter + get | 3 words (ranks 40, 1500, 9000) | 3 | 0.2923 | 146.1 | 49 |
+| kernel overlay_postings, one call per batch | 3 words (ranks 40, 1500, 9000) | 3 | 0.0836 | 41.8 | 172 |
+| kernel count_terms, one call per document | 3 words (ranks 40, 1500, 9000) | 3 | 0.0870 | 43.5 | 165 |
+| status quo: tokenize + Counter + get | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.2936 | 146.8 | 49 |
+| kernel overlay_postings, one call per batch | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.0841 | 42.0 | 171 |
+| kernel count_terms, one call per document | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.0889 | 44.4 | 161 |
+| status quo: tokenize + Counter + get | 2 very common (ranks 5, 12) | 2 | 0.2949 | 147.5 | 49 |
+| kernel overlay_postings, one call per batch | 2 very common (ranks 5, 12) | 2 | 0.0832 | 41.6 | 172 |
+| kernel count_terms, one call per document | 2 very common (ranks 5, 12) | 2 | 0.0859 | 42.9 | 167 |
+| status quo: tokenize + Counter + get | 2 rare (ranks 8000, 20000) | 2 | 0.2858 | 142.9 | 50 |
+| kernel overlay_postings, one call per batch | 2 rare (ranks 8000, 20000) | 2 | 0.0811 | 40.6 | 177 |
+| kernel count_terms, one call per document | 2 rare (ranks 8000, 20000) | 2 | 0.0824 | 41.2 | 174 |
+parity: kernel postings equal tokenize + Counter on every body and query

@@ -1,0 +1,31 @@
+== Peak factors measured on real traces
+Leung corporate: mean ops/day 3,507,692; peak day 9.4M = x2.68; peak hour 1.7M = x3.88 of the 8-hour-workday mean hour
+Leung engineering: mean ops/day 3,628,866; peak day 19.1M = x5.26; peak hour 2.1M = x4.63 of the 8-hour-workday mean hour
+Google Piper: 800k peak / 500k workday mean = x1.6
+Leung corporate CIFS ops per client per day: 667; engineering: 1,367
+
+== Human search queries per user per working day
+Stenmark 2002: 2,776 real queries/day over ~60,000 employees = 0.046/employee/day; 5,644 unique IPs in the week = 9.4% of employees searched at all
+Martin White 2018: 200,000/month over 50,000 unique users of 75,000 employees = 4.0/active user/month = 0.19/active user/working day; 0.127/employee/working day
+SparkToro 2024 web search: 121/searcher/month = 4.0/day on every day (an upper bound for any search box)
+Human ranked search (glean), intranet measurement, 0.05-0.2                 0.200/user/day          200/day    0.007/s mean     0.03/s peak (x4.0)
+Human ranked search (glean), web-search upper bound, 4/day                  4.000/user/day        4,000/day    0.139/s mean     0.56/s peak (x4.0)
+Clay's proposal: 100 queries/user/day                                     100.000/user/day      100,000/day    3.472/s mean    13.89/s peak (x4.0)
+
+== Agent tool calls per user per working day
+Claude Code report: 10 actions/prompt x 4 turns/session = 40 actions/session
+Agent: 2 Claude-Code-sized sessions/user/day x 40 actions                  80.000/user/day       80,000/day    2.778/s mean    11.11/s peak (x4.0)
+Agent: 5 Claude-Code-sized sessions/user/day x 40 actions                 200.000/user/day      200,000/day    6.944/s mean    27.78/s peak (x4.0)
+Agent: 10 Claude-Code-sized sessions/user/day x 40 actions                400.000/user/day      400,000/day   13.889/s mean    55.56/s peak (x4.0)
+SWE-agent: median 12 steps resolved, mean 21 unresolved, GPT-4 Turbo; SWE-smith on Verified: 25-29 steps (Claude 3.7 Sonnet)
+
+== Files changed per day
+Veeam 2% (bytes)                         2.0000% of 10,000,000 files = 200,000 files/day = 200.0 files/user/day
+Veeam 5% (bytes)                         5.0000% of 10,000,000 files = 500,000 files/day = 500.0 files/user/day
+Meyer 20%/month uniform upper bound      0.9524% of 10,000,000 files = 95,238 files/day = 95.2 files/user/day
+Clay 1%                                  1.0000% of 10,000,000 files = 100,000 files/day = 100.0 files/user/day
+Clay 10% nightly                         10.0000% of 10,000,000 files = 1,000,000 files/day = 1,000.0 files/user/day
+Dropbox 2017: 1.2e9 files saved/day over 500M registered users = 2.4 files/user/day (registered, not active)
+Google 2015: 16,000 human commits/workday over 25,000 developers = 0.64 commits/dev/day; 40,000 total = 1.6
+GitHub 2026: 34.3e9 commits/yr over 225M developers = 0.42 commits/dev/day (most registered developers are inactive)
+Leung: writes are 1/3.2 (corp) and 1/2.3 (eng) of I/Os; 57-65% of files persist more than a day; over 90% of stored bytes untouched in three months

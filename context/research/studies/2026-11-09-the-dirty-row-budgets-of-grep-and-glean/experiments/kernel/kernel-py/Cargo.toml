@@ -1,0 +1,15 @@
+[package]
+name = "overlay_counts"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "overlay_counts"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py311", "extension-module"] }
+
+[profile.release]
+opt-level = 3
+debug = false

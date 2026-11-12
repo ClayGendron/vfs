@@ -1,0 +1,14 @@
+corpus                                  10,000,000
+organic writes, working day (1%)           100,000
+organic writes, nightly batch (10%)      1,000,000
+organic writes per day                   1,100,000
+six full rebuilds, file visits          60,000,000
+full visits / organic writes                  54.5x
+one full rebuild / organic writes              9.1x
+partial passes per day                          96
+edits per 15-min pass, work hours            2,500  (0.0250% of corpus)
+weekly full rebuild (Graph default)           1.30x organic writes per day
+28-day full crawl (Glean default)             0.32x organic writes per day
+GitHub full reindex rate                   239,198 docs/s over 18 h
+GitHub stated publish rate                 120,000 docs/s
+10M files at GitHub's publish rate             1.4 minutes per full rebuild

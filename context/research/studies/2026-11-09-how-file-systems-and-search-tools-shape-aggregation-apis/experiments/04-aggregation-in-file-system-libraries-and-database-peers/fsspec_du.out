@@ -1,0 +1,14 @@
+fsspec 2026.7.0
+du(total=True) -> int 90199312
+du(total=False) -> dict with 284 entries; first 3: {"/Users/claygendron/Git/Repos/vfs/src/vfs/__init__.py": 1269, "/Users/claygendron/Git/Repos/vfs/src/vfs/__pycache__/__init__.cpython-313.opt-1.pyc": 1251, "/Users/claygendron/Git/Repos/vfs/src/vfs/__pycache__/__init__.cpython-313.pyc": 1251}
+du(total=False, maxdepth=1) -> 0 entries: {}
+du(total=False, maxdepth=1, withdirs=True) -> 2 entries: {"/Users/claygendron/Git/Repos/vfs/src": 96, "/Users/claygendron/Git/Repos/vfs/src/vfs": 800}
+du(total=True, maxdepth=1) -> 0
+du(total=True, withdirs=True) -> 90210192
+sizes([...]) -> [171408, 5595]
+info(root) keys -> ['created', 'gid', 'ino', 'islink', 'mode', 'mtime', 'name', 'nlink', 'size', 'type', 'uid']
+info(root) size -> 96 type directory
+find(maxdepth=1, withdirs=True, detail=True) -> keys of first dir record: ['created', 'gid', 'ino', 'islink', 'mode', 'mtime', 'name', 'nlink', 'size', 'type', 'uid']
+ls(detail=True) record types -> ['directory'] dir size field -> [800]
+uv run --with fsspec python -I fsspec_du.py   0.10s user 0.04s system 84% cpu 0.159 total
+exit 0

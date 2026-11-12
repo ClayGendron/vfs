@@ -1,0 +1,36 @@
+bodies 2000 bytes 14334854 chars 14334854 tokens 2184212 bytes/body 7167 tokens/body 1092 passes 7
+parity: fused, dictionary and ascii kernels agree with vfs_core::tokenize + HashMap on every body and query (2000 of 2000 bodies are all-ASCII)
+
+| variant | query | terms | s per pass | us per body | MB/s | ns per token |
+|---|---|---|---|---|---|---|
+| A tokenize -> Vec<String> | (no terms) | 0 | 0.1285 | 64.2 | 112 | 58.8 |
+| B tokenize + HashMap<&str,u32> + lookup | 2 words (ranks 300, 3000) | 2 | 0.2255 | 112.7 | 64 | 103.2 |
+| C tokenize + linear compare | 2 words (ranks 300, 3000) | 2 | 0.1344 | 67.2 | 107 | 61.5 |
+| D fused count (no alloc, no map) | 2 words (ranks 300, 3000) | 2 | 0.0829 | 41.4 | 173 | 37.9 |
+| E fused + HashMap<String,u32> | 2 words (ranks 300, 3000) | 2 | 0.2069 | 103.5 | 69 | 94.7 |
+| G ascii byte path (headroom probe) | 2 words (ranks 300, 3000) | 2 | 0.0485 | 24.2 | 296 | 22.2 |
+| F overlay_postings batch | 2 words (ranks 300, 3000) | 2 | 0.0836 | 41.8 | 171 | 38.3 |
+| B tokenize + HashMap<&str,u32> + lookup | 3 words (ranks 40, 1500, 9000) | 3 | 0.2284 | 114.2 | 63 | 104.6 |
+| C tokenize + linear compare | 3 words (ranks 40, 1500, 9000) | 3 | 0.1398 | 69.9 | 103 | 64.0 |
+| D fused count (no alloc, no map) | 3 words (ranks 40, 1500, 9000) | 3 | 0.0843 | 42.2 | 170 | 38.6 |
+| E fused + HashMap<String,u32> | 3 words (ranks 40, 1500, 9000) | 3 | 0.2046 | 102.3 | 70 | 93.7 |
+| G ascii byte path (headroom probe) | 3 words (ranks 40, 1500, 9000) | 3 | 0.0491 | 24.5 | 292 | 22.5 |
+| F overlay_postings batch | 3 words (ranks 40, 1500, 9000) | 3 | 0.0854 | 42.7 | 168 | 39.1 |
+| B tokenize + HashMap<&str,u32> + lookup | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.2217 | 110.8 | 65 | 101.5 |
+| C tokenize + linear compare | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.1418 | 70.9 | 101 | 64.9 |
+| D fused count (no alloc, no map) | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.0861 | 43.1 | 166 | 39.4 |
+| E fused + HashMap<String,u32> | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.2034 | 101.7 | 70 | 93.1 |
+| G ascii byte path (headroom probe) | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.0510 | 25.5 | 281 | 23.3 |
+| F overlay_postings batch | 4 words (ranks 700, 2000, 5000, 15000) | 4 | 0.0875 | 43.8 | 164 | 40.1 |
+| B tokenize + HashMap<&str,u32> + lookup | 2 very common (ranks 5, 12) | 2 | 0.2251 | 112.6 | 64 | 103.1 |
+| C tokenize + linear compare | 2 very common (ranks 5, 12) | 2 | 0.1381 | 69.0 | 104 | 63.2 |
+| D fused count (no alloc, no map) | 2 very common (ranks 5, 12) | 2 | 0.0842 | 42.1 | 170 | 38.5 |
+| E fused + HashMap<String,u32> | 2 very common (ranks 5, 12) | 2 | 0.2052 | 102.6 | 70 | 93.9 |
+| G ascii byte path (headroom probe) | 2 very common (ranks 5, 12) | 2 | 0.0487 | 24.4 | 294 | 22.3 |
+| F overlay_postings batch | 2 very common (ranks 5, 12) | 2 | 0.0849 | 42.5 | 169 | 38.9 |
+| B tokenize + HashMap<&str,u32> + lookup | 2 rare (ranks 8000, 20000) | 2 | 0.2233 | 111.7 | 64 | 102.3 |
+| C tokenize + linear compare | 2 rare (ranks 8000, 20000) | 2 | 0.1344 | 67.2 | 107 | 61.5 |
+| D fused count (no alloc, no map) | 2 rare (ranks 8000, 20000) | 2 | 0.0826 | 41.3 | 174 | 37.8 |
+| E fused + HashMap<String,u32> | 2 rare (ranks 8000, 20000) | 2 | 0.2050 | 102.5 | 70 | 93.8 |
+| G ascii byte path (headroom probe) | 2 rare (ranks 8000, 20000) | 2 | 0.0477 | 23.9 | 300 | 21.9 |
+| F overlay_postings batch | 2 rare (ranks 8000, 20000) | 2 | 0.0840 | 42.0 | 171 | 38.5 |

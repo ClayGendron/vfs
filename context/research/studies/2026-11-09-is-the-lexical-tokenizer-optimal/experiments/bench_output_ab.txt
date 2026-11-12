@@ -1,0 +1,57 @@
+passes 7; corpus B files skipped as non-UTF-8 or unreadable: 0
+corpus A: bodies 2000 bytes 14334854 non-ASCII bytes 0 (0.000%) chars 14334854 tokens 2184212 bytes/body 7167 tokens/body 1092
+  all-ASCII bodies: 2000 of 2000
+  distinct terms: 33294
+corpus B: bodies 943 bytes 19205768 non-ASCII bytes 105803 (0.551%) chars 19138593 tokens 2821882 bytes/body 20367 tokens/body 2992
+  all-ASCII bodies: 107 of 943
+  distinct terms: 50347
+
+corpus A (2000 bodies, 14334854 bytes, 2184212 tokens)
+
+| section | variant | parity | us per body | MB/s | ns per token | allocs per body | reallocs per body | alloc bytes per body | vs engine |
+|---|---|---|---|---|---|---|---|---|---|
+| profile | vfs_core::tokenize (the engine) | reference | 61.2 | 117 | 56.1 | 1096.1 | 11.4 | 131869 | 1.00x |
+| profile | (i) chars collection | n/a | 4.6 | 1561 | 4.2 | 1.0 | 2.0 | 50203 | 0.07x |
+| profile | (ii) + run scan and class checks | n/a | 17.5 | 409 | 16.1 | 1.0 | 2.0 | 50203 | 0.29x |
+| profile | (iii) + identifier split | n/a | 26.3 | 272 | 24.1 | 2.0 | 2.0 | 50267 | 0.43x |
+| profile | (iv) + fold into scratch | n/a | 37.3 | 192 | 34.2 | 3.0 | 3.5 | 50307 | 0.61x |
+| profile | (v) + length check | n/a | 42.4 | 169 | 38.8 | 3.0 | 3.5 | 50307 | 0.69x |
+| profile | (vi) + clone: the full function, staged copy | identical | 64.7 | 111 | 59.2 | 1096.1 | 11.4 | 131869 | 1.06x |
+| candidate | (a) no Vec<char>: char_indices and byte slices | identical | 71.4 | 100 | 65.4 | 1095.1 | 9.4 | 81666 | 1.17x |
+| candidate | (b) borrowed &str sink, counter (no clone) | identical | 41.3 | 173 | 37.9 | 1.0 | 0.0 | 908 | 0.67x |
+| candidate | (c) ASCII run fast path on (a)'s scan, Vec<String> out | identical | 58.6 | 122 | 53.7 | 1095.1 | 9.4 | 81665 | 0.96x |
+| candidate | (d) byte-first length check | identical | 61.0 | 117 | 55.9 | 1096.1 | 11.4 | 131869 | 1.00x |
+| candidate | (e) 128-entry ASCII class table | identical | 62.1 | 115 | 56.9 | 1096.1 | 11.4 | 131869 | 1.01x |
+| candidate | (f) a+b+c+d+e, counter sink (the builder's use) | identical | 34.1 | 210 | 31.2 | 0.0 | 0.0 | 0 | 0.56x |
+| candidate | (f) a+b+c+d+e, Vec<String> out (the binding's use) | identical | 57.4 | 125 | 52.6 | 1095.1 | 9.4 | 81665 | 0.94x |
+| builder | LexicalAccumulator::add_doc (the engine) | reference | 181.5 | 39 | 166.2 | 1146.7 | 105.3 | 147912 | 2.96x |
+| builder | borrowed lookup, (b) feed, SipHash | identical rows | 91.8 | 78 | 84.1 | 68.3 | 93.9 | 18404 | 1.50x |
+| builder | borrowed lookup, (b) feed, FNV-1a | identical rows | 81.9 | 88 | 75.0 | 68.3 | 93.9 | 18404 | 1.34x |
+| builder | borrowed lookup, (f) feed, SipHash | identical rows | 82.3 | 87 | 75.3 | 68.3 | 93.9 | 17560 | 1.34x |
+| builder | borrowed lookup, (f) feed, FNV-1a | identical rows | 73.6 | 97 | 67.4 | 68.3 | 93.9 | 17560 | 1.20x |
+| builder | engine add_doc + finish + block drain (whole build CPU) | reference | 194.4 | 37 | 178.0 | 1271.0 | 122.9 | 165249 | 3.17x |
+
+corpus B (943 bodies, 19205768 bytes, 2821882 tokens)
+
+| section | variant | parity | us per body | MB/s | ns per token | allocs per body | reallocs per body | alloc bytes per body | vs engine |
+|---|---|---|---|---|---|---|---|---|---|
+| profile | vfs_core::tokenize (the engine) | reference | 181.8 | 112 | 60.8 | 2996.4 | 13.9 | 367667 | 1.00x |
+| profile | (i) chars collection | n/a | 12.9 | 1573 | 4.3 | 1.0 | 2.0 | 142598 | 0.07x |
+| profile | (ii) + run scan and class checks | n/a | 56.1 | 363 | 18.7 | 1.0 | 2.0 | 142598 | 0.31x |
+| profile | (iii) + identifier split | n/a | 82.4 | 247 | 27.5 | 2.0 | 2.5 | 142747 | 0.45x |
+| profile | (iv) + fold into scratch | n/a | 111.9 | 182 | 37.4 | 3.0 | 4.7 | 142827 | 0.62x |
+| profile | (v) + length check | n/a | 126.3 | 161 | 42.2 | 3.0 | 4.7 | 142827 | 0.69x |
+| profile | (vi) + clone: the full function, staged copy | identical | 190.5 | 107 | 63.6 | 2996.4 | 13.9 | 367667 | 1.05x |
+| candidate | (a) no Vec<char>: char_indices and byte slices | identical | 210.6 | 97 | 70.4 | 2995.4 | 11.9 | 225069 | 1.16x |
+| candidate | (b) borrowed &str sink, counter (no clone) | identical | 124.6 | 163 | 41.6 | 1.0 | 0.5 | 7166 | 0.69x |
+| candidate | (c) ASCII run fast path on (a)'s scan, Vec<String> out | identical | 175.0 | 116 | 58.5 | 2995.4 | 11.8 | 225058 | 0.96x |
+| candidate | (d) byte-first length check | identical | 179.5 | 113 | 60.0 | 2996.4 | 13.9 | 367667 | 0.99x |
+| candidate | (e) 128-entry ASCII class table | identical | 184.3 | 110 | 61.6 | 2996.4 | 13.9 | 367667 | 1.01x |
+| candidate | (f) a+b+c+d+e, counter sink (the builder's use) | identical | 107.0 | 190 | 35.8 | 0.0 | 0.0 | 1 | 0.59x |
+| candidate | (f) a+b+c+d+e, Vec<String> out (the binding's use) | identical | 173.5 | 117 | 58.0 | 2995.4 | 11.8 | 225058 | 0.95x |
+| builder | LexicalAccumulator::add_doc (the engine) | reference | 450.4 | 45 | 150.5 | 3157.8 | 99.1 | 394853 | 2.48x |
+| builder | borrowed lookup, (b) feed, SipHash | identical rows | 217.7 | 94 | 72.7 | 215.8 | 85.7 | 38043 | 1.20x |
+| builder | borrowed lookup, (b) feed, FNV-1a | identical rows | 195.8 | 104 | 65.4 | 215.8 | 85.7 | 38043 | 1.08x |
+| builder | borrowed lookup, (f) feed, SipHash | identical rows | 199.7 | 102 | 66.7 | 215.8 | 85.7 | 31027 | 1.10x |
+| builder | borrowed lookup, (f) feed, FNV-1a | identical rows | 184.9 | 110 | 61.8 | 215.8 | 85.7 | 31027 | 1.02x |
+| builder | engine add_doc + finish + block drain (whole build CPU) | reference | 477.9 | 43 | 159.7 | 3539.9 | 154.0 | 441063 | 2.63x |

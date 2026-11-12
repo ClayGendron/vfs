@@ -57,6 +57,37 @@ Consequences that bind design work:
 - **Unknown dialects are served the core verbs, never ranked search.** They resolve to the conservative `GENERIC` floor stamped with their own name and serve read, write, the topology verbs, glob and grep exactly as a tuned engine does. `glean` is withheld from their declared capabilities, because ranked search needs an engine fact the floor cannot declare: a cosine distance function. **Every supported dialect has one**: native on Postgres/pgvector, MariaDB, SQL Server 2025 and Oracle 23ai; sqlite-vec on SQLite, a core dependency vfs loads on every connection. MySQL community has no distance function and no extension vfs can install, so it is not a supported dialect: a `mysql://` URL is served as an unknown one. There is no client-side vector floor; the Rust cosine kernel is the vector leg's referee.
 - **Never design toward a hard scale cap.** Do not intentionally limit vfs's scale capacity (no designed corpus ceilings, row maximums, or "supported size" limits) unless an external system imposes one: a SQL engine's own caps, a protocol constant. Where the current implementation is suboptimal at scale (e.g. a whole-corpus in-memory build), acknowledge the profile honestly in the docstring and name the future direction; never convert the suboptimality into a declared limit.
 
+## The reference deployment: the scale every idea is filtered through
+
+Every design idea is costed against one concrete enterprise deployment before it is proposed. It is a filter, not a target and not a cap: an idea that is cheap in a demo and ruinous here is rejected here, and an idea that looks heavy in the abstract but is a rounding error here is not rejected for looking heavy. Every figure is sourced in [the 2026-11-09 research memo](context/research/2026-11-09-what-an-enterprise-scale-deployment-looks-like.md), which names the study, the population and the year behind each one; a row marked *assumption* is one no public measurement exists for. When a real deployment is measured and diverges, the table is updated and the ideas it filtered are revisited.
+
+| Dimension | Figure | Source in words |
+|---|---|---|
+| Files | 10,000,000 | the share estate of about 2,400 accounts at the measured 4,225 files per account (785 organizations, 2019), or a 1,000-person company once code, wiki versions and cloud drives are counted |
+| Directories | about 1,000,000; median directory 2 files, a quarter empty of files, a tail into thousands of children | 6 to 12 files per directory in every study from 1998 to 2019; the largest directory in the Linux tree holds 1,533 entries |
+| Depth | mean 6; 15% of directories at depth 8 or more; tail to 12 to 15 | the Microsoft desktop series, 2000 to 2009 |
+| File size | median 4 KB; mean 0.3 to 0.7 MB; 3 to 7 TB of bodies, about 40 GB of text at the median | the 4 KB median is unchanged since 1981; the text share by count is high and by bytes low, and is an *assumption* |
+| Growth | about 25% a year, doubling in three years | 20 to 32% a year on desktops over eleven years; about 5% in a mature code tree |
+| Derived rows | about 100,000,000 chunks with their postings and embeddings | the ten-chunks-per-file ratio vfs's own embed docstring states |
+| Callers | 1,000 people and the agents acting for them | the user count is the owner's choice; the rows below separate the two populations |
+| Human ranked searches | about 0.2 a person a day, 200 a day in all | two intranet query logs, 60,000 and 75,000 employees, 2002 and 2018 |
+| Agent verb calls | 100 to 200 a user a day, 150 as the figure; 150,000 a day; about 5 a second over an eight-hour day, about 20 a second at peak; about three reads, lists, globs and greps per write or edit, `glean` under a tenth; the top 1% of identities issue 10 to 20% of calls | about 10 actions a prompt and 4 prompts a session measured on 400,000 agent sessions, at 2 to 5 sessions a day; a 4× peak hour from the NetApp traces |
+| Organic change | 0.5% of files a working day, 50,000 single-file writes; 1% as the design ceiling, 100,000 | at most 0.95% a day from the desktop studies, 0.1% of bytes on shared servers; human saves are 1,000 to 5,000 of these and the rest are machine writes |
+| Nightly batch | 10% of files, 1,000,000, in 10,000-file batches, 100 batches inside six hours, about 50 files a second sustained | the ingest contract vfs chooses; no organic corpus measures anything near it, and automation issuing most writes has precedent |
+| Partial index pass | every 15 minutes, floor 1 minute, over what changed since the last pass: about 1,250 to 2,500 files in working hours, the nightly million overnight; each pass writes its own posting table | SharePoint's continuous-crawl default and Microsoft's connector floor; Glean's connectors run at 10 minutes to 1 hour |
+| Full rebuild | once a day, required by the design, folding the delta posting tables into one; 10,000,000 file visits, about ten times the day's organic writes | prior art rebuilds weekly to monthly or never; the only sub-daily full builds are zoekt's, per repository, for compaction |
+| Directory aggregates | direct-children file count, subdirectory count and byte total per directory, maintained with the write and coalesced per batch; recursive totals only for marked directories; labelled approximate, with a strict read and a repair verb; a 1 to 5 second lag budget where asynchronous | the consensus of CephFS, HDFS, btrfs, ZFS, Lustre, GPFS, FSRM and JuiceFS at ten million files and beyond; the shape vfs's own aggregation experiment tests |
+| Rights | every verb call judged against row-level grants | the number of groups and the share of files under grants is an *assumption* |
+| Engines | Postgres as the common case; SQL Server and Oracle at customer sites | the floors above, 1,000-element `IN` lists and about 2,100 bind parameters, are live constraints |
+
+How to use it: name the multiplier an idea rides on, then multiply.
+
+- **Per verb call** is about 150,000 a day. A read must cost in proportion to what it returns, never to the corpus: one scan of 10,000,000 rows per call is 1.5 trillion row visits a day, and an agent is waiting on the latency.
+- **Per file write** is about 1,050,000 a day at the centre and 1,100,000 at the ceiling. One bounded statement per write is about a million statements a day, affordable if it is bounded and uncontended; the same statement landing on one hot row is about 30 updates a second on that row at the daytime peak and about 50 a second through the nightly batch, a serialization point.
+- **Per index visit** is about 11,000,000 a day: the partial passes' million plus the daily rebuild's ten million. Anything added to the rebuild path is paid ten times more often than anything on the write path and seventy times more often than anything on a verb call. This is the multiplier that most often turns a small idea into an unaffordable one.
+- **Per batch** is 100 a night inside six hours. 10,000 rows through chunked builders at the engine floor is already about ten statements per table touched; a round trip per row adds 10,000.
+- **Per corpus** is once a day, the rebuild. A whole-table operation is affordable only there, only bounded in memory and interruptible, and never per call or per write.
+
 ## Tooling
 
 - **This is a uv project.** Run Python and tooling through `uv`, e.g. `uv run python ...`, `uv run pytest ...`. Do not invoke the interpreter or `pip` directly, and do not manually `source .venv`.

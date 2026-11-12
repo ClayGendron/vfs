@@ -1,0 +1,175 @@
+{
+  "engine": "sqlite",
+  "variant": "keyset_4096",
+  "python": "3.13.11",
+  "machine": "arm64",
+  "copy_s": 0.84,
+  "db_bytes": 2451095552,
+  "sqlite_version": "3.50.4",
+  "membership_budget": 32668,
+  "parameter_budget": 32700,
+  "page_statement": "SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content \nFROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id \nWHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > 0 ORDER BY vfs_chunks.id\n LIMIT 256 OFFSET 0",
+  "page_rows": 4096,
+  "probe_size": 0,
+  "before": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 1
+  },
+  "salt": 1,
+  "dirtied": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 1,
+    "epoch": 1
+  },
+  "reindex": {
+    "success": true,
+    "wall_s": 50.51,
+    "process_cpu_s": 46.82,
+    "statements": 762,
+    "errors": []
+  },
+  "rss_peak_mb": 2917.2,
+  "rss_before_reindex_mb": 650.9,
+  "after": {
+    "chunks": 462963,
+    "posting_list": 7482,
+    "lex_postings": 768702,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 2
+  },
+  "timers": {
+    "phase.chunk_dirty": {
+      "calls": 1,
+      "wall_s": 0.054,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.build_epoch": {
+      "calls": 1,
+      "wall_s": 41.661,
+      "rows": 0,
+      "chars": 0
+    },
+    "build.lexical_total": {
+      "calls": 1,
+      "wall_s": 35.684,
+      "rows": 0,
+      "chars": 0
+    },
+    "scan.batcher_add": {
+      "calls": 0,
+      "wall_s": 0.182,
+      "rows": 462963,
+      "chars": 0
+    },
+    "lexical.builder.add_docs": {
+      "calls": 163,
+      "wall_s": 19.897,
+      "rows": 462963,
+      "chars": 681751944
+    },
+    "lexical.inserts": {
+      "calls": 209,
+      "wall_s": 8.052,
+      "rows": 0,
+      "chars": 0
+    },
+    "scan.yield": {
+      "calls": 163,
+      "wall_s": 23.486,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.publish_epoch": {
+      "calls": 1,
+      "wall_s": 0.978,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.reclaim_epochs": {
+      "calls": 1,
+      "wall_s": 0.924,
+      "rows": 0,
+      "chars": 0
+    }
+  },
+  "scan": {
+    "pages": 115,
+    "nonempty_pages": 114,
+    "rows": 462963,
+    "chars": 681751944,
+    "scan_wall_s": 5.574,
+    "page_wall_median_ms": 47.986,
+    "page_wall_mean_ms": 48.468,
+    "page_wall_p99_ms": 81.138,
+    "page_wall_max_ms": 81.407,
+    "page_rows_median": 4096,
+    "page_chars_median": 6032563,
+    "page_chars_mean": 5928278.0,
+    "first_10_pages_ms": [
+      72.87,
+      50.13,
+      48.99,
+      46.74,
+      50.29,
+      78.14,
+      46.2,
+      47.88,
+      48.13,
+      47.3
+    ],
+    "last_10_pages_ms": [
+      48.65,
+      46.45,
+      48.03,
+      46.7,
+      46.94,
+      41.75,
+      44.25,
+      48.54,
+      22.89,
+      0.53
+    ],
+    "rows_dropped": 0
+  },
+  "checksum": {
+    "lex_docs": {
+      "rows": 462963,
+      "sha256": "14b6de4f504312cf54c40fc71e50da419a0df85b1e34cad219d97904573a77f5",
+      "sha256_without_ids": "8e8c7e39f6e02d9c019858c59f18718f572581f45c4b83e23ffb3eeb87a5b685"
+    },
+    "lex_df": {
+      "rows": 131296,
+      "sha256": "a960c6cad636875a52d1e636241ac8642284553f6c6b3dc33e56a1663638b95f",
+      "sha256_without_ids": "415af24a5625e53165d53c0ecc54d4cf346b91e14dd791c57acd9a10a0793da9"
+    },
+    "lex_stats": {
+      "rows": 1,
+      "sha256": "e3b9f151df3da4ca77baadb855fcde369c9bcf66ac64b23170549983966f07f4",
+      "sha256_without_ids": "e3b9f151df3da4ca77baadb855fcde369c9bcf66ac64b23170549983966f07f4"
+    },
+    "lex_postings": {
+      "rows": 768702,
+      "sha256": "ef924bccd8d727e53ae275c09e36e7666e52834567a3db683ead1af9aac9f204",
+      "sha256_without_ids": "6d693bc8c444a5dfc0907af2d7c3c9ecfc33a5881785c66812ea17b70430a2dc"
+    }
+  },
+  "checksum_wall_s": 12.23
+}

@@ -1,0 +1,10 @@
+fs 2.4.16
+glob('**/*.py').count() -> Counts(files=94, directories=0, data=1657004)
+fields -> ('files', 'directories', 'data')
+glob('**').count() -> Counts(files=284, directories=18, data=90210096)
+glob('**/').count() -> Counts(files=0, directories=18, data=10784)
+getinfo('vfs', details) size -> 800 is_dir -> True
+getsize('vfs/base.py') -> 171408
+walk(max_depth=1) first Step -> / dirs 1 files 0
+uv run --no-project --python 3.12 --with fs --with "setuptools<80" python -I   0.08s user 0.03s system 95% cpu 0.110 total
+exit 0

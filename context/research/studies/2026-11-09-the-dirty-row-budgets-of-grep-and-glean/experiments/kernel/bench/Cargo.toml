@@ -1,0 +1,11 @@
+[package]
+name = "overlay-kernel-bench"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vfs-core = { path = "/Users/claygendron/Git/Repos/vfs/crates/vfs-core" }
+
+[profile.release]
+opt-level = 3
+debug = false

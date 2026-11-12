@@ -1,0 +1,2 @@
+before: rss=111.2 MB peak=111.5 MB
+after: pairs=462963 wall=13.94s rss=1071.4 MB peak=1095.3 MB tracemalloc current=72.0 MB peak=72.0 MB

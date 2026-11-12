@@ -1,0 +1,8520 @@
+{
+ "engine": "postgres",
+ "files": 100000,
+ "levels": [
+  10000,
+  25000
+ ],
+ "machine": "Apple M1 Pro, 10 cores, 32 GB",
+ "python": "3.13.11",
+ "default_overlay_budget": 500,
+ "lifted_overlay_budget": 25000,
+ "lifted_wall_s": 600.0,
+ "default_wall_s": 10.0,
+ "grep_patterns": [
+  {
+   "name": "rare literal (rank 12000)",
+   "pattern": "demekaness",
+   "kw": {
+    "fixed_strings": true
+   }
+  },
+  {
+   "name": "common word (rank 40)",
+   "pattern": "bavozo",
+   "kw": {}
+  },
+  {
+   "name": "alternation regex (ranks 2000|2500)",
+   "pattern": "ivethha|duka",
+   "kw": {}
+  },
+  {
+   "name": "case-insensitive word (rank 800)",
+   "pattern": "WIDE",
+   "kw": {
+    "case_mode": "insensitive"
+   }
+  },
+  {
+   "name": "matches almost nothing",
+   "pattern": "neverappears",
+   "kw": {}
+  }
+ ],
+ "glean_queries": [
+  {
+   "name": "2 words (ranks 300, 3000)",
+   "query": "lubavibu nessstenha"
+  },
+  {
+   "name": "3 words (ranks 40, 1500, 9000)",
+   "query": "bavozo lubeproes namenessho"
+  },
+  {
+   "name": "4 words (ranks 700, 2000, 5000, 15000)",
+   "query": "stkien ivethha cobu ivewearce"
+  },
+  {
+   "name": "2 very common (ranks 5, 12)",
+   "query": "goniha bitiondu"
+  },
+  {
+   "name": "2 rare (ranks 8000, 20000)",
+   "query": "mikelode larocon"
+  }
+ ],
+ "started": "2026-11-09 11:02:27",
+ "base": {
+  "reused": true,
+  "counts": {
+   "entry": 103921,
+   "chunks": 462963,
+   "posting_list": 7480,
+   "lex_postings": 768707,
+   "files": 100000,
+   "not_encoded": 0,
+   "epoch": 1
+  }
+ },
+ "results": [
+  {
+   "n": 10000,
+   "compound_from": 0,
+   "copy_s": 0.03,
+   "dirty": {
+    "n": 10000,
+    "wall_s": 11.86,
+    "not_encoded_after": 10001
+   },
+   "grep": [
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 0,
+     "wall_s": 1.6699,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 686,
+     "lines": 690,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0024,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0602,
+       "rows": 5291,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0889,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.4665,
+       "rows": 15292,
+       "bytes": 202077337,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0273,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 2.8201,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 23854,
+     "lines": 63533,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0026,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1973,
+       "rows": 22514,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0202,
+       "rows": 2486,
+       "bytes": 16762684,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 2.18,
+       "rows": 25000,
+       "bytes": 224567102,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0608,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 3.1448,
+     "statements": 16,
+     "statement_kinds": {
+      "SELECT": 16
+     },
+     "files": 8924,
+     "lines": 10116,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0035,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1861,
+       "rows": 17015,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0836,
+       "rows": 7985,
+       "bytes": 54568553,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 10,
+       "wall_s": 2.7355,
+       "rows": 25000,
+       "bytes": 321316364,
+       "statements": 10
+      },
+      "grep.verify": {
+       "calls": 10,
+       "wall_s": 0.0493,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 0,
+     "wall_s": 2.2588,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 8080,
+     "lines": 10251,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0018,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.2128,
+       "rows": 22522,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0198,
+       "rows": 2478,
+       "bytes": 16674549,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.9069,
+       "rows": 25000,
+       "bytes": 249187236,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0398,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 0.6388,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0575,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 3,
+       "wall_s": 0.556,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 3
+      },
+      "grep.verify": {
+       "calls": 3,
+       "wall_s": 0.0113,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 1,
+     "wall_s": 1.6096,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 686,
+     "lines": 690,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0016,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0537,
+       "rows": 5291,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0569,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.4472,
+       "rows": 15292,
+       "bytes": 202077337,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0261,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 2.2982,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 23854,
+     "lines": 63533,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.003,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.174,
+       "rows": 22514,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0216,
+       "rows": 2486,
+       "bytes": 16762684,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.7442,
+       "rows": 25000,
+       "bytes": 224567102,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0546,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 2.7101,
+     "statements": 16,
+     "statement_kinds": {
+      "SELECT": 16
+     },
+     "files": 8924,
+     "lines": 10116,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0028,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1922,
+       "rows": 17015,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0455,
+       "rows": 7985,
+       "bytes": 54568553,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 10,
+       "wall_s": 2.3347,
+       "rows": 25000,
+       "bytes": 321316364,
+       "statements": 10
+      },
+      "grep.verify": {
+       "calls": 10,
+       "wall_s": 0.0478,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 1,
+     "wall_s": 2.2435,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 8080,
+     "lines": 10251,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0018,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.2158,
+       "rows": 22522,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0199,
+       "rows": 2478,
+       "bytes": 16674549,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.876,
+       "rows": 25000,
+       "bytes": 249187236,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0411,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 0.6607,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0539,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 3,
+       "wall_s": 0.5815,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 3
+      },
+      "grep.verify": {
+       "calls": 3,
+       "wall_s": 0.0121,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 2,
+     "wall_s": 1.6287,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 686,
+     "lines": 690,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0016,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0542,
+       "rows": 5291,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0556,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.4696,
+       "rows": 15292,
+       "bytes": 202077337,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0248,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 2.316,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 23854,
+     "lines": 63533,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0026,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1726,
+       "rows": 22514,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0549,
+       "rows": 2486,
+       "bytes": 16762684,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.7101,
+       "rows": 25000,
+       "bytes": 224567102,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.0596,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 2.6917,
+     "statements": 16,
+     "statement_kinds": {
+      "SELECT": 16
+     },
+     "files": 8924,
+     "lines": 10116,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0025,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1797,
+       "rows": 17015,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0453,
+       "rows": 7985,
+       "bytes": 54568553,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 10,
+       "wall_s": 2.3305,
+       "rows": 25000,
+       "bytes": 321316364,
+       "statements": 10
+      },
+      "grep.verify": {
+       "calls": 10,
+       "wall_s": 0.0465,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 2,
+     "wall_s": 2.2063,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 8080,
+     "lines": 10251,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0018,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.2104,
+       "rows": 22522,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0197,
+       "rows": 2478,
+       "bytes": 16674549,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.8435,
+       "rows": 25000,
+       "bytes": 249187236,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.051,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 0.6613,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0874,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 3,
+       "wall_s": 0.5476,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 3
+      },
+      "grep.verify": {
+       "calls": 3,
+       "wall_s": 0.0111,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    }
+   ],
+   "glean_default": [
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.168,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 997,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0087,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.115,
+       "rows": 112,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0084,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0319,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0742,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.2651,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1204,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0085,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1091,
+       "rows": 321,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.007,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0272,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0745,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1539,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 972,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0082,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1087,
+       "rows": 81,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0281,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0738,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 3.793,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1374,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0089,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1125,
+       "rows": 477,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0073,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0296,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0749,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1556,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 887,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0085,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.119,
+       "rows": 6,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0286,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0836,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.1492,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 997,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0083,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1117,
+       "rows": 112,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0065,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0292,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0755,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.2672,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1204,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0091,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1124,
+       "rows": 321,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.007,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0294,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0754,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.155,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 972,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0089,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1121,
+       "rows": 81,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0076,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0299,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.074,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 3.7715,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1374,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0084,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1116,
+       "rows": 477,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0069,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0286,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0754,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.1442,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 887,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0087,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1108,
+       "rows": 6,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0068,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0287,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0748,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1512,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 997,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0089,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1103,
+       "rows": 112,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0065,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0285,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0747,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.2663,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1204,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0091,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1131,
+       "rows": 321,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0068,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0288,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0769,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1556,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 972,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0086,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1124,
+       "rows": 81,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0293,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0762,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 3.8166,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1374,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0086,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1117,
+       "rows": 477,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0067,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0292,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0752,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1473,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 887,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0083,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1115,
+       "rows": 6,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0285,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0761,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    }
+   ],
+   "glean_lifted": [
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 2.2241,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 3083,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0562,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1235,
+       "rows": 2198,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.122,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5352,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4594,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0004,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 2.3028,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 7180,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0551,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.0848,
+       "rows": 6297,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1006,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.533,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4416,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0011,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 2.1927,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 2365,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0559,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.0903,
+       "rows": 1474,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1005,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5199,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4614,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0002,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.8151,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 10299,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0548,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.0847,
+       "rows": 9402,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1006,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5343,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4389,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0015,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 2.1973,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1026,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0548,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1069,
+       "rows": 145,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0975,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5805,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4217,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 2.1571,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 3083,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0535,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.0572,
+       "rows": 2198,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1002,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5339,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4154,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0004,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 2.3827,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 7180,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0547,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1684,
+       "rows": 6297,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0975,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5867,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4722,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0012,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 2.2095,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 2365,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0549,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1098,
+       "rows": 1474,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1003,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5483,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4545,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0002,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 5.9479,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 10299,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.094,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1306,
+       "rows": 9402,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1002,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5411,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4773,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0017,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 2.4309,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1026,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0666,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.3279,
+       "rows": 145,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1033,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.7665,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4517,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 2.2152,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 3083,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0561,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1151,
+       "rows": 2198,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1001,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5446,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4632,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0004,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 2.3129,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 7180,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0548,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1606,
+       "rows": 6297,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1004,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5763,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4738,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0011,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 2.1997,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 2365,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0547,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1001,
+       "rows": 1474,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.098,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5386,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4556,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0002,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 3.4408,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 10299,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0929,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.1264,
+       "rows": 9402,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0996,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5388,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4752,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0017,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 2.3057,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1026,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0536,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.2157,
+       "rows": 145,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.1002,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5787,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.5305,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    }
+   ],
+   "recall": {
+    "grep": {
+     "name": "sentinel grep",
+     "pattern": "qzxvunique",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 0.6294,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "files": 1,
+     "lines": 2,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0565,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 3,
+       "wall_s": 0.5473,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 3
+      },
+      "grep.verify": {
+       "calls": 3,
+       "wall_s": 0.0122,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": true
+    },
+    "glean_default": {
+     "name": "sentinel glean",
+     "query": "qzxvunique",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1226,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "hits": 0,
+     "lexical_hits": 0,
+     "vector_leg": null,
+     "terms_present": [],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 4
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0078,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1103,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0057,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0297,
+       "rows": 500,
+       "bytes": 3563644,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0744,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    "glean_lifted": {
+     "name": "sentinel glean",
+     "query": "qzxvunique",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 2.1642,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "hits": 1,
+     "lexical_hits": 1,
+     "vector_leg": null,
+     "terms_present": [],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 4
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0559,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 2.0951,
+       "rows": 1,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0986,
+       "rows": 10001,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.5452,
+       "rows": 10001,
+       "bytes": 68157930,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 1.4453,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": true
+    }
+   },
+   "rss_mb": 423.8,
+   "default_wall": {
+    "grep": [
+     {
+      "name": "rare literal (rank 12000)",
+      "pattern": "demekaness",
+      "kw": {
+       "fixed_strings": true
+      },
+      "rep": 0,
+      "wall_s": 2.1163,
+      "statements": 13,
+      "statement_kinds": {
+       "SELECT": 13
+      },
+      "files": 686,
+      "lines": 690,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0058,
+        "rows": 4,
+        "bytes": 136197,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.0691,
+        "rows": 5291,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0944,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 7,
+        "wall_s": 1.8926,
+        "rows": 15292,
+        "bytes": 202077337,
+        "statements": 7
+       },
+       "grep.verify": {
+        "calls": 7,
+        "wall_s": 0.0262,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "sentinel_found": false
+     },
+     {
+      "name": "common word (rank 40)",
+      "pattern": "bavozo",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 2.9719,
+      "statements": 13,
+      "statement_kinds": {
+       "SELECT": 13
+      },
+      "files": 23854,
+      "lines": 63533,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0027,
+        "rows": 4,
+        "bytes": 309713,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.2324,
+        "rows": 22514,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.02,
+        "rows": 2486,
+        "bytes": 16762684,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 7,
+        "wall_s": 2.2831,
+        "rows": 25000,
+        "bytes": 224567102,
+        "statements": 7
+       },
+       "grep.verify": {
+        "calls": 7,
+        "wall_s": 0.0607,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "alternation regex (ranks 2000|2500)",
+      "pattern": "ivethha|duka",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 2.747,
+      "statements": 16,
+      "statement_kinds": {
+       "SELECT": 16
+      },
+      "files": 8924,
+      "lines": 10116,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0031,
+        "rows": 6,
+        "bytes": 262478,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.1685,
+        "rows": 17015,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0461,
+        "rows": 7985,
+        "bytes": 54568553,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 10,
+        "wall_s": 2.361,
+        "rows": 25000,
+        "bytes": 321316364,
+        "statements": 10
+       },
+       "grep.verify": {
+        "calls": 10,
+        "wall_s": 0.0796,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "case-insensitive word (rank 800)",
+      "pattern": "WIDE",
+      "kw": {
+       "case_mode": "insensitive"
+      },
+      "rep": 0,
+      "wall_s": 2.2453,
+      "statements": 14,
+      "statement_kinds": {
+       "SELECT": 14
+      },
+      "files": 8080,
+      "lines": 10251,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0019,
+        "rows": 2,
+        "bytes": 134746,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.2214,
+        "rows": 22522,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0192,
+        "rows": 2478,
+        "bytes": 16674549,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 8,
+        "wall_s": 1.8718,
+        "rows": 25000,
+        "bytes": 249187236,
+        "statements": 8
+       },
+       "grep.verify": {
+        "calls": 8,
+        "wall_s": 0.0508,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "matches almost nothing",
+      "pattern": "neverappears",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 0.6701,
+      "statements": 7,
+      "statement_kinds": {
+       "SELECT": 7
+      },
+      "files": 0,
+      "lines": 0,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0566,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 3,
+        "wall_s": 0.5506,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 3
+       },
+       "grep.verify": {
+        "calls": 3,
+        "wall_s": 0.0488,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "sentinel_found": false
+     }
+    ],
+    "glean_lifted": [
+     {
+      "name": "2 words (ranks 300, 3000)",
+      "query": "lubavibu nessstenha",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 2.2179,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 3083,
+      "vector_leg": null,
+      "terms_present": [
+       "lubavibu",
+       "nessstenha"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.0569,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 2.1009,
+        "rows": 2198,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.1124,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 0.5517,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 1.4295,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0003,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "3 words (ranks 40, 1500, 9000)",
+      "query": "bavozo lubeproes namenessho",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 2.3529,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 7180,
+      "vector_leg": null,
+      "terms_present": [
+       "bavozo",
+       "lubeproes",
+       "namenessho"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.0534,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 2.1286,
+        "rows": 6297,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.0991,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 0.532,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 1.4474,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.001,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "4 words (ranks 700, 2000, 5000, 15000)",
+      "query": "stkien ivethha cobu ivewearce",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 2.1646,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 2365,
+      "vector_leg": null,
+      "terms_present": [
+       "stkien",
+       "ivethha",
+       "cobu",
+       "ivewearce"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.0552,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 2.0596,
+        "rows": 1474,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.1014,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 0.5204,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 1.4312,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0002,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "2 very common (ranks 5, 12)",
+      "query": "goniha bitiondu",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 5.8899,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 10299,
+      "vector_leg": null,
+      "terms_present": [
+       "goniha",
+       "bitiondu"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.0556,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 2.1227,
+        "rows": 9402,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.1402,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 0.5359,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 1.435,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0016,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "2 rare (ranks 8000, 20000)",
+      "query": "mikelode larocon",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 2.2049,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 1026,
+      "vector_leg": null,
+      "terms_present": [
+       "mikelode",
+       "larocon"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.0577,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 2.1094,
+        "rows": 145,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.0998,
+        "rows": 10001,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 0.5602,
+        "rows": 10001,
+        "bytes": 68157930,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 1.4432,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     }
+    ]
+   },
+   "level_total_s": 126.1
+  },
+  {
+   "n": 25000,
+   "compound_from": 10000,
+   "copy_s": 0.03,
+   "dirty": {
+    "n": 25000,
+    "wall_s": 17.69,
+    "not_encoded_after": 23401
+   },
+   "grep": [
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 0,
+     "wall_s": 2.1933,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 667,
+     "lines": 672,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0029,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0525,
+       "rows": 4496,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1205,
+       "rows": 20504,
+       "bytes": 139671538,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.9082,
+       "rows": 25000,
+       "bytes": 253747953,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0731,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 2.3613,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 22671,
+     "lines": 60157,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0028,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1891,
+       "rows": 19189,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0519,
+       "rows": 5811,
+       "bytes": 39844615,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.766,
+       "rows": 25000,
+       "bytes": 216563774,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.064,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 2.6162,
+     "statements": 15,
+     "statement_kinds": {
+      "SELECT": 15
+     },
+     "files": 7949,
+     "lines": 8996,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0028,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1615,
+       "rows": 14529,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0745,
+       "rows": 10471,
+       "bytes": 71653681,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 9,
+       "wall_s": 2.2499,
+       "rows": 25000,
+       "bytes": 299260391,
+       "statements": 9
+      },
+      "grep.verify": {
+       "calls": 9,
+       "wall_s": 0.0454,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 0,
+     "wall_s": 2.1936,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 7584,
+     "lines": 9620,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0019,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.162,
+       "rows": 19126,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0572,
+       "rows": 5874,
+       "bytes": 40305852,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.8125,
+       "rows": 25000,
+       "bytes": 237962543,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0386,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 1.5457,
+     "statements": 9,
+     "statement_kinds": {
+      "SELECT": 9
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1536,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 5,
+       "wall_s": 1.3001,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 5
+      },
+      "grep.verify": {
+       "calls": 5,
+       "wall_s": 0.0254,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 1,
+     "wall_s": 2.2059,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 667,
+     "lines": 672,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0016,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0525,
+       "rows": 4496,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1316,
+       "rows": 20504,
+       "bytes": 139671538,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.9514,
+       "rows": 25000,
+       "bytes": 253747953,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0347,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 2.3742,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 22671,
+     "lines": 60157,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0026,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.2003,
+       "rows": 19189,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0557,
+       "rows": 5811,
+       "bytes": 39844615,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.6564,
+       "rows": 25000,
+       "bytes": 216563774,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.1499,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 2.5989,
+     "statements": 15,
+     "statement_kinds": {
+      "SELECT": 15
+     },
+     "files": 7949,
+     "lines": 8996,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0025,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1412,
+       "rows": 14529,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0763,
+       "rows": 10471,
+       "bytes": 71653681,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 9,
+       "wall_s": 2.1893,
+       "rows": 25000,
+       "bytes": 299260391,
+       "statements": 9
+      },
+      "grep.verify": {
+       "calls": 9,
+       "wall_s": 0.0475,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 1,
+     "wall_s": 2.1961,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 7584,
+     "lines": 9620,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0016,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1659,
+       "rows": 19126,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0543,
+       "rows": 5874,
+       "bytes": 40305852,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.7899,
+       "rows": 25000,
+       "bytes": 237962543,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0476,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 1,
+     "wall_s": 1.4666,
+     "statements": 9,
+     "statement_kinds": {
+      "SELECT": 9
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1599,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 5,
+       "wall_s": 1.2475,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 5
+      },
+      "grep.verify": {
+       "calls": 5,
+       "wall_s": 0.0309,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    },
+    {
+     "name": "rare literal (rank 12000)",
+     "pattern": "demekaness",
+     "kw": {
+      "fixed_strings": true
+     },
+     "rep": 2,
+     "wall_s": 2.1906,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 667,
+     "lines": 672,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0017,
+       "rows": 4,
+       "bytes": 136197,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0536,
+       "rows": 4496,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1784,
+       "rows": 20504,
+       "bytes": 139671538,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.8858,
+       "rows": 25000,
+       "bytes": 253747953,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0374,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "common word (rank 40)",
+     "pattern": "bavozo",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 2.2912,
+     "statements": 13,
+     "statement_kinds": {
+      "SELECT": 13
+     },
+     "files": 22671,
+     "lines": 60157,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0027,
+       "rows": 4,
+       "bytes": 309713,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.1675,
+       "rows": 19189,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0553,
+       "rows": 5811,
+       "bytes": 39844615,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 7,
+       "wall_s": 1.6616,
+       "rows": 25000,
+       "bytes": 216563774,
+       "statements": 7
+      },
+      "grep.verify": {
+       "calls": 7,
+       "wall_s": 0.092,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "alternation regex (ranks 2000|2500)",
+     "pattern": "ivethha|duka",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 2.5886,
+     "statements": 15,
+     "statement_kinds": {
+      "SELECT": 15
+     },
+     "files": 7949,
+     "lines": 8996,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0025,
+       "rows": 6,
+       "bytes": 262478,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.136,
+       "rows": 14529,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1096,
+       "rows": 10471,
+       "bytes": 71653681,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 9,
+       "wall_s": 2.2065,
+       "rows": 25000,
+       "bytes": 299260391,
+       "statements": 9
+      },
+      "grep.verify": {
+       "calls": 9,
+       "wall_s": 0.0495,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "case-insensitive word (rank 800)",
+     "pattern": "WIDE",
+     "kw": {
+      "case_mode": "insensitive"
+     },
+     "rep": 2,
+     "wall_s": 2.1982,
+     "statements": 14,
+     "statement_kinds": {
+      "SELECT": 14
+     },
+     "files": 7584,
+     "lines": 9620,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0016,
+       "rows": 2,
+       "bytes": 134746,
+       "statements": 1
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.2185,
+       "rows": 19126,
+       "bytes": 0,
+       "statements": 1
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.0517,
+       "rows": 5874,
+       "bytes": 40305852,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 8,
+       "wall_s": 1.8029,
+       "rows": 25000,
+       "bytes": 237962543,
+       "statements": 8
+      },
+      "grep.verify": {
+       "calls": 8,
+       "wall_s": 0.0423,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+       "data": null
+      }
+     ],
+     "sentinel_found": false
+    },
+    {
+     "name": "matches almost nothing",
+     "pattern": "neverappears",
+     "kw": {},
+     "rep": 2,
+     "wall_s": 1.5284,
+     "statements": 9,
+     "statement_kinds": {
+      "SELECT": 9
+     },
+     "files": 0,
+     "lines": 0,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1997,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 5,
+       "wall_s": 1.2699,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 5
+      },
+      "grep.verify": {
+       "calls": 5,
+       "wall_s": 0.0285,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": false
+    }
+   ],
+   "glean_default": [
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.2097,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 873,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.035,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1202,
+       "rows": 123,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.009,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0318,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0786,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.2864,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1073,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0178,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1129,
+       "rows": 303,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0069,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.028,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0774,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1728,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 830,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0181,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1144,
+       "rows": 75,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0071,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0297,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0771,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 3.8058,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1233,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0166,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1102,
+       "rows": 476,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0064,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.029,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0741,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1518,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 767,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.017,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1094,
+       "rows": 5,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0065,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0279,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0745,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.1584,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 873,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0173,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1111,
+       "rows": 123,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0067,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.029,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0749,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.2607,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1073,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0164,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1086,
+       "rows": 303,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0278,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0739,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.1565,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 830,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0164,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1095,
+       "rows": 75,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0065,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0288,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0737,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 3.804,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1233,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0177,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1133,
+       "rows": 476,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0064,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0296,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0766,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 1,
+     "overlay_budget": 500,
+     "wall_s": 0.1481,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 767,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0165,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.109,
+       "rows": 5,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0064,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0281,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0741,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1547,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 873,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0159,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1115,
+       "rows": 123,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.006,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0298,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0751,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.3018,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1073,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0168,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1128,
+       "rows": 303,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0069,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0288,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0765,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1576,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 830,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0162,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1102,
+       "rows": 75,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0063,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0286,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0747,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 3.8623,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1233,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0172,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1125,
+       "rows": 476,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0068,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0292,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0756,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 2,
+     "overlay_budget": 500,
+     "wall_s": 0.1404,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 767,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0048,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1112,
+       "rows": 5,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0067,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0286,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0754,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    }
+   ],
+   "glean_lifted": [
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.1648,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 5928,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1245,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9744,
+       "rows": 5178,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2631,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.3341,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.359,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0008,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.2728,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 15551,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1378,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9241,
+       "rows": 14781,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.3152,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2525,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3324,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0024,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.2001,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 4185,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1632,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9265,
+       "rows": 3430,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2426,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2787,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3879,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0006,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 8.8387,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 22776,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1476,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9188,
+       "rows": 22019,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2785,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2594,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3522,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0036,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.1303,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1096,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1488,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.929,
+       "rows": 334,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2439,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.3032,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3676,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 5.1763,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 5928,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1451,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.959,
+       "rows": 5178,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2553,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.294,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3914,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0009,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 5.367,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 15551,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1563,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9603,
+       "rows": 14781,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.3086,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2596,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3644,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0026,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 5.0963,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 4185,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1544,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.8758,
+       "rows": 3430,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2473,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2438,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3683,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0005,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 8.9743,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 22776,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1514,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 5.0115,
+       "rows": 22019,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2786,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2567,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.4453,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0037,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 1,
+     "overlay_budget": 25000,
+     "wall_s": 5.1629,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1096,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1477,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9593,
+       "rows": 334,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2485,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.3247,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3699,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 words (ranks 300, 3000)",
+     "query": "lubavibu nessstenha",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 5.1842,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 5928,
+     "vector_leg": null,
+     "terms_present": [
+      "lubavibu",
+      "nessstenha"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1484,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9659,
+       "rows": 5178,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2866,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2616,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3988,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0009,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "3 words (ranks 40, 1500, 9000)",
+     "query": "bavozo lubeproes namenessho",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 5.3135,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 15551,
+     "vector_leg": null,
+     "terms_present": [
+      "bavozo",
+      "lubeproes",
+      "namenessho"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1505,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 4.9131,
+       "rows": 14781,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2482,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.2706,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.3671,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0026,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "4 words (ranks 700, 2000, 5000, 15000)",
+     "query": "stkien ivethha cobu ivewearce",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 5.751,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 4185,
+     "vector_leg": null,
+     "terms_present": [
+      "stkien",
+      "ivethha",
+      "cobu",
+      "ivewearce"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1674,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 5.5146,
+       "rows": 3430,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2566,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.3372,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.9017,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0006,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 very common (ranks 5, 12)",
+     "query": "goniha bitiondu",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 6.8333,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 22776,
+     "vector_leg": null,
+     "terms_present": [
+      "goniha",
+      "bitiondu"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1504,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 5.3805,
+       "rows": 22019,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.3015,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.6362,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.4089,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0039,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    {
+     "name": "2 rare (ranks 8000, 20000)",
+     "query": "mikelode larocon",
+     "rep": 2,
+     "overlay_budget": 25000,
+     "wall_s": 5.7614,
+     "statements": 11,
+     "statement_kinds": {
+      "SELECT": 11
+     },
+     "hits": 10,
+     "lexical_hits": 1096,
+     "vector_leg": null,
+     "terms_present": [
+      "mikelode",
+      "larocon"
+     ],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 8
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.178,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 5.5292,
+       "rows": 334,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2808,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.8279,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.4034,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0001,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": false
+    }
+   ],
+   "recall": {
+    "grep": {
+     "name": "sentinel grep",
+     "pattern": "qzxvunique",
+     "kw": {},
+     "rep": 0,
+     "wall_s": 1.5343,
+     "statements": 9,
+     "statement_kinds": {
+      "SELECT": 9
+     },
+     "files": 1,
+     "lines": 2,
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 3
+      },
+      "grep.postings": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.index_rows": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "grep.nominees": {
+       "calls": 1,
+       "wall_s": 0.1699,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "grep.bodies": {
+       "calls": 5,
+       "wall_s": 1.2528,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 5
+      },
+      "grep.verify": {
+       "calls": 5,
+       "wall_s": 0.0811,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "sentinel_found": true
+    },
+    "glean_default": {
+     "name": "sentinel glean",
+     "query": "qzxvunique",
+     "rep": 0,
+     "overlay_budget": 500,
+     "wall_s": 0.1234,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "hits": 0,
+     "lexical_hits": 0,
+     "vector_leg": null,
+     "terms_present": [],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 4
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.0042,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 0.1139,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.0073,
+       "rows": 500,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 0.0298,
+       "rows": 500,
+       "bytes": 3523471,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 0.0763,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [
+      {
+       "kind": "vfs.budget_exhausted.truncated",
+       "severity": "warning",
+       "message": "Truncated: at the overlay budget; narrow the query, add globs or ext filters, or scope with paths",
+       "data": {
+        "scanned": 500,
+        "budget": 500
+       }
+      }
+     ],
+     "no_provider_record": true,
+     "sentinel_found": false
+    },
+    "glean_lifted": {
+     "name": "sentinel glean",
+     "query": "qzxvunique",
+     "rep": 0,
+     "overlay_budget": 25000,
+     "wall_s": 5.2327,
+     "statements": 7,
+     "statement_kinds": {
+      "SELECT": 7
+     },
+     "hits": 1,
+     "lexical_hits": 1,
+     "vector_leg": null,
+     "terms_present": [],
+     "phases": {
+      "other": {
+       "calls": 0,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 4
+      },
+      "glean.nominees": {
+       "calls": 1,
+       "wall_s": 0.1486,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.overlay": {
+       "calls": 1,
+       "wall_s": 5.057,
+       "rows": 1,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.surrogate_ids": {
+       "calls": 1,
+       "wall_s": 0.2476,
+       "rows": 23401,
+       "bytes": 0,
+       "statements": 1
+      },
+      "glean.bodies": {
+       "calls": 1,
+       "wall_s": 1.3887,
+       "rows": 23401,
+       "bytes": 159206426,
+       "statements": 1
+      },
+      "glean.tokenize": {
+       "calls": 1,
+       "wall_s": 3.4052,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      },
+      "glean.score": {
+       "calls": 1,
+       "wall_s": 0.0,
+       "rows": 0,
+       "bytes": 0,
+       "statements": 0
+      }
+     },
+     "records": [],
+     "no_provider_record": true,
+     "sentinel_found": true
+    }
+   },
+   "rss_mb": 511.5,
+   "default_wall": {
+    "grep": [
+     {
+      "name": "rare literal (rank 12000)",
+      "pattern": "demekaness",
+      "kw": {
+       "fixed_strings": true
+      },
+      "rep": 0,
+      "wall_s": 2.315,
+      "statements": 14,
+      "statement_kinds": {
+       "SELECT": 14
+      },
+      "files": 667,
+      "lines": 672,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0029,
+        "rows": 4,
+        "bytes": 136197,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.0545,
+        "rows": 4496,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.1151,
+        "rows": 20504,
+        "bytes": 139671538,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 8,
+        "wall_s": 2.0708,
+        "rows": 25000,
+        "bytes": 253747953,
+        "statements": 8
+       },
+       "grep.verify": {
+        "calls": 8,
+        "wall_s": 0.0351,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "common word (rank 40)",
+      "pattern": "bavozo",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 2.419,
+      "statements": 13,
+      "statement_kinds": {
+       "SELECT": 13
+      },
+      "files": 22671,
+      "lines": 60157,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0027,
+        "rows": 4,
+        "bytes": 309713,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.2269,
+        "rows": 19189,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0431,
+        "rows": 5811,
+        "bytes": 39844615,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 7,
+        "wall_s": 1.6935,
+        "rows": 25000,
+        "bytes": 216563774,
+        "statements": 7
+       },
+       "grep.verify": {
+        "calls": 7,
+        "wall_s": 0.1142,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "alternation regex (ranks 2000|2500)",
+      "pattern": "ivethha|duka",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 2.6872,
+      "statements": 15,
+      "statement_kinds": {
+       "SELECT": 15
+      },
+      "files": 7949,
+      "lines": 8996,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0028,
+        "rows": 6,
+        "bytes": 262478,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.1565,
+        "rows": 14529,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0651,
+        "rows": 10471,
+        "bytes": 71653681,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 9,
+        "wall_s": 2.3255,
+        "rows": 25000,
+        "bytes": 299260391,
+        "statements": 9
+       },
+       "grep.verify": {
+        "calls": 9,
+        "wall_s": 0.0508,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "case-insensitive word (rank 800)",
+      "pattern": "WIDE",
+      "kw": {
+       "case_mode": "insensitive"
+      },
+      "rep": 0,
+      "wall_s": 2.2416,
+      "statements": 14,
+      "statement_kinds": {
+       "SELECT": 14
+      },
+      "files": 7584,
+      "lines": 9620,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.002,
+        "rows": 2,
+        "bytes": 134746,
+        "statements": 1
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.1619,
+        "rows": 19126,
+        "bytes": 0,
+        "statements": 1
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.0432,
+        "rows": 5874,
+        "bytes": 40305852,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 8,
+        "wall_s": 1.8575,
+        "rows": 25000,
+        "bytes": 237962543,
+        "statements": 8
+       },
+       "grep.verify": {
+        "calls": 8,
+        "wall_s": 0.094,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [
+       {
+        "kind": "vfs.budget_exhausted.truncated",
+        "severity": "warning",
+        "message": "Truncated: at the candidate budget; narrow the pattern, add globs or ext filters, or scope with paths",
+        "data": null
+       }
+      ],
+      "sentinel_found": false
+     },
+     {
+      "name": "matches almost nothing",
+      "pattern": "neverappears",
+      "kw": {},
+      "rep": 0,
+      "wall_s": 1.499,
+      "statements": 9,
+      "statement_kinds": {
+       "SELECT": 9
+      },
+      "files": 0,
+      "lines": 0,
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 3
+       },
+       "grep.postings": {
+        "calls": 1,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "grep.index_rows": {
+        "calls": 1,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "grep.nominees": {
+        "calls": 1,
+        "wall_s": 0.1328,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "grep.bodies": {
+        "calls": 5,
+        "wall_s": 1.3134,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 5
+       },
+       "grep.verify": {
+        "calls": 5,
+        "wall_s": 0.0264,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "sentinel_found": false
+     }
+    ],
+    "glean_lifted": [
+     {
+      "name": "2 words (ranks 300, 3000)",
+      "query": "lubavibu nessstenha",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 5.2681,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 5928,
+      "vector_leg": null,
+      "terms_present": [
+       "lubavibu",
+       "nessstenha"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.1752,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 5.015,
+        "rows": 5178,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.2881,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 1.2777,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 3.3768,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0008,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "3 words (ranks 40, 1500, 9000)",
+      "query": "bavozo lubeproes namenessho",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 5.3394,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 15551,
+      "vector_leg": null,
+      "terms_present": [
+       "bavozo",
+       "lubeproes",
+       "namenessho"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.1459,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 4.9865,
+        "rows": 14781,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.2469,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 1.3111,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 3.4003,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0025,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "4 words (ranks 700, 2000, 5000, 15000)",
+      "query": "stkien ivethha cobu ivewearce",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 5.2239,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 4185,
+      "vector_leg": null,
+      "terms_present": [
+       "stkien",
+       "ivethha",
+       "cobu",
+       "ivewearce"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.196,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 4.9132,
+        "rows": 3430,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.2519,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 1.2658,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 3.3779,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0008,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "2 very common (ranks 5, 12)",
+      "query": "goniha bitiondu",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 8.901,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 22776,
+      "vector_leg": null,
+      "terms_present": [
+       "goniha",
+       "bitiondu"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.1501,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 5.0016,
+        "rows": 22019,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.2484,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 1.2653,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 3.4526,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.004,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     },
+     {
+      "name": "2 rare (ranks 8000, 20000)",
+      "query": "mikelode larocon",
+      "rep": 0,
+      "overlay_budget": 25000,
+      "wall_s": 5.2079,
+      "statements": 11,
+      "statement_kinds": {
+       "SELECT": 11
+      },
+      "hits": 10,
+      "lexical_hits": 1096,
+      "vector_leg": null,
+      "terms_present": [
+       "mikelode",
+       "larocon"
+      ],
+      "phases": {
+       "other": {
+        "calls": 0,
+        "wall_s": 0.0,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 8
+       },
+       "glean.nominees": {
+        "calls": 1,
+        "wall_s": 0.1731,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.overlay": {
+        "calls": 1,
+        "wall_s": 4.9788,
+        "rows": 334,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.surrogate_ids": {
+        "calls": 1,
+        "wall_s": 0.2537,
+        "rows": 23401,
+        "bytes": 0,
+        "statements": 1
+       },
+       "glean.bodies": {
+        "calls": 1,
+        "wall_s": 1.2563,
+        "rows": 23401,
+        "bytes": 159206426,
+        "statements": 1
+       },
+       "glean.tokenize": {
+        "calls": 1,
+        "wall_s": 3.4042,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       },
+       "glean.score": {
+        "calls": 1,
+        "wall_s": 0.0001,
+        "rows": 0,
+        "bytes": 0,
+        "statements": 0
+       }
+      },
+      "records": [],
+      "no_provider_record": true,
+      "sentinel_found": false
+     }
+    ]
+   },
+   "level_total_s": 200.5
+  }
+ ],
+ "compound": true,
+ "finished": "2026-11-09 11:07:54"
+}

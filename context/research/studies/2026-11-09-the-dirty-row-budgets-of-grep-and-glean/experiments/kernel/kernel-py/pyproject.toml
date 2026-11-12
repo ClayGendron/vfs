@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.8.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "overlay_counts"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.maturin]
+module-name = "overlay_counts"
+features = ["pyo3/extension-module"]

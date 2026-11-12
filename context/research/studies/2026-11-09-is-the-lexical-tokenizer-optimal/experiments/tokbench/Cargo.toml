@@ -1,0 +1,14 @@
+[package]
+name = "tokbench"
+version = "0.1.0"
+edition = "2024"
+
+# Standalone: not a member of the repository's workspace.
+[workspace]
+
+[dependencies]
+vfs-core = { path = "/Users/claygendron/Git/Repos/vfs/crates/vfs-core" }
+
+[profile.release]
+opt-level = 3
+debug = false

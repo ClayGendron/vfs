@@ -1,0 +1,38 @@
+[10:44:32] building 10000 files on sqlite
+[10:44:40]   wrote 10000/10000
+[10:44:40] write done in 8.29s
+[10:44:52]   reindex #0 wall=11.9419s stmts=360 not_encoded=0 epoch=1
+[10:44:52] base built in 20.4s: {'entry': 13921, 'chunks': 46810, 'posting_list': 7473, 'lex_postings': 93378, 'files': 10000, 'not_encoded': 0, 'epoch': 1}
+[10:44:52] level N=500: fresh store ready in 0.05s
+[10:44:52]   dirtied 500 (+ sentinel) in 0.35s; not_encoded=501
+[10:44:54]   grep medians: rare literal (rank 12000)=0.02s, common word (rank 40)=0.21s, alternation regex (ranks 2000|2500)=0.05s, case-insensitive word (rank 800)=0.11s, matches almost nothing=0.01s
+[10:44:55]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.10s, 3 words (ranks 40, 1500, 9000)=0.10s, 4 words (ranks 700, 2000, 5000, 15000)=0.10s, 2 very common (ranks 5, 12)=0.11s, 2 rare (ranks 8000, 20000)=0.09s
+[10:44:56]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.10s, 3 words (ranks 40, 1500, 9000)=0.10s, 4 words (ranks 700, 2000, 5000, 15000)=0.10s, 2 very common (ranks 5, 12)=0.10s, 2 rare (ranks 8000, 20000)=0.09s
+[10:44:57]   recall: grep=True glean@500=False glean@25000=True
+[10:44:58]   default wall: grep 0.03s, 0.17s, 0.05s, 0.11s, 0.01s | glean 0.13s, 0.10s, 0.10s, 0.10s, 0.09s
+[10:44:58] level N=500 done in 5.7s; results written
+[10:44:58] level N=2000: fresh store ready in 0.05s
+[10:44:59]   dirtied 2000 (+ sentinel) in 1.2s; not_encoded=2001
+[10:45:00]   grep medians: rare literal (rank 12000)=0.05s, common word (rank 40)=0.18s, alternation regex (ranks 2000|2500)=0.07s, case-insensitive word (rank 800)=0.15s, matches almost nothing=0.04s
+[10:45:02]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.10s, 3 words (ranks 40, 1500, 9000)=0.10s, 4 words (ranks 700, 2000, 5000, 15000)=0.10s, 2 very common (ranks 5, 12)=0.10s, 2 rare (ranks 8000, 20000)=0.09s
+[10:45:07]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.34s, 3 words (ranks 40, 1500, 9000)=0.34s, 4 words (ranks 700, 2000, 5000, 15000)=0.34s, 2 very common (ranks 5, 12)=0.35s, 2 rare (ranks 8000, 20000)=0.33s
+[10:45:07]   recall: grep=True glean@500=False glean@25000=True
+[10:45:10]   default wall: grep 0.05s, 0.23s, 0.07s, 0.12s, 0.04s | glean 0.34s, 0.34s, 0.34s, 0.35s, 0.33s
+[10:45:10] level N=2000 done in 12.0s; results written
+[10:45:10] level N=5000: fresh store ready in 0.05s
+[10:45:13]   dirtied 5000 (+ sentinel) in 3.05s; not_encoded=5001
+[10:45:15]   grep medians: rare literal (rank 12000)=0.09s, common word (rank 40)=0.24s, alternation regex (ranks 2000|2500)=0.12s, case-insensitive word (rank 800)=0.15s, matches almost nothing=0.09s
+[10:45:16]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.10s, 3 words (ranks 40, 1500, 9000)=0.10s, 4 words (ranks 700, 2000, 5000, 15000)=0.10s, 2 very common (ranks 5, 12)=0.11s, 2 rare (ranks 8000, 20000)=0.10s
+[10:45:30]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.86s, 3 words (ranks 40, 1500, 9000)=0.87s, 4 words (ranks 700, 2000, 5000, 15000)=0.90s, 2 very common (ranks 5, 12)=0.85s, 2 rare (ranks 8000, 20000)=0.83s
+[10:45:31]   recall: grep=True glean@500=False glean@25000=True
+[10:45:35]   default wall: grep 0.13s, 0.20s, 0.11s, 0.15s, 0.12s | glean 0.82s, 0.84s, 0.84s, 0.91s, 0.84s
+[10:45:36] level N=5000 done in 25.9s; results written
+[10:45:36] level N=10000: fresh store ready in 0.08s
+[10:45:42]   dirtied 10000 (+ sentinel) in 6.01s; not_encoded=10001
+[10:45:45]   grep medians: rare literal (rank 12000)=0.20s, common word (rank 40)=0.24s, alternation regex (ranks 2000|2500)=0.17s, case-insensitive word (rank 800)=0.21s, matches almost nothing=0.17s
+[10:45:46]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.11s, 3 words (ranks 40, 1500, 9000)=0.11s, 4 words (ranks 700, 2000, 5000, 15000)=0.11s, 2 very common (ranks 5, 12)=0.13s, 2 rare (ranks 8000, 20000)=0.10s
+[10:46:12]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=1.69s, 3 words (ranks 40, 1500, 9000)=1.71s, 4 words (ranks 700, 2000, 5000, 15000)=1.70s, 2 very common (ranks 5, 12)=1.72s, 2 rare (ranks 8000, 20000)=1.67s
+[10:46:14]   recall: grep=True glean@500=False glean@25000=True
+[10:46:23]   default wall: grep 0.17s, 0.23s, 0.20s, 0.18s, 0.16s | glean 1.68s, 1.70s, 1.62s, 1.84s, 1.72s
+[10:46:23] level N=10000 done in 47.6s; results written
+[10:46:23] done

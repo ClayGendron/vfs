@@ -1,0 +1,16 @@
+Researcher 04 experiments, 2026-11-09, run on Clay's Mac (Darwin 25.5.0, zsh), box opened 08:32:34 EST.
+
+1. fsspec local du over the vfs src/ tree (output in fsspec_du.out, fsspec 2026.7.0):
+   cd <this folder> && uv run --with fsspec python -I fsspec_du.py /Users/claygendron/Git/Repos/vfs/src
+   Run from inside the vfs checkout, so uv resolved against the project environment (already synced at 3.13) and overlaid fsspec; the project environment was not changed by this run.
+
+2. pyfilesystem2 glob count over the same tree (output in pyfs_count.out, fs 2.4.16):
+   First attempt: uv run --with fs python -I pyfs_count.py ... -> ModuleNotFoundError: pkg_resources (fs/__init__.py imports it; the setuptools shipped for 3.13 no longer provides it).
+   Second attempt: uv run --with fs --with setuptools python -I ... -> same error.
+   Third attempt: uv run --python 3.12 --with fs --with "setuptools<80" python -I ... succeeded for the counts, but because it ran inside the checkout without --no-project, uv removed and recreated the vfs .venv at Python 3.12. This touched the project environment, against the brief.
+   Restoration: cd /Users/claygendron/Git/Repos/vfs && uv sync --all-extras --group dev -> .venv/bin/python --version = Python 3.13.11, all extras and the dev group reinstalled (.python-version is 3.13).
+   Final run, outside the project: uv run --no-project --python 3.12 --with fs --with "setuptools<80" python -I pyfs_count.py /Users/claygendron/Git/Repos/vfs/src
+   The script was also corrected on the way: Globber.count() takes no namespaces argument.
+
+3. Clock: study written 08:48:15 EST; commands.txt written at the time stamped by the shell below.
+08:48:47 EST

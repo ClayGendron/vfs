@@ -1,0 +1,55 @@
+# Machine: Clays-MacBook-Pro.local, Apple M1 Pro; git version:
+git version 2.51.0
+
+$ git shortlog -sn
+
+$ git diff --shortstat HEAD~5
+ 105 files changed, 8049 insertions(+), 305 deletions(-)
+
+$ git diff --stat HEAD~5 | tail -3
+ tests/test_shared_builds.py                        |  62 +++
+ tests/test_sync.py                                 |   5 +-
+ 105 files changed, 8049 insertions(+), 305 deletions(-)
+
+$ git diff --numstat HEAD~5 | head -5
+61	0	context/research/2026-11-07-how-runtimes-bound-work-deadlines-cadence-and-pools.md
+45	0	context/research/2026-11-07-how-search-apis-carry-scope-roots-beside-patterns.md
+51	0	context/research/2026-11-07-import-direction-and-module-size-fitness-functions.md
+169	0	context/research/2026-11-07-when-sqlite-gathers-planner-statistics.md
+1	0	context/research/README.md
+
+$ git rev-list --count HEAD
+911
+
+$ git count-objects -v
+count: 7958
+size: 59824
+in-pack: 15095
+packs: 6
+size-pack: 21430
+prune-packable: 5468
+garbage: 0
+size-garbage: 0
+
+$ git ls-files src | wc -l
+      96
+
+$ git grep -c "def read" -- src | head -5
+src/vfs/base.py:1
+src/vfs/permissions.py:2
+src/vfs/session.py:1
+src/vfs/storage/backends/database/backend.py:1
+src/vfs/storage/backends/database/embed.py:1
+
+$ git grep -c -m 1 "def read" -- src | head -3
+src/vfs/base.py:1
+src/vfs/permissions.py:1
+src/vfs/session.py:1
+
+# The bare `git shortlog -sn` above printed nothing: with no revision and a non-terminal stdin, shortlog reads commits from stdin (builtin/shortlog.c read_from_stdin). Rerun with an explicit revision:
+$ git shortlog -sn HEAD
+   867	Clay Gendron
+    44	Claude
+
+$ git shortlog -sn HEAD~5..HEAD
+     5	Clay Gendron

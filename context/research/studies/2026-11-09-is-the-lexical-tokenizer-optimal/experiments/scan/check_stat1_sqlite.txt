@@ -1,0 +1,16 @@
+python sqlite 3.50.4; ctypes 3.53.4
+== as shipped (ANALYZE run by vfs): sqlite_stat1 rows=30
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page: rows=256 wall_ms=15.204 vm_step=916385 filter_miss=256 filter_hit=0
+== sqlite_stat1 emptied: sqlite_stat1 rows=0
+  id=7 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_deleted_at (deleted_at=?)
+  id=17 parent=0 SEARCH vfs_chunks USING INDEX ix_vfs_chunks_entry_id (entry_id=? AND rowid>?)
+  id=37 parent=0 USE TEMP B-TREE FOR ORDER BY
+  page: rows=256 wall_ms=68.492 vm_step=1623201 filter_miss=0 filter_hit=0
+== ANALYZE run again: sqlite_stat1 rows=33
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page: rows=256 wall_ms=15.221 vm_step=916385 filter_miss=256 filter_hit=0

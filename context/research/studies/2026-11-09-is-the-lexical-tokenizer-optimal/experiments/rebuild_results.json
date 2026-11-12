@@ -1,0 +1,121 @@
+{
+  "source": "/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/19e5567a-293c-4698-ba37-caa374019bda/scratchpad/tokenizer/profile/../../scanbudgets/curve/base_100000.db",
+  "copy_s": 1.01,
+  "db_bytes": 2451095552,
+  "chunk_sample": {
+    "chunk_rows_in_store": 462963,
+    "sampled": 20000,
+    "bytes": 29552453
+  },
+  "before": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 1
+  },
+  "dirtied": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "files": 100000,
+    "not_encoded": 1,
+    "epoch": 1
+  },
+  "reindex": {
+    "success": true,
+    "wall_s": 74.62,
+    "process_cpu_s": 72.94,
+    "statements": 2464,
+    "errors": []
+  },
+  "after": {
+    "chunks": 462963,
+    "posting_list": 7482,
+    "lex_postings": 768702,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 2
+  },
+  "timers": {
+    "phase.chunk_dirty": {
+      "calls": 1,
+      "wall_s": 0.052,
+      "rows": 0,
+      "chars": 0
+    },
+    "build.gram_inserts": {
+      "calls": 186,
+      "wall_s": 0.096,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.build_epoch": {
+      "calls": 1,
+      "wall_s": 66.617,
+      "rows": 0,
+      "chars": 0
+    },
+    "build.gram_feed": {
+      "calls": 21,
+      "wall_s": 2.829,
+      "rows": 100000,
+      "chars": 681754131
+    },
+    "build.lexical_total": {
+      "calls": 1,
+      "wall_s": 61.45,
+      "rows": 0,
+      "chars": 0
+    },
+    "lexical.builder.add_docs": {
+      "calls": 163,
+      "wall_s": 17.553,
+      "rows": 462963,
+      "chars": 681751944
+    },
+    "lexical.inserts": {
+      "calls": 209,
+      "wall_s": 6.773,
+      "rows": 0,
+      "chars": 0
+    },
+    "lexical.builder.finish": {
+      "calls": 1,
+      "wall_s": 0.447,
+      "rows": 0,
+      "chars": 0
+    },
+    "lexical.builder.next_df_batch": {
+      "calls": 8,
+      "wall_s": 0.02,
+      "rows": 131296,
+      "chars": 0
+    },
+    "lexical.builder.next_batch": {
+      "calls": 40,
+      "wall_s": 0.254,
+      "rows": 768702,
+      "chars": 0
+    },
+    "phase.publish_epoch": {
+      "calls": 1,
+      "wall_s": 0.881,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.reclaim_epochs": {
+      "calls": 1,
+      "wall_s": 0.966,
+      "rows": 0,
+      "chars": 0
+    }
+  }
+}

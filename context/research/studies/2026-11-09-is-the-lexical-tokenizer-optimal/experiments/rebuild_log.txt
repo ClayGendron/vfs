@@ -1,0 +1,18 @@
+copied /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/19e5567a-293c-4698-ba37-caa374019bda/scratchpad/tokenizer/profile/../../scanbudgets/curve/base_100000.db -> /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/19e5567a-293c-4698-ba37-caa374019bda/scratchpad/tokenizer/profile/store/rebuild_100000.db in 1.01s
+chunk sample: {'chunk_rows_in_store': 462963, 'sampled': 20000, 'bytes': 29552453}
+before: {'chunks': 462963, 'posting_list': 7480, 'lex_postings': 768707, 'lex_df': 131296, 'lex_docs': 462963, 'files': 100000, 'not_encoded': 0, 'epoch': 1}
+after one write: not_encoded=1
+reindex: wall=74.62s cpu=72.94s statements=2475 success=True
+  build.gram_feed                      calls=    21 wall=    2.829s rows=   100000 chars=681754131
+  build.gram_inserts                   calls=   186 wall=    0.096s rows=        0 chars=0
+  build.lexical_total                  calls=     1 wall=   61.450s rows=        0 chars=0
+  lexical.builder.add_docs             calls=   163 wall=   17.553s rows=   462963 chars=681751944
+  lexical.builder.finish               calls=     1 wall=    0.447s rows=        0 chars=0
+  lexical.builder.next_batch           calls=    40 wall=    0.254s rows=   768702 chars=0
+  lexical.builder.next_df_batch        calls=     8 wall=    0.020s rows=   131296 chars=0
+  lexical.inserts                      calls=   209 wall=    6.773s rows=        0 chars=0
+  phase.build_epoch                    calls=     1 wall=   66.617s rows=        0 chars=0
+  phase.chunk_dirty                    calls=     1 wall=    0.052s rows=        0 chars=0
+  phase.publish_epoch                  calls=     1 wall=    0.881s rows=        0 chars=0
+  phase.reclaim_epochs                 calls=     1 wall=    0.966s rows=        0 chars=0
+after: {'chunks': 462963, 'posting_list': 7482, 'lex_postings': 768702, 'lex_df': 131296, 'lex_docs': 462963, 'files': 100000, 'not_encoded': 0, 'epoch': 2}

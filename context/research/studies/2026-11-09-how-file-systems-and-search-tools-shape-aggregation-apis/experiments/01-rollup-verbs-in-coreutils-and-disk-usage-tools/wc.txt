@@ -1,0 +1,21 @@
+$ find src/ -type f -name "*.py" | xargs wc -l | tail -5   (wc appends a total line when given more than one file)
+      98 src/vfs/storage/backends/database/membership.py
+     335 src/vfs/storage/backends/database/serialized.py
+     222 src/vfs/storage/backends/database/offload.py
+     310 src/vfs/storage/backends/database/scope.py
+   39158 total
+
+$ find src/ -type f -name "*.py" | wc -l
+      94
+
+$ find context/ -type f -name "*.md" | xargs wc -lwc | tail -3
+      62     227    1867 context/research/studies/2026-10-15-agent-shell/experiments/s10/pyodide_untrusted/deno_cache/npm/registry.npmjs.org/pyodide/0.28.3/README.md
+     548    1738   15306 context/research/studies/2026-10-15-agent-shell/experiments/s10/pyodide_untrusted/deno_cache/npm/registry.npmjs.org/ws/8.22.0/README.md
+  138537 2389171 17130383 total
+
+$ find src/ -type f -name "*.py" -print0 | wc -l --files0-from=- 2>&1 | tail -2   (GNU-only flag; BSD wc lacks it)
+wc: illegal option -- -
+usage: wc [-Lclmw] [file ...]
+
+$ cat src/vfs/*.py | wc -l   (pipe: one number, no total line, no per-file breakdown)
+    8478

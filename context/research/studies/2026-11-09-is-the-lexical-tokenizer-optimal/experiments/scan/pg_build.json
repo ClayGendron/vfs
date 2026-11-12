@@ -1,0 +1,59 @@
+{
+  "url": "localhost:54320/vfs",
+  "schema": "scan_base",
+  "files": 100000,
+  "postgres_version": "17.11 (Debian 17.11-1.pgdg12+2)",
+  "write_wall_s": 113.78,
+  "reindex": [
+    {
+      "attempt": 0,
+      "success": true,
+      "wall_s": 759.47,
+      "chunks": 462963,
+      "posting_list": 7480,
+      "lex_postings": 768707,
+      "lex_df": 131296,
+      "lex_docs": 462963,
+      "lex_stats": 1,
+      "files": 100000,
+      "not_encoded": 0,
+      "epoch": 1
+    }
+  ],
+  "counts": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 1
+  },
+  "schema_bytes": "2330853376",
+  "checksum_epoch": 1,
+  "checksum": {
+    "lex_docs": {
+      "rows": 462963,
+      "sha256": "8dd3df456b4417b4273704dc7629630a51691bb4fe9932b54162de72b0880f7d",
+      "sha256_without_ids": "23d4ae5c3af7b84a052a9f66ffda1ae441c858e7c8adee5cecad10c7761ddfe6"
+    },
+    "lex_df": {
+      "rows": 131296,
+      "sha256": "a74045a91540bbe069ec2c1f3e63bda767368ef48625f3206dee0d057fc734c0",
+      "sha256_without_ids": "20e4b5f400f177831457a17af8f0b0f7da2fc2d5a20e588043ab87dc24fce065"
+    },
+    "lex_stats": {
+      "rows": 1,
+      "sha256": "38330f2ee6476b6cdc8a626528a90d6f4a8809442dbdc9727916db8d109c0cb8",
+      "sha256_without_ids": "38330f2ee6476b6cdc8a626528a90d6f4a8809442dbdc9727916db8d109c0cb8"
+    },
+    "lex_postings": {
+      "rows": 768707,
+      "sha256": "ff2d46ba8d2f74204e09a4b47890f5a32a4c408d710802f48096184520c2eea3",
+      "sha256_without_ids": "f3e7c2faea807b82f54a0fcbc1c1d3763e93c1d787bde4b34866542c1d17ca9e"
+    }
+  },
+  "rss_peak_mb": 3020.1
+}

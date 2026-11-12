@@ -1,0 +1,90 @@
+# Machine: Clays-MacBook-Pro.local, Apple M1 Pro, 10 cores, macOS Darwin 25.5.0
+# rg version:
+ripgrep 15.1.0
+
+$ rg --stats "def read" src/ | tail -9
+
+13 matches
+13 matched lines
+10 files contained matches
+96 files searched
+957 bytes printed
+1659826 bytes searched
+0.027395 seconds spent searching
+0.009385 seconds total
+
+$ rg -c "def read" src/
+src/vfs/base.py:1
+src/vfs/permissions.py:2
+src/vfs/sync.py:2
+src/vfs/storage/protocol.py:2
+src/vfs/session.py:1
+src/vfs/storage/backends/database/reads.py:1
+src/vfs/storage/backends/database/revision.py:1
+src/vfs/storage/backends/database/rights.py:1
+src/vfs/storage/backends/database/embed.py:1
+src/vfs/storage/backends/database/backend.py:1
+
+$ rg --count-matches "def read" src/
+src/vfs/base.py:1
+src/vfs/permissions.py:2
+src/vfs/storage/backends/database/reads.py:1
+src/vfs/storage/backends/database/embed.py:1
+src/vfs/storage/backends/database/backend.py:1
+src/vfs/storage/backends/database/revision.py:1
+src/vfs/storage/protocol.py:2
+src/vfs/storage/backends/database/rights.py:1
+src/vfs/session.py:1
+src/vfs/sync.py:2
+
+$ rg -l "def read" src/
+src/vfs/base.py
+src/vfs/permissions.py
+src/vfs/sync.py
+src/vfs/session.py
+src/vfs/storage/protocol.py
+src/vfs/storage/backends/database/rights.py
+src/vfs/storage/backends/database/reads.py
+src/vfs/storage/backends/database/revision.py
+src/vfs/storage/backends/database/backend.py
+src/vfs/storage/backends/database/embed.py
+
+$ rg -c --include-zero "def read" src/vfs/base.py src/vfs/native.py
+src/vfs/native.py:0
+src/vfs/base.py:1
+
+$ rg -c -m 1 "def read" src/
+src/vfs/base.py:1
+src/vfs/session.py:1
+src/vfs/permissions.py:1
+src/vfs/sync.py:1
+src/vfs/storage/protocol.py:1
+src/vfs/storage/backends/database/reads.py:1
+src/vfs/storage/backends/database/revision.py:1
+src/vfs/storage/backends/database/rights.py:1
+src/vfs/storage/backends/database/embed.py:1
+src/vfs/storage/backends/database/backend.py:1
+
+$ rg --stats -m 1 "def read" src/ | tail -9
+
+10 matches
+10 matched lines
+10 files contained matches
+96 files searched
+794 bytes printed
+1285267 bytes searched
+0.002740 seconds spent searching
+0.008764 seconds total
+
+$ rg --json "def read" src/ | grep -c "\"type\":\"match\""
+13
+
+$ rg --json "def read" src/ | grep "\"type\":\"end\"" | head -2
+{"type":"end","data":{"path":{"text":"src/vfs/base.py"},"binary_offset":null,"stats":{"elapsed":{"secs":0,"nanos":46833,"human":"0.000047s"},"searches":1,"searches_with_match":1,"bytes_searched":171408,"bytes_printed":268,"matched_lines":1,"matches":1}}}
+{"type":"end","data":{"path":{"text":"src/vfs/permissions.py"},"binary_offset":null,"stats":{"elapsed":{"secs":0,"nanos":7000,"human":"0.000007s"},"searches":1,"searches_with_match":1,"bytes_searched":14481,"bytes_printed":575,"matched_lines":2,"matches":2}}}
+
+$ rg --json "def read" src/ | tail -1
+{"data":{"elapsed_total":{"human":"0.005997s","nanos":5997334,"secs":0},"stats":{"bytes_printed":3934,"bytes_searched":1659826,"elapsed":{"human":"0.000536s","nanos":536005,"secs":0},"matched_lines":13,"matches":13,"searches":96,"searches_with_match":10}},"type":"summary"}
+
+$ rg --files src/ | wc -l
+      96

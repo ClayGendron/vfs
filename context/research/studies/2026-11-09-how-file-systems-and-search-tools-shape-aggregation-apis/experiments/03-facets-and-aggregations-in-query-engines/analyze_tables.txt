@@ -1,0 +1,59 @@
+Installed 9 packages in 16ms
+files.dir: (1/3)
+
+  Total rows: 97
+  Null rows: 0
+  Blank rows: 0
+
+  Distinct values: 9
+
+  Most common:
+    33: vfs/storage/backends/database
+    17: vfs/models
+    16: vfs
+    8: vfs/rendering
+    6: vfs/embedding
+
+  Least common:
+    2: vfs/storage/backends
+    3: vfs/pattern_matching
+    6: vfs/embedding
+    6: vfs/results
+    6: vfs/storage
+
+files.ext: (2/3)
+
+  Total rows: 97
+  Null rows: 0
+  Blank rows: 0
+
+  Distinct values: 4
+
+  Most common:
+    94: py
+    1: typed
+    1: so
+    1: pyi
+
+files.lines: (3/3)
+
+  Total rows: 97
+  Null rows: 0
+  Blank rows: 0
+
+  Distinct values: 92
+
+  Most common:
+    2: 227
+    2: 83
+    2: 71
+    2: 50
+    2: 48
+
+  Least common:
+    1: 1318
+    1: 1542
+    1: 1960
+    1: 3710
+    1: 397187
+

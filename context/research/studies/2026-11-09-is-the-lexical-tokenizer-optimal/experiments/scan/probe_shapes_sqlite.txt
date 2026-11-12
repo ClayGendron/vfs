@@ -1,0 +1,57 @@
+python sqlite 3.50.4; ctypes /opt/homebrew/opt/sqlite/lib/libsqlite3.dylib 3.53.4
+
+== shipped_join
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=13.393 vm_step=916385 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== correlated_exists
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE EXISTS (SELECT 1 FROM vfs_entries WHERE vfs_entries.entry_id = vfs_chunks.entry_id AND vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL) AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=4 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=7 parent=0 CORRELATED SCALAR SUBQUERY 1
+  id=12 parent=7 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=13.652 vm_step=1020562 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== likelihood_0_99
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE likelihood(vfs_entries.chunked = 1, 0.99) AND likelihood(vfs_entries.indexable = 1, 0.99) AND likelihood(vfs_entries.deleted_at IS NULL, 0.99) AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=13.351 vm_step=916385 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== likely
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE likely(vfs_entries.chunked = 1) AND likely(vfs_entries.indexable = 1) AND likely(vfs_entries.deleted_at IS NULL) AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=13.49 vm_step=916385 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== unary_plus_terms
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE +vfs_entries.chunked = 1 AND +vfs_entries.indexable = 1 AND +vfs_entries.deleted_at IS NULL AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=13.088 vm_step=916385 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== filter_in_on_clause
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id AND vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL WHERE 1 AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=14.129 vm_step=916385 fullscan_step=0 sort=0 filter_miss=256 filter_hit=0
+
+== scalar_subquery_filter
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE (SELECT 1 FROM vfs_entries WHERE vfs_entries.entry_id = vfs_chunks.entry_id AND vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL) = 1 AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=4 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=7 parent=0 CORRELATED SCALAR SUBQUERY 1
+  id=12 parent=7 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=0.432 vm_step=6409 fullscan_step=0 sort=0 filter_miss=0 filter_hit=0
+  full walk: {"pages": 1810, "rows": 462963, "vm_step": 11590367, "wall_s": 0.916, "page_ms_median": 0.49, "page_ms_max": 0.755}
+
+== no_filter_join
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE 1 AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+  id=5 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=7 parent=0 SEARCH vfs_entries USING COVERING INDEX ix_vfs_entries_entry_id (entry_id=?)
+  page at last=231481: rows=256 wall_ms=0.35 vm_step=2313 fullscan_step=0 sort=0 filter_miss=0 filter_hit=0

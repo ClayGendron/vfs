@@ -1,0 +1,191 @@
+{
+  "ext_and_dir_top5": {
+    "json": {
+      "allow_execute_sql": true,
+      "columns": [
+        "path",
+        "dir",
+        "ext",
+        "size",
+        "lines"
+      ],
+      "database": "corpus",
+      "expandable_columns": [],
+      "expanded_columns": [],
+      "facet_results": {
+        "dir": {
+          "hideable": true,
+          "name": "dir",
+          "results": [
+            {
+              "count": 33,
+              "label": "vfs/storage/backends/database",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&dir=vfs%2Fstorage%2Fbackends%2Fdatabase",
+              "value": "vfs/storage/backends/database"
+            },
+            {
+              "count": 17,
+              "label": "vfs/models",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&dir=vfs%2Fmodels",
+              "value": "vfs/models"
+            },
+            {
+              "count": 16,
+              "label": "vfs",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&dir=vfs",
+              "value": "vfs"
+            },
+            {
+              "count": 8,
+              "label": "vfs/rendering",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&dir=vfs%2Frendering",
+              "value": "vfs/rendering"
+            },
+            {
+              "count": 6,
+              "label": "vfs/embedding",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&dir=vfs%2Fembedding",
+              "value": "vfs/embedding"
+            }
+          ],
+          "toggle_url": "/corpus/files.json?_facet=ext&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0",
+          "truncated": true,
+          "type": "column"
+        },
+        "ext": {
+          "hideable": true,
+          "name": "ext",
+          "results": [
+            {
+              "count": 94,
+              "label": "py",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&ext=py",
+              "value": "py"
+            },
+            {
+              "count": 1,
+              "label": "pyi",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&ext=pyi",
+              "value": "pyi"
+            },
+            {
+              "count": 1,
+              "label": "so",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&ext=so",
+              "value": "so"
+            },
+            {
+              "count": 1,
+              "label": "typed",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0&ext=typed",
+              "value": "typed"
+            }
+          ],
+          "toggle_url": "/corpus/files.json?_facet=dir&_extra=facet_results%2Ccount%2Csuggested_facets&_size=0",
+          "truncated": false,
+          "type": "column"
+        }
+      },
+      "filtered_table_rows_count": 97,
+      "human_description_en": "",
+      "is_view": false,
+      "next": null,
+      "next_url": null,
+      "primary_keys": [
+        "path"
+      ],
+      "private": false,
+      "query": {
+        "params": {},
+        "sql": "select path, dir, ext, size, lines from files order by path limit 1"
+      },
+      "query_ms": 4.822249989956617,
+      "rows": [],
+      "suggested_facets": [],
+      "table": "files",
+      "truncated": false,
+      "units": {}
+    },
+    "path": "/corpus/files.json?_facet=ext&_facet=dir&_extra=facet_results,count,suggested_facets&_size=0",
+    "status": 200
+  },
+  "ext_filtered_to_py": {
+    "json": {
+      "allow_execute_sql": true,
+      "columns": [
+        "path",
+        "dir",
+        "ext",
+        "size",
+        "lines"
+      ],
+      "database": "corpus",
+      "expandable_columns": [],
+      "expanded_columns": [],
+      "facet_results": {
+        "dir": {
+          "hideable": true,
+          "name": "dir",
+          "results": [
+            {
+              "count": 33,
+              "label": "vfs/storage/backends/database",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?ext=py&_facet=dir&_facet_size=3&_extra=facet_results%2Ccount&_size=0&dir=vfs%2Fstorage%2Fbackends%2Fdatabase",
+              "value": "vfs/storage/backends/database"
+            },
+            {
+              "count": 17,
+              "label": "vfs/models",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?ext=py&_facet=dir&_facet_size=3&_extra=facet_results%2Ccount&_size=0&dir=vfs%2Fmodels",
+              "value": "vfs/models"
+            },
+            {
+              "count": 13,
+              "label": "vfs",
+              "selected": false,
+              "toggle_url": "http://localhost/corpus/files.json?ext=py&_facet=dir&_facet_size=3&_extra=facet_results%2Ccount&_size=0&dir=vfs",
+              "value": "vfs"
+            }
+          ],
+          "toggle_url": "/corpus/files.json?ext=py&_facet_size=3&_extra=facet_results%2Ccount&_size=0",
+          "truncated": true,
+          "type": "column"
+        }
+      },
+      "filtered_table_rows_count": 94,
+      "human_description_en": "where ext = \"py\"",
+      "is_view": false,
+      "next": null,
+      "next_url": null,
+      "primary_keys": [
+        "path"
+      ],
+      "private": false,
+      "query": {
+        "params": {
+          "p0": "py"
+        },
+        "sql": "select path, dir, ext, size, lines from files where \"ext\" = :p0 order by path limit 1"
+      },
+      "query_ms": 3.4731669584289193,
+      "rows": [],
+      "suggested_facets": [],
+      "table": "files",
+      "truncated": false,
+      "units": {}
+    },
+    "path": "/corpus/files.json?ext=py&_facet=dir&_facet_size=3&_extra=facet_results,count&_size=0",
+    "status": 200
+  }
+}

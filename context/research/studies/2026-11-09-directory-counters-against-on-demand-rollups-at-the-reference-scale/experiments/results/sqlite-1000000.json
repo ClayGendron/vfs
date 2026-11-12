@@ -1,0 +1,157 @@
+{
+ "url": "sqlite+aiosqlite:////private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/5248171c-ceb5-46b9-a08a-9d01dfcd485d/scratchpad/rollup-sqlite.db",
+ "dialect": "sqlite",
+ "files_requested": 1000000,
+ "insert_page_rows": 2000,
+ "counter_chunk_rows": 1000,
+ "seed": {
+  "entry_rows": 1100001,
+  "statements": 568,
+  "wall_ms": 55454
+ },
+ "repair_scan_direct": {
+  "rows_scanned": 1100001,
+  "statements": 1,
+  "wall_ms": 2006
+ },
+ "seed_recursive": {
+  "rows": 100001,
+  "statements": 51,
+  "wall_ms": 785
+ },
+ "tree": {
+  "directories": 100000,
+  "files": 1000000,
+  "files_per_dir_mean": 10.0,
+  "files_per_dir_median": 2,
+  "files_per_dir_p99": 128,
+  "files_per_dir_max": 27439,
+  "dirs_with_no_files_share": 0.296,
+  "depth_mean": 5.4,
+  "depth_max": 14,
+  "depth_ge8_share": 0.156,
+  "root_children": 1223
+ },
+ "read_root": {
+  "root": "/corp",
+  "entries_under": 1100000,
+  "ondemand": {
+   "rows_scanned": 1100000,
+   "statements": 1,
+   "buckets": 1223,
+   "wall_ms": 980.1
+  },
+  "direct": {
+   "rows_scanned": 100000,
+   "statements": 1,
+   "buckets": 1219,
+   "wall_ms": 56.5
+  },
+  "recursive": {
+   "rows_scanned": 1223,
+   "statements": 1,
+   "buckets": 1223,
+   "wall_ms": 2.4
+  }
+ },
+ "read_mid": {
+  "root": "/corp/d89876/d31711",
+  "entries_under": 6900,
+  "ondemand": {
+   "rows_scanned": 6900,
+   "statements": 1,
+   "buckets": 7,
+   "wall_ms": 94.3
+  },
+  "direct": {
+   "rows_scanned": 8,
+   "statements": 1,
+   "buckets": 3,
+   "wall_ms": 6.2
+  },
+  "recursive": {
+   "rows_scanned": 3,
+   "statements": 1,
+   "buckets": 3,
+   "wall_ms": 0.3
+  }
+ },
+ "write_ingest_spread": {
+  "files": 10000,
+  "distinct_parents": 6590,
+  "insert": {
+   "statements": 5,
+   "rows": 10000,
+   "wall_ms": 313.1
+  },
+  "direct_counters": {
+   "statements": 7,
+   "counter_rows_touched": 6590,
+   "wall_ms": 80.4
+  },
+  "recursive_counters": {
+   "statements": 23,
+   "counter_rows_touched": 22045,
+   "wall_ms": 176.6
+  }
+ },
+ "write_ingest_concentrated": {
+  "files": 10000,
+  "distinct_parents": 1,
+  "insert": {
+   "statements": 5,
+   "rows": 10000,
+   "wall_ms": 33.6
+  },
+  "direct_counters": {
+   "statements": 1,
+   "counter_rows_touched": 1,
+   "wall_ms": 0.6
+  },
+  "recursive_counters": {
+   "statements": 1,
+   "counter_rows_touched": 2,
+   "wall_ms": 0.3
+  }
+ },
+ "write_edit_spread": {
+  "files": 10000,
+  "read_before_write": {
+   "statements": 10,
+   "rows": 10000,
+   "wall_ms": 36.7
+  },
+  "update": {
+   "statements": 10,
+   "rows": 10000,
+   "wall_ms": 164.3
+  },
+  "distinct_parents": 6572,
+  "direct_counters": {
+   "statements": 7,
+   "counter_rows_touched": 6572,
+   "wall_ms": 57.6
+  },
+  "recursive_counters": {
+   "statements": 22,
+   "counter_rows_touched": 21805,
+   "wall_ms": 170.9
+  }
+ },
+ "write_single_edit": {
+  "baseline": {
+   "statements": 2
+  },
+  "direct_counters": {
+   "statements": 1,
+   "counter_rows_touched": 1,
+   "wall_ms": 0.2
+  },
+  "recursive_counters": {
+   "statements": 1,
+   "counter_rows_touched": 3,
+   "depth": 2,
+   "wall_ms": 0.2
+  }
+ }
+}

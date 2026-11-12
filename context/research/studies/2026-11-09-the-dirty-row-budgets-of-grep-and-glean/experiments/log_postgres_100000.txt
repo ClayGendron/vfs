@@ -1,0 +1,18 @@
+[11:02:28] reusing base: {'entry': 103921, 'chunks': 462963, 'posting_list': 7480, 'lex_postings': 768707, 'files': 100000, 'not_encoded': 0, 'epoch': 1}
+[11:02:28] level N=10000: fresh store ready in 0.03s
+[11:02:39]   dirtied 10000 (+ sentinel) in 11.86s; not_encoded=10001
+[11:03:09]   grep medians: rare literal (rank 12000)=1.63s, common word (rank 40)=2.32s, alternation regex (ranks 2000|2500)=2.71s, case-insensitive word (rank 800)=2.24s, matches almost nothing=0.66s
+[11:03:23]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.15s, 3 words (ranks 40, 1500, 9000)=0.27s, 4 words (ranks 700, 2000, 5000, 15000)=0.15s, 2 very common (ranks 5, 12)=3.79s, 2 rare (ranks 8000, 20000)=0.15s
+[11:04:05]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=2.22s, 3 words (ranks 40, 1500, 9000)=2.31s, 4 words (ranks 700, 2000, 5000, 15000)=2.20s, 2 very common (ranks 5, 12)=5.82s, 2 rare (ranks 8000, 20000)=2.31s
+[11:04:08]   recall: grep=True glean@500=False glean@25000=True
+[11:04:34]   default wall: grep 2.12s, 2.97s, 2.75s, 2.25s, 0.67s | glean 2.22s, 2.35s, 2.16s, 5.89s, 2.20s
+[11:04:34] level N=10000 done in 126.1s; results written
+[11:04:34] level N=25000: fresh store ready in 0.03s
+[11:04:51]   dirtied 25000 (+ sentinel) in 17.69s; not_encoded=23401
+[11:05:24]   grep medians: rare literal (rank 12000)=2.19s, common word (rank 40)=2.36s, alternation regex (ranks 2000|2500)=2.60s, case-insensitive word (rank 800)=2.20s, matches almost nothing=1.53s
+[11:05:38]   glean[budget=500] medians: 2 words (ranks 300, 3000)=0.16s, 3 words (ranks 40, 1500, 9000)=0.29s, 4 words (ranks 700, 2000, 5000, 15000)=0.16s, 2 very common (ranks 5, 12)=3.81s, 2 rare (ranks 8000, 20000)=0.15s
+[11:07:06]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=5.18s, 3 words (ranks 40, 1500, 9000)=5.31s, 4 words (ranks 700, 2000, 5000, 15000)=5.20s, 2 very common (ranks 5, 12)=8.84s, 2 rare (ranks 8000, 20000)=5.16s
+[11:07:13]   recall: grep=True glean@500=False glean@25000=True
+[11:07:54]   default wall: grep 2.31s, 2.42s, 2.69s, 2.24s, 1.50s | glean 5.27s, 5.34s, 5.22s, 8.90s, 5.21s
+[11:07:54] level N=25000 done in 200.5s; results written
+[11:07:54] done

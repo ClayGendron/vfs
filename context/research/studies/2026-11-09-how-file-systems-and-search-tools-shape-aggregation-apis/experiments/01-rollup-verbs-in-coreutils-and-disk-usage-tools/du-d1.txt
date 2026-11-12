@@ -1,0 +1,36 @@
+$ du -d 1 src/ context/   (macOS BSD du, Darwin 25.5.0, 512-byte blocks)
+177328	src//vfs
+177328	src/
+949504	context//research
+10048	context//specifications
+0	context//prior_art
+24	context//intentions
+3136	context//reviews
+576	context//standards
+963312	context/
+
+$ du -d 1 -h -c src/ context/
+ 87M	src//vfs
+ 87M	src/
+464M	context//research
+4.9M	context//specifications
+  0B	context//prior_art
+ 12K	context//intentions
+1.5M	context//reviews
+288K	context//standards
+470M	context/
+557M	total
+
+$ du -s -A src/vfs   (apparent size)
+176331	src/vfs
+
+$ du -s src/vfs   (allocated blocks)
+177328	src/vfs
+
+$ du -d 1 -t 1000 context/   (threshold: hide entries under 1000 blocks)
+949504	context//research
+10048	context//specifications
+24	context//intentions
+3136	context//reviews
+576	context//standards
+963312	context/

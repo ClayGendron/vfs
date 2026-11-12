@@ -1,0 +1,192 @@
+{
+ "url": "localhost:54329/vfs",
+ "dialect": "postgresql",
+ "files_requested": 10000000,
+ "insert_page_rows": 2000,
+ "counter_chunk_rows": 1000,
+ "seed": {
+  "entry_rows": 11000001,
+  "statements": 5512,
+  "wall_ms": 461802
+ },
+ "repair_scan_direct": {
+  "rows_scanned": 11000001,
+  "statements": 1,
+  "wall_ms": 49782
+ },
+ "seed_recursive": {
+  "rows": 1000001,
+  "statements": 501,
+  "wall_ms": 23303
+ },
+ "tree": {
+  "directories": 1000000,
+  "files": 10000000,
+  "files_per_dir_mean": 10.0,
+  "files_per_dir_median": 2,
+  "files_per_dir_p99": 131,
+  "files_per_dir_max": 23362,
+  "dirs_with_no_files_share": 0.289,
+  "depth_mean": 5.4,
+  "depth_max": 14,
+  "depth_ge8_share": 0.157,
+  "root_children": 12071
+ },
+ "read_root": {
+  "root": "/corp",
+  "entries_under": 11000000,
+  "ondemand": {
+   "rows_scanned": 11000000,
+   "statements": 1,
+   "buckets": 12071,
+   "wall_ms": 7235.3,
+   "plan": [
+    "Finalize GroupAggregate  (cost=1143463.63..2907909.12 rows=11003439 width=72) (actual time=6751.065..7595.317 rows=12071 loops=1)",
+    "  Group Key: (CASE WHEN (strpos(substr((exp_entries.path)::text, 7), '/'::text) > 0) THEN substr(substr((exp_entries.path)::text, 7), 1, (strpos(substr((exp_entries.path)::text, 7), '/'::text) - 1)) ELSE substr((exp_entries.path)::text, 7) END)",
+    "  ->  Gather Merge  (cost=1143463.63..2431093.44 rows=9169532 width=72) (actual time=6750.964..7585.441 rows=36033 loops=1)",
+    "        Workers Planned: 2",
+    "        Workers Launched: 2",
+    "        ->  Partial GroupAggregate  (cost=1142463.60..1371701.90 rows=4584766 width=72) (actual time=6724.355..7537.929 rows=12011 loops=3)"
+   ]
+  },
+  "direct": {
+   "rows_scanned": 1000000,
+   "statements": 1,
+   "buckets": 12028,
+   "wall_ms": 329.9
+  },
+  "recursive": {
+   "rows_scanned": 12071,
+   "statements": 1,
+   "buckets": 12071,
+   "wall_ms": 53.1
+  }
+ },
+ "read_mid": {
+  "root": "/corp/d773796/d114044",
+  "entries_under": 23976,
+  "ondemand": {
+   "rows_scanned": 23976,
+   "statements": 1,
+   "buckets": 17,
+   "wall_ms": 357.6,
+   "plan": [
+    "Finalize GroupAggregate  (cost=286936.64..304760.99 rows=111157 width=72) (actual time=357.739..360.987 rows=17 loops=1)",
+    "  Group Key: (CASE WHEN (strpos(substr((exp_entries.path)::text, 23), '/'::text) > 0) THEN substr(substr((exp_entries.path)::text, 23), 1, (strpos(substr((exp_entries.path)::text, 23), '/'::text) - 1)) ELSE substr((exp_entries.path)::text, 23) END)",
+    "  ->  Gather Merge  (cost=286936.64..299944.19 rows=92630 width=72) (actual time=357.723..360.965 rows=24 loops=1)",
+    "        Workers Planned: 2",
+    "        Workers Launched: 2",
+    "        ->  Partial GroupAggregate  (cost=285936.62..288252.37 rows=46315 width=72) (actual time=348.839..348.882 rows=8 loops=3)"
+   ]
+  },
+  "direct": {
+   "rows_scanned": 73,
+   "statements": 1,
+   "buckets": 4,
+   "wall_ms": 30.6
+  },
+  "recursive": {
+   "rows_scanned": 4,
+   "statements": 1,
+   "buckets": 4,
+   "wall_ms": 0.9
+  }
+ },
+ "write_ingest_spread": {
+  "files": 10000,
+  "distinct_parents": 9165,
+  "insert": {
+   "statements": 5,
+   "rows": 10000,
+   "wall_ms": 557.4
+  },
+  "direct_counters": {
+   "statements": 10,
+   "counter_rows_touched": 9165,
+   "wall_ms": 501.4
+  },
+  "recursive_counters": {
+   "statements": 44,
+   "counter_rows_touched": 43844,
+   "wall_ms": 2305.0
+  }
+ },
+ "write_ingest_concentrated": {
+  "files": 10000,
+  "distinct_parents": 1,
+  "insert": {
+   "statements": 5,
+   "rows": 10000,
+   "wall_ms": 363.5
+  },
+  "direct_counters": {
+   "statements": 1,
+   "counter_rows_touched": 1,
+   "wall_ms": 3.5
+  },
+  "recursive_counters": {
+   "statements": 1,
+   "counter_rows_touched": 2,
+   "wall_ms": 1.5
+  }
+ },
+ "write_edit_spread": {
+  "files": 10000,
+  "read_before_write": {
+   "statements": 10,
+   "rows": 10000,
+   "wall_ms": 205.9
+  },
+  "update": {
+   "statements": 10,
+   "rows": 10000,
+   "wall_ms": 1907.7
+  },
+  "distinct_parents": 9242,
+  "direct_counters": {
+   "statements": 10,
+   "counter_rows_touched": 9242,
+   "wall_ms": 398.8
+  },
+  "recursive_counters": {
+   "statements": 45,
+   "counter_rows_touched": 44420,
+   "wall_ms": 1710.9
+  }
+ },
+ "write_single_edit": {
+  "baseline": {
+   "statements": 2
+  },
+  "direct_counters": {
+   "statements": 1,
+   "counter_rows_touched": 1,
+   "wall_ms": 1.4
+  },
+  "recursive_counters": {
+   "statements": 1,
+   "counter_rows_touched": 6,
+   "depth": 5,
+   "wall_ms": 1.3
+  }
+ },
+ "contention": {
+  "workers": 16,
+  "edits_per_worker": 50,
+  "baseline": {
+   "wall_ms": 509,
+   "edits_per_second": 1570.7,
+   "restarts": 0
+  },
+  "direct": {
+   "wall_ms": 437,
+   "edits_per_second": 1830.1,
+   "restarts": 0
+  },
+  "recursive": {
+   "wall_ms": 761,
+   "edits_per_second": 1051.0,
+   "restarts": 0
+  }
+ }
+}

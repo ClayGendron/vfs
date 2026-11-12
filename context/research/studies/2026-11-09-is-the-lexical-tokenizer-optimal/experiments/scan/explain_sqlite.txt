@@ -1,0 +1,126 @@
+store: {"chunks": 462963, "entries": 103921, "entries_covered": 100000, "chunks_covered": 462963, "max_chunk_id": 462963, "min_chunk_id": 1, "chunk_content_bytes": 681751857, "chunk_content_chars": 681751857, "page_size": 16384, "page_count": 149603}
+indexes:
+  vfs_chunks.ix_vfs_chunks_content_hash: CREATE INDEX ix_vfs_chunks_content_hash ON vfs_chunks (content_hash)
+  vfs_chunks.ix_vfs_chunks_entry_id: CREATE INDEX ix_vfs_chunks_entry_id ON vfs_chunks (entry_id)
+  vfs_chunks.sqlite_autoindex_vfs_chunks_1: None
+  vfs_entries.ix_vfs_entries_content_hash: CREATE INDEX ix_vfs_entries_content_hash ON vfs_entries (content_hash)
+  vfs_entries.ix_vfs_entries_deleted_at: CREATE INDEX ix_vfs_entries_deleted_at ON vfs_entries (deleted_at)
+  vfs_entries.ix_vfs_entries_encoded_kind: CREATE INDEX ix_vfs_entries_encoded_kind ON vfs_entries (encoded, kind)
+  vfs_entries.ix_vfs_entries_entry_id: CREATE UNIQUE INDEX ix_vfs_entries_entry_id ON vfs_entries (entry_id)
+  vfs_entries.ix_vfs_entries_everyone_path: CREATE INDEX ix_vfs_entries_everyone_path ON vfs_entries (everyone_level, path)
+  vfs_entries.ix_vfs_entries_ext: CREATE INDEX ix_vfs_entries_ext ON vfs_entries (ext)
+  vfs_entries.ix_vfs_entries_ext_kind: CREATE INDEX ix_vfs_entries_ext_kind ON vfs_entries (ext, kind)
+  vfs_entries.ix_vfs_entries_kind: CREATE INDEX ix_vfs_entries_kind ON vfs_entries (kind)
+  vfs_entries.ix_vfs_entries_owner_id: CREATE INDEX ix_vfs_entries_owner_id ON vfs_entries (owner_id)
+  vfs_entries.ix_vfs_entries_path: CREATE UNIQUE INDEX ix_vfs_entries_path ON vfs_entries (path)
+  vfs_entries.ix_vfs_entries_render_status: CREATE INDEX ix_vfs_entries_render_status ON vfs_entries (render_status)
+  vfs_entries.ix_vfs_entries_trash_root: CREATE INDEX ix_vfs_entries_trash_root ON vfs_entries (trash_root_id)
+  vfs_entries.sqlite_autoindex_vfs_entries_1: None
+sqlite_stat1:
+  vfs_chunks ix_vfs_chunks_content_hash: 462963 1
+  vfs_chunks ix_vfs_chunks_entry_id: 462963 5
+  vfs_chunks sqlite_autoindex_vfs_chunks_1: 462963 5 1
+  vfs_entries ix_vfs_entries_content_hash: 93921 1
+  vfs_entries ix_vfs_entries_deleted_at: 93921 93921
+  vfs_entries ix_vfs_entries_encoded_kind: 93921 46961 46961
+  vfs_entries ix_vfs_entries_entry_id: 93921 1
+  vfs_entries ix_vfs_entries_everyone_path: 93921 93921 1
+  vfs_entries ix_vfs_entries_ext: 93921 46961
+  vfs_entries ix_vfs_entries_ext_kind: 93921 46961 46961
+  vfs_entries ix_vfs_entries_kind: 93921 46961
+  vfs_entries ix_vfs_entries_owner_id: 93921 93921
+  vfs_entries ix_vfs_entries_path: 93921 1
+  vfs_entries ix_vfs_entries_render_status: 93921 93921
+  vfs_entries ix_vfs_entries_trash_root: 93921 93921
+  vfs_entries sqlite_autoindex_vfs_entries_1: 93921 24 1
+
+== shipped_join
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+EXPLAIN QUERY PLAN:
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+EXPLAIN opcodes: 43
+  last=       0 rows=256 content_bytes= 388462 wall_ms=  13.281 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=   46296 rows=256 content_bytes= 367062 wall_ms=  12.799 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  115740 rows=256 content_bytes= 374863 wall_ms=  13.787 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  231481 rows=256 content_bytes= 373459 wall_ms=  12.794 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  347222 rows=256 content_bytes= 366288 wall_ms=  12.806 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  460963 rows=256 content_bytes= 380405 wall_ms=  13.120 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  231481 limit= 1024 rows= 1024 content_bytes= 1498879 wall_ms=  14.095 fullscan_step=0 sort=0 vm_step=930209
+  last=  231481 limit= 4096 rows= 4096 content_bytes= 6008703 wall_ms=  19.064 fullscan_step=0 sort=0 vm_step=985505
+  last=  231481 limit=16384 rows=16384 content_bytes=24174610 wall_ms=  38.432 fullscan_step=0 sort=0 vm_step=1206689
+
+== exists_subquery
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.entry_id IN (SELECT vfs_entries.entry_id FROM vfs_entries WHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL) AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+EXPLAIN QUERY PLAN:
+  id=5 parent=0 SEARCH vfs_chunks USING INDEX ix_vfs_chunks_entry_id (entry_id=? AND rowid>?)
+  id=9 parent=0 LIST SUBQUERY 1
+  id=12 parent=9 SCAN vfs_entries
+  id=24 parent=9 CREATE BLOOM FILTER
+  id=49 parent=0 USE TEMP B-TREE FOR ORDER BY
+EXPLAIN opcodes: 55
+  last=       0 rows=256 content_bytes= 388462 wall_ms= 105.364 fullscan_step=103920 sort=1 autoindex=0 vm_step=2428447 filter_miss=0 filter_hit=0
+  last=   46296 rows=256 content_bytes= 367062 wall_ms=  91.379 fullscan_step=103920 sort=1 autoindex=0 vm_step=2357725 filter_miss=0 filter_hit=0
+  last=  115740 rows=256 content_bytes= 374863 wall_ms= 101.234 fullscan_step=103920 sort=1 autoindex=0 vm_step=2279081 filter_miss=0 filter_hit=0
+  last=  231481 rows=256 content_bytes= 373459 wall_ms=  97.729 fullscan_step=103920 sort=1 autoindex=0 vm_step=2127865 filter_miss=0 filter_hit=0
+  last=  347222 rows=256 content_bytes= 366288 wall_ms=  97.205 fullscan_step=103920 sort=1 autoindex=0 vm_step=1978238 filter_miss=0 filter_hit=0
+  last=  460963 rows=256 content_bytes= 380405 wall_ms=  91.324 fullscan_step=103920 sort=1 autoindex=0 vm_step=1823862 filter_miss=0 filter_hit=0
+  last=  231481 limit= 1024 rows= 1024 content_bytes= 1498879 wall_ms= 124.239 fullscan_step=103920 sort=1 vm_step=2169119
+  last=  231481 limit= 4096 rows= 4096 content_bytes= 6008703 wall_ms= 216.523 fullscan_step=103920 sort=1 vm_step=2282081
+  last=  231481 limit=16384 rows=16384 content_bytes=24174610 wall_ms= 491.537 fullscan_step=103920 sort=1 vm_step=2534806
+
+== cross_join_chunks_outer
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks CROSS JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+EXPLAIN QUERY PLAN:
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+EXPLAIN opcodes: 43
+  last=       0 rows=256 content_bytes= 388462 wall_ms=  13.063 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=   46296 rows=256 content_bytes= 367062 wall_ms=  12.860 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  115740 rows=256 content_bytes= 374863 wall_ms=  13.569 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  231481 rows=256 content_bytes= 373459 wall_ms=  12.691 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  347222 rows=256 content_bytes= 366288 wall_ms=  12.687 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  460963 rows=256 content_bytes= 380405 wall_ms=  12.792 fullscan_step=0 sort=0 autoindex=0 vm_step=916385 filter_miss=256 filter_hit=0
+  last=  231481 limit= 1024 rows= 1024 content_bytes= 1498879 wall_ms=  14.016 fullscan_step=0 sort=0 vm_step=930209
+  last=  231481 limit= 4096 rows= 4096 content_bytes= 6008703 wall_ms=  18.807 fullscan_step=0 sort=0 vm_step=985505
+  last=  231481 limit=16384 rows=16384 content_bytes=24174610 wall_ms=  38.530 fullscan_step=0 sort=0 vm_step=1206689
+
+== chunks_alone
+SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content FROM vfs_chunks WHERE vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+EXPLAIN QUERY PLAN:
+  id=4 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+EXPLAIN opcodes: 15
+  last=       0 rows=256 content_bytes= 388462 wall_ms=   0.282 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=   46296 rows=256 content_bytes= 367062 wall_ms=   0.283 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=  115740 rows=256 content_bytes= 374863 wall_ms=   0.286 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=  231481 rows=256 content_bytes= 373459 wall_ms=   0.280 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=  347222 rows=256 content_bytes= 366288 wall_ms=   0.281 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=  460963 rows=256 content_bytes= 380405 wall_ms=   0.289 fullscan_step=0 sort=0 autoindex=0 vm_step=1544 filter_miss=0 filter_hit=0
+  last=  231481 limit= 1024 rows= 1024 content_bytes= 1498879 wall_ms=   1.131 fullscan_step=0 sort=0 vm_step=6152
+  last=  231481 limit= 4096 rows= 4096 content_bytes= 6008703 wall_ms=   4.868 fullscan_step=0 sort=0 vm_step=24584
+  last=  231481 limit=16384 rows=16384 content_bytes=24174610 wall_ms=  20.153 fullscan_step=0 sort=0 vm_step=98312
+
+== ids_only_join
+SELECT vfs_chunks.id, vfs_chunks.entry_id FROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id WHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > ? ORDER BY vfs_chunks.id LIMIT ?
+EXPLAIN QUERY PLAN:
+  id=6 parent=0 SEARCH vfs_chunks USING INTEGER PRIMARY KEY (rowid>?)
+  id=9 parent=0 BLOOM FILTER ON vfs_entries (entry_id=?)
+  id=21 parent=0 SEARCH vfs_entries USING INDEX ix_vfs_entries_entry_id (entry_id=?)
+EXPLAIN opcodes: 42
+  last=       0 rows=256 content_bytes=      0 wall_ms=  12.600 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=   46296 rows=256 content_bytes=      0 wall_ms=  12.578 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=  115740 rows=256 content_bytes=      0 wall_ms=  12.685 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=  231481 rows=256 content_bytes=      0 wall_ms=  12.591 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=  347222 rows=256 content_bytes=      0 wall_ms=  12.557 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=  460963 rows=256 content_bytes=      0 wall_ms=  12.582 fullscan_step=0 sort=0 autoindex=0 vm_step=916129 filter_miss=256 filter_hit=0
+  last=  231481 limit= 1024 rows= 1024 content_bytes=       0 wall_ms=  13.487 fullscan_step=0 sort=0 vm_step=929185
+  last=  231481 limit= 4096 rows= 4096 content_bytes=       0 wall_ms=  17.160 fullscan_step=0 sort=0 vm_step=981409
+  last=  231481 limit=16384 rows=16384 content_bytes=       0 wall_ms=  31.651 fullscan_step=0 sort=0 vm_step=1190305
+
+== full keyset walk of shipped_join, 256 a page, in-process ctypes
+{"pages": 1810, "rows": 462963, "content_bytes": 681751857, "vm_step": 1657737940, "fullscan_step": 0, "wall_s": 23.401, "page_ms_median": 12.728, "page_ms_p99": 14.321, "page_ms_max": 16.032}
+
+== full keyset walk of chunks_alone, 256 a page, in-process ctypes
+{"pages": 1810, "rows": 462963, "content_bytes": 681751857, "vm_step": 2792260, "wall_s": 0.606}

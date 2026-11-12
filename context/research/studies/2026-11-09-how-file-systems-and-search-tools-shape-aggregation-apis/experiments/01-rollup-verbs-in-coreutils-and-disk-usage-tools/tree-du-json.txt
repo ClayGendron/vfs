@@ -1,0 +1,131 @@
+$ /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/5248171c-ceb5-46b9-a08a-9d01dfcd485d/scratchpad/treebuild/tree --version
+tree v2.3.2 © 1996 - 2026 by Steve Baker, Thomas Moore, Francesc Rocher, Florian Sesser, Kyosuke Tokoro
+
+$ tree --du -J -L 1 src/vfs   (built from the tree clone at 1a41b51 in a scratch copy; make took 0.95s wall on this Apple-silicon Mac, Darwin 25.5.0)
+[
+    {"type":"directory","name":"src/vfs","size":84822740,"contents":[
+        {"type":"file","name":"__init__.py","size":1269},
+        {"type":"directory","name":"__pycache__","size":864},
+        {"type":"file","name":"_native.abi3.so","size":84465520},
+        {"type":"file","name":"_native.pyi","size":2822},
+        {"type":"file","name":"authority.py","size":9137},
+        {"type":"file","name":"base.py","size":171408},
+        {"type":"directory","name":"embedding","size":288},
+        {"type":"file","name":"exceptions.py","size":5143},
+        {"type":"directory","name":"models","size":640},
+        {"type":"file","name":"native.py","size":5595},
+        {"type":"file","name":"ops.py","size":7974},
+        {"type":"file","name":"params.py","size":24787},
+        {"type":"file","name":"paths.py","size":33477},
+        {"type":"directory","name":"pattern_matching","size":192},
+        {"type":"file","name":"permissions.py","size":14481},
+        {"type":"file","name":"py.typed","size":0},
+        {"type":"directory","name":"rendering","size":352},
+        {"type":"file","name":"rerank.py","size":14925},
+        {"type":"directory","name":"results","size":288},
+        {"type":"file","name":"session.py","size":15774},
+        {"type":"file","name":"skills.py","size":9133},
+        {"type":"directory","name":"storage","size":320},
+        {"type":"file","name":"sync.py","size":37551}
+    ]}
+,    {"type":"report","size":84822740,"directories":8,"files":16}
+]
+
+$ tree --du -J -L 2 src/vfs | tail -3   (the report element)
+    ]}
+,    {"type":"report","size":86096277,"directories":15,"files":87}
+]
+
+$ tree --du -h -L 1 src/vfs   (text form with footer)
+[ 81M]  src/vfs
+├── [1.2K]  __init__.py
+├── [ 864]  __pycache__
+├── [ 81M]  _native.abi3.so
+├── [2.8K]  _native.pyi
+├── [8.9K]  authority.py
+├── [167K]  base.py
+├── [ 288]  embedding
+├── [5.0K]  exceptions.py
+├── [ 640]  models
+├── [5.5K]  native.py
+├── [7.8K]  ops.py
+├── [ 24K]  params.py
+├── [ 33K]  paths.py
+├── [ 192]  pattern_matching
+├── [ 14K]  permissions.py
+├── [   0]  py.typed
+├── [ 352]  rendering
+├── [ 15K]  rerank.py
+├── [ 288]  results
+├── [ 15K]  session.py
+├── [8.9K]  skills.py
+├── [ 320]  storage
+└── [ 37K]  sync.py
+
+  81M used in 8 directories, 16 files
+
+$ tree --du -h --filelimit 10 -L 2 src/vfs   (filelimit: directories with more than 10 entries are not descended)
+[ 800]  src/vfs  [error opening dir]
+
+  800 used in 0 directories, 1 file
+
+$ tree --du -J --filelimit 10 -L 2 src/vfs | grep -n -B1 -A1 "error\|report" | head -40
+1-[
+2:    {"type":"directory","name":"src/vfs","size":800,"contents":[{"error": "error opening dir"}
+3-    ]}
+4:,    {"type":"report","size":800,"directories":0,"files":1}
+5-]
+
+$ tree --du -X -L 1 src/vfs | tail -8
+        <file name="sync.py" size="37551"></file>
+    </directory>
+    <report>
+        <size>84822740</size>
+        <directories>8</directories>
+        <files>16</files>
+    </report>
+</tree>
+
+$ tree -s -L 1 src/vfs   (-s without --du: directory size is its own inode size, not a rollup)
+[        800]  src/vfs
+├── [       1269]  __init__.py
+├── [        864]  __pycache__
+├── [   84465520]  _native.abi3.so
+├── [       2822]  _native.pyi
+├── [       9137]  authority.py
+├── [     171408]  base.py
+├── [        288]  embedding
+├── [       5143]  exceptions.py
+├── [        640]  models
+├── [       5595]  native.py
+├── [       7974]  ops.py
+├── [      24787]  params.py
+├── [      33477]  paths.py
+├── [        192]  pattern_matching
+├── [      14481]  permissions.py
+├── [          0]  py.typed
+├── [        352]  rendering
+├── [      14925]  rerank.py
+├── [        288]  results
+├── [      15774]  session.py
+├── [       9133]  skills.py
+├── [        320]  storage
+└── [      37551]  sync.py
+
+8 directories, 16 files
+
+$ tree --du -s -L 1 --noreport src/vfs | head -4   (--noreport drops the footer)
+[   84822740]  src/vfs
+├── [       1269]  __init__.py
+├── [        864]  __pycache__
+├── [   84465520]  _native.abi3.so
+
+$ tree --du -J -L 1 -P "*.py" src/vfs | tail -3   (-P pattern filters files; are pruned files still in the rollup?)
+    ]}
+,    {"type":"report","size":354398,"directories":8,"files":13}
+]
+
+$ tree --du -J -L 1 -P "*.py" --prune src/vfs | tail -3
+    ]}
+,    {"type":"report","size":351454,"directories":1,"files":13}
+]

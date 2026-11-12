@@ -1,0 +1,175 @@
+{
+  "engine": "sqlite",
+  "variant": "exists_subquery",
+  "python": "3.13.11",
+  "machine": "arm64",
+  "copy_s": 0.86,
+  "db_bytes": 2451095552,
+  "sqlite_version": "3.50.4",
+  "membership_budget": 32668,
+  "parameter_budget": 32700,
+  "page_statement": "SELECT vfs_chunks.id, vfs_chunks.entry_id, vfs_chunks.content \nFROM vfs_chunks JOIN vfs_entries ON vfs_entries.entry_id = vfs_chunks.entry_id \nWHERE vfs_entries.chunked = 1 AND vfs_entries.indexable = 1 AND vfs_entries.deleted_at IS NULL AND vfs_chunks.id > 0 ORDER BY vfs_chunks.id\n LIMIT 256 OFFSET 0",
+  "page_rows": 256,
+  "probe_size": 0,
+  "before": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 1
+  },
+  "salt": 1,
+  "dirtied": {
+    "chunks": 462963,
+    "posting_list": 7480,
+    "lex_postings": 768707,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 1,
+    "epoch": 1
+  },
+  "reindex": {
+    "success": true,
+    "wall_s": 248.91,
+    "process_cpu_s": 238.76,
+    "statements": 2472,
+    "errors": []
+  },
+  "rss_peak_mb": 2899.7,
+  "rss_before_reindex_mb": 652.2,
+  "after": {
+    "chunks": 462963,
+    "posting_list": 7482,
+    "lex_postings": 768702,
+    "lex_df": 131296,
+    "lex_docs": 462963,
+    "lex_stats": 1,
+    "files": 100000,
+    "not_encoded": 0,
+    "epoch": 2
+  },
+  "timers": {
+    "phase.chunk_dirty": {
+      "calls": 1,
+      "wall_s": 0.05,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.build_epoch": {
+      "calls": 1,
+      "wall_s": 239.913,
+      "rows": 0,
+      "chars": 0
+    },
+    "build.lexical_total": {
+      "calls": 1,
+      "wall_s": 233.917,
+      "rows": 0,
+      "chars": 0
+    },
+    "scan.batcher_add": {
+      "calls": 0,
+      "wall_s": 0.163,
+      "rows": 462963,
+      "chars": 0
+    },
+    "lexical.builder.add_docs": {
+      "calls": 163,
+      "wall_s": 19.678,
+      "rows": 462963,
+      "chars": 681751944
+    },
+    "lexical.inserts": {
+      "calls": 209,
+      "wall_s": 7.709,
+      "rows": 0,
+      "chars": 0
+    },
+    "scan.yield": {
+      "calls": 163,
+      "wall_s": 23.032,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.publish_epoch": {
+      "calls": 1,
+      "wall_s": 1.03,
+      "rows": 0,
+      "chars": 0
+    },
+    "phase.reclaim_epochs": {
+      "calls": 1,
+      "wall_s": 1.0,
+      "rows": 0,
+      "chars": 0
+    }
+  },
+  "scan": {
+    "pages": 1810,
+    "nonempty_pages": 1809,
+    "rows": 462963,
+    "chars": 681751944,
+    "scan_wall_s": 204.34,
+    "page_wall_median_ms": 112.342,
+    "page_wall_mean_ms": 112.895,
+    "page_wall_p99_ms": 125.304,
+    "page_wall_max_ms": 185.972,
+    "page_rows_median": 256.0,
+    "page_chars_median": 377093.0,
+    "page_chars_mean": 376659.0,
+    "first_10_pages_ms": [
+      145.82,
+      126.04,
+      121.15,
+      123.24,
+      121.5,
+      124.98,
+      122.5,
+      127.81,
+      117.91,
+      126.32
+    ],
+    "last_10_pages_ms": [
+      98.84,
+      106.31,
+      103.67,
+      104.34,
+      100.43,
+      103.73,
+      105.67,
+      102.11,
+      101.51,
+      97.74
+    ],
+    "rows_dropped": 0
+  },
+  "checksum": {
+    "lex_docs": {
+      "rows": 462963,
+      "sha256": "14b6de4f504312cf54c40fc71e50da419a0df85b1e34cad219d97904573a77f5",
+      "sha256_without_ids": "8e8c7e39f6e02d9c019858c59f18718f572581f45c4b83e23ffb3eeb87a5b685"
+    },
+    "lex_df": {
+      "rows": 131296,
+      "sha256": "a960c6cad636875a52d1e636241ac8642284553f6c6b3dc33e56a1663638b95f",
+      "sha256_without_ids": "415af24a5625e53165d53c0ecc54d4cf346b91e14dd791c57acd9a10a0793da9"
+    },
+    "lex_stats": {
+      "rows": 1,
+      "sha256": "e3b9f151df3da4ca77baadb855fcde369c9bcf66ac64b23170549983966f07f4",
+      "sha256_without_ids": "e3b9f151df3da4ca77baadb855fcde369c9bcf66ac64b23170549983966f07f4"
+    },
+    "lex_postings": {
+      "rows": 768702,
+      "sha256": "ef924bccd8d727e53ae275c09e36e7666e52834567a3db683ead1af9aac9f204",
+      "sha256_without_ids": "6d693bc8c444a5dfc0907af2d7c3c9ecfc33a5881785c66812ea17b70430a2dc"
+    }
+  },
+  "checksum_wall_s": 12.72
+}

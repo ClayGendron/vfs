@@ -1,0 +1,41 @@
+[11:41:05] reusing base: {'entry': 103921, 'chunks': 462963, 'posting_list': 7480, 'lex_postings': 768707, 'files': 100000, 'not_encoded': 0, 'epoch': 1}
+[11:41:06] level N=5000: fresh store ready in 0.78s
+[11:41:10]   dirtied 5000 (+ sentinel) in 4.22s; not_encoded=5001
+[11:41:10]   overlay implementation: python (study 02's), one pass
+[11:41:14]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.91s, 3 words (ranks 40, 1500, 9000)=1.02s, 4 words (ranks 700, 2000, 5000, 15000)=0.90s, 2 very common (ranks 5, 12)=0.96s, 2 rare (ranks 8000, 20000)=0.87s
+[11:41:14]   overlay implementation: kernel, 3 passes
+[11:41:20]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.38s, 3 words (ranks 40, 1500, 9000)=0.39s, 4 words (ranks 700, 2000, 5000, 15000)=0.38s, 2 very common (ranks 5, 12)=0.48s, 2 rare (ranks 8000, 20000)=0.36s
+[11:41:22]   parity 2 words (ranks 300, 3000): same paths=True max score delta=0.0
+[11:41:23]   parity 3 words (ranks 40, 1500, 9000): same paths=True max score delta=0.0
+[11:41:24]   parity 4 words (ranks 700, 2000, 5000, 15000): same paths=True max score delta=0.0
+[11:41:26]   parity 2 very common (ranks 5, 12): same paths=True max score delta=0.0
+[11:41:27]   parity 2 rare (ranks 8000, 20000): same paths=True max score delta=0.0
+[11:41:27]   recall (kernel, budget 25000): sentinel found=True
+[11:41:27] level N=5000 done in 22.5s; results written
+[11:41:28] level N=10000: fresh store ready in 0.45s
+[11:41:36]   dirtied 10000 (+ sentinel) in 8.06s; not_encoded=10001
+[11:41:36]   overlay implementation: python (study 02's), one pass
+[11:41:45]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=1.77s, 3 words (ranks 40, 1500, 9000)=1.77s, 4 words (ranks 700, 2000, 5000, 15000)=1.72s, 2 very common (ranks 5, 12)=1.82s, 2 rare (ranks 8000, 20000)=1.67s
+[11:41:45]   overlay implementation: kernel, 3 passes
+[11:41:56]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=0.69s, 3 words (ranks 40, 1500, 9000)=0.75s, 4 words (ranks 700, 2000, 5000, 15000)=0.70s, 2 very common (ranks 5, 12)=0.81s, 2 rare (ranks 8000, 20000)=0.68s
+[11:41:58]   parity 2 words (ranks 300, 3000): same paths=True max score delta=0.0
+[11:42:00]   parity 3 words (ranks 40, 1500, 9000): same paths=True max score delta=0.0
+[11:42:03]   parity 4 words (ranks 700, 2000, 5000, 15000): same paths=True max score delta=0.0
+[11:42:05]   parity 2 very common (ranks 5, 12): same paths=True max score delta=0.0
+[11:42:08]   parity 2 rare (ranks 8000, 20000): same paths=True max score delta=0.0
+[11:42:09]   recall (kernel, budget 25000): sentinel found=True
+[11:42:09] level N=10000 done in 41.3s; results written
+[11:42:09] level N=25000: fresh store ready in 0.45s
+[11:42:27]   dirtied 25000 (+ sentinel) in 17.76s; not_encoded=25001
+[11:42:27]   overlay implementation: python (study 02's), one pass
+[11:42:48]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=4.28s, 3 words (ranks 40, 1500, 9000)=4.34s, 4 words (ranks 700, 2000, 5000, 15000)=4.25s, 2 very common (ranks 5, 12)=4.43s, 2 rare (ranks 8000, 20000)=4.28s
+[11:42:48]   overlay implementation: kernel, 3 passes
+[11:43:15]   glean[budget=25000] medians: 2 words (ranks 300, 3000)=1.70s, 3 words (ranks 40, 1500, 9000)=1.79s, 4 words (ranks 700, 2000, 5000, 15000)=1.77s, 2 very common (ranks 5, 12)=1.92s, 2 rare (ranks 8000, 20000)=1.69s
+[11:43:21]   parity 2 words (ranks 300, 3000): same paths=True max score delta=0.0
+[11:43:27]   parity 3 words (ranks 40, 1500, 9000): same paths=True max score delta=0.0
+[11:43:33]   parity 4 words (ranks 700, 2000, 5000, 15000): same paths=True max score delta=0.0
+[11:43:39]   parity 2 very common (ranks 5, 12): same paths=True max score delta=0.0
+[11:43:45]   parity 2 rare (ranks 8000, 20000): same paths=True max score delta=0.0
+[11:43:47]   recall (kernel, budget 25000): sentinel found=False
+[11:43:47] level N=25000 done in 98.5s; results written
+[11:43:47] done
