@@ -153,8 +153,8 @@ async def test_capabilities_union_across_bindings() -> None:
     # snapshot, self included.
     root = AsyncVirtualFileSystem(storage=BindableStorage(caps=frozenset({"read", "stat", "ls", "tree"})))
     assert root.capabilities() == frozenset({"read", "stat", "ls", "tree"})
-    await root.bind(BindableStorage(caps=frozenset({"glean"})), "/m")
-    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "glean"})
+    await root.bind(BindableStorage(caps=frozenset({"search"})), "/m")
+    assert root.capabilities() == frozenset({"read", "stat", "ls", "tree", "search"})
 
 
 async def test_capability_snapshot_is_pinned_at_bind_not_live() -> None:

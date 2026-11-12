@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
+from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.results import ErrorKind, Result, classified
 
 if TYPE_CHECKING:
@@ -261,7 +261,7 @@ class AsyncSession:
         return await self._fs.copy(src, dest, copies, authority=self._authority)
 
     # -------------------------------------------------------------------
-    # search, graph, execution
+    # find, execution
     # -------------------------------------------------------------------
 
     async def glob(
@@ -336,7 +336,7 @@ class AsyncSession:
             authority=self._authority,
         )
 
-    async def glean(
+    async def search(
         self,
         query: str,
         *,
@@ -349,9 +349,9 @@ class AsyncSession:
         globs_not: tuple[str, ...] = (),
         columns: frozenset[str] | None = None,
     ) -> Result:
-        if (refusal := self._refuse_closed("glean")) is not None:
+        if (refusal := self._refuse_closed("search")) is not None:
             return refusal
-        return await self._fs.glean(
+        return await self._fs.search(
             query,
             limit=limit,
             paths=paths,
@@ -364,22 +364,22 @@ class AsyncSession:
             authority=self._authority,
         )
 
-    async def graph(
+    async def traverse(
         self,
         method: str,
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
     ) -> Result:
-        if (refusal := self._refuse_closed("graph")) is not None:
+        if (refusal := self._refuse_closed("traverse")) is not None:
             return refusal
-        return await self._fs.graph(
+        return await self._fs.traverse(
             method,
             path,
             observations,

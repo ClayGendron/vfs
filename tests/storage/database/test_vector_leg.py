@@ -1,4 +1,4 @@
-"""The vector leg of glean against real sqlite rows (sqlite-vec): a hit only the vectors can
+"""The vector leg of search against real sqlite rows (sqlite-vec): a hit only the vectors can
 find, the fusion of both legs, the ladder's two rungs, the records a mount emits when the leg
 cannot run, the tier inference, the query-vector cache, and the Rust referee's verdict."""
 
@@ -19,7 +19,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind, Severity
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
-from vfs.storage.backends.database import glean as glean_module
+from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import POSTGRESQL
 from vfs.storage.ranking import RRF, Convex, Ranker
 
@@ -87,13 +87,13 @@ class TestTheLeg:
         # "meaning" shares no word with any file; its vector is two.md's.
         provider = PlantedProvider({"meaning": FILES["/notes/two.md"]})
         storage = await _indexed(tmp_path, embedder=provider)
-        result = await storage.glean(query="meaning", limit=2)
+        result = await storage.search(query="meaning", limit=2)
         assert result.success is True, result.errors
         assert _paths(result)[0] == "/notes/two.md" and result.observations[0].score == 1.0
         legs = result.legs  # ty: ignore[unresolved-attribute]
         assert legs["lexical"] == {"hits": 0, "terms": []}
         assert legs["vector"]["tier"] == "native_exact" and legs["vector"]["model"] == provider.model_id
-        assert legs["vector"]["hits"] == len(FILES) and legs["vector"]["depth"] == glean_module.VECTOR_DEPTH_FLOOR
+        assert legs["vector"]["hits"] == len(FILES) and legs["vector"]["depth"] == search_module.VECTOR_DEPTH_FLOOR
         assert legs["fusion"] == "Convex({'vector': 0.5, 'lexical': 0.5})"
         [match] = result.observations[0].matches or []
         assert match.content == FILES["/notes/two.md"] and match.preview is not None
@@ -104,17 +104,17 @@ class TestTheLeg:
         # "alpha" is a word of one.md; its vector is planted as four.py's.
         provider = PlantedProvider({"alpha": FILES["/src/four.py"]})
         storage = await _indexed(tmp_path, embedder=provider)
-        result = await storage.glean(query="alpha", limit=4)
+        result = await storage.search(query="alpha", limit=4)
         paths = _paths(result)
         assert set(paths[:2]) == {"/notes/one.md", "/src/four.py"}
-        lexical_only = await storage.glean(query="alpha", limit=4, globs=("notes/**",))
+        lexical_only = await storage.search(query="alpha", limit=4, globs=("notes/**",))
         assert _paths(lexical_only)[0] == "/notes/one.md"
         heavy = DatabaseStorage(
             url=_url(tmp_path), embedder=provider, ranker=Ranker(fusion=Convex({"vector": 0.9, "lexical": 0.1}))
         )
-        assert _paths(await heavy.glean(query="alpha", limit=1)) == ["/src/four.py"]
+        assert _paths(await heavy.search(query="alpha", limit=1)) == ["/src/four.py"]
         rank_only = DatabaseStorage(url=_url(tmp_path), embedder=provider, ranker=Ranker(fusion=RRF(k=1)))
-        rrf = await rank_only.glean(query="alpha", limit=4)
+        rrf = await rank_only.search(query="alpha", limit=4)
         assert set(_paths(rrf)[:2]) == {"/notes/one.md", "/src/four.py"}
         assert rrf.legs["fusion"] == "RRF(k=1, weights={'vector': 1.0, 'lexical': 1.0})"  # ty: ignore[unresolved-attribute]
         await storage.close()
@@ -123,7 +123,7 @@ class TestTheLeg:
 
     async def test_scores_stay_on_the_unit_scale_best_first(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path, embedder=HashEmbeddingProvider(16))
-        result = await storage.glean(query="alpha bravo", limit=4)
+        result = await storage.search(query="alpha bravo", limit=4)
         scores = [o.score for o in result.observations]
         assert scores[0] == 1.0 and scores == sorted(scores, reverse=True) and scores[-1] == 0.0
         for row in result.observations:
@@ -135,10 +135,10 @@ class TestTheLeg:
     ) -> None:
         provider = PlantedProvider({"meaning": FILES["/src/four.py"]})
         storage = await _indexed(tmp_path, embedder=provider)
-        narrow = await storage.glean(query="meaning", globs=("src/**",))
+        narrow = await storage.search(query="meaning", globs=("src/**",))
         assert _paths(narrow)[0] == "/src/four.py" and set(_paths(narrow)) == {"/src/four.py", "/src/three.py"}
-        monkeypatch.setattr(glean_module, "SCOPE_ID_BUDGET", 0)
-        wide = await storage.glean(query="meaning", globs=("src/**",))
+        monkeypatch.setattr(search_module, "SCOPE_ID_BUDGET", 0)
+        wide = await storage.search(query="meaning", globs=("src/**",))
         assert _paths(wide) == _paths(narrow)
         assert [o.score for o in wide.observations] == [o.score for o in narrow.observations]
         await storage.close()
@@ -148,13 +148,13 @@ class TestTheLeg:
     ) -> None:
         files = {f"/a/{i}.txt": f"alpha number {i}\n" for i in range(6)} | {"/b/target.txt": "bravo target\n"}
         storage = await _indexed(tmp_path, files, embedder=HashEmbeddingProvider(16))
-        monkeypatch.setattr(glean_module, "SCOPE_ID_BUDGET", 0)
-        monkeypatch.setattr(glean_module, "VECTOR_DEPTH_FLOOR", 2)
-        monkeypatch.setattr(glean_module, "VECTOR_DEPTH_FACTOR", 1)
-        monkeypatch.setattr(glean_module, "PROBE_DEEPEN", 8)
+        monkeypatch.setattr(search_module, "SCOPE_ID_BUDGET", 0)
+        monkeypatch.setattr(search_module, "VECTOR_DEPTH_FLOOR", 2)
+        monkeypatch.setattr(search_module, "VECTOR_DEPTH_FACTOR", 1)
+        monkeypatch.setattr(search_module, "PROBE_DEEPEN", 8)
         # An exclusion is never pushed into SQL: the two nearest chunks to
         # "alpha number" are /a files the gate refuses, so the leg deepens.
-        result = await storage.glean(query="alpha number", limit=1, globs_not=("a/**",))
+        result = await storage.search(query="alpha number", limit=1, globs_not=("a/**",))
         assert _paths(result) == ["/b/target.txt"]
         await storage.close()
 
@@ -164,7 +164,7 @@ class TestTheLeg:
             {"nothing": "## Section 7\n\nlantern words in section 7, plain prose.\n\n"}, dimension=64
         )
         storage = await _indexed(tmp_path, {"/big.md": sections, "/small.md": "quiet river stone\n"}, embedder=provider)
-        [row, *_] = (await storage.glean(query="nothing", limit=1)).observations
+        [row, *_] = (await storage.search(query="nothing", limit=1)).observations
         assert str(row.path) == "/big.md" and len(row.matches or []) == 3
         bounds = [(m.start, m.end) for m in row.matches or []]
         assert len(set(bounds)) == 3 and bounds == sorted(bounds)
@@ -180,7 +180,7 @@ class TestTheLeg:
             return leg._replace(prelude="SELECT 1"), records
 
         monkeypatch.setattr(storage, "_vector_leg_for", with_prelude)
-        result = await storage.glean(query="alpha")
+        result = await storage.search(query="alpha")
         assert result.success is True and result.legs["vector"]["hits"] == len(FILES)  # ty: ignore[unresolved-attribute]
         assert storage.ranker == Ranker()
         await storage.close()
@@ -189,10 +189,10 @@ class TestTheLeg:
         provider = PlantedProvider({"meaning": FILES["/notes/two.md"]}, dimension=16)
         storage = await _indexed(tmp_path, embedder=provider)
         assert (await storage.delete(path=Path("/notes/two.md"))).success is True
-        result = await storage.glean(query="meaning", limit=1)
+        result = await storage.search(query="meaning", limit=1)
         assert "/notes/two.md" not in _paths(result)
         assert (await storage.write(entries=[Entry(path=Path("/late.md"), content="late arrival\n")])).success
-        late = await storage.glean(query="arrival", limit=2)
+        late = await storage.search(query="arrival", limit=2)
         assert _paths(late)[0] == "/late.md"  # the overlay serves it lexically; the vector leg has no row for it
         assert late.legs["vector"]["hits"] == len(FILES) - 1  # ty: ignore[unresolved-attribute]
         await storage.close()
@@ -201,24 +201,24 @@ class TestTheLeg:
 class TestRecords:
     async def test_no_provider_is_an_info_record_and_a_lexical_answer(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        result = await storage.glean(query="alpha")
+        result = await storage.search(query="alpha")
         [note] = result.errors
         assert note.severity == Severity.info and note.kind == ErrorKind.unavailable
         assert note.data == {"leg": "vector", "reason": "no_provider"}
         assert result.legs["vector"] is None and _paths(result) == ["/notes/one.md"]  # ty: ignore[unresolved-attribute]
-        assert storage.traits()["glean_signals"] == "lexical"
+        assert storage.traits()["search_signals"] == "lexical"
         await storage.close()
 
     async def test_a_stale_space_is_a_conflict_record_and_a_lexical_answer(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path, embedder=ScriptedProvider(8, model="one"))
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(8, model="two"))
-        result = await other.glean(query="alpha")
+        result = await other.search(query="alpha")
         [note] = [e for e in result.errors if e.severity == Severity.warning]
         assert note.kind == ErrorKind.conflict and note.data is not None
         assert note.data["reason"] == "stale_identity" and note.data["stored"] == "scripted/one@8"
         assert result.legs["vector"] is None and _paths(result) == ["/notes/one.md"]  # ty: ignore[unresolved-attribute]
-        assert other.traits()["glean_signals"] == "hybrid"
+        assert other.traits()["search_signals"] == "hybrid"
         await other.close()
 
     async def test_a_failing_query_embed_is_a_warning_and_a_lexical_answer(
@@ -233,7 +233,7 @@ class TestRecords:
 
         monkeypatch.setattr(broken, "embed_query", failing)
         storage._host.embedder = broken
-        result = await storage.glean(query="alpha")
+        result = await storage.search(query="alpha")
         [note] = result.errors
         assert note.severity == Severity.warning and note.retryable is True
         assert note.data == {"leg": "vector", "reason": "embed_failed", "provider": "hash/blake2b-tokens-bigrams@8"}
@@ -243,13 +243,13 @@ class TestRecords:
     async def test_the_query_vector_is_memoised_per_space(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = PlantedProvider({}, dimension=8)
         storage = await _indexed(tmp_path, embedder=provider)
-        await storage.glean(query="alpha")
-        await storage.glean(query="alpha")
-        await storage.glean(query="bravo")
+        await storage.search(query="alpha")
+        await storage.search(query="alpha")
+        await storage.search(query="bravo")
         assert provider.queries == ["alpha", "bravo"]
         monkeypatch.setattr(backend_module, "QUERY_VECTOR_CACHE", 1)
-        await storage.glean(query="charlie")
-        await storage.glean(query="alpha")  # evicted: embedded again
+        await storage.search(query="charlie")
+        await storage.search(query="alpha")  # evicted: embedded again
         assert provider.queries == ["alpha", "bravo", "charlie", "alpha"]
         await storage.close()
 
@@ -307,7 +307,7 @@ class TestReferee:
         vector_only = DatabaseStorage(
             url=_url(tmp_path), embedder=provider, ranker=Ranker(fusion=Convex({"vector": 1.0}))
         )
-        answer = await vector_only.glean(query="shared token 3", limit=10, globs=("d/**",))
+        answer = await vector_only.search(query="shared token 3", limit=10, globs=("d/**",))
         scores = [kernel[chunk_of[path]] for path in _paths(answer)]
         assert len(scores) == 10 and all(score >= tenth - 1e-6 for score in scores)
         assert all(earlier >= later - 1e-6 for earlier, later in pairwise(scores))

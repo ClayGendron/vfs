@@ -1,6 +1,6 @@
 # VFS: Agentic Search on your Database
 
-Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, glean, and graph are the four verbs any agent needs to navigate a knowledge base.
+Compose a fully-featured, Unix-like environment for your agents. VFS is built on one claim: glob, grep, search, and traverse are the four verbs any agent needs to navigate a knowledge base.
 
 VFS is built on a conviction that creating effective AI agents, from the scale of small local development to the size of an enterprise, is first and foremost a **data engineering** problem. This conviction comes from observing how AI agents work on tasks, noticing the flaws in some components of their current harnesses and tooling, and identifying what well established patterns of computer science can we applied towards making great AI agents. The beliefs below capture an opinionated understanding of what LLMs and AI agents are and how they work and create a high level framework of how to build with them.
 
@@ -60,12 +60,12 @@ What does not exist today is a framework for developers to use for the data engi
 
 These use cases highlight the need for four specific verbs that can compose and define agentic seach.
 
-Three of these verbs are already familiar — `glob` and `grep` from any Unix terminal and `graph` from how we already think about connected data. One is new, and we are calling it `glean`. This verb is coined to represent semantic and lexical search patterns that rank documents by relevance, and because it has nice alliteration.
+All four of these verbs are already familiar: `glob` and `grep` from any Unix terminal, `search` from every package manager and agent harness, and `traverse` from how graph engines name a walk over connected data.
 
 - `glob` searches on the dimension of **location**. It produces file matches against the structure of the file's path providing agents a way to reason on the meaning carried by a files place in the namespace.
 - `grep` searches on the dimension of **content**. It matches exact strings and regular expressions inside files, which makes it precise and predictable for finding structured content and literal strings.
-- `glean` searches on the dimension of **meaning**. It ranks files by semantic and lexical relevance to a specific query enabling search with natural language.
-- `graph` searches on the dimension of **connection**. It traverses the edges between files and ranks files with centrality algorithms to present a topological view of how information flows within a knowledge base.
+- `search` searches on the dimension of **meaning**. It ranks files by semantic and lexical relevance to a specific query enabling search with natural language.
+- `traverse` searches on the dimension of **connection**. It traverses the edges between files and ranks files with centrality algorithms to present a topological view of how information flows within a knowledge base.
 
 Together, these four verbs cover every dimension along which a file carries information, and thus these verbs cover the needs of agentic search. Additionally, the outputs of one search method can be used as input to the next because everything is addressable by a file path. A file system with these four verbs allows agents to navigate and search an environment in an interative and preditable fashion. This meets the definition of agentic search, and thus provides us with a framework for how to engineer data for it.
 

@@ -326,5 +326,5 @@ class TestEngineLegs:
             edges = await _edges(storage)
             assert {key for key in edges if key[0] == "/docs/guide.md"} == {("/docs/guide.md", "/hub.md", "links")}
             assert edges[("/docs/guide.md", "/hub.md", "links")][1] == 1.0
-            glean = await storage.glean(query="hub")
-            assert glean.success is True and glean.observations[0].path == "/hub.md"
+            search = await storage.search(query="hub")
+            assert search.success is True and search.observations[0].path == "/hub.md"

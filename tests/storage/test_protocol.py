@@ -9,10 +9,13 @@ coverage of the op vocabulary, the ``StorageBackend`` identity minimum,
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 from typing import Any
 
 import pytest
 
+import vfs.storage
 from vfs.ops import ALL_OPS, GRANT_OPS, MUTATING_OPS
 from vfs.paths import Path
 from vfs.results import Result
@@ -22,11 +25,11 @@ from vfs.storage import (
     ResolvedPair,
     StorageBackend,
     SupportsClose,
-    SupportsGlean,
-    SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsRankedSearch,
     SupportsTraits,
+    SupportsTraversal,
     TransportError,
     storage_ops,
 )
@@ -61,8 +64,8 @@ class PatternSearcher(ReadOnly):
 
 
 class Everything(PatternSearcher):
-    async def glean(self, **kwargs: Any) -> Result:
-        return _ok("glean")
+    async def search(self, **kwargs: Any) -> Result:
+        return _ok("search")
 
     async def write(self, **kwargs: Any) -> Result:
         return _ok("write")
@@ -88,8 +91,8 @@ class Everything(PatternSearcher):
     async def copy(self, **kwargs: Any) -> Result:
         return _ok("copy")
 
-    async def graph(self, **kwargs: Any) -> Result:
-        return _ok("graph")
+    async def traverse(self, **kwargs: Any) -> Result:
+        return _ok("traverse")
 
     async def mkedge(self, **kwargs: Any) -> Result:
         return _ok("mkedge")
@@ -153,7 +156,7 @@ def test_families_are_all_or_nothing() -> None:
 
 def test_mutation_family_is_exactly_the_write_gated_ops() -> None:
     # The family boundary follows the write gate: mkedge writes the edge
-    # projection, so it belongs to mutation, not graph.
+    # projection, so it belongs to mutation, not traversal.
     class Mutating(ReadOnly):
         async def write(self, **kwargs: Any) -> Result:
             return _ok("write")
@@ -200,23 +203,33 @@ def test_graph_family_is_traversal_only() -> None:
     # side stands alone, so dialect-specific traversal composes over a
     # portable mkedge in a base class.
     class TraversalOnly(ReadOnly):
-        async def graph(self, **kwargs: Any) -> Result:
-            return _ok("graph")
+        async def traverse(self, **kwargs: Any) -> Result:
+            return _ok("traverse")
 
-    assert isinstance(TraversalOnly(), SupportsGraph)
-    assert storage_ops(TraversalOnly()) == storage_ops(ReadOnly()) | {"graph"}
+    assert isinstance(TraversalOnly(), SupportsTraversal)
+    assert storage_ops(TraversalOnly()) == storage_ops(ReadOnly()) | {"traverse"}
 
 
 def test_search_families_are_independent() -> None:
-    # glob/grep without glean is the normal partial backend, and vice versa.
-    class GleanOnly(ReadOnly):
-        async def glean(self, **kwargs: Any) -> Result:
-            return _ok("glean")
+    # glob/grep without search is the normal partial backend, and vice versa.
+    class SearchOnly(ReadOnly):
+        async def search(self, **kwargs: Any) -> Result:
+            return _ok("search")
 
     assert isinstance(PatternSearcher(), SupportsPatternSearch)
-    assert not isinstance(PatternSearcher(), SupportsGlean)
-    assert isinstance(GleanOnly(), SupportsGlean)
-    assert not isinstance(GleanOnly(), SupportsPatternSearch)
+    assert not isinstance(PatternSearcher(), SupportsRankedSearch)
+    assert isinstance(SearchOnly(), SupportsRankedSearch)
+    assert not isinstance(SearchOnly(), SupportsPatternSearch)
+
+
+def test_the_old_family_names_are_gone() -> None:
+    # Mutant: re-export an old class or leave an old module importable.
+    database = "vfs.storage.backends.database"
+    assert not hasattr(vfs.storage, "SupportsGlean") and not hasattr(vfs.storage, "SupportsGraph")
+    assert importlib.util.find_spec(f"{database}.glean") is None
+    assert importlib.util.find_spec(f"{database}.graph") is None
+    assert importlib.import_module(f"{database}.search").__name__ == f"{database}.search"
+    assert importlib.import_module(f"{database}.traverse").__name__ == f"{database}.traverse"
 
 
 # ----------------------------------------------------------------------

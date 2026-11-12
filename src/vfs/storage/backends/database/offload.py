@@ -4,7 +4,7 @@ Five kinds of work run real CPU inside their coroutines — grep's verify
 stage (up to a full wall budget of matching per call), reindex's chunk
 and posting stages, write's measurement of a call's bodies past the
 inline total, edit's per-target matching, and glob gating: every stage
-that matches rows against the glob channels (glob, grep and glean in
+that matches rows against the glob channels (glob, grep and search in
 storage, and the router's chained calls, root probe and admissions) —
 and running any inline holds the event loop against every concurrent
 caller on the host. All hop through one small executor the backend
@@ -95,7 +95,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 # The wall every row-matching stage runs under, in seconds: storage grep,
-# glob and glean by default, and each of the router's matching stages.
+# glob and search by default, and each of the router's matching stages.
 WALL_TIME_BUDGET: Final = 10.0
 
 # The wall's cause in a truncation record, the same words at every site that writes it.

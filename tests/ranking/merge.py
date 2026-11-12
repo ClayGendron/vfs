@@ -28,7 +28,7 @@ def halves(corpus: Corpus) -> list[Corpus]:
     ]
 
 
-async def merged_glean_run(vfs: AsyncVirtualFileSystem, corpus: Corpus, mounts: Sequence[str], k: int = 50) -> Run:
+async def merged_search_run(vfs: AsyncVirtualFileSystem, corpus: Corpus, mounts: Sequence[str], k: int = 50) -> Run:
     """Every query through the router over *mounts*, rows mapped back to doc ids."""
     doc_of = corpus.doc_of
     run: Run = {}
@@ -41,7 +41,7 @@ async def merged_ranking(
     vfs: AsyncVirtualFileSystem, query: str, mounts: Sequence[str], k: int
 ) -> list[tuple[str, float]]:
     """Top-``k`` entries as ``(mount-local path, score)`` through the router's merge."""
-    result = await vfs.glean(query, limit=k)
+    result = await vfs.search(query, limit=k)
     assert result.success is True, result.errors
     ranked: list[tuple[str, float]] = []
     for row in result.observations:

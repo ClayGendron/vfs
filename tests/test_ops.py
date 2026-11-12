@@ -27,6 +27,8 @@ from vfs.ops import (
     TWO_PATH_OPS,
     VERB_RUNGS,
     WRITE_GATED_OPS,
+    Needs,
+    Op,
     Rung,
 )
 from vfs.results import projection
@@ -85,8 +87,8 @@ def test_expected_vocabulary() -> None:
                 "tree",
                 "glob",
                 "grep",
-                "glean",
-                "graph",
+                "search",
+                "traverse",
                 "run",
                 "grant",
                 "revoke",
@@ -98,6 +100,15 @@ def test_expected_vocabulary() -> None:
         )
         == ALL_OPS
     )
+
+
+def test_search_and_traverse_are_the_ranked_and_walking_read_ops() -> None:
+    # Mutant: keep an old op literal beside the new one, or drop a new one from READ_OPS.
+    vocabulary = frozenset(get_args(Op))
+    assert {"search", "traverse"} <= vocabulary and {"search", "traverse"} <= READ_OPS
+    assert VERB_RUNGS["search"] == Needs("read")
+    assert VERB_RUNGS["traverse"] == Needs("read", passing="list")
+    assert not {"glean", "graph"} & (vocabulary | ALL_OPS | READ_OPS)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +127,7 @@ def test_every_op_has_exactly_one_rung_entry() -> None:
     for needs in VERB_RUNGS.values():
         assert needs.primary in RUNGS and needs.primary != "none"
         assert needs.create is None or needs.create in RUNGS
-        assert needs.traverse is None or needs.traverse in RUNGS
+        assert needs.passing is None or needs.passing in RUNGS
 
 
 def test_a_mutation_never_sits_below_add() -> None:
@@ -136,16 +147,26 @@ def test_creating_is_never_harder_than_modifying() -> None:
     for op, needs in VERB_RUNGS.items():
         if needs.create is not None:
             assert LEVEL_RANK[needs.create] <= LEVEL_RANK[needs.primary], op
-        if needs.traverse is not None:
-            assert LEVEL_RANK[needs.traverse] <= LEVEL_RANK[needs.primary], op
+        if needs.passing is not None:
+            assert LEVEL_RANK[needs.passing] <= LEVEL_RANK[needs.primary], op
 
 
-def test_the_listing_verbs_name_at_list_and_the_search_verbs_read() -> None:
+def test_the_listing_verbs_name_at_list_and_the_find_verbs_read() -> None:
     assert {op for op in READ_OPS if VERB_RUNGS[op].primary == "list"} == {"stat", "ls", "tree", "glob"}
-    assert {op for op in READ_OPS if VERB_RUNGS[op].primary == "read"} == {"read", "grep", "glean", "graph"}
-    assert VERB_RUNGS["graph"].traverse == "list"
-    assert VERB_RUNGS["mkedge"].traverse == VERB_RUNGS["rmedge"].traverse == "list"
-    assert VERB_RUNGS["copy"].traverse == "read"
+    assert {op for op in READ_OPS if VERB_RUNGS[op].primary == "read"} == {"read", "grep", "search", "traverse"}
+    assert VERB_RUNGS["traverse"].passing == "list"
+    assert VERB_RUNGS["mkedge"].passing == VERB_RUNGS["rmedge"].passing == "list"
+    assert VERB_RUNGS["copy"].passing == "read"
+
+
+def test_the_passing_rung_is_set_where_a_verb_reads_a_row_it_does_not_change() -> None:
+    # Mutant: drop the rung from one of the four rows, or set it on a fifth.
+    assert VERB_RUNGS["traverse"].passing == "list"
+    assert VERB_RUNGS["mkedge"].passing == VERB_RUNGS["rmedge"].passing == "list"
+    assert VERB_RUNGS["copy"].passing == "read"
+    others = ALL_OPS - {"traverse", "mkedge", "rmedge", "copy"}
+    assert all(VERB_RUNGS[op].passing is None for op in others)
+    assert Needs._fields == ("primary", "create", "passing")
 
 
 # ---------------------------------------------------------------------------
@@ -166,16 +187,18 @@ def test_projection_derives_grant_functions_from_the_shared_set() -> None:
     assert all(projection.default_projection(op) == ("path",) for op in GRANT_OPS)
 
 
-def test_glean_and_run_have_default_projections() -> None:
-    assert projection.default_projection("glean") == ("path", "score", "matches")
+def test_search_and_run_have_default_projections() -> None:
+    assert projection.default_projection("search") == ("path", "score", "matches")
+    assert projection.default_projection("traverse") == ("path", "kind", "depth")
     assert projection.default_projection("run") == ("path",)
-    assert "glean" in projection.KNOWN_FUNCTIONS
+    assert "search" in projection.KNOWN_FUNCTIONS
     assert "run" in projection.KNOWN_FUNCTIONS
+    assert not {"glean", "graph"} & projection.KNOWN_FUNCTIONS
 
 
 def test_pruned_vocabularies_are_gone() -> None:
     # Centrality left the product scope; per-method search names died with
-    # the glean redesign (fusion is opaque — no producing method to name).
+    # the search redesign (fusion is opaque — no producing method to name).
     assert not hasattr(projection, "CENTRALITY_FUNCTIONS")
     assert not hasattr(projection, "RANKED_SEARCH_FUNCTIONS")
     for stale in ("pagerank", "hits", "vector_search", "semantic_search", "lexical_search", "bm25"):
@@ -204,8 +227,8 @@ async def test_no_agent_surface_op_ever_dispatches_sweep() -> None:
         "tree": lambda: fs.tree("/"),
         "glob": lambda: fs.glob("*.py"),
         "grep": lambda: fs.grep("needle"),
-        "glean": lambda: fs.glean("how does auth work"),
-        "graph": lambda: fs.graph("outbound", "/a.py"),
+        "search": lambda: fs.search("how does auth work"),
+        "traverse": lambda: fs.traverse("outbound", "/a.py"),
         "write": lambda: fs.write(path="/f.txt", content="x"),
         "edit": lambda: fs.edit("/f.txt", old="a", new="b"),
         "delete": lambda: fs.delete("/f.txt"),

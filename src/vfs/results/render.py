@@ -2,7 +2,7 @@
 
 One entry point, :func:`render_result`, dispatches on the result's ``op``
 into a per-arrangement renderer: ripgrep-style lines for grep, an ASCII
-tree, the walk's hierarchy with its edge types for graph, verbatim content
+tree, the walk's hierarchy with its edge types for traverse, verbatim content
 for read, Markdown tables for everything tabular, one-liners for actions,
 and a dedicated write formatter. Errors render one
 agent-facing line each — severity, locus, cause, contract hint, retry
@@ -124,7 +124,7 @@ def _error_line(error: ResultError) -> str:
 
 # Functions whose body ignores per-field projection columns — a
 # "not populated" note about columns is meaningless under them.
-_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree", "graph"}) | ACTION_FUNCTIONS | GRANT_FUNCTIONS
+_PROJECTION_FREE_FUNCTIONS: frozenset[str] = frozenset({"tree", "traverse"}) | ACTION_FUNCTIONS | GRANT_FUNCTIONS
 
 
 def _render_unpopulated_projection_note(result: Result, projection: tuple[str, ...] | None) -> str:
@@ -184,12 +184,12 @@ def _render_body(result: Result, projection: tuple[str, ...]) -> str:
     fn = result.op
     if fn == "grep":
         return _render_grep(result, projection)
-    if fn == "glean":
-        return _render_glean(result, projection)
+    if fn == "search":
+        return _render_search(result, projection)
     if fn == "tree":
         return _render_tree(result)
-    if fn == "graph":
-        return _render_graph(result)
+    if fn == "traverse":
+        return _render_traverse(result)
     if fn == "read":
         return _render_read(result, projection)
     if fn == "stat":
@@ -430,11 +430,11 @@ def _region_lines(
     return None
 
 
-_GLEAN_LINE_LEVEL_FIELDS: frozenset[str] = frozenset({"path", "score", "matches"})
-"""Fields glean prints as ranked lines; anything else switches to the table."""
+_SEARCH_LINE_LEVEL_FIELDS: frozenset[str] = frozenset({"path", "score", "matches"})
+"""Fields search prints as ranked lines; anything else switches to the table."""
 
 
-def _render_glean(result: Result, projection: tuple[str, ...]) -> str:
+def _render_search(result: Result, projection: tuple[str, ...]) -> str:
     """Rank-ordered output — a ranked list never renders path-sorted.
 
     With the native vocabulary (``path`` / ``score`` / ``matches``) each
@@ -448,7 +448,7 @@ def _render_glean(result: Result, projection: tuple[str, ...]) -> str:
     Markdown table, still in rank order, with ``matches`` as ``start-end``
     spans.
     """
-    if not set(projection).issubset(_GLEAN_LINE_LEVEL_FIELDS):
+    if not set(projection).issubset(_SEARCH_LINE_LEVEL_FIELDS):
         return _render_rows(result.observations, projection)
     include_score = "score" in projection
     include_matches = "matches" in projection
@@ -498,7 +498,7 @@ def _render_tree(result: Result) -> str:
     return "\n".join(lines)
 
 
-def _render_graph(result: Result) -> str:
+def _render_traverse(result: Result) -> str:
     """The walk as a hierarchy: seeds as roots, every node under the node one level up that reached it.
 
     A node row's parent is the returned node one level shallower that an

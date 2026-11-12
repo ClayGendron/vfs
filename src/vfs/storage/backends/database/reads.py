@@ -450,7 +450,7 @@ def address_channel(channel: GlobChannel, patterns: Sequence[str]) -> tuple[Addr
     """One glob channel's arms, each addressed to the side of the tombstone it searches.
 
     The one pattern-side resolution of the trash view, shared by glob,
-    grep and glean: the channel is admitted whole, then every arm under
+    grep and search: the channel is admitted whole, then every arm under
     the head is stripped to the pattern it names. The bare head is a
     directory, not a pattern — it is refused as the bare root is, naming
     the channel, so no verb ever compiles the stripped ``/``.

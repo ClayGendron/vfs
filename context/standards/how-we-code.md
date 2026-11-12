@@ -28,7 +28,7 @@ This group is an instruction of how to code, not a record to produce. The order 
 ## 3. Contracts: declare, don't sniff
 
 - **One ingress table.** A verb's parameters are rows in `PARAMS` (`src/vfs/params.py:139`); the router gate, the drift test (`tests/test_params.py:28`) and the wire schema read that table and nothing else. A new verb or parameter is a new row first.
-- **Capabilities are declared.** A backend says what it serves through `capabilities()` and nothing reads its method surface (`src/vfs/storage/protocol.py:7`; `src/vfs/storage/backends/database/backend.py:276` withholds `glean` when the profile has no distance function). Tests gate on the declaration with `@needs` (`tests/support/storage_contract.py:58`).
+- **Capabilities are declared.** A backend says what it serves through `capabilities()` and nothing reads its method surface (`src/vfs/storage/protocol.py:7`; `src/vfs/storage/backends/database/backend.py:318` withholds `search` when the profile has no distance function). Tests gate on the declaration with `@needs` (`tests/support/storage_contract.py:58`).
 - **Ports are `Protocol`s; one adapter per technology; specialization is construction-only.** The router depends on the `Supports*` protocols (`src/vfs/storage/protocol.py:113`); `InMemoryStorage` is `DatabaseStorage` pointed at a private file (`src/vfs/storage/backends/memory.py:32`); engine differences live in `DialectProfile` (`src/vfs/storage/backends/database/dialects.py:150`), never in a subclass.
 - **Code names no document.** A comment or docstring gives its reason in words and never cites a spec, a memo, a review or a `context/` path; the document cites the code. See [AGENTS.md](../../AGENTS.md), "Code comments".
 

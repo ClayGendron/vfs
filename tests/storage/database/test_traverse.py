@@ -25,7 +25,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database.dialects import PROFILES
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.graph import GraphRequest, Site, hop_statement
+from vfs.storage.backends.database.traverse import TRAVERSE_OPS, GraphRequest, Site, hop_statement
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -109,6 +109,30 @@ def _edges(result: Result) -> set[tuple[str, str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# The op name
+# ---------------------------------------------------------------------------
+
+
+async def test_the_backend_answers_traverse_with_its_own_op_name(storage: InMemoryStorage) -> None:
+    # Mutant: leave one refusal or the builder's constant on the old op name.
+    await _chain(storage)
+    assert (await storage.write(entries=[Entry(path=Path("/w/lone.md"), content="x")], authority=SYSTEM)).success
+    answer = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None)
+    zero_depth = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=0)
+    meta_seed = await storage.traverse(method="outbound", path=Path("/.vfs/trash/w/a.md"))
+    no_edges = await storage.traverse(method="outbound", path=Path("/w/lone.md"))
+    too_many = await storage.traverse(
+        method="outbound",
+        path=Path(CHAIN[0]),
+        edge_types=tuple(f"t{i}" for i in range(storage._host.membership_budget // 2 + 1)),
+    )
+    assert _nodes(answer) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2} and _nodes(no_edges) == {"/w/lone.md": 0}
+    assert zero_depth.errors[0].kind == meta_seed.errors[0].kind == ErrorKind.invalid
+    assert [result.ops for result in (answer, zero_depth, meta_seed, no_edges, too_many)] == [("traverse",)] * 5
+    assert TRAVERSE_OPS == ("traverse",)
+
+
+# ---------------------------------------------------------------------------
 # Rights on every hop
 # ---------------------------------------------------------------------------
 
@@ -120,9 +144,9 @@ class TestRights:
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for path in (CHAIN[0], CHAIN[2]):
             assert (await storage.grant(path=Path(path), principal="bob", level="read", authority=SYSTEM)).success
-        cut = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
+        cut = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
         assert cut.success is True and _nodes(cut) == {CHAIN[0]: 0} and _edges(cut) == set()
-        whole = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
+        whole = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
         assert _nodes(whole) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2}
 
     async def test_a_hidden_middle_node_cuts_the_walk_under_the_clause_fan(
@@ -136,15 +160,17 @@ class TestRights:
             assert (await storage.write(entries=[Entry(path=Path(path), content="x")], authority=SYSTEM)).success
             assert (await storage.grant(path=Path(path), principal="bob", level="read", authority=SYSTEM)).success
         with recording(storage) as joined:
-            assert _nodes(await storage.graph(method="outbound", path=Path(CHAIN[0]), authority=BOB)) == {CHAIN[0]: 0}
+            assert _nodes(await storage.traverse(method="outbound", path=Path(CHAIN[0]), authority=BOB)) == {
+                CHAIN[0]: 0
+            }
         unjoined = replace(storage._host.profile, range_source=None)
         monkeypatch.setattr(EngineHost, "profile", property(lambda _self: unjoined))
         monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 56))
         with recording(storage) as fanned:
-            cut = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
+            cut = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
         assert cut.success is True and _nodes(cut) == {CHAIN[0]: 0}
         assert len(fanned.hops()) > len(joined.hops())
-        whole = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
+        whole = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
         assert _nodes(whole) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2}
 
     async def test_a_list_node_is_passed_and_returned_bare(self, storage: InMemoryStorage) -> None:
@@ -154,7 +180,7 @@ class TestRights:
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for path, level in ((CHAIN[0], "read"), (CHAIN[1], "list"), (CHAIN[2], "read")):
             assert (await storage.grant(path=Path(path), principal="bob", level=level, authority=SYSTEM)).success
-        result = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
+        result = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=BOB)
         assert _nodes(result) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2}
         rows = {str(o.path): o for o in result.observations if o.edge_target is None}
         assert rows[CHAIN[1]].populated == {"path", "kind", "depth"} and rows[CHAIN[1]].kind == "file"
@@ -163,7 +189,7 @@ class TestRights:
         for key in ((CHAIN[0], CHAIN[1]), (CHAIN[1], CHAIN[2])):
             assert edges[key].edge_weight is None and edges[key].edge_distance is None
             assert edges[key].populated == {"path", "edge_target", "edge_type"}
-        whole = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
+        whole = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=SYSTEM)
         measured = next(o for o in whole.observations if o.edge_target == CHAIN[1])
         assert measured.edge_weight == 1.0 and measured.edge_distance == 0.5
 
@@ -177,7 +203,7 @@ class TestRights:
             await storage.grant(path=Path("/r/deep/file.md"), principal="bob", level="read", authority=SYSTEM)
         ).success
         with recording(storage) as recorded:
-            walked = await storage.graph(
+            walked = await storage.traverse(
                 method="outbound", path=Path("/"), edge_types=("fs",), depth=None, authority=BOB
             )
         assert _nodes(walked) == {"/": 0, "/r": 1, "/r/deep": 2, "/r/deep/file.md": 3}
@@ -197,12 +223,12 @@ class TestRights:
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/w"), posture="list", authority=SYSTEM)).success is True
         with recording(storage) as recorded:
-            bare = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, authority=ANON)
+            bare = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, authority=ANON)
         assert _nodes(bare) == {CHAIN[0]: 0, CHAIN[1]: 1, CHAIN[2]: 2}
         assert all(o.populated == {"path", "kind", "depth"} for o in bare.observations if o.edge_target is None)
         assert recorded.probes() == [] and len(recorded.hops()) == 3  # anonymous derives no road: no probe
         assert (await storage.write(entries=[Entry(path=Path("/x.md"), content="x")], authority=SYSTEM)).success
-        refused = await storage.graph(method="outbound", path=Path("/x.md"), authority=ANON)
+        refused = await storage.traverse(method="outbound", path=Path("/x.md"), authority=ANON)
         assert refused.success is False and refused.errors[0].kind == ErrorKind.unauthenticated
 
 
@@ -232,16 +258,16 @@ class TestStatements:
         await _chain(storage)
         budget = storage._host.membership_budget
         too_many = tuple(f"t{n}" for n in range(budget // 2 + 1))
-        refused = await storage.graph(method="outbound", path=Path(CHAIN[0]), edge_types=too_many)
+        refused = await storage.traverse(method="outbound", path=Path(CHAIN[0]), edge_types=too_many)
         assert refused.success is False and refused.errors[0].kind == ErrorKind.invalid
-        fine = await storage.graph(method="outbound", path=Path(CHAIN[0]), edge_types=too_many[:-1])
+        fine = await storage.traverse(method="outbound", path=Path(CHAIN[0]), edge_types=too_many[:-1])
         assert fine.success is True
 
     async def test_the_walk_stops_at_limit_before_the_next_hop(self, storage: InMemoryStorage) -> None:
         # Mutant: drop the early stop — a second hop statement would run.
         await _chain(storage)
         with recording(storage) as recorded:
-            result = await storage.graph(method="outbound", path=Path(CHAIN[0]), depth=None, limit=2)
+            result = await storage.traverse(method="outbound", path=Path(CHAIN[0]), depth=None, limit=2)
         assert _nodes(result) == {CHAIN[0]: 0, CHAIN[1]: 1}
         assert len(recorded.hops()) == 1
         assert result.errors[0].data == {"limit": 2, "nodes_found": 2, "depth_reached": 1}
@@ -272,7 +298,7 @@ class TestStatements:
         rows = [Observation(path=Path(path)) for path in seeds]
         for depth, frontiers, unexpanded in ((1, [count], count), (2, [count, count], 0)):
             with recording(storage) as recorded:
-                result = await storage.graph(method="outbound", observations=rows, depth=depth, limit=None)
+                result = await storage.traverse(method="outbound", observations=rows, depth=depth, limit=None)
             assert result.success is True and len(_nodes(result)) == 2 * count
             expected_hops = sum(math.ceil(size / chunk) for size in frontiers) + math.ceil(unexpanded / chunk)
             assert len(recorded.seeds()) == math.ceil(count / chunk)
@@ -289,7 +315,7 @@ class TestStatements:
         edges = [Edge(source=Path(a), target=Path(b), edge_type="calls") for a in nodes for b in nodes if a != b]
         assert (await storage.mkedge(edges=edges)).success is True
         with recording(storage) as recorded:
-            result = await storage.graph(method="outbound", path=Path(nodes[0]), depth=4, limit=None)
+            result = await storage.traverse(method="outbound", path=Path(nodes[0]), depth=4, limit=None)
         assert len(_nodes(result)) == 200 and len(_edges(result)) == 199 * 200
         assert len(recorded.seeds()) == 1 and len(recorded.edges()) == 2
 
@@ -308,7 +334,7 @@ class TestStatements:
         assert (await storage.mkedge(edges=edges)).success is True
         rows = [Observation(path=Path(path)) for path in seeds]
         with recording(storage) as recorded:
-            result = await storage.graph(method="meet", observations=rows, depth=None, limit=None)
+            result = await storage.traverse(method="meet", observations=rows, depth=None, limit=None)
         assert result.success is True and result.errors == []
         assert len(_nodes(result)) == 2 * count + 1 and len(_edges(result)) == 2 * count
         # two hops by two directions by one chunk, plus the induced fetch of the one unexpanded node (two directions)
@@ -340,7 +366,7 @@ async def _agree(seed: int) -> None:
         method = rng.choice(("outbound", "inbound", "neighborhood"))
         depth = rng.choice((1, 2, 3, None))
         start = rng.sample(nodes, rng.choice((1, 2)))
-        walked = await storage.graph(
+        walked = await storage.traverse(
             method=method, observations=[Observation(path=Path(p)) for p in start], depth=depth, limit=None
         )
         expected = graph_walk.walk(edges, start, method, depth)
@@ -348,7 +374,7 @@ async def _agree(seed: int) -> None:
         assert _edges(walked) == graph_walk.induced(edges, expected), (seed, method, depth, start)
         meeters = rng.sample(nodes, rng.choice((2, 3)))
         for minimal in (False, True):
-            met = await storage.graph(
+            met = await storage.traverse(
                 method="meet",
                 observations=[Observation(path=Path(p)) for p in meeters],
                 depth=None,
@@ -393,8 +419,8 @@ async def test_minimal_strips_the_leaf_a_removal_leaves_behind(storage: InMemory
     rows = [Edge(source=Path(nodes[s]), target=Path(nodes[t]), edge_type="r") for s, t in edges]
     assert (await storage.mkedge(edges=rows)).success is True
     seeds = [Observation(path=Path(nodes[name])) for name in "abc"]
-    both = await storage.graph(method="meet", observations=seeds, depth=None, limit=None)
-    minimal = await storage.graph(method="meet", observations=seeds, depth=None, limit=None, minimal=True)
+    both = await storage.traverse(method="meet", observations=seeds, depth=None, limit=None)
+    minimal = await storage.traverse(method="meet", observations=seeds, depth=None, limit=None, minimal=True)
     assert set(_nodes(both)) == set(nodes.values())
     assert set(_nodes(minimal)) == {nodes[name] for name in "abcmx"}
     triples = [(nodes[s], nodes[t], "r") for s, t in edges]
@@ -413,7 +439,9 @@ async def test_an_observation_seed_contributes_its_path_and_columns_narrow_the_r
     # select the fields a whole node carries, never a body.
     await _chain(storage)
     seed = Observation(path=Path(CHAIN[0]), edge_target=Path(CHAIN[1]), edge_type="imports")
-    result = await storage.graph(method="outbound", observations=[seed], columns=frozenset({"size_bytes", "content"}))
+    result = await storage.traverse(
+        method="outbound", observations=[seed], columns=frozenset({"size_bytes", "content"})
+    )
     assert _nodes(result) == {CHAIN[0]: 0, CHAIN[1]: 1}
     rows = [o for o in result.observations if o.edge_target is None]
     assert all(o.populated == {"path", "kind", "version", "size_bytes", "depth"} for o in rows)

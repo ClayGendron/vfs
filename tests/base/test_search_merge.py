@@ -24,11 +24,11 @@ def _row(path: str, score: float, text: str | None = None) -> Observation:
 
 
 def _mount(rows: list[Observation], **extras: Any) -> CannedStorage:
-    return CannedStorage({"glean": Result(ops=("glean",), observations=rows, **extras)})
+    return CannedStorage({"search": Result(ops=("search",), observations=rows, **extras)})
 
 
 def _limits(storage: RecorderStorage) -> list[int]:
-    return [kwargs["limit"] for op, kwargs in storage.calls if op == "glean"]
+    return [kwargs["limit"] for op, kwargs in storage.calls if op == "search"]
 
 
 def _legs(result: Result) -> dict[str, Any]:
@@ -60,7 +60,7 @@ async def _two_mounts(
 
 async def test_two_mounts_merge_by_the_query_not_by_their_own_scores() -> None:
     root, low, high = await _two_mounts()
-    result = await root.glean("lease", limit=3)
+    result = await root.search("lease", limit=3)
     assert result.success is True
     assert result.paths == ("/low/l1", "/high/h1", "/high/h2")
     assert result.observations[0].score == 1.0
@@ -74,7 +74,7 @@ async def test_the_law_holds_through_the_router() -> None:
     # /high said h1 > h2; the rerank prefers h2. h1 rides up beside it and
     # both stay in their mount's order.
     root, _low, _high = await _two_mounts()
-    result = await root.glean("lease", limit=4)
+    result = await root.search("lease", limit=4)
     paths = _paths(result)
     assert paths.index("/high/h1") < paths.index("/high/h2")
     assert paths.index("/low/l1") < paths.index("/low/l2")
@@ -84,17 +84,17 @@ async def test_one_answering_mount_stands_at_the_callers_limit() -> None:
     root = AsyncVirtualFileSystem()
     only = _mount([_row("/a", 0.9, "x"), _row("/b", 0.4, "y"), _row("/c", 0.1, "z")], legs={"lexical": {"hits": 3}})
     await root.add_mount(only, "/only")
-    result = await root.glean("x", limit=2)
+    result = await root.search("x", limit=2)
     assert result.paths == ("/only/a", "/only/b")
     assert [o.score for o in result.observations] == [0.9, 0.4]
     assert _legs(result) == {"lexical": {"hits": 3}}
-    # The root memory entry answers glean too, so the fan-out asked for the depth.
+    # The root memory entry answers search too, so the fan-out asked for the depth.
     assert _limits(only) == [6]
 
 
 async def test_a_scope_naming_one_mount_never_over_fetches_or_reranks() -> None:
     root, low, high = await _two_mounts()
-    result = await root.glean("lease", paths=("/high",), limit=2)
+    result = await root.search("lease", paths=("/high",), limit=2)
     assert result.paths == ("/high/h1", "/high/h2")
     assert [o.score for o in result.observations] == [0.9, 0.8]
     assert _limits(high) == [2] and _limits(low) == []
@@ -103,7 +103,7 @@ async def test_a_scope_naming_one_mount_never_over_fetches_or_reranks() -> None:
 async def test_observations_across_mounts_merge_the_same_way() -> None:
     root, low, high = await _two_mounts()
     held = [Observation(path=Path("/low/l1")), Observation(path=Path("/high/h2"))]
-    result = await root.glean("lease", observations=held, limit=3)
+    result = await root.search("lease", observations=held, limit=3)
     assert result.paths == ("/low/l1", "/high/h1", "/high/h2")
     assert _limits(low) == [9] and _limits(high) == [9]
     assert "merge" in _legs(result)
@@ -115,7 +115,7 @@ async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
     other = _mount([_row("/one", 0.5, "lease")])
     await root.add_mount(full, "/full")
     await root.add_mount(other, "/other")
-    result = await root.glean("lease", limit=100)
+    result = await root.search("lease", limit=100)
     assert result.success is True and len(result.observations) == 100
     [record] = [e for e in result.errors if e.kind is ErrorKind.truncated]
     assert record.data == {"mount": "/full", "cap": FANOUT_CAP}
@@ -125,13 +125,13 @@ async def test_a_mount_at_the_cap_leaves_a_truncation_warning() -> None:
 async def test_a_dead_mount_among_answering_ones_is_loss_on_record() -> None:
     root = AsyncVirtualFileSystem()
     live = _mount([_row("/a", 0.5, "lease")])
-    dead = CannedStorage({"glean": Result(ops=("glean",), errors=[])})
-    dead.answers["glean"] = Result.model_validate(
-        {"ops": ["glean"], "errors": [{"kind": "vfs.unavailable", "message": "down", "severity": "error"}]}
+    dead = CannedStorage({"search": Result(ops=("search",), errors=[])})
+    dead.answers["search"] = Result.model_validate(
+        {"ops": ["search"], "errors": [{"kind": "vfs.unavailable", "message": "down", "severity": "error"}]}
     )
     await root.add_mount(live, "/live")
     await root.add_mount(dead, "/dead")
-    result = await root.glean("lease", limit=5)
+    result = await root.search("lease", limit=5)
     assert result.success is True and result.paths == ("/live/a",)
     assert [e.kind for e in result.warnings] == [ErrorKind.unavailable]
 
@@ -153,7 +153,7 @@ class _Reverse:
 
 async def test_stages_are_configured_on_the_instance_and_the_law_binds_them() -> None:
     root, _low, _high = await _two_mounts(rerankers=(BM25Rerank(), _Reverse()))
-    result = await root.glean("lease", limit=4)
+    result = await root.search("lease", limit=4)
     assert _legs(result)["merge"]["rerankers"] == ["BM25Rerank()", "_Reverse()"]
     paths = _paths(result)
     assert paths.index("/low/l1") < paths.index("/low/l2") and paths.index("/high/h1") < paths.index("/high/h2")
@@ -161,7 +161,7 @@ async def test_stages_are_configured_on_the_instance_and_the_law_binds_them() ->
 
 async def test_no_stages_means_the_mounts_scores_under_the_law() -> None:
     root, _low, _high = await _two_mounts(rerankers=())
-    result = await root.glean("lease", limit=4)
+    result = await root.search("lease", limit=4)
     assert result.paths == ("/high/h1", "/high/h2", "/low/l1", "/low/l2")
 
 
@@ -177,4 +177,4 @@ async def test_a_stage_that_changes_the_row_set_is_an_error() -> None:
 
     root, _low, _high = await _two_mounts(rerankers=(Dropper(),))
     with pytest.raises(ValueError, match="reorders, never retrieves"):
-        await root.glean("lease", limit=4)
+        await root.search("lease", limit=4)

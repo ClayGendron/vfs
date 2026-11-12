@@ -1,4 +1,4 @@
-"""The structural scope every content search shares — grep's and glean's.
+"""The structural scope every content search shares — grep's and search's.
 
 Scoping crosses the storage seam as pattern text on the ``globs``
 channels (the router composes scope roots into them), or past the
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 FETCH_RIDE: Final = ROW_GATE_FIELDS | {"size_bytes", "deleted_at"} | RIGHTS_FIELDS
 
 # The count at which both verbs cut the path-ordered scan tier: grep's
-# pool of index candidates plus scan rows, glean's overlay whole. Re-derived
+# pool of index candidates plus scan rows, search's overlay whole. Re-derived
 # from the linux-scale sweep: a candidate costs ~75 µs (fetch-dominated), so
 # 25,000 bounds a saturated call near ~2 s while un-truncating every
 # benchmark row search semantics can justify. A tripped budget truncates

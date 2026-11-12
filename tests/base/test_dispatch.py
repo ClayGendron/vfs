@@ -555,11 +555,11 @@ async def test_rmedge_requires_edges_or_the_sugar_triple() -> None:
 
 
 # ----------------------------------------------------------------------
-# fan-out shape: glob / grep / glean
+# fan-out shape: glob / grep / search
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+@pytest.mark.parametrize("op", ["glob", "grep", "search"])
 async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
     root = AsyncVirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
@@ -574,7 +574,7 @@ async def test_fanout_reaches_every_mount_in_table_order(op: str) -> None:
     assert a.calls[0][1].get("paths", ()) == ()
 
 
-@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+@pytest.mark.parametrize("op", ["glob", "grep", "search"])
 async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None:
     # The incapable entry is never dispatched, and the gap goes on record
     # as an info-severity coverage entry — never a failure.
@@ -587,14 +587,14 @@ async def test_fanout_skips_incapable_terminal_with_info_record(op: str) -> None
     assert result.success is True
     assert result.paths == ("/a/hit.md",)
     assert b.calls == []
-    # glean also skips the root entry (memory declares no glean) — every
+    # search also skips the root entry (memory declares no search) — every
     # skip is an info-severity unsupported record anchored at its bind path.
     assert all(e.kind is ErrorKind.unsupported and e.severity is Severity.info for e in result.errors)
     skip = next(e for e in result.errors if e.path == "/b")
     assert skip.source == "/b"
 
 
-@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+@pytest.mark.parametrize("op", ["glob", "grep", "search"])
 async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
     root = AsyncVirtualFileSystem()
     a, b = EchoStorage(), EchoStorage()
@@ -609,7 +609,7 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
         assert kwargs["patterns"] == ("/src/**/*.py",)
         assert [o for o, _ in a.calls] == ["stat", "glob"]
     else:
-        # Grep's scope crosses as glob text — glean's too: the composed
+        # Grep's scope crosses as glob text — search's too: the composed
         # subtree plus the root's own literal path (find's operand law),
         # probe beside.
         [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == op]
@@ -641,13 +641,13 @@ async def test_fanout_includes_self_storage_before_mounts() -> None:
 
 
 async def test_fanout_with_no_capable_terminals_is_empty_success() -> None:
-    # A root backend that declares no glean, and no mounts: empty
+    # A root backend that declares no search, and no mounts: empty
     # success, with the skipped entry on record as info.
     fs = AsyncVirtualFileSystem(storage=EchoStorage(caps=frozenset({"read"})))
-    result = await fs.glean("anything")
+    result = await fs.search("anything")
     assert result.success is True
     assert len(result) == 0
-    assert result.op == "glean"
+    assert result.op == "search"
     [skip] = result.errors
     assert skip.severity is Severity.info
     assert skip.kind is ErrorKind.unsupported
@@ -1016,7 +1016,7 @@ async def test_observation_shaped_glob_obeys_max_count() -> None:
 
 async def test_non_positive_result_bound_is_invalid() -> None:
     root = AsyncVirtualFileSystem()
-    for result in (await root.glob("*.md", max_count=0), await root.glean("q", limit=-1)):
+    for result in (await root.glob("*.md", max_count=0), await root.search("q", limit=-1)):
         assert result.success is False
         assert result.errors[0].kind is ErrorKind.invalid
 
@@ -1101,27 +1101,27 @@ async def test_observation_batch_mutation_gates_capability_before_dispatch() -> 
 
 
 # ----------------------------------------------------------------------
-# grouped shape: graph
+# grouped shape: traverse
 # ----------------------------------------------------------------------
 
 
-async def test_graph_rejects_unknown_and_centrality_methods() -> None:
+async def test_traverse_rejects_unknown_and_centrality_methods() -> None:
     fs = RecorderFS()
     for method in ("pagerank", "not_a_method"):
-        result = await fs.graph(method, path="/a.py")
+        result = await fs.traverse(method, path="/a.py")
         assert result.success is False
         assert result.errors[0].kind is ErrorKind.invalid
     assert fs.calls == []
 
 
-async def test_graph_path_routes_to_one_terminal() -> None:
+async def test_traverse_path_routes_to_one_terminal() -> None:
     root = AsyncVirtualFileSystem()
     child = RecorderStorage()
     await root.add_mount(child, "/m")
-    await root.graph("outbound", path="/m/a.py", depth=None)
+    await root.traverse("outbound", path="/m/a.py", depth=None)
     assert child.calls == [
         (
-            "graph",
+            "traverse",
             {
                 "path": "/a.py",
                 "method": "outbound",
@@ -1136,13 +1136,13 @@ async def test_graph_path_routes_to_one_terminal() -> None:
     ]
 
 
-async def test_graph_observations_group_per_mount() -> None:
+async def test_traverse_observations_group_per_mount() -> None:
     root = AsyncVirtualFileSystem()
     a, b = RecorderStorage(), RecorderStorage()
     await root.add_mount(a, "/a")
     await root.add_mount(b, "/b")
     rows = [Observation(path=Path("/a/x.py")), Observation(path=Path("/b/y.py"))]
-    await root.graph("neighborhood", observations=rows, depth=2)
+    await root.traverse("neighborhood", observations=rows, depth=2)
     assert len(a.calls) == 1 and len(b.calls) == 1
     (a_obs,) = a.calls[0][1]["observations"]
     assert a_obs.path == "/x.py"  # each mount walks only its own subgraph
@@ -1245,7 +1245,7 @@ async def test_write_entries_meta_root_rejected_but_meta_scope_admitted() -> Non
 # ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+@pytest.mark.parametrize("op", ["glob", "grep", "search"])
 async def test_fanout_with_zero_hop_budget_is_budget_exhausted(op: str) -> None:
     root = AsyncVirtualFileSystem(hop_budget=0)
     await root.add_mount(EchoStorage(), "/m")
@@ -1557,7 +1557,7 @@ async def test_two_path_rejects_pair_and_batch_together(op: str) -> None:
     assert result.errors[0].kind is ErrorKind.invalid
 
 
-@pytest.mark.parametrize("op", ["glob", "grep", "glean"])
+@pytest.mark.parametrize("op", ["glob", "grep", "search"])
 async def test_fanout_rejects_paths_and_observations_together(op: str) -> None:
     root = AsyncVirtualFileSystem()
     await root.add_mount(EchoStorage(), "/m")
@@ -1696,11 +1696,11 @@ async def test_multiple_impl_bugs_raise_an_exception_group() -> None:
         ("mkedge", lambda fs: fs.mkedge(source="/a.txt", target="/b.txt", edge_type="ref")),
         ("move", lambda fs: fs.move("/a", "/b")),
         ("copy", lambda fs: fs.copy("/a", "/b")),
-        ("graph", lambda fs: fs.graph("outbound", "/nope")),
+        ("traverse", lambda fs: fs.traverse("outbound", "/nope")),
         ("run", lambda fs: fs.run("/nope")),
         ("glob", lambda fs: fs.glob("*", paths=("/nope",))),
         ("grep", lambda fs: fs.grep("x", paths=("/nope",))),
-        ("glean", lambda fs: fs.glean("q", paths=("/nope",))),
+        ("search", lambda fs: fs.search("q", paths=("/nope",))),
     ],
 )
 async def test_closed_filesystem_fails_every_verb_as_backend_unavailable(verb: str, call: Any) -> None:

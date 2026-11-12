@@ -57,10 +57,10 @@ from vfs.models import (
     measure_text,
 )
 from vfs.ops import (
-    GRAPH_DEPTH_DEFAULT,
-    GRAPH_LIMIT_DEFAULT,
     MUTATING_OPS,
     READ_OPS,
+    TRAVERSE_DEPTH_DEFAULT,
+    TRAVERSE_LIMIT_DEFAULT,
     CaseMode,
     GrepOutputMode,
     TwoPathOperation,
@@ -103,12 +103,12 @@ from vfs.storage import (
     ResolvedPair,
     StorageBackend,
     SupportsClose,
-    SupportsGlean,
     SupportsGrants,
-    SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsRankedSearch,
     SupportsRun,
+    SupportsTraversal,
     TransportError,
 )
 from vfs.storage.backends.database.descent import TRASHED_KEY
@@ -1325,7 +1325,7 @@ class AsyncVirtualFileSystem:
         return await self._route_pairs("copy", src, dest, copies, authority=authority)
 
     # -------------------------------------------------------------------
-    # public methods — search
+    # public methods — find
     # -------------------------------------------------------------------
 
     async def glob(
@@ -1550,7 +1550,7 @@ class AsyncVirtualFileSystem:
             authority=authority,
         )
 
-    async def glean(
+    async def search(
         self,
         query: str,
         *,
@@ -1585,7 +1585,7 @@ class AsyncVirtualFileSystem:
         seam, with a concurrent probe asserting the roots.
         """
         refusal = self._gate_params(
-            "glean",
+            "search",
             query=query,
             limit=limit,
             paths=paths,
@@ -1600,7 +1600,7 @@ class AsyncVirtualFileSystem:
         if refusal is not None:
             return refusal
         return await self._route_fanout(
-            "glean",
+            "search",
             paths=paths,
             observations=observations,
             ranked=_Ranked(query, limit, fanout_depth(limit)),
@@ -1611,17 +1611,17 @@ class AsyncVirtualFileSystem:
             authority=authority,
         )
 
-    async def graph(
+    async def traverse(
         self,
         method: str,
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
@@ -1637,7 +1637,7 @@ class AsyncVirtualFileSystem:
         to the nodes that keep the seeds connected. The answer carries the
         nodes with their ``depth`` and every selected edge among them.
         *method* is validated against the traversal vocabulary before any
-        dispatch; the envelope reports the one ``graph`` op — traversal is
+        dispatch; the envelope reports the one ``traverse`` op — traversal is
         the whole verb, and analytics are index-time data, not queries.
         """
         kwargs: dict[str, Any] = {
@@ -1649,10 +1649,10 @@ class AsyncVirtualFileSystem:
             "limit": limit,
             "columns": columns,
         }
-        refusal = self._gate_params("graph", path=path, observations=observations, authority=authority, **kwargs)
+        refusal = self._gate_params("traverse", path=path, observations=observations, authority=authority, **kwargs)
         if refusal is not None:
             return refusal
-        return await self._route_single("graph", path, observations, authority=authority, **kwargs)
+        return await self._route_single("traverse", path, observations, authority=authority, **kwargs)
 
     # -------------------------------------------------------------------
     # public methods — execution
@@ -2476,7 +2476,7 @@ class AsyncVirtualFileSystem:
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
-        """Build grep's dispatches (glean's too): scoping crosses the seam as glob text, or as roots beside the arms.
+        """Build grep's dispatches (search's too): scoping crosses the seam as glob text, or as roots beside the arms.
 
         Glob's dispatch shape on grep's filters (*admissions* is the
         caller's ``globs``, *exclusions* its ``globs_not``, the ext
@@ -3216,10 +3216,10 @@ class AsyncVirtualFileSystem:
                     if not isinstance(storage, SupportsPatternSearch):
                         return self._backend_unsupported(op)
                     return await storage.grep(authority=authority, **kwargs)
-                case "glean":
-                    if not isinstance(storage, SupportsGlean):
+                case "search":
+                    if not isinstance(storage, SupportsRankedSearch):
                         return self._backend_unsupported(op)
-                    return await storage.glean(authority=authority, **kwargs)
+                    return await storage.search(authority=authority, **kwargs)
                 case "write":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
@@ -3252,10 +3252,10 @@ class AsyncVirtualFileSystem:
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)
                     return await storage.copy(authority=authority, **kwargs)
-                case "graph":
-                    if not isinstance(storage, SupportsGraph):
+                case "traverse":
+                    if not isinstance(storage, SupportsTraversal):
                         return self._backend_unsupported(op)
-                    return await storage.graph(authority=authority, **kwargs)
+                    return await storage.traverse(authority=authority, **kwargs)
                 case "mkedge":
                     if not isinstance(storage, SupportsMutation):
                         return self._backend_unsupported(op)

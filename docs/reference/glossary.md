@@ -46,6 +46,8 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 
 **Road directory.** A hidden directory with a visible row beneath it. It shows in listings with path and kind only, lists only its visible and road children, and refuses every write beneath it with `permission_denied`.
 
+**Search.** The ranked verb: text in, one fused ranked list of entries out, each with its `score` and `matches`; formerly `glean`.
+
 **Session.** A facade holding one authority and one filesystem. Every verb on it is the filesystem verb with the authority filled in. Closed is final. `AsyncSession` is the kernel's, `Session` the synchronous face's. See [AsyncSession](session.md) and [the synchronous face](sync.md).
 
 **Source identity.** The raw edge identity behind an authority, such as an issuer and subject pair. Set once at the edge, stored on version rows, never interpreted by the filesystem.
@@ -55,5 +57,7 @@ Terms used across the identity and permission surface, in alphabetical order. A 
 **Subjects.** The set of principals whose permissions apply to a call. Non-empty except under the system actor. Bounded at `MAX_SUBJECTS`, which is 64.
 
 **System actor.** The principal named `system` with kind `system`, the actor of `Authority.system()`. It has no subjects, bypasses grants, and stamps whatever owner a write payload declares. Mount administration runs as it.
+
+**Traverse.** The walking verb: a frontier walk over the edges from seeds by one of four methods, `inbound`, `outbound`, `neighborhood` and `meet`; formerly `graph`. See [walk the edges around a file](../how-to/walk-the-edges-around-a-file.md).
 
 **Unauthenticated.** The error kind `vfs.unauthenticated`. A mount-side refusal: the anonymous principal is judged at the path it addresses, and a posture there below the verb's rung answers it. Its hint names the fix: open a session with an authority, or configure a default.

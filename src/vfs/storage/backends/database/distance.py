@@ -10,7 +10,7 @@ bytes for MariaDB and SQLite) and this module names the function:
     select(chunks.c.id).order_by(order).limit(k)
 
 A dialect with no distance function (the generic floor) has no
-expression here; the capability gate withholds ``glean`` from it
+expression here; the capability gate withholds ``search`` from it
 before a statement is ever built.
 """
 
@@ -39,7 +39,7 @@ def cosine_distance(dialect_name: str, column: Column[object], query: Sequence[f
         return func.vector_distance(literal(_COSINE), column, cast(bound, column.type), type_=Float)
     if dialect_name in ("mariadb", "sqlite"):
         return func.vec_distance_cosine(column, bound, type_=Float)
-    msg = f"{dialect_name!r} has no cosine distance function; the capability gate withholds glean from it"
+    msg = f"{dialect_name!r} has no cosine distance function; the capability gate withholds search from it"
     raise ValueError(msg)
 
 

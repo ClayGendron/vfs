@@ -144,7 +144,7 @@ class TestSetAlgebra:
         assert (a & b).paths == ("/b.md",)
 
     def test_union_left_wins_and_fills_nulls(self) -> None:
-        a = Result(ops=("glean",), observations=[obs("/a.md", score=0.9)])
+        a = Result(ops=("search",), observations=[obs("/a.md", score=0.9)])
         b = Result(ops=("stat",), observations=[obs("/a.md", score=0.1, size_bytes=42)])
         merged = (a | b).one()
         assert merged.score == 0.9  # left wins
@@ -209,12 +209,12 @@ class TestEnrichment:
 
     def test_top_sorts_then_slices(self) -> None:
         result = Result(
-            ops=("glean",),
+            ops=("search",),
             observations=[obs("/low.md", score=0.1), obs("/high.md", score=0.9)],
         )
         top = result.top(1)
         assert top.paths == ("/high.md",)
-        assert top.op == "glean"
+        assert top.op == "search"
 
     def test_top_rejects_non_positive_k(self) -> None:
         with pytest.raises(ValueError, match="k must be >= 1"):
@@ -229,7 +229,7 @@ class TestEnrichment:
         # NaN compares false against everything; an unguarded key corrupts the
         # sort and top() drops the real leaders. NaN must sink like None.
         result = Result(
-            ops=("glean",),
+            ops=("search",),
             observations=[
                 obs("/a.md", score=1.0),
                 obs("/nan.md", score=float("nan")),
@@ -250,12 +250,12 @@ class TestEnrichment:
     def test_chains_preserve_envelope(self) -> None:
         err = ResultError(kind=ErrorKind.unavailable, message="one mount down")
         result = Result(
-            ops=("glean",),
+            ops=("search",),
             observations=[obs("/a.md", score=0.5)],
             errors=[err],
         )
         chained = result.sort().filter(lambda o: True)
-        assert chained.op == "glean"
+        assert chained.op == "search"
         assert chained.errors == [err]
 
 
@@ -446,7 +446,7 @@ class TestWireContract:
 
     def test_non_finite_scores_are_json_safe_and_restore_as_none(self) -> None:
         result = Result(
-            ops=("glean",),
+            ops=("search",),
             observations=[obs("/a.md", score=float("nan")), obs("/b.md", score=float("inf"))],
         )
         payload = result.to_payload()

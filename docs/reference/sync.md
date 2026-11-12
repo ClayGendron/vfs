@@ -50,7 +50,7 @@ assert not any(t.name == "vfs-sync-loop" for t in threading.enumerate())
 
 ## Verbs
 
-Every verb of `AsyncVirtualFileSystem`, with the same parameters: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `glean`, `graph`, `run`, `grant`, `revoke`, `grants`, `posture`, `add_member`, `remove_member`. Each returns a `Result`.
+Every verb of `AsyncVirtualFileSystem`, with the same parameters: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `search`, `traverse`, `run`, `grant`, `revoke`, `grants`, `posture`, `add_member`, `remove_member`. Each returns a `Result`.
 
 Every management method, with the same parameters: `bind`, `unbind`, `add_mount`, `remove_mount`, `remount`, `locate`, `locate_edge`. Each returns what the kernel's returns and raises what the kernel's raises. `mounts()` and `capabilities()` answer without a hop. `session(authority)` returns a `Session`.
 

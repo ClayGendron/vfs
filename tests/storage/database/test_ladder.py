@@ -332,7 +332,7 @@ async def test_a_grant_takes_every_rung_but_none(storage: InMemoryStorage) -> No
 # ---------------------------------------------------------------------------
 
 
-async def test_glob_and_tree_name_list_rows_bare_and_grep_and_glean_never_search_them(
+async def test_glob_and_tree_name_list_rows_bare_and_grep_and_search_never_search_them(
     storage: InMemoryStorage,
 ) -> None:
     await _seed(
@@ -348,9 +348,9 @@ async def test_glob_and_tree_name_list_rows_bare_and_grep_and_glean_never_search
     assert set(tree) == {"/team/plan.md", "/team/notes.txt"} and set(tree.values()) == {BARE}
     grepped = await storage.grep(pattern="lantern", allow_scan=True, authority=BOB)
     assert _paths(grepped) == ["/pub/faq.md"] and grepped.errors == []
-    gleaned = await storage.glean(query="lantern", authority=BOB)
-    assert _paths(gleaned) == ["/pub/faq.md"]
-    stats = (gleaned.model_extra or {})["lexical_stats"]
+    searched = await storage.search(query="lantern", authority=BOB)
+    assert _paths(searched) == ["/pub/faq.md"]
+    stats = (searched.model_extra or {})["lexical_stats"]
     assert stats["n_docs"] == 1 and stats["terms"]["lantern"]["df"] == 1
 
 
@@ -437,7 +437,7 @@ async def test_anonymous_listings_are_judged_at_the_path_named_and_derive_no_roa
     scoped = await storage.grep(pattern="lantern", globs=("/scratch/**",), allow_scan=True, authority=ANON)
     assert _paths(scoped) == ["/scratch/old.md"]
     assert _kind(await storage.grep(pattern="lantern", allow_scan=True, authority=ANON)) == ErrorKind.unauthenticated
-    assert _kind(await storage.glean(query="lantern", authority=ANON)) == ErrorKind.unauthenticated
+    assert _kind(await storage.search(query="lantern", authority=ANON)) == ErrorKind.unauthenticated
     # A named nobody lists the root and finds /scratch there; anonymous is refused at /.
     assert _paths(await storage.ls(path=Path("/"), authority=Authority.of(Principal("zed")))) == ["/scratch"]
 

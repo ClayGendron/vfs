@@ -1,6 +1,6 @@
 """Ranking seams — how a mount fuses its legs into one list, declared on the Storage.
 
-A ``glean`` answer is one ranked list of entries. Inside a mount it is
+A ``search`` answer is one ranked list of entries. Inside a mount it is
 built from *legs* — the vector leg's cosine-ranked entries, the lexical
 leg's BM25-ranked entries — each already **aggregated to entries** (the
 best chunk speaks for its entry) and **normalised to the unit interval**
@@ -342,7 +342,7 @@ Transform = Linear | Log1p | Saturation | Sigmoid
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """One declared prior: what reindex stores under *name*, and how glean applies it.
+    """One declared prior: what reindex stores under *name*, and how search applies it.
 
     *measure* and *smoothing* (the hierarchy share ``gamma``) decide the
     stored value and make up its options fingerprint; *transform* and

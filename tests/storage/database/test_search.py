@@ -1,8 +1,8 @@
-"""The glean leg against real sqlite rows: scope rungs, the two rounds,
+"""The search leg against real sqlite rows: scope rungs, the two rounds,
 the overlay, records, the two-read protocol, ordering laws and the mask.
 
 Direct backend tests — capability declaration is a router concern, so
-these rows call ``storage.glean`` straight through the seam. The
+these rows call ``storage.search`` straight through the seam. The
 overlay serves everything until ``reindex()`` runs; several rows run
 in both worlds because the answer must not depend on which side served.
 """
@@ -30,9 +30,9 @@ from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database import glean as glean_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import scope as scope_module
+from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.offload import WALL_TIME_BUDGET, WALL_TIME_CAUSE
@@ -150,30 +150,49 @@ async def _entry_ids(storage: DatabaseStorage, paths: Sequence[str]) -> set[Any]
         return set((await session.execute(stmt)).scalars().all())
 
 
+async def test_the_backend_answers_search_with_its_own_op_name(tmp_path: Any) -> None:
+    # Mutant: leave the answer or the refusal on the old op name.
+    storage = await _fresh(tmp_path)
+    answer = await storage.search(query="tokens")
+    refusal = await storage.search(query="tokens", globs=("a**b",))
+    no_term = await storage.search(query="!!!")
+    assert answer.success is True and refusal.errors[0].kind == ErrorKind.invalid
+    assert answer.ops == refusal.ops == no_term.ops == ("search",)
+    await storage.close()
+
+
+def test_the_wall_budget_is_spelled_search(tmp_path: Any) -> None:
+    # Mutant: accept the old keyword as an alias beside the new one.
+    with pytest.raises(TypeError, match="glean_wall_seconds"):
+        DatabaseStorage(url=_url(tmp_path), glean_wall_seconds=1.0)  # ty: ignore[unknown-argument]
+    with pytest.raises(ValueError, match="search_wall_seconds"):
+        DatabaseStorage(url=_url(tmp_path), search_wall_seconds=0)
+
+
 class TestRefusals:
     async def test_a_query_with_no_term_classifies_invalid(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
-        result = await storage.glean(query="!!! ...")
+        result = await storage.search(query="!!! ...")
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     async def test_a_defective_glob_classifies_invalid(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
-        result = await storage.glean(query="tokens", globs=("a**b",))
+        result = await storage.search(query="tokens", globs=("a**b",))
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
     def test_the_wall_budget_must_be_positive(self, tmp_path: Any) -> None:
-        with pytest.raises(ValueError, match="glean_wall_seconds"):
-            DatabaseStorage(url=_url(tmp_path), glean_wall_seconds=0)
+        with pytest.raises(ValueError, match="search_wall_seconds"):
+            DatabaseStorage(url=_url(tmp_path), search_wall_seconds=0)
 
 
 class TestRanking:
     async def test_entries_come_best_first_on_a_unit_scale(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        result = await storage.glean(query="tokens")
+        result = await storage.search(query="tokens")
         assert result.success is True, result.errors
         assert _paths(result)[0] == "/notes.txt"  # three occurrences in a short body
         scores = _scores(result)
@@ -184,7 +203,7 @@ class TestRanking:
 
     async def test_a_hit_carries_its_chunks_with_bounds_text_and_score(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        [row] = (await storage.glean(query="dispatches", limit=1)).observations
+        [row] = (await storage.search(query="dispatches", limit=1)).observations
         assert str(row.path) == "/docs/routing.md"
         [match] = row.matches or []
         assert (match.start, match.end) == (1, 1)
@@ -195,7 +214,7 @@ class TestRanking:
 
     async def test_a_chunk_hit_carries_a_bolded_preview_inside_its_bounds(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        [row] = (await storage.glean(query="Tokens", limit=1, globs=("src/**",))).observations
+        [row] = (await storage.search(query="Tokens", limit=1, globs=("src/**",))).observations
         for match in row.matches or []:
             assert match.preview is not None and "**tokens**" in match.preview
             assert match.preview_start is not None and match.preview_end is not None
@@ -206,7 +225,7 @@ class TestRanking:
         # Both terms are in the index but only one occurs in the chunk that answers.
         files = {"/a.md": "stream of tokens\n", "/b.md": "a request arrives\nand a stream flows\n"}
         storage = await _indexed(tmp_path, files)
-        result = await storage.glean(query="tokens request")
+        result = await storage.search(query="tokens request")
         [b] = [o for o in result.observations if str(o.path) == "/b.md"]
         [match] = b.matches or []
         assert match.preview == "a **request** arrives\nand a stream flows"
@@ -215,10 +234,10 @@ class TestRanking:
     async def test_a_long_entry_carries_its_best_chunks_with_distinct_bounds(self, tmp_path: Any) -> None:
         sections = (f"## Section {i}\n\nlantern words in section {i}, plain prose sentence.\n\n" for i in range(120))
         storage = await _indexed(tmp_path, {"/doc/big.md": "".join(sections), "/doc/small.md": "no lantern here\n"})
-        [row] = (await storage.glean(query="lantern", limit=1)).observations
+        [row] = (await storage.search(query="lantern", limit=1)).observations
         assert str(row.path) == "/doc/big.md"
         matches = row.matches or []
-        assert len(matches) == glean_module.TOP_CHUNKS
+        assert len(matches) == search_module.TOP_CHUNKS
         bounds = [(m.start, m.end) for m in matches]
         assert len(set(bounds)) == len(bounds) and bounds == sorted(bounds)
         assert matches[0].score == row.score == 1.0
@@ -228,21 +247,21 @@ class TestRanking:
     async def test_the_limit_counts_entries_and_ties_break_by_path(self, tmp_path: Any) -> None:
         files = {"/b.txt": "same words here\n", "/a.txt": "same words here\n", "/c.txt": "same words here\n"}
         storage = await _indexed(tmp_path, files)
-        result = await storage.glean(query="same words", limit=2)
+        result = await storage.search(query="same words", limit=2)
         assert _paths(result) == ["/a.txt", "/b.txt"]
         assert [o.score for o in result.observations] == [1.0, 1.0]
         await storage.close()
 
     async def test_columns_narrow_the_mask_and_identity_stays(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        [row] = (await storage.glean(query="dispatches", limit=1, columns=frozenset({"path"}))).observations
+        [row] = (await storage.search(query="dispatches", limit=1, columns=frozenset({"path"}))).observations
         assert row.populated == {"path", "kind", "version", "score", "matches"}
         assert row.size_bytes is None
         await storage.close()
 
     async def test_term_statistics_ride_the_envelope(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        result = await storage.glean(query="tokens unknownword")
+        result = await storage.search(query="tokens unknownword")
         export = result.lexical_stats  # ty: ignore[unresolved-attribute]
         assert export["n_docs"] == len(CORPUS) and export["avg_dl"] > 0
         assert set(export["terms"]) == {"tokens"} and export["terms"]["tokens"]["df"] == 4
@@ -250,7 +269,7 @@ class TestRanking:
 
     async def test_an_indexed_term_absent_from_the_corpus_answers_empty(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        result = await storage.glean(query="unknownword")
+        result = await storage.search(query="unknownword")
         assert result.success is True and result.observations == []
         await storage.close()
 
@@ -259,14 +278,14 @@ class TestScope:
     async def test_globs_take_the_narrow_rung(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         storage = await _indexed(tmp_path)
         narrowed: list[int] = []
-        real = glean_module._chunk_ids_for
+        real = search_module._chunk_ids_for
 
         async def spying(session, tables, epoch, doc_ids, profile, budget):
             narrowed.append(len(doc_ids))
             return await real(session, tables, epoch, doc_ids, profile, budget)
 
-        monkeypatch.setattr(glean_module, "_chunk_ids_for", spying)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        monkeypatch.setattr(search_module, "_chunk_ids_for", spying)
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert set(_paths(result)) == {"/src/lexer.py", "/src/parser.py"}
         assert narrowed == [4]  # the segment index nominated the src entries, the deep directory among them
         await storage.close()
@@ -275,11 +294,11 @@ class TestScope:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = await _indexed(tmp_path)
-        narrow = await storage.glean(query="tokens", globs=("src/**",))
-        monkeypatch.setattr(glean_module, "SCOPE_ID_BUDGET", 1)
+        narrow = await storage.search(query="tokens", globs=("src/**",))
+        monkeypatch.setattr(search_module, "SCOPE_ID_BUDGET", 1)
         narrowed: list[int] = []
-        monkeypatch.setattr(glean_module, "_chunk_ids_for", lambda *a: narrowed.append(1))
-        wide = await storage.glean(query="tokens", globs=("src/**",))
+        monkeypatch.setattr(search_module, "_chunk_ids_for", lambda *a: narrowed.append(1))
+        wide = await storage.search(query="tokens", globs=("src/**",))
         assert narrowed == []  # over the budget: no allow-list resolution
         assert _paths(wide) == _paths(narrow) and wide.errors == narrow.errors
         assert [o.score for o in wide.observations] == [o.score for o in narrow.observations]
@@ -287,12 +306,12 @@ class TestScope:
 
     async def test_exclusions_and_ext_gate_every_row(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        assert set(_paths(await storage.glean(query="tokens", globs_not=("src/**",)))) == {
+        assert set(_paths(await storage.search(query="tokens", globs_not=("src/**",)))) == {
             "/notes.txt",
             "/docs/tokens.md",
         }
-        assert _paths(await storage.glean(query="tokens", ext=("md",))) == ["/docs/tokens.md"]
-        assert _paths(await storage.glean(query="tokens", ext_not=("py", "md"))) == ["/notes.txt"]
+        assert _paths(await storage.search(query="tokens", ext=("md",))) == ["/docs/tokens.md"]
+        assert _paths(await storage.search(query="tokens", ext_not=("py", "md"))) == ["/notes.txt"]
         await storage.close()
 
     async def test_a_glob_contradicting_the_ext_channel_answers_empty_in_both_worlds(self, tmp_path: Any) -> None:
@@ -300,7 +319,7 @@ class TestScope:
         # scan has no live arm and the index side has no admitted row.
         storage = await _fresh(tmp_path)
         for _world in ("overlay", "indexed"):
-            result = await storage.glean(query="tokens", globs=("*.py",), ext=("md",))
+            result = await storage.search(query="tokens", globs=("*.py",), ext=("md",))
             assert result.success is True and result.observations == []
             assert (await storage.reindex()).success is True
         await storage.close()
@@ -311,22 +330,22 @@ class TestScope:
             await storage.write(entries=[Entry(path=Path("/.vfs/hidden.txt"), content="tokens too\n")], parents=True)
         ).success
         assert (await storage.reindex()).success is True
-        assert _paths(await storage.glean(query="tokens")) == ["/a.txt"]
-        assert _paths(await storage.glean(query="tokens", globs=("/.vfs/**",))) == ["/.vfs/hidden.txt"]
+        assert _paths(await storage.search(query="tokens")) == ["/a.txt"]
+        assert _paths(await storage.search(query="tokens", globs=("/.vfs/**",))) == ["/.vfs/hidden.txt"]
         await storage.close()
 
     async def test_piped_rows_admit_their_own_paths(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
-        rows = (await storage.glean(query="tokens", globs=("docs/**", "notes.txt"))).observations
-        piped = await storage.glean(query="tokens", observations=rows[:1])
+        rows = (await storage.search(query="tokens", globs=("docs/**", "notes.txt"))).observations
+        piped = await storage.search(query="tokens", observations=rows[:1])
         assert _paths(piped) == [str(rows[0].path)]
         await storage.close()
 
     async def test_the_same_scope_answers_identically_before_and_after_reindex(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
-        before = await storage.glean(query="tokens", globs=("src/**",))
+        before = await storage.search(query="tokens", globs=("src/**",))
         assert (await storage.reindex()).success is True
-        after = await storage.glean(query="tokens", globs=("src/**",))
+        after = await storage.search(query="tokens", globs=("src/**",))
         assert _paths(before) == _paths(after) == ["/src/lexer.py", "/src/parser.py"]
         await storage.close()
 
@@ -339,18 +358,18 @@ class TestRounds:
         # second block, so a one-block head cannot answer without round two.
         files = {f"/c/{i:04}.txt": f"common word number {i}\n" + ("anchor\n" if i == 130 else "") for i in range(140)}
         storage = await _indexed(tmp_path, files)
-        reference = await storage.glean(query="common anchor", limit=5)
+        reference = await storage.search(query="common anchor", limit=5)
         assert _paths(reference)[0] == "/c/0130.txt"
         wanted: list[dict[str, list[int]]] = []
-        real = glean_module.tail_block_statements
+        real = search_module.tail_block_statements
 
         def spying(postings, epoch, asked, *rest):
             wanted.append({term: list(nos) for term, nos in asked.items()})
             return real(postings, epoch, asked, *rest)
 
-        monkeypatch.setattr(glean_module, "tail_block_statements", spying)
-        monkeypatch.setattr(glean_module, "HEAD_BLOCKS", 1)
-        result = await storage.glean(query="common anchor", limit=5)
+        monkeypatch.setattr(search_module, "tail_block_statements", spying)
+        monkeypatch.setattr(search_module, "HEAD_BLOCKS", 1)
+        result = await storage.search(query="common anchor", limit=5)
         assert wanted == [{"common": [1]}]  # one term wanting one block: the second block of ``common``
         assert [(str(o.path), o.score) for o in result.observations] == [
             (str(o.path), o.score) for o in reference.observations
@@ -371,21 +390,21 @@ class TestRounds:
         assert stat_rows > 0
         selected: list[list[int]] = []
         scored: list[list[int]] = []
-        real_select, real_score = glean_module.select_blocks, glean_module.score_blocks
+        real_select, real_score = search_module.select_blocks, search_module.score_blocks
 
         def recording_select(*args: Any, **kwargs: Any) -> Any:
             chosen = real_select(*args, **kwargs)
-            selected.extend([no for no in competing if no >= glean_module.HEAD_BLOCKS] for competing in chosen)
+            selected.extend([no for no in competing if no >= search_module.HEAD_BLOCKS] for competing in chosen)
             return chosen
 
         def counting_score(blocks: Any, *args: Any, **kwargs: Any) -> Any:
             scored.append([block.term for block in blocks])
             return real_score(blocks, *args, **kwargs)
 
-        monkeypatch.setattr(glean_module, "select_blocks", recording_select)
-        monkeypatch.setattr(glean_module, "score_blocks", counting_score)
-        monkeypatch.setattr(glean_module, "HEAD_BLOCKS", 1)
-        result = await storage.glean(query="zeta alpha anchor", limit=5)
+        monkeypatch.setattr(search_module, "select_blocks", recording_select)
+        monkeypatch.setattr(search_module, "score_blocks", counting_score)
+        monkeypatch.setattr(search_module, "HEAD_BLOCKS", 1)
+        result = await storage.search(query="zeta alpha anchor", limit=5)
         assert result.success is True
         assert [len(tail) for tail in selected] == [2, 2]
         head, full = scored[0], scored[1]
@@ -402,9 +421,9 @@ class TestProbes:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = await _indexed(tmp_path)
-        monkeypatch.setattr(glean_module, "FUSION_K", 1)
-        monkeypatch.setattr(glean_module, "PROBE_DEEPEN", 1)
-        result = await storage.glean(query="tokens", limit=10)
+        monkeypatch.setattr(search_module, "FUSION_K", 1)
+        monkeypatch.setattr(search_module, "PROBE_DEEPEN", 1)
+        result = await storage.search(query="tokens", limit=10)
         assert result.success is True
         [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert record.kind == ErrorKind.truncated and record.severity == Severity.warning
@@ -416,24 +435,24 @@ class TestProbes:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         storage = await _indexed(tmp_path)
-        monkeypatch.setattr(glean_module, "FUSION_K", 1)
-        result = await storage.glean(query="tokens", limit=3, globs=("src/**",))
+        monkeypatch.setattr(search_module, "FUSION_K", 1)
+        result = await storage.search(query="tokens", limit=3, globs=("src/**",))
         [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert "candidate window" in record.message and record.data == {"window": 1, "found": 1}
         await storage.close()
 
     def test_round_two_arms_pack_under_the_parameter_budget(self) -> None:
         arms = [(3, true()), (3, true()), (5, true()), (2, true())]
-        packed = glean_module._packed_arms(arms, 6)
+        packed = search_module._packed_arms(arms, 6)
         assert [len(statement) for statement in packed] == [2, 1, 1]
-        assert glean_module._packed_arms([], 6) == []
+        assert search_module._packed_arms([], 6) == []
 
     def test_the_tail_fetch_takes_the_tuple_form_where_declared(self) -> None:
         postings = build_vfs_tables().lex_postings
         wanted = {"the": [8, 9, 10], "is": [8, 9, 10, 11]}
 
         def compiled(profile: Any, dialect: Any, parameter_budget: int) -> list[tuple[str, int]]:
-            statements = glean_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
+            statements = search_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
             rendered = [s.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}) for s in statements]
             return [(str(c), len(c.params)) for c in rendered]
 
@@ -450,7 +469,7 @@ class TestProbes:
 class TestOverlay:
     async def test_a_never_indexed_store_serves_from_live_text(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
-        result = await storage.glean(query="tokens")
+        result = await storage.search(query="tokens")
         assert result.success is True, result.errors
         assert _paths(result)[0] == "/notes.txt"
         [match] = result.observations[0].matches or []
@@ -464,10 +483,10 @@ class TestOverlay:
     async def test_a_written_file_with_a_new_word_is_found_before_reindex(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="zebra tokens\n")])).success
-        result = await storage.glean(query="zebra")
+        result = await storage.search(query="zebra")
         assert _paths(result) == ["/fresh.txt"]
         # The overlay and the index share one scale: the fresh row ranks among indexed rows.
-        mixed = await storage.glean(query="tokens")
+        mixed = await storage.search(query="tokens")
         assert "/fresh.txt" in _paths(mixed) and mixed.observations[0].score == 1.0
         await storage.close()
 
@@ -477,14 +496,14 @@ class TestOverlay:
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/docs/fresh.md"), content="tokens late\n")])).success
         admitted_sizes: list[int] = []
-        real = glean_module._overlay
+        real = search_module._overlay
 
         async def spying(session, tables, profile, budget, executor, admitted, terms, stats, deadline):
             admitted_sizes.append(len(admitted))
             return await real(session, tables, profile, budget, executor, admitted, terms, stats, deadline)
 
-        monkeypatch.setattr(glean_module, "_overlay", spying)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        monkeypatch.setattr(search_module, "_overlay", spying)
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert set(_paths(result)) == {"/src/lexer.py", "/src/parser.py"}
         assert admitted_sizes == [0]  # the scan ran and nominated nothing in scope
         await storage.close()
@@ -493,17 +512,17 @@ class TestOverlay:
         """Guards: either verb cutting the dirty rows at a count of its own, or holding a budget name of its own
         for the scan tier beside the shared one."""
         assert scope_module.SCAN_TIER_BUDGET == 25_000
-        assert glean_module.SCAN_TIER_BUDGET == grep_module.SCAN_TIER_BUDGET == scope_module.SCAN_TIER_BUDGET
+        assert search_module.SCAN_TIER_BUDGET == grep_module.SCAN_TIER_BUDGET == scope_module.SCAN_TIER_BUDGET
         shared = {"SCAN_TIER_BUDGET", "CONTENT_BYTE_BUDGET", "WALL_TIME_BUDGET"}
-        glean_budgets = {name for name in vars(glean_module) if name.endswith("_BUDGET")}
+        search_budgets = {name for name in vars(search_module) if name.endswith("_BUDGET")}
         grep_budgets = {name for name in vars(grep_module) if name.endswith("_BUDGET")}
-        assert glean_budgets == shared | {"SCOPE_ID_BUDGET"}
+        assert search_budgets == shared | {"SCOPE_ID_BUDGET"}
         assert grep_budgets == shared | {"POSTING_BYTE_BUDGET"}
 
     async def test_the_overlay_budget_truncates_loudly(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         storage = await _fresh(tmp_path)
-        monkeypatch.setattr(glean_module, "SCAN_TIER_BUDGET", 2)
-        result = await storage.glean(query="tokens")
+        monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", 2)
+        result = await storage.search(query="tokens")
         assert result.success is True
         [record] = [e for e in result.errors if e.severity == Severity.warning]
         assert record.kind == ErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
@@ -523,15 +542,15 @@ class TestOverlay:
         bodies = [f"{'tokens ' * (i % 4)}stream number {i} {'parser ' * (i % 3)}\n" for i in range(12)]
         dirty = [Entry(path=Path(f"/dirty/{i:02}.txt"), content=body) for i, body in enumerate(bodies)]
         assert (await storage.write(entries=dirty, parents=True)).success is True
-        kernel = await storage.glean(query="tokens parser stream", limit=20)
+        kernel = await storage.search(query="tokens parser stream", limit=20)
         assert kernel.success is True and len(kernel.observations) == 15
 
         def counted(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
             return pure_overlay_postings(docs, terms)
 
-        monkeypatch.setattr(glean_module, "overlay_postings", counted)
-        monkeypatch.setattr(glean_module, "score_blocks", pure_score_blocks)
-        oracle = await storage.glean(query="tokens parser stream", limit=20)
+        monkeypatch.setattr(search_module, "overlay_postings", counted)
+        monkeypatch.setattr(search_module, "score_blocks", pure_score_blocks)
+        oracle = await storage.search(query="tokens parser stream", limit=20)
         assert _ranked(kernel) == _ranked(oracle)
         await storage.close()
 
@@ -543,13 +562,13 @@ class TestOverlay:
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
         storage = await _fresh(tmp_path, files)
         with _recorded(storage) as whole:
-            reference = await storage.glean(query="tokens")
+            reference = await storage.search(query="tokens")
         assert len(reference.observations) == 5
         # One nominee fetch, one surrogate fetch, one body fetch, plus the preview fetch.
         assert _overlay_legs(whole) == (2, 1, 1)
-        monkeypatch.setattr(glean_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
+        monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
         with _recorded(storage) as batched:
-            result = await storage.glean(query="tokens")
+            result = await storage.search(query="tokens")
         # One body and one surrogate fetch per batch of one, plus the preview; the nominee fetch stays one.
         assert _overlay_legs(batched) == (6, 5, 1)
         assert _ranked(result) == _ranked(reference)
@@ -569,7 +588,7 @@ class TestOverlay:
         }
         storage = await _fresh(tmp_path, files)
         returned: list[Any] = []
-        real_overlay = glean_module._overlay
+        real_overlay = search_module._overlay
 
         async def spying_overlay(*args: Any) -> Any:
             outcome = await real_overlay(*args)
@@ -577,19 +596,19 @@ class TestOverlay:
             return outcome
 
         fetched: list[list[Any]] = []
-        real_fetch = glean_module.content_for_entries
+        real_fetch = search_module.content_for_entries
 
         async def spying_fetch(session, tables, profile, membership_budget, entry_ids):
             fetched.append(list(entry_ids))
             return await real_fetch(session, tables, profile, membership_budget, entry_ids)
 
-        monkeypatch.setattr(glean_module, "_overlay", spying_overlay)
-        monkeypatch.setattr(glean_module, "content_for_entries", spying_fetch)
-        result = await storage.glean(query="tokens", limit=2)
+        monkeypatch.setattr(search_module, "_overlay", spying_overlay)
+        monkeypatch.setattr(search_module, "content_for_entries", spying_fetch)
+        result = await storage.search(query="tokens", limit=2)
         assert _paths(result) == ["/d/a.txt", "/d/b.txt"]
         [(hits, completed)] = returned
         assert completed is True and set(hits) == await _entry_ids(storage, ["/d/a.txt", "/d/b.txt", "/d/c.txt"])
-        assert all(isinstance(hit, glean_module._Hit) for hit in hits.values())
+        assert all(isinstance(hit, search_module._Hit) for hit in hits.values())
         counted, previewed = fetched
         assert len(counted) == 5
         assert set(previewed) == await _entry_ids(storage, ["/d/a.txt", "/d/b.txt"])
@@ -602,14 +621,14 @@ class TestOverlay:
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="nothing here\n")])).success
         fetched: list[list[Any]] = []
-        real_fetch = glean_module.content_for_entries
+        real_fetch = search_module.content_for_entries
 
         async def spying_fetch(session, tables, profile, membership_budget, entry_ids):
             fetched.append(list(entry_ids))
             return await real_fetch(session, tables, profile, membership_budget, entry_ids)
 
-        monkeypatch.setattr(glean_module, "content_for_entries", spying_fetch)
-        result = await storage.glean(query="tokens")
+        monkeypatch.setattr(search_module, "content_for_entries", spying_fetch)
+        result = await storage.search(query="tokens")
         assert set(_paths(result)) == {"/notes.txt", "/src/lexer.py", "/src/parser.py", "/docs/tokens.md"}
         assert [len(ids) for ids in fetched] == [1]  # the dirty row was counted; nothing was previewed
         await storage.close()
@@ -625,7 +644,7 @@ class TestOverlay:
             "/d/c.txt": "tokens filler filler\n",
         }
         storage = await _fresh(tmp_path, files)
-        real_fetch = glean_module.content_for_entries
+        real_fetch = search_module.content_for_entries
         calls = {"n": 0}
 
         async def purged_before_the_preview(session, tables, profile, membership_budget, entry_ids):
@@ -635,8 +654,8 @@ class TestOverlay:
                 bodies.pop(next(iter(entry_ids)))
             return bodies
 
-        monkeypatch.setattr(glean_module, "content_for_entries", purged_before_the_preview)
-        result = await storage.glean(query="tokens", limit=2)
+        monkeypatch.setattr(search_module, "content_for_entries", purged_before_the_preview)
+        result = await storage.search(query="tokens", limit=2)
         assert result.success is True, result.errors
         assert calls["n"] == 2
         assert _paths(result) == ["/d/b.txt"]
@@ -652,8 +671,8 @@ class TestOverlay:
                 moves["n"] += 1
                 assert (await storage.reindex()).success is True
 
-        with installed("glean:after-pointer-read", rival):
-            result = await storage.glean(query="tokens")
+        with installed("search:after-pointer-read", rival):
+            result = await storage.search(query="tokens")
         assert result.success is True, result.errors
         assert "/fresh.txt" in _paths(result) and moves["n"] == 1
         await storage.close()
@@ -665,7 +684,7 @@ class TestOverlay:
         # authoritative read sees, and the overlay serves it mid-call.
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
-        real = glean_module.pointer_with_overlay
+        real = search_module.pointer_with_overlay
         calls = {"n": 0}
 
         async def blind_preamble(session, tables):
@@ -673,16 +692,16 @@ class TestOverlay:
             pointer, overlay_empty = await real(session, tables)
             return (pointer, True) if calls["n"] == 1 else (pointer, overlay_empty)
 
-        real_epoch = glean_module.current_epoch
+        real_epoch = search_module.current_epoch
         epoch_calls = {"n": 0}
 
         async def counting_epoch(session, tables):
             epoch_calls["n"] += 1
             return await real_epoch(session, tables)
 
-        monkeypatch.setattr(glean_module, "pointer_with_overlay", blind_preamble)
-        monkeypatch.setattr(glean_module, "current_epoch", counting_epoch)
-        result = await storage.glean(query="tokens")
+        monkeypatch.setattr(search_module, "pointer_with_overlay", blind_preamble)
+        monkeypatch.setattr(search_module, "current_epoch", counting_epoch)
+        result = await storage.search(query="tokens")
         assert result.success is True, result.errors
         assert "/fresh.txt" in _paths(result)
         assert calls["n"] == 2  # advisory, then authoritative
@@ -695,15 +714,15 @@ class TestOverlay:
         storage = await _indexed(tmp_path)
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
-        real = glean_module.current_epoch
+        real = search_module.current_epoch
         calls = {"n": 0}
 
         async def always_moving(session, tables):
             calls["n"] += 1
             return ((await real(session, tables)) or 0) + calls["n"]
 
-        monkeypatch.setattr(glean_module, "current_epoch", always_moving)
-        result = await storage.glean(query="tokens")
+        monkeypatch.setattr(search_module, "current_epoch", always_moving)
+        result = await storage.search(query="tokens")
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict and result.errors[0].retryable is True
         await storage.close()
@@ -711,24 +730,24 @@ class TestOverlay:
     def test_overlay_blocks_take_counted_postings_and_local_statistics(self) -> None:
         """Guards: a block encoded in arrival order (path order) rather than doc-id order,
         or the local statistics counted over anything but the bodies the kernel reached."""
-        assert glean_module._text(b"alpha beta") == glean_module._text("alpha beta") == "alpha beta"
+        assert search_module._text(b"alpha beta") == search_module._text("alpha beta") == "alpha beta"
         # Two bodies, "alpha beta" (id 1) and "beta beta gamma" (id 2), counted in reverse path order.
-        counted = glean_module._OverlayCount([[(2, 2, 3), (1, 1, 2)], []], 2, 5)
-        blocks, idfs, avg_dl = glean_module._overlay_blocks(
+        counted = search_module._OverlayCount([[(2, 2, 3), (1, 1, 2)], []], 2, 5)
+        blocks, idfs, avg_dl = search_module._overlay_blocks(
             counted, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75)
         )
         assert [block.term for block in blocks] == [0]  # delta occurs nowhere: no block
         assert blocks[0].doc_ids == encode_block([1, 2], [1, 2], [2, 3])[0]
         assert avg_dl == 2.5 and idfs[0] == pytest.approx(0.1823, abs=1e-3)
         assert idfs[1] > idfs[0]  # the rarer term (absent) takes the higher idf
-        nothing = glean_module._OverlayCount([[]], 0, 0)
-        blocks, idfs, avg_dl = glean_module._overlay_blocks(nothing, ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
+        nothing = search_module._OverlayCount([[]], 0, 0)
+        blocks, idfs, avg_dl = search_module._overlay_blocks(nothing, ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
         assert blocks == [] and avg_dl == 0.0 and len(idfs) == 1
 
     async def test_an_overlay_hit_spans_its_whole_body_and_previews_the_best_window(self, tmp_path: Any) -> None:
         body = "".join(f"line {i} of prose\n" for i in range(1, 9)) + "the lantern line\nlast line\n"
         storage = await _fresh(tmp_path, {"/fresh.md": body})
-        [row] = (await storage.glean(query="lantern")).observations
+        [row] = (await storage.search(query="lantern")).observations
         [match] = row.matches or []
         assert (match.start, match.end, match.content) == (1, 10, None)
         assert match.preview is not None and match.preview.endswith("line 8 of prose\nthe **lantern** line")
@@ -738,20 +757,20 @@ class TestOverlay:
 
 class TestBudgets:
     async def test_an_expired_wall_budget_truncates_and_skips_the_overlay(self, tmp_path: Any) -> None:
-        storage = await _indexed(tmp_path, glean_wall_seconds=1e-9)
+        storage = await _indexed(tmp_path, search_wall_seconds=1e-9)
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
-        result = await storage.glean(query="tokens")
+        result = await storage.search(query="tokens")
         assert result.success is True
         assert any("wall-time budget" in e.message for e in result.errors)
         assert "/fresh.txt" not in _paths(result)
         await storage.close()
 
-    async def test_glean_gates_judge_on_the_backend_pool(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_search_gates_judge_on_the_backend_pool(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the gates built once per hop, or judged off the backend's pool."""
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/src/fresh.py"), content="tokens late\n")])).success
         spy = _SetSpy(monkeypatch)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert "/src/fresh.py" in _paths(result) and "/src/lexer.py" in _paths(result)
         assert spy.builds == 1 and len(spy.threads) >= 2
         assert all(name.startswith("vfs-offload") for name in spy.threads), spy.threads
@@ -764,7 +783,7 @@ class TestBudgets:
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/src/fresh.py"), content="tokens late\n")])).success
         spy = _SetSpy(monkeypatch, unfinished=True)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert len(spy.threads) >= 2
         [wall] = _walls(result)
         assert (wall.kind, wall.severity) == (ErrorKind.truncated, Severity.warning)
@@ -774,9 +793,9 @@ class TestBudgets:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Guards: the wall's two sites each appending their own record."""
-        storage = await _indexed(tmp_path, glean_wall_seconds=1e-9)
+        storage = await _indexed(tmp_path, search_wall_seconds=1e-9)
         _SetSpy(monkeypatch, unfinished=True)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert result.success is True
         assert len(_walls(result)) == 1
         await storage.close()
@@ -787,7 +806,7 @@ class TestBudgets:
         """Guards: the chunk entries' completion flag ignored: a fully indexed call makes no overlay hop."""
         storage = await _indexed(tmp_path)
         spy = _SetSpy(monkeypatch, unfinished=True)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert spy.threads and "/src/lexer.py" in _paths(result)
         assert len(_walls(result)) == 1
         await storage.close()
@@ -798,7 +817,7 @@ class TestBudgets:
         """Guards: the overlay's completion flag ignored: a never-indexed store judges only there."""
         storage = await _fresh(tmp_path)
         spy = _SetSpy(monkeypatch, unfinished=True)
-        result = await storage.glean(query="tokens", globs=("src/**",))
+        result = await storage.search(query="tokens", globs=("src/**",))
         assert len(spy.threads) == 1 and "/src/lexer.py" in _paths(result)
         assert len(_walls(result)) == 1
         await storage.close()
@@ -811,7 +830,7 @@ class TestBudgets:
         or its record dropped: terms the index never saw leave the vector leg the only one judging."""
         storage = await _indexed(tmp_path, embedder=HashEmbeddingProvider())
         spy = _SetSpy(monkeypatch, unfinished=True)
-        result = await storage.glean(query="zebra quantum", **scope)
+        result = await storage.search(query="zebra quantum", **scope)
         assert spy.threads and _paths(result)
         assert len(_walls(result)) == 1
         await storage.close()
@@ -827,7 +846,7 @@ class TestBudgets:
             Entry(path=Path("/dirty/b.txt"), content="tokens later\n"),
         ]
         assert (await storage.write(entries=dirty, parents=True)).success is True
-        real = glean_module.overlay_postings
+        real = search_module.overlay_postings
         budgets: list[float | None] = []
 
         def stopping(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
@@ -835,8 +854,8 @@ class TestBudgets:
             counted = real(docs[:1], terms, budget=budget)
             return OverlayPostings(counted.postings, 1, counted.total_dl, False)
 
-        monkeypatch.setattr(glean_module, "overlay_postings", stopping)
-        result = await storage.glean(query="tokens")
+        monkeypatch.setattr(search_module, "overlay_postings", stopping)
+        result = await storage.search(query="tokens")
         assert result.success is True
         # The hop's budget is the wall's remainder cut at worker start, never unbounded.
         [budget] = budgets
@@ -854,21 +873,21 @@ class TestBudgets:
         or the batches counted before the wall dropped from the answer."""
         files = {f"/d/{i}.txt": f"tokens body number {i}\n" for i in range(5)}
         storage = await _fresh(tmp_path, files)
-        monkeypatch.setattr(glean_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
-        real_clock, real_kernel = glean_module.monotonic, glean_module.overlay_postings
+        monkeypatch.setattr(search_module, "CONTENT_BYTE_BUDGET", len(files["/d/0.txt"].encode()))
+        real_clock, real_kernel = search_module.monotonic, search_module.overlay_postings
         skew = {"seconds": 0.0}
 
         def skewed_clock() -> float:
             return real_clock() + skew["seconds"]
 
         def counting_kernel(docs: Any, terms: Any, *, budget: float | None) -> OverlayPostings:
-            skew["seconds"] = 1e6  # the wall passes, as glean reads it, once the first batch is counted
+            skew["seconds"] = 1e6  # the wall passes, as search reads it, once the first batch is counted
             return real_kernel(docs, terms, budget=budget)
 
-        monkeypatch.setattr(glean_module, "monotonic", skewed_clock)
-        monkeypatch.setattr(glean_module, "overlay_postings", counting_kernel)
+        monkeypatch.setattr(search_module, "monotonic", skewed_clock)
+        monkeypatch.setattr(search_module, "overlay_postings", counting_kernel)
         with _recorded(storage) as statements:
-            result = await storage.glean(query="tokens")
+            result = await storage.search(query="tokens")
         assert result.success is True
         assert len(_walls(result)) == 1
         assert _paths(result) == ["/d/0.txt"]  # the first batch's body, the only one fetched
@@ -879,5 +898,5 @@ class TestBudgets:
     async def test_traits_declare_the_lexical_leg_and_its_overlay(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
         traits = storage.traits()
-        assert traits["glean_signals"] == "lexical" and traits["glean_staleness"] == "overlay"
+        assert traits["search_signals"] == "lexical" and traits["search_staleness"] == "overlay"
         await storage.close()

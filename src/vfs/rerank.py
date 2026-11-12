@@ -1,6 +1,6 @@
 """The cross-mount merge: one BM25 over the union, under each mount's own order.
 
-One mount's ``glean`` answer is ranked on one scale. Two mounts' answers
+One mount's ``search`` answer is ranked on one scale. Two mounts' answers
 are not: each scored against its own corpus with its own legs, so their
 ``score`` columns cannot be sorted together. When more than one mount
 answers, the router fetches deeper than the caller's limit from each,
@@ -200,7 +200,7 @@ async def merge_ranked(
     depth: int,
     rerankers: Sequence[Reranker],
 ) -> RankedMerge:
-    """Merge the mounts' ``glean`` answers into one ranked list of at most *limit* rows.
+    """Merge the mounts' ``search`` answers into one ranked list of at most *limit* rows.
 
     *answers* pairs each answering mount's path with its rebased result,
     in dispatch order. One answering mount is returned as it stands,
@@ -224,7 +224,7 @@ async def merge_ranked(
         classified(
             ErrorKind.truncated,
             severity=Severity.warning,
-            detail=f"glean fan-out reached the {FANOUT_CAP}-row cap on one mount; the merge may have lost recall; "
+            detail=f"search fan-out reached the {FANOUT_CAP}-row cap on one mount; the merge may have lost recall; "
             f"{REFINE_GUIDANCE}",
             data={"mount": str(mount), "cap": FANOUT_CAP},
         )

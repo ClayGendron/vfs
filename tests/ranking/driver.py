@@ -1,17 +1,17 @@
-"""The BM25 baseline driver: the lexical index read the way the glean leg reads it.
+"""The BM25 baseline driver: the lexical index read the way the search leg reads it.
 
 ``load_corpus`` writes a corpus into a backend and reindexes it;
 ``entry_ranking`` runs one query as two rounds over the block tables —
 the head fetch, the engine's scorer, block selection for the overflowing
 terms, the round-two key fetch through the leg's own builder
-(:func:`~vfs.storage.backends.database.glean.tail_block_statements`), the
+(:func:`~vfs.storage.backends.database.search.tail_block_statements`), the
 scorer again — then MaxP to entries. Scores are rounded to
 :data:`SCORE_DECIMALS` and ordered ``score DESC, path ASC`` so the
 ordered list is identical on every engine and across rebuilds (entry
 ids are minted per write; paths are not).
 
-``glean_ranking`` and ``glean_run`` are the same questions asked of the
-``glean`` verb — the product path the driver referees. The verb's
+``search_ranking`` and ``search_run`` are the same questions asked of the
+``search`` verb — the product path the driver referees. The verb's
 scores are min-max normalised, so its runs carry a different scale and
 the same order.
 """
@@ -27,8 +27,8 @@ from vfs.models import Entry
 from vfs.models.lexical import ScoreBlock, decode_summary, score_blocks, select_blocks, tokenize
 from vfs.paths import Path
 from vfs.storage.backends.database.dialects import chunked
-from vfs.storage.backends.database.glean import posting_columns, tail_block_statements
 from vfs.storage.backends.database.lexical import lexical_stats
+from vfs.storage.backends.database.search import posting_columns, tail_block_statements
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -99,19 +99,19 @@ async def bm25_run(loaded: Loaded, k: int = 50) -> Run:
     return run
 
 
-async def glean_run(loaded: Loaded, k: int = 50) -> Run:
+async def search_run(loaded: Loaded, k: int = 50) -> Run:
     """Every query of the corpus ranked to ``k`` entries through the verb, keyed by doc id."""
     doc_of = loaded.corpus.doc_of
     run: Run = {}
     for qid, query in loaded.corpus.queries.items():
-        ranked = await glean_ranking(loaded, query, k)
+        ranked = await search_ranking(loaded, query, k)
         run[qid] = {doc_of[path]: score for path, score in ranked}
     return run
 
 
-async def glean_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[str, float]]:
-    """Top-``k`` entries as ``(path, score)`` through ``storage.glean`` — the verb's own order."""
-    result = await loaded.storage.glean(query=query, limit=k)
+async def search_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[str, float]]:
+    """Top-``k`` entries as ``(path, score)`` through ``storage.search`` — the verb's own order."""
+    result = await loaded.storage.search(query=query, limit=k)
     assert result.success is True, result.errors
     ranked: list[tuple[str, float]] = []
     for row in result.observations:

@@ -39,7 +39,7 @@ from ulid import ULID
 
 from vfs.authority import Authority
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
-from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, VERB_RUNGS
+from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
@@ -79,8 +79,6 @@ from vfs.storage.backends.database.embed import (
     write_vectors,
 )
 from vfs.storage.backends.database.engine import EngineHost
-from vfs.storage.backends.database.glean import VectorLeg, glean_rows
-from vfs.storage.backends.database.graph import GraphRequest, Site, graph_rows
 from vfs.storage.backends.database.grep import grep_rows
 from vfs.storage.backends.database.indexing import (
     REINDEX_HEARTBEAT_SECONDS,
@@ -145,6 +143,7 @@ from vfs.storage.backends.database.rights import (
     unauthenticated_refusals,
 )
 from vfs.storage.backends.database.seams import seam
+from vfs.storage.backends.database.search import VectorLeg, search_rows
 from vfs.storage.backends.database.segments import (
     SegmentRebuildState,
     collect_segment_drift,
@@ -158,6 +157,7 @@ from vfs.storage.backends.database.signals import (
 )
 from vfs.storage.backends.database.topology import transfer_rows
 from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
+from vfs.storage.backends.database.traverse import GraphRequest, Site, traverse_rows
 from vfs.storage.backends.database.writes import edit_rows, measured_entries, mkdir_rows, write_rows
 from vfs.storage.protocol import storage_ops, targets_of
 from vfs.storage.ranking import Ranker
@@ -222,7 +222,7 @@ class DatabaseStorage:
         description: str | None = None,
         trash_days: int = 90,
         grep_wall_seconds: float = WALL_TIME_BUDGET,
-        glean_wall_seconds: float = WALL_TIME_BUDGET,
+        search_wall_seconds: float = WALL_TIME_BUDGET,
         glob_wall_seconds: float = WALL_TIME_BUDGET,
         embedder: EmbeddingProvider | None = None,
         native_embedding: NativeEmbeddingConfig | None = None,
@@ -267,11 +267,11 @@ class DatabaseStorage:
         self._render_limits = render_limits if render_limits is not None else RenderLimits()
         # The last queries' vectors, keyed by space: a re-asked question costs no provider call.
         self._query_vectors: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
-        if glean_wall_seconds <= 0:
-            msg = f"glean_wall_seconds must be positive, got {glean_wall_seconds}"
+        if search_wall_seconds <= 0:
+            msg = f"search_wall_seconds must be positive, got {search_wall_seconds}"
             raise ValueError(msg)
         self._grep_wall_seconds = grep_wall_seconds
-        self._glean_wall_seconds = glean_wall_seconds
+        self._search_wall_seconds = search_wall_seconds
         self._glob_wall_seconds = glob_wall_seconds
         self.name = name
         # Construction stays dialect-free: a borrowed host knows its
@@ -285,7 +285,7 @@ class DatabaseStorage:
 
     @property
     def embedder(self) -> EmbeddingProvider | None:
-        """The configured embedding provider; ``None`` serves glean lexical-only."""
+        """The configured embedding provider; ``None`` serves search lexical-only."""
         return self._host.embedder
 
     @property
@@ -310,12 +310,12 @@ class DatabaseStorage:
         """The method surface, minus what this mount cannot vouch for.
 
         An unknown dialect serves the core verbs on the generic floor
-        and withholds ``glean``: ranked search needs a cosine distance
+        and withholds ``search``: ranked search needs a cosine distance
         in the engine, which only a tuned profile declares.
         """
         withheld: set[Op] = set()
         if self._host.profile.vector_distance == "none":
-            withheld.add("glean")
+            withheld.add("search")
         return storage_ops(self) - withheld
 
     def traits(self) -> Mapping[str, str]:
@@ -324,8 +324,8 @@ class DatabaseStorage:
             "arbitration": self._host.profile.arbitration,
             "grep_tier": "indexed",
             "grep_staleness": "overlay",
-            "glean_signals": "hybrid" if self._host.embedder is not None else "lexical",
-            "glean_staleness": "overlay",
+            "search_signals": "hybrid" if self._host.embedder is not None else "lexical",
+            "search_staleness": "overlay",
         }
         # Tuned engines are the measured ones; only they may claim full
         # durability — unknown dialects resolve to GENERIC-renamed names.
@@ -430,24 +430,24 @@ class DatabaseStorage:
         )
 
     # -------------------------------------------------------------------
-    # Graph family
+    # Traversal family
     # -------------------------------------------------------------------
 
-    async def graph(
+    async def traverse(
         self,
         *,
         method: str,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
-        """The frontier walk from the seeds under the caller's view; see ``graph.py``.
+        """The frontier walk from the seeds under the caller's view; see ``traverse.py``.
 
         The type lists are bound beside the frontier in every hop statement,
         so together they may not exceed half the membership budget.
@@ -455,14 +455,16 @@ class DatabaseStorage:
         for name, value in (("depth", depth), ("limit", limit)):
             if value is not None and value < 1:
                 return Result(
-                    ops=("graph",), errors=[classified(ErrorKind.invalid, detail=f"{name} must be >= 1, got {value}")]
+                    ops=("traverse",),
+                    errors=[classified(ErrorKind.invalid, detail=f"{name} must be >= 1, got {value}")],
                 )
         host = self._host
         if len(edge_types) + len(edge_types_not) > host.membership_budget // 2:
             detail = (
-                f"graph names {len(edge_types) + len(edge_types_not)} edge types; at most {host.membership_budget // 2}"
+                f"traverse names {len(edge_types) + len(edge_types_not)} edge types; "
+                f"at most {host.membership_budget // 2}"
             )
-            return Result(ops=("graph",), errors=[classified(ErrorKind.invalid, detail=detail)])
+            return Result(ops=("traverse",), errors=[classified(ErrorKind.invalid, detail=detail)])
         seeds = [path] if path is not None else [row.path for row in observations or []]
         request = GraphRequest(
             method,
@@ -475,12 +477,12 @@ class DatabaseStorage:
         )
         site = Site(host.tables, host.profile, host.membership_budget)
         return await self._execute(
-            "graph",
+            "traverse",
             self._viewed(
-                "graph",
+                "traverse",
                 authority,
                 [str(seed) for seed in seeds],
-                lambda session, view: graph_rows(session, site, request, seeds, view),
+                lambda session, view: traverse_rows(session, site, request, seeds, view),
             ),
         )
 
@@ -602,7 +604,7 @@ class DatabaseStorage:
     # Ranked search
     # -------------------------------------------------------------------
 
-    async def glean(
+    async def search(
         self,
         *,
         query: str,
@@ -619,22 +621,22 @@ class DatabaseStorage:
         try:
             admitted = admit_scope(scope, "globs")
         except PatternError as exc:
-            return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
+            return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
         refusal = await self._host.ensure_ready()
         if refusal is not None:
-            return Result(ops=("glean",), errors=[refusal])
+            return Result(ops=("search",), errors=[refusal])
         scoped = bool(ext or ext_not or globs or globs_not or observations or scope)
         vector, records = await self._vector_leg_for(query, scoped=scoped)
         host = self._host
         piped = tuple(str(row.path) for row in observations or ())
-        gate = self._scoped_gate(authority, globs, admitted, piped, self._glean_wall_seconds)
+        gate = self._scoped_gate(authority, globs, admitted, piped, self._search_wall_seconds)
         return await self._execute(
-            "glean",
+            "search",
             self._viewed(
-                "glean",
+                "search",
                 authority,
                 [*addressed_by(globs), *piped] if gate is None else (),
-                lambda session, view: glean_rows(
+                lambda session, view: search_rows(
                     session,
                     host.tables,
                     host.profile,
@@ -650,7 +652,7 @@ class DatabaseStorage:
                     globs_not=globs_not,
                     observations=observations,
                     columns=columns,
-                    wall_seconds=self._glean_wall_seconds,
+                    wall_seconds=self._search_wall_seconds,
                     dialect_name=self._host.profile.name,
                     vector=vector,
                     ranker=self._ranker,
@@ -727,13 +729,13 @@ class DatabaseStorage:
         )
 
     async def _embed_query(self, provider: EmbeddingProvider, query: str) -> list[float]:
-        """The query's unit vector, memoised per space under the glean wall budget."""
+        """The query's unit vector, memoised per space under the search wall budget."""
         key = (provider.model_id, query)
         cached = self._query_vectors.get(key)
         if cached is not None:
             self._query_vectors.move_to_end(key)
             return cached
-        vector = unit_vector(await asyncio.wait_for(provider.embed_query(query), self._glean_wall_seconds))
+        vector = unit_vector(await asyncio.wait_for(provider.embed_query(query), self._search_wall_seconds))
         self._query_vectors[key] = vector
         while len(self._query_vectors) > QUERY_VECTOR_CACHE:
             self._query_vectors.popitem(last=False)
@@ -1675,14 +1677,14 @@ class DatabaseStorage:
         anonymous call with a scope channel is judged by *scoped* instead,
         at the paths composition would have judged (:meth:`_scoped_refusals`).
         A verb that
-        declares a ``traverse`` rung (the graph walk) reads at that rung:
+        declares a ``passing`` rung (the graph walk) reads at that rung:
         the view narrows at it, the anonymous check judges at it, and the
         body projects a row whole only where the caller holds the primary.
         """
         host = self._host
         who = self._named(authority)
         needs = VERB_RUNGS[op]
-        rung = needs.traverse or needs.primary
+        rung = needs.passing or needs.primary
         judged = [address_of(path).stored for path in addressed]
 
         async def run(session: AsyncSession) -> Result:
@@ -1908,7 +1910,7 @@ class DatabaseStorage:
         """Move or copy under the gate: a moved source is modified and a copied one read, whole
         subtrees included; every destination is a creation."""
         needs = VERB_RUNGS[op]
-        passing: Rung = needs.primary if op == "move" else needs.traverse or needs.primary
+        passing: Rung = needs.primary if op == "move" else needs.passing or needs.primary
 
         async def gate(session: AsyncSession) -> list[ResultError]:
             checks = await self._gate(session, authority, needs)

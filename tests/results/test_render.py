@@ -309,15 +309,15 @@ class TestGrepRendering:
 
 
 # ---------------------------------------------------------------------------
-# Glean
+# Search
 # ---------------------------------------------------------------------------
 
 
-def _glean_hit(path: str, score: float, *regions: Match) -> Observation:
+def _search_hit(path: str, score: float, *regions: Match) -> Observation:
     return obs(path, score=score, matches=list(regions), populated=frozenset({"path", "score", "matches"}))
 
 
-class TestGleanRendering:
+class TestSearchRendering:
     HIT = Match(
         start=10,
         end=30,
@@ -330,29 +330,29 @@ class TestGleanRendering:
 
     def test_default_projection_prints_rank_order_with_locators_and_quoted_previews(self) -> None:
         # /z ranks first: a ranked result never renders path-sorted.
-        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9, self.HIT), _glean_hit("/a.md", 0.4)])
+        result = Result(ops=("search",), observations=[_search_hit("/z.md", 0.9, self.HIT), _search_hit("/a.md", 0.4)])
         assert str(result) == "/z.md  score=0.9000\n/z.md:10-30\n> **needle** here\n> more\n/a.md  score=0.4000"
 
     def test_path_only_projection_keeps_rank_order(self) -> None:
-        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9), _glean_hit("/a.md", 0.4)])
+        result = Result(ops=("search",), observations=[_search_hit("/z.md", 0.9), _search_hit("/a.md", 0.4)])
         assert result.to_str(projection=("path",)) == "/z.md\n/a.md"
 
     def test_path_and_score_projection_prints_headers_only(self) -> None:
-        result = Result(ops=("glean",), observations=[_glean_hit("/z.md", 0.9, self.HIT)])
+        result = Result(ops=("search",), observations=[_search_hit("/z.md", 0.9, self.HIT)])
         assert result.to_str(projection=("path", "score")) == "/z.md  score=0.9000"
 
     def test_a_blank_preview_line_renders_as_a_bare_quote_marker(self) -> None:
         region = Match(start=1, end=3, preview="one\n\nthree", preview_start=1, preview_end=3)
-        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, region)])
+        result = Result(ops=("search",), observations=[_search_hit("/a.md", 1.0, region)])
         assert result.to_str(projection=("matches",)) == "/a.md\n/a.md:1-3\n> one\n>\n> three"
 
     def test_a_region_without_a_preview_shows_the_head_of_its_text(self) -> None:
         region = Match(start=5, end=9, content="a\nb\nc\nd\ne\n")
-        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, region)])
+        result = Result(ops=("search",), observations=[_search_hit("/a.md", 1.0, region)])
         assert result.to_str(projection=("path", "matches")) == "/a.md\n/a.md:5-9\n> a\n> b\n> c\n> d"
 
     def test_a_region_with_neither_shows_the_locator_alone(self) -> None:
-        result = Result(ops=("glean",), observations=[_glean_hit("/a.md", 1.0, Match(start=1, end=1))])
+        result = Result(ops=("search",), observations=[_search_hit("/a.md", 1.0, Match(start=1, end=1))])
         assert result.to_str(projection=("path", "matches")) == "/a.md\n/a.md:1-1"
 
     def test_row_level_fields_switch_to_a_rank_ordered_table(self) -> None:
@@ -366,13 +366,13 @@ class TestGleanRendering:
             ),
             obs("/a.md", score=0.4, size_bytes=3, populated=frozenset({"path", "score", "size_bytes"})),
         ]
-        out = Result(ops=("glean",), observations=rows).to_str(projection=("path", "score", "size_bytes", "matches"))
+        out = Result(ops=("search",), observations=rows).to_str(projection=("path", "score", "size_bytes", "matches"))
         lines = out.split("\n")
         assert lines[0].startswith("| path") and lines[2].startswith("| /z.md") and lines[3].startswith("| /a.md")
         assert "10-30" in lines[2]
 
     def test_an_empty_result_renders_nothing(self) -> None:
-        assert Result(ops=("glean",), observations=[]).to_str() == ""
+        assert Result(ops=("search",), observations=[]).to_str() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -435,12 +435,12 @@ def edge(source: str, target: str, edge_type: str = "imports", **kwargs: Any) ->
     return Observation(path=Path(source), edge_target=Path(target), edge_type=edge_type, **kwargs)
 
 
-class TestGraphRendering:
+class TestTraverseRendering:
     def test_the_hierarchy_marks_cross_links_and_cycles(self) -> None:
         # Each node sits under the node one level up that reached it, the
         # least by (edge type, path); every further edge prints at its source.
         result = Result(
-            ops=("graph",),
+            ops=("traverse",),
             observations=[
                 node("/src/app.py", 0),
                 node("/src/db.py", 1),
@@ -464,25 +464,25 @@ class TestGraphRendering:
 
     def test_an_inbound_child_points_at_its_parent(self) -> None:
         result = Result(
-            ops=("graph",), observations=[node("/a.md", 0), node("/b.md", 1), edge("/b.md", "/a.md", "links")]
+            ops=("traverse",), observations=[node("/a.md", 0), node("/b.md", 1), edge("/b.md", "/a.md", "links")]
         )
         assert result.to_str() == "/a.md  (seed)\n└── links ← /b.md  [1]\nedges: 1 among 2 nodes"
 
     def test_a_node_without_a_shallower_neighbour_is_a_root(self) -> None:
         # Two seeds, one node reached by neither through a returned edge.
-        result = Result(ops=("graph",), observations=[node("/a.md", 0), node("/b.md", 0), node("/c.md", 2)])
+        result = Result(ops=("traverse",), observations=[node("/a.md", 0), node("/b.md", 0), node("/c.md", 2)])
         assert result.to_str() == "/a.md  (seed)\n/b.md  (seed)\n/c.md  [2]\nedges: 0 among 3 nodes"
 
     def test_an_edge_row_is_never_a_node_and_the_warning_follows(self) -> None:
         warning = ResultError(kind=ErrorKind.truncated, message="cut", severity=Severity.warning)
-        result = Result(ops=("graph",), observations=[node("/a.md", 0), edge("/a.md", "/b.md")], errors=[warning])
+        result = Result(ops=("traverse",), observations=[node("/a.md", 0), edge("/a.md", "/b.md")], errors=[warning])
         text = result.to_str()
         assert text.startswith("/a.md  (seed)\n└── imports → /b.md  ↑ shown\nedges: 1 among 1 node")
         assert "\n\nWARNING: cut — " in text
         assert "NOTE:" not in result.to_str(projection=("path", "score"))
 
     def test_an_empty_graph_renders_nothing(self) -> None:
-        assert Result(ops=("graph",)).to_str() == ""
+        assert Result(ops=("traverse",)).to_str() == ""
 
     def test_depth_right_aligns_in_a_projected_table(self) -> None:
         rows = [node("/a.md", 0), node("/bb.md", 10)]

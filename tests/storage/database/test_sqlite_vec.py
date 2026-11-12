@@ -25,6 +25,7 @@ from vfs.storage.backends.database.dialects import (
     VectorFunction,
     is_insufficient_privilege,
 )
+from vfs.storage.backends.database.distance import cosine_distance
 from vfs.storage.backends.memory import InMemoryStorage
 
 INSTALL: Final = "CREATE EXTENSION IF NOT EXISTS vector"
@@ -231,10 +232,12 @@ class TestInstallExtensions:
 
 
 class TestCapabilityGate:
-    def test_an_unknown_dialect_serves_the_core_verbs_and_withholds_glean(self, tmp_path: Any, monkeypatch) -> None:
+    def test_an_unknown_dialect_serves_the_core_verbs_and_withholds_search(self, tmp_path: Any, monkeypatch) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        assert "glean" in storage.capabilities()
+        assert "search" in storage.capabilities()
         monkeypatch.setattr(storage._host, "_profile", replace(GENERIC, name="exotic"))
         capabilities = storage.capabilities()
-        assert "glean" not in capabilities
-        assert {"read", "write", "delete", "move", "glob", "grep"} <= capabilities
+        assert "search" not in capabilities
+        assert {"read", "write", "delete", "move", "glob", "grep", "traverse"} <= capabilities
+        with pytest.raises(ValueError, match=r"withholds search from it$"):
+            cosine_distance("exotic", storage._host.tables.chunks.c.embedding, [1.0, 0.0, 0.0])

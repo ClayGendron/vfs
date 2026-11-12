@@ -31,7 +31,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 from vfs.base import AsyncVirtualFileSystem
-from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT
+from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.rerank import BM25Rerank
 from vfs.results import ErrorKind, Result, classified
 from vfs.session import CLOSED_SESSION_DETAIL, AsyncSession, closed_refusal
@@ -448,7 +448,7 @@ class VirtualFileSystem:
         return self._result("copy", self._fs.copy, src, dest, copies, authority=authority)
 
     # -------------------------------------------------------------------
-    # search, graph, execution
+    # find, execution
     # -------------------------------------------------------------------
 
     def glob(
@@ -525,7 +525,7 @@ class VirtualFileSystem:
             authority=authority,
         )
 
-    def glean(
+    def search(
         self,
         query: str,
         *,
@@ -540,8 +540,8 @@ class VirtualFileSystem:
         authority: Authority | None = None,
     ) -> Result:
         return self._result(
-            "glean",
-            self._fs.glean,
+            "search",
+            self._fs.search,
             query,
             limit=limit,
             paths=paths,
@@ -554,23 +554,23 @@ class VirtualFileSystem:
             authority=authority,
         )
 
-    def graph(
+    def traverse(
         self,
         method: str,
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result:
         return self._result(
-            "graph",
-            self._fs.graph,
+            "traverse",
+            self._fs.traverse,
             method,
             path,
             observations,
@@ -903,7 +903,7 @@ class Session:
         return self._result("copy", self._session.copy, src, dest, copies)
 
     # -------------------------------------------------------------------
-    # search, graph, execution
+    # find, execution
     # -------------------------------------------------------------------
 
     def glob(
@@ -976,7 +976,7 @@ class Session:
             columns=columns,
         )
 
-    def glean(
+    def search(
         self,
         query: str,
         *,
@@ -990,8 +990,8 @@ class Session:
         columns: frozenset[str] | None = None,
     ) -> Result:
         return self._result(
-            "glean",
-            self._session.glean,
+            "search",
+            self._session.search,
             query,
             limit=limit,
             paths=paths,
@@ -1003,22 +1003,22 @@ class Session:
             columns=columns,
         )
 
-    def graph(
+    def traverse(
         self,
         method: str,
         path: str | None = None,
         observations: list[Observation] | None = None,
         *,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
     ) -> Result:
         return self._result(
-            "graph",
-            self._session.graph,
+            "traverse",
+            self._session.traverse,
             method,
             path,
             observations,

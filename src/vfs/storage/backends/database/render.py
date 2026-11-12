@@ -2,7 +2,7 @@
 
 A bytes entry's text is a rendering made by a per-format renderer and
 written to the content row under the same entry id, so chunking, the
-gram index, grep, glean and permissions see it as they see any text.
+gram index, grep, search and permissions see it as they see any text.
 The rendering is stamped on the entry row with the bytes hash and the
 renderer's generation (``render_source_hash``, ``render_generation``),
 and the fingerprint-skip law decides re-rendering exactly as it does

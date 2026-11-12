@@ -1,4 +1,4 @@
-"""Ranked search over the lexical index — the BM25 leg of ``glean``.
+"""Ranked search over the lexical index — the BM25 leg of ``search``.
 
 The verb is grep's shape with a scorer where grep has a matcher: one
 session, SELECTs only, the backend's redrive around it, scope crossing
@@ -245,7 +245,7 @@ class _Lexicon(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-async def glean_rows(
+async def search_rows(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
@@ -294,15 +294,15 @@ async def glean_rows(
     ranker = ranker or Ranker()
     terms = list(dict.fromkeys(tokenize(query)))
     if not terms:
-        detail = f"glean query {query!r} has no searchable term after folding"
-        return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=detail)])
+        detail = f"search query {query!r} has no searchable term after folding"
+        return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=detail)])
     if observations:
         globs = (*globs, *(escape_glob(str(row.path)) for row in observations))
     try:
         admissions, trashed = trash_scope(globs, scope)
         exclusions = scope_exclusions(globs_not, trashed=trashed)
     except PatternError as exc:
-        return Result(ops=("glean",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
+        return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     side = side_scope(scope, trashed=trashed)
     entry = tables.entry
     channels = scope_channels(admissions, side)
@@ -325,7 +325,7 @@ async def glean_rows(
     truncations: list[tuple[str, dict[str, Any] | None]] = []
 
     epoch, overlay_empty = await pointer_with_overlay(session, tables)
-    await seam("glean:after-pointer-read")
+    await seam("search:after-pointer-read")
     stats = await lexical_stats(session, tables, -1 if epoch is None else epoch, terms, membership_budget)
     lexicon: _Lexicon | None = None
     if view is not None and epoch is not None:
@@ -419,7 +419,7 @@ async def glean_rows(
     if overlay_empty:
         current, still_empty = await pointer_with_overlay(session, tables)
         if current != epoch:
-            raise StaleSnapshot("the gram-index epoch pointer moved mid-glean")
+            raise StaleSnapshot("the gram-index epoch pointer moved mid-search")
         skip_verified = still_empty
     if not skip_verified and monotonic() <= deadline:
         nominees = await entries_for_scan(
@@ -456,7 +456,7 @@ async def glean_rows(
         if nominees.overflow:
             truncations.append(("overlay budget", {"scanned": len(nominees.rows), "budget": SCAN_TIER_BUDGET}))
     if not skip_verified and epoch is not None and await current_epoch(session, tables) != epoch:
-        raise StaleSnapshot("the gram-index epoch pointer moved mid-glean")
+        raise StaleSnapshot("the gram-index epoch pointer moved mid-search")
 
     fused = _fuse(ranker, hits, vector_hits)
     signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))
@@ -505,7 +505,7 @@ async def glean_rows(
         "fused": "client",
         "signals": signals.explain,
     }
-    return Result(ops=("glean",), observations=observed, errors=errors, lexical_stats=export, legs=legs)
+    return Result(ops=("search",), observations=observed, errors=errors, lexical_stats=export, legs=legs)
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,7 @@ DIRECTIONS: Final[dict[str, tuple[Direction, ...]]] = {
 # What a bare node carries: the ``list`` projection plus the walk's own field.
 BARE_FIELDS: Final[frozenset[str]] = LIST_FIELDS | {"depth"}
 
-GRAPH_OPS: Final = ("graph",)
+TRAVERSE_OPS: Final = ("traverse",)
 
 
 class Site(NamedTuple):
@@ -163,24 +163,24 @@ class Walk:
 # ---------------------------------------------------------------------------
 
 
-async def graph_rows(
+async def traverse_rows(
     session: AsyncSession,
     site: Site,
     request: GraphRequest,
     seeds: Sequence[Path],
     view: Visibility | None,
 ) -> Result:
-    """The ``graph`` answer for *seeds* under *view*: node rows nearest first, then every edge among them."""
+    """The ``traverse`` answer for *seeds* under *view*: node rows nearest first, then every edge among them."""
     invalid = [
-        classified(ErrorKind.invalid, seed, detail="graph seeds must be live paths outside /.vfs")
+        classified(ErrorKind.invalid, seed, detail="traverse seeds must be live paths outside /.vfs")
         for seed in seeds
         if is_meta_path(seed)
     ]
     if invalid:
-        return Result(ops=GRAPH_OPS, errors=invalid)
+        return Result(ops=TRAVERSE_OPS, errors=invalid)
     roots = await resolve_seeds(session, site, request, seeds, view)
     if not roots:
-        return Result(ops=GRAPH_OPS)
+        return Result(ops=TRAVERSE_OPS)
     if request.method == "meet":
         walk = await meet_walk(session, site, request, roots, view)
         kept = prune(walk, roots, minimal=request.minimal)
@@ -496,7 +496,7 @@ async def observe(
             classified(
                 ErrorKind.truncated,
                 severity=Severity.warning,
-                detail=f"graph returned the nearest {len(shown)} of at least {len(walk.nodes)} nodes; raise limit",
+                detail=f"traverse returned the nearest {len(shown)} of at least {len(walk.nodes)} nodes; raise limit",
                 data={"limit": request.limit, "nodes_found": len(walk.nodes), "depth_reached": walk.depth_reached},
             )
         )
@@ -512,7 +512,7 @@ async def observe(
                 data=data,
             )
         )
-    return Result(ops=GRAPH_OPS, observations=rows, errors=errors)
+    return Result(ops=TRAVERSE_OPS, observations=rows, errors=errors)
 
 
 # ---------------------------------------------------------------------------

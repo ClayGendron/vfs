@@ -33,7 +33,7 @@ from vfs import AsyncSession
 
 ## Verbs
 
-The session defines every verb the filesystem defines: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `glean`, `graph`, `run`.
+The session defines every verb the filesystem defines: `read`, `stat`, `ls`, `tree`, `write`, `edit`, `delete`, `restore`, `sweep`, `mkdir`, `mkedge`, `rmedge`, `move`, `copy`, `glob`, `grep`, `search`, `traverse`, `run`.
 
 Each session verb has the filesystem verb's signature with the `authority` parameter removed: the same parameter names, kinds, defaults, and order. Each delegates to the filesystem verb with `authority=self.authority`. A session call and the direct call with the same authority return equal results and reach storage with the same authority.
 

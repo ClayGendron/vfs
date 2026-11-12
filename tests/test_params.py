@@ -10,7 +10,7 @@ import pytest
 
 from tests.support.base_doubles import RecorderFS, RecorderStorage
 from vfs.base import AsyncVirtualFileSystem
-from vfs.ops import ALL_OPS, RUNGS
+from vfs.ops import ALL_OPS, RUNGS, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 from vfs.params import GRANTABLE, INT_CEILING, PARAMS, POSTURES, RULES, param_violation
 from vfs.results import ErrorKind
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
@@ -33,15 +33,16 @@ def test_every_verb_signature_matches_the_table() -> None:
         assert sig_names == table_names, f"{op}: drift on {sig_names ^ table_names}"
 
 
-def test_the_graph_signature_defaults_equal_the_table_defaults() -> None:
+def test_the_traverse_signature_defaults_equal_the_table_defaults() -> None:
     # The gate never substitutes a ParamSpec default; the verb's own
     # signature carries it, so the two must agree or the wire and the
     # in-process caller see different walks.
-    signature = inspect.signature(AsyncVirtualFileSystem.graph).parameters
-    for spec in PARAMS["graph"]:
+    signature = inspect.signature(AsyncVirtualFileSystem.traverse).parameters
+    for spec in PARAMS["traverse"]:
         if spec.default is not None and spec.name in signature:
             assert signature[spec.name].default == spec.default, spec.name
     assert signature["depth"].default == 1 and signature["limit"].default == 128
+    assert (TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT) == (1, 128)
 
 
 def test_the_grant_choices_derive_from_the_ladder() -> None:
@@ -142,18 +143,21 @@ GARBAGE = [
     ("grep-null-case-mode", lambda fs: fs.grep("x", case_mode=None)),
     ("grep-null-paths", lambda fs: fs.grep("x", paths=None)),
     ("delete-null-cascade", lambda fs: fs.delete("/f.txt", cascade=None)),
-    ("glean-null-limit", lambda fs: fs.glean("q", limit=None)),
-    ("glean-non-str-query", lambda fs: fs.glean(123)),
-    ("glean-bool-limit", lambda fs: fs.glean("q", limit=True)),
-    ("graph-bogus-method", lambda fs: fs.graph("bogus", "/a.py")),
-    ("graph-zero-depth", lambda fs: fs.graph("outbound", "/a.py", depth=0)),
-    ("graph-zero-limit", lambda fs: fs.graph("outbound", "/a.py", limit=0)),
-    ("graph-retired-method", lambda fs: fs.graph("ancestors", "/a.py")),
-    ("graph-minimal-off-meet", lambda fs: fs.graph("outbound", "/a.py", minimal=True)),
-    ("graph-type-in-both-lists", lambda fs: fs.graph("outbound", "/a.py", edge_types=("a",), edge_types_not=("a",))),
-    ("graph-bad-type-segment", lambda fs: fs.graph("outbound", "/a.py", edge_types=("a/b",))),
-    ("graph-str-edge-types", lambda fs: fs.graph("outbound", "/a.py", edge_types="imports")),
-    ("graph-truthy-minimal", lambda fs: fs.graph("meet", "/a.py", minimal=1)),
+    ("search-null-limit", lambda fs: fs.search("q", limit=None)),
+    ("search-non-str-query", lambda fs: fs.search(123)),
+    ("search-bool-limit", lambda fs: fs.search("q", limit=True)),
+    ("traverse-bogus-method", lambda fs: fs.traverse("bogus", "/a.py")),
+    ("traverse-zero-depth", lambda fs: fs.traverse("outbound", "/a.py", depth=0)),
+    ("traverse-zero-limit", lambda fs: fs.traverse("outbound", "/a.py", limit=0)),
+    ("traverse-retired-method", lambda fs: fs.traverse("ancestors", "/a.py")),
+    ("traverse-minimal-off-meet", lambda fs: fs.traverse("outbound", "/a.py", minimal=True)),
+    (
+        "traverse-type-in-both-lists",
+        lambda fs: fs.traverse("outbound", "/a.py", edge_types=("a",), edge_types_not=("a",)),
+    ),
+    ("traverse-bad-type-segment", lambda fs: fs.traverse("outbound", "/a.py", edge_types=("a/b",))),
+    ("traverse-str-edge-types", lambda fs: fs.traverse("outbound", "/a.py", edge_types="imports")),
+    ("traverse-truthy-minimal", lambda fs: fs.traverse("meet", "/a.py", minimal=1)),
     ("run-non-dict-arguments", lambda fs: fs.run("/t", arguments=123)),
 ]
 

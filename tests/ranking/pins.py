@@ -2,7 +2,7 @@
 
 ``top10.json`` is recorded on sqlite (``VFS_RANKING_REPIN=1``) from the
 lexical driver and asserted by every leg — memory, sqlite and the four
-servers — through the driver, and through the ``glean`` verb on a mount
+servers — through the driver, and through the ``search`` verb on a mount
 with no embedder, which must reproduce the driver's order exactly.
 ``top10_hybrid.json`` is the same pin for the verb on a mount carrying
 the hashing embedder: the vector leg's in-engine cosine, fused with the
@@ -22,7 +22,7 @@ import os
 from typing import TYPE_CHECKING, Final
 
 from tests.ranking.corpora import VFS_NATIVE, vfs_native
-from tests.ranking.driver import Loaded, entry_ranking, glean_ranking, load_corpus
+from tests.ranking.driver import Loaded, entry_ranking, load_corpus, search_ranking
 from tests.ranking.merge import halves, merged_ranking
 from vfs.base import AsyncVirtualFileSystem
 
@@ -55,10 +55,10 @@ async def ordered_top10(loaded: Loaded) -> dict[str, list[str]]:
     }
 
 
-async def ordered_top10_via_glean(loaded: Loaded) -> dict[str, list[str]]:
-    """Every golden query ranked to ten paths through the ``glean`` verb."""
+async def ordered_top10_via_search(loaded: Loaded) -> dict[str, list[str]]:
+    """Every golden query ranked to ten paths through the ``search`` verb."""
     return {
-        qid: [path for path, _ in await glean_ranking(loaded, query, 10)]
+        qid: [path for path, _ in await search_ranking(loaded, query, 10)]
         for qid, query in loaded.corpus.queries.items()
     }
 
@@ -77,7 +77,7 @@ async def assert_top10_pin(storage: DatabaseStorage, *, analyzed: bool = False) 
         TOP10.write_text(json.dumps(actual, indent=1) + "\n", encoding="utf-8")
     expected = json.loads(TOP10.read_text(encoding="utf-8"))
     assert actual == expected
-    via_verb = await ordered_top10_via_glean(loaded)
+    via_verb = await ordered_top10_via_search(loaded)
     if storage.embedder is None:
         assert via_verb == expected
         return

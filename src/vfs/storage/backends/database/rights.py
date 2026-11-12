@@ -868,8 +868,8 @@ class WriteGate:
     def _slot(self, mode: GateMode) -> Rung:
         """The rung this leg needs on a row it has seen: the verb's slot for *mode*."""
         if mode == "read":
-            assert self.needs.traverse is not None, "a read leg belongs to a verb with a traverse slot"
-            return self.needs.traverse
+            assert self.needs.passing is not None, "a read leg belongs to a verb with a passing slot"
+            return self.needs.passing
         if mode == "modify":
             return self.needs.primary
         assert self.needs.create is not None, "a creation belongs to a verb with a create slot"
@@ -906,7 +906,7 @@ class WriteGate:
         caller who may name but not revive a deleted row is denied, never
         told it is absent; a creation at it answers as the verb's own
         ladder does. An occupied, named target is judged at the leg's
-        slot: a read leg at the traverse rung, a creation at the create
+        slot: a read leg at the passing rung, a creation at the create
         rung, a change at the primary rung with the owner floor riding.
         A road directory passes only a leg whose slot is ``list``.
         """

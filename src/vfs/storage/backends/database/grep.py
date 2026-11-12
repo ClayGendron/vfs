@@ -48,7 +48,7 @@ per OR branch, so a wide-alternation union's fetch cost grows with
 its branch count; that width is deliberately uncapped (bulk unions —
 IOC lists, symbol sweeps — are a supported shape) and is bounded by
 the wall-clock deadline instead, consulted between branches. The scan
-tier's count, byte and metering laws are the ones glean's overlay reads
+tier's count, byte and metering laws are the ones search's overlay reads
 (``SCAN_TIER_BUDGET``, ``CONTENT_BYTE_BUDGET`` and ``stored_size`` in
 ``scope.py``); grep spends the count as one pool its index side draws
 from first. When the index side alone saturates it the scan overlay is

@@ -80,8 +80,8 @@ class RecorderStorage:
     async def grep(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("grep", kwargs, authority)
 
-    async def glean(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
-        return self._answer("glean", kwargs, authority)
+    async def search(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("search", kwargs, authority)
 
     async def write(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("write", kwargs, authority)
@@ -107,8 +107,8 @@ class RecorderStorage:
     async def copy(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("copy", kwargs, authority)
 
-    async def graph(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
-        return self._answer("graph", kwargs, authority)
+    async def traverse(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
+        return self._answer("traverse", kwargs, authority)
 
     async def mkedge(self, *, authority: Authority | None = None, **kwargs: Any) -> Result:
         return self._answer("mkedge", kwargs, authority)
@@ -471,7 +471,7 @@ def _fan(fs: AsyncVirtualFileSystem, op: str, **kwargs: Any):
     calls = {
         "glob": lambda: fs.glob("*.py", **kwargs),
         "grep": lambda: fs.grep("needle", **kwargs),
-        "glean": lambda: fs.glean("how does auth work", **kwargs),
+        "search": lambda: fs.search("how does auth work", **kwargs),
     }
     return calls[op]()
 

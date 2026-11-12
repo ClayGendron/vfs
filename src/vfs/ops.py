@@ -16,7 +16,7 @@ its own copy. A verb's class decides how it is routed and gated:
 string into these ops and re-enters through their public methods, so every
 gate fires on the real verb. It is a front door, not an op.
 
-The ``graph`` op routes and reports as one verb: traversal only —
+The ``traverse`` op routes and reports as one verb: traversal only —
 ``outbound`` follows each edge from its source to its target, ``inbound``
 follows it back, ``neighborhood`` ignores the arrow, and ``meet`` returns
 the subgraph that joins the seeds — with its own hierarchical rendering.
@@ -50,8 +50,8 @@ Op = Literal[
     "tree",
     "glob",
     "grep",
-    "glean",
-    "graph",
+    "search",
+    "traverse",
     "run",
     "grant",
     "revoke",
@@ -78,7 +78,7 @@ class TwoPathOperation(NamedTuple):
 
 
 READ_OPS: Final[frozenset[Op]] = frozenset(
-    {"read", "stat", "ls", "tree", "glob", "grep", "glean", "graph"},
+    {"read", "stat", "ls", "tree", "glob", "grep", "search", "traverse"},
 )
 """Ops that only observe — they must keep working on read-only mounts."""
 
@@ -129,13 +129,13 @@ class Needs(NamedTuple):
 
     ``primary`` judges an occupied target (the owner floor riding for a
     mutation); ``create`` judges a fresh name and an occupied name a
-    creation lands on; ``traverse`` judges a row the verb reads without
+    creation lands on; ``passing`` judges a row the verb reads without
     changing — a copy's source, an edge's target, a walk's node.
     """
 
     primary: Rung
     create: Rung | None = None
-    traverse: Rung | None = None
+    passing: Rung | None = None
 
 
 VERB_RUNGS: Final[dict[Op, Needs]] = {
@@ -145,17 +145,17 @@ VERB_RUNGS: Final[dict[Op, Needs]] = {
     "tree": Needs("list"),
     "glob": Needs("list"),
     "grep": Needs("read"),
-    "glean": Needs("read"),
-    "graph": Needs("read", traverse="list"),
+    "search": Needs("read"),
+    "traverse": Needs("read", passing="list"),
     "write": Needs("contribute", create="add"),
     "edit": Needs("contribute"),
     "mkdir": Needs("contribute", create="add"),
     "delete": Needs("read_write"),
     "restore": Needs("read_write"),
     "move": Needs("read_write", create="add"),
-    "copy": Needs("read_write", create="add", traverse="read"),
-    "mkedge": Needs("contribute", traverse="list"),
-    "rmedge": Needs("contribute", traverse="list"),
+    "copy": Needs("read_write", create="add", passing="read"),
+    "mkedge": Needs("contribute", passing="list"),
+    "rmedge": Needs("contribute", passing="list"),
     "grant": Needs("read_write"),
     "revoke": Needs("read_write"),
     "posture": Needs("read_write"),
@@ -168,7 +168,7 @@ VERB_RUNGS: Final[dict[Op, Needs]] = {
 """The one verb-to-rung table: every gate and view reads its rung here and carries no literal.
 
 The listing verbs name rows at ``list`` and show each row's fields by
-the rung the caller holds on it; ``grep`` and ``glean`` search only what
+the rung the caller holds on it; ``grep`` and ``search`` search only what
 the caller reads; a walk passes nodes at ``list`` and returns contents
 at ``read``. A mutation judges a fresh name at ``create`` and an
 occupied row at ``primary`` or by the owner floor; a tombstoned row a
@@ -184,11 +184,11 @@ GrepOutputMode = Literal["lines", "files", "count"]
 
 # The graph walk's defaults, carried by the verb's signature and by the
 # params table alike: the gate never substitutes a schema default.
-GRAPH_DEPTH_DEFAULT: Final = 1
-GRAPH_LIMIT_DEFAULT: Final = 128
+TRAVERSE_DEPTH_DEFAULT: Final = 1
+TRAVERSE_LIMIT_DEFAULT: Final = 128
 
-GRAPH_METHODS: Final[frozenset[str]] = frozenset({"inbound", "outbound", "neighborhood", "meet"})
-"""Graph traversal vocabulary — the only methods the ``graph`` verb accepts.
+TRAVERSE_METHODS: Final[frozenset[str]] = frozenset({"inbound", "outbound", "neighborhood", "meet"})
+"""Graph traversal vocabulary — the only methods the ``traverse`` verb accepts.
 
 ``outbound`` follows each edge from its ``source`` to its ``target`` (the
 direction ``mkedge`` was given), ``inbound`` follows it from ``target``

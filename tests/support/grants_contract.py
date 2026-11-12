@@ -35,10 +35,10 @@ from vfs.storage import (
     ResolvedPair,
     StorageBackend,
     SupportsClose,
-    SupportsGlean,
     SupportsGrants,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsRankedSearch,
     SupportsReindex,
 )
 from vfs.storage.backends.database import rights
@@ -81,7 +81,7 @@ ANONYMOUS_CALLS: dict[str, Callable[[GrantsBackend], Awaitable[Result]]] = {
     "ls": lambda s: s.ls(path=Path("/"), authority=ANON),
     "glob": lambda s: s.glob(patterns=("/**",), authority=ANON),
     "grep": lambda s: s.grep(pattern="x", allow_scan=True, authority=ANON),
-    "glean": lambda s: s.glean(query="x", authority=ANON),
+    "search": lambda s: s.search(query="x", authority=ANON),
     "write": lambda s: s.write(entries=[Entry(path=Path("/n.md"), content="x")], authority=ANON),
     "edit": lambda s: s.edit(path=Path("/pub/readme.md"), edits=[EditOperation("a", "b")], authority=ANON),
     "delete": lambda s: s.delete(path=Path("/pub/readme.md"), authority=ANON),
@@ -98,7 +98,13 @@ ANONYMOUS_CALLS: dict[str, Callable[[GrantsBackend], Awaitable[Result]]] = {
 
 
 class GrantsBackend(
-    StorageBackend, SupportsPatternSearch, SupportsGlean, SupportsMutation, SupportsGrants, SupportsClose, Protocol
+    StorageBackend,
+    SupportsPatternSearch,
+    SupportsRankedSearch,
+    SupportsMutation,
+    SupportsGrants,
+    SupportsClose,
+    Protocol,
 ):
     """The verb surface the grants suite calls."""
 
@@ -310,7 +316,7 @@ class GrantsContract:
         result = await storage.read(path=Path("/pub/readme.md"), authority=ANON)
         assert _kind(result) == ErrorKind.unauthenticated
 
-    @needs("grant", "write", "mkedge", "glean", "sweep", "move", "copy", "restore")
+    @needs("grant", "write", "mkedge", "search", "sweep", "move", "copy", "restore")
     @pytest.mark.parametrize("verb", sorted(ANONYMOUS_CALLS))
     async def test_anonymous_is_unauthenticated_on_every_verb_of_a_private_mount(
         self, storage: GrantsBackend, verb: str
@@ -1193,39 +1199,39 @@ class GrantsContract:
     # Ranked search — hidden rows never move a visible score
     # ------------------------------------------------------------------
 
-    @needs("grant", "glean")
+    @needs("grant", "search")
     async def test_a_hidden_only_term_never_reaches_the_statistics_export(self, storage: GrantsBackend) -> None:
         await _world(storage)
         hidden = Entry(path=Path("/hr/secret.md"), content="quarantine lantern")
         assert (await storage.write(entries=[hidden], authority=SYSTEM)).success is True
         assert (await _reindexer(storage).reindex()).success is True
-        result = await storage.glean(query="quarantine lantern", authority=BOB)
+        result = await storage.search(query="quarantine lantern", authority=BOB)
         assert result.success is True
         exported = (result.model_extra or {})["lexical_stats"]
         assert "quarantine" not in exported["terms"]
         assert exported["terms"]["lantern"]["df"] == 1
-        whole = await storage.glean(query="quarantine lantern", authority=SYSTEM)
+        whole = await storage.search(query="quarantine lantern", authority=SYSTEM)
         assert "quarantine" in (whole.model_extra or {})["lexical_stats"]["terms"]
 
-    @needs("grant", "glean", "write")
+    @needs("grant", "search", "write")
     async def test_a_hidden_row_written_after_the_index_never_reaches_the_overlay(self, storage: GrantsBackend) -> None:
         # Write-then-search is the agent's path: a fresh hidden row is served
         # from the overlay, and must neither rank nor count for bob.
         await _world(storage)
         assert (await _reindexer(storage).reindex()).success is True
-        before = await storage.glean(query="quarantine lantern", authority=BOB)
+        before = await storage.search(query="quarantine lantern", authority=BOB)
         fresh = Entry(path=Path("/hr/fresh.md"), content="quarantine lantern")
         assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
-        after = await storage.glean(query="quarantine lantern", authority=BOB)
+        after = await storage.search(query="quarantine lantern", authority=BOB)
         assert after.success is True and "/hr/fresh.md" not in _paths(after)
         assert _paths(after) == _paths(before)
         stats_before, stats_after = [(r.model_extra or {})["lexical_stats"] for r in (before, after)]
         assert stats_after["n_docs"] == stats_before["n_docs"]
         assert "quarantine" not in stats_after["terms"]
         assert stats_after["terms"]["lantern"]["df"] == stats_before["terms"]["lantern"]["df"]
-        assert "/hr/fresh.md" in _paths(await storage.glean(query="quarantine", authority=SYSTEM))
+        assert "/hr/fresh.md" in _paths(await storage.search(query="quarantine", authority=SYSTEM))
 
-    @needs("grant", "glean")
+    @needs("grant", "search")
     async def test_a_sibling_that_sorts_inside_a_grant_never_counts_in_the_statistics(
         self, storage: GrantsBackend
     ) -> None:
@@ -1234,17 +1240,17 @@ class GrantsContract:
         await _world(storage)
         reindexer = _reindexer(storage)
         assert (await reindexer.reindex()).success is True
-        before = _n_docs(await storage.glean(query="lantern", authority=BOB))
+        before = _n_docs(await storage.search(query="lantern", authority=BOB))
         outside = [Entry(path=Path(p), content="lantern") for p in ("/pub-x/a.md", "/pub0.md")]
         assert (await storage.write(entries=outside, parents=True, authority=SYSTEM)).success is True
         assert (await reindexer.reindex()).success is True
-        assert _n_docs(await storage.glean(query="lantern", authority=BOB)) == before
+        assert _n_docs(await storage.search(query="lantern", authority=BOB)) == before
         inside = Entry(path=Path("/pub/deep0.md"), content="lantern")
         assert (await storage.write(entries=[inside], authority=SYSTEM)).success is True
         assert (await reindexer.reindex()).success is True
-        assert _n_docs(await storage.glean(query="lantern", authority=BOB)) == before + 1
+        assert _n_docs(await storage.search(query="lantern", authority=BOB)) == before + 1
 
-    @needs("grant", "glean")
+    @needs("grant", "search")
     async def test_a_hidden_partition_never_moves_a_visible_score(self, storage: GrantsBackend) -> None:
         # The planted-ladder attack: bob plants a probe word beside words of
         # known counts; if hidden rows counted in the statistics, hidden
@@ -1254,13 +1260,13 @@ class GrantsContract:
         assert (await storage.write(entries=_ladder(), parents=True, authority=SYSTEM)).success is True
         assert (await reindexer.reindex()).success is True
         query = " ".join((PROBE, *(f"zqx{k}vk" for k in LADDER)))
-        bob_before = _scores(await storage.glean(query=query, limit=20, authority=BOB))
-        whole_before = _scores(await storage.glean(query=query, limit=20, authority=SYSTEM))
+        bob_before = _scores(await storage.search(query=query, limit=20, authority=BOB))
+        whole_before = _scores(await storage.search(query=query, limit=20, authority=SYSTEM))
         mentions = [Entry(path=Path(f"/hr/leak/{n}.md"), content=f"about {PROBE}") for n in range(3)]
         assert (await storage.write(entries=mentions, parents=True, authority=SYSTEM)).success is True
         assert (await reindexer.reindex()).success is True
-        bob_after = _scores(await storage.glean(query=query, limit=20, authority=BOB))
-        whole_after = _scores(await storage.glean(query=query, limit=20, authority=SYSTEM))
+        bob_after = _scores(await storage.search(query=query, limit=20, authority=BOB))
+        whole_after = _scores(await storage.search(query=query, limit=20, authority=SYSTEM))
         assert bob_after == bob_before
         assert all(not path.startswith("/hr/") for path, _ in bob_after)
         # The control: a whole-mount caller counts the new rows, so its scores move.
@@ -1394,7 +1400,7 @@ def _scores(result: Result) -> list[tuple[str, float | None]]:
 
 
 def _n_docs(result: Result) -> int:
-    """The visible document count a partial caller's glean exported."""
+    """The visible document count a partial caller's search exported."""
     assert result.success is True, result.errors
     n_docs = (result.model_extra or {})["lexical_stats"]["n_docs"]
     assert isinstance(n_docs, int)

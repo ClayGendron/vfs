@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 
 from vfs.authority import Authority
-from vfs.ops import GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, GRAPH_METHODS, CaseMode, GrepOutputMode
+from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, TRAVERSE_METHODS, CaseMode, GrepOutputMode
 from vfs.paths import ObjectKind, validate_segment
 from vfs.storage.grants import GRANTABLE_LEVELS, Posture
 
@@ -290,7 +290,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _COLUMNS,
         _AUTHORITY,
     ),
-    "glean": (
+    "search": (
         ParamSpec("query", "str", required=True, doc="ranked-search text"),
         ParamSpec(
             "limit",
@@ -310,12 +310,12 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
         _COLUMNS,
         _AUTHORITY,
     ),
-    "graph": (
+    "traverse": (
         ParamSpec(
             "method",
             "str",
             required=True,
-            choices=GRAPH_METHODS,
+            choices=TRAVERSE_METHODS,
             doc="inbound, outbound or neighborhood from the seeds; meet joins them",
         ),
         ParamSpec("path", "path", doc="the seed node"),
@@ -325,7 +325,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             "int",
             minimum=1,
             maximum=INT_CEILING,
-            default=GRAPH_DEPTH_DEFAULT,
+            default=TRAVERSE_DEPTH_DEFAULT,
             doc="hops from the nearest seed; None walks until nothing new is reached",
         ),
         ParamSpec(
@@ -348,7 +348,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             "int",
             minimum=1,
             maximum=INT_CEILING,
-            default=GRAPH_LIMIT_DEFAULT,
+            default=TRAVERSE_LIMIT_DEFAULT,
             doc="node rows to return, nearest first; None returns every row",
         ),
         _COLUMNS,
@@ -406,7 +406,7 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
     "ls": (_ONE_TARGET,),
     "delete": (_ONE_TARGET,),
     "restore": (_ONE_TARGET,),
-    "graph": (_ONE_TARGET,),
+    "traverse": (_ONE_TARGET,),
     "edit": (
         _ONE_TARGET,
         ShapeRule(
@@ -458,11 +458,11 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
             msg_both="grep takes paths or observations, not both",
         ),
     ),
-    "glean": (
+    "search": (
         ShapeRule(
             (("paths",), ("observations",)),
             exactly_one=False,
-            msg_both="glean takes paths or observations, not both",
+            msg_both="search takes paths or observations, not both",
         ),
     ),
     "mkedge": (
@@ -484,9 +484,9 @@ RULES: Final[dict[Op, tuple[ShapeRule, ...]]] = {
 }
 
 VALUE_RULES: Final[dict[Op, tuple[ValueRule, ...]]] = {
-    "graph": (
-        OnlyWith("minimal", True, "method", "meet", "graph minimal=True is lawful only with method='meet'"),
-        Disjoint("edge_types", "edge_types_not", "graph edge_types and edge_types_not must not share a type"),
+    "traverse": (
+        OnlyWith("minimal", True, "method", "meet", "traverse minimal=True is lawful only with method='meet'"),
+        Disjoint("edge_types", "edge_types_not", "traverse edge_types and edge_types_not must not share a type"),
         Segments("edge_types"),
         Segments("edge_types_not"),
     ),

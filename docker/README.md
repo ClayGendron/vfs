@@ -90,7 +90,7 @@ the regression pin for the byte-denominated path limits and the
 `VARBINARY` key columns (ADR 024). MySQL community is not a supported
 dialect (no distance function, no extension vfs can install — ADR
 059): a `mysql://` URL is served the core verbs on the generic floor
-and withholds `glean`. With MariaDB and Oracle both tuned, no real
+and withholds `search`. With MariaDB and Oracle both tuned, no real
 engine resolves to the GENERIC floor anymore — the floor is pinned
 synthetically in the dialect tests, and its budget numbers remain
 borrowed from Oracle's real caps (ORA-01795's 1,000-element `IN`-list).

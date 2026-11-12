@@ -1,6 +1,6 @@
 """Query-biased previews for ranked hits — the excerpt an agent reads before the file.
 
-A glean hit already carries its chunk text. The preview is cut from that
+A search hit already carries its chunk text. The preview is cut from that
 text alone: one fold of the chunk, a score per line from the query's
 terms, the best short window of lines, the terms bolded in Markdown, and
 hard caps on characters so a result page stays token-bounded by

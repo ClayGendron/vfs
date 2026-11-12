@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, Protocol, get_args, runtime_checkable
 
-from vfs.ops import GRANT_OPS, GRAPH_DEPTH_DEFAULT, GRAPH_LIMIT_DEFAULT, MUTATING_OPS
+from vfs.ops import GRANT_OPS, MUTATING_OPS, TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -75,15 +75,15 @@ if TYPE_CHECKING:
 # which verbs it serves (that is ``capabilities()``). An absent key means
 # the trait is not declared, never a default.
 TraitKey = Literal[
-    "grep_tier", "grep_staleness", "glean_signals", "glean_staleness", "version_encoding", "durability", "arbitration"
+    "grep_tier", "grep_staleness", "search_signals", "search_staleness", "version_encoding", "durability", "arbitration"
 ]
 TRAIT_KEYS: Final[frozenset[str]] = frozenset(get_args(TraitKey))
 
 TRAIT_VALUES: Final[dict[str, frozenset[str]]] = {
     "grep_tier": frozenset({"indexed", "scan"}),
     "grep_staleness": frozenset({"none", "overlay"}),
-    "glean_signals": frozenset({"lexical", "vector", "hybrid"}),
-    "glean_staleness": frozenset({"none", "overlay"}),
+    "search_signals": frozenset({"lexical", "vector", "hybrid"}),
+    "search_staleness": frozenset({"none", "overlay"}),
     "version_encoding": frozenset({"per_entry64"}),
     "durability": frozenset({"full", "relaxed"}),
     "arbitration": frozenset({"upsert", "catch_retry"}),
@@ -163,7 +163,7 @@ class SupportsRead(Protocol):
 class SupportsMutation(Protocol):
     """The mutation family: exactly the write-gated ops (``MUTATING_OPS``).
 
-    ``mkedge`` and ``rmedge`` live here, not in the graph family — they
+    ``mkedge`` and ``rmedge`` live here, not in the traversal family — they
     write the edge projection, and the family boundary follows the
     write gate.
     """
@@ -265,7 +265,7 @@ class SupportsPatternSearch(Protocol):
     router's probe.  Glob returns rows matching
     **any** pattern, one refusable pattern refusing the call whole;
     grep's ``pattern`` is content-only and never a path.  Split from
-    ranked search (:class:`SupportsGlean`) because a lexical scan needs
+    ranked search (:class:`SupportsRankedSearch`) because a lexical scan needs
     no retrieval index: partial backends routinely have one without the
     other.
     """
@@ -308,7 +308,7 @@ class SupportsPatternSearch(Protocol):
 
 
 @runtime_checkable
-class SupportsGlean(Protocol):
+class SupportsRankedSearch(Protocol):
     """The ranked-search family: text in, one fused ranked list out.
 
     Its own family because it rides on retrieval indexes (vector, lexical,
@@ -321,7 +321,7 @@ class SupportsGlean(Protocol):
     coordinates.
     """
 
-    async def glean(
+    async def search(
         self,
         *,
         query: str,
@@ -338,20 +338,20 @@ class SupportsGlean(Protocol):
 
 
 @runtime_checkable
-class SupportsGraph(Protocol):
-    """The graph family: read-side traversals over the backend's own subgraph."""
+class SupportsTraversal(Protocol):
+    """The traversal family: read-side traversals over the backend's own subgraph."""
 
-    async def graph(
+    async def traverse(
         self,
         *,
         method: str,
         path: Path | None = None,
         observations: list[Observation] | None = None,
-        depth: int | None = GRAPH_DEPTH_DEFAULT,
+        depth: int | None = TRAVERSE_DEPTH_DEFAULT,
         edge_types: tuple[str, ...] = (),
         edge_types_not: tuple[str, ...] = (),
         minimal: bool = False,
-        limit: int | None = GRAPH_LIMIT_DEFAULT,
+        limit: int | None = TRAVERSE_LIMIT_DEFAULT,
         columns: frozenset[str] | None = None,
         authority: Authority | None = None,
     ) -> Result: ...
@@ -476,8 +476,8 @@ class SupportsReindex(Protocol):
 
     The contract: idempotent-cheap when nothing is dirty, safe under
     rivals (concurrent calls converge; a loser classifies ``conflict``),
-    and never required for correctness — between builds the search verbs
-    must serve correct results from their scan tier.
+    and never required for correctness — between builds ``grep`` and
+    ``search`` must serve correct results from their scan tier.
     """
 
     async def reindex(self) -> Result: ...
@@ -523,9 +523,9 @@ def targets_of(
 _FAMILY_OPS: Final[tuple[tuple[type, frozenset[Op]], ...]] = (
     (SupportsRead, frozenset({"read", "stat", "ls", "tree"})),
     (SupportsPatternSearch, frozenset({"glob", "grep"})),
-    (SupportsGlean, frozenset({"glean"})),
+    (SupportsRankedSearch, frozenset({"search"})),
     (SupportsMutation, MUTATING_OPS),
-    (SupportsGraph, frozenset({"graph"})),
+    (SupportsTraversal, frozenset({"traverse"})),
     (SupportsRun, frozenset({"run"})),
     (SupportsGrants, GRANT_OPS),
 )

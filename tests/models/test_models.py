@@ -738,7 +738,7 @@ class TestObservation:
         obs = Observation(path=Path("/src/auth.py"), matches=[chunk_hit, grep_hit], score=0.91)
         assert obs.content is None  # the file's own content was never fetched
         assert obs.matches is not None
-        assert obs.matches[0].match is None  # whole-region hit (glean chunk)
+        assert obs.matches[0].match is None  # whole-region hit (search chunk)
         assert obs.matches[0].score == 0.91  # per-region relevance
         assert obs.matches[1].match == 5  # grep hit line
         assert obs.matches[1].score is None  # grep rows carry no relevance

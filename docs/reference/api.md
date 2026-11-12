@@ -27,9 +27,9 @@ Every verb takes a keyword-only `authority: Authority | None = None`. An explici
 
 `vfs.UnauthenticatedError` is the exception class `exception_for_kind` maps to `unauthenticated`, raised by `raise_if_failed` on a result carrying that kind.
 
-## graph
+## traverse
 
-`AsyncVirtualFileSystem.graph(method, path=None, observations=None, *, depth=1, edge_types=(), edge_types_not=(), minimal=False, limit=128, columns=None, authority=None) -> Result`
+`AsyncVirtualFileSystem.traverse(method, path=None, observations=None, *, depth=1, edge_types=(), edge_types_not=(), minimal=False, limit=128, columns=None, authority=None) -> Result`
 
 A frontier walk over the edges `mkedge` authored, one seed path or many seed observations (an observation contributes its `path`). Each hop is one chunked statement per frontier chunk; the application keeps the visited set, so `depth=None` ends when nothing new is reached.
 
@@ -60,12 +60,12 @@ await fs.write(path="/src/config.py", content="")
 await fs.mkedge(source="/src/app.py", target="/src/db.py", edge_type="imports")
 await fs.mkedge(source="/src/db.py", target="/src/config.py", edge_type="imports")
 
-result = await fs.graph("inbound", "/src/config.py")
+result = await fs.traverse("inbound", "/src/config.py")
 nodes = [o for o in result.observations if o.edge_target is None]
 edges = [o for o in result.observations if o.edge_target is not None]
 assert [(str(o.path), o.depth) for o in nodes] == [("/src/config.py", 0), ("/src/db.py", 1)]
 assert [(str(o.path), str(o.edge_target), o.edge_type) for o in edges] == [("/src/db.py", "/src/config.py", "imports")]
 
-whole = await fs.graph("inbound", "/src/config.py", depth=None)
+whole = await fs.traverse("inbound", "/src/config.py", depth=None)
 assert len([o for o in whole.observations if o.edge_target is None]) == 3
 ```

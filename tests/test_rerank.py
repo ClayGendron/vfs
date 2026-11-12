@@ -31,7 +31,7 @@ def _row(path: str, score: float, *texts: str, content_hash: str | None = None) 
 
 
 def _answer(mount: str, rows: list[Observation], **extras: Any) -> tuple[Path, Result]:
-    return Path(mount), Result(ops=("glean",), observations=rows, **extras).with_mount(mount)
+    return Path(mount), Result(ops=("search",), observations=rows, **extras).with_mount(mount)
 
 
 def _stats(n_docs: int, avg_dl: float, **df: int) -> dict[str, object]:

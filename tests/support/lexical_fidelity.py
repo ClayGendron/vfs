@@ -1,7 +1,7 @@
 """The lexical index's fidelity referee, shared by the sqlite and engine legs.
 
 Scores a fixture corpus two ways — through the stored blocks and the
-active engine's scorer, the way the glean leg will, and a pure-Python
+active engine's scorer, the way the search leg will, and a pure-Python
 BM25 written here from the tokens alone — and requires the same top-10
 and a Kendall τ of 1.0 over every scored chunk. The pure scorer is
 deliberately independent of the builder: it recomputes tf, dl, df, N,

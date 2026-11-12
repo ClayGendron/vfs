@@ -43,19 +43,19 @@ FALLBACK_PROJECTION: tuple[str, ...] = ("path",)
 """Default projection for an op this client does not recognize."""
 
 # Per-op default projection. Users override with ``--output`` on the
-# CLI or the ``projection=`` kwarg on ``to_str``. Grep and glean default
+# CLI or the ``projection=`` kwarg on ``to_str``. Grep and search default
 # to ``matches`` rather than ``content``: each Match carries its own
 # region text and preview, so the file is never fetched for the render.
 _DEFAULT_PROJECTION: dict[str, tuple[str, ...]] = {
     "grep": ("path", "matches"),
     "glob": ("path",),
-    "glean": ("path", "score", "matches"),
+    "search": ("path", "score", "matches"),
     "ls": ("path",),
     "tree": ("path",),
     "read": ("content",),
     "stat": ("path", "kind", "size_bytes", "updated_at"),
     "run": ("path",),
-    "graph": ("path", "kind", "depth"),
+    "traverse": ("path", "kind", "depth"),
 }
 for _fn in ACTION_FUNCTIONS | GRANT_FUNCTIONS:
     _DEFAULT_PROJECTION[_fn] = ("path",)

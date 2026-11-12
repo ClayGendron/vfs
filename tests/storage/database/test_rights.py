@@ -299,8 +299,8 @@ async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hin
         pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",), range_hints=hints)
         monkeypatch.setattr(EngineHost, "profile", property(lambda _self: pinned))
         bob = Authority.of(Principal("bob"))
-        gleaned = await storage.glean(query="lantern", authority=bob)
-        assert gleaned.success is True and len(gleaned.observations) == 3
+        searched = await storage.search(query="lantern", authority=bob)
+        assert searched.success is True and len(searched.observations) == 3
         assert {str(o.path) for o in (await storage.tree(path=Path("/"), authority=bob)).observations} >= {"/d"}
     finally:
         await storage.close()
@@ -710,7 +710,7 @@ async def _answers(storage: InMemoryStorage, authority: Authority) -> list[objec
     globbed = await storage.glob(patterns=("/**",), authority=authority)
     walked = await storage.tree(path=Path("/"), authority=authority)
     grepped = await storage.grep(pattern="lantern", output_mode="files", allow_scan=True, authority=authority)
-    gleaned = await storage.glean(query="lantern", limit=30, authority=authority)
+    searched = await storage.search(query="lantern", limit=30, authority=authority)
     read = await storage.read(path=Path("/f03/doc.md"), authority=authority)
     hidden = await storage.stat(path=Path("/hidden/0.md"), authority=authority)
     return [
@@ -718,7 +718,7 @@ async def _answers(storage: InMemoryStorage, authority: Authority) -> list[objec
         sorted(str(o.path) for o in globbed.observations),
         sorted(str(o.path) for o in walked.observations),
         sorted(str(o.path) for o in grepped.observations),
-        [(str(o.path), o.score) for o in gleaned.observations],
+        [(str(o.path), o.score) for o in searched.observations],
         read.one().content,
         [error.kind for error in hidden.errors],
     ]
@@ -1006,13 +1006,13 @@ class TestPostureGate:
 
         monkeypatch.setattr(backend_module, stage, expired_read if stage == "posture_rows_for_chunks" else expired)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
-        for verb in ("glob", "grep", "glean"):
+        for verb in ("glob", "grep", "search"):
             if verb == "glob":
                 result = await storage.glob(patterns=(), scope=scope, authority=Authority.anonymous())
             elif verb == "grep":
                 result = await storage.grep(pattern="needle", scope=scope, authority=Authority.anonymous())
             else:
-                result = await storage.glean(query="needle", scope=scope, authority=Authority.anonymous())
+                result = await storage.search(query="needle", scope=scope, authority=Authority.anonymous())
             [error] = result.errors
             assert (error.kind, error.message.endswith(_WALL_DETAIL)) == (ErrorKind.unauthenticated, True), verb
         assert read_body.calls == []

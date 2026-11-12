@@ -56,12 +56,12 @@ from vfs.storage import (
     ResolvedPair,
     StorageBackend,
     SupportsClose,
-    SupportsGlean,
-    SupportsGraph,
     SupportsMutation,
     SupportsPatternSearch,
+    SupportsRankedSearch,
     SupportsReindex,
     SupportsTraits,
+    SupportsTraversal,
 )
 from vfs.storage.replace import EditOperation
 
@@ -70,7 +70,13 @@ needs = pytest.mark.needs
 
 
 class ConformanceBackend(
-    StorageBackend, SupportsPatternSearch, SupportsGlean, SupportsGraph, SupportsMutation, SupportsClose, Protocol
+    StorageBackend,
+    SupportsPatternSearch,
+    SupportsRankedSearch,
+    SupportsTraversal,
+    SupportsMutation,
+    SupportsClose,
+    Protocol,
 ):
     """The full verb surface the suite may call; capability gating trims per test."""
 
@@ -1349,9 +1355,9 @@ class StorageContract:
             assert (await reindexer.reindex()).success is True
 
     @pytest.mark.slow
-    @needs("write", "delete", "glean")
-    async def test_scope_channel_gleans_as_composition(self, storage: ConformanceBackend) -> None:
-        """Guards: glean's rungs reading the scope channel differently from the
+    @needs("write", "delete", "search")
+    async def test_scope_channel_searches_as_composition(self, storage: ConformanceBackend) -> None:
+        """Guards: search's rungs reading the scope channel differently from the
         composed globs."""
         _skip_a_proven_engine(self)
         await _scope_world(storage)
@@ -1359,8 +1365,8 @@ class StorageContract:
         for _world in ("overlay", "indexed"):
             for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
                 globs, globs_not = case.composed()
-                composed = await storage.glean(query="needle", limit=100, globs=globs, globs_not=globs_not)
-                channel = await storage.glean(query="needle", limit=100, scope=case.channel())
+                composed = await storage.search(query="needle", limit=100, globs=globs, globs_not=globs_not)
+                channel = await storage.search(query="needle", limit=100, scope=case.channel())
                 assert _scoped_paths(channel) == _scoped_paths(composed), case
             assert (await reindexer.reindex()).success is True
 
@@ -1399,7 +1405,7 @@ class StorageContract:
         assert not any(FACTS_CONJUNCT.search(statement) for statement in plan_store.statements)
 
     @pytest.mark.slow
-    @needs("write", "glean")
+    @needs("write", "search")
     def test_the_chunk_page_plan_is_the_engines_own(self, plan_store: PlanReadings) -> None:
         """Guards: an engine's chunk pages taking the other shape than its profile declares — SQLite joining
         the entries, a per-page filter build, or Postgres taking the probe its JIT turns into a regression.
@@ -1824,81 +1830,83 @@ class StorageContract:
         assert [o.path for o in (await storage.grep(pattern="marker_after_4k")).observations] == ["/app.log"]
 
     # ------------------------------------------------------------------
-    # glean — ranked search, one row per entry, in both worlds
+    # search — ranked search, one row per entry, in both worlds
     # ------------------------------------------------------------------
 
-    @needs("glean")
-    async def test_glean_rejects_a_query_with_no_term_as_invalid(self, storage: ConformanceBackend) -> None:
-        result = await storage.glean(query="... !!!")
+    @needs("search")
+    async def test_search_rejects_a_query_with_no_term_as_invalid(self, storage: ConformanceBackend) -> None:
+        result = await storage.search(query="... !!!")
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.invalid
 
-    @needs("write", "glean")
-    async def test_glean_answers_entries_not_chunks_in_both_worlds(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_answers_entries_not_chunks_in_both_worlds(self, storage: ConformanceBackend) -> None:
         # A long body splits into several chunks at reindex; the answer
         # is still one row per entry, its best chunks riding as matches.
         reindexer = _reindexer_of(storage)
         sections = "".join(f"## Section {i}\n\nlantern words in section {i}, plain prose.\n\n" for i in range(120))
         await storage.write(entries=[Entry(path=Path("/long.md"), content=sections)])
         await storage.write(entries=[Entry(path=Path("/short.md"), content="one lantern here\n")])
-        overlay = await storage.glean(query="lantern")
+        overlay = await storage.search(query="lantern")
         assert sorted(str(o.path) for o in overlay.observations) == ["/long.md", "/short.md"]
         assert (await reindexer.reindex()).success is True
-        indexed = await storage.glean(query="lantern")
+        indexed = await storage.search(query="lantern")
         assert sorted(str(o.path) for o in indexed.observations) == ["/long.md", "/short.md"]
         [long_row] = [o for o in indexed.observations if str(o.path) == "/long.md"]
         bounds = [(m.start, m.end) for m in long_row.matches or []]
         assert len(bounds) >= 2 and len(set(bounds)) == len(bounds)
 
-    @needs("write", "glean")
-    async def test_glean_scores_are_unit_scaled_best_first_with_path_ties(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_scores_are_unit_scaled_best_first_with_path_ties(self, storage: ConformanceBackend) -> None:
         reindexer = _reindexer_of(storage)
         files = {"/b.txt": "same words here", "/a.txt": "same words here", "/c.txt": "same words, same words"}
         await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
         for _world in ("overlay", "indexed"):
-            result = await storage.glean(query="same words")
+            result = await storage.search(query="same words")
             assert result.success is True, result.errors
             scores = [o.score for o in result.observations]
             assert scores[0] == 1.0 and scores == sorted(scores, reverse=True)
             assert [str(o.path) for o in result.observations][1:] == ["/a.txt", "/b.txt"]  # the tie breaks by path
             assert (await reindexer.reindex()).success is True
 
-    @needs("write", "glean")
-    async def test_glean_scope_is_exact_in_both_worlds(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_scope_is_exact_in_both_worlds(self, storage: ConformanceBackend) -> None:
         # Whichever rung the ladder takes, a scoped call never returns an
         # out-of-scope entry, and the gates compose as grep's do.
         reindexer = _reindexer_of(storage)
         for path in ("/src/a.txt", "/src/deep/c.txt", "/docs/b.txt", "/src/d.md"):
             await storage.write(entries=[Entry(path=Path(path), content="needle body")], parents=True)
         for _world in ("overlay", "indexed"):
-            scoped = await storage.glean(query="needle", globs=("src/**",))
+            scoped = await storage.search(query="needle", globs=("src/**",))
             assert sorted(str(o.path) for o in scoped.observations) == ["/src/a.txt", "/src/d.md", "/src/deep/c.txt"]
-            narrowed = await storage.glean(query="needle", globs=("src/**",), ext=("txt",), globs_not=("src/deep/**",))
+            narrowed = await storage.search(query="needle", globs=("src/**",), ext=("txt",), globs_not=("src/deep/**",))
             assert [str(o.path) for o in narrowed.observations] == ["/src/a.txt"]
-            excluded = await storage.glean(query="needle", ext_not=("txt",))
+            excluded = await storage.search(query="needle", ext_not=("txt",))
             assert [str(o.path) for o in excluded.observations] == ["/src/d.md"]
             assert (await reindexer.reindex()).success is True
 
-    @needs("write", "glean")
-    async def test_glean_piped_observations_admit_their_own_paths(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_piped_observations_admit_their_own_paths(self, storage: ConformanceBackend) -> None:
         reindexer = _reindexer_of(storage)
         for path in ("/a.txt", "/b.txt", "/c.txt"):
             await storage.write(entries=[Entry(path=Path(path), content="needle body")])
         assert (await reindexer.reindex()).success is True
-        rows = (await storage.glean(query="needle")).observations
+        rows = (await storage.search(query="needle")).observations
         assert len(rows) == 3
-        piped = await storage.glean(query="needle", observations=rows[:2])
+        piped = await storage.search(query="needle", observations=rows[:2])
         assert sorted(str(o.path) for o in piped.observations) == sorted(str(o.path) for o in rows[:2])
 
-    @needs("write", "glean")
-    async def test_glean_renders_rank_ordered_bolded_previews_in_both_worlds(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_renders_rank_ordered_bolded_previews_in_both_worlds(
+        self, storage: ConformanceBackend
+    ) -> None:
         # /z outranks /a; the text never renders path-sorted, and every
         # region carries a preview cut inside its own bounds.
         reindexer = _reindexer_of(storage)
         files = {"/z.txt": "beacon beacon beacon\n", "/a.txt": "one beacon, then filler words here\n"}
         await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
         for _world in ("overlay", "indexed"):
-            result = await storage.glean(query="beacon")
+            result = await storage.search(query="beacon")
             assert [str(o.path) for o in result.observations] == ["/z.txt", "/a.txt"]
             text = result.to_str()
             assert text.index("/z.txt") < text.index("/a.txt")
@@ -1910,31 +1918,31 @@ class StorageContract:
                     assert match.start <= match.preview_start <= match.preview_end <= match.end
             assert (await reindexer.reindex()).success is True
 
-    @needs("write", "glean")
-    async def test_glean_serves_the_dirty_set_and_partitions_the_index(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_serves_the_dirty_set_and_partitions_the_index(self, storage: ConformanceBackend) -> None:
         # A row written since the last build answers from its live text;
         # a rewritten row's stale postings never answer for it.
         reindexer = _reindexer_of(storage)
         await storage.write(entries=[Entry(path=Path("/idx.txt"), content="first magnet")])
         assert (await reindexer.reindex()).success is True
         await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="late magnet")])
-        found = await storage.glean(query="magnet")
+        found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
         assert (await reindexer.reindex()).success is True
-        found = await storage.glean(query="magnet")
+        found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
         assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
-        stale = await storage.glean(query="magnet")
+        stale = await storage.search(query="magnet")
         assert [str(o.path) for o in stale.observations] == ["/fresh.txt"]
-        fresh = await storage.glean(query="lodestone")
+        fresh = await storage.search(query="lodestone")
         # The rewritten row answers first from its fresh text; a hybrid
         # mount's vector leg may rank other neighbours below it.
         assert str(fresh.observations[0].path) == "/idx.txt" and fresh.observations[0].score == 1.0
         assert "/fresh.txt" not in [str(o.path) for o in fresh.observations if o.score == 1.0]
 
     @pytest.mark.slow
-    @needs("write", "grep", "glean")
+    @needs("write", "grep", "search")
     async def test_both_verbs_see_the_six_hundred_and_first_dirty_row(self, storage: ConformanceBackend) -> None:
         """Guards: either verb cutting the path-ordered dirty rows at a count of its own below the shared one,
         so a file written past the old overlay count is grepped but not ranked."""
@@ -1946,41 +1954,41 @@ class StorageContract:
         assert (await storage.write(entries=dirty, parents=True)).success is True
         grepped = await storage.grep(pattern="zymurgy")
         assert [str(o.path) for o in grepped.observations] == ["/dirty/last.txt"]
-        gleaned = await storage.glean(query="zymurgy")
+        searched = await storage.search(query="zymurgy")
         # The sentinel ranks first from its live text; a hybrid mount's vector leg may rank neighbours below it.
-        assert str(gleaned.observations[0].path) == "/dirty/last.txt" and gleaned.observations[0].score == 1.0
-        assert not any("overlay budget" in e.message for e in gleaned.errors), gleaned.errors
+        assert str(searched.observations[0].path) == "/dirty/last.txt" and searched.observations[0].score == 1.0
+        assert not any("overlay budget" in e.message for e in searched.errors), searched.errors
 
-    @needs("write", "glean")
-    async def test_default_glean_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_default_search_hides_the_meta_subtree(self, storage: ConformanceBackend) -> None:
         await storage.write(entries=[Entry(path=Path("/real.txt"), content="needle in the open")])
         await storage.write(entries=[Entry(path=Path("/.vfs/state/s.txt"), content="needle hidden")], parents=True)
-        default = await storage.glean(query="needle")
+        default = await storage.search(query="needle")
         assert [str(o.path) for o in default.observations] == ["/real.txt"]
-        literal = await storage.glean(query="needle", globs=("/.vfs/state/**",))
+        literal = await storage.search(query="needle", globs=("/.vfs/state/**",))
         assert [str(o.path) for o in literal.observations] == ["/.vfs/state/s.txt"]
-        wildcard = await storage.glean(query="needle", globs=("/.v*/state/**",))
+        wildcard = await storage.search(query="needle", globs=("/.v*/state/**",))
         assert wildcard.success is True
         assert wildcard.observations == []
 
-    @needs("write", "glean", "delete")
-    async def test_trash_scoped_glean_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search", "delete")
+    async def test_trash_scoped_search_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
         reindexer = _reindexer_of(storage)
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
         assert (await reindexer.reindex()).success is True
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
         assert (await reindexer.reindex()).success is True
-        assert (await storage.glean(query="buried")).observations == []  # default scope hides the deleted
-        found = await storage.glean(query="buried", globs=("/.vfs/trash/gone.txt",))
+        assert (await storage.search(query="buried")).observations == []  # default scope hides the deleted
+        found = await storage.search(query="buried", globs=("/.vfs/trash/gone.txt",))
         assert [str(o.path) for o in found.observations] == ["/gone.txt"]
 
-    @needs("write", "glean")
-    async def test_glean_accepts_an_authority_and_applies_no_grant(self, storage: ConformanceBackend) -> None:
+    @needs("write", "search")
+    async def test_search_accepts_an_authority_and_applies_no_grant(self, storage: ConformanceBackend) -> None:
         # Row-level grants are a later concern of their own; today every
         # read on a backend accepts an ``authority`` and scopes nothing by it.
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        anonymous = await storage.glean(query="needle")
-        named = await storage.glean(query="needle", authority=Authority.of(Principal("someone-else")))
+        anonymous = await storage.search(query="needle")
+        named = await storage.search(query="needle", authority=Authority.of(Principal("someone-else")))
         assert named.success is True
         assert [str(o.path) for o in named.observations] == [str(o.path) for o in anonymous.observations] == ["/a.txt"]
 
@@ -2094,10 +2102,10 @@ class StorageContract:
         assert [o.status for o in gone.observations] == ["deleted"] and gone.errors == []
 
     # ------------------------------------------------------------------
-    # graph — the frontier walk and the meeting subgraph
+    # traverse — the frontier walk and the meeting subgraph
     # ------------------------------------------------------------------
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     @pytest.mark.parametrize("method", ["outbound", "inbound", "neighborhood"])
     @pytest.mark.parametrize("depth", [1, 2, 3, None])
     async def test_a_walk_equals_the_breadth_first_oracle(
@@ -2105,71 +2113,71 @@ class StorageContract:
     ) -> None:
         # Mutant: swap the membership column (near for far) in the hop.
         await _graph_world(storage)
-        result = await storage.graph(method=method, path=Path("/g/a.md"), depth=depth, limit=None)
+        result = await storage.traverse(method=method, path=Path("/g/a.md"), depth=depth, limit=None)
         assert result.success is True, result.errors
         expected = graph_walk.walk(GRAPH_EDGES, ["/g/a.md"], method, depth)
         assert _nodes(result) == expected
         assert _edges(result) == graph_walk.induced(GRAPH_EDGES, expected)
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_a_joint_walk_is_the_union_of_its_seeds_at_the_minimum_depth(
         self, storage: ConformanceBackend
     ) -> None:
         # Mutant: let a later hop overwrite a visited node's depth.
         await _graph_world(storage)
         seeds = [Observation(path=Path("/g/a.md")), Observation(path=Path("/g/d.md"))]
-        joint = await storage.graph(method="outbound", observations=seeds, depth=2, limit=None)
+        joint = await storage.traverse(method="outbound", observations=seeds, depth=2, limit=None)
         assert joint.success is True, joint.errors
         expected = graph_walk.walk(GRAPH_EDGES, ["/g/a.md", "/g/d.md"], "outbound", 2)
         assert _nodes(joint) == expected
         assert _nodes(joint)["/g/d.md"] == 0  # a seed reached from another seed stays a seed
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_seeds_that_do_not_resolve_start_no_hop(self, storage: ConformanceBackend) -> None:
         # An unknown seed, a tombstoned seed and a seed under /.vfs: the
         # first two yield nothing, the third is invalid at the backend.
         await _graph_world(storage)
-        assert (await storage.graph(method="outbound", path=Path("/g/nope.md"))).observations == []
+        assert (await storage.traverse(method="outbound", path=Path("/g/nope.md"))).observations == []
         assert (await storage.delete(path=Path("/g/a.md"))).success is True
-        assert (await storage.graph(method="outbound", path=Path("/g/a.md"))).observations == []
-        meta = await storage.graph(method="outbound", path=Path("/.vfs/trash/g/a.md"))
+        assert (await storage.traverse(method="outbound", path=Path("/g/a.md"))).observations == []
+        meta = await storage.traverse(method="outbound", path=Path("/.vfs/trash/g/a.md"))
         assert meta.success is False and meta.errors[0].kind == ErrorKind.invalid
 
-    @needs("write", "mkedge", "graph", "delete", "restore")
+    @needs("write", "mkedge", "traverse", "delete", "restore")
     async def test_a_tombstoned_node_cuts_the_walk_until_it_is_restored(self, storage: ConformanceBackend) -> None:
         # Mutant: drop the liveness term from the hop statement.
         await _graph_world(storage)
         assert (await storage.delete(path=Path("/g/b.md"))).success is True
-        cut = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        cut = await storage.traverse(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
         live = [edge for edge in GRAPH_EDGES if "/g/b.md" not in edge[:2]]
         assert _nodes(cut) == graph_walk.walk(live, ["/g/a.md"], "outbound", None)
         assert (await storage.restore(path=Path("/g/b.md"))).success is True
-        back = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        back = await storage.traverse(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
         assert _nodes(back) == graph_walk.walk(GRAPH_EDGES, ["/g/a.md"], "outbound", None)
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_the_type_filters_select_the_edges_a_walk_follows(self, storage: ConformanceBackend) -> None:
         # The default follows every authored type and never fs; naming fs
         # walks the tree; naming one type follows and returns nothing else.
         await _graph_world(storage)
-        authored = await storage.graph(method="outbound", path=Path("/g"), depth=None, limit=None)
+        authored = await storage.traverse(method="outbound", path=Path("/g"), depth=None, limit=None)
         assert _nodes(authored) == {"/g": 0}
-        tree = await storage.graph(method="outbound", path=Path("/g"), edge_types=("fs",), depth=None, limit=None)
+        tree = await storage.traverse(method="outbound", path=Path("/g"), edge_types=("fs",), depth=None, limit=None)
         assert set(_nodes(tree)) == {"/g", *GRAPH_FILES}
         assert {edge[2] for edge in _edges(tree)} == {"fs"}
-        refs = await storage.graph(method="outbound", path=Path("/g/b.md"), edge_types=("refs",), limit=None)
+        refs = await storage.traverse(method="outbound", path=Path("/g/b.md"), edge_types=("refs",), limit=None)
         assert _nodes(refs) == {"/g/b.md": 0, "/g/f.md": 1}
         assert _edges(refs) == {("/g/b.md", "/g/f.md", "refs")}
-        skipped = await storage.graph(method="outbound", path=Path("/g/b.md"), edge_types_not=("refs",), limit=None)
+        skipped = await storage.traverse(method="outbound", path=Path("/g/b.md"), edge_types_not=("refs",), limit=None)
         assert _nodes(skipped) == {"/g/b.md": 0, "/g/d.md": 1}
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_every_selected_edge_among_the_returned_nodes_is_a_row(self, storage: ConformanceBackend) -> None:
         # Mutant: restrict the induced fetch's far endpoint to the last level.
         # At depth 2 from a: the cross-link c→b, the last level's d→e, and
         # the back-edge d→a all appear although no hop from d ever ran.
         await _graph_world(storage)
-        result = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=2, limit=None)
+        result = await storage.traverse(method="outbound", path=Path("/g/a.md"), depth=2, limit=None)
         edges = _edges(result)
         assert {("/g/c.md", "/g/b.md", "imports"), ("/g/d.md", "/g/a.md", "imports")} <= edges
         assert ("/g/d.md", "/g/e.md", "imports") not in edges  # e is beyond depth 2
@@ -2180,12 +2188,12 @@ class StorageContract:
         assert [o.depth for o in nodes] == sorted(o.depth or 0 for o in nodes)
         assert all(o.populated >= {"path", "kind", "depth"} for o in nodes)
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_limit_keeps_the_nearest_nodes_and_no_dangling_edge(self, storage: ConformanceBackend) -> None:
         # Mutant: drop the early stop — the walk would still cut, but the
         # warning's nodes_found would count the whole reach.
         await _graph_world(storage)
-        result = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=2)
+        result = await storage.traverse(method="outbound", path=Path("/g/a.md"), depth=None, limit=2)
         assert result.success is True
         assert _nodes(result) == {"/g/a.md": 0, "/g/b.md": 1}
         shown = set(_nodes(result))
@@ -2193,55 +2201,55 @@ class StorageContract:
         (warning,) = result.errors
         assert warning.kind == ErrorKind.truncated and warning.severity == Severity.warning
         assert warning.data == {"limit": 2, "nodes_found": 3, "depth_reached": 1}
-        whole = await storage.graph(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
+        whole = await storage.traverse(method="outbound", path=Path("/g/a.md"), depth=None, limit=None)
         assert whole.errors == [] and len(_nodes(whole)) == len(GRAPH_FILES)
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_meet_keeps_the_shared_dependency(self, storage: ConformanceBackend) -> None:
         # Mutant: directed stripping — it deletes x in a → x ← b.
         await _meet_world(storage)
-        met = await storage.graph(method="meet", observations=_seeds("/m/a.md", "/m/b.md"), depth=None, limit=None)
+        met = await storage.traverse(method="meet", observations=_seeds("/m/a.md", "/m/b.md"), depth=None, limit=None)
         assert met.success is True and met.errors == []
         assert _nodes(met) == {"/m/a.md": 0, "/m/b.md": 0, "/m/x.md": 1}
         assert _edges(met) == {("/m/a.md", "/m/x.md", "uses"), ("/m/b.md", "/m/x.md", "uses")}
-        chain = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=None, limit=None)
+        chain = await storage.traverse(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=None, limit=None)
         assert _nodes(chain) == {"/m/c.md": 0, "/m/d.md": 1, "/m/e.md": 1, "/m/f.md": 0}
         assert len(_edges(chain)) == 3
         for seeds in (("/m/a.md", "/m/b.md"), ("/m/c.md", "/m/f.md")):
-            found = await storage.graph(method="meet", observations=_seeds(*seeds), depth=None, limit=None)
+            found = await storage.traverse(method="meet", observations=_seeds(*seeds), depth=None, limit=None)
             assert _nodes(found) == meeting_subgraph.meet(MEET_EDGES, list(seeds)).depths
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_meet_reports_the_components_when_the_seeds_do_not_join(self, storage: ConformanceBackend) -> None:
         # One resolved seed is itself; two seeds with no route stay apart
         # and the info record says so; a spent radius names its depth.
         # Mutant: skip the boundary hop — c and f, three edges apart, would
         # no longer meet at depth 1.
         await _meet_world(storage)
-        alone = await storage.graph(method="meet", path=Path("/m/a.md"), depth=None)
+        alone = await storage.traverse(method="meet", path=Path("/m/a.md"), depth=None)
         assert _nodes(alone) == {"/m/a.md": 0} and alone.errors == []
-        apart = await storage.graph(method="meet", observations=_seeds("/m/a.md", "/m/lone.md"), depth=None)
+        apart = await storage.traverse(method="meet", observations=_seeds("/m/a.md", "/m/lone.md"), depth=None)
         (record,) = apart.errors
         assert record.kind == ErrorKind.not_found and record.severity == Severity.info
         assert record.data == {"seeds": 2, "components": 2}
         assert _nodes(apart) == {"/m/a.md": 0, "/m/lone.md": 0} and _edges(apart) == set()
-        spent = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=1)
+        spent = await storage.traverse(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=1)
         (record,) = spent.errors
         assert record.data == {"seeds": 2, "components": 2, "depth": 1}
-        boundary = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=1)
+        boundary = await storage.traverse(method="meet", observations=_seeds("/m/c.md", "/m/f.md"), depth=1)
         assert boundary.errors == [] and _nodes(boundary) == {"/m/c.md": 0, "/m/d.md": 1, "/m/e.md": 1, "/m/f.md": 0}
-        joined = await storage.graph(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=2)
+        joined = await storage.traverse(method="meet", observations=_seeds("/m/c.md", "/m/g.md"), depth=2)
         assert joined.errors == [] and set(_nodes(joined)) == {"/m/c.md", "/m/d.md", "/m/e.md", "/m/f.md", "/m/g.md"}
 
-    @needs("write", "mkedge", "graph")
+    @needs("write", "mkedge", "traverse")
     async def test_minimal_meet_drops_a_route_the_seeds_do_not_need(self, storage: ConformanceBackend) -> None:
         # p→u→q and p→v→q both join p and q; s→v makes v a bridge too, so
         # both routes are kept and u is a non-articulation node: minimal
         # drops it. Mutant: skip the articulation check.
         await _meet_world(storage)
         seeds = _seeds("/m/p.md", "/m/q.md", "/m/s.md")
-        both = await storage.graph(method="meet", observations=seeds, depth=None, limit=None)
-        minimal = await storage.graph(method="meet", observations=seeds, depth=None, limit=None, minimal=True)
+        both = await storage.traverse(method="meet", observations=seeds, depth=None, limit=None)
+        minimal = await storage.traverse(method="meet", observations=seeds, depth=None, limit=None, minimal=True)
         assert set(_nodes(both)) == {"/m/p.md", "/m/q.md", "/m/s.md", "/m/u.md", "/m/v.md"}
         assert set(_nodes(minimal)) == {"/m/p.md", "/m/q.md", "/m/s.md", "/m/v.md"}
         assert _edges(minimal) == {
@@ -2382,7 +2390,7 @@ class StorageContract:
                 assert o.version is not None
                 assert {"path", "kind", "version"} <= o.populated
 
-    @needs("write", "stat", "read", "ls", "glob", "grep", "glean")
+    @needs("write", "stat", "read", "ls", "glob", "grep", "search")
     async def test_the_mask_never_omits_a_populated_field(self, storage: ConformanceBackend) -> None:
         # The mask may exceed the non-null fields (fetched-but-null is
         # legal) but must never omit a field that carries a value. The
@@ -2395,8 +2403,8 @@ class StorageContract:
             await storage.glob(patterns=("*.txt",), columns=frozenset({"path"})),
             await storage.grep(pattern="needle"),
             await storage.grep(pattern="needle", columns=frozenset({"path"})),
-            await storage.glean(query="needle"),
-            await storage.glean(query="needle", columns=frozenset({"path"})),
+            await storage.search(query="needle"),
+            await storage.search(query="needle", columns=frozenset({"path"})),
         )
         for result in pattern_results:
             assert result.observations, result.errors  # a vacuous row referees nothing
@@ -2864,15 +2872,15 @@ class StorageContract:
         assert traits.get("grep_tier") in ("indexed", "scan")
         assert traits.get("grep_staleness") in ("overlay", "none")
 
-    @needs("glean")
-    async def test_glean_traits_are_declared(self, storage: ConformanceBackend) -> None:
-        # A glean-capable backend names its signals and its freshness
+    @needs("search")
+    async def test_search_traits_are_declared(self, storage: ConformanceBackend) -> None:
+        # A search-capable backend names its signals and its freshness
         # posture; popping either must fail here, never skip silently.
         if not isinstance(storage, SupportsTraits):
-            pytest.fail("a glean-capable backend must declare its glean traits")
+            pytest.fail("a search-capable backend must declare its search traits")
         traits = storage.traits()
-        assert traits.get("glean_signals") in TRAIT_VALUES["glean_signals"]
-        assert traits.get("glean_staleness") in TRAIT_VALUES["glean_staleness"]
+        assert traits.get("search_signals") in TRAIT_VALUES["search_signals"]
+        assert traits.get("search_staleness") in TRAIT_VALUES["search_staleness"]
 
     # ------------------------------------------------------------------
     # Bytes bodies — a binary is an entry whose text is a rendering

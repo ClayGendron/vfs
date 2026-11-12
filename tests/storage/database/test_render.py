@@ -134,8 +134,8 @@ class TestRenderings:
         assert row.render_source_hash == row.content_hash
         assert row.render_generation == storage.renderers.generation(PDF)
         assert row.render_units is not None and '"kind":"page"' in row.render_units
-        glean = await storage.glean(query="quokka")
-        assert [str(row.path) for row in glean.observations] == ["/docs/q.pdf"]
+        search = await storage.search(query="quokka")
+        assert [str(row.path) for row in search.observations] == ["/docs/q.pdf"]
         await storage.close()
 
     async def test_the_rendering_is_chunked_in_the_same_run(self, tmp_path) -> None:
@@ -363,7 +363,7 @@ class TestStatuses:
         # The landing reset the chunk stamp the pending row had earned, so the text split in the same run.
         assert (row.chunked, row.indexable) == (True, True) and row.chunk_source_hash == row.content_hash
         assert await _chunk_count(storage, "/q.pdf") >= 1
-        assert [str(r.path) for r in (await storage.glean(query="quokka")).observations] == ["/q.pdf"]
+        assert [str(r.path) for r in (await storage.search(query="quokka")).observations] == ["/q.pdf"]
         await storage.close()
 
     async def test_a_raising_renderer_is_failed(self, tmp_path) -> None:

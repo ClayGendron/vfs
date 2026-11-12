@@ -171,7 +171,7 @@ class TestTombstone:
         assert [str(o.path) for o in (await storage.glob(patterns=("/d/*.txt",))).observations] == []
         found = await storage.grep(pattern="needle")
         assert [str(o.path) for o in found.observations] == ["/d/sub/b.txt"]
-        found = await storage.glean(query="needle")
+        found = await storage.search(query="needle")
         assert [str(o.path) for o in found.observations] == ["/d/sub/b.txt"]
         # A row the caller sends with the batch form answers the same way.
         batch = await storage.read(observations=[Observation(path=target), Observation(path=Path("/keep.txt"))])
@@ -806,7 +806,7 @@ class TestTrashView:
         assert [str(o.path) for o in listed.observations] == ["/.vfs/docs", "/.vfs/trash"]
         await storage.close()
 
-    async def test_tree_glob_grep_and_glean_under_the_head_match_row_paths(self, tmp_path) -> None:
+    async def test_tree_glob_grep_and_search_under_the_head_match_row_paths(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _tree(storage)
         assert (await storage.reindex()).success is True
@@ -823,9 +823,9 @@ class TestTrashView:
         grepped = await storage.grep(pattern="needle", globs=("/.vfs/trash/**",))
         assert [str(o.path) for o in grepped.observations] == ["/d/a.txt", "/d/sub/b.txt"]
         assert (await storage.grep(pattern="needle")).observations == []
-        gleaned = await storage.glean(query="needle", globs=("/.vfs/trash/**",))
-        assert {str(o.path) for o in gleaned.observations} == {"/d/a.txt", "/d/sub/b.txt"}
-        assert (await storage.glean(query="needle")).observations == []
+        searched = await storage.search(query="needle", globs=("/.vfs/trash/**",))
+        assert {str(o.path) for o in searched.observations} == {"/d/a.txt", "/d/sub/b.txt"}
+        assert (await storage.search(query="needle")).observations == []
         await storage.close()
 
     async def test_point_reads_through_the_head_address_the_tombstoned_row(self, tmp_path) -> None:
@@ -871,7 +871,7 @@ class TestTrashView:
         await _tree(storage)
         mixed = await storage.grep(pattern="needle", globs=("/.vfs/trash/**", "/d/**"))
         assert mixed.success is False and mixed.errors[0].kind == ErrorKind.invalid
-        mixed = await storage.glean(query="needle", globs=("/.vfs/trash/**", "/d/**"))
+        mixed = await storage.search(query="needle", globs=("/.vfs/trash/**", "/d/**"))
         assert mixed.success is False and mixed.errors[0].kind == ErrorKind.invalid
         await storage.close()
 
@@ -885,10 +885,10 @@ class TestTrashView:
         attempts = [
             storage.glob(patterns=("/.vfs/trash",)),
             storage.grep(pattern="needle", globs=("/.vfs/trash",)),
-            storage.glean(query="needle", globs=("/.vfs/trash",)),
+            storage.search(query="needle", globs=("/.vfs/trash",)),
             storage.glob(patterns=("/**",), globs_not=("/.vfs/trash",)),
             storage.grep(pattern="needle", globs_not=("/.vfs/trash",)),
-            storage.glean(query="needle", globs_not=("/.vfs/trash",)),
+            storage.search(query="needle", globs_not=("/.vfs/trash",)),
         ]
         for attempt in attempts:
             result = await attempt
@@ -919,10 +919,10 @@ class TestTrashView:
         assert [str(o.path) for o in grepped.observations] == ["/d/a.txt", "/d/sub/b.txt"]
         grepped = await storage.grep(pattern="needle", globs=("/.vfs/trash/**",), globs_not=("/.vfs/trash/d/sub/**",))
         assert [str(o.path) for o in grepped.observations] == ["/d/a.txt"]
-        gleaned = await storage.glean(query="needle", globs_not=("/.vfs/trash/notes/**",))
-        assert {str(o.path) for o in gleaned.observations} == {"/notes/c.txt"}
-        gleaned = await storage.glean(query="needle", globs=("/.vfs/trash/**",), globs_not=("/.vfs/trash/d/sub/**",))
-        assert {str(o.path) for o in gleaned.observations} == {"/d/a.txt"}
+        searched = await storage.search(query="needle", globs_not=("/.vfs/trash/notes/**",))
+        assert {str(o.path) for o in searched.observations} == {"/notes/c.txt"}
+        searched = await storage.search(query="needle", globs=("/.vfs/trash/**",), globs_not=("/.vfs/trash/d/sub/**",))
+        assert {str(o.path) for o in searched.observations} == {"/d/a.txt"}
         await storage.close()
 
     async def test_a_miss_inside_a_deleted_tree_names_the_deleted_boundary_for_every_verb(self, tmp_path) -> None:

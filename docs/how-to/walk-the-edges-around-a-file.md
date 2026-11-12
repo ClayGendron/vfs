@@ -27,7 +27,7 @@ await fs.mkedge(source="/docs/setup.md", target="/src/config.py", edge_type="men
 `inbound` follows each edge from its target back to its source. The default depth is one hop.
 
 ```python
-result = await fs.graph("inbound", "/src/config.py")
+result = await fs.traverse("inbound", "/src/config.py")
 nodes = [o for o in result.observations if o.edge_target is None]
 assert [str(o.path) for o in nodes] == ["/src/config.py", "/docs/setup.md", "/src/app.py", "/src/db.py"]
 assert [o.depth for o in nodes] == [0, 1, 1, 1]
@@ -49,7 +49,7 @@ assert {(str(o.path), o.edge_type) for o in edges} == {
 `outbound` follows the arrows forward. `depth=None` walks until nothing new is reached; the visited set bounds it.
 
 ```python
-result = await fs.graph("outbound", "/src/app.py", depth=None)
+result = await fs.traverse("outbound", "/src/app.py", depth=None)
 assert {str(o.path): o.depth for o in result.observations if o.edge_target is None} == {
     "/src/app.py": 0,
     "/src/db.py": 1,
@@ -62,10 +62,10 @@ assert {str(o.path): o.depth for o in result.observations if o.edge_target is No
 Name the types to follow, or the types to skip. The hierarchy's own `fs` edges are followed only when you name them.
 
 ```python
-only_mentions = await fs.graph("inbound", "/src/config.py", edge_types=("mentions",))
+only_mentions = await fs.traverse("inbound", "/src/config.py", edge_types=("mentions",))
 assert [str(o.path) for o in only_mentions.observations if o.edge_target is None] == ["/src/config.py", "/docs/setup.md"]
 
-subtree = await fs.graph("outbound", "/src", edge_types=("fs",), depth=None)
+subtree = await fs.traverse("outbound", "/src", edge_types=("fs",), depth=None)
 assert {str(o.path) for o in subtree.observations if o.edge_target is None} == {
     "/src", "/src/app.py", "/src/config.py", "/src/db.py",
 }
@@ -79,7 +79,7 @@ assert {str(o.path) for o in subtree.observations if o.edge_target is None} == {
 from vfs.models import Observation
 
 seeds = [Observation(path="/docs/setup.md"), Observation(path="/src/app.py")]
-joined = await fs.graph("meet", observations=seeds, depth=None)
+joined = await fs.traverse("meet", observations=seeds, depth=None)
 assert {str(o.path) for o in joined.observations if o.edge_target is None} == {
     "/docs/setup.md", "/src/app.py", "/src/config.py",
 }
@@ -94,7 +94,7 @@ When the seeds do not connect, the result carries an `info` record of kind `not_
 ```python
 from vfs.results import ErrorKind
 
-cut = await fs.graph("inbound", "/src/config.py", limit=2)
+cut = await fs.traverse("inbound", "/src/config.py", limit=2)
 assert len([o for o in cut.observations if o.edge_target is None]) == 2
 assert cut.errors[0].kind == ErrorKind.truncated
 assert cut.errors[0].data == {"limit": 2, "nodes_found": 4, "depth_reached": 1}
@@ -105,7 +105,7 @@ assert cut.errors[0].data == {"limit": 2, "nodes_found": 4, "depth_reached": 1}
 `str(result)` draws the walk as a tree: each node under the node that reached it, the edge type and arrow on the line, the depth in brackets, and every further edge marked where its source sits.
 
 ```python
-print(await fs.graph("outbound", "/src/app.py", depth=None))
+print(await fs.traverse("outbound", "/src/app.py", depth=None))
 ```
 
 A caller sees only the nodes its rights let it name; nothing is reached through a node it cannot. For the rights rules, read [Share a folder with grants](share-a-folder-with-grants.md).

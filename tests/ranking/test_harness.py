@@ -21,9 +21,9 @@ from sqlalchemy import func, select
 
 from tests.ranking.controls import uninformative_prior
 from tests.ranking.corpora import VFS_NATIVE, Corpus, beir, vfs_native
-from tests.ranking.driver import Loaded, Run, bm25_run, glean_run, load_corpus
+from tests.ranking.driver import Loaded, Run, bm25_run, load_corpus, search_run
 from tests.ranking.embedders import HASH_DIMENSION, PIN_SENTENCE, POTION_MODEL, potion_embed
-from tests.ranking.merge import halves, merged_glean_run, naive_score_sort, round_robin
+from tests.ranking.merge import halves, merged_search_run, naive_score_sort, round_robin
 from tests.ranking.metrics import METRICS, compare, evaluate
 from tests.ranking.pins import MERGE_MOUNTS, assert_merge_top10_pin, assert_top10_pin, rewriting
 from tests.storage.database.test_signals import ENGINE_LEGS
@@ -144,12 +144,12 @@ class TestBaseline:
         assert all(run[qid] for qid in run)  # every golden query finds something
         gate("vfs_native", "bm25", evaluate(golden.qrels, run))
 
-    async def test_glean_equals_the_bm25_baseline_on_vfs_native(self, golden_loaded: Loaded, golden: Corpus) -> None:
+    async def test_search_equals_the_bm25_baseline_on_vfs_native(self, golden_loaded: Loaded, golden: Corpus) -> None:
         loaded = golden_loaded
         baseline = evaluate(golden.qrels, await bm25_run(loaded))
-        arm = evaluate(golden.qrels, await glean_run(loaded))
+        arm = evaluate(golden.qrels, await search_run(loaded))
         assert_arms_agree(arm, baseline)
-        gate("vfs_native", "glean", arm)
+        gate("vfs_native", "search", arm)
 
     @pytest.mark.slow
     async def test_bm25_holds_the_gate_on_beir(self, beir_loaded: tuple[Loaded, Run]) -> None:
@@ -157,13 +157,13 @@ class TestBaseline:
         gate(loaded.corpus.name, "bm25", evaluate(loaded.corpus.qrels, run))
 
     @pytest.mark.slow
-    async def test_glean_equals_the_bm25_baseline_on_beir(self, beir_loaded: tuple[Loaded, Run]) -> None:
+    async def test_search_equals_the_bm25_baseline_on_beir(self, beir_loaded: tuple[Loaded, Run]) -> None:
         loaded, run = beir_loaded
         corpus = loaded.corpus
         baseline = evaluate(corpus.qrels, run)
-        arm = evaluate(corpus.qrels, await glean_run(loaded))
+        arm = evaluate(corpus.qrels, await search_run(loaded))
         assert_arms_agree(arm, baseline)
-        gate(corpus.name, "glean", arm)
+        gate(corpus.name, "search", arm)
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -258,7 +258,7 @@ class TestHybridArms:
             loaded = await load_corpus(storage, golden)
             for arm, ranker in arms.items():
                 storage.ranker = ranker  # the fusion is a query-time choice; the index is the same
-                gate("vfs_native", f"{arm}/{name}", evaluate(golden.qrels, await glean_run(loaded)))
+                gate("vfs_native", f"{arm}/{name}", evaluate(golden.qrels, await search_run(loaded)))
         finally:
             await storage.close()
 
@@ -284,8 +284,8 @@ class TestSignalArms:
             async with loaded.storage._host.session_factory() as session:
                 stmt = select(func.count()).select_from(edges).where(edges.c.provenance == "extracted")
                 extracted = (await session.execute(stmt)).scalar_one()
-            numbers = evaluate(golden.qrels, await glean_run(loaded))
-            answered = await loaded.storage.glean(query=next(iter(golden.queries.values())))
+            numbers = evaluate(golden.qrels, await search_run(loaded))
+            answered = await loaded.storage.search(query=next(iter(golden.queries.values())))
         finally:
             await storage.close()
         assert extracted > 100
@@ -298,8 +298,8 @@ class TestSignalArms:
         storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/shape.sqlite", ranker=ranker)
         try:
             loaded = await load_corpus(storage, golden)
-            numbers = evaluate(golden.qrels, await glean_run(loaded))
-            answered = await loaded.storage.glean(query=next(iter(golden.queries.values())))
+            numbers = evaluate(golden.qrels, await search_run(loaded))
+            answered = await loaded.storage.search(query=next(iter(golden.queries.values())))
         finally:
             await storage.close()
         assert answered.model_extra is not None and answered.model_extra["legs"]["signals"]["shape"]["applied"] is True
@@ -325,13 +325,13 @@ class TestArms:
         vfs = AsyncVirtualFileSystem()
         for loaded, mount in zip(mounts, MERGE_MOUNTS, strict=True):
             await vfs.add_mount(loaded.storage, mount, owned=False)
-        numbers = evaluate(golden.qrels, await merged_glean_run(vfs, golden, MERGE_MOUNTS))
+        numbers = evaluate(golden.qrels, await merged_search_run(vfs, golden, MERGE_MOUNTS))
         gate("vfs_native", "merge/rerank", numbers)
         floors = recorded()["vfs_native"]
         assert numbers["ndcg@10"] > max(
             floors["merge/naive_score_sort"]["ndcg@10"], floors["merge/round_robin"]["ndcg@10"]
         )
-        assert numbers["ndcg@10"] >= floors["glean"]["ndcg@10"] - 0.02
+        assert numbers["ndcg@10"] >= floors["search"]["ndcg@10"] - 0.02
 
     async def test_the_uninformative_prior_control_is_recorded(self, golden_loaded: Loaded, golden: Corpus) -> None:
         run = await bm25_run(golden_loaded)

@@ -69,7 +69,7 @@ def _row(path: str, score: float, text: str) -> Observation:
 
 
 def _mount(rows: list[Observation]) -> CannedStorage:
-    return CannedStorage({"glean": Result(ops=("glean",), observations=rows, lexical_stats=STATS, legs={"m": 1})})
+    return CannedStorage({"search": Result(ops=("search",), observations=rows, lexical_stats=STATS, legs={"m": 1})})
 
 
 def _loop_threads() -> list[threading.Thread]:
@@ -235,6 +235,18 @@ def test_the_constructors_and_the_context_managers_are_twins() -> None:
     assert callable(VirtualFileSystem.__enter__) and callable(VirtualFileSystem.__exit__)
 
 
+def test_every_face_spells_the_verbs_search_and_traverse() -> None:
+    # Mutant: leave an old method on one face, or answer under an old op name.
+    for face in (AsyncVirtualFileSystem, AsyncSession, VirtualFileSystem, Session):
+        assert callable(face.search) and callable(face.traverse), face.__name__
+        assert not hasattr(face, "glean") and not hasattr(face, "graph"), face.__name__
+    with VirtualFileSystem() as fs:
+        fs.add_mount(InMemoryStorage(), "/m")
+        assert fs.write(path="/m/a.md", content="a lantern").success is True
+        assert fs.search("lantern", paths=("/m",)).ops == ("search",)
+        assert fs.traverse("inbound", "/m/a.md").ops == ("traverse",)
+
+
 # ---------------------------------------------------------------------------
 # The deadlock guard
 # ---------------------------------------------------------------------------
@@ -248,7 +260,7 @@ def test_a_verb_from_the_loop_thread_is_refused_not_hung() -> None:
         stage.fs = fs
         fs.add_mount(_mount([_row("/l1", 0.2, "lease lease"), _row("/l2", 0.1, "nothing")]), "/low")
         fs.add_mount(_mount([_row("/h1", 0.9, "unrelated"), _row("/h2", 0.8, "a lease")]), "/high")
-        merged = fs.glean("lease")
+        merged = fs.search("lease")
     assert merged.success is True
     refusal = stage.seen[0]
     assert isinstance(refusal, Result)
@@ -265,7 +277,7 @@ def test_a_management_call_from_the_loop_thread_raises() -> None:
         stage.fs = fs
         fs.add_mount(_mount([_row("/l1", 0.2, "lease")]), "/low")
         fs.add_mount(_mount([_row("/h1", 0.9, "lease")]), "/high")
-        assert fs.glean("lease").success is True
+        assert fs.search("lease").success is True
         assert fs.mounts()[-1].path != "/late"
     raised = stage.seen[1]
     assert isinstance(raised, RuntimeError)
@@ -711,7 +723,7 @@ def test_the_own_loop_refusal_comes_before_the_warning() -> None:
         stage.fs = fs
         fs.add_mount(_mount([_row("/l1", 0.2, "lease")]), "/low")
         fs.add_mount(_mount([_row("/h1", 0.9, "lease")]), "/high")
-        assert fs.glean("lease").success is True
+        assert fs.search("lease").success is True
     refusal = stage.seen[0]
     assert isinstance(refusal, Result) and refusal.errors[0].kind is ErrorKind.invalid
     assert caught == []

@@ -39,7 +39,7 @@ class TestVocabulary:
 
     def test_is_known_function(self) -> None:
         assert is_known_function("grep")
-        assert is_known_function("glean")
+        assert is_known_function("search")
         assert not is_known_function("future_op")
 
 
@@ -113,4 +113,4 @@ class TestResolveProjection:
         assert resolve_projection(("all",), "glob", rows) == ("path",)
 
     def test_duplicates_drop_first_win(self) -> None:
-        assert resolve_projection(("score", "default"), "glean", []) == ("score", "path", "matches")
+        assert resolve_projection(("score", "default"), "search", []) == ("score", "path", "matches")

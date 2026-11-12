@@ -32,7 +32,7 @@ One line: this page turns "we are relatively close" into a checklist with a gate
 Each sentence is written to be true on the day `0.1.0` ships. Under each is what must land first.
 
 1. **vfs 0.1.0 is governed data access for AI agents, with the interface of a file system, over the SQL database you already run — SQLite, Postgres, SQL Server and Oracle, with MariaDB served as a second tier — where every read, search and write passes one gate that judges the caller's rights on every row it touches, and every tool call is gated at its entry. On the wire and inside a guest the gate is a wall. In process it is a convention your host code agrees to; the threat model says so.** *True today for files on all five engines: the gate, the ladder and row grants are built and green. True for tools when the program table and the `/.vfs` views land (domains F and G). The threat model is R8.*
-2. **Agents reach it as the interface they already know — `ls`, `cat`, `grep`, pipes, `for`, `if`, functions — from Python (sync or async), from a bash shell that speaks the whole language, from a Python or JavaScript program running inside vfs, or over MCP, with `glob`, `grep`, ranked `glean` and `graph` built in and scoped to what the caller may see.** *The search half is built. The sync facade (X1), the shell (F1–F7), the two guests (T5a, T5b) and `serve()` (M1–M2) are not.*
+2. **Agents reach it as the interface they already know — `ls`, `cat`, `grep`, pipes, `for`, `if`, functions — from Python (sync or async), from a bash shell that speaks the whole language, from a Python or JavaScript program running inside vfs, or over MCP, with `glob`, `grep`, ranked `search` and `traverse` built in and scoped to what the caller may see.** *The search half is built. The sync facade (X1), the shell (F1–F7), the two guests (T5a, T5b) and `serve()` (M1–M2) are not.*
 3. **Every body change is versioned and every delete is reversible. A session remembers what its agent read, so a write over a changed file is refused without the developer carrying a version. An action can be stopped before it happens and become a question a human answers — for vfs's own mutations, with a preview of what the world will look like if they say yes — and a run with several such questions picks up where it stopped, never from the top. One permission structure governs a file and a tool alike, and every call vfs makes is a row in the database you already run: who, what, how many rows, how long.** *Trash and restore are built. Version rows exist for replaced bodies; nothing reads them back yet (K8). The session's memory is K10. The stop, the preview, the durable run and the resume are domain B; the action log they stand on is H0. "A file and a tool alike" is I3.*
 
 ### 1.2 Who it is for
@@ -92,7 +92,7 @@ Spec 166 defines the lane. This section says what each gate waits for. An **alph
 | 1 | Public kernel API | **Built** as 25 async verbs behind one gate (`base.py:2835–3088`; `tests/test_ops.py:246` pins `ALL_OPS`). **None** of ADR 087's arguments exist: no cursor, no `range=`, no `if_version=`, no `replace=`, no request key, no `versions`. All three ADR 087 probes still reproduce on SQLite: twenty concurrent appends keep one line; a body changed by raw SQL reads as success; a replayed `move` is a bare `not_found` with no data. |
 | 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. `cancelled` and `timeout` are declared kinds with no producer in `src/`. No run ledger exists; spec 169c's `/.vfs/run` record is per process by design. |
 | 2 | SQLite, Postgres, MSSQL, Oracle | **Built**, plus MariaDB and a generic floor (`dialects.py:389–561`). All four engine legs green together on 2026-10-15 (`ac5c515`). On 2026-10-28 the MSSQL leg is red at its `apt` step (run 40689014566; the tests never ran), so the five `fix(storage)` and one `perf(base)` commits of 2026-10-24 have no SQL Server evidence. No migration story: a format mismatch refuses "re-provision". |
-| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `reindex` (`backend.py:554–687`, `glean.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
+| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `reindex` (`backend.py:554–687`, `search.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
 | 4 | Three tool kinds | **Missing**. `run` is a routed verb no storage serves. Specs 169/170 drafted. "MCP servers authenticating as the user" is undecided; spec 170 §3.1 pins the opposite (one host credential per server). |
 | 5 | Sync calls, Jupyter, ETL | **Missing** sync facade. `asyncio.run` fails inside a running loop (reproduced). A 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06). A 10,000-row `write` lands in 35–49 statements on SQLite depending on whether the parent exists and how the hook counts. |
 | 6 | Serve vfs as MCP | **Missing**. Spec 171 drafted (verbs as tools + one `cli` tool); spec 149 (token → `Authority`) a seed. No `[project.scripts]` entry; spec 171 decision 7 says "no `vfs serve`". |
@@ -210,7 +210,7 @@ Counts to keep in view: 31 active specs (4 built but not archived, 3 overtaken);
 
 *Story.* As a software developer, I want the session my agent works in to remember the version of every file it read, so that a later `write` or `edit` through that session is refused if the file changed underneath it, without my code carrying `if_version=` from the read to the write; as an agent, I want "read, think, write" to be safe by default. *Why.* Clay's request of 2026-10-28. K2 gives the kernel the precondition; today the caller must remember the version between two calls. The host loop is the one place that saw both calls, and the largest client cache is a model's context window, which no server can invalidate (ADR 087 pin 6). A `Session` already binds one authority to one conversation and holds no connection; it is the right owner of a small, bounded memory of what the conversation observed. A developer who uses sessions gets the guard for free; a developer who calls the router directly keeps today's behaviour. Precedent: eve's read stamp, Anthropic's `content_sha256` precondition, MongoDB's `IfMatch`, and the read-before-edit rule every coding agent enforces in its own loop. *The rule, in plain words.* Every result a session hands back that names a path and a version leaves a *stamp* in the session: the path's `entry_id`, `version` and `content_hash`. When the same session later writes, edits, moves or deletes that path and the caller gave no precondition of its own, the session fills in `if_version=` from the stamp. If the row moved on, the kernel answers `vfs.conflict` and writes nothing, exactly as K2 does for an explicit version. A successful mutation refreshes the stamp from its own result, so a session reads its own writes. An explicit `if_version=` always wins. A path the session never read writes unguarded by default (D50), or is refused when the session was opened `strict=True`. The memory is bounded by a declared constant; the stamps come off results the session already returned, so the guard costs no statement and no connection. *Depends on.* K2 (the precondition), K3 (the hash on every row). F3 (`Session.cli` shares the stamps, so `sed -i` and `cp` over a read file are guarded without the shell carrying versions) and X1 (the synchronous `Session` shares the shape) consume it. *Acceptance.*
 1. `s = fs.session(alice)`; `s.read("/a")`; bob writes `/a` through a second session; `s.write(path="/a", content=…)` returns `vfs.conflict` with `data["version"]` equal to bob's version and zero mutation statements; the same call through `fs.write(..., authority=alice)` with no session succeeds; on SQLite and on each engine leg.
-2. `s.read("/a")` then `s.write("/a")` twice succeeds both times (the stamp follows the write); `s.edit` likewise; a stamp is refreshed by `read`, `stat`, `ls`, `tree`, `glob`, `grep` and `glean` rows that carry `version` (one parametrized case per read verb) and never by a row without one.
+2. `s.read("/a")` then `s.write("/a")` twice succeeds both times (the stamp follows the write); `s.edit` likewise; a stamp is refreshed by `read`, `stat`, `ls`, `tree`, `glob`, `grep` and `search` rows that carry `version` (one parametrized case per read verb) and never by a row without one.
 3. An explicit `if_version=` on a stamped path reaches storage unchanged (spied); a 10,000-entry `s.write(entries=)` carries `if_versions=` for exactly the stamped paths and issues the same statements as K2's batch pin.
 4. A path never read in the session writes unguarded by default (D50); `fs.session(alice, strict=True)` refuses it `vfs.invalid` naming the read-before-write rule with zero mutation statements; under `strict=True`, `delete` and `move` need a stamp on the source and `copy` needs none.
 5. Bounded memory: `SESSION_STAMPS` (lean 4,096) is a declared constant; the 4,097th stamped path evicts the least recently touched one (evictions counted) and an evicted path is unstamped; each stamp is at most `STAMP_BYTES` (declared) and the test asserts the table's size in entries and bytes, never a clock; `Session.close()` drops the stamps.
@@ -434,13 +434,13 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 | Piece | State |
 |---|---|
-| Five tuned profiles + the generic floor; every op on all five; the floor withholds `glean` only | built (AGENTS.md, architecture 01, the glossary and spec 171 still say "`glean` and `graph`") |
+| Five tuned profiles + the generic floor; every op on all five; the floor withholds `search` only | built (spec 171 still says the floor withholds the walking verb too) |
 | Every `IN` list chunked by `membership()` | built (nine raw `.in_()` sites, all bounded) |
 | Four engine legs in CI (`test-dialects.yml`) | built; MSSQL leg red on 2026-10-28 at the `apt` step |
 | Schema lifecycle | refuse-and-re-provision only; `SCHEMA_FORMAT_VERSION = 23` vs ADR 020's "stays 1" |
 | `CREATE SCHEMA` for host apps, bulk path by driver, privilege refusals classified | missing (spec 157 draft) |
 | `install_extensions` | built on the storage; not reachable from the router |
-| 10k count pins | write, edges, glob, delete/restore, tombstoned read, graph; none for move, copy, mkdir, sweep, grep, glean, grants |
+| 10k count pins | write, edges, glob, delete/restore, tombstoned read, traverse; none for move, copy, mkdir, sweep, grep, search, grants |
 | Pool configuration | none; a borrowed MSSQL factory skips `use_setinputsizes=False` |
 | MariaDB guarded updates | per-row round trips (spec 080 researched) |
 | ANN index provisioned | Postgres only; MariaDB and Oracle profiles say `ann`, run exact |
@@ -452,7 +452,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 *Depends on.* D3 (MariaDB's tier), D18 (Oracle naming). *Acceptance.*
 1. `README.md` carries one row per `PROFILES` entry plus "any other SQLAlchemy dialect": driver extra, minimum server version, verbs served, vector tier, ANN index provisioned, arbitration, isolation pins, known caps (Oracle `IN` 1,000; SQL Server `membership_budget` = min(2,000, the bind budget); MariaDB packet and row limits; pgvector's dimension cap).
 2. A docs-fence test asserts the matrix's dialect names equal `set(PROFILES) | {"generic"}` and each row's arbitration and vector cells equal the profile's fields.
-3. AGENTS.md, `architecture/01`, the glossary and spec 171 say `glean` alone is withheld on the floor; `docker/README.md` and the `db_test` skill cite `tests/storage/test_conformance.py`; the dead `scripts/mssql_*.sh` are deleted.
+3. AGENTS.md, `architecture/01`, the glossary and spec 171 say `search` alone is withheld on the floor; `docker/README.md` and the `db_test` skill cite `tests/storage/test_conformance.py`; the dead `scripts/mssql_*.sh` are deleted.
 
 #### D2 — Schema lifecycle: directional mismatch, a corruption kind, the migration registry · amends ADR 020 · M · gate b
 
@@ -475,7 +475,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 #### D4 — Every verb has a 10k count pin, parametrized over the engine legs · M · gate b
 
 *Depends on.* Nothing. *Acceptance.*
-1. For each of `mkdir`, `move`, `copy`, `sweep`, `grep` (scoped), `glean` (scoped), `grant`, `revoke`, a `slow` test writes 10,000 entries and asserts the verb's statement count equals a named formula beside the test (`EXPECTED_STATEMENTS[verb]`) with the chunk count from `membership_budget`; X2's router-level `write` pin is the same family.
+1. For each of `mkdir`, `move`, `copy`, `sweep`, `grep` (scoped), `search` (scoped), `grant`, `revoke`, a `slow` test writes 10,000 entries and asserts the verb's statement count equals a named formula beside the test (`EXPECTED_STATEMENTS[verb]`) with the chunk count from `membership_budget`; X2's router-level `write` pin is the same family.
 2. `ENGINE_LEGS` is promoted to a shared fixture in `tests/conftest.py` and each pin is parametrized over it with the real budgets (Oracle 1,000; SQL Server 2,000).
 3. Under a monkeypatched `parameter_budget = 48`, every verb still returns the correct result.
 4. The MariaDB leg records the per-row `UPDATE` count of a 10k overwrite as a known number, so spec 080 landing is a visible delta.
@@ -500,9 +500,9 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 ---
 
-## 8. Domain E — Search: glean, providers, renderers, graph
+## 8. Domain E — Search: search, providers, renderers, traverse
 
-**Goal.** `glean` fuses BM25 and vector at query time on every supported engine, with a zero-config local embedder, two hosted adapters, one spelling for configuring a provider from Python, a config file or the command line, and quality pins on every engine leg. The query side is built; this domain is about defaults, truth-telling and pins.
+**Goal.** `search` fuses BM25 and vector at query time on every supported engine, with a zero-config local embedder, two hosted adapters, one spelling for configuring a provider from Python, a config file or the command line, and quality pins on every engine leg. The query side is built; this domain is about defaults, truth-telling and pins.
 
 ### State today
 
@@ -518,10 +518,10 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 | Width change on a native column | refuses "re-provision" |
 | Ordered hybrid top-10 pin | SQLite and memory only |
 | ADR 065 statistics-leak regression test | missing |
-| `glean_staleness` trait | says `overlay` for both legs; true for BM25 only |
+| `search_staleness` trait | says `overlay` for both legs; true for BM25 only |
 | Renderers pdf/docx/pptx/xlsx; failures as row states | built; images (152 C) and render-at-write (159) planned |
-| `graph`: frontier walk, four methods, rights per hop; `fs` and markdown `links` edges | built; `imports` edges (147) planned |
-| `docs/reference/api.md` glean content | none |
+| `traverse`: frontier walk, four methods, rights per hop; `fs` and markdown `links` edges | built; `imports` edges (147) planned |
+| `docs/reference/api.md` search content | none |
 
 ### Stories
 
@@ -560,11 +560,11 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 *Depends on.* Nothing. *Acceptance.*
 1. A test hides half a corpus from `bob` and asserts every probe term's `df` and every visible row's score are identical whether the hidden half exists or has been deleted; the same holds under the generic floor's clause fan.
-2. `traits()` says `glean_staleness` is `overlay` for the lexical leg and `reindex` for the vector leg; the protocol vocabulary and its drift test agree.
+2. `traits()` says `search_staleness` is `overlay` for the lexical leg and `reindex` for the vector leg; the protocol vocabulary and its drift test agree.
 
-#### E6 — glean reference docs and the embedder how-to · S · gate f
+#### E6 — search reference docs and the embedder how-to · S · gate f
 
-*Acceptance.* `api.md` documents `glean`'s parameters, the records (`no_provider`, `stale_identity`, `embed_failed`, `truncated`), the `legs` and `lexical_stats` extras, `Ranker`/`Convex`/`RRF`/`Signal` and `install_extensions`; the how-to covers SQLite (nothing to install), Postgres (`install_extensions`), SQL Server 2025 and Oracle 23.4+ prerequisites; every fence runs under the docs gate.
+*Acceptance.* `api.md` documents `search`'s parameters, the records (`no_provider`, `stale_identity`, `embed_failed`, `truncated`), the `legs` and `lexical_stats` extras, `Ranker`/`Convex`/`RRF`/`Signal` and `install_extensions`; the how-to covers SQLite (nothing to install), Postgres (`install_extensions`), SQL Server 2025 and Oracle 23.4+ prerequisites; every fence runs under the docs gate.
 
 #### E7 — Width change is a migration, not a re-provision · M · gate 0.2
 
@@ -626,6 +626,7 @@ Nothing is built. `vfs.shell` does not exist; `crates/vfs-core` has no `shell` m
 4. `set -e` stops at the first failing statement; the exemptions pinned are the left side of `&&`/`||`, a `!`-negated pipeline, a pipeline whose last stage succeeds, and a subshell's inner failure.
 5. Each never-class name returns its kind, exit code and hint; `grant`, `revoke` and `grants` gain shell spellings (D34).
 6. `rm -rf /` at a bind site is `vfs.busy`; elsewhere it tombstones with exactly one `delete(cascade=True)` call.
+7. The program table resolves `trav` to `traverse` at parse time, before dispatch, and no short form of a verb is ever an op: `trav` appears in no `Result.ops`, no `capabilities()` and no `tools/list`.
 
 #### F7 — The language runs: control flow, functions, arithmetic, arrays, the parameter operators · spec 167 F (new slice), amends ADR 081 · L · gate b
 
@@ -753,13 +754,13 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 #### M1 — The MCP adapter and `serve()` · spec 171 · L · gate b
 
 *Depends on.* F1, F3, I1, I2; T2 for links to program output (degrades to placeholders without it). Names below marked *(proposed)* are spec 171's and do not exist yet. *Acceptance.*
-1. `tools/list` names exactly the agent-facing verbs (spec 171's `AGENT_OPS` *(proposed)*) in `fs.capabilities()` plus `cli`: 21 on the default router, 20 on an unknown dialect (`glean` withheld; spec 171's "19" is stale, D1), 1 with `tools={"cli"}`; K8 raises the count to 22 and updates this pin; no schema names `authority`, `observations` or `provenance`.
+1. `tools/list` names exactly the agent-facing verbs (spec 171's `AGENT_OPS` *(proposed)*) in `fs.capabilities()` plus `cli`: 21 on the default router, 20 on an unknown dialect (`search` withheld; spec 171's "19" is stale, D1), 1 with `tools={"cli"}`; K8 raises the count to 22 and updates this pin; no schema names `authority`, `observations` or `provenance`.
 2. Over the `ls` tool on 10,000 files: the text block is at most 32,768 characters plus the marker; `structuredContent` holds exactly the rows the text showed plus one `truncated` warning with the elided count; a 10,000-image result yields at most 8 typed blocks, 4 MiB raw, 64 links; `structuredContent` carries no bytes and validates against the payload schema (`ResultPayload`, *proposed*).
 3. `isError == not structuredContent["success"]`; `cli('grep nomatch f')` and `cli('false')` are `isError: false` with `exit_code == 1`; `cli('cd /notes')` then `cli('pwd')` prints `/`; `timeout_ms` above 10,000 leaves the deadline at 10 s.
 4. `resources/read` returns a blob with `mimeType` for a bytes row and the exact text for a text row; a row over 12 MiB is refused `-32603` after one `stat` and zero body bytes bound; `vfs:///` URIs round-trip a space, `#`, `?`, `%` and a non-ASCII letter.
 5. The wire validates against the vendored 2025-06-18, 2025-11-25 and 2026-07-28 schemas; an older client gets links and audio flattened to placeholder text, never a refusal; the core install imports nothing from `mcp`.
 6. `readOnlyHint`, `destructiveHint` and `idempotentHint` are derived from `ops.py` (`IDEMPOTENT_OPS`) and K5's replay table; a verb with one non-idempotent form withholds the hint (D11).
-7. Two tenants, end to end: two principals over one served tree with different grants see different `ls`, `grep` and `glean` answers over HTTP, and a hidden row never appears in the other's `glean` statistics or `graph` walk (the E5 assertion run through the wire).
+7. Two tenants, end to end: two principals over one served tree with different grants see different `ls`, `grep` and `search` answers over HTTP, and a hidden row never appears in the other's `search` statistics or `traverse` walk (the E5 assertion run through the wire).
 8. HTTP with no token under a `read` posture serves `tools/list` and `ls` as `Authority.anonymous()`; `write` is `vfs.unauthenticated` with zero mutation statements.
 
 #### M2 — The one-line entry point: `vfs serve` and `python -m vfs.mcp` · new · M · gate b
@@ -792,7 +793,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 | Every public verb `async def`; no sync facade | missing; a 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06; the real-ipykernel run is the audit's, not re-verified) |
 | Top-level exports | `VirtualFileSystem` only |
 | 10,000-row `write(entries=)` | works, 35–49 statements on SQLite; pinned at storage level only |
-| Docs | 29 pages, 38 Sybil fences pass; 8 stub pages; `api.md` covers identity and graph only; 5 pages off the nav |
+| Docs | 29 pages, 38 Sybil fences pass; 8 stub pages; `api.md` covers identity and traverse only; 5 pages off the nav |
 | Examples | 6 of 9 import dead names (`DatabaseFileSystem`, `VFSClient`, `grover.*`); none run in CI |
 | Logging | no `import logging` anywhere in `src/vfs` |
 | Install | `pip install vfs-py` gives 0.0.22; CONTRIBUTING and AGENTS.md disagree on the setup recipe |
@@ -821,7 +822,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 #### X3 — Getting-started tutorial, notebook how-to, pipeline how-to, human-in-the-loop how-to · M · gate f
 
 *Acceptance.*
-1. `docs/tutorials/getting-started.md`: install → construct → write → `glob`/`grep`/`glean` → one rendered `Result`, every step a fence Sybil runs, no Postgres needed; the README's quick-start block is fence-tested too.
+1. `docs/tutorials/getting-started.md`: install → construct → write → `glob`/`grep`/`search` → one rendered `Result`, every step a fence Sybil runs, no Postgres needed; the README's quick-start block is fence-tested too.
 2. `docs/how-to/use-vfs-in-a-notebook.md` shows the sync and the `await` paths side by side and names the two `RuntimeError`s a user sees from `asyncio.run`.
 3. `docs/how-to/bulk-load-from-a-pipeline.md`: a 10k batch from an iterable, the whole-batch-atomic rule, `reindex()` after binary writes and its `conflict` retry.
 4. `docs/how-to/human-in-the-loop.md` (H3's example).
@@ -841,7 +842,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 
 #### X6 — Examples: delete the dead, run the live · S · gate b
 
-*Acceptance.* `cli_query_demo.py`, `demo_dbfs.py`, `postgres_backend_playground.ipynb`, `postgres_repo_glob_grep.ipynb`, `repo_postgres_cli_smoke.ipynb` and `story_001_demo.ipynb` are removed (D29); `main.py` is removed or ported; `glean_walkthrough.ipynb` is executed in CI via nbclient against the live tree; `glob_residuation.ipynb` uses public names or is removed; a test asserts no file under `examples/` imports `vfs.backends`, `vfs.client`, `vfs.query`, `sqlmodel` or `grover`.
+*Acceptance.* `cli_query_demo.py`, `demo_dbfs.py`, `postgres_backend_playground.ipynb`, `postgres_repo_glob_grep.ipynb`, `repo_postgres_cli_smoke.ipynb` and `story_001_demo.ipynb` are removed (D29); `main.py` is removed or ported; `search_walkthrough.ipynb` is executed in CI via nbclient against the live tree; `glob_residuation.ipynb` uses public names or is removed; a test asserts no file under `examples/` imports `vfs.backends`, `vfs.client`, `vfs.query`, `sqlmodel` or `grover`.
 
 #### X7 — One named logger · S · gate b
 

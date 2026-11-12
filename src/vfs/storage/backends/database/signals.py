@@ -1,4 +1,4 @@
-"""Ranking signals — stored priors: the reindex phase that computes them, the probe glean reads.
+"""Ranking signals — stored priors: the reindex phase that computes them, the probe search reads.
 
 A signal is a query-independent importance prior, one float per entry
 in ``[0, 1]``, declared on the mount's :class:`~vfs.storage.ranking.Ranker`

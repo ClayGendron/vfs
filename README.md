@@ -53,7 +53,7 @@ await kernel.add_mount(DatabaseStorage(url="sqlite+aiosqlite:///knowledge.db"), 
 
 written = await kernel.write(path="/enterprise/policies/mfa.md", content="All logins require MFA.", parents=True)
 result = await kernel.grep("MFA", paths=("/enterprise",))
-ranked = await kernel.glean("do logins need a second factor?", limit=10)
+ranked = await kernel.search("do logins need a second factor?", limit=10)
 assert written.success and result.success and ranked.success
 ```
 
@@ -68,27 +68,27 @@ Every node speaks the same small vocabulary. Verbs take paths in, return one com
 | Family | Verbs | What they answer |
 |---|---|---|
 | Read | `read` · `stat` · `ls` · `tree` | point reads and listings |
-| Search | `glob` · `grep` · `glean` · `graph` | *where it sits · what it says · what it means · how it connects* |
+| Find | `glob` · `grep` · `search` · `traverse` | *where it sits · what it says · what it means · how it connects* |
 | Mutate | `write` · `edit` · `delete` · `mkdir` · `move` · `copy` · `mkedge` | changes; `delete` is reversible through the trash and `restore` |
 | Execute | `run` | invoke a tool that lives at a path |
 
 Every family follows the same contract — paths in, one `Result` out.
 
-## Search from every angle: glob, grep, glean, graph
+## Find anything from every angle: glob, grep, search, traverse
 
 A file carries information four ways — where it sits, what it says, what it means, and how it connects. VFS gives each signal its own verb, and all four return the same composable result type, so they combine instead of competing.
 
 ```python
-await kernel.glob("**/*.md", paths=("/enterprise",))             # where it sits — match names and structure
-await kernel.grep("logins", ext=(".md",), before_context=2)      # what it says — match content, ripgrep-style
-await kernel.glean("do logins need a second factor?", limit=10)  # what it means — one fused, ranked list
-await kernel.graph("inbound", "/enterprise/policies/mfa.md")       # how it connects — what points at this policy
+await kernel.glob("**/*.md", paths=("/enterprise",))              # where it sits — match names and structure
+await kernel.grep("logins", ext=(".md",), before_context=2)       # what it says — match content, ripgrep-style
+await kernel.search("do logins need a second factor?", limit=10)  # what it means — one fused, ranked list
+await kernel.traverse("inbound", "/enterprise/policies/mfa.md")   # how it connects — what points at this policy
 ```
 
 - **`glob`** answers by *location*: names and structure, the shape of the tree.
 - **`grep`** answers by *content*: literal or regex matching with the options agents already know — case modes, context lines, include/exclude globs.
-- **`glean`** answers by *meaning*: text in, one ranked list out. The caller never picks a retrieval strategy — the backend fuses whatever signals it has (lexical, vector, graph) and owns the ranking. With no embedding provider configured, the lexical leg answers alone and the result says so.
-- **`graph`** answers by *connection*: typed edges between files are first-class, and four methods walk them like any other query — `inbound` (what points at this), `outbound` (what this points to), `neighborhood` (both), and `meet` (the subgraph that joins a set of files). A walk is one chunked SQL statement per hop, bounded by the nodes it reaches on every engine; the caller's rights are judged on every hop, so nothing is ever reached through a file the caller may not name. The answer carries the nodes with their distance and every edge among them, drawn as a tree with the edge types on the lines.
+- **`search`** answers by *meaning*: text in, one ranked list out. The caller never picks a retrieval strategy — the backend fuses whatever signals it has (lexical, vector, graph) and owns the ranking. With no embedding provider configured, the lexical leg answers alone and the result says so.
+- **`traverse`** answers by *connection*: typed edges between files are first-class, and four methods walk them like any other query — `inbound` (what points at this), `outbound` (what this points to), `neighborhood` (both), and `meet` (the subgraph that joins a set of files). A walk is one chunked SQL statement per hop, bounded by the nodes it reaches on every engine; the caller's rights are judged on every hop, so nothing is ever reached through a file the caller may not name. The answer carries the nodes with their distance and every edge among them, drawn as a tree with the edge types on the lines.
 
 Searches scope naturally: pass `paths=` to search a region, or nothing to search the whole namespace — the query fans out to every mount that can answer it, and mounts that can't are skipped rather than failing the sweep.
 
@@ -112,13 +112,13 @@ Chunks, edges, tools, and skills are ordinary entries: `ls` them, `grep` them, `
 
 ## Storage is composed, not inherited
 
-A node *holds* its storage rather than *being* it. Backends implement small protocol families — reads, pattern search, ranked search, mutation, graph, run — and a backend claims only the families it genuinely supports. A node's `capabilities()` are derived from what its backend actually declares, so a partial backend (an MCP tool catalog that only does `ls`/`read`/`run`, a store without ranked search) is a first-class citizen, not a liar.
+A node *holds* its storage rather than *being* it. Backends implement small protocol families — reads, pattern search, ranked search, mutation, traversal, run — and a backend claims only the families it genuinely supports. A node's `capabilities()` are derived from what its backend actually declares, so a partial backend (an MCP tool catalog that only does `ls`/`read`/`run`, a store without ranked search) is a first-class citizen, not a liar.
 
 ```python
 from vfs import InMemoryStorage, VirtualFileSystem
 
 node = VirtualFileSystem(storage=InMemoryStorage())  # a DatabaseStorage on a private in-process SQLite
-assert {"read", "glob", "grep", "glean", "write"} <= node.capabilities()
+assert {"read", "glob", "grep", "search", "write"} <= node.capabilities()
 node.close()
 ```
 
@@ -142,7 +142,7 @@ What the tree does not do yet, and where each decision lives.
 
 ## Status
 
-- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `glean` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 4,564 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
+- **Implemented (v2 core):** typed path grammar, models, the classified result channel, the op vocabulary, node permissions, the full async mount router — spine listings, capability gating, batched and fanned-out dispatch — and the database backend on the storage protocol: reads, writes, `glob`, `grep`, `search` with its lexical and vector legs and the cross-mount rerank, the trash arc, identity and row-level grants, binary bodies with text renderings. 4,564 tests at 100% coverage, green on SQLite, Postgres, MariaDB, SQL Server and Oracle.
 - **Under review:** row-level grants at scale (specs 058 and 150) and binary bodies (spec 152).
 - **Next:** the MCP surface (serve the namespace as one tool; mount MCP servers), the local file backend, the graph engine re-homed behind its protocol family, tools at paths, and a version row on every mutation.
 - **Released:** the newest alpha of this rebuild is on PyPI as `vfs-py`; the [releases](https://github.com/ClayGendron/vfs/releases) are the changelog. The `0.0.x` releases are yanked.

@@ -1,7 +1,7 @@
 """Tests for the ranking-signal phase and probe — ``storage/backends/database/signals.py``.
 
 The phase collects the live graph, computes each declared prior off the
-event loop, and publishes it under a fresh generation; glean probes the
+event loop, and publishes it under a fresh generation; search probes the
 stored values for its candidates and multiplies the fused score. The
 engine legs run the same loop against the four servers.
 """
@@ -217,15 +217,15 @@ class TestPhase:
 
 
 class TestProbe:
-    async def test_the_prior_reorders_glean_and_explains_itself(self, tmp_path) -> None:
+    async def test_the_prior_reorders_search_and_explains_itself(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        before = await storage.glean(query="needle")
+        before = await storage.search(query="needle")
         assert _order(before) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         assert _signal_records(before) == ["centrality"]
         assert _legs(before)["signals"]["centrality"]["applied"] is False
         assert (await storage.reindex()).success is True
-        after = await storage.glean(query="needle")
+        after = await storage.search(query="needle")
         assert _order(after)[0] == "/deep/b.md" and after.observations[0].score == 1.0
         assert _signal_records(after) == []
         explain = _legs(after)["signals"]["centrality"]
@@ -240,7 +240,7 @@ class TestProbe:
         assert (await storage.reindex()).success is True
         await storage.close()
         changed = _mount(tmp_path, Ranker(signals=(Signal("centrality", measure=PageRank()),)))
-        result = await changed.glean(query="needle")
+        result = await changed.search(query="needle")
         records = [error for error in result.errors if error.data and error.data.get("leg") == "signal"]
         assert len(records) == 1 and records[0].severity is Severity.warning
         assert records[0].kind is ErrorKind.unavailable and "other options" in records[0].message
@@ -251,7 +251,7 @@ class TestProbe:
         storage = _mount(tmp_path)
         await _seed(storage, edges=False)
         assert (await storage.reindex()).success is True
-        result = await storage.glean(query="needle")
+        result = await storage.search(query="needle")
         assert _signal_records(result) == ["centrality"]
         assert "no entry earned" in _legs(result)["signals"]["centrality"]["reason"]
         await storage.close()
@@ -267,7 +267,7 @@ class TestProbe:
         ]
         assert (await storage.mkedge(edges=ring)).success is True
         assert (await storage.reindex()).success is True
-        result = await storage.glean(query="needle")
+        result = await storage.search(query="needle")
         assert _order(result) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         assert [row.score for row in result.observations] == [1.0, 1.0, 1.0]
         await storage.close()
@@ -307,7 +307,7 @@ class TestEngineLegs:
             assert (await storage.reindex()).success is True
             stored = await _stored(storage)
             assert stored[("centrality", "/deep/b.md")] == 1.0
-            result = await storage.glean(query="needle")
+            result = await storage.search(query="needle")
             assert _order(result)[0] == "/deep/b.md" and _signal_records(result) == []
             assert (await storage.reindex()).success is True
             assert len(await _pointers(storage)) == 1
