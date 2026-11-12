@@ -1,11 +1,38 @@
-"""The ratchet for the documents written before the process: open-question lines each may hold.
+"""The lint's committed lists: the open-question ratchet, the ladder's exceptions and the size baseline.
 
-Generated on the landing day by ``open_question_hits`` over the numbered specs and the
-memos dated before the process; an entry that admits more than the file holds fails, so
-the table only ever shrinks. Keys are paths under ``context/``.
+``OPEN_QUESTION_ALLOWANCE`` is the ratchet for the documents written before the process: the
+open-question lines each may hold. It was generated on the landing day by ``open_question_hits``
+over the numbered specs and the memos dated before the process; an entry that admits more than the
+file holds fails, so the table only ever shrinks. The ratchet's keys are paths under ``context/``.
+
+``UPWARD_IMPORT_ALLOWANCE`` is the layer ladder's exceptions: each pair, importer then imported, admits
+the imports of exactly that pair that point up the ladder, and a pair that matches none fails as stale.
+``MODULE_LINE_BASELINE`` holds each module over the line ceiling at its exact count, keyed by its path
+from the repository root: a module that grows fails, and one that shrinks lowers its entry with it.
 """
 
 from __future__ import annotations
+
+UPWARD_IMPORT_ALLOWANCE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("vfs.base", "vfs.session"),
+        ("vfs.results.preview", "vfs.pattern_matching.grep"),
+        ("vfs.results.render", "vfs.pattern_matching.grep"),
+        ("vfs.models.signals", "vfs.storage.ranking"),
+    }
+)
+
+MODULE_LINE_BASELINE: dict[str, int] = {
+    "src/vfs/base.py": 3660,
+    "src/vfs/storage/backends/database/backend.py": 1997,
+    "src/vfs/storage/backends/database/rights.py": 1540,
+    "src/vfs/storage/backends/database/reads.py": 1318,
+    "src/vfs/storage/backends/database/writes.py": 1288,
+    "src/vfs/storage/backends/database/search.py": 1248,
+    "src/vfs/storage/backends/database/engine.py": 1139,
+    "src/vfs/storage/backends/database/dialects.py": 1112,
+    "src/vfs/sync.py": 1086,
+}
 
 OPEN_QUESTION_ALLOWANCE: dict[str, int] = {
     "context/research/2026-04-18-posix-and-related-standards.md": 1,

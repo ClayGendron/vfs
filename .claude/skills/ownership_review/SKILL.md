@@ -35,6 +35,100 @@ to check behavior, go under the session scratchpad only.
 
 ## Process
 
+### 0. State the layer map and the size line
+
+For each module of `src/vfs` the diff touches: name its rung from
+`LAYERS` in `tests/lint/test_code_shape.py`, list every import the diff
+adds with the rung it points to, and state the module's line count
+(`wc -l`) before and after. Then run
+
+    git diff <base>..<tip> -- tests/lint/test_code_shape.py tests/lint/allowlist.py
+
+(the same command against `HEAD` when the working tree is what is
+reviewed) and read what it shows of six declarations: `LAYERS`,
+`IMPORTS_NO_VFS_MODULE`, `ADAPTER_IMPORTERS` and `MODULE_LINE_CEILING`
+in the first file, `UPWARD_IMPORT_ALLOWANCE` and `MODULE_LINE_BASELINE`
+in the second. The lint compares each declaration with the tree as it
+stands, so a diff that edits a declaration together with the code
+passes the gate. This reading is what holds the declarations one-way.
+When the working tree is what is reviewed, `git diff HEAD` shows no
+untracked file: also read `git status --porcelain` for untracked
+modules under `src/vfs` and untracked files under `tests/lint`, and
+read each as part of the diff.
+
+Six kinds of change are each a finding of kind `misplacement` at
+`major`, which the review file ranks Medium, and the author answers it:
+
+- an entry added to `UPWARD_IMPORT_ALLOWANCE`;
+- an entry added to or raised in `MODULE_LINE_BASELINE`;
+- a change to `LAYERS` that reorders two modules that existed before
+  the diff, by a moved name or a split or merged rung, or that adds or
+  drops a deeper name, whether the modules beneath that name are old
+  or new;
+- a name removed from `IMPORTS_NO_VFS_MODULE`;
+- a name added to `ADAPTER_IMPORTERS`, or any change to the `ADAPTER`
+  it guards;
+- a raised `MODULE_LINE_CEILING`.
+
+A module the diff moves or renames is the module it was: its new name
+is not a first placement, and a rung that differs from its old one is
+a reordering. A change that tightens the gate is named and is not a
+finding: a removed or lowered entry, the first placement of a new
+top-level module, a name added to the declared set, a name removed
+from the adapter's importers, a lowered ceiling. The landing that
+creates `MODULE_LINE_BASELINE` records each module at the count it
+finds and grows none, because it changes no file under `src`; its
+entries are the baseline and are not findings. Every entry added or
+raised after it is.
+
+An added or raised baseline entry closes in one of two ways. The lines
+move out in the same landing, the module is back at or under its old
+count, and the entry is not raised after all: the Disposition says
+"fixed", and you confirm it by `wc -l` and the command above. Or the
+Disposition says "kept because", names what the landing added, and
+links the active spec or the placeholder memo that carries that
+module's reduction: open the link and confirm it when the document
+names the module and a reduction of it. A raise answered with neither
+is "Not confirmed": the Medium stands and the verdict is "Does not
+land yet". An added allowance entry closes the same two ways: the
+import moves so no entry is added, or the Disposition links the memo
+or spec that holds its question. The four entries the allowance was
+created with are answered the second way: each has a placeholder memo
+under `context/research/` that holds its question.
+
+The report opens with two lines, ahead of the ownership table, and the
+code review's Ownership subsection opens with the same two:
+
+    Layer map: <module> on rung <n>, for each touched module; adds <import> to rung <n>, for each added import; <closing>.
+    Size: <module> <lines before> to <lines after>, for each touched module; <closing>.
+
+The `Layer map:` closing is one of three:
+
+- "ladder unchanged" when the command shows nothing for
+  `tests/lint/test_code_shape.py`; an empty output is the only ground
+  for those two words alone;
+- "ladder unchanged, the file changed elsewhere:" and then what
+  changed, when the file changed and none of its four declarations did;
+- "ladder changed:" and then each change under its declaration's name,
+  when one did, as in "ladder changed: `LAYERS` gains `vfs.fanout` on
+  rung 7".
+
+The `Size:` closing is one of two:
+
+- "allowlist unchanged" when the command shows nothing for
+  `tests/lint/allowlist.py`;
+- "allowlist changed:" and then each entry added, removed, raised or
+  lowered, under its key, otherwise, as in "allowlist changed:
+  `src/vfs/base.py` lowered from 3,660 to 3,190".
+
+Here "ladder" stands for the four declarations of the first file
+together. A change to `ADAPTER` is a change to the adapter boundary:
+read it together with `ADAPTER_IMPORTERS`, and report it on the
+`Layer map:` line under "ladder changed:", never as the file changed
+elsewhere. A diff that touches no module of `src/vfs` opens each line
+with "no module of `src/vfs` touched" in place of the modules and
+keeps the closing.
+
 ### 1. Decompose the code into concerns, not lines
 
 Read the whole unit and label each block with what it *does* (data
@@ -121,8 +215,9 @@ rightful owner, you have a question, not a violation.
 
 ### 8. Deliver findings
 
-Report the ownership table from step 1 first — it is the map that makes
-every finding legible — then a severity-ordered list of violations.
+Report the two lines of step 0, then the ownership table from step 1 —
+it is the map that makes every finding legible — then a
+severity-ordered list of violations.
 Classify each by kind:
 
 - **misplacement** — logic hosted by a module that does not own it.

@@ -60,6 +60,8 @@ This group is an instruction of how to code, not a record to produce. The order 
 - **Algebra is a pure fold; policy stays outside it.** `Result.merge` is the fold and `merge_branches` adds the fan-out demotion (`src/vfs/results/envelope.py:339`).
 - **The docstring says why; the comment is two lines.** See [AGENTS.md](../../AGENTS.md), "Code comments".
 - **Reflect on smells after writing.** See [AGENTS.md](../../AGENTS.md), "Code smells".
+- **A structural note becomes a document the same day.** A review's Low or Note that names a duplication, a misplacement, an upward import or a growth becomes a placeholder memo or a spec that day, linked from the Disposition; see [the reviews README](../reviews/README.md), "The ranking".
+- **Imports point down the ladder:** `LAYERS` in `tests/lint/test_code_shape.py` is the layer map, a new top-level module names its rung in the landing that adds it, and a module over 1,000 lines is held at its exact count in `tests/lint/allowlist.py`.
 
 ## 7. Tests
 

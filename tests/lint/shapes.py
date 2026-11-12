@@ -26,6 +26,8 @@ _SPEC.loader.exec_module(unwrap_context)
 REPO: Path = unwrap_context.REPO
 CONTEXT: Path = unwrap_context.CONTEXT
 PROCESS_START = "2026-10-29"
+# The first day a code review must open its Ownership subsection with the two lines below.
+LAYER_LINES_START = "2026-11-13"
 markdown_files = unwrap_context.markdown_files
 FENCE_RE: re.Pattern[str] = unwrap_context.FENCE_RE
 
@@ -91,6 +93,8 @@ CODE_REVIEW_SECTIONS = (
     "Verdict",
 )
 LENS_SUBSECTIONS = ("Contract", "Scale", "Tests", "Ownership", "Adversarial")
+# Each opening line of the Ownership subsection, and the word that says what the diff did to the gate.
+LAYER_LINES = (("Layer map:", "ladder"), ("Size:", "allowlist"))
 SPEC_REVIEW_VERDICTS = ("Fit to build", "Not yet")
 CODE_REVIEW_VERDICTS = ("Lands", "Does not land yet")
 PIPELINE_STAGES = ("intent", "research", "spec", "review", "code", "review", "commit")
@@ -165,6 +169,26 @@ def raw_section_text(text: str, heading: str) -> str:
     """The text under one ``## `` heading with its code kept, for fence checks."""
     match = re.search(rf"^## {re.escape(heading)}\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
     return match.group(1) if match else ""
+
+
+def raw_subsection_lines(text: str, heading: str, subheading: str) -> list[str]:
+    """The lines under one ``### `` subheading of one ``## `` section, with their code kept.
+
+    A heading is read outside fenced blocks alone, so a fenced line that looks like one ends nothing.
+    """
+    kept: list[str] = []
+    section = subsection = ""
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and (found := HEADING_RE.match(line)):
+            section, subsection = found.group(1), ""
+        elif not in_fence and (found := SUBHEADING_RE.match(line)):
+            subsection = found.group(1)
+        elif (section, subsection) == (heading, subheading):
+            kept.append(line)
+    return kept
 
 
 def first_paragraph(text: str) -> str:
@@ -275,6 +299,7 @@ def review_errors(path: Path) -> list[str]:
         lenses = SUBHEADING_RE.findall(section_text(text, "Lenses"))
         if lenses != list(LENS_SUBSECTIONS):
             errors.append(f"{name}: Lenses subsections are {lenses}, not {list(LENS_SUBSECTIONS)}")
+        errors += layer_line_errors(name, path.name[:10], text)
         verdicts = CODE_REVIEW_VERDICTS
     else:
         return [f"{name}: a review is named …-spec-review.md or …-code-review.md"]
@@ -283,6 +308,22 @@ def review_errors(path: Path) -> list[str]:
     if not first.startswith(verdicts):
         errors.append(f"{name}: the Verdict's first line does not begin with one of {verdicts}")
     return errors
+
+
+def layer_line_errors(name: str, date: str, text: str) -> list[str]:
+    """A code review dated on or after the start holds the two lines under its Ownership subsection.
+
+    *date* is the review's own, ``YYYY-MM-DD``; an older review is read as written. Each line begins
+    with its label and holds its word, read from the raw text so a word inside backticks counts.
+    """
+    if date < LAYER_LINES_START:
+        return []
+    lines = raw_subsection_lines(text, "Lenses", "Ownership")
+    return [
+        f"{name}: no line under '### Ownership' begins '{label}' and holds the word '{word}'"
+        for label, word in LAYER_LINES
+        if not any(line.startswith(label) and re.search(rf"\b{word}\b", line) for line in lines)
+    ]
 
 
 def open_question_hits(text: str) -> list[str]:

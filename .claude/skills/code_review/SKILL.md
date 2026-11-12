@@ -387,6 +387,34 @@ these `## ` headings, in this order, exactly:
    and what it did not reach — taken from the workflow's `coverage`
    field. A lens with zero findings still writes its ledger; a lens
    whose agent failed writes "unreviewed surface", never "clean".
+   **The `### Ownership` subsection opens with two lines**, each a
+   paragraph of its own that begins at the margin, taken from step 0
+   of the ownership lens, which runs `git diff <base>..<tip> --
+   tests/lint/test_code_shape.py tests/lint/allowlist.py` (against
+   `HEAD` when the working tree is what is reviewed):
+   - `Layer map: <module> on rung <n>, for each touched module; adds
+     <import> to rung <n>, for each added import; <closing>.` The
+     closing is one of three: "ladder unchanged" when the command
+     shows nothing for `tests/lint/test_code_shape.py`, and an empty
+     output is the only ground for those two words alone;
+     "ladder unchanged, the file changed elsewhere:" and then what
+     changed, when the file changed and none of its four declarations
+     did; "ladder changed:" and then each change under its
+     declaration's name, when one did, as in
+     "ladder changed: `LAYERS` gains `vfs.fanout` on rung 7".
+   - `Size: <module> <lines before> to <lines after>, for each touched
+     module; <closing>.` The closing is one of two:
+     "allowlist unchanged" when the command shows nothing for
+     `tests/lint/allowlist.py`; "allowlist changed:" and then each
+     entry added, removed, raised or lowered, under its key,
+     otherwise, as in
+     "allowlist changed: `src/vfs/base.py` lowered from 3,660 to 3,190".
+
+   A diff that touches no module of `src/vfs` opens each line with
+   "no module of `src/vfs` touched" in place of the modules and keeps
+   the closing. The lint requires both lines, the first holding the
+   word `ladder` and the second the word `allowlist`, in a code review
+   dated on or after `LAYER_LINES_START` in `tests/lint/shapes.py`.
 5. `Security` — the lens below.
 6. `Standards checks` — the five lines below.
 7. `Disposition` — the author fills it in, one line per finding
