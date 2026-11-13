@@ -10,8 +10,8 @@ once and never decides what is eligible or what is returned.
 
 Its callers size two different things with it: the payload of one hop
 to a worker, and the bytes one SQL statement fetches. It imports the
-standard library only, so the router and the database adapter both
-import it downward.
+standard library only, so the chained filters and the database adapter
+both import it downward.
 """
 
 from __future__ import annotations

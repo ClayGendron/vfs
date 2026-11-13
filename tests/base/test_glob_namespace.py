@@ -35,7 +35,9 @@ from tests.support.scope_worlds import (
 )
 from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
+from vfs import chain as chain_module
 from vfs import deadline as deadline_module
+from vfs import fanout as fanout_module
 from vfs.authority import Authority
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
@@ -51,7 +53,7 @@ from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Iterator, Sequence
 
 # The demo tree: /notes.txt at the root, a.txt and deep/b.txt under /data.
 TREE = (("/notes.txt", "root"), ("/data/a.txt", "a"), ("/data/deep/b.txt", "b"))
@@ -540,12 +542,13 @@ def _spy_sets(monkeypatch: pytest.MonkeyPatch) -> list[list[Any]]:
 def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """The executor each router judge hop ran on."""
     executors: list[Any] = []
-    real = base_module.judge_rows
+    real = chain_module.judge_rows
 
     async def spied(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         executors.append(executor)
         return await real(executor, gates, rows, deadline=deadline)
 
+    monkeypatch.setattr(chain_module, "judge_rows", spied)
     monkeypatch.setattr(base_module, "judge_rows", spied)
     return executors
 
@@ -608,6 +611,37 @@ async def test_chained_glob_truncates_at_the_wall(monkeypatch: pytest.MonkeyPatc
     await fs.close()
 
 
+async def test_chained_glob_reads_its_wall_before_it_materializes_the_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guards: chained glob's wall read after the caller's rows are drawn, so
+    an iterable that is slow to draw no longer spends it."""
+    clock = [0.0]
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: clock[0])
+
+    def drawn_slowly() -> Iterator[Observation]:
+        clock[0] = 1e12
+        yield Observation(path=Path("/a.txt"))
+        yield Observation(path=Path("/b.txt"))
+
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.glob("*.txt", observations=drawn_slowly())  # ty: ignore[invalid-argument-type]
+    assert result.observations == []
+    [error] = result.errors
+    assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+    await fs.close()
+
+
+@pytest.mark.parametrize("batch", [5, "abc", ["/a.txt"], [Observation(path=Path("/a.txt")), "x"]])
+async def test_chained_glob_refuses_a_batch_that_is_not_rows(batch: object) -> None:
+    """Guards: the refusal of a batch that is not rows dropped from the chained
+    branch, so the call answers success with no row."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.glob("*", observations=batch)  # ty: ignore[invalid-argument-type]
+    assert result.observations == []
+    [error] = result.errors
+    assert error.kind is ErrorKind.invalid
+    await fs.close()
+
+
 async def test_the_root_probe_builds_each_name_arm_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the probe composing and building one program per row per arm."""
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
@@ -659,7 +693,7 @@ async def test_a_root_probe_past_its_wall_warns(monkeypatch: pytest.MonkeyPatch)
     async def unjudged(executor: Any, gates: Any, rows: Any, *, deadline: float) -> Any:
         return [None] * len(rows), False
 
-    monkeypatch.setattr(base_module, "judge_rows", unjudged)
+    monkeypatch.setattr(chain_module, "judge_rows", unjudged)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.write(path="/docs/x.txt", content="x", parents=True)
     result = await fs.glob("*", paths=("/docs",))
@@ -672,13 +706,13 @@ async def test_a_root_probe_past_its_wall_warns(monkeypatch: pytest.MonkeyPatch)
 async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the residual walk run inline on the loop, which then cannot turn."""
     # Composition kept at every size, so the walk residuates every root's arms.
-    monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", 10**9)
+    monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", 10**9)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     assert (await fs.mkdir(path="/m")).success is True
     await fs.add_mount(RecorderStorage(), "/m/n")
     turns = [0]
     readings: list[tuple[int, int]] = []
-    real = base_module._plan_scope
+    real = base_module.plan_scope
 
     def watched(*args: Any, **kwargs: Any) -> Any:
         start = turns[0]
@@ -691,7 +725,7 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
             await asyncio.sleep(0)
             turns[0] += 1
 
-    monkeypatch.setattr(base_module, "_plan_scope", watched)
+    monkeypatch.setattr(base_module, "plan_scope", watched)
     counter = asyncio.ensure_future(count_turns())
     result = await fs.glob(_arms("x") + "*.txt", paths=tuple(f"/m/n/r{i:04}" for i in range(2_000)))
     counter.cancel()
@@ -708,21 +742,21 @@ async def test_planning_past_the_wall_truncates(monkeypatch: pytest.MonkeyPatch)
     for root in roots:
         assert (await fs.write(path=f"{root}/a.txt", content="a", parents=True)).success is True
     composed: list[Any] = []
-    real = base_module.composed_pattern
+    real = fanout_module.composed_pattern
 
     def counted(root: Path, pattern: str) -> str:
         composed.append(root)
         return real(root, pattern)
 
     plans: list[Any] = []
-    real_plan = base_module._plan_scope
+    real_plan = base_module.plan_scope
 
     def recorded(*args: Any, **kwargs: Any) -> Any:
         plans.append(real_plan(*args, **kwargs))
         return plans[-1]
 
-    monkeypatch.setattr(base_module, "composed_pattern", counted)
-    monkeypatch.setattr(base_module, "_plan_scope", recorded)
+    monkeypatch.setattr(fanout_module, "composed_pattern", counted)
+    monkeypatch.setattr(base_module, "plan_scope", recorded)
     result = await fs.glob("/**/*.txt", paths=tuple(roots))
     walls = [error for error in result.errors if error.kind is ErrorKind.truncated]
     assert [(e.severity, e.message) for e in walls] == [(Severity.warning, _PLANNING_GUIDANCE)]
@@ -748,14 +782,14 @@ async def test_one_large_root_stops_inside_its_walk(monkeypatch: pytest.MonkeyPa
         await fs.add_mount(mount, f"/m{index:02}")
     monkeypatch.setattr(root, "glob", recorded_glob)
     residuations = [0]
-    real_residuals = base_module.residuals
+    real_residuals = fanout_module.residuals
     real_clock = deadline_module.monotonic
 
     def counted(pattern: str, bind_path: Path) -> Any:
         residuations[0] += 1
         return real_residuals(pattern, bind_path)
 
-    monkeypatch.setattr(base_module, "residuals", counted)
+    monkeypatch.setattr(fanout_module, "residuals", counted)
     monkeypatch.setattr(deadline_module, "monotonic", lambda: 1e12 if residuations[0] else real_clock())
     exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
     result = await fs.glob(_arms("x"), paths=("/",), globs_not=exclusions)
@@ -840,7 +874,7 @@ async def test_planning_composes_only_the_bounded_pairs(monkeypatch: pytest.Monk
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.add_mount(BindableStorage(), "/data")
     await fs.add_mount(RecorderStorage(), "/data/part00007/inner")
-    composed = _counted(monkeypatch, base_module, "composed_pattern")
+    composed = _counted(monkeypatch, fanout_module, "composed_pattern")
     result = await fs.glob("*." + _arms("e"), paths=tuple(f"/data/part{i:05}" for i in range(10_000)))
     assert result.ops == ("glob",)
     assert len(composed) == 64
@@ -886,7 +920,7 @@ async def test_both_shapes_answer_alike(
     answers: list[Result] = []
     scopes: list[int] = []
     for limit in (0, 10**9):
-        monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", limit)
+        monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", limit)
         admitted = _counted(monkeypatch, backend_module, "admit_scope")
         answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
         scopes.append(sum(scope is not None for scope, _channel in admitted))

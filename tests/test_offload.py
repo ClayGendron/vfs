@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tests.support.database_helpers import _url
 from tests.support.loop_ticks import LoopTicker
 from vfs import base as base_module
+from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs import offload as offload_module
 from vfs.base import AsyncVirtualFileSystem
@@ -640,7 +641,7 @@ def test_the_process_pool_is_lazy_shared_and_reminted(fresh_process_pool: None) 
 async def test_every_hop_rides_the_process_pool(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: a hop left on a pool its owner makes, on the loop's default executor, or inline."""
     storage_threads = _trace_verifiers(monkeypatch, grep_module)
-    router_threads = _trace_verifiers(monkeypatch, base_module)
+    router_threads = _trace_verifiers(monkeypatch, chain_module)
     measure_threads: list[str] = []
     real_measure = base_module.measure_text
 

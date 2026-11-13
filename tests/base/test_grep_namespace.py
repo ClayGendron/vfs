@@ -30,7 +30,9 @@ from tests.support.scope_worlds import (
 )
 from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
+from vfs import chain as chain_module
 from vfs import deadline as deadline_module
+from vfs import fanout as fanout_module
 from vfs import offload as offload_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
@@ -380,26 +382,26 @@ class _CountingVerifier:
 
 def _counting_verifiers(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> list[_CountingVerifier]:
     made: list[_CountingVerifier] = []
-    real = base_module.compile_verifier
+    real = chain_module.compile_verifier
 
     def compile_counted(*args: Any, **kw: Any) -> _CountingVerifier:
         verifier = _CountingVerifier(real(*args, **kw), **kwargs)
         made.append(verifier)
         return verifier
 
-    monkeypatch.setattr(base_module, "compile_verifier", compile_counted)
+    monkeypatch.setattr(chain_module, "compile_verifier", compile_counted)
     return made
 
 
 def _counted_hops(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     pools: list[Any] = []
-    real = base_module.call_offloaded
+    real = chain_module.call_offloaded
 
     async def counted(executor: Any, work: Any) -> Any:
         pools.append(executor)
         return await real(executor, work)
 
-    monkeypatch.setattr(base_module, "call_offloaded", counted)
+    monkeypatch.setattr(chain_module, "call_offloaded", counted)
     return pools
 
 
@@ -417,7 +419,7 @@ async def test_chained_grep_verifies_each_distinct_body_once(monkeypatch: pytest
 
 
 async def test_chained_grep_matches_in_byte_batches_on_the_process_pool(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 10)
+    monkeypatch.setattr(chain_module, "CONTENT_BYTE_BUDGET", 10)
     pools = _counted_hops(monkeypatch)
     default = _CountingExecutor()
     asyncio.get_running_loop().set_default_executor(default)
@@ -432,7 +434,7 @@ async def test_chained_grep_matches_in_byte_batches_on_the_process_pool(monkeypa
 
 
 async def test_chained_grep_truncates_at_the_wall(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    monkeypatch.setattr(chain_module, "WALL_TIME_BUDGET", -1.0)
     pools = _counted_hops(monkeypatch)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     result = await fs.grep("x", observations=_held(("/a", "x"), ("/b", "x"), ("/c", "x")))
@@ -446,7 +448,7 @@ async def test_chained_grep_truncates_at_the_wall(monkeypatch: pytest.MonkeyPatc
 
 
 async def test_a_batch_the_matcher_could_not_finish_truncates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(base_module, "CONTENT_BYTE_BUDGET", 1)
+    monkeypatch.setattr(chain_module, "CONTENT_BYTE_BUDGET", 1)
     made = _counting_verifiers(monkeypatch, unfinished_batch=0)
     pools = _counted_hops(monkeypatch)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
@@ -496,18 +498,18 @@ async def test_each_batch_gets_the_wall_budget_cut_at_worker_start(monkeypatch: 
             budgets.append(kwargs["budget"])
             return [[(1, 1, 1, "x")] for _ in texts], True
 
-    monkeypatch.setattr(base_module, "compile_verifier", lambda *a, **k: Recording())
+    monkeypatch.setattr(chain_module, "compile_verifier", lambda *a, **k: Recording())
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     result = await fs.grep("x", observations=_held(("/a", "x")), output_mode=mode)  # ty: ignore[invalid-argument-type]
     assert len(result.observations) == 1
-    assert budgets == [base_module.WALL_TIME_BUDGET - 3.0]
+    assert budgets == [chain_module.WALL_TIME_BUDGET - 3.0]
     await fs.close()
 
 
 async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyPatch) -> None:
     started, release = threading.Event(), threading.Event()
     finished: list[bool] = []
-    real = base_module.compile_verifier
+    real = chain_module.compile_verifier
 
     class Held:
         def __init__(self) -> None:
@@ -519,7 +521,7 @@ async def test_close_never_waits_for_a_running_batch(monkeypatch: pytest.MonkeyP
             finished.append(True)
             return self._inner.hit_lines(texts, **kwargs)
 
-    monkeypatch.setattr(base_module, "compile_verifier", lambda *a, **k: Held())
+    monkeypatch.setattr(chain_module, "compile_verifier", lambda *a, **k: Held())
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     task = asyncio.create_task(fs.grep("x", observations=_held(("/a", "x"))))
     await asyncio.to_thread(started.wait)
@@ -546,7 +548,7 @@ def one_worker_pool(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.MonkeyPatch, one_worker_pool: None) -> None:
     # One worker: grep a's batch holds it, grep b's batch waits in the queue when close() lands.
     started, release = threading.Event(), threading.Event()
-    real = base_module.compile_verifier
+    real = chain_module.compile_verifier
 
     class HeldOnce:
         def __init__(self, pattern: str, **kwargs: Any) -> None:
@@ -559,7 +561,7 @@ async def test_a_batch_queued_at_close_still_finishes(monkeypatch: pytest.Monkey
                 release.wait()
             return self._inner.hit_lines(texts, **kwargs)
 
-    monkeypatch.setattr(base_module, "compile_verifier", HeldOnce)
+    monkeypatch.setattr(chain_module, "compile_verifier", HeldOnce)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     first = asyncio.create_task(fs.grep("a", observations=_held(("/a", "a"))))
     await asyncio.to_thread(started.wait)
@@ -608,12 +610,13 @@ class _CountingExecutor(ThreadPoolExecutor):
 def _spy_judges(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     """The executor each router judge hop ran on."""
     executors: list[Any] = []
-    real = base_module.judge_rows
+    real = chain_module.judge_rows
 
     async def spied(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         executors.append(executor)
         return await real(executor, gates, rows, deadline=deadline)
 
+    monkeypatch.setattr(chain_module, "judge_rows", spied)
     monkeypatch.setattr(base_module, "judge_rows", spied)
     return executors
 
@@ -631,7 +634,7 @@ async def test_chained_grep_filters_once_on_the_process_pool(monkeypatch: pytest
 
 async def test_chained_grep_past_the_wall_reads_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: rows the filter never judged read and matched anyway."""
-    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    monkeypatch.setattr(chain_module, "WALL_TIME_BUDGET", -1.0)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     reads: list[Any] = []
 
@@ -646,6 +649,18 @@ async def test_chained_grep_past_the_wall_reads_nothing(monkeypatch: pytest.Monk
     assert reads == []
     [error] = result.errors
     assert (error.kind, error.severity) == (ErrorKind.truncated, Severity.warning)
+    await fs.close()
+
+
+@pytest.mark.parametrize("batch", [5, "abc", ["/a.txt"], [Observation(path=Path("/a.txt")), "x"]])
+async def test_chained_grep_refuses_a_batch_that_is_not_rows(batch: object) -> None:
+    """Guards: the refusal of a batch that is not rows dropped from the chained
+    branch, so the call answers success with no row."""
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    result = await fs.grep("x", observations=batch)  # ty: ignore[invalid-argument-type]
+    assert result.observations == []
+    [error] = result.errors
+    assert error.kind is ErrorKind.invalid
     await fs.close()
 
 
@@ -680,8 +695,8 @@ async def test_an_unfinished_filter_and_matching_stage_record_once(monkeypatch: 
     async def unfinished(executor: Any, gates: Any, rows: Any, *, deadline: Deadline) -> Any:
         return [1] * len(rows), False
 
-    monkeypatch.setattr(base_module, "judge_rows", unfinished)
-    monkeypatch.setattr(base_module, "WALL_TIME_BUDGET", -1.0)
+    monkeypatch.setattr(chain_module, "judge_rows", unfinished)
+    monkeypatch.setattr(chain_module, "WALL_TIME_BUDGET", -1.0)
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     result = await fs.grep("x", observations=_held(("/a.txt", "x"), ("/b.txt", "x")), globs=("*.txt",))
     assert result.observations == []
@@ -798,7 +813,7 @@ async def test_both_shapes_answer_alike(
     answers: list[Result] = []
     scopes: list[int] = []
     for limit in (0, 10**9):
-        monkeypatch.setattr(base_module, "_COMPOSED_ARM_LIMIT", limit)
+        monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", limit)
         admitted: list[object] = []
         real = backend_module.admit_scope
 
