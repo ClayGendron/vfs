@@ -1,22 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 524" width="640" height="524" role="img" aria-labelledby="title desc">
-  <title id="title">Tokens Used vs. Tokens Needed</title>
-  <desc id="desc">A chart of tokens used against tokens needed to solve a problem. The diagonal line, where tokens used equals tokens needed, is the line of optimal disclosure. Above the line cost is high because more tokens were used than the problem needed. Below the line performance is low because fewer tokens were used than the problem needed.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" id="vfs-optimal-disclosure" viewBox="0 0 640 524" width="640" height="524" role="img" aria-labelledby="vfs-optimal-disclosure-title vfs-optimal-disclosure-desc">
+  <title id="vfs-optimal-disclosure-title">Tokens Used vs. Tokens Needed</title>
+  <desc id="vfs-optimal-disclosure-desc">A chart of tokens used against tokens needed to solve a problem. The diagonal line, where tokens used equals tokens needed, is the line of optimal disclosure. Above the line cost is high because more tokens were used than the problem needed. Below the line performance is low because fewer tokens were used than the problem needed.</desc>
   <style>
-    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-    .primary { fill: #0b0b0b; }
-    .secondary { fill: #52514e; }
-    .axis { stroke: #898781; fill: none; }
-    .optimal { stroke: #2a78d6; fill: none; }
-    .title { font-size: 20px; font-weight: 600; }
-    .head { font-size: 16px; font-weight: 600; }
-    .body { font-size: 13px; }
-    .label { font-size: 13px; font-weight: 600; }
-    .axis-title { font-size: 15px; }
+    /* Each rule names this figure, so the file can be placed inline in a page and touch nothing else. */
+    /* Each colour and the typeface is the page's token when there is one, and the value here when alone. */
+    #vfs-optimal-disclosure text { font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif); }
+    #vfs-optimal-disclosure .primary { fill: var(--foreground, #0b0f17); }
+    #vfs-optimal-disclosure .secondary { fill: var(--muted-foreground, #505661); }
+    #vfs-optimal-disclosure .axis { stroke: var(--input, #857e70); fill: none; }
+    #vfs-optimal-disclosure .optimal { stroke: var(--primary, #2d48d4); fill: none; }
+    #vfs-optimal-disclosure .title { font-size: 20px; font-weight: 600; }
+    #vfs-optimal-disclosure .head { font-size: 16px; font-weight: 600; }
+    #vfs-optimal-disclosure .body { font-size: 13px; }
+    #vfs-optimal-disclosure .label { font-size: 13px; font-weight: 600; }
+    #vfs-optimal-disclosure .axis-title { font-size: 15px; }
     /* The background is transparent, so the ink follows the reader's theme. */
     @media (prefers-color-scheme: dark) {
-      .primary { fill: #f0efec; }
-      .secondary { fill: #c3c2b7; }
-      .optimal { stroke: #3987e5; }
+      #vfs-optimal-disclosure .primary { fill: var(--foreground, #f3f0e8); }
+      #vfs-optimal-disclosure .secondary { fill: var(--muted-foreground, #a39d90); }
+      #vfs-optimal-disclosure .axis { stroke: var(--input, #7a7366); }
+      #vfs-optimal-disclosure .optimal { stroke: var(--primary, #93b0ff); }
     }
   </style>
 

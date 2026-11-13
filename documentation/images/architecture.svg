@@ -1,27 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 520" width="760" height="520" role="img" aria-labelledby="title desc">
-  <title id="title">VFS Architecture</title>
-  <desc id="desc">An AI agent and the VFS kernel run inside one application process. The agent sends commands to the kernel, and the kernel is the one layer that everything flows through. The kernel reads and writes a database, which is SQLite locally or Postgres, SQL Server, or Oracle in the cloud. The kernel has no access to the host machine's disk, shell, network, or program code by default, and each one is reached only through an explicit grant.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" id="vfs-architecture" viewBox="0 0 760 520" width="760" height="520" role="img" aria-labelledby="vfs-architecture-title vfs-architecture-desc">
+  <title id="vfs-architecture-title">VFS Architecture</title>
+  <desc id="vfs-architecture-desc">An AI agent and the VFS kernel run inside one application process. The agent sends commands to the kernel, and the kernel is the one layer that everything flows through. The kernel reads and writes a database, which is SQLite locally or Postgres, SQL Server, or Oracle in the cloud. The kernel has no access to the host machine's disk, shell, network, or program code by default, and each one is reached only through an explicit grant.</desc>
   <style>
-    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
-    .primary { fill: #0b0b0b; }
-    .secondary { fill: #52514e; }
-    .frame { stroke: #898781; fill: none; }
-    .kernel { stroke: #2a78d6; fill: none; }
-    .flow { stroke: #898781; fill: none; }
-    .flow-head { fill: #898781; }
-    .title { font-size: 20px; font-weight: 600; }
-    .name { font-size: 15px; font-weight: 600; }
-    .group { font-size: 13px; font-weight: 600; }
-    .note { font-size: 13px; }
+    /* Each rule names this figure, so the file can be placed inline in a page and touch nothing else. */
+    /* Each colour and the typeface is the page's token when there is one, and the value here when alone. */
+    #vfs-architecture text { font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif); }
+    #vfs-architecture .primary { fill: var(--foreground, #0b0f17); }
+    #vfs-architecture .secondary { fill: var(--muted-foreground, #505661); }
+    #vfs-architecture .frame { stroke: var(--input, #857e70); fill: none; }
+    #vfs-architecture .kernel { stroke: var(--primary, #2d48d4); fill: none; }
+    #vfs-architecture .flow { stroke: var(--input, #857e70); fill: none; }
+    #vfs-architecture .flow-head { fill: var(--input, #857e70); }
+    #vfs-architecture .title { font-size: 20px; font-weight: 600; }
+    #vfs-architecture .name { font-size: 15px; font-weight: 600; }
+    #vfs-architecture .group { font-size: 13px; font-weight: 600; }
+    #vfs-architecture .note { font-size: 13px; }
     /* The background is transparent, so the ink follows the reader's theme. */
     @media (prefers-color-scheme: dark) {
-      .primary { fill: #f0efec; }
-      .secondary { fill: #c3c2b7; }
-      .kernel { stroke: #3987e5; }
+      #vfs-architecture .primary { fill: var(--foreground, #f3f0e8); }
+      #vfs-architecture .secondary { fill: var(--muted-foreground, #a39d90); }
+      #vfs-architecture .frame { stroke: var(--input, #7a7366); }
+      #vfs-architecture .kernel { stroke: var(--primary, #93b0ff); }
+      #vfs-architecture .flow { stroke: var(--input, #7a7366); }
+      #vfs-architecture .flow-head { fill: var(--input, #7a7366); }
     }
   </style>
   <defs>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <marker id="vfs-architecture-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path class="flow-head" d="M0 0 L10 5 L0 10 Z"/>
     </marker>
   </defs>
@@ -36,7 +41,7 @@
   <text class="name primary" text-anchor="middle" x="380" y="127">AI Agent</text>
   <text class="note secondary" text-anchor="middle" x="380" y="145">LLM and harness</text>
 
-  <path class="flow" stroke-width="1.5" marker-end="url(#arrow)" d="M380 156 V190"/>
+  <path class="flow" stroke-width="1.5" marker-end="url(#vfs-architecture-arrow)" d="M380 156 V190"/>
   <text class="note secondary" x="392" y="178">commands</text>
 
   <rect class="kernel" stroke-width="2" x="185" y="192" width="390" height="68" rx="8"/>
@@ -44,7 +49,7 @@
   <text class="note secondary" text-anchor="middle" x="380" y="242">the one layer that everything flows through</text>
 
   <!-- The kernel is the only path to storage. -->
-  <path class="flow" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#arrow)" d="M300 261 V310 H215 V362"/>
+  <path class="flow" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#vfs-architecture-arrow)" d="M300 261 V310 H215 V362"/>
   <text class="note secondary" text-anchor="end" x="203" y="340">reads and writes</text>
 
   <rect class="frame" stroke-width="1" x="30" y="364" width="370" height="130" rx="10"/>
@@ -59,7 +64,7 @@
   <text class="note secondary" text-anchor="middle" x="266" y="452">cloud</text>
 
   <!-- The kernel is also the only path to the host, and that path is closed by default. -->
-  <path class="flow" stroke-width="1.5" stroke-dasharray="5 4" stroke-linejoin="round" marker-end="url(#arrow)" d="M460 261 V310 H575 V362"/>
+  <path class="flow" stroke-width="1.5" stroke-dasharray="5 4" stroke-linejoin="round" marker-end="url(#vfs-architecture-arrow)" d="M460 261 V310 H575 V362"/>
   <text class="note secondary" x="587" y="331">no access by default,</text>
   <text class="note secondary" x="587" y="348">each is an explicit grant</text>
 

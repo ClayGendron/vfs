@@ -1,6 +1,6 @@
 # Introduction to VFS
 
-VFS is a virtual file system that gives AI agents governed access to an organization's data and tools.
+VFS is a virtual file system that gives AI agents governed access to data and tools.
 
 AI agents are usually connected to data one tool at a time, each with its own API and governance patterns. These connections also bloat the context window and make AI agents less effective. Defining every tool in the LLM API call leaves the AI agent moving data between systems instead of solving the problem. VFS replaces those connections with one namespace for data and tools. Both are mounted into one tree, and the AI agent works in it with commands it already knows.
 
