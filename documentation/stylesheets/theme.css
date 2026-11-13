@@ -53,6 +53,8 @@
   --font-sans: "Geist", system-ui, sans-serif;
   --font-heading: "IBM Plex Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* The wordmark's own typeface: the one exception to the design system's three. */
+  --font-mark: "Saira Stencil", "IBM Plex Sans", system-ui, sans-serif;
 
   --text-xs: 0.6rem;
   --text-sm: 0.675rem;
@@ -205,22 +207,19 @@ samp {
   font-variant-ligatures: none;
 }
 
-/* The mark is the name in lowercase italic, wherever the site's name is shown as a logo. */
+/* The mark is the name in lowercase, in bold italic Saira Stencil, wherever the name is shown as a logo. */
 .vfs-wordmark,
 .md-header__topic:first-child {
+  font-family: var(--font-mark);
+  font-size: var(--text-2xl);
   font-style: italic;
+  font-weight: 700;
+  line-height: 1;
   text-transform: lowercase;
 }
 
-.vfs-wordmark {
-  font-family: var(--font-heading);
-  font-size: var(--text-2xl);
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* The header reads "vfs Docs" as one phrase: "Docs" has the mark's typeface, size and baseline. */
-/* Only the slant, the weight and the colour change, and that tells the word from the mark. */
+/* The header reads "vfs Docs" as one phrase: "Docs" has the mark's size and sits on its baseline. */
+/* It is in the heading typeface, upright, regular and muted, and that tells the word from the mark. */
 .vfs-wordmark__site,
 .md-header__topic:first-child::after {
   color: var(--muted-foreground);
@@ -233,12 +232,13 @@ samp {
 }
 
 /* On a phone the theme prints the name itself, so "Docs" is added beside it, one word space away. */
-/* Both words have one typeface, size and line height, so centring them puts them on one baseline. */
+/* The two words share a baseline. The row is allowed to wrap only so that it can be centred as a line. */
 .md-header__topic:first-child {
-  align-items: center;
+  align-content: center;
+  align-items: baseline;
+  flex-wrap: wrap;
   gap: 0.4rem;
   height: 100%;
-  line-height: 1;
 }
 
 .md-header__topic:first-child::after {
@@ -276,10 +276,6 @@ samp {
 .md-header__topic {
   font-family: var(--font-heading);
   font-weight: 700;
-}
-
-.md-header__topic:first-child {
-  font-size: var(--text-2xl);
 }
 
 /* The repository link reads as a plain header link named in mkdocs.yml. */
