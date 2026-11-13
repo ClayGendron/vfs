@@ -22,5 +22,5 @@ pip install vfs-py
 
 ## Where to Go Next
 
-- [Overview](overview.md) covers the why, who, what, where, how, and when of VFS.
-- [History](history.md) tells how VFS became a file system.
+- [Overview](overview.md) gives a high-level analysis of how to think about VFS.
+- [History](history.md) gives the full backstory of where the ideas built into VFS came from.

@@ -45,6 +45,7 @@ extra:
 nav:
   - Home:
     - Introduction: index.md
+    - Get Started: get-started.md
     - Overview: overview.md
     - History: history.md
   - Tutorials:
