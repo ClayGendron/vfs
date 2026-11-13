@@ -101,3 +101,9 @@ markdown_extensions:
 
 plugins:
   - search
+  # The build downloads the fonts and serves them from the site, so a reader's browser never contacts Google.
+  # A link that leaves the site opens in a new tab, and a screen reader says so; a link inside the docs does not.
+  - privacy:
+      links_attr_map:
+        target: _blank
+        aria-describedby: vfs-new-tab

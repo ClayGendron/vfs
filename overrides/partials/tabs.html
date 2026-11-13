@@ -8,12 +8,11 @@
       {% endfor %}
       {% if config.repo_url %}
         <li class="md-tabs__item">
-          <a href="{{ config.repo_url }}" class="md-tabs__link" target="_blank" rel="noopener">
+          <a href="{{ config.repo_url }}" class="md-tabs__link" target="_blank" rel="noopener" aria-describedby="vfs-new-tab">
             {{ config.repo_name }}
             <svg class="vfs-external" viewBox="0 0 16 16" aria-hidden="true">
               <path d="M5 11 11 5M6 5h5v5"/>
             </svg>
-            <span class="vfs-visually-hidden">(opens in a new tab)</span>
           </a>
         </li>
       {% endif %}

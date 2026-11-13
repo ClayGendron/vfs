@@ -197,16 +197,6 @@ html {
   outline-offset: var(--focus-offset);
 }
 
-/* Words for a screen reader only, such as the note that a link opens a new tab. */
-.vfs-visually-hidden {
-  clip-path: inset(50%);
-  height: 1px;
-  overflow: hidden;
-  position: absolute;
-  white-space: nowrap;
-  width: 1px;
-}
-
 code,
 kbd,
 pre,
@@ -229,55 +219,35 @@ samp {
   line-height: 1;
 }
 
-/* The header reads "vfs / Docs": the mark, a muted slash, then the site's name in a smaller size. */
-.vfs-wordmark__slash,
+/* The header reads "vfs Docs" as one phrase: "Docs" has the mark's typeface, size and baseline. */
+/* Only the slant, the weight and the colour change, and that tells the word from the mark. */
 .vfs-wordmark__site,
-.md-header__topic:first-child .md-ellipsis::after,
 .md-header__topic:first-child::after {
+  color: var(--muted-foreground);
   font-family: var(--font-heading);
-  font-size: 1.1rem;
+  font-size: var(--text-2xl);
   font-style: normal;
+  font-weight: 400;
   line-height: 1;
   text-transform: none;
 }
 
-.vfs-wordmark__slash,
-.md-header__topic:first-child .md-ellipsis::after {
-  color: var(--muted-foreground);
-  font-weight: 400;
-}
-
-.vfs-wordmark__site,
-.md-header__topic:first-child::after {
-  color: var(--foreground);
-  font-size: 0.95rem;
-  font-weight: 500;
-}
-
-/* On a phone the theme prints the name itself, so the slash and "Docs" are added beside it. */
-.md-header__topic:first-child,
-.md-header__topic:first-child .md-ellipsis {
+/* On a phone the theme prints the name itself, so "Docs" is added beside it, one word space away. */
+/* Both words have one typeface, size and line height, so centring them puts them on one baseline. */
+.md-header__topic:first-child {
   align-items: center;
   gap: 0.4rem;
-}
-
-.md-header__topic:first-child {
   height: 100%;
   line-height: 1;
 }
 
-/* The padding keeps the clipping box clear of the italic's overhang and its descender. */
-.md-header__topic:first-child .md-ellipsis {
-  display: inline-flex;
-  padding: 0.2rem 0.1rem 0.2rem 0;
-}
-
-.md-header__topic:first-child .md-ellipsis::after {
-  content: "/";
-}
-
 .md-header__topic:first-child::after {
   content: "Docs";
+}
+
+/* The padding keeps the clipping box clear of the italic's overhang and its descender. */
+.md-header__topic:first-child .md-ellipsis {
+  padding: 0.2rem 0.1rem 0.2rem 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -424,8 +394,9 @@ samp {
     display: none;
   }
 
+  /* The mark and "Docs" sit on one baseline, one word space apart. */
   .md-header__button.md-logo {
-    align-items: center;
+    align-items: baseline;
     display: inline-flex;
     gap: 0.4rem;
   }
