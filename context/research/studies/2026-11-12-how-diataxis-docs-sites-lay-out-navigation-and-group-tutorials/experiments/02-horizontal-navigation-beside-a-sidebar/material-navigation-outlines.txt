@@ -1,0 +1,268 @@
+Top two levels of each Material for MkDocs or Zensical navigation, counted by a script over the public config fetched 2026-11-12. Entries shown as blank take their title from the page.
+
+## fastapi.yml
+top-level entries: 7; pages: 153
+- FastAPI  [1 pages]
+- features.md  [1 pages]
+-   [113 pages]
+    - learn/index.md
+    - python-types.md
+    - async.md
+    -   [51]
+    -   [35]
+    - fastapi-cli.md
+    - editor-support.md
+    - ai-development.md
+    -   [9]
+    -   [12]
+-   [24 pages]
+    -   [3]
+    - reference/security/index.md
+-   [8 pages]
+    - resources/index.md
+    - fastapi-people.md
+    - help-fastapi.md
+    - contributing.md
+    - translations.md
+    - project-generation.md
+    - external-links.md
+    - newsletter.md
+-   [5 pages]
+    - about/index.md
+    - alternatives.md
+    - history-design-future.md
+    - benchmarks.md
+    - management.md
+- release-notes.md  [1 pages]
+
+## pydantic.yml
+top-level entries: 9; pages: 93
+- Get Started  [9 pages]
+    - Welcome to Pydantic
+    - Why use Pydantic
+    - Help with Pydantic
+    - Enterprise Support
+    - Installation
+    - Migration Guide (V1 to V2)
+    - Version Policy
+    - Contributing
+    - Changelog
+- Concepts  [19 pages]
+    - Models
+    - Fields
+    - JSON Schema
+    - JSON
+    - Types
+    - Unions
+    - Alias
+    - Configuration
+    - Serialization
+    - Validators
+    - Dataclasses
+    - Forward Annotations
+    - Strict Mode
+    - Type Adapter
+    - Validation Decorator
+    - Conversion Table
+    - Settings Management
+    - Performance
+    - Experimental
+- API Documentation  [36 pages]
+    - Pydantic  [18]
+    - Pydantic Core  [2]
+    - Pydantic Settings
+    - Pydantic Extra Types  [15]
+- Internals  [2 pages]
+    - Architecture
+    - Resolving Annotations
+- Examples  [8 pages]
+    - Validating File Data
+    - Web and API Requests
+    - Queues
+    - Databases
+    - Custom Validators
+    - Dynamic models
+    - Cyclic references
+    - Agent libraries – Pydantic AI
+- Error Messages  [4 pages]
+    - Error Handling
+    - Validation Errors
+    - Usage Errors
+    - Troubleshooting with Logfire
+- Integrations  [13 pages]
+    - Pydantic Logfire
+    - LLMs
+    - Dev Tools  [10]
+    - Production Tools
+- Blog  [1 pages]
+- Pydantic People  [1 pages]
+
+## uv.yml
+top-level entries: 5; pages: 84
+- Introduction  [1 pages]
+- Getting started  [5 pages]
+    - getting-started/index.md
+    - Installation
+    - First steps
+    - Features
+    - Getting help
+- Guides  [26 pages]
+    - guides/index.md
+    - Installing Python
+    - Running scripts
+    - Using tools
+    - Working on projects
+    - Publishing packages
+    - Migration  [2]
+    - Integrations  [18]
+- Concepts  [32 pages]
+    - concepts/index.md
+    - Projects  [10]
+    - Tools
+    - Python versions
+    - Configuration files
+    - Package indexes
+    - Resolution
+    - Build backend
+    - Authentication  [6]
+    - Caching
+    - Preview features
+    - The pip interface  [7]
+- Reference  [20 pages]
+    - Commands
+    - Settings
+    - Environment variables
+    - Storage
+    - Installer options
+    - Troubleshooting  [3]
+    - Contributing
+    - Internals  [3]
+    - Benchmarks
+    - Policies  [6]
+
+## textual.yml
+top-level entries: 11; pages: 236
+- index.md  [1 pages]
+- Introduction  [2 pages]
+    - getting_started.md
+    - help.md
+- tutorial.md  [1 pages]
+- Guide  [19 pages]
+    - guide/index.md
+    - guide/devtools.md
+    - guide/app.md
+    - guide/styles.md
+    - guide/CSS.md
+    - guide/queries.md
+    - guide/layout.md
+    - guide/events.md
+    - guide/input.md
+    - guide/actions.md
+    - guide/reactivity.md
+    - guide/design.md
+    - guide/widgets.md
+    - guide/content.md
+    - guide/animation.md
+    - guide/screens.md
+    - guide/workers.md
+    - guide/command_palette.md
+    - guide/testing.md
+- widget_gallery.md  [1 pages]
+- Reference  [153 pages]
+    - CSS Types  [17]
+    - Events  [28]
+    - Styles  [69]
+    - Widgets  [38]
+- API  [49 pages]
+- How To  [7 pages]
+    - how-to/index.md
+    - how-to/center-things.md
+    - how-to/design-a-layout.md
+    - how-to/package-with-hatch.md
+    - how-to/render-and-compose.md
+    - how-to/style-inline-apps.md
+    - how-to/work-with-containers.md
+- FAQ.md  [1 pages]
+- roadmap.md  [1 pages]
+- Blog  [1 pages]
+    - blog/index.md
+
+## material.yml
+top-level entries: 7; pages: 73
+- Home  [1 pages]
+- Getting started  [10 pages]
+    - Installation
+    - Creating your site
+    - Publishing your site
+    - Customization
+    - Conventions
+    - Browser support
+    - Alternatives
+    - License
+    - Changelog  [2]
+- Setup  [22 pages]
+    - setup/index.md
+    - Changing the colors
+    - Changing the fonts
+    - Changing the language
+    - Changing the logo and icons
+    - Ensuring data privacy
+    - Setting up navigation
+    - Setting up site search
+    - Setting up site analytics
+    - Setting up social cards
+    - Setting up a blog
+    - Setting up tags
+    - Setting up versioning
+    - Setting up the header
+    - Setting up the footer
+    - Adding a git repository
+    - Adding a comment system
+    - Building an optimized site
+    - Building for offline usage
+    - Extensions  [3]
+- Plugins  [15 pages]
+    - plugins/index.md
+    - Blog
+    - Group
+    - Info
+    - Meta
+    - Offline
+    - Optimize
+    - Privacy
+    - Projects
+    - Search
+    - Social
+    - Tags
+    - Typeset
+    - Requirements  [2]
+- Reference  [16 pages]
+    - Admonitions
+    - Annotations
+    - Buttons
+    - Code blocks
+    - Content tabs
+    - Data tables
+    - Diagrams
+    - Footnotes
+    - Formatting
+    - Grids
+    - Icons, Emojis
+    - Images
+    - Lists
+    - Math
+    - Tooltips
+- Community  [8 pages]
+    - Contributing  [7]
+    - Guides
+- Blog  [1 pages]
+    - blog/index.md
+
+## polars.toml
+top-level entries: 2; pages: 87
+- Polars  [86 pages]
+    - User guide  [73]
+    - API
+    - Development  [6]
+    - Releases  [6]
+- Polars Nanook  [1 pages]

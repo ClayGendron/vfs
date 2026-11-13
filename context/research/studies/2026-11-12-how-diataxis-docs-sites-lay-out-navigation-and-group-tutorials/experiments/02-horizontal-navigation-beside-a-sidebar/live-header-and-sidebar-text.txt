@@ -1,0 +1,191 @@
+Header and navigation text of each live page, extracted from HTML fetched 2026-11-12, truncated.
+
+## docker
+HEADER:  | Get started | Guides | Manuals | Reference | Gordon | Gordon, your AI assistant for Docker docs | Search | { if (theme === 'auto') document.firstElementChild.className = e.matches ? 'dark' : 'light'; }; mql.addEventListener('change', handler); $watch('theme', val => applyTheme(val)); return () => mql.removeEventListener('change', handler); " @click="theme = (theme === 'light' ? 'dark' : theme =
+NAV 0 [('class', 'mt-1 hidden md:flex lg:flex xl:flex 2xl:flex')]:  | Get started | Guides | Manuals | Reference | 
+NAV 1 [('class', 'navbar-font mx-1 mt-1 flex flex-col')]:  | Tutorials | Containerize an application | Sandbox a coding agent | Pilot an organization rollout | Get Docker | What is Docker? | Docker concepts | The basics | What is a container? | What is an image? | What is a registry? | What is Docker Compose? | Building images | Understanding the image layers | Writing a Dockerfile | Build, tag, and publish an image 
+NAV 2 []:  | Home | / | Get started | 
+ASIDE:  | Edit this page | Request changes | 
+
+## react
+HEADER: none
+NAV 0 []:  | React | v | 19.3 | Search | ⌘ | Ctrl | K | Learn | Reference | Community | Blog | 
+NAV 1 []:  | GET STARTED | Quick Start | Tutorial: Tic-Tac-Toe | Thinking in React | Installation | Creating a React App | Build a React App from Scratch | Add React to an Existing Project | Setup | Editor Setup | Using TypeScript | React Developer Tools | React Compiler | Introduction | Installation | Incremental Adoption | Debugging and Troubleshooting | LEARN REACT | Describing the UI | Your First Compon
+NAV 2 [('class', 'pt-20 sticky top-0 end-0')]:  | On this page | Overview | Creating and nesting components | Writing markup with JSX | Adding styles | Displaying data | Conditional rendering | Rendering lists | Responding to events | Updating the screen | Using Hooks | Sharing data between components | Next Steps | 
+ASIDE:  | GET STARTED | Quick Start | Tutorial: Tic-Tac-Toe | Thinking in React | Installation | Creating a React App | Build a React App from Scratch | Add React to an Existing Project | Setup | Editor Setup | Using TypeScript | React Developer Tools | React Compiler | Introduction | Installation | Incremental Adoption | Debugging and Troubleshooting | LEARN REACT | Describing the UI | Your First Compon
+
+## nextjs
+HEADER:  | Latest | The framework for building agents | Frameworks | Svelte | Nuxt | Nitro | SDKs | AI SDK | Chat SDK | Flags SDK | Workflow SDK | Other | Turborepo | shadcn/ui | SWR | just-bash | deepsec | Docs | Learn | Showcase | Blog | Templates | Deploy | Search… | ⌘K | Ask AI | Ask AI | Search… | ⌘K | Docs | Learn | Showcase | Blog | Templates | Deploy | GitHub | Vercel OSS | Latest | eve | Framewor
+NAV 0 [('aria-label', 'Product navigation')]:  | Latest | The framework for building agents | Frameworks | Svelte | Nuxt | Nitro | SDKs | AI SDK | Chat SDK | Flags SDK | Workflow SDK | Other | Turborepo | shadcn/ui | SWR | just-bash | deepsec | 
+NAV 1 [('aria-label', 'Primary navigation')]:  | Docs | Learn | Showcase | Blog | Templates | Deploy | 
+NAV 2 [('class', 'flex flex-col px-1')]:  | Docs | Learn | Showcase | Blog | Templates | Deploy | GitHub | Vercel OSS | Latest | eve | Frameworks | Svelte | Nuxt | Nitro | SDKs | AI SDK | Chat SDK | Flags SDK | Workflow SDK | Other | Turborepo | shadcn/ui | SWR | just-bash | deepsec | 
+NAV 3 [('aria-label', 'Documentation')]:  | Using App Router | Features available in /app | Latest | v16.4.6 | Getting Started | Installation | Project Structure | Layouts and Pages | Linking and Navigating | Server and Client Components | Fetching Data | Mutating Data | Caching | Revalidating | Error Handling | CSS | Image Optimization | Font Optimization | Metadata and OG images | Route Handlers | Proxy | Deploying
+NAV 4 [('aria-label', 'On this page'), ('class', 'ml-0.5 flex min-h-0 flex-1 flex-col')]:  | On this page | Pre-requisite knowledge | Next Steps | Give feedback | Edit this page on GitHub | 
+ASIDE:  | Using App Router | Features available in /app | Latest | v16.4.6 | Getting Started | Installation | Project Structure | Layouts and Pages | Linking and Navigating | Server and Client Components | Fetching Data | Mutating Data | Caching | Revalidating | Error Handling | CSS | Image Optimization | Font Optimization | Metadata and OG images | Route Handlers | Proxy | Deploying | Upgrading | Guides
+
+## svelte
+HEADER:  | Svelte | Introduction | Overview | 
+NAV 0 [('aria-label', 'Primary'), ('class', 'svelte-wf8082 visible')]:  | Docs | Docs | Svelte | SvelteKit | CLI | AI | 
+NAV 1 [('class', 'dropdown-content svelte-fwukmr')]:  | Create new app | Your saved apps | 
+NAV 2 [('aria-label', 'Docs'), ('class', 'svelte-1dx26b8')]:  | Introduction | Overview | Getting started | .svelte files | .svelte.js and .svelte.ts files | Runes | What are runes? | $state | $derived | $effect | $props | $bindable | $inspect | $host | Template syntax | Basic markup | {#if ...} | {#each ...} | {#key ...} | {#await ...} | {#snippet ...} | {@render ...} | {@html ...} | {@attach ...} | {@const ...} | {
+NAV 3 [('class', 'svelte-42rdnp')]:  | Overview | 
+ASIDE:  | On this page | Overview | 
+
+## vue
+HEADER:  | Vue.js | Search | Main Navigation | Docs | Quick Start | Guide | Tutorial | Examples | API | Glossary | Error Reference | Vue 2 Docs | Migration from Vue 2 | Playground | Ecosystem | Resources | Themes | UI Components | Plugins Collection | Certification | Jobs | T-Shirt Shop | Official Libraries | Vue Router | Pinia | Tooling Guide | Video Courses | Vue Mastery | Vue School | Help | Discord Ch
+NAV 0 [('class', 'VPNavBarMenu menu')]:  | Main Navigation | Docs | Quick Start | Guide | Tutorial | Examples | API | Glossary | Error Reference | Vue 2 Docs | Migration from Vue 2 | Playground | Ecosystem | Resources | Themes | UI Components | Plugins Collection | Certification | Jobs | T-Shirt Shop | Official Libraries | Vue Router | Pinia | Tooling Guide | Video Courses | Vue Mastery | Vue School | Help | Discord 
+NAV 1 [('id', 'VPSidebarNav')]:  | API Preference | Options | Composition | ? | Sidebar Navigation | Getting Started | Introduction | Quick Start | Essentials | Creating an Application | Template Syntax | Reactivity Fundamentals | Computed Properties | Class and Style Bindings | Conditional Rendering | List Rendering | Event Handling | Form Input Bindings | Watchers | Template Refs | Components Basics | Lifecycle Hoo
+NAV 2 []:  | Table of Contents for current page | What is Vue? | The Progressive Framework | Single-File Components | API Styles | Still Got Questions? | Pick Your Learning Path | 
+ASIDE:  | API Preference | Options | Composition | ? | Sidebar Navigation | Getting Started | Introduction | Quick Start | Essentials | Creating an Application | Template Syntax | Reactivity Fundamentals | Computed Properties | Class and Style Bindings | Conditional Rendering | List Rendering | Event Handling | Form Input Bindings | Watchers | Template Refs | Components Basics | Lifecycle Hooks | Compone
+
+## tailwind
+HEADER: none
+NAV 0 [('class', 'flex flex-col gap-8')]:  | Getting started | Installation | Editor setup | Compatibility | Upgrade guide | Core concepts | Styling with utility classes | Hover, focus, and other states | Responsive design | Dark mode | Theme variables | Colors | Adding custom styles | Detecting classes in source files | Functions and directives | Base styles | Preflight | Layout | aspect-ratio | columns | break-afte
+
+## kubernetes
+HEADER:  | Kubernetes | Documentation | Kubernetes Blog | Training | Careers | Partners | Community | Versions | Release Information | v1.37 | v1.36 | v1.35 | v1.34 | v1.33 | English | বাংলা (Bengali) | 中文 (Chinese) | Français (French) | Deutsch (German) | हिन्दी (Hindi) | Bahasa Indonesia (Indonesian) | Italiano (Italian) | 日本語 (Japanese) | 한국어 (Korean) | فارسی (Persian) | Polski (Polish) | Português (Po
+NAV 0 []:  | Kubernetes | Documentation | Kubernetes Blog | Training | Careers | Partners | Community | Versions | Release Information | v1.37 | v1.36 | v1.35 | v1.34 | v1.33 | English | বাংলা (Bengali) | 中文 (Chinese) | Français (French) | Deutsch (German) | हिन्दी (Hindi) | Bahasa Indonesia (Indonesian) | Italiano (Italian) | 日本語 (Japanese) | 한국어 (Korean) | فارسی (Persian) | Polski (Polish) | Português (Po
+NAV 1 [('class', 'collapse td-sidebar-nav foldable-nav')]:  | English | বাংলা (Bengali) | 中文 (Chinese) | Français (French) | Deutsch (German) | हिन्दी (Hindi) | Bahasa Indonesia (Indonesian) | Italiano (Italian) | 日本語 (Japanese) | 한국어 (Korean) | Polski (Polish) | Português (Portuguese) | Русский (Russian) | Español (Spanish) | Українська (Ukrainian) | Tiếng Việt (Vietnamese) | فارسی (Persian) | Kubernetes Documentati
+NAV 2 []:  | Kubernetes Documentation | Documentation | 
+ASIDE:  | English | বাংলা (Bengali) | 中文 (Chinese) | Français (French) | Deutsch (German) | हिन्दी (Hindi) | Bahasa Indonesia (Indonesian) | Italiano (Italian) | 日本語 (Japanese) | 한국어 (Korean) | Polski (Polish) | Português (Portuguese) | Русский (Russian) | Español (Spanish) | Українська (Ukrainian) | Tiếng Việt (Vietnamese) | فارسی (Persian) | Kubernetes Documentation | Documentation | Available Document
+
+## stripe
+HEADER: none
+NAV 0 [('class', '⚙ as-3r as-3s ⚙f2u5rj'), ('aria-label', 'Documentation topics')]:  | Get started | Payments | Revenue | Risk | Data | Money management | Stablecoins | Embedded finance | Developer resources | More | 
+
+## supabase
+HEADER:  | Database | Use Supabase to connect, manage, and secure your Postgres database. | 
+NAV 0 [('aria-label', 'top bar')]:  | DOCS | Start | Products | Build | Manage | Reference | Resources | 
+NAV 1 [('aria-label', 'Docs sections'), ('class', 'sr-only')]:  | Products | Database | Auth | Storage | Edge Functions | Realtime | Data API (REST) | AI &amp; Vectors | Cron | Queues | GraphQL API | Build | AI Tools | Local Development &amp; CLI | Deployment &amp; Branching | Self-Hosting | Integrations | Manage | Platform Management | Security &amp; Compliance | Observability | Reference | JavaScript | Flutter | Sw
+NAV 2 []:  | Main menu | Start | Products | Build | Manage | Reference | Resources | Products | Features | Database | Auth | Storage | Edge Functions | Realtime | Modules | Data API (REST) | AI &amp; Vectors | Cron | Queues | GraphQL API | Database | Overview | Fundamentals | Fundamentals | Connecting to your database | Connecting to your database | Connection pooling and limits | Serverless drivers | Impor
+NAV 3 [('aria-label', 'top bar')]:  | DOCS | Start | Products | Build | Manage | Reference | Resources | 
+NAV 4 [('aria-label', 'Docs sections'), ('class', 'sr-only')]:  | Products | Database | Auth | Storage | Edge Functions | Realtime | Data API (REST) | AI &amp; Vectors | Cron | Queues | GraphQL API | Build | AI Tools | Local Development &amp; CLI | Deployment &amp; Branching | Self-Hosting | Integrations | Manage | Platform Management | Security &amp; Compliance | Observability | Reference | JavaScript | Flutter | Sw
+NAV 5 [('aria-label', 'breadcrumb'), ('class', 'layout-v2:lg:hidden')]:  | Database | Overview | 
+ASIDE:  | 
+
+## vercel
+HEADER:  | Copy Wordmark | Copy Logo | Download Brand Assets | Brand Guidelines | Docs | Build | Build with AI | AI Gateway | AI SDK | Sandbox | Container Registry | Workflow | Vercel Agent | v0 | ↗ | Vercel MCP | AI Integrations | Deploy &amp; scale | Deployments | CLI | Functions | Delivery Network | Storage | Integrations | Microfrontends | Domains | Operate &amp; protect | Firewall | Observability | F
+NAV 0 [('aria-label', 'Main navigation')]:  | Build | Build with AI | AI Gateway | AI SDK | Sandbox | Container Registry | Workflow | Vercel Agent | v0 | ↗ | Vercel MCP | AI Integrations | Deploy &amp; scale | Deployments | CLI | Functions | Delivery Network | Storage | Integrations | Microfrontends | Domains | Operate &amp; protect | Firewall | Observability | Feature Flags | Toolbar | Bot Management | BotID | Deplo
+NAV 1 []:  | Search | Docs | ⌘ K | Start | Getting started | Fundamentals | Frameworks | Incremental Migration | Production Checklist | Agent Checklist | Build AI apps | AI Gateway | Token Pass | AI SDK | Chat SDK | MCP | Vercel Connect | Agent Harnesses | Agent Resources | Run agents and backends | Functions | Fluid Compute | Routing Middleware | Background Workers | Schedules | Queues | Daemons | Workflow
+NAV 2 [('aria-label', 'Vercel Directory')]:  | Agent Stack | AI SDK | AI Gateway | Sandbox | Workflows | Connect | New | Passport | New | eve | New | Core Platform | Build and deploy | Vercel CI | New | Fluid Compute | Content Delivery | Observability | Security | Platform Security | WAF | Bot Management | BotID | Tools | Vercel Drop | Vercel Agent | Vercel Plugin | Agent Skills | Domains | v0 | Frameworks | eve | Ne
+ASIDE:  | Search | Docs | ⌘ K | Start | Getting started | Fundamentals | Frameworks | Incremental Migration | Production Checklist | Agent Checklist | Build AI apps | AI Gateway | Token Pass | AI SDK | Chat SDK | MCP | Vercel Connect | Agent Harnesses | Agent Resources | Run agents and backends | Functions | Fluid Compute | Routing Middleware | Background Workers | Schedules | Queues | Daemons | Workflow
+
+## hashicorp
+HEADER:  | Products | HashiCorp Cloud Platform | Get started in minutes with our cloud products | Learn more | Infrastructure Lifecycle Management | Terraform | Manage infrastructure as code | Packer | Build machine images | Nomad | Orchestrate workloads | Waypoint | Standardize application patterns | Vagrant | Build developer environments | Security Lifecycle Management | Vault | Centrally manage secrets
+NAV 0 [('aria-label', 'Main'), ('class', 'nav-bar-list-container_nav__C_i0_')]:  | Products | HashiCorp Cloud Platform | Get started in minutes with our cloud products | Learn more | Infrastructure Lifecycle Management | Terraform | Manage infrastructure as code | Packer | Build machine images | Nomad | Orchestrate workloads | Waypoint | Standardize application patterns | Vagrant | Build developer environments | Secu
+NAV 1 [('aria-label', 'Main'), ('class', 'nav-bar-list-container_nav__C_i0_')]:  | Install | Tutorials | Documentation | Documentation | Intro to Terraform | Configuration Language | Terraform CLI | HCP Terraform | Terraform Enterprise | Terraform MCP Server | Terraform Migrate | Provider Use | Terraform Policy | CLI: tfctl | Plugin Development | Registry Publishing | Integration Program | Sandbox | 
+NAV 2 [('aria-label', 'Main'), ('class', 'mobile-menu-levels-generic_mobileMenuNavList__ZySxX')]:  | Product | Infrastructure Lifecycle Management | Terraform | Manage infrastructure as code | Packer | Build machine images | Nomad | Orchestrate workloads | Waypoint | Standardize application patterns | Vagrant | Build developer environments | Security Lifecycle Management | Vault | Centrally manage secrets | Vault | R
+NAV 3 [('class', 'sidebar_nav__IworY'), ('id', 'sidebar-nav')]:  | Documentation | Documentation | Intro to Terraform | Configuration Language | Terraform CLI | HCP Terraform | Terraform Enterprise | CDK for Terraform | Provider Use | Plugin Development | Registry Publishing | Integration Program | Terraform Tools | Glossary | Resources | Tutorial Library | Certifications | Sandbox | Community Forum | (opens in new t
+NAV 4 [('aria-label', 'Breadcrumb'), ('class', 'breadcrumb-bar_root__wd_C5')]:  | Developer | Terraform | Documentation | 
+
+## mintlify
+HEADER:  | Mintlify | home page | English | Documentation | API reference | Changelog | Learn | Search... | ⌘ | K | Ask Assistant | ⌘ | I | Talk to us | Get started | Mintlify | home page | Search or ask... | Navigation | Get started | Quickstart | 
+NAV 0 [('aria-label', 'Main')]:  | Documentation | API reference | Changelog | Learn | 
+NAV 1 [('aria-label', 'Pages'), ('id', 'sidebar-content')]:  | Get started | Introduction | Quickstart | AI-native | CLI | Desktop app | Migration guide | Create content | Projects | Pages | Formatting | Components | Media | Reusable snippets | Personalized content | Editor | CI checks | Manage your site | Global settings | Navigation | Contextual menu | Narration | Bring your own model | Redirects | Exclude files | 
+NAV 2 [('id', 'pagination'), ('aria-label', 'Pagination'), ('class', 'grid lg:grid-cols-2 gap-4')]:  | Introduction | Previous | AI-native documentation | Next | 
+
+## starlight
+HEADER:  | Starlight | Search | Ctrl | K | Cancel | GitHub | Discord | Select theme | Dark | Light | Auto | Select language | English | Deutsch | Español | 日本語 | Français | Italiano | Bahasa Indonesia | 简体中文 | Português do Brasil | Português | 한국어 | Türkçe | Русский | हिंदी | Dansk | Українська | فارسی | 
+NAV 0 [('class', 'sidebar print:hidden astro-vjavdbtw'), ('aria-label', 'Main')]:  | Menu | Start Here | Getting Started | Manual Setup | Environmental Impact | Guides | Pages | Authoring Content in Markdown | CSS &amp; Styling | Customizing Starlight | Internationalization (i18n) | Overriding Components | Project Structure | Route Data | Sidebar Navigation | Site Search | Components | Using Components | Cards | Link
+NAV 1 [('class', 'astro-vnocblqr')]:  | On this page | Overview | Default sidebar | Add links and link groups | Internal links | Other links | Groups | Autogenerated links | Customizing autogenerated links in frontmatter | Badges | Badge variants and custom styling | Custom HTML attributes | Custom HTML attributes for autogenerated links | Internationalization | Internationalization with internal links | Internationa
+ASIDE:  | On this page | Overview | Default sidebar | Add links and link groups | Internal links | Other links | Groups | Autogenerated links | Customizing autogenerated links in frontmatter | Badges | Badge variants and custom styling | Custom HTML attributes | Custom HTML attributes for autogenerated links | Internationalization | Internationalization with internal links | Internationalization with bad
+
+## pydantic
+HEADER:  | / | Docs | Pydantic Docs | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | More | HTTPX2 | Monty | Search | Ctrl | K | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | Theme | pydantic/pydantic | 
+NAV 0 [('class', 'library-nav astro-nen7h5rs'), ('aria-label', 'Libraries')]:  | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | More | HTTPX2 | Monty | 
+NAV 1 [('id', 'library-menu'), ('class', 'library-menu astro-nen7h5rs'), ('aria-label', 'Libraries')]:  | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | Theme | pydantic/pydantic | 
+NAV 2 [('class', 'sidebar print:hidden astro-yp5ojevj'), ('aria-label', 'Main')]:  | Pydantic Validation | Pydantic AI | Pydantic Logfire | HTTPX2 | Monty | 
+NAV 3 [('class', 'astro-se7dl7il')]:  | On this page | Overview | TL;DR | The long version | validation | Basic model usage | Model methods and properties | Data conversion | Extra data | Nested models | Cyclic references | Rebuilding model schema | Validating data | Creating models without validation | Defining a custom __init__() | Error handling | Arbitrary class instances | Nested attributes | Model copy | Generi
+ASIDE:  | On this page | Overview | TL;DR | The long version | validation | Basic model usage | Model methods and properties | Data conversion | Extra data | Nested models | Cyclic references | Rebuilding model schema | Validating data | Creating models without validation | Defining a custom __init__() | Error handling | Arbitrary class instances | Nested attributes | Model copy | Generic models | Valida
+
+## polars
+HEADER:  | Polars user guide | Getting started | Search | pola-rs/polars | Polars | Polars Nanook | 
+NAV 0 [('class', 'md-header__inner md-grid'), ('aria-label', 'Header')]:  | Polars user guide | Getting started | Search | pola-rs/polars | 
+NAV 1 [('class', 'md-tabs'), ('aria-label', 'Tabs')]:  | Polars | Polars Nanook | 
+NAV 2 [('class', 'md-nav md-nav--primary md-nav--lifted'), ('aria-label', 'Navigation')]:  | Polars user guide | pola-rs/polars | Polars | Polars | User guide | User guide | Getting started | Getting started | On this page | Installing Polars | Reading &amp; writing | Expressions and contexts | select | with_columns | filter | group_by | More complex queries | 
+NAV 3 [('class', 'md-nav'), ('aria-label', 'Combining dataframes')]:  | Joining dataframes | Concatenating dataframes | 
+NAV 4 [('class', 'md-nav')]:  | Concepts | Data types and structures | Expressions and contexts | Lazy API | Streaming | 
+NAV 5 [('class', 'md-nav')]:  | Expressions | Basic operations | Expression expansion | Casting | Strings | Lists and arrays | Categorical data and enums | Structs | Missing data | Aggregation | Window functions | Folds | User-defined Python functions | Numpy functions | 
+NAV 6 [('class', 'md-nav')]:  | Transformations | Joins | Concatenation | Pivots | Unpivots | Time series | Time series | Parsing | Filtering | Grouping | Resampling | Time zones | 
+NAV 7 [('class', 'md-nav')]:  | Lazy API | Usage | Optimizations | Schema | DataType Expressions | Query plan | Query execution | Sources and sinks | Multiplexing queries | GPU Support | 
+NAV 8 [('class', 'md-nav')]:  | IO | CSV | Excel | Parquet | JSON files | Multiple | Hive | Databases | Cloud storage | Google BigQuery | Hugging Face | Google Sheets (via Colab) | 
+NAV 9 [('class', 'md-nav')]:  | Plugins | Expression Plugins | IO Plugins | 
+NAV 10 [('class', 'md-nav')]:  | SQL | Introduction | SHOW TABLES | SELECT | CREATE | Common Table Expressions | 
+NAV 11 [('class', 'md-nav')]:  | Migrating | Coming from Pandas | Coming from Apache Spark | 
+NAV 12 [('class', 'md-nav')]:  | Misc | Ecosystem | Multiprocessing | Visualization | Styling | Comparison with other tools | Arrow producer/consumer | Generating Polars code with LLMs | Query monitoring | 
+NAV 13 [('class', 'md-nav')]:  | API | Reference guide | 
+NAV 14 [('class', 'md-nav')]:  | Development | Contributing | Contributing | IDE configuration | Test suite | Continuous integration | Code style | 
+NAV 15 [('class', 'md-nav')]:  | Releases | Upgrade guides | Upgrade guides | Version 2.0 | Version 1.0 | Version 0.20 | Version 0.19 | 
+NAV 16 [('class', 'md-nav md-nav--secondary'), ('aria-label', 'On this page')]:  | On this page | Installing Polars | Reading &amp; writing | Expressions and contexts | select | with_columns | filter | group_by | More complex queries | 
+NAV 17 [('class', 'md-nav'), ('aria-label', 'Combining dataframes')]:  | Joining dataframes | Concatenating dataframes | 
+NAV 18 [('class', 'md-footer__inner md-grid'), ('aria-label', 'Footer')]:  | Previous | Index | Next | Installation | 
+
+## fastapi
+HEADER:  | FastAPI | First Steps | en - English | de - Deutsch | es - español | fr - français | hi - हिन्दी | ja - 日本語 | ko - 한국어 | pt - português | ru - русский язык | tr - Türkçe | uk - українська мова | zh - 简体中文 | zh-hant - 繁體中文 | Search | fastapi/fastapi | FastAPI | Features | Learn | Reference | Resources | About | Release Notes | 
+NAV 0 [('class', 'md-header__inner md-grid'), ('aria-label', 'Header')]:  | FastAPI | First Steps | en - English | de - Deutsch | es - español | fr - français | hi - हिन्दी | ja - 日本語 | ko - 한국어 | pt - português | ru - русский язык | tr - Türkçe | uk - українська мова | zh - 简体中文 | zh-hant - 繁體中文 | Search | fastapi/fastapi | 
+NAV 1 [('class', 'md-tabs'), ('aria-label', 'Tabs')]:  | FastAPI | Features | Learn | Reference | Resources | About | Release Notes | 
+NAV 2 [('class', 'md-nav md-nav--primary md-nav--lifted'), ('aria-label', 'Navigation')]:  | FastAPI | fastapi/fastapi | FastAPI | Features | Learn | Python Types Intro | Concurrency and async / await | Tutorial - User Guide | First Steps | First Steps | On this page | Check it | Interactive API docs | Alternative API docs | OpenAPI | "Schema" | API "schema" | Data "schema" | OpenAPI and JSON Schema | Check the | ope
+NAV 3 [('class', 'md-nav'), ('aria-label', 'Recap, step by step')]:  | Step 1: import | FastAPI | Step 2: create a | FastAPI | "instance" | Step 3: create a | path operation | Path | Operation | Define a | path operation decorator | 
+NAV 4 [('class', 'md-nav'), ('aria-label', 'Step 6: Deploy it')]:  | About FastAPI Cloud | Deploy to other cloud providers | 
+NAV 5 [('class', 'md-nav')]:  | Classes as Dependencies | Sub-dependencies | Dependencies in path operation decorators | Global Dependencies | Dependencies with yield | 
+NAV 6 [('class', 'md-nav')]:  | Security - First Steps | Get Current User | Simple OAuth2 with Password and Bearer | OAuth2 with Password (and hashing), Bearer with JWT tokens | 
+NAV 7 [('class', 'md-nav')]:  | Stream Data | Path Operation Advanced Configuration | Additional Status Codes | Return a Response Directly | Custom Response - HTML, Stream, File, others | Additional Responses in OpenAPI | Response Cookies | Response Headers | Response - Change Status Code | Advanced Dependencies | Advanced Security | OAuth2 scopes | HTTP Basic Auth | 
+NAV 8 [('class', 'md-nav')]:  | About FastAPI versions | FastAPI Cloud | About HTTPS | Run a Server Manually | Deployments Concepts | Deploy FastAPI on Cloud Providers | Server Workers - Uvicorn with Workers | FastAPI in Containers - Docker | 
+NAV 9 [('class', 'md-nav')]:  | General - How To - Recipes | Migrate from Pydantic v1 to Pydantic v2 | GraphQL | Custom Request and APIRoute class | Conditional OpenAPI | Extending OpenAPI | Separate OpenAPI Schemas for Input and Output or Not | Custom Docs UI Static Assets (Self-Hosting) | Configure Swagger UI | Testing a Database | Use Old 403 Authentication Error Status Codes | 
+NAV 10 [('class', 'md-nav')]:  | FastAPI class | Request Parameters | Status Codes | UploadFile class | Exceptions - HTTPException and WebSocketException | Dependencies - Depends() and Security() | APIRouter class | Background Tasks - BackgroundTasks | Request class | WebSockets | HTTPConnection class | Response class | Custom Response Classes - File, HTML, Redirect, Streaming, etc. | Server-Sent Events - EventSource
+NAV 11 [('class', 'md-nav')]:  | FastAPI People | Help | Contributing | Translations | Full Stack FastAPI Template | External Links | FastAPI and friends newsletter | 
+NAV 12 [('class', 'md-nav')]:  | Alternatives, Inspiration and Comparisons | History, Design and Future | Benchmarks | Repository Management | 
+NAV 13 [('class', 'md-nav md-nav--secondary'), ('aria-label', 'On this page')]:  | On this page | Check it | Interactive API docs | Alternative API docs | OpenAPI | "Schema" | API "schema" | Data "schema" | OpenAPI and JSON Schema | Check the | openapi.json | What is OpenAPI for | 
+NAV 14 [('class', 'md-nav'), ('aria-label', 'Recap, step by step')]:  | Step 1: import | FastAPI | Step 2: create a | FastAPI | "instance" | Step 3: create a | path operation | Path | Operation | Define a | path operation decorator | 
+NAV 15 [('class', 'md-nav'), ('aria-label', 'Step 6: Deploy it')]:  | About FastAPI Cloud | Deploy to other cloud providers | 
+NAV 16 [('class', 'md-path'), ('aria-label', 'Navigation')]:  | FastAPI | Learn | Tutorial - User Guide | 
+NAV 17 [('class', 'md-footer__inner md-grid'), ('aria-label', 'Footer')]:  | Previous | Tutorial - User Guide | Next | Path Parameters | 
+ASIDE:  | Deploy on | FastAPI Cloud | 🚀 | Follow | @fastapi | on | X (Twitter) | to stay updated | Follow | FastAPI | on | LinkedIn | to stay updated | Subscribe to the | FastAPI and friends | newsletter 🎉 | sponsor | sponsor | sponsor | sponsor | sponsor | sponsor | sponsor | sponsor | 
+
+## textual
+HEADER:  | Textual | Guide | Initializing search | GitHub | Home | Introduction | Tutorial | Guide | Widgets | Reference | API | How To | FAQ | Roadmap | Blog | 
+NAV 0 [('class', 'md-header__inner md-grid'), ('aria-label', 'Header')]:  | Textual | Guide | 
+NAV 1 [('class', 'md-tabs'), ('aria-label', 'Tabs')]:  | Home | Introduction | Tutorial | Guide | Widgets | Reference | API | How To | FAQ | Roadmap | Blog | 
+NAV 2 [('class', 'md-nav md-nav--primary md-nav--lifted'), ('aria-label', 'Navigation')]:  | Textual | GitHub | Home | Introduction | Introduction | Getting started | Help | 
+NAV 3 [('class', 'md-nav')]:  | Guide | Devtools | App Basics | Styles | Textual CSS | DOM Queries | Layout | Events and Messages | Input | Actions | Reactivity | Themes | Widgets | Content | Animation | Screens | Workers | Command Palette | Testing | 
+NAV 4 [('class', 'md-nav')]:  | Reference | CSS Types | CSS Types | &lt;border&gt; | &lt;color&gt; | &lt;hatch&gt; | &lt;horizontal&gt; | &lt;integer&gt; | &lt;keyline&gt; | &lt;name&gt; | &lt;number&gt; | &lt;overflow&gt; | &lt;pointer&gt; | &lt;position&gt; | &lt;percentage&gt; | &lt;scalar&gt; | &lt;text-align&gt; | &lt;text-style&gt; | &lt;vertical&gt; | 
+NAV 5 [('class', 'md-nav')]:  | Events | AppBlur | AppFocus | Blur | Click | DescendantBlur | DescendantFocus | Enter | Focus | Hide | Key | Leave | Load | Mount | MouseCapture | MouseDown | MouseMove | MouseRelease | MouseScrollDown | MouseScrollUp | MouseUp | Paste | Print | Resize | ScreenResume | ScreenSuspend | Show | Unmount | 
+NAV 6 [('class', 'md-nav')]:  | Styles | Align | Background | Background-tint | Border | Border-subtitle-align | Border-subtitle-background | Border-subtitle-color | Border-subtitle-style | Border-title-align | Border-title-background | Border-title-color | Border-title-style | Box-sizing | Color | Content-align | Display | Dock | Grid | Grid | Column-span | Grid-columns | Grid-gutter | Grid-rows | Grid-size | Row-sp
+NAV 7 [('class', 'md-nav')]:  | Links | Link-background | Link-background-hover | Link-color | Link-color-hover | Link-style | Link-style-hover | 
+NAV 8 [('class', 'md-nav')]:  | Scrollbar colors | Scrollbar-background | Scrollbar-background-active | Scrollbar-background-hover | Scrollbar-color | Scrollbar-color-active | Scrollbar-color-hover | Scrollbar-corner-color | 
+NAV 9 [('class', 'md-nav')]:  | Widgets | Button | Checkbox | Collapsible | ContentSwitcher | DataTable | Digits | DirectoryTree | Footer | Header | Input | Label | Link | ListItem | ListView | LoadingIndicator | Log | MarkdownViewer | Markdown | MaskedInput | OptionList | Placeholder | Pretty | ProgressBar | RadioButton | RadioSet | RichLog | Rule | Select | SelectionList | Sparkline | Static | Switch | TabbedConten
+NAV 10 [('class', 'md-nav')]:  | API | textual.app | textual.await_complete | textual.await_remove | textual.binding | textual.cache | textual.color | textual.command | textual.constants | textual.containers | textual.compose | textual.content | textual.coordinate | textual.dom | textual.events | textual.errors | textual.filter | textual.fuzzy | textual.geometry | textual.getters | textual.highlight | textual.layout 
+NAV 11 [('class', 'md-nav')]:  | How To | Center things | Design a Layout | Package a Textual app with Hatch | Render and compose | Style Inline Apps | Save time with Textual containers | 
+NAV 12 [('class', 'md-nav')]:  | Blog | Archive | Archive | 2025 | 2024 | 2023 | 2022 | 
+NAV 13 [('class', 'md-nav')]:  | Categories | DevLog | News | Release | 
+NAV 14 [('class', 'md-nav md-nav--secondary'), ('aria-label', 'Table of contents')]:  | Table of contents | Example code | 
+NAV 15 [('class', 'md-footer__inner md-grid'), ('aria-label', 'Footer')]:  | Previous | Tutorial | Next | Devtools | 
+ASIDE:  | November 6, 2022 | 
+
+## material
+HEADER:  | Material for MkDocs | Setting up navigation | Initializing search | squidfunk/mkdocs-material | 
+NAV 0 [('class', 'md-header__inner md-grid')]:  | Material for MkDocs | Setting up navigation | 
+NAV 1 []:  | Home | Getting started | Setup | Plugins | Reference | Community | Blog | 
+NAV 2 [('class', 'md-nav md-nav--primary md-nav--lifted')]:  | Material for MkDocs | squidfunk/mkdocs-material | Home | Getting started | Getting started | Installation | Creating your site | Publishing your site | Customization | Conventions | Browser support | Alternatives | License | Changelog | Changelog | How to upgrade | 
+NAV 3 []:  | Setup | Changing the colors | Changing the fonts | Changing the language | Changing the logo and icons | Ensuring data privacy | Setting up navigation | Setting up navigation | Table of contents | Configuration | Instant loading | Instant prefetching | Progress indicator | 
+NAV 4 [('aria-label', 'Instant previews')]:  | Automatic previews | 
+NAV 5 [('aria-label', 'Navigation tabs')]:  | Sticky navigation tabs | 
+NAV 6 [('aria-label', 'Table of contents')]:  | Anchor following | Navigation integration | 
+NAV 7 []:  | Hiding the sidebars | Hiding the navigation path | 
+NAV 8 []:  | Keyboard shortcuts | Content area width | 
+NAV 9 []:  | Extensions | Python Markdown | Python Markdown Extensions | 
+NAV 10 []:  | Plugins | Blog | Group | Info | Meta | Offline | Optimize | Privacy | Projects | Search | Social | Tags | Typeset | Requirements | Requirements | Image processing | Caching | 
+NAV 11 []:  | Reference | Admonitions | Annotations | Buttons | Code blocks | Content tabs | Data tables | Diagrams | Footnotes | Formatting | Grids | Icons, Emojis | Images | Lists | Math | Tooltips | 
+NAV 12 []:  | Community | Contributing | Contributing | Reporting a bug | Reporting a docs issue | Requesting a change | Adding translations | Making a pull request | Asking a question | 
+NAV 13 []:  | Guides | Creating a reproduction | 
+NAV 14 []:  | Blog | Archive | Archive | 2026 | 2025 | 2024 | 2023 | 2022 | 2021 | 
+NAV 15 []:  | Categories | Blog | Build | General | Performance | Search | 
+NAV 16 [('class', 'md-nav md-nav--secondary'), ('aria-label', 'Table of contents')]:  | Table of contents | Configuration | Instant loading | Instant prefetching | Progress indicator | 
+NAV 17 [('aria-label', 'Instant previews')]:  | Automatic previews | 
+NAV 18 [('aria-label', 'Navigation tabs')]:  | Sticky navigation tabs | 
+NAV 19 [('aria-label', 'Table of contents')]:  | Anchor following | Navigation integration | 
+NAV 20 []:  | Hiding the sidebars | Hiding the navigation path | 
+NAV 21 []:  | Keyboard shortcuts | Content area width | 
+NAV 22 []:  | +2 | 
+NAV 23 [('class', 'md-footer__inner md-grid')]:  | Previous | Ensuring data privacy | Next | Setting up site search | 
+ASIDE:  | November 5 | Zensical | &ndash; | Our modern successor | &ndash; | See what’s coming on November 5 → | 

@@ -1,0 +1,105 @@
+Navigation outlines read on 2026-11-12, top level first, a few lines per site.
+Page counts are files per docs folder from the GitHub git-trees API (EXECUTED; .md/.rst/.txt/.mdx/.ipynb, index pages included).
+
+diataxis.fr  (source/index.rst, five toctrees)
+  [hidden] Home
+  Start here
+  Applying Diataxis | Tutorials | How-to guides | Reference | Explanation | The compass | Workflow
+  Understanding Diataxis | Foundations | The map | Quality | Tutorials and how-to guides | Reference and explanation
+  [hidden] Colophon | Translation | News
+  /complex-hierarchies/ returns 404 on diataxis.fr and www.diataxis.fr; no such file in source/.
+
+Django 5.2 and dev  (docs/contents.txt toctree; docs/index.txt body)
+  toctree: intro | topics | howto | faq | ref | misc | glossary | releases | internals
+  landing body (dev): First steps (Getting started; Tutorial parts 1-8; Follow-on tutorials) | The model layer | The view layer |
+    The template layer | Other core functionality | User-facing features | Developer-facing features | Resources and interfaces |
+    Quality and dependability | The Django open-source project | Getting help | How the documentation is organized (last)
+  5.2 landing has "How the documentation is organized" third, and domain headings Forms, The admin, Security, ...
+  files: intro 14, topics 68, howto 38, ref 120, faq 9, internals 23, releases 400
+  howto index 5.2: 23 guides in 5 domain groups (Models/data/databases; Templates and output; Project configuration;
+    Installing/deploying/upgrading; Other guides)
+
+Canonical Sphinx starter pack  (docs/index.rst)
+  [hidden] tutorials/index | how-to/index | reference/index | explanation/index
+  [hidden] release-notes/index | contribute/index
+  how-to/index.rst is an empty skeleton (heading and label only)
+
+Ubuntu Server  (canonical/ubuntu-server-documentation docs/index.md; live at ubuntu.com/server/docs/)
+  [hidden] Tutorial | How-to guides | Reference | Explanation
+  [hidden] Contributing
+  Tutorial: Getting started (Basic installation) / Next steps (4)
+  How-to guides: 13 domain groups (Server installation, Security, Networking, Managing software, Data and storage,
+    Mail services, Web services, Graphics, Virtualisation, Containers, High availability, Observability, Debugging)
+  Explanation: Security, Networking, Managing software, Data and storage, Web services, Virtualisation and containers,
+    Clouds, High Availability, Performance
+  landing body: "In this documentation" by domain; "How this documentation is organized"; "Project and community"
+  files: tutorial 7, how-to 153, explanation 79, reference 10, contributing 7
+
+Juju  (live at canonical.com/juju/docs/juju-cli/latest/)
+  Tutorial | How-to guides | Reference | Explanation | For contributors (How-to guides, Reference) | Release notes
+  related products are separate sites: Charmcraft, Charmlibs, Concierge, JAAS, Jubilant, Ops, Pebble, Terraform Provider
+
+LXD  (live at canonical.com/lxd/docs/latest/)
+  LXD | Tutorial | How-to guides (Getting started, Server and client, Instances, Images, Projects, Storage, Networking,
+    Clustering, Production setup, ...) | Explanation | Reference (release notes and REST API inside)
+  landing cards by domain: Start here, System containers and VMs, Clusters, Storage and networks, Access LXD, Quality,
+    Lifecycle and administration
+  files: tutorial 1, howto 87, explanation 15, reference 86, root 46
+
+MAAS  (live at canonical.com/maas/docs)
+  Home | Tutorial | How-to guides (Get started, Back up, Upgrade, Manage networks, ... 27 entries) | Reference (API, CLI,
+    Configuration guides) | Explanation (18 entries)
+  landing: four-quadrant grid of the four types
+
+pytest  (live docs.pytest.org/en/stable/)
+  Get Started | How-to guides (23) | Reference guides (5) | Explanation (7) | Examples and customization tricks (8) |
+    About the project | Useful links
+  files: root 24, how-to 24, reference 6, explanation 8, example 10, announce 189
+
+NumPy  (live numpy.org/doc/stable/)
+  top bar: User Guide | API reference | Building from source | Development | Release notes | Learn (external) | NEPs (external)
+  landing cards: Getting started | User guide | API reference | Contributor's guide
+  User guide sidebar: Getting started (4) | Fundamentals and usage (fundamentals, MATLAB users, tutorials link, how-tos) |
+    Advanced usage and interoperability (5) | Extras (4)
+  files: user 39, reference 114, dev 18, building 9, f2py 24; numpy-tutorials repo content/ 12
+
+LangChain v0.3 (Docusaurus, langchain-ai/langchain branch v0.3 docs/sidebars.js and docusaurus.config.js)
+  sidebar: Introduction | Tutorials | How-to guides | Conceptual guide | Ecosystem | Versions | ...
+  navbar: Integrations | API Reference | More | v0.3
+  python.langchain.com/docs/introduction now 308-redirects to docs.langchain.com/oss/python/langchain/overview
+
+LangChain today (Mintlify, langchain-ai/docs src/docs.json, theme "aspen")
+  products: AGENT DEVELOPMENT LIFECYCLE (Home, Build, Test, Deploy, Monitor) | PRODUCTS AND SETUP (LangSmith setup,
+    LLM Gateway, No-code agents, Engine, Deep Agents Code)
+  Build > Python tabs: Overview | Managed Deep Agents 34 | Deep Agents 39 | LangChain 60 | LangGraph 36 | OpenWiki 12 |
+    Integrations 25 | Learn 27 | Reference 16 | Contribute 8   (page entries counted from docs.json)
+  LangChain tab groups: Get started | Core components | Middleware | Frontend | Advanced usage | Agent development | Production
+  Learn tab: Tutorials 14 (Deep Agents 4, LangChain 4, Multi-agent 4, LangGraph 2) | Conceptual overviews 8 | Additional resources 4
+
+Cloudflare Workers  (live HTML header; developers.cloudflare.com/workers/llms.txt; repo src/content/docs/workers/)
+  top bar: Docs Directory | API | SDKs | Changelog | Search | Log in / Dashboard
+  llms.txt sections (pages): Overview 1, Getting started 4, Examples 49, Tutorials 20, Best practices 1, Demos 2,
+    Local development 9, Playground 1, Configuration 24, Roles and permissions 3, Previews 8, Versions & deployments 9,
+    Workers Cache 7, CI/CD 22, Runtime APIs 92, Static Assets 24, Framework guides 31, Databases 13, Observability 23,
+    Testing 41, Wrangler 40, Vite plugin 14, Languages 18, Platform 12, Glossary 1, Reference 5   (total 474)
+  tutorials page: a table Name | Last Updated | Difficulty; 52 rows; Beginner 34, Intermediate 17, Advanced 1
+
+Wagtail  (docs/index.rst)
+  getting_started | tutorial | topics (Usage guide) | advanced_topics (Advanced) | extending | reference | deployment |
+    packages | support | editor_manual | contributing | releases
+  files: getting_started 6, tutorial 9, topics 15, advanced_topics 67, extending 18, reference 36, releases 236
+
+Hypothesis  (hypothesis/docs/index.rst on master)
+  [hidden] quickstart | tutorial/index | how-to/index | explanation/index | reference/index | stateful | Extras | glossary | changelog
+  [hidden, caption About Hypothesis] development | compatibility | usage | extensions | packaging | community
+  files: tutorial 9 (8 lessons), how-to 6 (5), explanation 3 (2), reference 5 (4)
+
+Briefcase / BeeWare  (beeware/briefcase docs/en/SUMMARY.md; Material for MkDocs, docs/config.yml)
+  Tutorial (one page pointing to tutorial.beeware.org) | How-to guides (run, code signing x4, building x3, testing, debugging x2,
+    publishing/*, Contributing tree ~30, internal, upgrading) | Topic guides (1) | Reference (configuration, env management,
+    commands x10, platforms by OS, plugins) | About Briefcase (FAQ, success stories, release history)
+
+minterpy  (live minterpy-project.github.io/minterpy/stable/)
+  top bar: Getting Started | How-to | Fundamentals | API Reference | Contributors | GitHub | Latest | Stable
+  landing: five cards, one per top-bar entry, each led by a reader question ("New to Minterpy?")
+  files: getting-started 8, how-to 27, fundamentals 10, api 53, contributors 17
