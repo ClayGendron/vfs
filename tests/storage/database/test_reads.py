@@ -23,6 +23,7 @@ from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
 from tests.support.loop_ticks import LoopTicker
+from vfs import deadline as deadline_module
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
@@ -1097,6 +1098,8 @@ class TestScopeChannel:
         root_arms = _counted(monkeypatch, "scope_root_arm")
         facts = _counted(monkeypatch, "channel_facts")
         pattern_arms = _counted(monkeypatch, "pattern_arm")
+        # A count pin never reads the runner's clock: a loaded machine must not end this glob at its wall.
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 0.0)
         result = await storage.glob(patterns=(), scope=ScopeChannel(roots=roots, arms=arms))
         assert [str(o.path) for o in result.observations] == ["/d00007/x.e05"]
         assert len(root_arms) == 10_000
