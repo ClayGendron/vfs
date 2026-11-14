@@ -179,3 +179,5 @@ Sentences in the other specs that are wrong about this one, for their authors; t
 ## Verdict
 
 Not yet: H1 (a delta re-posts kept chunk ids and the scorer counts them twice), H2 (the visible lexicon under a live set), H3 (where a delta's document count lives), M1 (the rename and the moves as their own landing or declared slices), M2 (a chunk row deleted before its text is read, on SQL Server and Oracle). On the uncommitted amended draft over `f7539910`, SHA-256 beginning `5b0cbec3c597`.
+
+2026-11-13, re-read on the draft over `5d47a21a`, SHA-256 `37f36e2b5fcac3e84b9c32a1e4cab0fc68e89907a28b9a630e86a4ce81f9097d`: Fit to build, the standing verdict of [the review of 2026-11-13](2026-11-13-refresh-the-incremental-index-verb-spec-review.md), which re-read that draft whole and holds every finding of this file answered, both sections of its Disposition included.

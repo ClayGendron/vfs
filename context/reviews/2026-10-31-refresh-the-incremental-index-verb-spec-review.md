@@ -133,3 +133,5 @@ Written by the author (the session that drafted the spec) on 2026-10-31 against 
 Not yet: H1, H2, H3 and M1 to M3, on the uncommitted draft at `3667fec`.
 
 2026-10-31, re-read on the amended uncommitted draft at 3667fec: Fit to build.
+
+2026-11-13, re-read on the draft over `5d47a21a`, SHA-256 `37f36e2b5fcac3e84b9c32a1e4cab0fc68e89907a28b9a630e86a4ce81f9097d`: Fit to build, the standing verdict of [the review of 2026-11-13](2026-11-13-refresh-the-incremental-index-verb-spec-review.md), which re-read that draft whole and holds every finding of this file answered.
