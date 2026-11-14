@@ -19,7 +19,9 @@ the root plus descendant path rewrites, tombstoned descendants riding
 with their tree. A copy mints fresh ULIDs at version 1 for the live rows
 alone, never copies edges or ``external_id``, and an overwritten
 occupant keeps its identity as a material update. Any per-pair error
-fails the batch whole; the runner never commits a failed result.
+fails the batch whole; the runner never commits a failed result. Every
+row a transfer acts on and every path it creates are judged against the
+caller's rights where the transfer finds them (``authorized.py``).
 """
 
 from __future__ import annotations
@@ -35,8 +37,10 @@ from ulid import ULID
 from vfs.authority import owner_for
 from vfs.batching import byte_chunked
 from vfs.models import encoded_at_creation
+from vfs.ops import VERB_RUNGS
 from vfs.paths import MAX_PATH_LENGTH, ROOT, Path, byte_length
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified
+from vfs.storage.backends.database.authorized import admit, admit_created, destination_postures, judging
 from vfs.storage.backends.database.descent import (
     ancestor_chain,
     classify_miss,
@@ -53,7 +57,7 @@ from vfs.storage.backends.database.dialects import (
     rows_per_statement,
 )
 from vfs.storage.backends.database.edges import insert_fs_rows, repoint_fs_row
-from vfs.storage.backends.database.labels import label_of, posture_beneath
+from vfs.storage.backends.database.labels import label_of
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.segments import insert_postings, move_postings
@@ -152,6 +156,10 @@ async def transfer_rows(
     tombstones = {path: row["deleted_at"] for path, row in committed.items() if row["deleted_at"] is not None}
     await seam("transfer:post-snapshot")
     now = datetime.now(UTC)
+    # The ids this call's earlier pairs minted or moved: rows a later pair carries that no rival made.
+    own: set[str] = set()
+    needs = VERB_RUNGS[op]
+    assert needs.create is not None
     pending: list[PendingRow] = []
     errors: list[ResultError] = []
     for pair in operations:
@@ -188,6 +196,7 @@ async def transfer_rows(
         if op == "copy":
             # A copy reproduces the live tree: a tombstoned descendant stays where it is, restorable.
             subtree = [row for row in subtree if row["deleted_at"] is None]
+            admit(judging(session, needs.passing or needs.primary), subtree)
         new_paths = {row["entry_id"]: str(dest) + row["path"][len(str(src)) :] for row in subtree}
         if any(byte_length(path) > MAX_PATH_LENGTH for path in new_paths.values()):
             errors.append(classified(ErrorKind.unaddressable, dest, target=src, detail=_PATH_BUDGET))
@@ -195,16 +204,23 @@ async def transfer_rows(
         # The reverse-ordering window: subtree collected, claim not yet
         # taken — a rival committing here must flip the claim's guard.
         await seam("transfer:post-collect")
-        postures = await posture_beneath(session, tables, profile, membership_budget, str(dest))
+        postures = await destination_postures(session, tables, profile, membership_budget, str(dest))
         if op == "move":
             error = await _execute_move(
-                session, tables, profile, membership_budget, src_row, dest, parent_id, postures, now, op=op
+                session, tables, profile, membership_budget, src_row, dest, parent_id, postures, now, op=op, own=own
             )
             if error is not None:
                 errors.append(error)
                 continue
+            own.add(src_row["entry_id"])
             version = src_row["version"] + 1
         else:
+            created = [(new_paths[row["entry_id"]], row["entry_id"]) for row in subtree]
+            if refusal := await admit_created(
+                session, tables, profile, membership_budget, needs.create, postures, created, own
+            ):
+                errors.append(refusal)
+                continue
             await _execute_copy(
                 session,
                 tables,
@@ -219,6 +235,7 @@ async def transfer_rows(
                 postures=postures,
                 authority=authority,
                 now=now,
+                own=own,
             )
             version = 1
         pending.append(PendingRow(dest, "created", src_row["kind"], version, src_row["size_bytes"]))
@@ -275,7 +292,7 @@ async def _fetch_subtree(
     redrive rather than a torn ``content_hash``.
     """
     entry = tables.entry
-    columns: list[Any] = [entry.c[name] for name in _SUBTREE_COLUMNS]
+    columns: list[Any] = [entry.c[name] for name in (*_SUBTREE_COLUMNS, "owner_id", "everyone_level")]
     return list((await session.execute(select(*columns).where(subtree_filter(entry, src, profile)))).mappings())
 
 
@@ -291,6 +308,7 @@ async def _execute_move(
     now: datetime,
     *,
     op: str,
+    own: set[str],
 ) -> ResultError | None:
     """Reparent the root, rewrite descendants, bump both parents.
 
@@ -331,7 +349,9 @@ async def _execute_move(
     await repoint_fs_row(session, tables.edges, src_row["entry_id"], dest_parent_id)
     root_move = [(src_row["entry_id"], src_row["path"], str(dest))]
     await move_postings(session, tables.segments, profile, membership_budget, root_move)
-    await _rewrite_descendants(session, tables, profile, membership_budget, src_row["path"], str(dest), postures)
+    old, new = src_row["path"], str(dest)
+    if refused := await _rewrite_descendants(session, tables, profile, membership_budget, old, new, postures, own):
+        return refused
     await bump(session, entry, src_row["parent_id"])
     # Both parents bump even when identical — two increments, per the
     # conformance contract.
@@ -341,20 +361,31 @@ async def _execute_move(
 
 async def _descendant_rewrites(
     session: AsyncSession, entry: Table, profile: DialectProfile, old_prefix: str, new_prefix: str
-) -> list[dict[str, str]]:
-    """Each descendant's id, old path, and recomputed path cache under the new prefix.
+) -> list[dict[str, Any]]:
+    """Each descendant's id, old path, recomputed path cache under the new prefix, and what its rights judge it by.
 
     Raw ``str`` slicing, no ``Path`` minted — the caller may still refuse
     the whole set on the byte budget before anything is applied. A
     tombstoned descendant rides along: its tree moves whole.
     """
     like = descendant_filter(entry, old_prefix, profile)
-    found = await session.execute(select(entry.c.entry_id, entry.c.path).where(like))
-    return [{"b_id": r.entry_id, "b_old": r.path, "b_path": new_prefix + r.path[len(old_prefix) :]} for r in found]
+    found = await session.execute(
+        select(entry.c.entry_id, entry.c.path, entry.c.owner_id, entry.c.everyone_level).where(like)
+    )
+    return [
+        {
+            "b_id": r.entry_id,
+            "b_old": r.path,
+            "b_path": new_prefix + r.path[len(old_prefix) :],
+            "owner_id": r.owner_id,
+            "everyone_level": r.everyone_level,
+        }
+        for r in found
+    ]
 
 
 async def _apply_rewrites(
-    session: AsyncSession, entry: Table, rows: list[dict[str, str]], postures: PostureRows
+    session: AsyncSession, entry: Table, rows: list[dict[str, Any]], postures: PostureRows
 ) -> None:
     """Executemany path-cache rewrite; bumps no versions and takes no guard.
 
@@ -384,7 +415,8 @@ async def _rewrite_descendants(
     old_prefix: str,
     new_prefix: str,
     postures: PostureRows,
-) -> None:
+    own: set[str],
+) -> ResultError | None:
     """Recompute descendant path caches under the moved prefix, collected live.
 
     Runs after the root claim, so a child committed inside the pre-claim
@@ -393,14 +425,26 @@ async def _rewrite_descendants(
     the redriven ladder then refuses the whole target honestly. The
     segment postings ride the same rewrite list, so they mirror the
     rewritten path caches inside this same transaction; the labels ride
-    it too, from *postures*, the destination's posture.
+    it too, from *postures*, the destination's posture. Every collected
+    row is judged at the move's rung and every new path as a creation
+    before any is rewritten; the ids it moves join *own*.
     """
     rewrites = await _descendant_rewrites(session, tables.entry, profile, old_prefix, new_prefix)
     if any(byte_length(r["b_path"]) > MAX_PATH_LENGTH for r in rewrites):
         raise StaleSnapshot("a late arrival under the moved prefix overflows the path budget")
+    needs = VERB_RUNGS["move"]
+    assert needs.create is not None
+    admit(judging(session, needs.primary), [{**row, "path": row["b_old"]} for row in rewrites])
+    created = [(row["b_path"], row["b_id"]) for row in rewrites]
+    if refused := await admit_created(
+        session, tables, profile, membership_budget, needs.create, postures, created, own
+    ):
+        return refused
     await _apply_rewrites(session, tables.entry, rewrites, postures)
     moves = [(row["b_id"], row["b_old"], row["b_path"]) for row in rewrites]
     await move_postings(session, tables.segments, profile, membership_budget, moves)
+    own.update(row["b_id"] for row in rewrites)
+    return None
 
 
 async def _execute_copy(
@@ -418,8 +462,9 @@ async def _execute_copy(
     postures: PostureRows,
     authority: Authority | None,
     now: datetime,
+    own: set[str],
 ) -> None:
-    """Mint the copied tree under a probed-empty destination.
+    """Mint the copied tree under a probed-empty destination; the ids it mints join *own*.
 
     Every row is fresh: new ULIDs at version 1, ownership follows the
     writer, the everyone level is the destination's (*postures*), and
@@ -476,6 +521,7 @@ async def _execute_copy(
     await insert_fs_rows(session, tables.edges, mirror)
     await _copy_bodies(session, tables, profile, membership_budget, subtree, id_map, now)
     await bump(session, entry, dest_parent_id)
+    own.update(id_map.values())
 
 
 async def _copy_bodies(

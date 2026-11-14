@@ -21,6 +21,7 @@ from sqlalchemy import delete, event, func, insert, select, text, update
 from sqlalchemy.dialects import postgresql
 from ulid import ULID
 
+from tests.support.commit_worlds import ALICE, EVE, attempts, clearing, drop_world, land, paths_under, row_at
 from tests.support.database_helpers import _ReturningSession, _url
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
@@ -51,6 +52,7 @@ from vfs.storage.backends.database.signals import collect_graph
 from vfs.storage.backends.database.staging import WritePlan
 from vfs.storage.backends.database.trash import _purge
 from vfs.storage.backends.database.writes import _apply, _fetch_committed, _guarded_stmt
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
 
@@ -1453,3 +1455,94 @@ class TestTopologyOptionsStamping:
         assert (await storage.copy(operations=[ResolvedPair(src=Path("/c.txt"), dest=Path("/d.txt"))])).success
         assert calls == [storage._host.profile] * 3
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Rights at the rows a delete or a sweep acts on
+# ---------------------------------------------------------------------------
+
+_EVES = {"/drop/e", "/drop/e/f.txt", "/drop/e/sub", "/drop/e/sub/g.txt"}
+
+
+class TestActedRowsAreJudged:
+    """A row landed beneath a delete's or a sweep's root after its gate is judged before the verb acts on it."""
+
+    @pytest.mark.parametrize("landed", ["/drop/e/late.txt", "/drop/e/sub/late.txt"], ids=["depth1", "depth2"])
+    async def test_a_delete_redrives_over_a_landed_row_beyond_the_callers_rung(self, monkeypatch, landed) -> None:
+        """Alice's row landed under eve's tree is never stamped with it: the delete runs again without it.
+
+        Guards ``admit_beneath`` in ``delete_rows``: deleted, the
+        descendant stamp tombstones alice's row in eve's delete. The depth-one
+        node is a backstop, since a real rival bumps the root and trips its guard.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        root = await row_at(storage, "/drop/e")
+        assert root is not None
+        sessions = attempts(monkeypatch, storage)
+        act = clearing("delete:post-collect", lambda: land(sessions[-1], storage._host.tables, landed, "alice", "add"))
+        with installed("delete:post-collect", act):
+            result = await storage.delete(path=Path("/drop/e"), authority=EVE)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        for path in _EVES:
+            row = await row_at(storage, path)
+            assert row is not None and row["deleted_at"] is not None
+            assert row["trash_root_id"] == root["entry_id"]
+        assert await row_at(storage, landed) is None
+
+    async def test_a_sweep_redrives_over_a_landed_row_beyond_the_callers_rung(self, monkeypatch) -> None:
+        """A row a purge round's re-collection finds is judged before it is destroyed.
+
+        Guards the ``admit`` call in ``_purge``: deleted, eve's sweep destroys alice's row in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables, late = storage._host.tables, "/drop/e/sub/late.txt"
+        rival = clearing("purge:post-collect", lambda: land(sessions[-1], tables, late, "alice", "add"))
+        with installed("purge:post-collect", rival):
+            result = await storage.sweep(path=Path("/drop/e"), authority=EVE)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        assert await paths_under(storage, "/drop/e") == set()
+
+    async def test_a_cascade_off_delete_of_an_emptied_directory_runs_once(self, monkeypatch) -> None:
+        """eve removes her emptied directory, which holds only alice's deleted file, in one attempt.
+
+        Guards the ``if cascade`` on ``admit_beneath``: run without it, the
+        second subtree judgment refuses a row the gate never judged, and the
+        delete redrives into a retryable conflict that never clears.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        assert (await storage.write(entries=[Entry(path=Path("/drop/e/a.txt"), content="a")], authority=ALICE)).success
+        assert (await storage.delete(path=Path("/drop/e/a.txt"), authority=ALICE)).success is True
+        for path in ("/drop/e/f.txt", "/drop/e/sub"):
+            assert (await storage.delete(path=Path(path), authority=EVE)).success is True
+        sessions = attempts(monkeypatch, storage)
+        result = await storage.delete(path=Path("/drop/e"), cascade=False, authority=EVE)
+        assert result.success is True, result.errors
+        assert len(sessions) == 1
+
+    @pytest.mark.parametrize("verb", ["delete", "sweep"])
+    async def test_a_landed_row_the_caller_may_act_on_rides_in_one_attempt(self, monkeypatch, verb: str) -> None:
+        """The judgment refuses nothing the caller may do: eve's own late row rides with her tree."""
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        seam_name = "delete:post-collect" if verb == "delete" else "purge:post-collect"
+        tables = storage._host.tables
+        act = clearing(seam_name, lambda: land(sessions[-1], tables, "/drop/e/sub/late.txt", "eve", "add"))
+        with installed(seam_name, act):
+            if verb == "delete":
+                result = await storage.delete(path=Path("/drop/e"), authority=EVE)
+            else:
+                result = await storage.sweep(path=Path("/drop/e"), authority=EVE)
+        assert result.success is True, result.errors
+        assert len(sessions) == 1
+        late = await row_at(storage, "/drop/e/sub/late.txt")
+        if verb == "delete":
+            assert late is not None and late["deleted_at"] is not None
+        else:
+            assert late is None

@@ -585,7 +585,7 @@ MARIADB: Final = DialectProfile(
     topology_isolation="READ COMMITTED",
     # Deadlock (1213) also carries SQLSTATE 40001; lock-wait timeout
     # (1205) ships under the HY000 catch-all, so only its errno classifies;
-    # 1020 is the snapshot-isolation conflict (11.6+ default), a restart.
+    # 1020 is the snapshot-isolation conflict; vfs requires innodb_snapshot_isolation on, the 11.6+ default.
     retryable_driver_codes=frozenset({1213, 1205, 1020}),
     tuple_in=True,
     # aiomysql renders executemany as one multirow statement client-side (44 vs 51 µs).

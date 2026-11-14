@@ -45,6 +45,7 @@ from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.addressing import addressed_by, scope_judged
+from vfs.storage.backends.database.authorized import admit_destinations, fenced, opening, remember
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
     PROFILES,
@@ -1279,12 +1280,13 @@ class DatabaseStorage:
     async def _gate(
         self, session: AsyncSession, authority: Authority | None, needs: Needs, *, cached: bool = True
     ) -> WriteGate | ResultError:
-        """The call's write gate, reading *needs* — the verb's entry in the rung table."""
+        """The write gate for *needs*, kept on the attempt's session; an uncached one, an admin write's, is unfenced."""
+        host = self._host
+        opened = await opening(session, host.tables, self._named(authority), self._rights if cached else None)
         resolution = await self._resolution(session, authority, cached=cached)
         if isinstance(resolution, ResultError):
             return resolution
-        host = self._host
-        return WriteGate(
+        gate = WriteGate(
             resolution,
             needs,
             host.tables,
@@ -1293,6 +1295,7 @@ class DatabaseStorage:
             host.parameter_budget,
             authority=self._named(authority),
         )
+        return remember(session, gate, opened, self._rights)
 
     async def _grant_write(
         self,
@@ -1394,7 +1397,7 @@ class DatabaseStorage:
         maintenance commit, whose Result discards its errors, goes
         through :meth:`_execute_maintenance` and never does.
         """
-        outcome = await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
+        outcome = await self._mutate(op, fenced(fn, self._host), op_execution_options(self._host.profile, writer=True))
         return self._host.take_advisories(outcome)
 
     async def _execute_maintenance(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
@@ -1431,7 +1434,8 @@ class DatabaseStorage:
             refused += await checks.targets(
                 session, [pair.dest for pair in operations if pair.dest != pair.src], "create"
             )
-            return refused or await checks.subtrees(session, sources, passing)
+            refused = refused or await checks.subtrees(session, sources, passing)
+            return refused or await admit_destinations(session, self._host, checks, op, operations)
 
         return await self._execute_topology(
             op,
@@ -1456,7 +1460,7 @@ class DatabaseStorage:
         pin, never ``op_isolation``. Every topology verb is public, so
         its Result takes the host's held advisories here.
         """
-        outcome = await self._mutate(op, fn, topology_execution_options(self._host.profile))
+        outcome = await self._mutate(op, fenced(fn, self._host), topology_execution_options(self._host.profile))
         return self._host.take_advisories(outcome)
 
     async def _mutate(

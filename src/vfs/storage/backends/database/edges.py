@@ -43,22 +43,26 @@ from sqlalchemy.exc import IntegrityError
 
 from vfs.models import Observation
 from vfs.models.edge import RESERVED_EDGE_TYPE
+from vfs.ops import VERB_RUNGS
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.storage.backends.database.authorized import admit, admit_passed, judging
 from vfs.storage.backends.database.descent import classify_misses
 from vfs.storage.backends.database.dialects import bulk_insert, chunked, statement_budget
 from vfs.storage.backends.database.membership import locked_lookup, membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from sqlalchemy import Table
+    from sqlalchemy.engine import RowMapping
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.dml import Update
 
     from vfs.authority import Authority
     from vfs.models import Edge
     from vfs.models.rows import VFSTables
+    from vfs.ops import Op
     from vfs.paths import Path
     from vfs.storage.backends.database.dialects import DialectProfile
 
@@ -144,7 +148,10 @@ async def mkedge_rows(
     *authority* is not yet used; edges carry no ownership today.
     """
     table = tables.edges
-    ids = await _endpoint_ids(session, tables, profile, membership_budget, edges, lock=True)
+    await seam("mkedge:before-resolve")
+    rows = await _endpoint_rows(session, tables, profile, membership_budget, edges, lock=True)
+    await _admit_endpoints(session, "mkedge", rows, edges)
+    ids = _endpoint_ids(rows)
     if missing := _missing_endpoints(edges, ids):
         errors = await classify_misses(session, tables.entry, missing, profile, membership_budget)
         return Result(ops=("mkedge",), errors=errors)
@@ -210,8 +217,11 @@ async def rmedge_rows(
     used.
     """
     table = tables.edges
-    ids = await _endpoint_ids(session, tables, profile, membership_budget, edges)
-    ids = {path: entry_id for path, entry_id in ids.items() if path not in unnamed}
+    await seam("rmedge:before-resolve")
+    rows = await _endpoint_rows(session, tables, profile, membership_budget, edges)
+    rows = {path: row for path, row in rows.items() if path not in unnamed}
+    await _admit_endpoints(session, "rmedge", rows, edges)
+    ids = _endpoint_ids(rows)
     existing = await _existing_triples(session, table, profile, membership_budget, _wanted_triples(edges, ids))
     rows: list[Observation] = []
     warnings: list[ResultError] = []
@@ -336,7 +346,7 @@ async def repair_edge_drift(
 # ---------------------------------------------------------------------------
 
 
-async def _endpoint_ids(
+async def _endpoint_rows(
     session: AsyncSession,
     tables: VFSTables,
     profile: DialectProfile,
@@ -344,8 +354,8 @@ async def _endpoint_ids(
     edges: list[Edge],
     *,
     lock: bool = False,
-) -> dict[str, str]:
-    """``path → entry id`` for every distinct live endpoint in the batch.
+) -> dict[str, RowMapping]:
+    """``path → row`` for every distinct live endpoint in the batch, with what the caller's rights judge it by.
 
     A tombstoned row at an endpoint's path reads as absent: no verb
     lands an edge on it, and the one it has waits for the restore. With
@@ -356,9 +366,10 @@ async def _endpoint_ids(
     """
     entry = tables.entry
     paths = sorted({str(edge.source) for edge in edges} | {str(edge.target) for edge in edges})
-    found: dict[str, str] = {}
+    found: dict[str, RowMapping] = {}
     for chunk in chunked(paths, membership_budget):
-        columns = [entry.c.path, entry.c.entry_id, entry.c.deleted_at]
+        columns = [entry.c.path, entry.c.entry_id, entry.c.deleted_at, entry.c.kind]
+        columns += [entry.c.owner_id, entry.c.everyone_level]
         if lock:
             # Sorted paths order the locks; a deadlock against a rival's
             # claim order classifies retryable and rides the retry channel.
@@ -366,8 +377,25 @@ async def _endpoint_ids(
         else:
             stmt = select(*columns).where(membership(entry.c.path, chunk, profile))
         result = await session.execute(stmt)
-        found.update({row.path: row.entry_id for row in result if row.deleted_at is None})
+        found.update({row["path"]: row for row in result.mappings() if row["deleted_at"] is None})
     return found
+
+
+def _endpoint_ids(rows: Mapping[str, RowMapping]) -> dict[str, str]:
+    """``path → entry id`` for the resolved live endpoints."""
+    return {path: row["entry_id"] for path, row in rows.items()}
+
+
+async def _admit_endpoints(session: AsyncSession, op: Op, rows: Mapping[str, RowMapping], edges: list[Edge]) -> None:
+    """Judge the resolved rows: each source at the verb's primary rung, each target at its passing rung."""
+    needs = VERB_RUNGS[op]
+    assert needs.passing is not None
+    sources = {str(edge.source) for edge in edges}
+    targets = {str(edge.target) for edge in edges}
+    admit(judging(session, needs.primary), [row for path, row in rows.items() if path in sources])
+    passed = [row for path, row in rows.items() if path in targets]
+    # mkedge's gate reads its targets through the trash road too; rmedge's names them by the live road alone.
+    await admit_passed(session, needs.passing, passed, trashed=op == "mkedge")
 
 
 def _missing_endpoints(edges: list[Edge], ids: dict[str, str]) -> list[Path]:

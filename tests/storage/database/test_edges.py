@@ -22,6 +22,8 @@ from sqlalchemy import delete, event, insert, select
 from sqlalchemy.dialects import mssql, postgresql
 from ulid import ULID
 
+from tests.support.commit_worlds import BOB, EVE, SYSTEM, attempts, authored_edges, clearing, drop_world, row_at
+from tests.support.commit_worlds import replace as replace_row
 from tests.support.database_helpers import _url
 from vfs.models import Edge, Entry, Observation
 from vfs.paths import Path
@@ -35,6 +37,7 @@ from vfs.storage.backends.database.edges import (
 )
 from vfs.storage.backends.database.maintenance import claim_index_lease
 from vfs.storage.backends.database.seams import installed
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.replace import EditOperation
 
 if TYPE_CHECKING:
@@ -525,3 +528,84 @@ class TestEdgeRebuild:
             result = await maintenance_module._rebuild_phases(storage._maintenance(), tables, lost, "MINE")
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message
+
+
+# ---------------------------------------------------------------------------
+# Rights at the endpoints an edge verb resolves
+# ---------------------------------------------------------------------------
+
+
+class TestEndpointsAreJudged:
+    """The endpoint rows an edge verb resolves after its gate are judged on what the resolve returned."""
+
+    @pytest.mark.parametrize("verb", ["mkedge", "rmedge"])
+    async def test_an_endpoint_replaced_before_the_resolve_is_judged(self, monkeypatch, verb: str) -> None:
+        """A source replaced by another owner's row after the gate redrives; no edge is written from it.
+
+        Guards the ``admit`` calls in ``mkedge_rows`` and ``rmedge_rows``:
+        deleted, mkedge writes its edge from alice's row in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        edge = Edge(source=Path("/drop/b.txt"), target=Path("/drop/e/f.txt"), edge_type="ref")
+        if verb == "rmedge":
+            assert (await storage.mkedge(edges=[edge], authority=SYSTEM)).success is True
+        bobs = await row_at(storage, "/drop/b.txt")
+        target = await row_at(storage, "/drop/e/f.txt")
+        assert bobs is not None and target is not None
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        seam_name = f"{verb}:before-resolve"
+        act = clearing(seam_name, lambda: replace_row(sessions[-1], tables, "/drop/b.txt", "alice", "add"))
+        with installed(seam_name, act):
+            if verb == "mkedge":
+                result = await storage.mkedge(edges=[edge], authority=BOB)
+            else:
+                result = await storage.rmedge(edges=[edge], authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        expected = [(bobs["entry_id"], target["entry_id"])] if verb == "mkedge" else []
+        assert await authored_edges(storage) == expected
+
+    @pytest.mark.parametrize("trashed", [False, True], ids=["live-road", "trash-road"])
+    async def test_an_mkedge_to_a_directory_on_the_callers_road_runs_once(self, monkeypatch, trashed: bool) -> None:
+        """A target the gate passes as a directory on eve's road passes the endpoint judgment too, in one attempt.
+
+        Guards the trash road in ``admit_passed``: read the live road alone,
+        a directory on the road only through the trash view redrives forever.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        written = await storage.write(entries=[Entry(path=Path("/drop/h/pub/f.txt"), content="p")], parents=True)
+        assert written.success is True
+        assert (await storage.posture(path=Path("/drop/h"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/drop/h/pub"), posture="list", authority=SYSTEM)).success is True
+        if trashed:
+            assert (await storage.delete(path=Path("/drop/h/pub"), authority=SYSTEM)).success is True
+        sessions = attempts(monkeypatch, storage)
+        edge = Edge(source=Path("/drop/e/f.txt"), target=Path("/drop/h"), edge_type="in")
+        result = await storage.mkedge(edges=[edge], authority=EVE)
+        assert result.success is True, result.errors
+        assert len(sessions) == 1
+
+    async def test_a_target_replaced_by_a_row_the_caller_may_not_name_redrives(self, monkeypatch) -> None:
+        """A target replaced after the gate by a row bob may not even list is judged, never linked to.
+
+        Guards the passing judgment of mkedge's targets: dropped, the edge
+        lands on a row bob cannot name, in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        target = await row_at(storage, "/drop/e/f.txt")
+        bobs = await row_at(storage, "/drop/b.txt")
+        assert target is not None and bobs is not None
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        name = "mkedge:before-resolve"
+        act = clearing(name, lambda: replace_row(sessions[-1], tables, "/drop/e/f.txt", "alice", "none"))
+        edge = Edge(source=Path("/drop/b.txt"), target=Path("/drop/e/f.txt"), edge_type="ref")
+        with installed(name, act):
+            result = await storage.mkedge(edges=[edge], authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        assert await authored_edges(storage) == [(bobs["entry_id"], target["entry_id"])]

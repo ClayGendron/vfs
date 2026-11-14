@@ -226,7 +226,9 @@ class Path(str):
         validated), the rebase pair :meth:`with_mount` / :meth:`without_mount`
         (canonical-absolute concat/strip of two branded paths, length checked
         explicitly), and backend row hydration (a stored path passed the gate
-        at write time, so re-gating every read row is pure overhead). Going
+        at write time, so re-gating every read row is pure overhead — among
+        them ``delete_rows``' claimed directories and a transfer's mapped
+        path, a stored path rebased onto a branded destination). Going
         through the public ``Path(...)`` constructor at those sites would
         recurse back into the gate; every other mint runs the full validation.
         """

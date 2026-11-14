@@ -35,6 +35,7 @@ SHRUNKEN_BUDGET = 480
 # Every statement the warm write path issues, named by the words it opens with, in the path's own order.
 FAMILIES: tuple[tuple[str, str], ...] = (
     ("begin", "BEGIN IMMEDIATE"),
+    ("revision", "SELECT vfs_meta.grant_revision"),
     ("grants", "SELECT vfs_grants."),
     ("principal revision", "SELECT max(vfs_principal_revisions.revision)"),
     ("relabels", "SELECT vfs_relabels."),
@@ -105,8 +106,10 @@ def _expected(host: EngineHost, columns: dict[str, tuple[str, ...]], directories
     return Counter(
         {
             "begin": 1,
+            # The revision the gate opens under, and the stamps read again by the fence before the commit.
+            "revision": 1,
             "grants": 2 * math.ceil(paths / membership_budget),
-            "principal revision": 1,
+            "principal revision": 2,
             "relabels": 1,
             "target probe": math.ceil(paths / membership_budget),
             "committed fetch": math.ceil(paths / membership_budget),
@@ -154,7 +157,7 @@ async def test_the_formula_holds_under_a_shrunken_budget(tmp_path: FsPath) -> No
         min(
             expected[name]
             for name, _ in FAMILIES
-            if name not in ("begin", "principal revision", "relabels", "parent bump")
+            if name not in ("begin", "revision", "principal revision", "relabels", "parent bump")
         )
         > 1
     )

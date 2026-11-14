@@ -23,6 +23,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from ulid import ULID
 
+from tests.support.commit_worlds import BOB, CAROL, attempts, clearing, drop_world, land, row_at, version_count
+from tests.support.commit_worlds import replace as replace_row
 from tests.support.database_helpers import _ReturningSession, _staged_material, _url
 from tests.support.statements import is_statistics_statement
 from vfs.authority import Authority, Principal
@@ -33,6 +35,7 @@ from vfs.results import ErrorKind, ResultError
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import writes as writes_module
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE, StaleSnapshot
+from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.database.staging import StagedEntry, WritePlan
 from vfs.storage.backends.database.writes import (
     _CLOBBER_COLUMNS,
@@ -46,6 +49,7 @@ from vfs.storage.backends.database.writes import (
     _upsert_constructor,
     _upsert_layer,
 )
+from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.protocol import ResolvedPair
 from vfs.storage.replace import EditOperation
 
@@ -1503,3 +1507,212 @@ async def test_an_edit_call_matches_in_one_hop_with_a_budget_per_match(
             assert (await storage.read(path=entry.path)).one().content == "done\n"
     finally:
         await storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Rights at the rows a write acts on
+# ---------------------------------------------------------------------------
+
+
+def _arm(monkeypatch: pytest.MonkeyPatch, storage: DatabaseStorage, arm: str) -> None:
+    """Run *storage*'s creates through arbitration arm *arm*, whatever its engine declares."""
+    monkeypatch.setattr(storage._host, "_profile", replace(storage._host.profile, arbitration=arm))
+
+
+class TestLandingJudgment:
+    """A create that arbitration turns into a change of a standing row is judged on that row."""
+
+    @pytest.mark.parametrize("arm", ["upsert", "catch_retry"])
+    async def test_a_create_that_lands_on_a_row_beyond_the_callers_rung_redrives(self, monkeypatch, arm) -> None:
+        """A rival's row at the path absorbs bob's create only if bob may contribute to it.
+
+        Guards the landing read in ``_apply``: deleted, or judged at the
+        create slot, the clobber lands bob's body on alice's row in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        _arm(monkeypatch, storage, arm)
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        rival = clearing("write:before-apply", lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add"))
+        with installed("write:before-apply", rival):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="bob")], authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None
+        assert (row["owner_id"], row["version"], row["content"]) == ("bob", 1, "bob")
+        assert await version_count(storage, row["entry_id"]) == 0
+
+    @pytest.mark.parametrize("arm", ["upsert", "catch_retry"])
+    async def test_a_create_that_lands_on_the_callers_own_row_absorbs_it(self, monkeypatch, arm) -> None:
+        """The owner floor admits a landing on the caller's own row: no redrive, the row kept and bumped."""
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        _arm(monkeypatch, storage, arm)
+        sessions = attempts(monkeypatch, storage)
+        landed: list[str] = []
+
+        async def act() -> None:
+            landed.append(await land(sessions[-1], storage._host.tables, "/drop/x.txt", "bob", "add"))
+
+        with installed("write:before-apply", clearing("write:before-apply", act)):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="bob")], authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 1
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None
+        assert (row["entry_id"], row["version"], row["owner_id"], row["content"]) == (landed[0], 2, "bob", "bob")
+
+    @pytest.mark.parametrize("arm", ["upsert", "catch_retry"])
+    async def test_a_create_that_lands_where_the_caller_may_contribute_absorbs_it(self, monkeypatch, arm) -> None:
+        """``contribute`` admits a landing on another owner's row: the row keeps its id and owner."""
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        granted = await storage.grant(path=Path("/drop"), principal="carol", level="contribute", authority=SYSTEM)
+        assert granted.success is True
+        _arm(monkeypatch, storage, arm)
+        sessions = attempts(monkeypatch, storage)
+        landed: list[str] = []
+
+        async def act() -> None:
+            landed.append(await land(sessions[-1], storage._host.tables, "/drop/x.txt", "alice", "add"))
+
+        with installed("write:before-apply", clearing("write:before-apply", act)):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="carol")], authority=CAROL)
+        assert result.success is True, result.errors
+        assert len(sessions) == 1
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None
+        assert (row["entry_id"], row["owner_id"], row["version"], row["content"]) == (landed[0], "alice", 2, "carol")
+
+    async def test_a_landed_row_carries_the_side_rows_a_written_one_does(self) -> None:
+        """The rival helper builds what a create builds: one fs mirror row and one segment posting per row."""
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        tables = storage._host.tables
+        assert (await storage.write(entries=[Entry(path=Path("/drop/w.txt"), content="w")], authority=BOB)).success
+        async with storage._host.session_factory() as session:
+            await session.connection(execution_options={"vfs_writer": True})
+            await land(session, tables, "/drop/l.txt", "alice", "add")
+            await session.commit()
+        counts = []
+        for path in ("/drop/w.txt", "/drop/l.txt"):
+            row = await row_at(storage, path)
+            assert row is not None
+            async with storage._host.session_factory() as session:
+                edges = tables.edges.select().where(tables.edges.c.target_id == row["entry_id"])
+                segments = tables.segments.select().where(tables.segments.c.entry_id == row["entry_id"])
+                counts.append((len((await session.execute(edges)).all()), len((await session.execute(segments)).all())))
+        assert counts[0] == counts[1] == (1, counts[0][1]) and counts[0][1] > 0
+
+
+class TestStagedRowsAreJudged:
+    """The rows the plan's own read stages an update or a revive over are judged from that read."""
+
+    async def test_a_row_that_appears_before_the_plan_reads_is_judged(self, monkeypatch) -> None:
+        """A row landed after the gate saw the path empty turns bob's create into an update he may not make.
+
+        Guards ``admit_staged`` in ``_finish``: deleted, the plan's update
+        branch rewrites alice's row with bob's body in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        act = clearing("write:before-snapshot", lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add"))
+        with installed("write:before-snapshot", act):
+            result = await storage.write(entries=[Entry(path=Path("/drop/x.txt"), content="bob")], authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        row = await row_at(storage, "/drop/x.txt")
+        assert row is not None
+        assert (row["owner_id"], row["version"], row["content"]) == ("bob", 1, "bob")
+
+    async def test_an_edit_target_replaced_before_the_plan_reads_is_judged(self, monkeypatch) -> None:
+        """An edit whose target was replaced by another owner's row after the gate edits nothing of it.
+
+        Guards ``admit_staged`` on edit's update: deleted, alice's row is edited in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        original = await row_at(storage, "/drop/b.txt")
+        assert original is not None
+        sessions = attempts(monkeypatch, storage)
+        tables = storage._host.tables
+        name = "write:before-snapshot"
+        act = clearing(name, lambda: replace_row(sessions[-1], tables, "/drop/b.txt", "alice", "add"))
+        edit = EditOperation(old="text", new="edited")
+        with installed("write:before-snapshot", act):
+            result = await storage.edit(edits=[edit], path=Path("/drop/b.txt"), authority=BOB)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        row = await row_at(storage, "/drop/b.txt")
+        assert row is not None
+        assert (row["entry_id"], row["owner_id"], row["content"]) == (original["entry_id"], "bob", "bob edited\n")
+
+    @pytest.mark.parametrize(
+        ("body", "shape"),
+        [("text alpha\ntext beta\n", "two-matches"), ("nothing alpha\n", "no-match")],
+        ids=["two-matches", "no-match"],
+    )
+    async def test_an_edit_never_answers_from_a_replaced_row_it_may_not_read(self, monkeypatch, body, shape) -> None:
+        """An edit judges every live target row its plan read before matching any, so no error is built from one.
+
+        Guards ``admit_targets`` in ``edit_rows``: deleted, an old text the
+        unreadable replacement holds twice answers with that row's lines in the
+        message, and one it lacks answers that the file does not hold it.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables, name = storage._host.tables, "write:before-snapshot"
+        act = clearing(name, lambda: replace_row(sessions[-1], tables, "/drop/b.txt", "alice", "none", body=body))
+        edit = EditOperation(old="text", new="edited")
+        with installed(name, act):
+            result = await storage.edit(edits=[edit], path=Path("/drop/b.txt"), authority=BOB)
+        assert len(sessions) == 2, shape
+        assert not any("alpha" in error.message for error in result.errors)
+        assert result.success is True, result.errors
+        row = await row_at(storage, "/drop/b.txt")
+        assert row is not None and (row["owner_id"], row["content"]) == ("bob", "bob edited\n")
+
+    async def test_an_errored_plan_is_judged_before_it_answers(self, monkeypatch) -> None:
+        """A batch whose plan errors and also stages an update over a row its gate never saw redrives before answering.
+
+        Guards ``admit_staged``'s place ahead of the ``plan.errors`` return:
+        after it, the errored plan answers in one attempt from an unjudged row.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        sessions = attempts(monkeypatch, storage)
+        tables, name = storage._host.tables, "write:before-snapshot"
+        act = clearing(name, lambda: land(sessions[-1], tables, "/drop/x.txt", "alice", "add"))
+        entries = [Entry(path=Path("/drop/x.txt"), content="bob"), Entry(path=Path("/drop/b.txt/c.txt"), content="c")]
+        with installed(name, act):
+            result = await storage.write(entries=entries, authority=BOB)
+        assert len(sessions) == 2
+        assert [(error.kind, error.path) for error in result.errors] == [(ErrorKind.wrong_kind, "/drop/b.txt")]
+
+    async def test_a_revive_the_plan_stages_is_judged_at_the_restore_rung(self, monkeypatch) -> None:
+        """A tombstoned row landed after the gate is revived only at ``read_write``, restore's rung.
+
+        Guards the revive's rung in ``admit_staged``: judged at the
+        verb's ``contribute``, carol revives alice's deleted row in one attempt.
+        """
+        storage = InMemoryStorage()
+        await drop_world(storage)
+        granted = await storage.grant(path=Path("/drop"), principal="carol", level="contribute", authority=SYSTEM)
+        assert granted.success is True
+        sessions = attempts(monkeypatch, storage)
+
+        async def act() -> None:
+            await land(sessions[-1], storage._host.tables, "/drop/y.txt", "alice", "add", deleted=True)
+
+        with installed("write:before-snapshot", clearing("write:before-snapshot", act)):
+            result = await storage.write(entries=[Entry(path=Path("/drop/y.txt"), content="carol")], authority=CAROL)
+        assert result.success is True, result.errors
+        assert len(sessions) == 2
+        row = await row_at(storage, "/drop/y.txt")
+        assert row is not None
+        assert (row["owner_id"], row["deleted_at"], row["version"]) == ("carol", None, 1)

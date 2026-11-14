@@ -128,9 +128,10 @@ class Needs(NamedTuple):
     """The rungs one verb needs: on its target, on a fresh name it mints, on a row it only passes or reads.
 
     ``primary`` judges an occupied target (the owner floor riding for a
-    mutation); ``create`` judges a fresh name and an occupied name a
-    creation lands on; ``passing`` judges a row the verb reads without
-    changing — a copy's source, an edge's target, a walk's node.
+    mutation); ``create`` judges a fresh name and a directory a creation
+    adopts; a row a file creation lands on is changed, and is judged at
+    ``primary`` with the owner floor; ``passing`` judges a row the verb
+    reads without changing — a copy's source, an edge's target, a walk's node.
     """
 
     primary: Rung

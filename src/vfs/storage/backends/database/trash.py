@@ -57,9 +57,11 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from sqlalchemy import bindparam, case, delete, false, func, select, true, update
 
 from vfs.models import Observation
+from vfs.ops import VERB_RUNGS
 from vfs.paths import ROOT, TRASH_ROOT, Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, already_exists, classified
 from vfs.results.kinds import TRASH_ROOT_KEY
+from vfs.storage.backends.database.authorized import admit, admit_beneath, judging
 from vfs.storage.backends.database.descent import (
     LIKE_ESCAPE,
     ancestor_chain,
@@ -203,6 +205,8 @@ async def delete_rows(
         return Result(ops=("delete",), errors=[refused])
     directories = [row for row in claims if row["kind"] == "directory"]
     await _tombstone_descendants(session, entry, profile, membership_budget, directories, now)
+    # Judged again only where the gate judged it: without cascade a claimed directory had no live child.
+    await admit_beneath(session, [Path._brand(row["path"]) for row in directories] if cascade else [])
     await bump_many(session, entry, profile, membership_budget, [row["parent_id"] for row in claims])
     return Result(ops=("delete",), observations=rows)
 
@@ -480,7 +484,8 @@ async def _tombstone_descendants(
     set alone. The statement sees the rows committed when it runs, so
     a child a rival landed after the snapshot rides with its parent; a
     rival landing afterwards finds its parent tombstoned at its own
-    bump guard and redrives into a refusal.
+    bump guard and redrives into a refusal. The rows it stamps are judged
+    after it, by the gate's subtree judgment run again over the roots.
     """
     if not roots:
         return
@@ -575,11 +580,16 @@ async def _purge(
     an orphan no re-collection ever sees. With the entry row gone
     first, a rival's guarded write misses and takes its own rows down
     with it; whatever side rows remain here were committed before the
-    entry delete and are swept by the passes below.
+    entry delete and are swept by the passes below. Each round's rows
+    are judged against the caller's rights before any of them is deleted.
     """
     entry = tables.entry
     edges = tables.edges
-    while ids := [row.entry_id for row in await session.execute(select(entry.c.entry_id).where(scope))]:
+    rights = judging(session, VERB_RUNGS["sweep"].primary)
+    judged = [entry.c.path, entry.c.owner_id, entry.c.everyone_level] if rights is not None else []
+    while rows := (await session.execute(select(entry.c.entry_id, *judged).where(scope))).mappings().all():
+        admit(rights, rows)
+        ids = [row["entry_id"] for row in rows]
         await seam("purge:post-collect")
         for chunk in chunked(ids, membership_budget):
             await seam("purge:pre-entry-delete")

@@ -28,11 +28,26 @@ from functools import partial
 from typing import Any, ClassVar
 
 import pytest
+from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy import insert, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
+from tests.support.commit_worlds import (
+    ALICE,
+    BOB,
+    EVE,
+    attempts,
+    copy_world,
+    dest_world,
+    drop_world,
+    grant_world,
+    label_world,
+    paths_under,
+    row_at,
+    version_count,
+)
 from tests.support.database_helpers import _url
 from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
@@ -41,10 +56,11 @@ from vfs.paths import Path
 from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, dialects, indexing, seams
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.revision import hold_revision
-from vfs.storage.grants import LEVEL_RANK
+from vfs.storage.grants import LEVEL_RANK, Posture
 from vfs.storage.replace import EditOperation
 
 # Kinds that may lawfully surface from a lost race; anything else — above
@@ -1638,3 +1654,325 @@ async def _gram_rows(storage: DatabaseStorage) -> list[int]:
     epochs = storage._host.tables.gram_epochs
     async with storage._host.engine.connect() as conn:
         return sorted((await conn.execute(select(epochs.c.epoch))).scalars())
+
+
+# ---------------------------------------------------------------------------
+# Rights at the commit point — genuine rivals inside a mutation's window
+# ---------------------------------------------------------------------------
+
+
+async def _liveness(storage: DatabaseStorage) -> dict[str, bool]:
+    """Every row's path and whether it is live: the world as the system actor reads it."""
+    entry = storage._host.tables.entry
+    async with storage._host.session_factory() as session:
+        found = await session.execute(select(entry.c.path, entry.c.deleted_at))
+        return {row.path: row.deleted_at is None for row in found}
+
+
+def _kinds_and_paths(result: Result) -> list[tuple[str, str | None]]:
+    return [(error.kind, error.path) for error in result.errors]
+
+
+# The seam each topology verb's rival commits at: after the collection, before the act.
+_TOPOLOGY_SEAMS = {
+    "delete": "delete:post-collect",
+    "move": "transfer:post-collect",
+    "sweep": "purge:post-collect",
+    "copy": "transfer:post-snapshot",
+}
+
+
+def _snapshot_writes(storage: DatabaseStorage) -> bool:
+    """Whether the profile pins a repeatable snapshot for writes, so a write's commit point is its first statement."""
+    return storage._host.profile.op_isolation is not None
+
+
+class TestRightsAtCommit:
+    """A mutation's rows and rights as they stand at its commit point, against a genuine committed rival."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_create_that_lands_on_another_owners_row_is_refused_below_contribute(self, env_var: str) -> None:
+        """A rival's row committed before bob's insert is changed by bob only if he could change it directly."""
+        async with server_storage(env_var, posture="none") as storage:
+            await drop_world(storage)
+            x = Path("/drop/x.txt")
+            alices, bobs = [Entry(path=x, content="alice")], [Entry(path=x, content="bob")]
+            rival = partial(storage.write, entries=alices, authority=ALICE)
+            handler, rivals = _self_clearing("write:before-apply", rival)
+            with seams.installed("write:before-apply", handler):
+                result = await storage.write(entries=bobs, authority=BOB)
+            assert rivals and rivals[0].success is True
+            assert result.success is False
+            assert _kinds_and_paths(result) == [(ErrorKind.permission_denied, "/drop/x.txt")]
+            row = await row_at(storage, "/drop/x.txt")
+            assert row is not None and (row["owner_id"], row["version"], row["content"]) == ("alice", 1, "alice")
+            assert await version_count(storage, row["entry_id"]) == 0
+            assert (await storage.read(path=Path("/drop/x.txt"), authority=BOB)).one().content == "alice"
+            await _audit(storage)
+
+    @pytest.mark.parametrize("verb", ["write", "edit", "edit-matching"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_row_that_appears_before_the_plan_reads_is_judged(self, env_var: str, verb: str) -> None:
+        """A row committed between the gate's read and the plan's is judged before the plan acts on it.
+
+        The matching edit's rival body holds the text bob's edit replaces, so
+        before the fix the edit lands on alice's row; the other edit's does not,
+        so it holds the judgment's place ahead of the plan's own errors.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await drop_world(storage)
+            target = "/drop/x.txt" if verb == "write" else "/drop/b.txt"
+            body = "alice text\n" if verb == "edit-matching" else "alice"
+            alices = [Entry(path=Path(target), content=body)]
+
+            async def rival() -> Result:
+                if verb != "write":
+                    assert (await storage.sweep(path=Path(target))).success is True
+                return await storage.write(entries=alices, authority=ALICE)
+
+            handler, rivals = _self_clearing("write:before-snapshot", rival)
+            with seams.installed("write:before-snapshot", handler):
+                if verb == "write":
+                    result = await storage.write(entries=[Entry(path=Path(target), content="bob")], authority=BOB)
+                else:
+                    edit = [EditOperation(old="text", new="edited")]
+                    result = await storage.edit(edits=edit, path=Path(target), authority=BOB)
+            assert rivals and rivals[0].success is True
+            assert result.success is False
+            assert _kinds_and_paths(result) == [(ErrorKind.permission_denied, target)]
+            row = await row_at(storage, target)
+            assert row is not None and (row["owner_id"], row["version"], row["content"]) == ("alice", 1, body)
+            await _audit(storage)
+
+    @pytest.mark.parametrize(
+        ("verb", "landed"),
+        [
+            ("delete", "/drop/e/late.txt"),
+            ("delete", "/drop/e/sub/late.txt"),
+            ("move", "/drop/e/late.txt"),
+            ("move", "/drop/e/sub/late.txt"),
+            ("sweep", "/drop/e/sub/late.txt"),
+            ("copy", "/s/priv/secret.txt"),
+        ],
+        ids=["delete-1", "delete-2", "move-1", "move-2", "sweep-2", "copy"],
+    )
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_row_landed_beneath_a_topology_root_is_never_acted_on_unjudged(
+        self, env_var: str, verb: str, landed: str
+    ) -> None:
+        """A row alice commits beneath eve's root after the gate is never deleted, moved, purged or copied by eve."""
+        async with server_storage(env_var, posture="none") as storage:
+            await (copy_world if verb == "copy" else drop_world)(storage)
+            seam_name = _TOPOLOGY_SEAMS[verb]
+            alices = [Entry(path=Path(landed), content="alice")]
+            handler, rivals = _self_clearing(seam_name, partial(storage.write, entries=alices, authority=ALICE))
+            eves = await _liveness(storage)
+            with seams.installed(seam_name, handler):
+                if verb == "delete":
+                    result = await storage.delete(path=Path("/drop/e"), authority=EVE)
+                elif verb == "sweep":
+                    result = await storage.sweep(path=Path("/drop/e"), authority=EVE)
+                elif verb == "move":
+                    moved = [ResolvedPair(src=Path("/drop/e"), dest=Path("/drop/f"))]
+                    result = await storage.move(operations=moved, authority=EVE)
+                else:
+                    copied = [ResolvedPair(src=Path("/s"), dest=Path("/t/s"))]
+                    result = await storage.copy(operations=copied, authority=EVE)
+            assert rivals and rivals[0].success is True
+            assert result.success is False
+            assert _kinds_and_paths(result) == [(ErrorKind.permission_denied, "/s" if verb == "copy" else "/drop/e")]
+            row = await row_at(storage, landed)
+            assert row is not None and (row["owner_id"], row["version"], row["deleted_at"]) == ("alice", 1, None)
+            after = await _liveness(storage)
+            assert {path: live for path, live in after.items() if path in eves} == eves
+            if verb == "copy":
+                assert await paths_under(storage, "/t/s") == set()
+            await _audit(storage)
+
+    @pytest.mark.parametrize("shape", ["copy", "move", "open-copy", "full-chunk"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_transfer_is_refused_where_a_direct_write_is(self, env_var: str, shape: str, monkeypatch) -> None:
+        """A transfer creates beneath its destination only what eve's direct write of each path there could create.
+
+        The full-chunk node runs one probe of ``arm_budget`` arms, 200 on
+        every pinned profile, on the engine itself.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            pair = [ResolvedPair(src=Path("/src"), dest=Path("/dst/c"))]
+            if shape == "full-chunk":
+                entries = [Entry(path=Path(f"/src/d{n % 10}/f{n}.txt"), content="f") for n in range(10_000)]
+                entries.append(Entry(path=Path("/dst"), kind="directory"))
+                assert (await storage.write(entries=entries, parents=True)).success is True
+                rules: list[tuple[str, Posture]] = [("/", "none"), ("/src", "read_write"), ("/dst", "add")]
+                rules.append(("/dst/c/d0", "none"))
+                rules += [(f"/dst/c/x{n:03}", "none") for n in range(99)]
+                for path, level in rules:
+                    assert (await storage.posture(path=Path(path), posture=level)).success is True
+                recorded: list[str] = []
+                counts: list[int] = []
+                listen = storage._host.engine.sync_engine
+
+                def record(conn, cursor, statement, parameters, context, executemany) -> None:
+                    recorded.append(statement)
+
+                original = backend_module.admit_destinations
+
+                async def counted(*args: Any, **kwargs: Any) -> Any:
+                    start = len(recorded)
+                    try:
+                        return await original(*args, **kwargs)
+                    finally:
+                        counts.append(len(recorded) - start)
+
+                monkeypatch.setattr(backend_module, "admit_destinations", counted)
+                sqlalchemy_event.listen(listen, "before_cursor_execute", record)
+                try:
+                    copied = await storage.copy(operations=pair, authority=EVE)
+                    results = [copied, await storage.move(operations=pair, authority=EVE)]
+                finally:
+                    sqlalchemy_event.remove(listen, "before_cursor_execute", record)
+                refused = [(ErrorKind.permission_denied, "/dst/c/d0")]
+                assert [_kinds_and_paths(result) for result in results] == [refused, refused]
+                assert counts == [3, 3]
+                await _audit(storage)
+                return
+            await dest_world(storage)
+            if shape == "open-copy":
+                assert (await storage.posture(path=Path("/dst/c/sub"), posture="add")).success is True
+            before = await _liveness(storage)
+            if shape == "move":
+                result = await storage.move(operations=pair, authority=EVE)
+            else:
+                result = await storage.copy(operations=pair, authority=EVE)
+            if shape == "open-copy":
+                assert result.success is True, result.errors
+                assert await row_at(storage, "/dst/c/sub/f.txt") is not None
+            else:
+                assert result.success is False
+                assert _kinds_and_paths(result) == [(ErrorKind.permission_denied, "/dst/c/sub")]
+                assert await paths_under(storage, "/dst") == {"/dst"}
+                assert await _liveness(storage) == before
+            await _audit(storage)
+
+    @pytest.mark.parametrize("verb", ["write", "delete", "move", "copy", "sweep"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_revoke_committed_inside_the_window_is_seen(self, env_var: str, verb: str) -> None:
+        """A revoke of bob committed inside his call's window is seen: the call answers from the later rights.
+
+        Where a write's commit point is its snapshot (a pinned
+        ``op_isolation``), the write is ordered before the revoke and stands.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await grant_world(storage)
+            before = await _liveness(storage)
+            seam_name, call = _grant_world_calls(storage)[verb]
+            handler, rivals = _self_clearing(seam_name, lambda: storage.revoke(path=Path("/g"), principal="bob"))
+            with seams.installed(seam_name, handler):
+                result = await call()
+            assert rivals and rivals[0].success is True
+            if verb == "write" and _snapshot_writes(storage):
+                assert result.success is True, result.errors
+                assert await row_at(storage, "/g/new.txt") is not None
+            else:
+                again = await call()
+                assert result.success is False
+                assert _kinds_and_paths(result) == _kinds_and_paths(again)
+                assert await _liveness(storage) == before
+            await _audit(storage)
+
+    @pytest.mark.parametrize("verb", ["write", "delete", "move"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_posture_tightening_committed_inside_the_window_is_seen(self, env_var: str, verb: str) -> None:
+        """A posture tightened under eve's call and relabelled to its end is seen; a new row's label is not asserted.
+
+        The same refusal on every engine, for two reasons. Where each
+        statement reads the latest commit, the fence finds everyone stamped
+        and the call redrives. Where a write's commit point is its snapshot
+        (Postgres, MariaDB), the relabel rewrote the row of ``/p`` the write
+        bumps, so the engine refuses the bump and the write redrives too.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await label_world(storage)
+            before = await _liveness(storage)
+            seam_name = "write:before-apply" if verb == "write" else _TOPOLOGY_SEAMS[verb]
+            handler, rivals = _self_clearing(seam_name, lambda: storage.posture(path=Path("/p"), posture="read"))
+            with seams.installed(seam_name, handler):
+                if verb == "write":
+                    result = await storage.write(entries=[Entry(path=Path("/p/new.txt"), content="n")], authority=EVE)
+                elif verb == "delete":
+                    result = await storage.delete(path=Path("/p/d"), authority=EVE)
+                else:
+                    moved = [ResolvedPair(src=Path("/p/d"), dest=Path("/p/m"))]
+                    result = await storage.move(operations=moved, authority=EVE)
+            assert rivals and rivals[0].success is True
+            expected = {"write": ["/p/new.txt"], "delete": ["/p/d"], "move": ["/p/d", "/p/m"]}[verb]
+            assert result.success is False
+            assert sorted(error.path or "" for error in result.errors) == expected
+            assert {error.kind for error in result.errors} == {ErrorKind.permission_denied}
+            assert await _liveness(storage) == before
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", [leg for leg in ENGINE_LEGS if leg.id == "mariadb"])
+    async def test_the_mariadb_leg_runs_with_snapshot_isolation(self, env_var: str) -> None:
+        """The MariaDB leg's server runs with ``innodb_snapshot_isolation`` on, which a write's commit point needs."""
+        async with server_storage(env_var) as storage:
+            assert (await storage.first_touch()).success is True
+            async with storage._host.engine.connect() as conn:
+                assert (await conn.execute(text("SELECT @@innodb_snapshot_isolation"))).scalar_one() == 1
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_grant_landed_before_an_in_place_refusal_redrives_into_success(
+        self, env_var: str, monkeypatch
+    ) -> None:
+        """A grant committed before an in-place refusal is read by the fence first: the call runs again and succeeds.
+
+        The grant runs on a second handle on the same mount, so the attempt
+        count is the copy's alone: the grant's own gate is never counted.
+        """
+        async with server_storage(env_var, posture="none") as storage:
+            await dest_world(storage)
+            assert (await storage.write(entries=[Entry(path=Path("/tmp/x"), kind="directory")], parents=True)).success
+            assert (await storage.posture(path=Path("/tmp"), posture="add")).success is True
+            assert (await storage.posture(path=Path("/dst/c/in/sub"), posture="none")).success is True
+            second = sibling(env_var, storage)
+            sessions = attempts(monkeypatch, storage)
+            fired: list[int] = []
+            granted: list[Result] = []
+
+            async def rival() -> None:
+                fired.append(len(sessions))
+                if fired == [1, 1]:
+                    granted.append(await second.grant(path=Path("/dst/c/in/sub"), principal="eve", level="add"))
+
+            grown = [
+                ResolvedPair(src=Path("/src"), dest=Path("/tmp/x/in")),
+                ResolvedPair(src=Path("/tmp/x"), dest=Path("/dst/c")),
+            ]
+            try:
+                with seams.installed("transfer:post-collect", rival):
+                    result = await storage.copy(operations=grown, authority=EVE)
+            finally:
+                await second.close()
+            assert granted and granted[0].success is True
+            assert result.success is True, result.errors
+            assert len(sessions) == 2
+            row = await row_at(storage, "/dst/c/in/sub/f.txt")
+            assert row is not None and row["owner_id"] == "eve"
+            await _audit(storage)
+
+
+def _grant_world_calls(storage: DatabaseStorage) -> dict[str, tuple[str, Any]]:
+    """bob's call of each verb in the grant world and the seam its rival commits at."""
+    written = [Entry(path=Path("/g/new.txt"), content="n")]
+
+    def transfer(op: str, dest: str) -> Any:
+        pair = [ResolvedPair(src=Path("/g/d"), dest=Path(dest))]
+        return lambda: (storage.move if op == "move" else storage.copy)(operations=pair, authority=BOB)
+
+    return {
+        "write": ("write:before-apply", partial(storage.write, entries=written, authority=BOB)),
+        "delete": ("delete:post-collect", lambda: storage.delete(path=Path("/g/d"), authority=BOB)),
+        "move": ("transfer:post-collect", transfer("move", "/g/e")),
+        "copy": ("transfer:post-collect", transfer("copy", "/g/c")),
+        "sweep": ("purge:post-collect", lambda: storage.sweep(path=Path("/g/d"), authority=BOB)),
+    }

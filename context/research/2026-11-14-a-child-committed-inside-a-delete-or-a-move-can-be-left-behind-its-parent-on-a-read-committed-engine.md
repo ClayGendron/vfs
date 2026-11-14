@@ -1,0 +1,27 @@
+# A child committed inside a delete or a move can be left behind its parent on a READ COMMITTED engine
+
+A placeholder memo. Two integrity windows found while [a mutation is authorized for the rows it acts on at its commit point](../specifications/active/2026-11-14-a-mutation-is-authorized-for-the-rows-it-acts-on-at-its-commit-point.md) was written and reviewed on 2026-11-14: the move window by that spec's author, the delete window by its reviewer as finding L2 of [the spec's review](../reviews/2026-11-14-a-mutation-is-authorized-for-the-rows-it-acts-on-at-its-commit-point-spec-review.md). The session lead ruled that both are integrity windows, not authorization, and that they wait here together. No spec waits on this memo: that spec names it under Out, and its property holds with both windows open, because a row left behind is a row the verb did not act on. The spec that takes the answer is not yet written; it will be a fix to the topology verbs' descendant statements. It is held untracked with that spec until that spec lands. Time box for the research: one session of two hours on the four server legs, through the `db_test` cycle.
+
+Labels: EXECUTED means a command ran for this memo; READ means read in the file cited, at `e90ec653` for vfs and at `c074737f` for the Postgres clone; INFERRED means reasoning.
+
+## The question
+
+To be settled: on each server engine, whether a write that creates a child beneath a directory a delete or a move is rewriting can commit so that, after both commit, the child is live under a tombstoned parent (delete) or keeps a path its moved parent no longer holds (move); and, where it can, which change to the two verbs' descendant statements closes it at a bounded cost on every engine.
+
+## What is known today
+
+- Delete stamps every live row beneath each claimed directory with one `LIKE` update per chunk of roots, after its root claims (READ, `src/vfs/storage/backends/database/trash.py:468-494`, `:201-205`).
+- A write creates its rows first and bumps each immediate parent last, guarded on that parent's path and on `deleted_at IS NULL` (READ, `src/vfs/storage/backends/database/writes.py:1054-1081`, `:1141-1153`).
+- On Postgres at `READ COMMITTED`, an `UPDATE` finds only the target rows committed as of the command's start; a found row already updated by a concurrent transaction is waited on and its updated version re-checked (READ, `../postgres/doc/src/sgml/mvcc.sgml:336-356`). A row inserted by a transaction that commits while the update runs is not among the rows it found (INFERRED from the same passage).
+- So, on Postgres: a writer whose child insert and parent bump both precede delete's stamp, and which commits while the stamp waits on that parent's row lock, leaves its child unstamped, and the child stays live under a tombstoned parent (INFERRED). The same holds where a statement reads a snapshot taken when it starts: SQL Server under snapshot `READ COMMITTED`, and Oracle (INFERRED from each engine's documented statement-level consistency). Under SQL Server's locking `READ COMMITTED` the stamp's scan waits on the uncommitted insert instead, and sees it once it commits (INFERRED).
+- Move collects its descendants with one plain read after its root claim and then rewrites each collected row's path by id, unguarded (READ, `src/vfs/storage/backends/database/topology.py:342-376`, `:379-403`). A child whose parent is a descendant, not the root, bumps a row the move has not yet locked. If that writer commits between move's collection and the rewrite of its parent, the child is not in the collection, its parent's path is rewritten, and the child keeps its old path under the moved parent: a torn path cache (INFERRED from the statement order; the same engines as above).
+- Neither window is staged by any test: the existing reverse-ordering pins commit their rival at `delete:post-collect` or `transfer:post-collect`, before the claim, where the root guard or the later statement catches it (READ, `tests/storage/database/test_races.py:250-316`).
+- Neither window changes who may act on what: the left-behind row is one the verb did not act on, so the authorization property of the spec above holds with it (INFERRED, that spec's decision 7).
+
+## The experiment that answers it
+
+Add two seams on a scratch copy, one between delete's root claims and its descendant stamp and one between move's descendant collection and its rewrite statement. On each of the four server legs, commit a rival write of a depth-two child at each seam, holding the rival's transaction open across the verb's statement where the engine lets a second connection do so, and run the campaign's integrity audit (`tests/storage/database/test_races.py:53-71`) after both commit. Record per engine whether a child is left live under a tombstoned parent or with a torn path. Then build each candidate on the scratch copy and count its statements and row locks on a 10,000-row subtree: the descendant stamp and rewrite re-collected until no new child appears, as the purge already does (`trash.py:546-604`); the stamp and rewrite guarded by a second pass that proves no live row beneath the root escaped; and a locking read of the children of every directory beneath the root before the act.
+
+## One line
+
+A delete or a move on a READ COMMITTED engine can leave a child its writer committed mid-statement live under a deleted parent or at a path its moved parent no longer holds; which engines do it, and the cheapest closing, wait on a two-hour run of the four server legs.

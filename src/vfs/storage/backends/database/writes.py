@@ -62,6 +62,7 @@ from vfs.models import (
 from vfs.models.rows import ULIDKey
 from vfs.offload import call_offloaded
 from vfs.results import ErrorKind, Result, ResultError, already_exists, classified, wrong_kind
+from vfs.storage.backends.database.authorized import admit_landed, admit_staged, admit_targets
 from vfs.storage.backends.database.descent import (
     miss_errors,
     rows_by_path,
@@ -298,6 +299,7 @@ async def edit_rows(
     """
     committed = await _fetch_committed(session, tables, profile, membership_budget, set(targets), with_content=True)
     live = {path: row for path, row in committed.items() if row["deleted_at"] is None}
+    admit_targets(session, "edit", live, targets)
     missing = await miss_errors(session, tables.entry, targets, live, profile, membership_budget)
     plan = WritePlan(committed, authority=authority, budget=profile.key_byte_budget)
     await call_offloaded(executor, lambda: _stage_edits(plan, live, missing, targets, edits))
@@ -319,6 +321,7 @@ async def _fetch_committed(
     with_content: bool = False,
 ) -> dict[str, RowMapping]:
     """One bounded fetch seeds the plan: targets, ancestors, the root — tombstones included, for the plan to judge."""
+    await seam("write:before-snapshot")
     entry = tables.entry
     columns: list[Column[object]] = [
         entry.c.entry_id,
@@ -328,6 +331,7 @@ async def _fetch_committed(
         entry.c.ext,
         entry.c.mime_type,
         entry.c.owner_id,
+        entry.c.everyone_level,
         entry.c.source,
         entry.c.size_bytes,
         entry.c.deleted_at,
@@ -352,6 +356,7 @@ async def _finish(
     overwrite: bool,
 ) -> Result:
     """Execute an error-free plan and assemble the batch's observations."""
+    admit_staged(session, op, plan)
     if plan.errors:
         return Result(ops=(op,), errors=plan.errors)
     # The guard's window: snapshot read and staging behind us, no
@@ -422,6 +427,7 @@ async def _apply(
         session, tables.entry, profile, parameter_budget, membership_budget, updates, now=now
     ):
         return errors
+    await admit_landed(session, tables.entry, profile, membership_budget, creates, minted)
     # Every row whose body this batch replaces — a guarded update, an
     # absorb, or a create that clobbered a rival — keeps that body as a version.
     replaced = [
@@ -695,8 +701,8 @@ async def _update_materials(
     per the dialect's declared ``guard_miss`` mode: an honest re-probe
     (``not_found`` vs ``conflict``), or a whole-method redrive where the
     probe would lie. The absorb arm (arbitration clobbers) increments
-    SQL-side, last-writer-wins between writes by design — but it still
-    proves its address: the update carries the path at probe time (a
+    SQL-side, last-writer-wins between writers the landing admits — but
+    it still proves its address: the update carries the path at probe time (a
     topology relocation always rewrites the path, so a row moved
     mid-window misses), and application is verified from
     RETURNING or a read-back comparing the stored path; a miss raises
