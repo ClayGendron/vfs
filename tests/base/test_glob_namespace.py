@@ -862,6 +862,8 @@ async def test_a_wide_scoped_glob_builds_roots_plus_arms(monkeypatch: pytest.Mon
     assert (await fs.write(entries=[*rows, Entry(path=Path("/data/d00007/x.e05"), content="x")], parents=True)).success
     # The crossing write's own statistics pass lands before the plans are read.
     await data._host.settle_statistics()
+    # A count pin never reads the runner's clock: a loaded machine must not end this glob at its wall.
+    monkeypatch.setattr(deadline_module, "monotonic", lambda: 0.0)
     root_arms = _counted(monkeypatch, reads_module, "scope_root_arm")
     facts = _counted(monkeypatch, reads_module, "channel_facts")
     pattern_arms = _counted(monkeypatch, reads_module, "pattern_arm")
