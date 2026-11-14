@@ -14,9 +14,10 @@ from io import BytesIO
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
+from vfs.deadline import Deadline
 from vfs.models.media import PPTX
 from vfs.rendering.markdown import Builder
-from vfs.rendering.seam import BundledRenderer, Rendering, failure_from, load_library
+from vfs.rendering.seam import BundledRenderer, Rendering, container_refusal, failure_from, load_library
 
 if TYPE_CHECKING:
     from vfs.rendering.seam import RenderLimits, RenderSource
@@ -34,6 +35,11 @@ class PptxRenderer(BundledRenderer):
     def render(self, source: RenderSource, limits: RenderLimits) -> Rendering:
         pptx = self.library
         started = monotonic()
+        refused = container_refusal(
+            source.data, limits, self.name, Deadline(at=started + limits.seconds), byte_limit=limits.container_bytes
+        )
+        if refused is not None:
+            return refused
         try:
             presentation = pptx.Presentation(BytesIO(source.data))
         except Exception as exc:  # a file python-pptx cannot open is malformed input, not a surprise

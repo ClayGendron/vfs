@@ -19,30 +19,38 @@ budget beyond the per-render limits passed in.
 
 A rendering that could not be made is a status with a reason, never a
 body: ``Rendering.text`` is ``None`` for every status that leaves no
-content row behind.
+content row behind. An Office renderer measures its zip container's
+directory and verifies every member's stream against it before its
+library opens it (:func:`container_refusal`).
 """
 
 from __future__ import annotations
 
+import binascii
+import copy
 import importlib
 import importlib.metadata
 import json
 import re
+import zipfile
 from dataclasses import dataclass
 from functools import cache
+from io import BytesIO
 from typing import TYPE_CHECKING, Any, ClassVar, Final, NamedTuple, Protocol, runtime_checkable
 
+from vfs.deadline import CHECK_EVERY
 from vfs.models.media import MAX_RENDER_DETAIL_LENGTH, RENDER_STATUSES, RENDERED_STATUSES
 from vfs.models.version import line_count
 
 if TYPE_CHECKING:
+    from vfs.deadline import Deadline
     from vfs.models.media import RenderStatus
 
 # One rendering's character budget: the gram index's eligibility ceiling,
 # so a rendering served in full is also one the index can carry whole.
 RENDER_CHARS: Final = 2 * 1024 * 1024
-# Output characters per input byte past the floor: the decompression-bomb
-# guard. A hit is always a loud failure, never a cut.
+# Output characters per input byte past the floor: it bounds the rendering's text, never what a parser
+# decompresses to make it. A hit is always a loud failure, never a cut.
 RENDER_RATIO: Final = 100
 RENDER_RATIO_FLOOR: Final = 1_000_000
 # Embedded objects: how deep a renderer follows containers, and how many
@@ -51,8 +59,29 @@ RENDER_EMBEDDED_DEPTH: Final = 1
 RENDER_EMBEDDED_COUNT: Final = 1_000
 # Units (pages, slides, sheets) one rendering walks before it is cut.
 RENDER_PAGES: Final = 10_000
-# Wall seconds one render may spend before the text so far is kept as partial.
+# Wall seconds one render runs under: a container still being verified is refused, and a rendering stops at its
+# next unit or table row and keeps its text as partial; a library's own open is not interrupted.
 RENDER_SECONDS: Final = 60.0
+
+# Members one Office container's directory may list: the most a zip directory counts without
+# its ZIP64 extension, above the members of a deck at the renderer's own slide cap.
+CONTAINER_MEMBERS: Final = 65_535
+# Uncompressed bytes a docx or pptx container may declare in all: those libraries hold and parse every
+# part they read, at up to about twelve times its bytes in memory, so this bounds what one render holds.
+CONTAINER_BYTES: Final = 256 << 20
+# Uncompressed bytes an xlsx container may declare in all: its library streams its sheets, so this
+# admits a full-height sheet of ordinary width; it is the most a 32-bit size field can state.
+WORKBOOK_BYTES: Final = 1 << 32
+# Declared bytes per stored byte, applied only past the floor of declared bytes, so a small
+# document with compressible parts is never refused by it.
+CONTAINER_RATIO: Final = 100
+CONTAINER_RATIO_FLOOR: Final = 64 << 20
+# The most one read of a member's stream returns while the container is verified, so the
+# verifying pass holds about one chunk of output and one of input at a time.
+CONTAINER_CHUNK: Final = 64 << 10
+# The compression methods the Office formats use; any other is refused before a member is read,
+# because the others decompress without a bound per call on some supported interpreters.
+OOXML_METHODS: Final = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 # The generation stamped on a bytes entry no renderer claims; a later
 # registration changes it, and the skip law retries the entry.
@@ -65,7 +94,19 @@ _LONE_SURROGATE: Final = re.compile("[\ud800-\udfff]")
 
 @dataclass(frozen=True)
 class RenderLimits:
-    """The caps one render runs inside; a host may lower them, never raise the ratio."""
+    """The caps one render runs inside.
+
+    The text limits (``chars``, ``ratio``, ``pages``, ``seconds``, the
+    embedded caps) act as the rendering is built; the container limits
+    (``container_members``, ``container_bytes`` for a library that holds
+    what it reads, ``workbook_bytes`` for one that streams its sheets,
+    ``container_ratio``) act before an Office library opens its zip
+    container, on what its directory declares, and every member's
+    stream is then verified against its declaration. A host may raise or
+    lower any of them but the output ratio, which may only be lowered; a
+    raise does not retry an entry already refused. They bound what a
+    renderer will process, never what vfs stores.
+    """
 
     chars: int = RENDER_CHARS
     ratio: int = RENDER_RATIO
@@ -73,9 +114,24 @@ class RenderLimits:
     embedded_count: int = RENDER_EMBEDDED_COUNT
     pages: int = RENDER_PAGES
     seconds: float = RENDER_SECONDS
+    container_members: int = CONTAINER_MEMBERS
+    container_bytes: int = CONTAINER_BYTES
+    workbook_bytes: int = WORKBOOK_BYTES
+    container_ratio: int = CONTAINER_RATIO
 
     def __post_init__(self) -> None:
-        for name in ("chars", "ratio", "embedded_depth", "embedded_count", "pages", "seconds"):
+        for name in (
+            "chars",
+            "ratio",
+            "embedded_depth",
+            "embedded_count",
+            "pages",
+            "seconds",
+            "container_members",
+            "container_bytes",
+            "workbook_bytes",
+            "container_ratio",
+        ):
             if getattr(self, name) <= 0:
                 msg = f"RenderLimits.{name} must be positive, got {getattr(self, name)!r}"
                 raise ValueError(msg)
@@ -231,6 +287,86 @@ def failure_from(exc: BaseException, renderer: str, status: RenderStatus = "fail
 
 
 # ---------------------------------------------------------------------------
+# Container measurement
+# ---------------------------------------------------------------------------
+
+
+def container_refusal(
+    data: bytes, limits: RenderLimits, renderer: str, deadline: Deadline, *, byte_limit: int
+) -> Rendering | None:
+    """The refusal of an Office zip container past its limits, or ``None`` once it is measured and verified.
+
+    The directory is read first, and alone: the member count against
+    ``limits.container_members``; each member's compression method
+    against :data:`OOXML_METHODS` and its name against the names seen;
+    the declared total against *byte_limit*, the caller's own family's
+    field (``container_bytes`` for a library that holds what it reads,
+    ``workbook_bytes`` for one that streams its sheets); and the total
+    against ``limits.container_ratio`` times the container's size, past
+    :data:`CONTAINER_RATIO_FLOOR`. A ratio past deflate's ceiling, about
+    1,032 to 1, refuses nothing a verified stream could hold, so a host
+    that raises it that far has turned it off. Only then is every
+    member's stream read once, in reads of at most
+    :data:`CONTAINER_CHUNK` bytes, *deadline* asked before the first
+    read and before every ``CHECK_EVERY``-th.
+
+    When this answers ``None``, every member is stored or deflated, is
+    named once, and has a stream no longer than its declared size whose
+    CRC-32 matches the declared one. So every read a library makes of a
+    member decompresses at most that member's declared size, and one
+    read of every member decompresses at most the declared total, which
+    the limits bound. It does not bound what a library's parser spends
+    on the bytes it is handed, nor a library reading one member twice.
+
+    The cost is one parse of the directory, about 580 bytes held a
+    member while it runs, and one decompression of every member with
+    one chunk held at a time. A limit, or a container still being
+    verified at the deadline, is ``failed``; a container the Office
+    formats do not admit, or one zipfile cannot read, is ``corrupt``.
+    It never raises.
+    """
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            members = archive.infolist()
+            count, cap = len(members), limits.container_members
+            if count > cap:
+                return failure(
+                    "failed",
+                    f"{renderer}: the container holds {count} members, {count - cap} past the {cap}-member limit",
+                )
+            names: set[str] = set()
+            total = 0
+            for member in members:
+                name = member.filename
+                if member.compress_type not in OOXML_METHODS:
+                    return failure(
+                        "corrupt",
+                        f"{renderer}: member {name!r} uses compression method {member.compress_type}, "
+                        "which the Office formats do not use",
+                    )
+                if name in names:
+                    return failure("corrupt", f"{renderer}: member {name!r} is named twice in the container")
+                names.add(name)
+                total += member.file_size
+            if total > byte_limit:
+                return failure(
+                    "failed",
+                    f"{renderer}: the container declares {total} uncompressed bytes, "
+                    f"{total - byte_limit} past the {byte_limit}-byte limit",
+                )
+            allowed = max(CONTAINER_RATIO_FLOOR, limits.container_ratio * len(data))
+            if total > allowed:
+                return failure(
+                    "failed",
+                    f"{renderer}: the container declares {total} uncompressed bytes, {total - allowed} past the "
+                    f"{allowed} its {len(data)} bytes allow at {limits.container_ratio}x",
+                )
+            return _verify(archive, members, limits, renderer, deadline)
+    except Exception as exc:  # a container zipfile cannot read is malformed input, as each library would find it
+        return failure_from(exc, renderer, "corrupt")
+
+
+# ---------------------------------------------------------------------------
 # The unit table as JSON on the entry row
 # ---------------------------------------------------------------------------
 
@@ -306,6 +442,52 @@ class BundledRenderer:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _verify(
+    archive: zipfile.ZipFile, members: list[zipfile.ZipInfo], limits: RenderLimits, renderer: str, deadline: Deadline
+) -> Rendering | None:
+    """Every member's stream read once against its declared size and CRC-32, *deadline* asked on the cadence.
+
+    Each member is opened as a copy of its entry that declares one byte
+    more and carries no checksum: zipfile cuts a stream at the size it is
+    given and checks a CRC only when the entry has one, so the extra byte
+    shows an overrun whatever the declared checksum says, and the
+    checksum is folded here over the whole stream read. Reads are
+    counted across the container, so the clock is read once every
+    ``CHECK_EVERY`` reads, members included.
+    """
+    reads = 0
+    for member in members:
+        probe = copy.copy(member)
+        probe.file_size = member.file_size + 1
+        del probe.CRC
+        seen = 0
+        crc = 0
+        with archive.open(probe) as stream:
+            while True:
+                if reads % CHECK_EVERY == 0 and deadline.expired():
+                    return failure(
+                        "failed", f"{renderer}: the container was not verified within {limits.seconds:g} seconds"
+                    )
+                chunk = stream.read(CONTAINER_CHUNK)
+                reads += 1
+                if not chunk:
+                    break
+                seen += len(chunk)
+                if seen > member.file_size:
+                    return failure(
+                        "corrupt",
+                        f"{renderer}: member {member.filename!r} holds more than the {member.file_size} bytes "
+                        "the container declares for it",
+                    )
+                crc = binascii.crc32(chunk, crc)
+        if crc != member.CRC:
+            return failure(
+                "corrupt",
+                f"{renderer}: member {member.filename!r} does not match the CRC-32 the container declares for it",
+            )
+    return None
 
 
 @cache

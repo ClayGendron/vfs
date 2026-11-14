@@ -25,9 +25,10 @@ from io import BytesIO
 from time import monotonic
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from vfs.deadline import Deadline
 from vfs.models.media import XLSX
 from vfs.rendering.markdown import Builder
-from vfs.rendering.seam import BundledRenderer, Rendering, failure_from
+from vfs.rendering.seam import BundledRenderer, Rendering, container_refusal, failure_from
 
 if TYPE_CHECKING:
     from vfs.rendering.seam import RenderLimits, RenderSource
@@ -72,6 +73,11 @@ class XlsxRenderer(BundledRenderer):
     def render(self, source: RenderSource, limits: RenderLimits) -> Rendering:
         openpyxl = self.library
         started = monotonic()
+        refused = container_refusal(
+            source.data, limits, self.name, Deadline(at=started + limits.seconds), byte_limit=limits.workbook_bytes
+        )
+        if refused is not None:
+            return refused
         try:
             workbook = openpyxl.load_workbook(BytesIO(source.data), read_only=True, data_only=True)
         except Exception as exc:  # a file openpyxl cannot open is malformed input, not a surprise

@@ -17,9 +17,10 @@ from io import BytesIO
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Final
 
+from vfs.deadline import Deadline
 from vfs.models.media import DOCX
 from vfs.rendering.markdown import Builder, flatten
-from vfs.rendering.seam import BundledRenderer, Rendering, failure_from
+from vfs.rendering.seam import BundledRenderer, Rendering, container_refusal, failure_from
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -46,6 +47,11 @@ class DocxRenderer(BundledRenderer):
     def render(self, source: RenderSource, limits: RenderLimits) -> Rendering:
         docx = self.library
         started = monotonic()
+        refused = container_refusal(
+            source.data, limits, self.name, Deadline(at=started + limits.seconds), byte_limit=limits.container_bytes
+        )
+        if refused is not None:
+            return refused
         try:
             document = docx.Document(BytesIO(source.data))
         except Exception as exc:  # a file python-docx cannot open is malformed input, not a surprise

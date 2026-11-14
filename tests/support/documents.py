@@ -8,6 +8,8 @@ document holds and asserts what the rendering says about it.
 from __future__ import annotations
 
 import struct
+import warnings
+import zipfile
 import zlib
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -228,3 +230,107 @@ def xlsx_bytes(sheets: Mapping[str, Mapping[str, object]], *, hidden: Sequence[s
     out = BytesIO()
     workbook.save(out)
     return out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Container directories
+# ---------------------------------------------------------------------------
+
+# The zip format's central-directory entry and end-record signatures, and the entry's field
+# offsets: flags, method, CRC-32, uncompressed size, the three lengths, the name.
+_ENTRY_SIGNATURE = b"PK\x01\x02"
+_END_SIGNATURE = b"PK\x05\x06"
+_FLAGS_AT = 8
+_METHOD_AT = 10
+_CRC_AT = 16
+_SIZE_AT = 24
+_LENGTHS_AT = 28
+_NAME_AT = 46
+# What an alias's stored name carries past the member's name, which zipfile drops on reading it.
+_ALIAS_TAIL = "\x00alias"
+
+
+def declared(
+    data: bytes,
+    member: str,
+    *,
+    file_size: int | None = None,
+    method: int | None = None,
+    crc: int | None = None,
+    flags: int | None = None,
+) -> bytes:
+    """*data* with *member*'s last central-directory entry declaring another size, method, CRC-32 or flag word.
+
+    Only the directory changes: the member's stream and its local header
+    are left as written, which is what a reader that trusts the directory
+    must be checked against. A name listed twice has its last entry
+    changed, the one zipfile resolves the name to.
+    """
+    out = bytearray(data)
+    end = data.rfind(_END_SIGNATURE)
+    count, _, offset = struct.unpack_from("<HII", data, end + 10)
+    found = None
+    for _ in range(count):
+        assert data[offset : offset + 4] == _ENTRY_SIGNATURE
+        name_length, extra_length, comment_length = struct.unpack_from("<HHH", data, offset + _LENGTHS_AT)
+        if data[offset + _NAME_AT : offset + _NAME_AT + name_length].decode("utf-8") == member:
+            found = offset
+        offset += _NAME_AT + name_length + extra_length + comment_length
+    if found is None:
+        raise KeyError(member)
+    fields = (("<H", _FLAGS_AT, flags), ("<H", _METHOD_AT, method), ("<I", _CRC_AT, crc), ("<I", _SIZE_AT, file_size))
+    for layout, at, value in fields:
+        if value is not None:
+            struct.pack_into(layout, out, found + at, value)
+    return bytes(out)
+
+
+def recompressed(data: bytes, method: int) -> bytes:
+    """*data* written again through ``zipfile`` with every member compressed by *method*."""
+    out = BytesIO()
+    with zipfile.ZipFile(BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
+        for info in source.infolist():
+            target.writestr(_entry(info, method), source.read(info))
+    return out.getvalue()
+
+
+def duplicated(data: bytes, member: str) -> bytes:
+    """*data* written again with a second entry for *member*, its stream a copy, appended last."""
+    out = BytesIO()
+    with zipfile.ZipFile(BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
+        for info in source.infolist():
+            target.writestr(_entry(info, info.compress_type), source.read(info))
+        info = source.getinfo(member)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # zipfile warns of the duplicate it is asked to write
+            target.writestr(_entry(info, info.compress_type), source.read(info))
+    return out.getvalue()
+
+
+def aliased(data: bytes, member: str) -> bytes:
+    """*data* written again with a second entry appended last, its stream a copy of *member*'s, whose stored
+    name differs from *member*'s but which zipfile reads back as *member*'s name."""
+    placeholder = member + "~" * len(_ALIAS_TAIL)
+    out = BytesIO()
+    with zipfile.ZipFile(BytesIO(data)) as source, zipfile.ZipFile(out, "w") as target:
+        for info in source.infolist():
+            target.writestr(_entry(info, info.compress_type), source.read(info))
+        info = source.getinfo(member)
+        alias = zipfile.ZipInfo(placeholder, info.date_time)
+        alias.compress_type = info.compress_type
+        target.writestr(alias, source.read(info))
+    written = out.getvalue()
+    assert written.count(placeholder.encode()) == 2  # the alias's local header and its directory entry
+    return written.replace(placeholder.encode(), (member + _ALIAS_TAIL).encode())
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _entry(info: zipfile.ZipInfo, method: int) -> zipfile.ZipInfo:
+    """A fresh entry for *info*'s name and time, compressed by *method*."""
+    entry = zipfile.ZipInfo(info.filename, info.date_time)
+    entry.compress_type = method
+    return entry

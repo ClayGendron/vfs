@@ -2,22 +2,30 @@
 
 from __future__ import annotations
 
+import binascii
+import zipfile
 from datetime import UTC, date, datetime
+from io import BytesIO
 from typing import Any
 
 import docx
+import openpyxl
+import pptx
+import pytest
 from docx.oxml import parse_xml
 
 from tests.support.documents import (
+    declared,
     docx_bytes,
     encrypted_pdf_bytes,
     pdf_bytes,
     pptx_bytes,
+    recompressed,
     surrogate_pdf_bytes,
     xlsx_bytes,
 )
 from vfs.models.media import DOCX, PDF, PPTX, XLSX
-from vfs.rendering import RendererRegistry, RenderLimits, RenderSource
+from vfs.rendering import RendererRegistry, Rendering, RenderLimits, RenderSource
 from vfs.rendering.docx import DocxRenderer, _heading_level, _Notes, _Writer
 from vfs.rendering.markdown import Builder
 from vfs.rendering.pdf import PdfRenderer
@@ -26,10 +34,16 @@ from vfs.rendering.xlsx import Box, XlsxRenderer, _cell_text, regions
 
 LIMITS = RenderLimits()
 REGISTRY = RendererRegistry.bundled()
+# Each Office format's media type and the library entry point its renderer opens the container with.
+OFFICE = {
+    "docx": (DOCX, docx, "Document"),
+    "pptx": (PPTX, pptx, "Presentation"),
+    "xlsx": (XLSX, openpyxl, "load_workbook"),
+}
 
 
-def _render(data: bytes, mime: str, name: str = "doc") -> Any:
-    return REGISTRY.render(RenderSource(data, mime, name), LIMITS)
+def _render(data: bytes, mime: str, name: str = "doc", limits: RenderLimits = LIMITS) -> Any:
+    return REGISTRY.render(RenderSource(data, mime, name), limits)
 
 
 class TestPdf:
@@ -294,3 +308,151 @@ class TestEmbeddedDepthAndGuards:
         assert rendering.status == "ok"
         assert rendering.text == "<!-- page 1 -->\n\ufffd\n"
         rendering.text.encode("utf-8")
+
+
+class TestContainerCheck:
+    @pytest.mark.parametrize("name", ["docx", "pptx", "xlsx"])
+    def test_each_office_renderer_refuses_before_its_library_opens(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        """A bzip2 container is refused and its library never called: the check's call deleted from that
+        renderer hands the container to the library, which opens it. With the render started at 0 and the
+        clock just past its seconds the fixture is refused unverified, and at exactly its seconds it is not: a
+        renderer passing a deadline that never expires, or one wider than its seconds, renders the first."""
+        mime = OFFICE[name][0]
+        data = _office(name)
+        bzip2 = recompressed(data, zipfile.ZIP_BZIP2)
+        opens = _count_opens(monkeypatch, name)
+        refused = _render(bzip2, mime)
+        assert (refused.status, refused.text) == ("corrupt", None)
+        assert refused.detail is not None and refused.detail.startswith(f"{name}: member ")
+        assert "uses compression method 12" in refused.detail
+        assert opens == []
+        assert _render(data, mime).status == "ok"
+        assert len(opens) == 1
+        monkeypatch.setattr(f"vfs.rendering.{name}.monotonic", lambda: 0.0)
+        monkeypatch.setattr("vfs.deadline.monotonic", lambda: LIMITS.seconds + 0.001)
+        detail = f"{name}: the container was not verified within {LIMITS.seconds:g} seconds"
+        assert _render(data, mime) == Rendering("failed", detail=detail)
+        assert len(opens) == 1
+        monkeypatch.setattr("vfs.deadline.monotonic", lambda: LIMITS.seconds)
+        assert _render(data, mime).detail != detail
+        assert len(opens) == 2
+
+    def test_every_office_fixture_renders_as_it_did_without_the_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Every fixture option and junk input renders the same with the check replaced by one admitting all."""
+        cases = [
+            *(
+                (data, DOCX)
+                for data in (
+                    docx_bytes(["Body"], title="The Title"),
+                    docx_bytes(["Body"], headings=[(1, "Section"), (2, "Sub")]),
+                    docx_bytes(["Body"], table=[["h1", "h2"], ["a", "b"]]),
+                    docx_bytes(["Body"], header="HEADER"),
+                    docx_bytes(["Body"], footer="FOOTER"),
+                    docx_bytes(["see note", "end"], comment="a reviewer comment"),
+                    docx_bytes(["Body"], picture=True),
+                    docx_bytes(["one"], header="HEADER", footer="FOOTER", second_section=True),
+                    docx_bytes([]),
+                )
+            ),
+            *(
+                (data, PPTX)
+                for data in (
+                    pptx_bytes([("Slide T", ["bullet"])], notes="speaker notes"),
+                    pptx_bytes([("Slide T", ["bullet"])], table=[["c00", "c01"], ["c10", "c11"]]),
+                    pptx_bytes([("Slide T", ["bullet"])], picture=True),
+                    pptx_bytes([(None, ["top"])], grouped="grouped text"),
+                    pptx_bytes([(None, ["top"])], nested="deep text"),
+                    pptx_bytes([(None, ["body"])], blank_notes=True),
+                    pptx_bytes([("One", ["first"]), (None, ["plain box"])]),
+                    pptx_bytes([(None, [""])]),
+                )
+            ),
+            *(
+                (data, XLSX)
+                for data in (
+                    xlsx_bytes({"One": {"A1": "first"}, "Two": {"A1": "second"}}),
+                    xlsx_bytes({"Shown": {"A1": "x"}, "Hidden": {"A1": "secret"}}, hidden=["Hidden"]),
+                    xlsx_bytes({"Typed": {"A1": "Item", "B1": 3.5, "A2": True, "B2": 7, "C3": date(2026, 10, 6)}}),
+                    xlsx_bytes({"Sheet": {"A1": ""}}),
+                )
+            ),
+            (b"PK\x03\x04junk", DOCX),
+            (b"not a zip", PPTX),
+            (b"PK\x03\x04junk", XLSX),
+        ]
+        checked = [_render(data, mime) for data, mime in cases]
+        for module in ("docx", "pptx", "xlsx"):
+            monkeypatch.setattr(f"vfs.rendering.{module}.container_refusal", _admit_all)
+        assert [_render(data, mime) for data, mime in cases] == checked
+
+    @pytest.mark.parametrize("name", ["docx", "pptx", "xlsx"])
+    def test_each_office_renderer_refuses_an_overrun_before_its_library_opens(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        """The largest member one byte past its declaration, its checksum the cut stream's: the check's call
+        deleted from that renderer hands the library the cut member."""
+        data = _office(name)
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            largest = max(archive.infolist(), key=lambda info: info.file_size)
+            stream = archive.read(largest)
+        cut = len(stream) - 1
+        overrun = declared(data, largest.filename, file_size=cut, crc=binascii.crc32(stream[:cut]))
+        opens = _count_opens(monkeypatch, name)
+        refused = _render(overrun, OFFICE[name][0])
+        assert (refused.status, refused.text) == ("corrupt", None)
+        assert refused.detail is not None and refused.detail.startswith(f"{name}: member ")
+        assert f"holds more than the {cut} bytes" in refused.detail
+        assert opens == []
+
+    @pytest.mark.parametrize("name", ["docx", "pptx", "xlsx"])
+    def test_each_office_renderer_measures_against_its_own_byte_limit(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        """One byte under the declared total in its own family's limit refuses, in the other's renders: a
+        renderer passing the other family's limit fails both."""
+        mime = OFFICE[name][0]
+        data = _office(name)
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            total = sum(info.file_size for info in archive.infolist())
+        own, other = ("workbook_bytes", "container_bytes") if name == "xlsx" else ("container_bytes", "workbook_bytes")
+        opens = _count_opens(monkeypatch, name)
+        refused = _render(data, mime, limits=RenderLimits(**{own: total - 1}))
+        detail = f"{name}: the container declares {total} uncompressed bytes, 1 past the {total - 1}-byte limit"
+        assert refused == Rendering("failed", detail=detail)
+        assert opens == []
+        assert _render(data, mime, limits=RenderLimits(**{other: total - 1})).status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _office(name: str) -> bytes:
+    """The container check's fixture of each Office format."""
+    if name == "docx":
+        return docx_bytes(["A wombat digs"])
+    if name == "pptx":
+        return pptx_bytes([("Echidna", ["spines"])])
+    return xlsx_bytes({"Budget": {"A1": "numbat"}})
+
+
+def _count_opens(monkeypatch: pytest.MonkeyPatch, name: str) -> list[object]:
+    """Wraps *name*'s library entry point so each call is recorded, and answers the record."""
+    _, module, attribute = OFFICE[name]
+    real = getattr(module, attribute)
+    calls: list[object] = []
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, attribute, counting)
+    return calls
+
+
+def _admit_all(*_: object, **__: object) -> None:
+    """A container check that admits every container: the renderers as they were without one."""
+    return None
