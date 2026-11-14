@@ -1,26 +1,39 @@
-# Introduction to VFS
+---
+hide:
+  - navigation
+  - toc
+  - footer
+---
 
-VFS is a virtual file system that gives AI agents governed access to data and tools.
+<div class="vfs-hero" markdown>
 
-AI agents are usually connected to data one tool at a time, each with its own API and governance patterns. These connections also bloat the context window and make AI agents less effective. Defining every tool in the LLM API call leaves the AI agent moving data between systems instead of solving the problem. VFS replaces those connections with one namespace for data and tools. Both are mounted into one tree, and the AI agent works in it with commands it already knows.
+# Governed Data Access for AI Agents
 
-```bash
-grep -rn "mfa" /enterprise | head -20
-```
+VFS is a virtual file system that gives AI agents one governed namespace for data and tools. AI agents navigate it with commands they already know, and every command is checked against permissions before it runs.
 
-Three things make this work.
+[Get Started](get-started.md){ .md-button .md-button--primary }
+[Read the Overview](overview.md){ .md-button }
 
-- **One namespace.** Everything an AI agent can see, search, and change lives at a path, and you decide what is mounted.
-- **One command line.** AI agents use `ls`, `grep`, `cat`, and a few others through a single tool, and read only what a task needs.
-- **One gate.** Every command passes through the VFS kernel, which checks permissions before anything runs and keeps deletes and overwrites reversible.
+</div>
 
-VFS is a Python library that runs inside your application and stores files in a database, from SQLite on a laptop to Postgres, SQL Server, or Oracle in the cloud.
+## Explore the Docs
 
-```bash
-pip install vfs-py
-```
+<div class="grid cards vfs-home-cards" markdown>
 
-## Where to Go Next
+- **[Tutorials](tutorials/build-your-first-file-system.md)**
 
-- [Overview](overview.md) gives a high-level analysis of how to think about VFS.
-- [History](history.md) gives the full backstory of where the ideas built into VFS came from.
+    Learn VFS step by step. Start here if you are new.
+
+- **[How-to Guides](how-to/load-a-folder-of-files.md)**
+
+    Get a specific job done, such as loading a folder of files.
+
+- **[Reference](reference/access-levels.md)**
+
+    Look up the facts, such as what each access level allows.
+
+- **[Explanation](explanation/why-vfs-stores-files-in-a-database.md)**
+
+    Understand why VFS is built the way it is.
+
+</div>

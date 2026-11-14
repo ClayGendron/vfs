@@ -17,6 +17,8 @@ theme:
     - navigation.tabs
     - navigation.tabs.sticky
     - navigation.sections
+    # A section whose first entry is an index page links to it: the Home link opens the landing page.
+    - navigation.indexes
     - navigation.expand
     - navigation.top
     - navigation.footer
@@ -44,7 +46,8 @@ extra:
 
 nav:
   - Home:
-    - Introduction: index.md
+    - index.md
+    - Introduction: introduction.md
     - Get Started: get-started.md
     - Overview: overview.md
     - History: history.md
@@ -78,6 +81,8 @@ markdown_extensions:
   - attr_list
   - def_list
   - footnotes
+  # Lets a page wrap Markdown in a block of its own, as the landing page does for its cards.
+  - md_in_html
   - tables
   - toc:
       permalink: true

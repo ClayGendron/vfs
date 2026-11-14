@@ -62,6 +62,11 @@
   --text-2xl: 1.4rem;
   --text-5xl: 2.2rem;
   --tracking-display: -0.03em;
+  /* The home page's title alone: 44px on a phone, up to 60px on a wide screen, where it fits one line. */
+  /* It is smaller than the design system's display size, because this is a manual and not a launch page. */
+  --type-display-size: clamp(2.2rem, 4vw, 3rem);
+  --type-display-leading: 1.05;
+  --type-display-tracking: -0.04em;
   --tracking-section: -0.02em;
   --tracking-eyebrow: 0.08em;
 
@@ -528,6 +533,21 @@ samp {
     letter-spacing: var(--tracking-eyebrow);
     text-transform: lowercase;
   }
+
+  /* A label that links to its group's index page is still one row: the link inside adds no box. */
+  .md-sidebar--primary .md-nav__container > .md-nav__link {
+    color: inherit;
+    margin: 0;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .md-sidebar--primary .md-nav__container > a.md-nav__link:hover,
+  .md-sidebar--primary .md-nav__container > a.md-nav__link:focus-visible,
+  .md-sidebar--primary .md-nav__container > a.md-nav__link--active {
+    background: none;
+    color: var(--foreground);
+  }
 }
 
 /* The table of contents is a sub-menu: a hairline at its start, muted until current. */
@@ -913,6 +933,162 @@ samp {
 
 .md-typeset .vfs-footer__facts a:hover {
   color: var(--foreground);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Buttons and cards                                                          */
+/* -------------------------------------------------------------------------- */
+
+/* A link written as a button is the design system's secondary button: 48px tall, bordered. */
+.md-typeset .md-button {
+  align-items: center;
+  background-color: var(--secondary);
+  border: var(--line-width) solid var(--input);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  display: inline-flex;
+  font-size: var(--text-base);
+  font-weight: 500;
+  height: 2.4rem;
+  padding: 0 0.8rem;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+/* The primary button carries the page's one main action. */
+.md-typeset .md-button--primary {
+  background-color: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.md-typeset .md-button:hover,
+.md-typeset .md-button:focus {
+  background-color: var(--secondary);
+  border-color: var(--foreground);
+  color: var(--foreground);
+}
+
+.md-typeset .md-button--primary:hover,
+.md-typeset .md-button--primary:focus {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* A card in a grid is the design system's card: raised ground, a hairline, 24px of padding. */
+.md-typeset .grid.cards > ul > li {
+  background-color: var(--card);
+  border: var(--line-width) solid var(--border);
+  border-radius: var(--radius);
+  color: var(--card-foreground);
+  padding: 1.2rem;
+  position: relative;
+  transition: border-color 0.15s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--foreground);
+  box-shadow: none;
+}
+
+/* A card's first line is its title, and its other lines describe it in the smaller, muted text. */
+.md-typeset .grid.cards > ul > li > p {
+  color: var(--muted-foreground);
+  font-size: var(--text-sm);
+  margin: 0.4rem 0 0;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child {
+  color: var(--card-foreground);
+  font-family: var(--font-heading);
+  font-size: var(--text-base);
+  margin: 0;
+}
+
+/* A title that is a link makes the whole card the link: its click area is stretched over the card. */
+.md-typeset .grid.cards > ul > li > p:first-child a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child a::after {
+  border-radius: var(--radius);
+  content: "";
+  inset: 0;
+  position: absolute;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child a:focus-visible {
+  outline: none;
+}
+
+.md-typeset .grid.cards > ul > li > p:first-child a:focus-visible::after {
+  outline: var(--focus-width) solid var(--ring);
+  outline-offset: var(--focus-offset);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Home page                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/* The page opens as the design system's hero does when nothing sits beside the words: on the page's */
+/* own ground, set from the left, with a title larger than a page's. It has no panel and no figure. */
+.md-typeset .vfs-hero {
+  padding-block: 2.4rem 0;
+}
+
+.md-typeset .vfs-hero h1 {
+  font-size: var(--type-display-size);
+  letter-spacing: var(--type-display-tracking);
+  line-height: var(--type-display-leading);
+  margin: 0 0 1.2rem;
+  text-wrap: balance;
+}
+
+/* The title is the page's name, not a section to link to, so it carries no link mark. */
+.md-typeset .vfs-hero h1 .headerlink {
+  display: none;
+}
+
+/* The sentences are quieter than the title and keep a readable measure. */
+.md-typeset .vfs-hero > p {
+  color: var(--muted-foreground);
+  margin: 0 0 1.2rem;
+  max-width: 34rem;
+}
+
+/* The two buttons sit in a row, 12px apart, at the hero's larger button size: 52px tall. */
+.md-typeset .vfs-hero > p:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0;
+  max-width: none;
+}
+
+.md-typeset .vfs-hero .md-button {
+  height: 2.6rem;
+  padding: 0 1.2rem;
+}
+
+/* The four kinds of documentation: one column on a phone, two on a tablet, four across a desktop. */
+.md-typeset .grid.vfs-home-cards {
+  gap: 0.8rem;
+  grid-template-columns: 1fr;
+  margin: 1.2rem 0 3.2rem;
+}
+
+@media screen and (min-width: 45em) {
+  .md-typeset .grid.vfs-home-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-typeset .grid.vfs-home-cards {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
