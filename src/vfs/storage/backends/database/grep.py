@@ -22,10 +22,10 @@ the refusal gate is pattern-shaped.
 
 Epoch coherence is detected, never assumed: engines without a
 repeatable-read pin read each statement at its own snapshot, so after
-the last epoch-dependent read the pointer is re-read — movement means
-a rival publish landed mid-call and the whole call redrives via
+the last epoch-dependent read the generation is re-read — movement means
+a rival publish, full or delta, landed mid-call and the whole call redrives via
 :class:`StaleSnapshot` (reclaim commits strictly after the publish
-CAS, so every observable mix moves the pointer first). On pinned
+CAS, so every observable mix moves the generation first). On pinned
 engines the re-read is a same-snapshot no-op. The overlay-emptiness
 verdict follows the same discipline: the preamble's combined
 pointer+EXISTS read is advisory — a non-empty verdict settles the
@@ -81,8 +81,8 @@ from vfs.pattern_matching import (
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
-from vfs.storage.backends.database.indexing import current_epoch, pointer_with_overlay
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.indexing import current_generation, live_set, pointer_with_overlay
+from vfs.storage.backends.database.membership import live_chunks, membership
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
     CHANNEL_ARM_BINDS,
@@ -119,7 +119,6 @@ if TYPE_CHECKING:
     from vfs.ops import CaseMode, GrepOutputMode
     from vfs.pattern_matching import GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Visibility
 
@@ -230,11 +229,12 @@ async def grep_rows(
 
     candidates: dict[str, RowMapping] = {}
     truncations: list[str] = []
-    epoch: Epoch | None = None
-    overlay_empty = False
+    generation, live, overlay_empty = 0, (), False
     scanned = 0
     if not scan_all:
-        epoch, overlay_empty = await pointer_with_overlay(session, tables)
+        snapshot = await pointer_with_overlay(session, tables)
+        generation, overlay_empty = snapshot.generation, snapshot.overlay_empty
+        live = await live_set(session, tables, snapshot.pointer)
         await seam("grep:after-pointer-read")
         # The allow-list joins nomination before the budget: the budget
         # counts scoped candidates, so truncation cannot drop in-scope rows.
@@ -252,7 +252,7 @@ async def grep_rows(
             nominated_count = 0
         else:
             try:
-                laddered = await _index_doc_ids(session, tables, profile, membership_budget, epoch, plan, allow)
+                laddered = await _index_doc_ids(session, tables, profile, membership_budget, live, plan, allow)
             except PostingCorruptionError as exc:
                 error = classified(ErrorKind.internal, detail=f"grep posting blob is corrupt: {exc}")
                 return Result(ops=("grep",), errors=[error])
@@ -299,10 +299,10 @@ async def grep_rows(
             if not scan_all and overlay_empty:
                 # The preamble verdict was advisory: the verdict that skips
                 # the scan is read after the statements it vouches for.
-                current, overlay_empty = await pointer_with_overlay(session, tables)
-                if current != epoch:
-                    raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
-                skip_verified = overlay_empty
+                again = await pointer_with_overlay(session, tables)
+                if again.generation != generation:
+                    raise StaleSnapshot("the index generation moved mid-grep")
+                skip_verified = overlay_empty = again.overlay_empty
             if not overlay_empty:
                 nominated, overflow = await entries_for_scan(
                     session,
@@ -333,10 +333,10 @@ async def grep_rows(
                     candidates.setdefault(mapping["path"], mapping)
     if deadline.expired() and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
-    if not scan_all and not skip_verified and await current_epoch(session, tables) != epoch:
-        # A rival publish+reclaim landed mid-call: the tiers this call
-        # read are a mix of epochs. Redrive whole from a fresh session.
-        raise StaleSnapshot("the gram-index epoch pointer moved mid-grep")
+    if not scan_all and not skip_verified and await current_generation(session, tables) != generation:
+        # A rival publish landed mid-call: the tiers this call read are
+        # a mix of index states. Redrive whole from a fresh session.
+        raise StaleSnapshot("the index generation moved mid-grep")
 
     ordered = [candidates[path] for path in sorted(candidates)]
     rows: list[Observation] = []
@@ -412,16 +412,19 @@ async def _index_doc_ids(
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    epoch: Epoch | None,
+    live: Sequence[int],
     plan: GramQuery,
     allow: DocIds | None,
 ) -> tuple[DocIds, int] | None:
     """At most ``SCAN_TIER_BUDGET`` sorted candidate doc ids for *plan*
-    under the caller-read *epoch*, plus the uncapped count.
+    over the caller-read *live* set, plus the uncapped count.
 
-    No published epoch means no content row is encoded: the index side
-    is empty and the scan side owns everything. The caller owns the epoch
-    read — its post-ladder re-read is what detects a mid-call publish.
+    An empty live set means no content row is encoded: the index side
+    is empty and the scan side owns everything. The caller owns the
+    generation read — its post-ladder re-read detects a mid-call publish.
+    Each AND-group goes to the kernel once per segment holding all its
+    chosen grams: an entry's postings for one version live whole in one
+    segment, so the groups union across segments and admit no phantom.
     The posting-byte budget is enforced before any blob fetch via the
     stored ``byte_size``.
 
@@ -437,19 +440,25 @@ async def _index_doc_ids(
     caller after the ladder. A malformed blob raises
     :class:`PostingCorruptionError` with the codec's refusal.
     """
-    if epoch is None:
+    if not live:
         return [], 0
     groups = _plan_groups(plan)
     grams = sorted({gram for group in groups for gram in group})
-    meta = await _posting_meta(session, tables, profile, membership_budget, epoch, grams)
+    meta = await _posting_meta(session, tables, profile, membership_budget, live, grams)
     chosen = _choose_grams(groups, meta)
     if allow is not None and _ladder_defers(chosen, meta, len(allow)):
         return None
     wanted = sorted({gram for group_chosen in chosen if group_chosen for gram in group_chosen})
-    blobs = await _posting_blobs(session, tables, profile, membership_budget, epoch, wanted)
+    blobs = await _posting_blobs(session, tables, profile, membership_budget, live, wanted)
     # None: a required gram indexes nothing, the group is empty. []: a
     # gramless group — it nominates nothing either way. Both drop here.
-    fed = [[blobs[gram] for gram in group_chosen] for group_chosen in chosen if group_chosen]
+    fed = [
+        [blobs[(epoch, gram)] for gram in group_chosen]
+        for group_chosen in chosen
+        if group_chosen
+        for epoch in live
+        if all((epoch, gram) in blobs for gram in group_chosen)
+    ]
     try:
         return extension().candidate_ids(fed, allow, SCAN_TIER_BUDGET)
     except ValueError as exc:
@@ -513,18 +522,19 @@ async def _posting_meta(
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    epoch: Epoch,
+    live: Sequence[int],
     grams: Sequence[GramKey],
 ) -> dict[GramKey, PostingMeta]:
-    """``gram → PostingMeta`` for the grams present in *epoch*."""
+    """``gram → PostingMeta`` for the grams present in any segment of *live*, summed across the set."""
     posting = tables.posting_list
     meta: dict[GramKey, PostingMeta] = {}
-    for chunk in chunked(list(grams), membership_budget):
+    for epochs, chunk in live_chunks(live, list(grams), membership_budget):
         stmt = select(posting.c.gram_key, posting.c.doc_count, posting.c.byte_size).where(
-            posting.c.epoch == epoch, membership(posting.c.gram_key, chunk, profile)
+            membership(posting.c.epoch, epochs, profile), membership(posting.c.gram_key, chunk, profile)
         )
         for row in await session.execute(stmt):
-            meta[row.gram_key] = PostingMeta(row.doc_count, row.byte_size)
+            seen = meta.get(row.gram_key, PostingMeta(0, 0))
+            meta[row.gram_key] = PostingMeta(seen.doc_count + row.doc_count, seen.byte_size + row.byte_size)
     return meta
 
 
@@ -533,18 +543,18 @@ async def _posting_blobs(
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    epoch: Epoch,
+    live: Sequence[int],
     grams: Sequence[GramKey],
-) -> dict[GramKey, bytes]:
-    """``gram → encoded posting blob`` — fetched only for the chosen grams."""
+) -> dict[tuple[int, GramKey], bytes]:
+    """``(epoch, gram) → encoded posting blob`` — fetched only for the chosen grams, in every live segment."""
     posting = tables.posting_list
-    blobs: dict[GramKey, bytes] = {}
-    for chunk in chunked(list(grams), membership_budget):
-        stmt = select(posting.c.gram_key, posting.c.postings).where(
-            posting.c.epoch == epoch, membership(posting.c.gram_key, chunk, profile)
+    blobs: dict[tuple[int, GramKey], bytes] = {}
+    for epochs, chunk in live_chunks(live, list(grams), membership_budget):
+        stmt = select(posting.c.epoch, posting.c.gram_key, posting.c.postings).where(
+            membership(posting.c.epoch, epochs, profile), membership(posting.c.gram_key, chunk, profile)
         )
         for row in await session.execute(stmt):
-            blobs[row.gram_key] = row.postings
+            blobs[(row.epoch, row.gram_key)] = row.postings
     return blobs
 
 

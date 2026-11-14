@@ -26,6 +26,7 @@ any required op — partial backends are first-class.
 
 from __future__ import annotations
 
+import re
 from functools import partial
 from typing import Any, ClassVar, NamedTuple, Protocol, cast
 
@@ -36,6 +37,7 @@ from tests.support.oracles import graph_walk, meeting_subgraph
 from tests.support.plan_store import (
     ENTRY_JOIN,
     FACTS_CONJUNCT,
+    REFRESH_INDEXES,
     RIGHTS_TERM,
     PlanBackend,
     PlanReadings,
@@ -1470,6 +1472,30 @@ class StorageContract:
 
     @pytest.mark.slow
     @needs("write", "grep", "grant")
+    def test_the_refresh_selection_plans_seek(self, plan_store: PlanReadings) -> None:
+        """A refresh's render read, slice read and two delta scans, and its embed step's read of the pass's rows,
+        its probe of their refusals and its page by id, each seek their index and walk no vfs table, the refusal
+        table among them, which holds thousands of rows for this model and another."""
+        assert set(plan_store.refresh_plans) == set(REFRESH_INDEXES)
+        walks = {
+            "sqlite": r"\bSCAN vfs_\w+",
+            "postgresql": r"Seq Scan on vfs_\w+",
+            "mariadb": r"'table': 'vfs_\w+', 'type': '(?:ALL|index)'",
+            "mssql": r'PhysicalOp="(?:Table Scan|Clustered Index Scan|Index Scan)"',
+            "oracle": r"TABLE ACCESS FULL\s*\|\s*VFS_|INDEX (?:FAST )?FULL SCAN",
+        }[plan_store.engine]
+        for name, plan in plan_store.refresh_plans.items():
+            table, index = REFRESH_INDEXES[name]
+            shape = {
+                "sqlite": rf"SEARCH {table} USING (?:COVERING )?(?:INDEX )?{index} \(",
+                "postgresql": rf"(?:Index (?:Only )?Scan (?:Backward )?using|Bitmap Index Scan on) {index}",
+                "mariadb": rf"'table': '{table}', 'type': '\w+', 'possible_keys': '[^']*', 'key': '{index}'",
+                "mssql": rf'PhysicalOp="(?:Clustered )?Index Seek"[^>]*>.*?Index="\[{index}\]"',
+                "oracle": rf"INDEX (?:RANGE|UNIQUE) SCAN\s*\|\s*{index}",
+            }[plan_store.engine]
+            assert re.search(shape, plan, flags=re.IGNORECASE | re.DOTALL), (name, plan)
+            assert not re.search(walks, plan, flags=re.IGNORECASE), (name, plan)
+
     def test_every_callers_scan_statement_only_seeks(self, plan_store: PlanReadings) -> None:
         """Guards: a scan-tier statement, a whole caller's or one carrying a partial caller's packed rights, planned
         as a scan of the entries table, a walk of one of its indexes, or a range over a path index; the mutants are
@@ -1771,6 +1797,18 @@ class StorageContract:
         assert (await rebuilder.rebuild()).success is True
         found = await storage.grep(pattern="magnet")
         assert [o.path for o in found.observations] == ["/idx.txt"]
+
+    async def test_a_rebuilder_declares_refresh(self, storage: ConformanceBackend) -> None:
+        # A backend that exposes the full pass exposes the incremental one beside it.
+        rebuilder = _rebuilder_of(storage)
+        assert callable(rebuilder.refresh)
+        await storage.write(entries=[Entry(path=Path("/base.txt"), content="magnet base here")])
+        assert (await rebuilder.rebuild()).success is True
+        await storage.write(entries=[Entry(path=Path("/late.txt"), content="magnet late here")])
+        refreshed = await rebuilder.refresh()
+        assert (refreshed.success, refreshed.ops) == (True, ("refresh",)), refreshed.errors
+        found = await storage.grep(pattern="magnet")
+        assert sorted(str(o.path) for o in found.observations) == ["/base.txt", "/late.txt"]
 
     @needs("write", "grep")
     async def test_grep_posting_blobs_reach_the_engine_as_bytes(

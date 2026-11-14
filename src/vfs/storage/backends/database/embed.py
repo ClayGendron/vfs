@@ -46,7 +46,7 @@ from asyncio import sleep
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import bindparam, delete, exists, func, insert, select, update
+from sqlalchemy import bindparam, cast, delete, exists, func, insert, literal, select, update
 
 from vfs.results import Result
 from vfs.storage.backends.database.dialects import chunked
@@ -230,6 +230,68 @@ def unembedded_page(
         limit=limit,
         chunk_terms=[chunks.c.embedding.is_(None), ~_refused(tables, key)],
     )
+
+
+class PassRows(NamedTuple):
+    """A refresh's own chunk rows still without a vector: the ids to embed, and the rows whose text is refused."""
+
+    ids: list[ChunkId]
+    refused: int
+
+
+async def pass_unembedded(
+    session: AsyncSession,
+    tables: VFSTables,
+    key: RefusalKey,
+    profile: DialectProfile,
+    membership_budget: int,
+    entry_ids: Sequence[str],
+) -> PassRows:
+    """The rows without a vector of *entry_ids*' live, chunked entries, and which of their texts are refused.
+
+    Two reads, each keyed by what the pass holds: the rows through
+    ``entry_id`` on both tables, then the refusals by their key over the
+    rows' hashes. Neither orders nor limits, so no planner walks a key in
+    order whatever its statistics say, and no read reaches past the pass.
+
+    The refusal probe's keys are a list of casts to the column's type, a
+    key-list spelling outside :mod:`membership`, because SQL Server plans
+    ``membership``'s derived table as a merge join over a scan of the
+    refusal table's key; each list is chunked by *membership_budget*.
+
+    It holds an id and a 64-character hash for every chunk row the pass
+    left without a vector, about 0.3 KB a row, so about 120 MB for a
+    45,000-file pass; the direction is to embed each committed slice's
+    rows as it commits.
+    """
+    rows = await _pass_rows(session, tables, profile, membership_budget, entry_ids)
+    refusals, (model_id, input_cap, batch_cap) = tables.embed_refusals, key
+    refused: set[ContentHash] = set()
+    texts = sorted({row.content_hash for row in rows if row.content_hash is not None})
+    for hashes in chunked(texts, membership_budget):
+        # Each key cast to the column's type, so it binds as the key does: SQL Server merge-joins the
+        # derived-table form against a scan of the clustered key, and converts the column for a plain list.
+        keyed = refusals.c.content_hash.in_([cast(literal(text), refusals.c.content_hash.type) for text in hashes])
+        stmt = select(refusals.c.content_hash).where(
+            keyed,
+            refusals.c.model_id == model_id,
+            refusals.c.max_input_tokens == input_cap,
+            refusals.c.max_batch_tokens == batch_cap,
+        )
+        refused.update((await session.execute(stmt)).scalars())
+    kept = sorted(row.id for row in rows if row.content_hash not in refused)
+    return PassRows(kept, len(rows) - len(kept))
+
+
+async def select_pass_page(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, chunk_ids: Sequence[ChunkId]
+) -> list[EmbedRow]:
+    """The rows of *chunk_ids*, one page of :func:`pass_unembedded`'s ids, read by the primary key, ascending id."""
+    chunks = tables.chunks
+    columns = (chunks.c.id, chunks.c.content_hash, chunks.c.content, chunks.c.entry_id)
+    stmt = select(*columns).where(membership(chunks.c.id, chunk_ids, profile), chunks.c.embedding.is_(None))
+    found = await session.execute(stmt.order_by(chunks.c.id))
+    return [EmbedRow(row.id, row.content_hash, row.content, row.entry_id) for row in found]
 
 
 async def cached_vectors(
@@ -497,6 +559,29 @@ async def _count_null(session: AsyncSession, tables: VFSTables, refusal: Any) ->
         .where(chunks.c.embedding.is_(None), entry.c.chunked, entry.c.deleted_at.is_(None), refusal)
     )
     return (await session.execute(stmt)).scalar_one()
+
+
+class _PassRow(NamedTuple):
+    id: ChunkId
+    content_hash: ContentHash | None
+
+
+async def _pass_rows(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, budget: int, entry_ids: Sequence[str]
+) -> list[_PassRow]:
+    """The rows without a vector of *entry_ids*' live, chunked entries, one membership slice of the entries a read."""
+    chunks, entry = tables.chunks, tables.entry
+    joined = chunks.join(entry, entry.c.entry_id == chunks.c.entry_id)
+    rows: list[_PassRow] = []
+    for ids in chunked(list(dict.fromkeys(entry_ids)), budget):
+        stmt = (
+            select(chunks.c.id, chunks.c.content_hash)
+            .select_from(joined)
+            .where(membership(chunks.c.entry_id, ids, profile), chunks.c.embedding.is_(None))
+            .where(entry.c.chunked, entry.c.deleted_at.is_(None))
+        )
+        rows.extend(_PassRow(row.id, row.content_hash) for row in await session.execute(stmt))
+    return rows
 
 
 def _input_refusal(exc: BaseException) -> bool:

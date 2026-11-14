@@ -57,7 +57,7 @@ from vfs.storage.backends.database.embed import EMBED_CONCURRENCY, EMBED_TIMEOUT
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.grep import grep_rows
 from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
-from vfs.storage.backends.database.maintenance import MaintenanceContext, rebuild
+from vfs.storage.backends.database.maintenance import MaintenanceContext, rebuild, refresh
 from vfs.storage.backends.database.reads import (
     AdmittedScope,
     admit_scope,
@@ -1114,29 +1114,14 @@ class DatabaseStorage:
         return Result(ops=("install_extensions",))
 
     async def rebuild(self) -> Result:
-        """Batch index maintenance: binaries rendered, gram epochs rebuilt, segments re-converged, vectors filled.
-
-        One runner at a time: the verb claims the single-runner lease up
-        front — a live rival refuses loudly with a retryable conflict —
-        and releases it best-effort at the end; a crashed run frees the
-        lease by heartbeat expiry. The render stage runs first: every
-        bytes entry whose stamp misses is rendered to text through the
-        mount's renderers and lands as a content row or a stamped state,
-        reported in the ``rendering`` extra (a retryable warning when
-        rows remain pending). The segment pass re-converges the
-        path-segment postings to the recomputed truth under per-row path
-        guards, reporting any found drift loudly. The gram side is
-        idempotent-cheap when nothing is dirty and the epoch fingerprint
-        matches; each phase runs in its own writer transaction, and
-        posting rows are invisible until the publish transaction flips
-        the ``encoded`` flags and the epoch pointer together. With an
-        embedder configured, the embed step then fills every missing
-        vector and reports in the ``embedding`` extra. Every commit the
-        index or the vector leg rests on is fenced by the lease.
-        """
+        """The full index pass; its contract is :class:`~vfs.storage.protocol.SupportsRebuild`'s."""
         return await rebuild(self._maintenance())
 
-    def _maintenance(self) -> MaintenanceContext:
+    async def refresh(self) -> Result:
+        """The incremental index pass; its contract is :class:`~vfs.storage.protocol.SupportsRebuild`'s."""
+        return await refresh(self._maintenance("refresh"))
+
+    def _maintenance(self, verb: Literal["rebuild", "refresh"] = "rebuild") -> MaintenanceContext:
         """The pipeline's view of this backend, built per pass; the ranker is read when the signal phase starts."""
         return MaintenanceContext(
             host=self._host,
@@ -1149,6 +1134,7 @@ class DatabaseStorage:
             execute_maintenance=self._execute_maintenance,
             execute_leased=self._execute_leased,
             rows=self._rows,
+            verb=verb,
         )
 
     async def close(self) -> None:

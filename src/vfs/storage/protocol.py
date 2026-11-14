@@ -476,15 +476,39 @@ class SupportsTraits(Protocol):
 
 @runtime_checkable
 class SupportsRebuild(Protocol):
-    """Optional index maintenance: a backend with a built search tier exposes ``rebuild``.
+    """Optional index maintenance: a backend with a built search tier exposes ``rebuild`` and ``refresh``.
 
-    The contract: idempotent-cheap when nothing is dirty, safe under
-    rivals (concurrent calls converge; a loser classifies ``conflict``),
-    and never required for correctness — between builds ``grep`` and
-    ``search`` must serve correct results from their scan tier.
+    The contract both share: idempotent-cheap when nothing is dirty, safe
+    under rivals — one runner at a time holds the index lease, a live rival
+    refuses with a retryable ``conflict``, a publish that loses its race
+    classifies ``conflict`` — and never required for correctness: between
+    passes ``grep`` and ``search`` serve correct results from their scan tier.
+
+    ``rebuild`` is the full pass, O(corpus): it renders the binaries whose
+    stamp misses, re-splits and rebuilds the whole index into one epoch,
+    folds every delta back into it, re-converges the path segments, the
+    edges and the directory flags, recomputes the ranking priors and fills
+    missing vectors. It never refuses for want of a published index.
+
+    ``refresh`` is the incremental pass, O(dirty): it renders, chunks and
+    indexes only what writes changed since the last pass into a delta that
+    readers union with the published index, flips without re-posting an
+    entry whose chunks are already indexed, and fills the vectors of the
+    chunks it split; it runs no segment, edge, flag or prior pass, so a
+    prior is up to one rebuild old. It refuses, ``unavailable`` and naming
+    ``rebuild``, when no index is published yet, the published one holds no
+    text, or it was built under other index options. A file a refresh left
+    unembedded (a refused text, a provider outage, slices committed before
+    a lost lease, files written while the stored model identity is stale)
+    is ranked by the lexical leg alone until the next rebuild, and no
+    Result marks such a hit.
+    Start refreshes at least four thirds of the search wall apart, or a
+    search on an engine without a snapshot pin can exhaust its retries.
     """
 
     async def rebuild(self) -> Result: ...
+
+    async def refresh(self) -> Result: ...
 
 
 @runtime_checkable

@@ -65,7 +65,7 @@ def _block(term: int, bound: float, ids: list[int], tfs: list[int], dls: list[in
     return ScoreBlock(term, bound, encode_postings(ids), _varints(tfs), _varints(dls))
 
 
-def _drained(builder: PureLexicalBuilder, cap: int = 100) -> tuple[list, list]:
+def _drained(builder: lexical.LexicalBuilder, cap: int = 100) -> tuple[list, list]:
     summaries: list = []
     while (batch := builder.next_df_batch(cap)) is not None:
         summaries.extend(batch)
@@ -419,3 +419,59 @@ class TestSelectBlocks:
         empty = BlockSummary(array("q"), array("d"))
         assert self._one(empty, [1], [1.0], 0.0) == []
         assert select_blocks([], [1], [1.0], 0.0) == []
+
+
+# A corpus whose common term crosses a block, fed under a base's statistics.
+_DELTA_DOCS = [(n, f"wombat common {'rare' if n % 7 == 0 else 'plain'} words{n % 3}") for n in range(1, 300)]
+
+
+def test_finish_under_matches_the_oracle() -> None:
+    engine, oracle = lexical.lexical_builder(), PureLexicalBuilder()
+    assert engine.add_docs(_DELTA_DOCS) == oracle.add_docs(_DELTA_DOCS)
+    vocabulary = engine.vocabulary()
+    assert vocabulary == oracle.vocabulary()
+    assert [term for term, _df in vocabulary] == sorted({t for _id, body in _DELTA_DOCS for t in pure_tokenize(body)})
+    assert dict(vocabulary)["common"] == len(_DELTA_DOCS)
+    idfs = [idf(df, 10_000 + index) for index, (_term, df) in enumerate(vocabulary)]
+    own_avg = sum(len(pure_tokenize(body)) for _id, body in _DELTA_DOCS) / len(_DELTA_DOCS)
+    assert engine.finish_under(5.5, idfs) == oracle.finish_under(5.5, idfs) == (len(_DELTA_DOCS), own_avg)
+    summaries, rows = _drained(engine)
+    assert (summaries, rows) == _drained(oracle)
+    assert [row[2] for row in summaries] == idfs
+    for builder in (lexical.lexical_builder(), PureLexicalBuilder()):
+        builder.add_docs(_DELTA_DOCS)
+        with pytest.raises(ValueError, match="idf"):
+            builder.finish_under(5.5, idfs[:-1])
+    with pytest.raises(ValueError):
+        engine.add_docs([(10_000, "more")])
+    with pytest.raises(ValueError):
+        engine.finish_under(5.5, idfs)
+
+
+def test_term_weight_is_total_at_a_zero_mean_length() -> None:
+    """Guards: the zero-mean guard deleted, so a corpus whose mean length is 0 divides by it; or the guard
+    reaching a positive mean, so an ordinary score moves."""
+    for tf in (1, 3):
+        for dl in (0, 7):
+            weight = term_weight(tf, dl, 0.0, 2.5)
+            assert math.isfinite(weight) and weight == 2.5 * tf * (BM25_K1 + 1.0) / (tf + BM25_K1)
+    norm = BM25_K1 * (1.0 - BM25_B + BM25_B * 7 / 9.0)
+    assert term_weight(3, 7, 9.0, 2.5) == 2.5 * 3 * (BM25_K1 + 1.0) / (3 + norm)
+
+
+def test_finish_under_weighs_every_block_under_the_given_statistics() -> None:
+    builder = PureLexicalBuilder()
+    builder.add_docs(_DELTA_DOCS)
+    idfs = [1.5] * len(builder.vocabulary())
+    builder.finish_under(5.5, idfs)
+    summaries, rows = _drained(builder)
+    by_term = {row[0]: row[2] for row in summaries}
+    blobs = {row[0]: row[4] for row in summaries}
+    for term, block_no, _count, doc_ids, tfs, dls in rows:
+        weights = [
+            term_weight(tf, dl, 5.5, by_term[term])
+            for tf, dl in zip(decode_varints(tfs), decode_varints(dls), strict=True)
+        ]
+        assert len(decode_postings(doc_ids)) == len(weights)
+        summary = decode_summary(blobs[term])
+        assert summary.max_weights[block_no] == max(weights)

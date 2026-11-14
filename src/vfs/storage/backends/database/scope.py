@@ -27,7 +27,7 @@ from __future__ import annotations
 from itertools import product
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
 from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, compile_filter, escape_glob
@@ -35,6 +35,7 @@ from vfs.storage.backends.database import dialects
 from vfs.storage.backends.database.addressing import address_channel
 from vfs.storage.backends.database.descent import liveness_filters
 from vfs.storage.backends.database.dialects import EXPRESSION_DEPTH_RESERVE, arm_budget, chunked
+from vfs.storage.backends.database.membership import rare
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
@@ -324,8 +325,7 @@ async def entries_for_scan(
     kinds = kind_membership(entry)
     base = [kinds.predicate]
     if not everything:
-        pending = ~entry.c.encoded
-        base.append(pending if profile.rarity_hint is None else getattr(func, profile.rarity_hint)(pending))
+        base.append(rare(profile, ~entry.c.encoded))
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
     clauses = None if view is None else view.clauses()
     cap = min(parameter_budget // 2, profile.expression_depth_budget - EXPRESSION_DEPTH_RESERVE)

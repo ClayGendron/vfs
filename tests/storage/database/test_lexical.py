@@ -15,7 +15,7 @@ from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
 from tests.support.loop_ticks import LoopTicker
-from tests.support.oracles.lexical import pure_tokenize
+from tests.support.oracles.lexical import pure_score_blocks, pure_tokenize
 from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
@@ -371,7 +371,8 @@ class TestTermStatistics:
         storage = await _seeded(tmp_path)
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
-            stats = await lexical_stats(session, tables, 1, ["rows", "rows", "absent_term", "index"], 100)
+            probe = ["rows", "rows", "absent_term", "index"]
+            stats = await lexical_stats(session, tables, storage._host.profile, (1,), probe, 100)
         assert isinstance(stats, TermStatistics)
         assert stats.n_docs == 3 and stats.avg_dl > 0 and (stats.k1, stats.b) == (BM25_K1, BM25_B)
         rows = stats.terms["rows"]
@@ -384,8 +385,8 @@ class TestTermStatistics:
     async def test_an_unbuilt_epoch_answers_zero_documents(self, tmp_path) -> None:
         storage = await _seeded(tmp_path)
         async with storage._host.session_factory() as session:
-            stats = await lexical_stats(session, storage._host.tables, 42, ["rows"], 100)
-        assert stats == TermStatistics({}, 0, 0.0, BM25_K1, BM25_B)
+            stats = await lexical_stats(session, storage._host.tables, storage._host.profile, (42,), ["rows"], 100)
+        assert stats == TermStatistics({}, 0, 0.0, BM25_K1, BM25_B, {})
         await storage.close()
 
     async def test_the_probe_chunks_by_the_membership_budget(self, tmp_path) -> None:
@@ -399,8 +400,8 @@ class TestTermStatistics:
 
         terms = [f"t{i}" for i in range(7)] + ["rows"]
         async with storage._host.session_factory() as session:
-            stats = await lexical_stats(session, storage._host.tables, 1, terms, 3)
-        assert len(probes) == 3  # eight distinct terms at a budget of three
+            stats = await lexical_stats(session, storage._host.tables, storage._host.profile, (1,), terms, 3)
+        assert len(probes) == 4  # eight distinct terms beside one epoch at a budget of three: two a statement
         assert set(stats.terms) == {"rows"}
         await storage.close()
 
@@ -463,3 +464,102 @@ class TestBatchBudgets:
         assert lexical_store._LEXICAL_INSERT_ROWS == 20_000
         assert lexical_store._TOKENIZE_BATCH_BYTES == 4 * 1024 * 1024
         assert lexical_store._SCAN_PAGE_ROWS == 256
+
+
+async def _summaries(storage: DatabaseStorage, epoch: int) -> dict[str, tuple[int, float]]:
+    df = storage._host.tables.lex_df
+    async with storage._host.engine.connect() as conn:
+        rows = await conn.execute(select(df.c.term, df.c.df, df.c.idf).where(df.c.epoch == epoch))
+        return {row.term: (row.df, row.idf) for row in rows}
+
+
+async def _corpus(storage: DatabaseStorage, epoch: int) -> tuple[int, float, float, float]:
+    stats = storage._host.tables.lex_stats
+    stmt = select(stats.c.n_docs, stats.c.avg_dl, stats.c.k1, stats.c.b).where(stats.c.epoch == epoch)
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(stmt)).one()._tuple()
+
+
+async def _refreshed(storage: DatabaseStorage, files: dict[str, str]) -> int:
+    """*files* written and refreshed into one delta; its epoch."""
+    entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+    assert (await storage.write(entries=entries)).success is True
+    assert (await storage.refresh()).success is True
+    epochs = storage._host.tables.gram_epochs
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(func.max(epochs.c.epoch)))).scalar_one()
+
+
+class TestDeltaStatistics:
+    async def test_delta_idfs_follow_the_overlay_law(self, tmp_path) -> None:
+        storage = await _seeded(tmp_path)
+        base = await _summaries(storage, 1)
+        base_n = (await _corpus(storage, 1))[0]
+        delta = await _refreshed(storage, {"/d.txt": "rows wombat wombat\n", "/e.txt": "rows alone here\n"})
+        found = await _summaries(storage, delta)
+        delta_n = (await _corpus(storage, delta))[0]
+        assert delta_n == 2 and found["rows"] == (2, base["rows"][1])
+        assert found["wombat"] == (1, idf(1, base_n + delta_n))  # the delta's whole count, not the term's
+        await storage.close()
+
+    async def test_each_delta_counts_its_own_documents(self, tmp_path) -> None:
+        storage = await _seeded(tmp_path)
+        base_row = await _corpus(storage, 1)
+        first = await _refreshed(storage, {f"/q{n}.txt": f"quokka note {n}\n" for n in range(2)})
+        second = await _refreshed(storage, {f"/r{n}.txt": f"quokka entry {n}\n" for n in range(3)})
+        assert await _corpus(storage, 1) == base_row
+        for epoch, count in ((first, 2), (second, 3)):
+            n_docs, _avg, k1, b = await _corpus(storage, epoch)
+            assert (n_docs, k1, b) == (count, base_row[2], base_row[3])
+            assert (await _summaries(storage, epoch))["quokka"] == (count, idf(count, base_row[0] + count))
+        await storage.close()
+
+    async def test_concatenated_segments_rank_as_the_oracle_does(self, tmp_path) -> None:
+        storage = await _seeded(tmp_path)
+        await _refreshed(storage, {"/q.txt": "quokka rows rows\n", "/s.txt": "quokka index\n"})
+        await _refreshed(storage, {"/t.txt": "quokka quokka rows\n"})
+        tables, host = storage._host.tables, storage._host
+        postings, df = tables.lex_postings, tables.lex_df
+        terms = ["quokka", "rows", "index"]
+        async with host.session_factory() as session:
+            live = await indexing.live_set(session, tables, 1)
+            stats = await lexical_stats(session, tables, host.profile, live, terms, 100)
+            present = [term for term in terms if term in stats.terms]
+            ranked = await lexical_store.chunk_ranking(
+                session, tables, live, stats, present, 10, None, host.profile, 100
+            )
+            slots = (await session.execute(select(df.c.epoch, df.c.term, df.c.idf, df.c.blocks))).all()
+            blocks = (await session.execute(select(postings))).all()
+        assert len(live) == 3 and stats.avg_dl == (await _corpus(storage, 1))[1]
+        held = [row for row in slots if row.term in present]
+        index = {(row.epoch, row.term): position for position, row in enumerate(held)}
+        maxima = {(row.epoch, row.term): decode_summary(bytes(row.blocks)).max_weights for row in slots}
+        oracle_blocks = [
+            lexical_model.ScoreBlock(
+                index[(row.epoch, row.term)],
+                maxima[(row.epoch, row.term)][row.block_no],
+                bytes(row.doc_ids),
+                bytes(row.tfs),
+                bytes(row.dls),
+            )
+            for row in blocks
+            if (row.epoch, row.term) in index
+        ]
+        idfs = [row.idf for row in held]
+        assert len(held) > len(present)  # a term held by more than one segment is more than one slot
+        assert ranked == pure_score_blocks(oracle_blocks, idfs, stats.avg_dl, 10)
+        await storage.close()
+
+    def test_a_slot_bound_fetches_a_superset_of_the_flat_bound(self) -> None:
+        def summary(firsts: list[int], maxima: list[float]) -> lexical_model.BlockSummary:
+            return decode_summary(lexical_model.encode_summary(firsts, maxima))
+
+        base, delta, other = ([1, 300, 600], [0.5, 2.0, 0.4]), ([900, 1200], [1.8, 0.3]), ([5, 700], [0.6, 0.6])
+        candidates, scores, theta = [10, 320, 650, 950, 1250], [1.0, 2.5, 0.6, 2.4, 0.4], 2.3
+        flat = lexical_model.select_blocks(
+            [summary(base[0] + delta[0], base[1] + delta[1]), summary(*other)], candidates, scores, theta
+        )
+        per_slot = [summary(*base), summary(*delta), summary(*other)]
+        slots = lexical_model.select_blocks(per_slot, candidates, scores, theta)
+        sliced = {*slots[0], *(len(base[0]) + number for number in slots[1])}
+        assert set(flat[0]) <= sliced and set(flat[1]) <= set(slots[2])

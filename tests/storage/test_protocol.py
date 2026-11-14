@@ -239,9 +239,10 @@ def test_the_old_index_names_are_gone() -> None:
     protocol = importlib.import_module("vfs.storage.protocol")
     assert not hasattr(vfs.storage, old_class) and not hasattr(protocol, old_class)
     rebuild = vfs.storage.SupportsRebuild
-    assert [name for name, value in vars(rebuild).items() if callable(value) and not name.startswith("_")] == [
-        "rebuild"
-    ]
+    assert {name for name, value in vars(rebuild).items() if callable(value) and not name.startswith("_")} == {
+        "rebuild",
+        "refresh",
+    }
     declaring = {name for name, value in vars(protocol).items() if isinstance(value, type) and "rebuild" in vars(value)}
     assert declaring == {"SupportsRebuild"}
     assert not [name for name, value in vars(protocol).items() if isinstance(value, type) and old_verb in vars(value)]

@@ -38,7 +38,8 @@ content write resets both flags, and the delete claim demotes
 live or trashed row from both tiers: an uncovered content row is always
 ``NOT encoded``, which is exactly the scan side's partition. A directory
 a store wrote false before this rule is repaired by its next rebuild
-(:func:`collect_flag_drift`, :func:`repair_flag_drift`).
+(:func:`~vfs.storage.backends.database.flags.collect_flag_drift`,
+:func:`~vfs.storage.backends.database.flags.repair_flag_drift`).
 
 One rebuild runs at a time, arbitrated by a crash-safe lease on the
 index-state row, which :mod:`~vfs.storage.backends.database.maintenance`
@@ -59,10 +60,11 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple, cast
 
-from sqlalchemy import bindparam, case, column, delete, func, insert, literal, or_, select, tuple_, update, values
+from sqlalchemy import and_, bindparam, case, column, delete, func, insert, literal, or_, select, tuple_, update, values
 from sqlalchemy.exc import IntegrityError
 
 from vfs.batching import ByteBatcher, byte_chunked
@@ -84,9 +86,9 @@ from vfs.storage.backends.database.dialects import (
     statement_budget,
     supports_values_update,
 )
-from vfs.storage.backends.database.lexical import build_lexical_epoch
+from vfs.storage.backends.database.lexical import build_lexical_delta, build_lexical_epoch
 from vfs.storage.backends.database.links import LinkOutcome, LinkWork, extract_link_work, publish_links
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import live_chunks, membership, rare
 from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
@@ -155,6 +157,18 @@ class RebuildState:
     covered: list[tuple[str, int]] = field(default_factory=list)
 
 
+@dataclass
+class DeltaState:
+    """Carry-over between a refresh's build and its publish, for the run holding *token*'s lease: the base the
+    delta was built on, its epoch (``None`` when nothing was posted), and the kept and posted ``(entry, version)``."""
+
+    token: str
+    base: Epoch | None = None
+    epoch: Epoch | None = None
+    kept: list[tuple[str, int]] = field(default_factory=list)
+    posted: list[tuple[str, int]] = field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Phase A — chunk the dirty
 # ---------------------------------------------------------------------------
@@ -181,21 +195,26 @@ class ChunkCursor:
     ``pending`` carries the candidates an earlier byte cut left, with their meters, at most one read's worth
     (fewer than :data:`CHUNK_SLICE_ENTRIES`), so each is measured once a pass; ``links`` sums the committed
     slices' link counts. A slice writes the ``next_*`` values, adopted once it commits, so a redrive re-reads
-    from the same place.
+    from the same place. ``resplit`` holds every entry a committed slice split, a new file's first chunking
+    among them: one 26-character id a split entry, held until the embed step, so it grows with the pass's
+    dirty set; the direction is to embed each committed slice's ids as that slice commits.
     """
 
     stale: bool = False
     after: int = 0
     pending: list[Row[Any]] = field(default_factory=list)
     links: LinkOutcome = _NO_LINKS
+    resplit: list[str] = field(default_factory=list)
     done: bool = False
     next_after: int = 0
     next_pending: list[Row[Any]] = field(default_factory=list)
     next_links: LinkOutcome = _NO_LINKS
+    next_resplit: list[str] = field(default_factory=list)
 
     def adopt(self) -> None:
-        """Take the committed slice's place, carried candidates and link counts as the pass's own."""
+        """Take the committed slice's place, carried candidates, link counts and split entries as the pass's own."""
         self.after, self.pending, self.links = self.next_after, self.next_pending, self.next_links
+        self.resplit.extend(self.next_resplit)
 
     def links_record(self) -> list[ResultError]:
         """The pass's one info record of extracted references that name no live entry, when there are any."""
@@ -225,8 +244,13 @@ async def chunk_dirty(
     *,
     cursor: ChunkCursor,
     carry_embeddings: bool = True,
+    verb: str = "rebuild",
+    seek: bool = False,
 ) -> Result:
     """Re-derive per-entry state for the next slice of live content entries that are stale.
+
+    *verb* names the running pass in the seams and the op; with *seek* the size read also pins ``NOT encoded``
+    and ``NOT indexable``, which every row vfs leaves ``NOT chunked`` already holds, so it seeks the pending index.
 
     One slice a transaction: the cursor's carried candidates, then the
     next entries past them, at most :data:`CHUNK_SLICE_ENTRIES` and no
@@ -267,15 +291,17 @@ async def chunk_dirty(
     terms = [kind_membership(entry).predicate, entry.c.deleted_at.is_(None), awaiting]
     wanted = min(membership_budget, CHUNK_SLICE_ENTRIES) - len(cursor.pending)
     past = cursor.pending[-1].id if cursor.pending else cursor.after
-    fresh = (await session.execute(_size_read(tables, profile, terms, past=past, wanted=wanted))).all()
+    fresh = (await session.execute(_size_read(tables, profile, terms, past=past, wanted=wanted, seek=seek))).all()
     candidates = [*cursor.pending, *fresh]
     kept = _slice_ids(candidates)
     cursor.next_after, cursor.next_pending = kept[-1] if kept else cursor.after, candidates[len(kept) :]
+    cursor.next_resplit = []
     cursor.done, cursor.next_links = len(fresh) < wanted and not cursor.next_pending, cursor.links
     if not kept:
-        return Result(ops=("rebuild",))
+        return Result(ops=(verb,))
     dirty = (
         select(
+            entry.c.id,
             entry.c.entry_id,
             entry.c.version,
             entry.c.path,
@@ -292,9 +318,9 @@ async def chunk_dirty(
         .order_by(entry.c.id)
     )
     rows = (await session.execute(dirty)).all()
-    await seam("rebuild:before-chunk-split")
+    await seam(f"{verb}:before-chunk-split")
     work = await call_offloaded(executor, partial(_assess_and_split, rows, generation, links_generation))
-    await seam("rebuild:before-chunk-flip")
+    await seam(f"{verb}:before-chunk-flip")
     provenance = {
         "chunk_source_hash": entry.c.content_hash,
         "chunk_generation": generation,
@@ -305,6 +331,11 @@ async def chunk_dirty(
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.eligible, assignments=stamp)
     stamp = {"chunked": True, "indexable": False, **provenance}
     await _flip_flags(session, entry, profile, parameter_budget, membership_budget, work.ineligible, assignments=stamp)
+    # A re-split entry's stamp goes before its rows do, keyed by the primary key the flips hold:
+    # a seek of the entry_id index here would wait on a relabel that holds it and waits on us.
+    surrogate, unstamped = {row.entry_id: row.id for row in rows}, update(entry).values(indexed_epoch=None)
+    for ids in chunked([surrogate[entry_id] for entry_id in work.resplit_ids], membership_budget):
+        await session.execute(unstamped.where(membership(entry.c.id, ids, profile)))
     carried = await _carried_embeddings(session, chunks, work, profile, membership_budget) if carry_embeddings else {}
     for ids in chunked(work.resplit_ids, membership_budget):
         await session.execute(delete(chunks).where(membership(chunks.c.entry_id, ids, profile)))
@@ -319,7 +350,8 @@ async def chunk_dirty(
         await _carry_embeddings(session, chunks, work, carried)
     links = await publish_links(session, tables, profile, membership_budget, work.links)
     cursor.next_links = LinkOutcome(*(total + count for total, count in zip(cursor.links, links, strict=True)))
-    return Result(ops=("rebuild",))
+    cursor.next_resplit = work.resplit_ids
+    return Result(ops=(verb,))
 
 
 # ---------------------------------------------------------------------------
@@ -377,39 +409,9 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: RebuildSt
         .where(entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None), tables.content.c.content.isnot(None))
         .order_by(entry.c.id)
     )
-    builder = postings_builder()
-    covered: dict[str, int] = {}
-    # Content length in characters is the batch's byte proxy (exact for
-    # ASCII-dominant code); the fold itself runs inside the hop.
-    batcher: ByteBatcher[tuple[int, str]] = ByteBatcher(_doc_size, _EXTRACT_BATCH_BYTES)
-    rows = await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS))
-    async for row in rows:
-        covered[row.entry_id] = row.version
-        full = batcher.add((row.id, row.content))
-        if full is not None:
-            await call_offloaded(executor, partial(_feed_docs, builder, full))
-    final = batcher.flush()
-    if final is not None:
-        await call_offloaded(executor, partial(_feed_docs, builder, final))
-    state.covered = list(covered.items())
-    drain = partial(builder.next_batch, _POSTING_BATCH_BYTES)
     try:
-        while (drained := await call_offloaded(executor, drain)) is not None:
-            await bulk_insert(
-                session,
-                tables.posting_list,
-                [
-                    {
-                        "epoch": epoch,
-                        "gram_key": gram,
-                        "postings": blob,
-                        "encoding": ENCODING_DELTA_VARINT,
-                        "doc_count": doc_count,
-                        "byte_size": len(blob),
-                    }
-                    for gram, blob, doc_count in drained
-                ],
-            )
+        covered = await _post_epoch(session, tables, scan, epoch, executor)
+        state.covered = list(covered.items())
         await seam("rebuild:before-lexical")
         await build_lexical_epoch(session, tables, epoch, executor, covered)
         await session.execute(
@@ -422,21 +424,101 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: RebuildSt
     return Result(ops=("rebuild",))
 
 
+async def build_delta(
+    session: AsyncSession,
+    tables: VFSTables,
+    state: DeltaState,
+    executor: Executor,
+    profile: DialectProfile,
+    membership_budget: int,
+) -> Result:
+    """List the dirty entries a live segment already holds, and post the rest under a fresh delta on the base.
+
+    A *kept* entry's stamp is at or above the base, so it is flipped at the publish and read for its
+    ``(entry_id, version)`` alone. The delta's lexical rows are the chunks of exactly the entries the posting
+    scan posted, read by id and never by their flags, whatever commits between the reads. No epoch is minted
+    when nothing is posted; every read seeks the pending index, and residency is the posted set's alone.
+    """
+    state.base = await current_epoch(session, tables)
+    assert state.base is not None
+    kept, posting = _delta_scans(tables, state.base)
+    state.kept = [(row.entry_id, row.version) for row in await session.execute(kept)]
+    built = (await session.execute(select(func.max(tables.gram_epochs.c.epoch)))).scalar_one()
+    epoch = max(built or 0, state.base) + 1
+    try:
+        posted = await _post_epoch(session, tables, posting, epoch, executor)
+        state.posted = list(posted.items())
+        if not posted:
+            return Result(ops=("refresh",))
+        await seam("refresh:before-lexical")
+        lexical = partial(build_lexical_delta, session, tables, epoch, state.base, list(posted), executor)
+        await lexical(profile, membership_budget)
+        fingerprint = {"format_version": INDEX_FORMAT_VERSION, "options_hash": index_options_hash()}
+        await session.execute(insert(tables.gram_epochs), [{"epoch": epoch, "base_epoch": state.base, **fingerprint}])
+    except IntegrityError as exc:
+        raise StaleSnapshot(f"a rival refresh already built epoch {epoch}") from exc
+    state.epoch = epoch
+    return Result(ops=("refresh",))
+
+
 async def current_epoch(session: AsyncSession, tables: VFSTables) -> Epoch | None:
     """The published epoch pointer; ``None`` before the first publish."""
     pointer = select(tables.index_state.c.current_gram_epoch).where(tables.index_state.c.id == 1)
     return (await session.execute(pointer)).scalar_one_or_none()
 
 
-async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
-    """The epoch pointer plus an overlay-emptiness verdict, one statement.
+async def current_generation(session: AsyncSession, tables: VFSTables) -> int:
+    """The generation every publish bumps, full or delta; 0 before the first and on a missing row."""
+    generation = select(tables.index_state.c.index_generation).where(tables.index_state.c.id == 1)
+    return (await session.execute(generation)).scalar_one_or_none() or 0
+
+
+async def live_set(session: AsyncSession, tables: VFSTables, pointer: Epoch | None) -> tuple[Epoch, ...]:
+    """The base *pointer* names and its published deltas, ascending, the base first; ``()`` with no pointer.
+    One statement over the built epochs' rows: the live set and the residue of builds that lost their publish."""
+    if pointer is None:
+        return ()
+    epochs = tables.gram_epochs
+    delta = and_(epochs.c.base_epoch == pointer, epochs.c.published_at.isnot(None))
+    stmt = select(epochs.c.epoch).where(or_(epochs.c.epoch == pointer, delta)).order_by(epochs.c.epoch)
+    return tuple((await session.execute(stmt)).scalars())
+
+
+async def refresh_refusal(session: AsyncSession, tables: VFSTables) -> ResultError | None:
+    """Why a refresh may not run, naming the rebuild that clears it: no published base, a base that holds no
+    text, whose statistics no delta can weigh under, or one built under other index options, whose deltas
+    would mix formats; ``None`` when it may."""
+    pointer = await current_epoch(session, tables)
+    if pointer is None:
+        return classified(ErrorKind.unavailable, retryable=False, detail="no index is published yet; run rebuild")
+    lexical = select(tables.lex_stats.c.n_docs).where(tables.lex_stats.c.epoch == pointer)
+    if not (await session.execute(lexical)).scalar_one_or_none():
+        detail = "the published index holds no text yet; run rebuild"
+        return classified(ErrorKind.unavailable, retryable=False, detail=detail)
+    if await _fingerprint_matches(session, tables, pointer):
+        return None
+    drift = "a format, gram-option or chunk-generation change"
+    detail = f"the published index was built under other index options ({drift}); run rebuild"
+    return classified(ErrorKind.unavailable, retryable=False, detail=detail)
+
+
+class IndexSnapshot(NamedTuple):
+    """One read of the index-state row: the pointer, the generation, and the overlay-emptiness verdict."""
+
+    pointer: Epoch | None
+    generation: int
+    overlay_empty: bool
+
+
+async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> IndexSnapshot:
+    """The epoch pointer and the generation plus an overlay-emptiness verdict, one statement.
 
     Issued twice on the skip path, once when the preamble verdict is
     non-empty: the preamble read is advisory (non-empty settles it —
     the scan tier will run, and no second combined read is issued),
     while the authoritative post-fetch read's empty verdict alone
     permits skipping the scan — with results identical to scanning —
-    and doubles as the epoch recheck. The predicate stays ORM-built — the
+    and doubles as the generation recheck. The predicate stays ORM-built — the
     negation renders as an inline literal on every dialect, which keeps
     the seek on the composite (encoded, kind) index reachable; the CASE
     wrapper is what lets engines without boolean select-list expressions
@@ -444,12 +526,12 @@ async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tupl
     """
     entry, state = tables.entry, tables.index_state
     pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
-    stmt = select(state.c.current_gram_epoch, case((pending, 1), else_=0)).where(state.c.id == 1)
-    row = (await session.execute(stmt)).one_or_none()
+    stmt = select(state.c.current_gram_epoch, state.c.index_generation, case((pending, 1), else_=0))
+    row = (await session.execute(stmt.where(state.c.id == 1))).one_or_none()
     if row is None:
-        return None, False
-    pointer, has_pending = row
-    return pointer, not has_pending
+        return IndexSnapshot(None, 0, False)
+    pointer, generation, has_pending = row
+    return IndexSnapshot(pointer, generation, not has_pending)
 
 
 # ---------------------------------------------------------------------------
@@ -472,21 +554,58 @@ async def publish_epoch(
     still invisible. The pointer flip is a CAS on the epoch this build
     started from and on the lease holder, so a rival publishing first,
     or a rival that claimed this run's lease, classifies as conflict and
-    a run whose lease was taken publishes nothing.
+    a run whose lease was taken publishes nothing. The flip stamps every
+    covered entry with the epoch, whether or not its flag lands, and the
+    same statement as the pointer bumps the generation.
     """
     entry, index = tables.entry, tables.index_state
     if state.covered:
-        await _flip_flags(
-            session, entry, profile, parameter_budget, membership_budget, state.covered, assignments={"encoded": True}
-        )
+        stamp = {"indexed_epoch": state.epoch}
+        flip = partial(_flip_flags, session, entry, profile, parameter_budget, membership_budget, state.covered)
+        await flip(assignments={"encoded": True}, stamp=stamp)
     pointer = index.c.current_gram_epoch
     started = pointer.is_(None) if state.previous_epoch is None else pointer == state.previous_epoch
     cas = update(index).where(index.c.id == 1, started, index.c.lease_holder == state.token)
-    result = cast("CursorResult[Any]", await session.execute(cas.values(current_gram_epoch=state.epoch)))
+    bumped = {"current_gram_epoch": state.epoch, "index_generation": index.c.index_generation + 1}
+    result = cast("CursorResult[Any]", await session.execute(cas.values(**bumped)))
     if result.rowcount != 1:
         detail = f"rebuild lost the index publish race for epoch {state.epoch}"
         return Result(ops=("rebuild",), errors=[classified(ErrorKind.conflict, detail=detail)])
     return Result(ops=("rebuild",))
+
+
+async def publish_delta(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+    state: DeltaState,
+) -> Result:
+    """Make a delta live, or only its kept flips when nothing was posted, in one transaction.
+
+    Kept entries flip version-guarded; posted ones flip the same way and are stamped with the delta whether or
+    not their flag lands; their old ``vfs_lex_docs`` rows leave the live set, so a replaced chunk id resolves to
+    no entry; the delta is marked published; the generation moves in a compare-and-set on the base and the lease
+    holder, the index-state row last. A miss is the publish race, not retryable, rolled back whole.
+    """
+    entry, index, docs = tables.entry, tables.index_state, tables.lex_docs
+    flip = partial(_flip_flags, session, entry, profile, parameter_budget, membership_budget)
+    await flip(state.kept, assignments={"encoded": True})
+    if state.epoch is not None:
+        await flip(state.posted, assignments={"encoded": True}, stamp={"indexed_epoch": state.epoch})
+        posted = [entry_id for entry_id, _version in state.posted]
+        for epochs, ids in live_chunks(await live_set(session, tables, state.base), posted, membership_budget):
+            where = (membership(docs.c.epoch, epochs, profile), membership(docs.c.entry_id, ids, profile))
+            await session.execute(delete(docs).where(*where))
+        marked = update(tables.gram_epochs).where(tables.gram_epochs.c.epoch == state.epoch)
+        await session.execute(marked.values(published_at=datetime.now(UTC)))
+    cas = update(index).where(index.c.id == 1, index.c.current_gram_epoch == state.base)
+    cas = cas.where(index.c.lease_holder == state.token).values(index_generation=index.c.index_generation + 1)
+    if cast("CursorResult[Any]", await session.execute(cas)).rowcount != 1:
+        detail = f"refresh lost the index publish race for epoch {state.base if state.epoch is None else state.epoch}"
+        return Result(ops=("refresh",), errors=[classified(ErrorKind.conflict, detail=detail)])
+    return Result(ops=("refresh",))
 
 
 async def reclaim_epochs(session: AsyncSession, tables: VFSTables) -> Result:
@@ -518,63 +637,6 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
 
 
 # ---------------------------------------------------------------------------
-# Flag repair — directories a store wrote before they were created encoded
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class FlagRebuildState:
-    """Carry-over between the rebuild flag phases' separate transactions."""
-
-    ids: list[str] = field(default_factory=list)
-    repaired: int = 0
-
-    @property
-    def clean(self) -> bool:
-        return not self.ids
-
-
-async def collect_flag_drift(session: AsyncSession, tables: VFSTables, state: FlagRebuildState) -> Result:
-    """Find the directory rows still flagged as awaiting the index.
-
-    A plain read — no writer is blocked. On a store this rule wrote it
-    is one seek on the (encoded, kind) index that returns nothing; on an
-    earlier store it returns every directory once, the only time the
-    result grows with the store.
-    """
-    entry = tables.entry
-    scan = select(entry.c.entry_id).where(entry.c.kind == "directory", ~entry.c.encoded)
-    async for row in await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS)):
-        state.ids.append(row.entry_id)
-    return Result(ops=("rebuild",))
-
-
-async def repair_flag_drift(
-    session: AsyncSession,
-    tables: VFSTables,
-    profile: DialectProfile,
-    membership_budget: int,
-    state: FlagRebuildState,
-) -> Result:
-    """Flip the collected directories true, each guarded on still being an unencoded directory.
-
-    Chunked by the membership budget, so no statement grows with the
-    count. The guard keeps a row whose kind changed under its id from
-    being stamped covered with no grams; the count of rows flipped is
-    what the backend reports.
-    """
-    entry = tables.entry
-    for chunk in chunked(sorted(state.ids), membership_budget):
-        stmt = (
-            update(entry)
-            .where(membership(entry.c.entry_id, chunk, profile), entry.c.kind == "directory", ~entry.c.encoded)
-            .values(encoded=True)
-        )
-        state.repaired += cast("CursorResult[Any]", await session.execute(stmt)).rowcount
-    return Result(ops=("rebuild",))
-
-
-# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -590,11 +652,16 @@ def _stale_generation(entry: Table) -> ColumnElement[bool]:
     )
 
 
-def _size_read(tables: VFSTables, profile: DialectProfile, terms: list[Any], *, past: int, wanted: int) -> Select[Any]:
+def _size_read(
+    tables: VFSTables, profile: DialectProfile, terms: list[Any], *, past: int, wanted: int, seek: bool = False
+) -> Select[Any]:
     """The next *wanted* candidates past *past* with their meters: chosen in a derived table that carries the
-    limit, and only then joined to their stored text and sized by the profile's stored-length function."""
+    limit, and only then joined to their stored text and sized by the profile's stored-length function. With
+    *seek* the pick also pins ``NOT encoded``, marked rare where the profile names a hint, so a planner with
+    averaged statistics seeks the pending index under the limit rather than walking the primary key."""
     entry, content = tables.entry, tables.content
-    picked = select(entry.c.id, entry.c.entry_id, entry.c.source, entry.c.size_bytes).where(entry.c.id > past, *terms)
+    pinned = [*terms, rare(profile, ~entry.c.encoded), ~entry.c.indexable] if seek else terms
+    picked = select(entry.c.id, entry.c.entry_id, entry.c.source, entry.c.size_bytes).where(entry.c.id > past, *pinned)
     chosen = picked.order_by(entry.c.id).limit(wanted).subquery("candidates")
     stored = func.coalesce(getattr(func, profile.stored_length)(content.c.content), 0)
     meter = case((chosen.c.source == "bytes", stored), else_=chosen.c.size_bytes).label("meter")
@@ -725,15 +792,77 @@ def _indexable(content: str) -> bool:
 
 
 async def _work_pending(session: AsyncSession, tables: VFSTables, current: Epoch | None) -> bool:
-    if current is None:
+    """A dirty live entry, fingerprint drift, or live deltas to fold back into one epoch."""
+    if current is None or not await _fingerprint_matches(session, tables, current):
         return True
-    fingerprint = select(tables.gram_epochs.c.format_version, tables.gram_epochs.c.options_hash).where(
-        tables.gram_epochs.c.epoch == current
-    )
-    row = (await session.execute(fingerprint)).one_or_none()
-    if row is None or row._tuple() != (INDEX_FORMAT_VERSION, index_options_hash()):
+    epochs = tables.gram_epochs
+    deltas = select(literal(1)).where(epochs.c.base_epoch == current, epochs.c.published_at.isnot(None)).limit(1)
+    if (await session.execute(deltas)).first() is not None:
         return True
     return (await session.execute(_pending_probe(tables.entry))).first() is not None
+
+
+async def _fingerprint_matches(session: AsyncSession, tables: VFSTables, epoch: Epoch) -> bool:
+    """Whether *epoch* was built under the running code's format and options."""
+    epochs = tables.gram_epochs
+    fingerprint = select(epochs.c.format_version, epochs.c.options_hash).where(epochs.c.epoch == epoch)
+    row = (await session.execute(fingerprint)).one_or_none()
+    return row is not None and row._tuple() == (INDEX_FORMAT_VERSION, index_options_hash())
+
+
+async def _post_epoch(
+    session: AsyncSession, tables: VFSTables, scan: Select[Any], epoch: Epoch, executor: Executor
+) -> dict[str, int]:
+    """Stream *scan*'s bodies into the postings builder in byte-bounded feeds and drain its grams under *epoch*.
+
+    Answers the posted ``entry_id → version``. Content length in characters
+    is the feed's byte proxy (exact for ASCII-dominant code); the fold
+    itself runs inside the hop.
+    """
+    builder = postings_builder()
+    covered: dict[str, int] = {}
+    batcher: ByteBatcher[tuple[int, str]] = ByteBatcher(_doc_size, _EXTRACT_BATCH_BYTES)
+    rows = await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS))
+    async for row in rows:
+        covered[row.entry_id] = row.version
+        full = batcher.add((row.id, row.content))
+        if full is not None:
+            await call_offloaded(executor, partial(_feed_docs, builder, full))
+    final = batcher.flush()
+    if final is not None:
+        await call_offloaded(executor, partial(_feed_docs, builder, final))
+    drain = partial(builder.next_batch, _POSTING_BATCH_BYTES)
+    while (drained := await call_offloaded(executor, drain)) is not None:
+        await bulk_insert(
+            session,
+            tables.posting_list,
+            [
+                {
+                    "epoch": epoch,
+                    "gram_key": gram,
+                    "postings": blob,
+                    "encoding": ENCODING_DELTA_VARINT,
+                    "doc_count": doc_count,
+                    "byte_size": len(blob),
+                }
+                for gram, blob, doc_count in drained
+            ],
+        )
+    return covered
+
+
+def _delta_scans(tables: VFSTables, base: Epoch) -> tuple[Select[Any], Select[Any]]:
+    """The dirty live content rows awaiting the gram index, as two scans: the kept ones a live segment already
+    posted, by ``(entry_id, version)`` alone, and the rest with their bodies, both in id order."""
+    entry, content = tables.entry, tables.content
+    dirty = (~entry.c.encoded, entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None))
+    kept = select(entry.c.entry_id, entry.c.version).where(*dirty, entry.c.indexed_epoch >= base)
+    unposted = or_(entry.c.indexed_epoch.is_(None), entry.c.indexed_epoch < base)
+    posting = select(entry.c.id, entry.c.entry_id, entry.c.version, content.c.content).select_from(
+        tables.content_joined()
+    )
+    posting = posting.where(*dirty, unposted, content.c.content.isnot(None))
+    return kept.order_by(entry.c.id), posting.order_by(entry.c.id)
 
 
 async def _flip_flags(
@@ -745,6 +874,7 @@ async def _flip_flags(
     pairs: list[tuple[str, int]],
     *,
     assignments: dict[str, Any],
+    stamp: dict[str, Any] | None = None,
 ) -> None:
     """Version-guarded set-based flag stamp; a miss leaves rows scan-side.
 
@@ -753,7 +883,9 @@ async def _flip_flags(
     the per-pair executemany degrades to one round trip per row on the
     MySQL family and MSSQL. The executemany stays as the generic floor.
     A flip lands only on a live row, since a delete's descendants and a
-    restore's members change ``deleted_at`` with no version bump.
+    restore's members change ``deleted_at`` with no version bump. With a
+    *stamp*, its columns land on every row whose ``entry_id`` matches and
+    the version and liveness guard moves into a CASE on each assignment.
     """
     if not pairs:
         return
@@ -761,7 +893,7 @@ async def _flip_flags(
     dialect = session.get_bind().dialect
     if supports_values_update(profile, dialect):
         per_statement = statement_budget(
-            lambda rows: _values_flip_stmt(entry, rows, assignments=assignments),
+            lambda rows: _values_flip_stmt(entry, rows, assignments=assignments, stamp=stamp),
             pairs[0],
             dialect,
             parameter_budget=parameter_budget,
@@ -769,30 +901,47 @@ async def _flip_flags(
             row_cap=membership_budget,
         )
         for chunk in chunked(pairs, per_statement):
-            await session.execute(_values_flip_stmt(entry, chunk, assignments=assignments))
+            await session.execute(_values_flip_stmt(entry, chunk, assignments=assignments, stamp=stamp))
         return
     if profile.tuple_in:
-        for chunk in chunked(pairs, max(1, membership_budget // 2)):
-            guard = tuple_(entry.c.entry_id, entry.c.version).in_(chunk)
-            await session.execute(update(entry).where(guard, live).values(**assignments))
+        # Rows found by entry_id and liveness kept in a CASE: SQLite walks on the pairs alone or on deleted_at.
+        for chunk in chunked(pairs, max(1, membership_budget // 3)):
+            pair = tuple_(entry.c.entry_id, entry.c.version).in_(chunk)
+            selected = update(entry).where(membership(entry.c.entry_id, [eid for eid, _ver in chunk], profile))
+            if stamp is None:
+                await session.execute(selected.where(pair).values(**_guarded(entry, live, assignments)))
+            else:
+                await session.execute(selected.values(**_guarded(entry, and_(pair, live), assignments), **stamp))
         return
-    stmt = (
-        update(entry)
-        .where(entry.c.entry_id == bindparam("b_id"), entry.c.version == bindparam("b_ver"), live)
-        .values(**assignments)
-    )
+    matched = and_(entry.c.version == bindparam("b_ver"), live)
+    stmt = update(entry).where(entry.c.entry_id == bindparam("b_id"))
+    if stamp is None:
+        stmt = stmt.where(matched).values(**assignments)
+    else:
+        stmt = stmt.values(**_guarded(entry, matched, assignments), **stamp)
     await session.execute(stmt, [{"b_id": eid, "b_ver": ver} for eid, ver in pairs])
 
 
-def _values_flip_stmt(entry: Table, rows: Sequence[tuple[str, int]], *, assignments: dict[str, Any]) -> Update:
-    """One guarded flag stamp over a VALUES join carrying *rows*, landing on live rows alone."""
+def _values_flip_stmt(
+    entry: Table, rows: Sequence[tuple[str, int]], *, assignments: dict[str, Any], stamp: dict[str, Any] | None
+) -> Update:
+    """One guarded flag stamp over a VALUES join carrying *rows*, landing on live rows alone, or with a *stamp*
+    landing on every matched row and guarding the flags in a CASE."""
     incoming = values(
         column("v_id", entry.c.entry_id.type),
         column("v_ver", entry.c.version.type),
         name="incoming",
     ).data(list(rows))
-    where = [entry.c.entry_id == incoming.c.v_id, entry.c.version == incoming.c.v_ver, entry.c.deleted_at.is_(None)]
-    return update(entry).where(*where).values(**assignments)
+    matched = and_(entry.c.version == incoming.c.v_ver, entry.c.deleted_at.is_(None))
+    selected = update(entry).where(entry.c.entry_id == incoming.c.v_id)
+    if stamp is None:
+        return selected.where(matched).values(**assignments)
+    return selected.values(**_guarded(entry, matched, assignments), **stamp)
+
+
+def _guarded(entry: Table, matched: ColumnElement[bool], assignments: dict[str, Any]) -> dict[str, Any]:
+    """Each assignment as a CASE that takes its value only where *matched* holds, its own column otherwise."""
+    return {name: case((matched, value), else_=entry.c[name]) for name, value in assignments.items()}
 
 
 def _pending_probe(entry: Table) -> Select[tuple[int]]:

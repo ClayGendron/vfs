@@ -9,6 +9,7 @@ in both worlds because the answer must not depend on which side served.
 
 from __future__ import annotations
 
+import math
 import re
 import threading
 from collections import Counter
@@ -16,18 +17,19 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import event, select, true
+from sqlalchemy import event, func, select, true
 from sqlalchemy.dialects import mssql, sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
+from tests.support.oracles.postings import decode_postings, decode_varints
 from tests.support.partial_callers import BOB, SYSTEM, partial_store
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
 from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
-from vfs.models.lexical import OverlayPostings, encode_block
+from vfs.models.lexical import OverlayPostings, encode_block, term_weight
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import ScopeChannel
@@ -39,9 +41,10 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import lexical as lexical_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
-from vfs.storage.backends.database.dialects import MSSQL, SQLITE
+from vfs.storage.backends.database.dialects import MSSQL, SQLITE, membership_budget
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.reads import AdmittedScope
@@ -467,9 +470,9 @@ class TestRounds:
         wanted: list[dict[str, list[int]]] = []
         real = lexical_module.tail_block_statements
 
-        def spying(postings, epoch, asked, *rest):
-            wanted.append({term: list(nos) for term, nos in asked.items()})
-            return real(postings, epoch, asked, *rest)
+        def spying(postings, asked, *rest):
+            wanted.append({term: list(nos) for (_epoch, term), nos in asked.items()})
+            return real(postings, asked, *rest)
 
         monkeypatch.setattr(lexical_module, "tail_block_statements", spying)
         monkeypatch.setattr(lexical_module, "HEAD_BLOCKS", 1)
@@ -553,21 +556,33 @@ class TestProbes:
 
     def test_the_tail_fetch_takes_the_tuple_form_where_declared(self) -> None:
         postings = build_vfs_tables().lex_postings
-        wanted = {"the": [8, 9, 10], "is": [8, 9, 10, 11]}
+        wanted = {(1, "the"): [8, 9, 10], (1, "is"): [8, 9, 10, 11]}
 
-        def compiled(profile: Any, dialect: Any, parameter_budget: int) -> list[tuple[str, int]]:
-            statements = lexical_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
+        def compiled(profile: Any, dialect: Any, budget: int) -> list[tuple[str, int]]:
+            statements = lexical_module.tail_block_statements(postings, wanted, profile, budget)
             rendered = [s.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}) for s in statements]
             return [(str(c), len(c.params)) for c in rendered]
 
-        tuple_form = compiled(SQLITE, sqlite.dialect(), 8)
-        assert [(binds - 1) // 2 for _, binds in tuple_form] == [2, 2, 2, 1]
+        # Each slot's block is one (epoch, term, block_no) triple, three binds, a third of the budget a statement.
+        tuple_form = compiled(SQLITE, sqlite.dialect(), 7)
+        assert [binds // 3 for _, binds in tuple_form] == [2, 2, 2, 1]
         assert all("IN (VALUES" in text and " OR " not in text for text, _ in tuple_form)
+        # The arms pack under the membership budget, which nets the reserve, never the whole parameter budget.
         arms = compiled(MSSQL, mssql.dialect(), 8)
         assert [binds for _, binds in arms] == [5, 6]
         assert all(" OR " not in text and "VALUES" not in text for text, _ in arms)
         [(packed, binds)] = compiled(MSSQL, mssql.dialect(), 16)
         assert binds == 11 and " OR " in packed and "VALUES" not in packed
+
+    def test_the_tail_fetch_keeps_the_reserve_on_sql_server(self) -> None:
+        """Guards: the ``OR`` arms packed to the whole parameter budget, leaving the driver's reserve no room."""
+        postings = build_vfs_tables().lex_postings
+        wanted = {(epoch, term): list(range(40)) for epoch in range(1, 97) for term in ("heron", "kestrel")}
+        budget = membership_budget(MSSQL, 2_099)
+        statements = lexical_module.tail_block_statements(postings, wanted, MSSQL, budget)
+        compile_kwargs = {"render_postcompile": True}
+        binds = [len(s.compile(dialect=mssql.dialect(), compile_kwargs=compile_kwargs).params) for s in statements]
+        assert sum(binds) == 96 * 2 * 42 and all(count <= budget for count in binds), (budget, binds)
 
 
 class TestOverlay:
@@ -865,10 +880,10 @@ class TestOverlay:
 
         async def blind_preamble(session, tables):
             calls["n"] += 1
-            pointer, overlay_empty = await real(session, tables)
-            return (pointer, True) if calls["n"] == 1 else (pointer, overlay_empty)
+            snapshot = await real(session, tables)
+            return snapshot._replace(overlay_empty=True) if calls["n"] == 1 else snapshot
 
-        real_epoch = search_module.current_epoch
+        real_epoch = search_module.current_generation
         epoch_calls = {"n": 0}
 
         async def counting_epoch(session, tables):
@@ -876,7 +891,7 @@ class TestOverlay:
             return await real_epoch(session, tables)
 
         monkeypatch.setattr(search_module, "pointer_with_overlay", blind_preamble)
-        monkeypatch.setattr(search_module, "current_epoch", counting_epoch)
+        monkeypatch.setattr(search_module, "current_generation", counting_epoch)
         result = await storage.search(query="tokens")
         assert result.success is True, result.errors
         assert "/fresh.txt" in _paths(result)
@@ -890,17 +905,18 @@ class TestOverlay:
         storage = await _indexed(tmp_path)
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
-        real = search_module.current_epoch
+        real = search_module.current_generation
         calls = {"n": 0}
 
         async def always_moving(session, tables):
             calls["n"] += 1
-            return ((await real(session, tables)) or 0) + calls["n"]
+            return (await real(session, tables)) + calls["n"]
 
-        monkeypatch.setattr(search_module, "current_epoch", always_moving)
+        monkeypatch.setattr(search_module, "current_generation", always_moving)
         result = await storage.search(query="tokens")
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict and result.errors[0].retryable is True
+        assert result.errors[0].message.endswith("the index generation moved mid-search"), result.errors[0].message
         await storage.close()
 
     def test_overlay_blocks_take_counted_postings_and_local_statistics(self) -> None:
@@ -910,14 +926,15 @@ class TestOverlay:
         # Two bodies, "alpha beta" (id 1) and "beta beta gamma" (id 2), counted in reverse path order.
         counted = search_module._OverlayCount([[(2, 2, 3), (1, 1, 2)], []], 2, 5)
         blocks, idfs, avg_dl = search_module._overlay_blocks(
-            counted, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75)
+            counted, ["beta", "delta"], TermStatistics({}, 0, 0.0, 1.2, 0.75, {})
         )
         assert [block.term for block in blocks] == [0]  # delta occurs nowhere: no block
         assert blocks[0].doc_ids == encode_block([1, 2], [1, 2], [2, 3])[0]
         assert avg_dl == 2.5 and idfs[0] == pytest.approx(0.1823, abs=1e-3)
         assert idfs[1] > idfs[0]  # the rarer term (absent) takes the higher idf
         nothing = search_module._OverlayCount([[]], 0, 0)
-        blocks, idfs, avg_dl = search_module._overlay_blocks(nothing, ["beta"], TermStatistics({}, 0, 0.0, 1.2, 0.75))
+        stats = TermStatistics({}, 0, 0.0, 1.2, 0.75, {})
+        blocks, idfs, avg_dl = search_module._overlay_blocks(nothing, ["beta"], stats)
         assert blocks == [] and avg_dl == 0.0 and len(idfs) == 1
 
     async def test_an_overlay_hit_spans_its_whole_body_and_previews_the_best_window(self, tmp_path: Any) -> None:
@@ -1218,7 +1235,7 @@ class TestVanishedChunks:
             [match] = row.matches or []
             assert (match.start, match.content) == (1, None)
         assert reads == [None]  # one text read: nothing was redriven
-        assert (len(undisturbed), issued) == (8, 9)  # one bounded body read more than the settled search
+        assert (len(undisturbed), issued) == (9, 10)  # one bounded body read more than the settled search
         await storage.close()
 
     async def test_grep_and_search_stay_whole_through_a_generation_bump(
@@ -1266,7 +1283,7 @@ class TestVanishedChunks:
         assert _ranked(result) == _ranked(settled) and result.errors == settled.errors
         [removed] = reads
         assert await _chunk_owner(storage, removed) == "/notes.txt"
-        assert (len(undisturbed), len(disturbed)) == (8, 9)
+        assert (len(undisturbed), len(disturbed)) == (9, 10)
         assert sum(1 for sql in disturbed if _CONTENT_READ.search(sql)) == 1
         before, after = _matches(settled), _matches(result)
         [whole] = after.pop("/notes.txt")
@@ -1291,7 +1308,7 @@ class TestVanishedChunks:
         assert result.success is True, result.errors
         assert _ranked(result) == _ranked(settled) and _matches(result) == _matches(settled)
         assert len(reads) == 2 and asked == [1, 0]
-        assert (len(undisturbed), len(redriven)) == (8, 17)  # both attempts whole, and the one body read
+        assert (len(undisturbed), len(redriven)) == (9, 19)  # both attempts whole, and the one body read
         assert not {ErrorKind.conflict, ErrorKind.truncated} & set(_kinds(result))
         await storage.close()
 
@@ -1547,3 +1564,264 @@ class TestVanishedChunks:
         assert _paths(raced) == ["/d/b.txt"] and len(reads) == 2  # the moved entry ran the call again and left
         assert not [m for o in raced.observations for m in o.matches or [] if "moved" in (m.preview or "")]
         await storage.close()
+
+
+async def _refreshed(storage: DatabaseStorage, files: dict[str, str]) -> None:
+    entries = [Entry(path=Path(path), content=body) for path, body in files.items()]
+    assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
+    assert (await storage.refresh()).success is True
+
+
+async def _live_docs(storage: DatabaseStorage) -> list[Any]:
+    """Every ``vfs_lex_docs`` row of the live set, with its entry's path."""
+    tables = storage._host.tables
+    docs, entry = tables.lex_docs, tables.entry
+    async with storage._host.session_factory() as session:
+        pointer = (await session.execute(select(tables.index_state.c.current_gram_epoch))).scalar_one()
+        live = await indexing_module.live_set(session, tables, pointer)
+        stmt = select(docs.c.epoch, docs.c.chunk_id, docs.c.dl, entry.c.path).join(
+            entry, entry.c.entry_id == docs.c.entry_id
+        )
+        return [row for row in (await session.execute(stmt)).all() if row.epoch in live]
+
+
+async def _live_blocks(storage: DatabaseStorage) -> list[Any]:
+    tables = storage._host.tables
+    async with storage._host.session_factory() as session:
+        pointer = (await session.execute(select(tables.index_state.c.current_gram_epoch))).scalar_one()
+        live = await indexing_module.live_set(session, tables, pointer)
+        rows = (await session.execute(select(tables.lex_postings))).all()
+    return [row for row in rows if row.epoch in live]
+
+
+async def _live_partial_store(tmp_path: Any, *, hidden: bool) -> DatabaseStorage:
+    """bob reads ``/d``; a base and two deltas, the second store with hidden ``/h`` files in the base and a delta."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    storage = await _partial_store(tmp_path)
+    if hidden:
+        await _refreshed(storage, {"/h/base.txt": "tokens kestrel tokens tokens\n"})
+        assert (await storage.rebuild()).success is True
+    hidden_delta = {"/h/y.txt": "kestrel kestrel"} if hidden else {}
+    await _refreshed(storage, {"/d/x.txt": "kestrel tokens words\n", **hidden_delta})
+    await _refreshed(storage, {"/d/z.txt": "kestrel only here\n"})
+    return storage
+
+
+class TestLiveSet:
+    async def test_a_re_split_entry_ranks_from_its_new_chunks(self, tmp_path: Any) -> None:
+        storage = await _indexed(tmp_path)
+        old = {row.chunk_id for row in await _live_docs(storage) if row.path == "/notes.txt"}
+        await _refreshed(storage, {"/notes.txt": "A river of tokens, tokens and more tokens.\n"})
+        result = await storage.search(query="tokens")
+        assert result.success is True, result.errors
+        assert _paths(result)[0] == "/notes.txt"
+        live = await _live_docs(storage)
+        assert not {row.chunk_id for row in live} & old
+        assert {row.epoch for row in live if row.path == "/notes.txt"} == {max(row.epoch for row in live)}
+        await storage.close()
+
+    async def test_a_moved_generation_redrives_search_once(self, tmp_path: Any, monkeypatch) -> None:
+        storage = await _indexed(tmp_path)
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="tokens late\n")])).success
+        real, pointers = search_module.current_generation, []
+        index_state = storage._host.tables.index_state
+
+        async def one_ahead(session, tables):
+            pointers.append((await session.execute(select(index_state.c.current_gram_epoch))).scalar_one())
+            generation = await real(session, tables)
+            return generation + 1 if len(pointers) == 1 else generation
+
+        monkeypatch.setattr(search_module, "current_generation", one_ahead)
+        attempts: list[int] = []
+
+        async def counted() -> None:
+            attempts.append(len(attempts))
+
+        with installed("search:after-pointer-read", counted):
+            result = await storage.search(query="tokens")
+        assert "/fresh.txt" in _paths(result)
+        assert (len(attempts), pointers) == (2, [1, 1])
+        await storage.close()
+
+    async def test_a_generation_moved_at_the_empty_overlay_recheck_redrives_search(
+        self, tmp_path: Any, monkeypatch
+    ) -> None:
+        # A quiet store skips the scan tier on its second combined read: a publish there redrives the call once.
+        storage = await _indexed(tmp_path)
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
+        real, calls = search_module.pointer_with_overlay, []
+
+        async def moved_at_recheck(session, tables):
+            calls.append(len(calls))
+            snapshot = await real(session, tables)
+            return snapshot._replace(generation=snapshot.generation + 1) if len(calls) == 2 else snapshot
+
+        monkeypatch.setattr(search_module, "pointer_with_overlay", moved_at_recheck)
+        result = await storage.search(query="tokens")
+        assert result.success is True and _paths(result)[0] == "/notes.txt", result.errors
+        assert len(calls) == 4  # two combined reads an attempt: exactly one redrive
+        await storage.close()
+
+    async def test_the_view_and_scope_paths_read_the_live_set(self, tmp_path: Any) -> None:
+        storage = await _partial_store(tmp_path)
+        await _refreshed(storage, {"/d/fresh.txt": "kestrel tokens\n"})
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            assert (await conn.execute(select(entry.c.encoded).where(entry.c.path == "/d/fresh.txt"))).scalar_one()
+        viewed = await storage.search(query="kestrel", authority=BOB)
+        scoped = await storage.search(query="kestrel", globs=("/d/**",))
+        for result in (viewed, scoped):
+            assert result.success is True and _paths(result) == ["/d/fresh.txt"], result.errors
+            assert result.legs["lexical"]["hits"] == 1  # ty: ignore[unresolved-attribute]
+        await storage.close()
+
+    async def test_the_export_reports_the_live_set(self, tmp_path: Any) -> None:
+        storage = await _indexed(tmp_path)
+        await _refreshed(storage, {"/q1.txt": "quokka one\n", "/q2.txt": "quokka two\n"})
+        await _refreshed(storage, {"/q3.txt": "quokka three\n"})
+        stats = storage._host.tables.lex_stats
+        async with storage._host.engine.connect() as conn:
+            corpus = {row.epoch: row for row in await conn.execute(select(stats))}
+        result = await storage.search(query="quokka")
+        export = result.lexical_stats  # ty: ignore[unresolved-attribute]
+        assert export["terms"]["quokka"]["df"] == 3
+        assert export["n_docs"] == sum(row.n_docs for row in corpus.values())
+        assert export["avg_dl"] == corpus[min(corpus)].avg_dl
+        await storage.close()
+
+    async def test_a_kept_chunk_id_is_posted_once(self, tmp_path: Any) -> None:
+        files = {"/a.txt": "apricot body\n", "/b.txt": "bilberry body\n", "/c.txt": "cloudberry body\n"}
+        storage = await _indexed(tmp_path, files)
+        words = ("apricot", "bilberry", "cloudberry")
+        scores = {word: (await storage.search(query=word)).observations[0].score for word in words}
+        tables = storage._host.tables
+        lex = (tables.posting_list, tables.lex_docs, tables.lex_postings, tables.lex_df)
+        async with storage._host.engine.connect() as conn:
+            counts = {t.name: (await conn.execute(select(func.count()).select_from(t))).scalar_one() for t in lex}
+        await _refreshed(storage, {"/a.txt": "apricot body\n"})
+        assert (await storage.delete(path=Path("/b.txt"))).success is True
+        assert (await storage.restore(path=Path("/b.txt"))).success is True
+        assert (await storage.delete(path=Path("/c.txt"))).success is True
+        await _refreshed(storage, {"/c.txt": "cloudberry body\n"})
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            assert all((await conn.execute(select(entry.c.encoded).where(entry.c.path.in_(files)))).scalars())
+            after = {t.name: (await conn.execute(select(func.count()).select_from(t))).scalar_one() for t in lex}
+        assert after == counts
+        segments: dict[int, set[int]] = {}
+        for row in await _live_blocks(storage):
+            for chunk_id in decode_postings(bytes(row.doc_ids)):
+                segments.setdefault(chunk_id, set()).add(row.epoch)
+        assert segments and all(len(epochs) == 1 for epochs in segments.values())
+        for word, score in scores.items():
+            assert (await storage.search(query=word)).observations[0].score == score
+        await storage.close()
+
+    @pytest.mark.parametrize("budget", [None, 2], ids=["whole", "one-epoch-a-statement"])
+    async def test_a_partial_caller_scores_and_exports_the_visible_live_set(
+        self, tmp_path: Any, monkeypatch, budget: int | None
+    ) -> None:
+        storage = await _live_partial_store(tmp_path, hidden=True)
+        if budget is not None:  # every live-set read then merges one statement per segment
+            monkeypatch.setattr(EngineHost, "membership_budget", property(lambda self: budget))
+        lexicons: list[Any] = []
+        caps: list[tuple[int, int]] = []
+        real_lexicon, real_extension = lexical_module.visible_lexicon, lexical_module.extension
+
+        async def captured(*args: Any) -> Any:
+            lexicons.append(await real_lexicon(*args))
+            return lexicons[-1]
+
+        class Capped:
+            def __getattr__(self, name: str) -> Any:
+                return getattr(real_extension(), name)
+
+            def candidate_ids(self, groups: Any, allow: Any, cap: int) -> Any:
+                found = real_extension().candidate_ids(groups, allow, cap)
+                if allow is None:
+                    caps.append((cap, len(found[0])))
+                return found
+
+        monkeypatch.setattr(search_module, "visible_lexicon", captured)
+        monkeypatch.setattr(lexical_module, "extension", Capped)
+        result = await storage.search(query="kestrel tokens", authority=BOB)
+        assert result.success is True, result.errors
+        [lexicon] = lexicons
+        visible = [row for row in await _live_docs(storage) if row.path.startswith("/d/")]
+        n_v, avg_v = len(visible), sum(row.dl for row in visible) / len(visible)
+        assert (lexicon.stats.n_docs, lexicon.stats.avg_dl) == (n_v, avg_v)
+        assert sorted(lexicon.visible) == sorted(row.chunk_id for row in visible)
+        export = result.lexical_stats  # ty: ignore[unresolved-attribute]
+        assert (export["n_docs"], export["avg_dl"]) == (n_v, avg_v)
+        visible_ids = {row.chunk_id for row in visible}
+        for term, summary in lexicon.stats.terms.items():
+            blocks = [row for row in await _live_blocks(storage) if row.term == term]
+            holding = {cid for row in blocks for cid in decode_postings(bytes(row.doc_ids)) if cid in visible_ids}
+            assert summary.df == len(holding) == export["terms"][term]["df"], term
+        for block in lexicon.blocks:
+            ids = decode_postings(block.doc_ids)
+            weights = [
+                term_weight(tf, dl, avg_v, lexicon.idfs[block.term])
+                for tf, dl in zip(decode_varints(block.tfs), decode_varints(block.dls), strict=True)
+            ]
+            assert len(ids) == len(weights) and block.bound >= max(weights) - 1e-12
+        assert caps and all(cap >= union for cap, union in caps)
+        oracle = pure_score_blocks(lexicon.blocks, lexicon.idfs, avg_v, 10, candidates=lexicon.visible)
+        owner = {row.chunk_id: row.path for row in visible}
+        expected = list(dict.fromkeys(owner[chunk_id] for chunk_id, _score in oracle))
+        assert _paths(result) == expected
+        await storage.close()
+
+    async def test_many_segments_issue_bounded_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the live set's epoch slice put back at ``budget - 1``, so a long live set leaves one term a probe."""
+        storage = InMemoryStorage()
+        base = [Entry(path=Path("/s/base.txt"), content="kestrel base\n")]
+        assert (await storage.write(entries=base, parents=True)).success
+        assert (await storage.rebuild()).success is True
+        for n in range(39):
+            await _refreshed(storage, {f"/s/d{n:02}.txt": f"kestrel delta {n} words\n"})
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session:
+            pointer = await indexing_module.current_epoch(session, tables)
+            assert len(await indexing_module.live_set(session, tables, pointer)) == 40
+        monkeypatch.setattr(EngineHost, "membership_budget", property(lambda _self: 16))
+        query = " ".join(["kestrel", *(f"term{n:02}" for n in range(19))])
+        with _recorded(storage) as statements:
+            found = await storage.search(query=query)
+        assert found.success is True and found.observations, found.errors
+        probes = [sql for sql in statements if "FROM vfs_lex_df" in sql and "vfs_lex_df.epoch IN" in sql]
+        assert len(probes) == 15, len(probes)
+        await storage.close()
+
+    async def test_a_zero_mean_length_never_fails_a_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the scorer's zero-mean guard deleted, so a delta on a base with no text divides by its mean.
+
+        The refusal that keeps a refresh off such a base is patched away, so the pass publishes the delta.
+        """
+
+        async def no_refusal(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        storage = InMemoryStorage()
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
+        assert (await storage.rebuild()).success is True
+        monkeypatch.setattr(maintenance_module, "refresh_refusal", no_refusal)
+        await _refreshed(storage, {"/d/a.txt": "kestrel tokens here\n", "/h/b.txt": "kestrel hidden\n"})
+        assert (await storage.write(entries=[Entry(path=Path("/d/fresh.txt"), content="kestrel fresh\n")])).success
+        everyone, bob = ["/d/a.txt", "/d/fresh.txt", "/h/b.txt"], ["/d/a.txt", "/d/fresh.txt"]
+        for authority, paths in ((SYSTEM, everyone), (BOB, bob)):
+            found = await storage.search(query="kestrel tokens", authority=authority)
+            assert found.success is True and sorted(_paths(found)) == paths, found.errors
+            assert all(o.score is not None and math.isfinite(o.score) for o in found.observations)
+        await storage.close()
+
+    async def test_a_hidden_document_moves_no_number_a_partial_caller_sees(self, tmp_path: Any) -> None:
+        alone = await _live_partial_store(tmp_path / "alone", hidden=False)
+        beside = await _live_partial_store(tmp_path / "beside", hidden=True)
+        seen = [_seen(await store.search(query="kestrel tokens", authority=BOB)) for store in (alone, beside)]
+        assert seen[0] == seen[1]
+        assert seen[0][0], seen[0]
+        for store in (alone, beside):
+            await store.close()

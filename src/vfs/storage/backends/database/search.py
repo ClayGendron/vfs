@@ -39,9 +39,9 @@ kept past its batch), the postings encoded as blocks at query time and
 scored by the same engine with the epoch's statistics, so the two
 sides share one formula, one accumulation order and one scale. The
 previews of the overlay entries that answer come from one bounded read
-of those entries' live bodies after the order is settled. The pointer
+of those entries' live bodies after the order is settled. The generation
 read is advisory and re-issued after the fetch (the two-read protocol);
-a moved pointer raises :class:`StaleSnapshot` for the backend to
+a moved generation raises :class:`StaleSnapshot` for the backend to
 redrive. A carried chunk the text read no longer finds answers from its
 entry's live body in the overlay's whole-document shape; an entry whose
 body is gone too raises :class:`StaleSnapshot`.
@@ -93,7 +93,7 @@ from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.results.preview import select_preview
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
 from vfs.storage.backends.database.distance import cosine_distance
-from vfs.storage.backends.database.indexing import current_epoch, pointer_with_overlay
+from vfs.storage.backends.database.indexing import current_generation, live_set, pointer_with_overlay
 from vfs.storage.backends.database.lexical import (
     ChunkId,
     Lexicon,
@@ -104,7 +104,7 @@ from vfs.storage.backends.database.lexical import (
     lexical_stats,
     visible_lexicon,
 )
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import live_chunks, membership
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
     CHANNEL_ARM_BINDS,
@@ -142,7 +142,6 @@ if TYPE_CHECKING:
     from vfs.models.rows import EntryId, VFSTables
     from vfs.pattern_matching import Body, GlobGates
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.reads import AdmittedScope
     from vfs.storage.backends.database.rights import Clause, Visibility
     from vfs.storage.backends.database.scope import Pushdown
@@ -308,12 +307,14 @@ async def search_rows(
     deadline = Deadline.after(wall_seconds)
     truncations: list[tuple[str, dict[str, Any] | None]] = []
 
-    epoch, overlay_empty = await pointer_with_overlay(session, tables)
+    snapshot = await pointer_with_overlay(session, tables)
+    epoch, overlay_empty = snapshot.pointer, snapshot.overlay_empty
+    live = await live_set(session, tables, epoch)
     await seam("search:after-pointer-read")
-    stats = await lexical_stats(session, tables, -1 if epoch is None else epoch, terms, membership_budget)
+    stats = await lexical_stats(session, tables, profile, live, terms, membership_budget)
     lexicon: Lexicon | None = None
     if view is not None and epoch is not None:
-        lexicon = await visible_lexicon(session, tables, profile, membership_budget, epoch, stats, terms, view)
+        lexicon = await visible_lexicon(session, tables, profile, membership_budget, live, stats, terms, view)
         stats = lexicon.stats
     present = [term for term in terms if term in stats.terms]
 
@@ -328,7 +329,7 @@ async def search_rows(
     if epoch is not None and present:
         candidates: list[ChunkId] | None = None
         if allow is not None and len(allow) <= SCOPE_ID_BUDGET:
-            candidates = await chunk_ids_for(session, tables, epoch, allow, profile, membership_budget)
+            candidates = await chunk_ids_for(session, tables, live, allow, profile, membership_budget)
         if lexicon is not None:
             candidates = lexicon.visible if candidates is None else sorted(set(candidates) & set(lexicon.visible))
         if candidates is None or candidates:
@@ -340,19 +341,18 @@ async def search_rows(
                     ranking = await chunk_ranking(
                         session,
                         tables,
-                        epoch,
+                        live,
                         stats,
                         present,
                         depth,
                         candidates,
                         profile,
-                        parameter_budget,
                         membership_budget,
                     )
                 hits, rows, completed = await _entries_for_chunks(
                     session,
                     tables,
-                    epoch,
+                    live,
                     ranking,
                     fetched,
                     gated,
@@ -401,10 +401,10 @@ async def search_rows(
         _record_wall(truncations)
     skip_verified = False
     if overlay_empty:
-        current, still_empty = await pointer_with_overlay(session, tables)
-        if current != epoch:
-            raise StaleSnapshot("the gram-index epoch pointer moved mid-search")
-        skip_verified = still_empty
+        again = await pointer_with_overlay(session, tables)
+        if again.generation != snapshot.generation:
+            raise StaleSnapshot("the index generation moved mid-search")
+        skip_verified = again.overlay_empty
     if not skip_verified and not deadline.expired():
         nominees = await entries_for_scan(
             session,
@@ -436,8 +436,8 @@ async def search_rows(
         rows.update({mapping["entry_id"]: mapping for mapping in admitted if mapping["entry_id"] in overlay})
         if nominees.overflow:
             truncations.append(("overlay budget", {"scanned": len(nominees.rows), "budget": SCAN_TIER_BUDGET}))
-    if not skip_verified and epoch is not None and await current_epoch(session, tables) != epoch:
-        raise StaleSnapshot("the gram-index epoch pointer moved mid-search")
+    if not skip_verified and epoch is not None and await current_generation(session, tables) != snapshot.generation:
+        raise StaleSnapshot("the index generation moved mid-search")
 
     fused = _fuse(ranker, hits, vector_hits)
     signals = await signal_factors(session, tables, profile, membership_budget, ranker, list(fused.entries))
@@ -491,7 +491,7 @@ async def search_rows(
 async def _entries_for_chunks(
     session: AsyncSession,
     tables: VFSTables,
-    epoch: Epoch,
+    live: Sequence[int],
     ranking: Ranking,
     fetched: frozenset[str],
     scope: _Gates,
@@ -521,12 +521,12 @@ async def _entries_for_chunks(
     owner: dict[ChunkId, EntryId] = {}
     rows: dict[EntryId, RowMapping] = {}
     found: list[RowMapping] = []
-    for chunk in chunked([chunk_id for chunk_id, _ in ranking], per_chunk):
+    for epochs, chunk in live_chunks(live, [chunk_id for chunk_id, _ in ranking], per_chunk):
         stmt = (
             select(*columns)
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
             .where(
-                docs.c.epoch == epoch,
+                membership(docs.c.epoch, epochs, profile),
                 membership(docs.c.chunk_id, chunk, profile),
                 entry.c.encoded,
                 kinds.predicate,

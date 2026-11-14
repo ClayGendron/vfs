@@ -137,7 +137,7 @@ async def chunk_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[int, f
     columns = posting_columns(postings)
     terms = list(dict.fromkeys(tokenize(query)))
     async with storage._host.session_factory() as session:
-        stats = await lexical_stats(session, tables, epoch, terms, budget)
+        stats = await lexical_stats(session, tables, storage._host.profile, (epoch,), terms, budget)
         present = [term for term in terms if term in stats.terms]
         if not present:
             return []
@@ -171,10 +171,10 @@ async def chunk_ranking(loaded: Loaded, query: str, k: int) -> list[tuple[int, f
         overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
         selected = select_blocks([summaries[term] for term in overflowing], candidates, tail, theta)
         wanted = {
-            term: [no for no in competing if no >= HEAD_BLOCKS]
+            (epoch, term): [no for no in competing if no >= HEAD_BLOCKS]
             for term, competing in zip(overflowing, selected, strict=True)
         }
         host = storage._host
-        for statement in tail_block_statements(postings, epoch, wanted, host.profile, host.parameter_budget, budget):
+        for statement in tail_block_statements(postings, wanted, host.profile, budget):
             blocks += as_blocks((await session.execute(statement)).all())
         return score_blocks(blocks, idfs, stats.avg_dl, k)

@@ -170,8 +170,7 @@ class _TermList:
             out.append((self.open_count, slice(a, len(self.ids)), slice(b, len(self.tfs)), slice(c, len(self.dls))))
         return out
 
-    def summary(self, term: str, n_docs: int, avg_dl: float) -> SummaryRow:
-        term_idf = idf(self.df, n_docs)
+    def summary(self, term: str, term_idf: float, avg_dl: float) -> SummaryRow:
         firsts: list[int] = []
         maxes: list[float] = []
         for _count, ids, tfs, dls in self.blocks():
@@ -232,12 +231,31 @@ class PureLexicalBuilder:
     def finish(self) -> tuple[int, float]:
         if self._drained is None:
             avg_dl = self._total_dl / self._n_docs if self._n_docs else 0.0
-            self._stats = (self._n_docs, avg_dl)
-            self._drained = [
-                (term, lst, lst.summary(term, self._n_docs, avg_dl)) for term, lst in sorted(self._terms.items())
-            ]
-            self._terms = {}
+            idfs = [idf(lst.df, self._n_docs) for _term, lst in sorted(self._terms.items())]
+            self._seal(avg_dl, idfs)
         return self._stats
+
+    def vocabulary(self) -> list[tuple[str, int]]:
+        if self._drained is not None:
+            raise ValueError("statistics are fixed; create a fresh builder")
+        return [(term, lst.df) for term, lst in sorted(self._terms.items())]
+
+    def finish_under(self, avg_dl: float, idfs: list[float]) -> tuple[int, float]:
+        if self._drained is not None:
+            raise ValueError("statistics are fixed; create a fresh builder")
+        if len(idfs) != len(self._terms):
+            raise ValueError(f"one idf per vocabulary term is required; got {len(idfs)} for {len(self._terms)} terms")
+        self._seal(avg_dl, idfs)
+        return self._stats
+
+    def _seal(self, weigh_avg_dl: float, idfs: list[float]) -> None:
+        """The fed documents' own statistics fixed, every block weighed under *weigh_avg_dl* and *idfs*."""
+        self._stats = (self._n_docs, self._total_dl / self._n_docs if self._n_docs else 0.0)
+        self._drained = [
+            (term, lst, lst.summary(term, term_idf, weigh_avg_dl))
+            for (term, lst), term_idf in zip(sorted(self._terms.items()), idfs, strict=True)
+        ]
+        self._terms = {}
 
     def next_df_batch(self, row_cap: int) -> list[tuple[str, int, float, float, bytes]] | None:
         self.finish()

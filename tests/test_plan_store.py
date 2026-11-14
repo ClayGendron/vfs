@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.support.plan_store import bounded_access, entry_access
+from sqlalchemy import Boolean, Column, Index, MetaData, String, Table
+
+from tests.support.plan_store import DIRTY_INDEXES, bounded_access, dirty_indexes, entry_access
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "plan_store"
 
@@ -29,6 +31,7 @@ _WALKS = (
     "mssql-walk-wholeindex.xml",
     "oracle-walk-skipscan.txt",
     "postgresql-walk-nonleading.txt",
+    "postgresql-walk-pending-nonleading.txt",
     "mariadb-walk-unknown.txt",
     "mssql-walk-partitioned.xml",
     "oracle-walk-unnamed.txt",
@@ -70,6 +73,27 @@ def test_the_scan_reader_sees_the_walks_of_the_old_world() -> None:
         accesses = entry_access(engine, plan)
         assert accesses, name
         assert all(bounded_access(access) for access in accesses), (name, accesses)
+
+
+def test_every_index_led_by_encoded_is_a_dirty_index_and_no_other() -> None:
+    """Guards: the bound naming one dirty index by hand, so the refresh's pending index (or a third led by
+    ``encoded``) is refused where its seek is the one the bound exists to allow; or admitting an index that
+    holds ``encoded`` past its first column, whose seek reads whatever its leading column holds."""
+    assert {"ix_vfs_entries_encoded_kind", "ix_vfs_entries_index_pending"} == DIRTY_INDEXES
+    for name in ("postgresql-corrected-pending.txt", "mariadb-corrected-pending.txt"):
+        [access] = entry_access(name.partition("-")[0], (FIXTURES / name).read_text())
+        assert (access.index, access.seeks, bounded_access(access)) == ("ix_vfs_entries_index_pending", True, True)
+    [walk] = entry_access("postgresql", (FIXTURES / "postgresql-walk-pending-nonleading.txt").read_text())
+    assert (walk.index, walk.seeks, bounded_access(walk)) == ("ix_vfs_entries_index_pending", False, False)
+    table = Table(
+        "t",
+        MetaData(),
+        Column("encoded", Boolean),
+        Column("kind", String(8)),
+        Index("ix_led", "encoded", "kind"),
+        Index("ix_later", "kind", "encoded"),
+    )
+    assert dirty_indexes(table) == {"ix_led"}
 
 
 def _plans(world: str) -> list[tuple[str, str, str]]:

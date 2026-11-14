@@ -85,7 +85,7 @@ if TYPE_CHECKING:
 # storage-side, reported on observations, never authored on an Entry.
 ENTRY_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset(
     {"id", "entry_id", "parent_id", "trash_root_id", "version"}
-    | {"chunked", "encoded", "indexable", "chunk_source_hash", "chunk_generation"}
+    | {"chunked", "encoded", "indexable", "indexed_epoch", "chunk_source_hash", "chunk_generation"}
     | {"link_source_hash", "link_generation", "everyone_level"}
     | {"render_source_hash", "render_generation", "render_detail", "render_units", "media_width", "media_height"},
 )
@@ -136,7 +136,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 25
+SCHEMA_FORMAT_VERSION: Final = 26
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -447,6 +447,8 @@ def build_vfs_tables(
         # Gram eligibility: reset by content writes like its siblings,
         # re-stamped with `chunked`; only read behind a true `chunked`.
         Column("indexable", Boolean, nullable=False, default=False),
+        # The last published segment that posted the current chunk rows; a re-split clears it.
+        Column("indexed_epoch", Integer),
         # Chunk provenance: the body hash and engine/grammar generation the
         # stored chunk rows derive from — the fingerprint-skip law reads both.
         Column("chunk_source_hash", String(64)),
@@ -486,6 +488,9 @@ def build_vfs_tables(
         # Serves grep's overlay probe: the encoded=0 seek set is the pending
         # content rows, and kind in the key answers the kind term beside it.
         Index("ix_vfs_entries_encoded_kind", "encoded", "kind"),
+        # The incremental pass's seeks: the rows not yet chunked and the rows awaiting the
+        # gram index, live, in id order, apart from the ineligible and the trashed rows.
+        Index("ix_vfs_entries_index_pending", "encoded", "chunked", "indexable", "deleted_at", "id"),
         # The everyone leg of a partial read: "rows under /p everyone may
         # see" is one seek here; the leading column alone serves the rest.
         Index("ix_vfs_entries_everyone_path", "everyone_level", "path"),
@@ -495,8 +500,8 @@ def build_vfs_tables(
         Index("ix_vfs_entries_trash_root", "trash_root_id"),
         # The twin lookups: a body hash shared by many rows is found by index, never a scan.
         Index("ix_vfs_entries_content_hash", "content_hash"),
-        # The unrendered count and the pending probe: render state, never a scan of every row.
-        Index("ix_vfs_entries_render_status", "render_status"),
+        # The unrendered count, the pending probe and the pending page's keyset seek over live rows.
+        Index("ix_vfs_entries_render_status", "render_status", "deleted_at", "id"),
         schema=schema,
         sqlite_autoincrement=True,
     )
@@ -672,6 +677,8 @@ def build_vfs_tables(
         metadata,
         Column("id", Integer, primary_key=True, autoincrement=False),
         Column("current_gram_epoch", Integer),
+        # Bumped by every publish, full or delta: the readers' coherence token beside the pointer.
+        Column("index_generation", Integer, nullable=False, default=0, server_default="0"),
         Column("lease_holder", String(ULID_LENGTH)),
         Column("lease_heartbeat", BigInteger),
         CheckConstraint("id = 1", name="ck_vfs_index_state_single_row"),
@@ -699,6 +706,9 @@ def build_vfs_tables(
         Column("format_version", Integer, nullable=False),
         Column("options_hash", String(64), nullable=False),
         Column("created_at", _timestamp()),
+        # A delta: the base it was built on, and when its publish made it live; both null for a full epoch.
+        Column("base_epoch", Integer),
+        Column("published_at", _timestamp()),
         schema=schema,
     )
 

@@ -1,0 +1,6 @@
+Limit  (cost=6.21..6.21 rows=1 width=1236)
+  ->  Sort  (cost=6.21..6.21 rows=1 width=1236)
+        Sort Key: path COLLATE "C"
+        ->  Index Scan using ix_vfs_entries_index_pending on vfs_entries  (cost=0.41..96.20 rows=1 width=1236)
+              Index Cond: ((chunked = true) AND (indexable = true))
+              Filter: (((path)::text <> '/'::text) AND (encoded = false))

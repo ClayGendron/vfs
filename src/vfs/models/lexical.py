@@ -188,8 +188,9 @@ def idf(df: int, n_docs: int) -> float:
 
 
 def term_weight(tf: int, dl: int, avg_dl: float, term_idf: float) -> float:
-    """One posting's BM25 contribution: ``idf * tf(k1+1) / (tf + k1(1 - b + b*dl/avg_dl))``."""
-    norm = BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl)
+    """One posting's BM25 contribution: ``idf * tf(k1+1) / (tf + k1(1 - b + b*dl/avg_dl))``; a corpus with
+    no mean length takes the length ratio as 1, so the weight is total."""
+    norm = BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl) if avg_dl > 0 else BM25_K1
     return term_idf * tf * (BM25_K1 + 1.0) / (tf + norm)
 
 
@@ -253,11 +254,19 @@ class LexicalBuilder(Protocol):
     the statistics (idempotent; feeding afterwards raises ``ValueError``);
     the two drains yield term-ordered batches of at most ``row_cap``
     summary rows and block rows respectively, ``None`` when exhausted.
+    ``vocabulary`` is every term fed with its document count, in term
+    order; ``finish_under`` fixes the block maxima under another corpus's
+    mean length and one idf per vocabulary term instead, refuses a list of
+    another length, and answers the fed documents' own count and length.
     """
 
     def add_docs(self, docs: list[tuple[int, str]]) -> list[int]: ...
 
     def finish(self) -> tuple[int, float]: ...
+
+    def vocabulary(self) -> list[tuple[str, int]]: ...
+
+    def finish_under(self, avg_dl: float, idfs: list[float]) -> tuple[int, float]: ...
 
     def next_df_batch(self, row_cap: int) -> list[tuple[str, int, float, float, bytes]] | None: ...
 

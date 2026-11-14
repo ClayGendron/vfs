@@ -32,7 +32,7 @@ except ImportError as error:  # pragma: no cover - pinned by a subprocess test
     )
     raise ImportError(message) from error
 
-EXPECTED_PROTOCOL: Final = 14
+EXPECTED_PROTOCOL: Final = 15
 
 if _ext.PROTOCOL_VERSION != EXPECTED_PROTOCOL:  # pragma: no cover - pinned by a subprocess test
     message = (

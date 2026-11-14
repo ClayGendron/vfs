@@ -121,7 +121,7 @@ async def fetch_query(
     postings = tables.lex_postings
     probe = list(dict.fromkeys(tokenize(query)))
     async with storage._host.session_factory() as session:
-        stats = await lexical_stats(session, tables, epoch, probe, 100)
+        stats = await lexical_stats(session, tables, storage._host.profile, (epoch,), probe, 100)
         terms = [t for t in probe if t in stats.terms]
         summaries = {t: decode_summary(stats.terms[t].blocks) for t in terms}
         fetched = (

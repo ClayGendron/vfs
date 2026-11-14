@@ -46,7 +46,7 @@ from vfs.models.lexical import (
 from vfs.native import extension
 from vfs.offload import call_offloaded
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import live_chunks, membership
 from vfs.storage.backends.database.ranges import derived_hint
 from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
@@ -81,11 +81,15 @@ Ranking = list[tuple[ChunkId, float]]
 
 
 class TermStatistics(NamedTuple):
-    """Corpus-wide BM25 inputs for a query's terms, from one epoch.
+    """Corpus-wide BM25 inputs for a query's terms, from the live set: the base and its published deltas.
 
-    ``terms`` maps each probed term present in the epoch to its summary
-    row; a term absent from the corpus is absent here. ``k1`` and ``b``
-    are the constants the epoch was weighted under.
+    ``slots`` holds each probed term's summary row in every live segment
+    that has it, ``(epoch, row)`` in epoch order, each a term of its own to
+    the scorer. ``terms`` maps each term present in any segment to its first
+    slot's row with ``df`` summed over the live set; a term absent from the
+    corpus is absent from both. ``n_docs`` sums every segment's count;
+    ``avg_dl``, ``k1`` and ``b`` are the base's, which every slot was
+    weighted under.
     """
 
     terms: dict[str, SummaryRow]
@@ -93,6 +97,7 @@ class TermStatistics(NamedTuple):
     avg_dl: float
     k1: float
     b: float
+    slots: Mapping[str, Sequence[tuple[int, SummaryRow]]]
 
 
 class Lexicon(NamedTuple):
@@ -128,22 +133,55 @@ async def build_lexical_epoch(
     keeps the chunks of the *covered* entries alone.
     """
     builder = lexical_builder()
-    async for batch in _chunk_batches(session, tables, covered):
-        docs = [(chunk_id, content) for chunk_id, _entry_id, content in batch]
-        lengths = await call_offloaded(executor, partial(builder.add_docs, docs))
-        rows = [
-            {"epoch": epoch, "chunk_id": chunk_id, "entry_id": entry_id, "dl": dl}
-            for (chunk_id, entry_id, _content), dl in zip(batch, lengths, strict=True)
-        ]
-        for page in chunked(rows, _LEXICAL_INSERT_ROWS):
-            await bulk_insert(session, tables.lex_docs, list(page))
+    await _fed(session, tables, epoch, executor, builder, _chunk_batches(session, tables, covered))
     n_docs, avg_dl = await call_offloaded(executor, builder.finish)
     stats = {"epoch": epoch, "n_docs": n_docs, "avg_dl": avg_dl, "k1": BM25_K1, "b": BM25_B}
     await session.execute(insert(tables.lex_stats), [stats])
-    while (summaries := await call_offloaded(executor, partial(_df_rows, builder, epoch))) is not None:
-        await bulk_insert(session, tables.lex_df, summaries)
-    while (blocks := await call_offloaded(executor, partial(_block_rows, builder, epoch))) is not None:
-        await bulk_insert(session, tables.lex_postings, blocks)
+    await _drained(session, tables, epoch, executor, builder)
+
+
+async def build_lexical_delta(
+    session: AsyncSession,
+    tables: VFSTables,
+    epoch: int,
+    base: int,
+    posted: Sequence[str],
+    executor: Executor,
+    profile: DialectProfile,
+    membership_budget: int,
+) -> None:
+    """Write a delta's four row sets from the chunks of exactly the *posted* entries, weighted under *base*.
+
+    The chunk ids are read by membership slices of the entry ids and sorted,
+    then their content by slices of those ids in order, so the builder sees
+    strictly increasing ids and no entry flag is read. Every block's bound is
+    taken under the base's mean length and, per term, the base's idf where
+    the base holds the term, else ``idf(df, base_n + delta_n)``: the scale
+    the overlay already scores unindexed bodies on. The delta's own document
+    count and mean length are its ``lex_stats`` row, under the base's ``k1``
+    and ``b``.
+    """
+    chunks, df, stats = tables.chunks, tables.lex_df, tables.lex_stats
+    ids: list[int] = []
+    for entry_ids in chunked(list(posted), membership_budget):
+        held = select(chunks.c.id).where(membership(chunks.c.entry_id, entry_ids, profile))
+        ids.extend((await session.execute(held)).scalars())
+    ids.sort()
+    builder = lexical_builder()
+    batches = _posted_batches(session, tables, ids, profile, membership_budget)
+    fed = await _fed(session, tables, epoch, executor, builder, batches)
+    base_row = select(stats.c.n_docs, stats.c.avg_dl, stats.c.k1, stats.c.b).where(stats.c.epoch == base)
+    corpus = (await session.execute(base_row)).one()
+    vocabulary = await call_offloaded(executor, builder.vocabulary)
+    in_base: dict[str, float] = {}
+    for probe in chunked([term for term, _count in vocabulary], membership_budget):
+        lookup = select(df.c.term, df.c.idf).where(df.c.epoch == base, membership(df.c.term, probe, profile))
+        in_base.update((row.term, row.idf) for row in await session.execute(lookup))
+    idfs = [in_base[term] if term in in_base else idf(count, corpus.n_docs + fed) for term, count in vocabulary]
+    n_docs, avg_dl = await call_offloaded(executor, partial(builder.finish_under, corpus.avg_dl, idfs))
+    row = {"epoch": epoch, "n_docs": n_docs, "avg_dl": avg_dl, "k1": corpus.k1, "b": corpus.b}
+    await session.execute(insert(stats), [row])
+    await _drained(session, tables, epoch, executor, builder)
 
 
 def lexical_scan_page(tables: VFSTables, *, after: int) -> Select[Any]:
@@ -161,32 +199,37 @@ def lexical_scan_page(tables: VFSTables, *, after: int) -> Select[Any]:
 async def lexical_stats(
     session: AsyncSession,
     tables: VFSTables,
-    epoch: int,
+    profile: DialectProfile,
+    live: Sequence[int],
     terms: Sequence[str],
     membership_budget: int,
 ) -> TermStatistics:
-    """Summary rows for *terms* from *epoch*: one chunked ``IN``-list probe
-    on ``lex_df`` plus the epoch's ``lex_stats`` row.
+    """Summary rows for *terms* in every segment of *live*, the base first: chunked membership probes on
+    ``lex_df`` and the live set's ``lex_stats`` rows, each statement spending one budget on both lists.
 
-    An epoch with no statistics row (never built) answers zero
-    documents; the caller decides what an empty corpus means.
+    A live set whose base has no statistics row (none, or never built)
+    answers zero documents; the caller decides what an empty corpus means.
     """
     df, stats = tables.lex_df, tables.lex_stats
-    found: dict[str, SummaryRow] = {}
-    for probe in chunked(list(dict.fromkeys(terms)), membership_budget):
-        lookup = select(df.c.term, df.c.df, df.c.idf, df.c.max_weight, df.c.blocks).where(
-            df.c.epoch == epoch, df.c.term.in_(probe)
-        )
+    slots: dict[str, list[tuple[int, SummaryRow]]] = {}
+    for epochs, probe in live_chunks(live, list(dict.fromkeys(terms)), membership_budget):
+        columns = (df.c.epoch, df.c.term, df.c.df, df.c.idf, df.c.max_weight, df.c.blocks)
+        lookup = select(*columns).where(membership(df.c.epoch, epochs, profile), membership(df.c.term, probe, profile))
         for row in await session.execute(lookup):
-            found[row.term] = SummaryRow(row.term, row.df, row.idf, row.max_weight, bytes(row.blocks))
-    corpus = (
-        await session.execute(
-            select(stats.c.n_docs, stats.c.avg_dl, stats.c.k1, stats.c.b).where(stats.c.epoch == epoch)
-        )
-    ).one_or_none()
-    if corpus is None:
-        return TermStatistics(found, 0, 0.0, BM25_K1, BM25_B)
-    return TermStatistics(found, corpus.n_docs, corpus.avg_dl, corpus.k1, corpus.b)
+            summary = SummaryRow(row.term, row.df, row.idf, row.max_weight, bytes(row.blocks))
+            slots.setdefault(row.term, []).append((row.epoch, summary))
+    corpus: dict[int, Any] = {}
+    for epochs in chunked(list(live), membership_budget):
+        stmt = select(stats.c.epoch, stats.c.n_docs, stats.c.avg_dl, stats.c.k1, stats.c.b)
+        rows = await session.execute(stmt.where(membership(stats.c.epoch, epochs, profile)))
+        corpus.update((row.epoch, row) for row in rows)
+    for held in slots.values():
+        held.sort(key=lambda slot: slot[0])
+    found = {term: held[0][1]._replace(df=sum(row.df for _, row in held)) for term, held in slots.items()}
+    base = corpus.get(live[0]) if live else None
+    if base is None:
+        return TermStatistics(found, 0, 0.0, BM25_K1, BM25_B, slots)
+    return TermStatistics(found, sum(row.n_docs for row in corpus.values()), base.avg_dl, base.k1, base.b, slots)
 
 
 # ---------------------------------------------------------------------------
@@ -197,70 +240,78 @@ async def lexical_stats(
 async def chunk_ranking(
     session: AsyncSession,
     tables: VFSTables,
-    epoch: int,
+    live: Sequence[int],
     stats: TermStatistics,
     present: Sequence[str],
     k: int,
     candidates: Sequence[ChunkId] | None,
     profile: DialectProfile,
-    parameter_budget: int,
     membership_budget: int,
 ) -> Ranking:
-    """Top-``k`` ``(chunk_id, score)`` from the head fetch plus the selected blocks."""
+    """Top-``k`` ``(chunk_id, score)`` from the head fetch plus the selected blocks, every slot a term.
+
+    A chunk's postings live in one live segment, so each (term, segment)
+    slot scores under its own stored idf and summary and the blocks concatenate;
+    a slot's bound lifted by the others' maxima loosens block selection, never tightens it.
+    """
     postings = tables.lex_postings
     columns = posting_columns(postings)
-    summaries = {term: decode_summary(stats.terms[term].blocks) for term in present}
-    idfs = [stats.terms[term].idf for term in present]
-    index = {term: position for position, term in enumerate(present)}
+    slots = [(epoch, term) for term in present for epoch, _row in stats.slots[term]]
+    rows = {(epoch, term): row for term in present for epoch, row in stats.slots[term]}
+    summaries = {slot: decode_summary(rows[slot].blocks) for slot in slots}
+    idfs = [rows[slot].idf for slot in slots]
+    index = {slot: position for position, slot in enumerate(slots)}
 
     def as_blocks(fetched: Sequence[Any]) -> list[ScoreBlock]:
         return [
             ScoreBlock(
-                index[r.term], summaries[r.term].max_weights[r.block_no], bytes(r.doc_ids), bytes(r.tfs), bytes(r.dls)
+                index[(r.epoch, r.term)],
+                summaries[(r.epoch, r.term)].max_weights[r.block_no],
+                bytes(r.doc_ids),
+                bytes(r.tfs),
+                bytes(r.dls),
             )
             for r in fetched
         ]
 
     blocks: list[ScoreBlock] = []
-    for probe in chunked(list(present), membership_budget):
-        head = select(*columns).where(
-            postings.c.epoch == epoch, postings.c.term.in_(probe), postings.c.block_no < HEAD_BLOCKS
-        )
+    for epochs, probe in live_chunks(live, list(present), membership_budget):
+        in_slots = (membership(postings.c.epoch, epochs, profile), postings.c.term.in_(list(probe)))
+        head = select(*columns).where(*in_slots, postings.c.block_no < HEAD_BLOCKS)
         blocks += as_blocks((await session.execute(head)).all())
     scored = score_blocks(blocks, idfs, stats.avg_dl, 10**9, candidates=candidates)
     theta = scored[k - 1][1] if len(scored) >= k else 0.0
     score_of = dict(scored)
     sorted_candidates = sorted(score_of)
     tail = [score_of[chunk] for chunk in sorted_candidates]
-    overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
-    selected = select_blocks([summaries[term] for term in overflowing], sorted_candidates, tail, theta)
+    overflowing = [slot for slot in slots if len(summaries[slot].first_ids) > HEAD_BLOCKS]
+    selected = select_blocks([summaries[slot] for slot in overflowing], sorted_candidates, tail, theta)
     wanted = {
-        term: [no for no in competing if no >= HEAD_BLOCKS]
-        for term, competing in zip(overflowing, selected, strict=True)
+        slot: [no for no in competing if no >= HEAD_BLOCKS]
+        for slot, competing in zip(overflowing, selected, strict=True)
     }
-    for statement in tail_block_statements(postings, epoch, wanted, profile, parameter_budget, membership_budget):
+    for statement in tail_block_statements(postings, wanted, profile, membership_budget):
         blocks += as_blocks((await session.execute(statement)).all())
     return score_blocks(blocks, idfs, stats.avg_dl, k, candidates=candidates)
 
 
 def tail_block_statements(
     postings: Table,
-    epoch: int,
-    wanted: Mapping[str, Sequence[int]],
+    wanted: Mapping[tuple[int, str], Sequence[int]],
     profile: DialectProfile,
-    parameter_budget: int,
     membership_budget: int,
 ) -> list[Select[Any]]:
-    """The tail fetch: the statements that read the ``wanted`` blocks (term → block numbers) by key.
+    """The tail fetch: the statements that read the ``wanted`` blocks ((epoch, term) → block numbers) by key.
 
     Two spellings, chosen by the profile. Where the engine accepts a
     row-value constructor inside ``IN`` (``tuple_in``), every statement
-    is ``epoch = ? AND (term, block_no) IN (pairs)``, the pairs chunked
-    at half the membership budget because each binds two values, and no
+    is ``(epoch, term, block_no) IN (triples)``, the triples chunked
+    at a third of the membership budget because each binds three values, and no
     statement carries an ``OR``. Elsewhere the arms are
-    ``epoch = ? AND term = ? AND block_no IN (...)``, one per term and
+    ``epoch = ? AND term = ? AND block_no IN (...)``, one per slot and
     chunk of block numbers, packed into ``OR`` statements under the
-    parameter budget.
+    membership budget, which nets the driver's reserve; an arm over the whole live set would fetch blocks
+    no slot chose.
 
     The tuple form exists because SQLite's planner loses rows from the OR
     form: over the postings table's ``WITHOUT ROWID`` key, once the store
@@ -272,42 +323,39 @@ def tail_block_statements(
     """
     columns = posting_columns(postings)
     if profile.tuple_in:
-        pairs = [(term, no) for term, nos in wanted.items() for no in nos]
-        return [
-            select(*columns).where(
-                postings.c.epoch == epoch, tuple_(postings.c.term, postings.c.block_no).in_(list(chunk))
-            )
-            for chunk in chunked(pairs, max(1, membership_budget // 2))
-        ]
+        triples = [(epoch, term, no) for (epoch, term), nos in wanted.items() for no in nos]
+        key = tuple_(postings.c.epoch, postings.c.term, postings.c.block_no)
+        per_statement = max(1, membership_budget // 3)
+        return [select(*columns).where(key.in_(list(chunk))) for chunk in chunked(triples, per_statement)]
     arms: list[tuple[int, ColumnElement[bool]]] = []
-    for term, nos in wanted.items():
-        for chunk in chunked(list(nos), membership_budget):
+    for (epoch, term), nos in wanted.items():
+        for chunk in chunked(list(nos), max(1, membership_budget - 2)):
             arm = and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(chunk)))
             arms.append((len(chunk) + 2, arm))
-    return [select(*columns).where(or_(*statement)) for statement in _packed_arms(arms, parameter_budget)]
+    return [select(*columns).where(or_(*statement)) for statement in _packed_arms(arms, membership_budget)]
 
 
 def posting_columns(postings: Table) -> tuple[Column[Any], ...]:
-    """The five posting columns every block fetch projects, in the order the scorer's block reader expects."""
-    return (postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
+    """The six posting columns every block fetch projects, its slot's epoch first, in the scorer's reader's order."""
+    return (postings.c.epoch, postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
 
 
 async def chunk_ids_for(
     session: AsyncSession,
     tables: VFSTables,
-    epoch: int,
+    live: Sequence[int],
     doc_ids: Sequence[int],
     profile: DialectProfile,
     membership_budget: int,
 ) -> list[ChunkId]:
-    """The epoch's chunk ids of the entries with surrogate ids *doc_ids*, sorted."""
+    """The live set's chunk ids of the entries with surrogate ids *doc_ids*, sorted."""
     entry, docs = tables.entry, tables.lex_docs
     found: list[ChunkId] = []
-    for chunk in chunked(list(doc_ids), membership_budget):
+    for epochs, chunk in live_chunks(live, list(doc_ids), membership_budget):
         stmt = (
             select(docs.c.chunk_id)
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
-            .where(docs.c.epoch == epoch, membership(entry.c.id, chunk, profile))
+            .where(membership(docs.c.epoch, epochs, profile), membership(entry.c.id, chunk, profile))
         )
         found.extend((await session.execute(stmt)).scalars())
     found.sort()
@@ -324,20 +372,22 @@ async def visible_lexicon(
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    epoch: int,
+    live: Sequence[int],
     stats: TermStatistics,
     terms: Sequence[str],
     view: Visibility,
 ) -> Lexicon:
     """The query's BM25 inputs counted over the rows *view* admits, and the blocks to score them.
 
-    ``N`` and the mean length come from the visible chunks of the epoch;
-    each term's ``df`` from its postings met with the visible chunks
-    among them. A term no visible row contains drops out, so it neither
-    scores nor appears in the export. Every block's stored bound was
-    taken under the corpus statistics, so it is rescaled —
-    ``max_weight * idf_v / idf_g * max(1, avg_dl_v / avg_dl_g)``, never
-    below the true bound — before the scorer prunes on it.
+    ``N`` and the mean length come from the visible chunks of the live set,
+    each counted once, since a live chunk has one doc row in it; each term's
+    ``df`` from its postings in every slot met with the visible chunks
+    among them, one idf a term. A term no visible row contains drops out, so
+    it neither scores nor appears in the export. Every block's stored bound
+    was taken under its slot's statistics, so it is rescaled —
+    ``max_weight * idf_v / idf_slot * max(1, avg_dl_v / avg_dl_base)``,
+    never below the true bound — before the scorer prunes on it; the union's
+    cap is every slot's stored ``df`` summed, never below the union.
 
     Cost profile, stated plainly: this reads every block of every query
     term and resolves the visibility of every chunk those blocks name —
@@ -345,36 +395,39 @@ async def visible_lexicon(
     with what the caller sees. Numbering chunks in path order, so a
     folder is one id range, is the known way to make it flat.
     """
-    n_docs, total_dl = await _visible_corpus(session, tables, profile, epoch, view)
+    n_docs, total_dl = await _visible_corpus(session, tables, profile, live, view, membership_budget)
     avg_dl = total_dl / n_docs if n_docs else 0.0
     probed = [term for term in terms if term in stats.terms]
-    by_term = await _all_blocks(session, tables, epoch, probed, membership_budget)
+    by_slot = await _all_blocks(session, tables, profile, live, probed, membership_budget)
     engine = extension()
     union: list[int] = []
     if probed:
-        groups = [[bytes(block.doc_ids)] for term in probed for block in by_term[term]]
-        union, _count = engine.candidate_ids(groups, None, sum(stats.terms[term].df for term in probed))
-    visible = sorted(await _visible_chunks(session, tables, profile, membership_budget, epoch, union, view))
+        groups = [[bytes(block.doc_ids)] for fetched in by_slot.values() for block in fetched]
+        cap = sum(row.df for term in probed for _epoch, row in stats.slots[term])
+        union, _count = engine.candidate_ids(groups, None, cap)
+    visible = sorted(await _visible_chunks(session, tables, profile, membership_budget, live, union, view))
     kept: dict[str, SummaryRow] = {}
     blocks: list[ScoreBlock] = []
     idfs: list[float] = []
+    lift = max(1.0, avg_dl / stats.avg_dl) if stats.avg_dl else 1.0
     for term in probed:
-        term_blocks = by_term[term]
-        df = engine.candidate_ids([[bytes(b.doc_ids)] for b in term_blocks], visible, 0)[1] if visible else 0
+        term_slots = [(row, by_slot.get((epoch, term), [])) for epoch, row in stats.slots[term]]
+        held = [[bytes(b.doc_ids)] for _row, fetched in term_slots for b in fetched]
+        df = engine.candidate_ids(held, visible, 0)[1] if visible else 0
         if not df:
             continue
-        row = stats.terms[term]
         term_idf = idf(df, n_docs)
-        scale = term_idf / row.idf * max(1.0, avg_dl / stats.avg_dl)
-        maxima = decode_summary(row.blocks).max_weights
-        kept[term] = SummaryRow(term, df, term_idf, row.max_weight * scale, row.blocks)
+        first = stats.terms[term]
+        kept[term] = SummaryRow(term, df, term_idf, first.max_weight * term_idf / first.idf * lift, first.blocks)
         position = len(idfs)
         idfs.append(term_idf)
-        blocks += [
-            ScoreBlock(position, maxima[b.block_no] * scale, bytes(b.doc_ids), bytes(b.tfs), bytes(b.dls))
-            for b in term_blocks
-        ]
-    return Lexicon(TermStatistics(kept, n_docs, avg_dl, stats.k1, stats.b), blocks, idfs, visible)
+        for row, fetched in term_slots:
+            maxima, scale = decode_summary(row.blocks).max_weights, term_idf / row.idf * lift
+            blocks += [
+                ScoreBlock(position, maxima[b.block_no] * scale, bytes(b.doc_ids), bytes(b.tfs), bytes(b.dls))
+                for b in fetched
+            ]
+    return Lexicon(TermStatistics(kept, n_docs, avg_dl, stats.k1, stats.b, {}), blocks, idfs, visible)
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +457,56 @@ async def _chunk_batches(
     final = batcher.flush()
     if final is not None:
         yield final
+
+
+async def _posted_batches(
+    session: AsyncSession, tables: VFSTables, ids: Sequence[ChunkId], profile: DialectProfile, membership_budget: int
+) -> AsyncIterator[list[tuple[int, str, str]]]:
+    """The chunk rows *ids* name, ascending, read by membership slices of the sorted ids, in byte-bounded batches."""
+    chunks = tables.chunks
+    batcher: ByteBatcher[tuple[int, str, str]] = ByteBatcher(_doc_size, _TOKENIZE_BATCH_BYTES)
+    for page in chunked(ids, membership_budget):
+        stmt = select(chunks.c.id, chunks.c.entry_id, chunks.c.content).where(membership(chunks.c.id, page, profile))
+        for row in (await session.execute(stmt.order_by(chunks.c.id))).all():
+            full = batcher.add((row.id, row.entry_id, row.content))
+            if full is not None:
+                yield full
+    final = batcher.flush()
+    if final is not None:
+        yield final
+
+
+async def _fed(
+    session: AsyncSession,
+    tables: VFSTables,
+    epoch: int,
+    executor: Executor,
+    builder: LexicalBuilder,
+    batches: AsyncIterator[list[tuple[int, str, str]]],
+) -> int:
+    """Feed each batch to *builder* off the loop and write its doc rows under *epoch*; the documents fed."""
+    fed = 0
+    async for batch in batches:
+        docs = [(chunk_id, content) for chunk_id, _entry_id, content in batch]
+        lengths = await call_offloaded(executor, partial(builder.add_docs, docs))
+        rows = [
+            {"epoch": epoch, "chunk_id": chunk_id, "entry_id": entry_id, "dl": dl}
+            for (chunk_id, entry_id, _content), dl in zip(batch, lengths, strict=True)
+        ]
+        for page in chunked(rows, _LEXICAL_INSERT_ROWS):
+            await bulk_insert(session, tables.lex_docs, list(page))
+        fed += len(batch)
+    return fed
+
+
+async def _drained(
+    session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor, builder: LexicalBuilder
+) -> None:
+    """The finished builder's summary rows, then its block rows, written under *epoch* in row-bounded inserts."""
+    while (summaries := await call_offloaded(executor, partial(_df_rows, builder, epoch))) is not None:
+        await bulk_insert(session, tables.lex_df, summaries)
+    while (blocks := await call_offloaded(executor, partial(_block_rows, builder, epoch))) is not None:
+        await bulk_insert(session, tables.lex_postings, blocks)
 
 
 def _doc_size(doc: tuple[int, str, str]) -> int:
@@ -458,61 +561,67 @@ def _packed_arms(
 
 
 async def _visible_corpus(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile, epoch: int, view: Visibility
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    live: Sequence[int],
+    view: Visibility,
+    membership_budget: int,
 ) -> tuple[int, int]:
-    """``(chunk count, total length)`` over the epoch's chunks whose entry the view admits.
+    """``(chunk count, total length)`` over the live set's chunks whose entry the view admits.
 
     One aggregate over the chunks joined to the visible entries where the
     dialect joins a range list, hinted where its planner would otherwise
     drive the join from the chunks; otherwise one aggregate when the
     predicate fits one statement, or each clause's rows read and
     deduplicated here, since clauses overlap and a per-clause count
-    would double one.
+    would double one. Each runs once per slice of the live set, summed.
     """
     docs, entry = tables.lex_docs, tables.entry
     aggregate = (func.count(), func.coalesce(func.sum(docs.c.dl), 0))
     visible = view.entries()
-    if visible is not None:
-        on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
-        stmt = select(*aggregate).select_from(on_visible).where(docs.c.epoch == epoch)
-        hint = derived_hint(profile, docs, "epoch", "entry_id")
-        if hint is not None:
-            stmt = stmt.prefix_with(hint, dialect=profile.name)
-        count, total = (await session.execute(stmt)).one()
-        return int(count), int(total)
     joined = docs.join(entry, entry.c.entry_id == docs.c.entry_id)
     clauses = view.clauses() or []
-    if len(clauses) == 1:
-        stmt = select(*aggregate).select_from(joined).where(docs.c.epoch == epoch, clauses[0].predicate)
-        count, total = (await session.execute(stmt)).one()
-        return int(count), int(total)
-    lengths: dict[ChunkId, int] = {}
-    for clause in clauses:
-        stmt = (
-            select(docs.c.chunk_id, docs.c.dl, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
-            .select_from(joined)
-            .where(docs.c.epoch == epoch, clause.predicate)
-        )
-        for mapping in (await session.execute(stmt)).mappings():
-            if view.holds(mapping, view.need):
-                lengths[mapping["chunk_id"]] = mapping["dl"]
-    return len(lengths), sum(lengths.values())
+    fields = (docs.c.chunk_id, docs.c.dl, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
+    hint = derived_hint(profile, docs, "epoch", "entry_id")
+    count, total, lengths = 0, 0, {}
+    for epochs in chunked(list(live), membership_budget):
+        in_live = membership(docs.c.epoch, epochs, profile)
+        if visible is not None:
+            on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
+            stmt = select(*aggregate).select_from(on_visible).where(in_live)
+            stmt = stmt if hint is None else stmt.prefix_with(hint, dialect=profile.name)
+        elif len(clauses) == 1:
+            stmt = select(*aggregate).select_from(joined).where(in_live, clauses[0].predicate)
+        else:
+            for clause in clauses:
+                rows = await session.execute(select(*fields).select_from(joined).where(in_live, clause.predicate))
+                lengths.update((m["chunk_id"], m["dl"]) for m in rows.mappings() if view.holds(m, view.need))
+            continue
+        slice_count, slice_total = (await session.execute(stmt)).one()
+        count, total = count + int(slice_count), total + int(slice_total)
+    return count + len(lengths), total + sum(lengths.values())
 
 
 async def _all_blocks(
-    session: AsyncSession, tables: VFSTables, epoch: int, terms: Sequence[str], membership_budget: int
-) -> dict[str, list[Any]]:
-    """Every block of each of *terms*, in block order."""
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    live: Sequence[int],
+    terms: Sequence[str],
+    membership_budget: int,
+) -> dict[tuple[int, str], list[Any]]:
+    """Every block of each of *terms* in every live segment, keyed by slot, in block order."""
     postings = tables.lex_postings
-    out: dict[str, list[Any]] = {term: [] for term in terms}
-    for probe in chunked(list(terms), membership_budget):
+    out: dict[tuple[int, str], list[Any]] = {}
+    for epochs, probe in live_chunks(live, list(terms), membership_budget):
         stmt = (
-            select(postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
-            .where(postings.c.epoch == epoch, postings.c.term.in_(probe))
-            .order_by(postings.c.term, postings.c.block_no)
+            select(*posting_columns(postings))
+            .where(membership(postings.c.epoch, epochs, profile), postings.c.term.in_(list(probe)))
+            .order_by(postings.c.epoch, postings.c.term, postings.c.block_no)
         )
         for row in await session.execute(stmt):
-            out[row.term].append(row)
+            out.setdefault((row.epoch, row.term), []).append(row)
     return out
 
 
@@ -521,18 +630,18 @@ async def _visible_chunks(
     tables: VFSTables,
     profile: DialectProfile,
     membership_budget: int,
-    epoch: int,
+    live: Sequence[int],
     chunk_ids: Sequence[ChunkId],
     view: Visibility,
 ) -> set[ChunkId]:
-    """The *chunk_ids* whose entry the view admits."""
+    """The *chunk_ids* whose entry the view admits, resolved through the live set's doc rows."""
     docs, entry = tables.lex_docs, tables.entry
     visible: set[ChunkId] = set()
-    for chunk in chunked(list(chunk_ids), membership_budget):
+    for epochs, chunk in live_chunks(live, list(chunk_ids), membership_budget):
         stmt = (
             select(docs.c.chunk_id, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
             .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
-            .where(docs.c.epoch == epoch, membership(docs.c.chunk_id, chunk, profile))
+            .where(membership(docs.c.epoch, epochs, profile), membership(docs.c.chunk_id, chunk, profile))
         )
         visible.update(m["chunk_id"] for m in (await session.execute(stmt)).mappings() if view.holds(m, view.need))
     return visible

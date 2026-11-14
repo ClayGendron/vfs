@@ -197,7 +197,20 @@ class TestBuildVFSTables:
             assert getattr(tables, attr).metadata is tables.metadata
         # The pointer and the lease live on a row of their own, apart from the admin lock's.
         assert not {"current_gram_epoch", "re" + "index_holder", "re" + "index_heartbeat"} & set(tables.meta.c.keys())
-        assert SCHEMA_FORMAT_VERSION == 25
+        assert set(tables.index_state.c.keys()) == {
+            "id",
+            "current_gram_epoch",
+            "index_generation",
+            "lease_holder",
+            "lease_heartbeat",
+        }
+        assert tables.index_state.c.index_generation.nullable is False
+        assert {"base_epoch", "published_at"} <= set(tables.gram_epochs.c.keys())
+        assert tables.entry.c.indexed_epoch.nullable is True
+        keys = {str(index.name): [column.name for column in index.columns] for index in tables.entry.indexes}
+        assert keys["ix_vfs_entries_index_pending"] == ["encoded", "chunked", "indexable", "deleted_at", "id"]
+        assert keys["ix_vfs_entries_render_status"] == ["render_status", "deleted_at", "id"]
+        assert SCHEMA_FORMAT_VERSION == 26
 
     def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:
         other = build_vfs_tables(schema="tenant")
@@ -315,7 +328,8 @@ class TestBuildVFSTables:
         default = tables.posting_list.c.encoding.default
         assert isinstance(default, ColumnDefault)
         assert default.arg == ENCODING_DELTA_VARINT
-        assert {"epoch", "format_version", "options_hash", "created_at"} == set(tables.gram_epochs.c.keys())
+        expected = {"epoch", "format_version", "options_hash", "created_at", "base_epoch", "published_at"}
+        assert expected == set(tables.gram_epochs.c.keys())
 
     def test_lexical_tables_are_epoch_scoped_and_keyed_for_term_runs(self, tables: VFSTables) -> None:
         # One term's blocks are a contiguous run under (epoch, term, block_no);

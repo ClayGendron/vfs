@@ -51,7 +51,7 @@ from vfs.models.media import RENDERED_STATUSES, SETTLED_STATUSES
 from vfs.rendering.seam import UNSUPPORTED_GENERATION, Rendering, RenderSource, units_from_json, units_to_json
 from vfs.results import Result
 from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, bulk_insert, chunked
-from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.membership import membership, rare
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -103,7 +103,7 @@ class RenderReport:
     ``failed`` (encrypted, corrupt, or the renderer refused), or
     ``cached`` (any verdict borrowed from a twin, text or failure).
     ``unrendered`` is the live bytes rows still pending when the stage
-    ended — nonzero only when a landing was skipped or refused.
+    ended, or in a refresh the rows its pages read that no landing reached.
     """
 
     rendered: int = 0
@@ -148,7 +148,13 @@ class RenderReport:
 
 
 async def select_render_dirty(
-    session: AsyncSession, tables: VFSTables, claims: Mapping[str, str], after: int, limit: int
+    session: AsyncSession,
+    tables: VFSTables,
+    claims: Mapping[str, str],
+    after: int,
+    limit: int,
+    profile: DialectProfile,
+    regenerate: bool = True,
 ) -> list[RenderRow]:
     """The next *limit* live bytes rows past *after* whose stamp pair misses, ascending id.
 
@@ -157,7 +163,8 @@ async def select_render_dirty(
     ``type → generation`` table; an unclaimed type expects the
     unsupported mark, so a type newly claimed re-dirties its rows), or
     was made from other bytes. The CASE is renderer-sized, never
-    corpus-sized.
+    corpus-sized. Without *regenerate* only the rows whose bytes a write
+    changed are read, ``render_status = 'pending'``, by a seek the *profile*'s hint keeps.
     """
     entry = tables.entry
     stale = or_(
@@ -166,9 +173,11 @@ async def select_render_dirty(
         entry.c.render_source_hash.is_(None),
         entry.c.render_source_hash != entry.c.content_hash,
     )
+    pending = rare(profile, entry.c.render_status == "pending")
     stmt = (
         select(entry.c.id, entry.c.entry_id, entry.c.name, entry.c.mime_type, entry.c.content_hash, entry.c.size_bytes)
-        .where(entry.c.source == "bytes", entry.c.deleted_at.is_(None), entry.c.id > after, stale)
+        .where(entry.c.source == "bytes", entry.c.deleted_at.is_(None), entry.c.id > after)
+        .where(stale if regenerate else pending)
         .order_by(entry.c.id)
         .limit(limit)
     )
@@ -359,6 +368,7 @@ async def land_renderings(
             lines=bindparam("b_lines"),
             chunked=False,
             encoded=False,
+            indexable=False,
             chunk_source_hash=None,
         )
     )
@@ -382,15 +392,12 @@ async def land_renderings(
     return Result(ops=("rebuild",))
 
 
-async def count_unrendered(session: AsyncSession, tables: VFSTables) -> int:
-    """Live bytes rows still pending — the ``unrendered`` count."""
+async def count_unrendered(session: AsyncSession, tables: VFSTables, profile: DialectProfile) -> int:
+    """Live bytes rows still pending — the rebuild's ``unrendered`` count, a seek the profile's hint keeps."""
     entry = tables.entry
-    stmt = (
-        select(func.count())
-        .select_from(entry)
-        .where(entry.c.source == "bytes", entry.c.deleted_at.is_(None), entry.c.render_status == "pending")
-    )
-    return (await session.execute(stmt)).scalar_one()
+    pending = rare(profile, entry.c.render_status == "pending")
+    stmt = select(func.count()).select_from(entry).where(entry.c.source == "bytes", entry.c.deleted_at.is_(None))
+    return (await session.execute(stmt.where(pending))).scalar_one()
 
 
 # ---------------------------------------------------------------------------

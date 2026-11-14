@@ -42,6 +42,10 @@ statements for one grep by the system actor and for one by each
 principal are recorded as the nominator built them, spelled with literal
 values and planned, so a pin can hold the partial callers' accesses to
 the entries table (:func:`entry_access`) to the whole caller's.
+
+After those, a root of its own takes a thousand files, ineligible and
+trashed shares among them, and a refresh's four selection reads are
+planned over it (:func:`refresh_readings`).
 """
 
 from __future__ import annotations
@@ -54,17 +58,20 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple, cast
 from unittest import mock
 
 from sqlalchemy import event, func, select, text
+from ulid import ULID
 
 from tests.support.partial_callers import RecordingSession
 from tests.support.server_schemas import server_schema
 from vfs.authority import Authority, Principal
 from vfs.models import Entry
-from vfs.models.rows import build_vfs_tables
+from vfs.models.rows import ULIDKey, build_vfs_tables
 from vfs.paths import Path
 from vfs.pattern_matching import ScopeChannel
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import grep as grep_module
-from vfs.storage.backends.database.embed import EMBED_PAGE_ROWS, unembedded_page
+from vfs.storage.backends.database import maintenance as maintenance_module
+from vfs.storage.backends.database.dialects import chunked
+from vfs.storage.backends.database.embed import EMBED_PAGE_ROWS, pass_unembedded, select_pass_page, unembedded_page
 from vfs.storage.backends.database.lexical import _SCAN_PAGE_ROWS, lexical_scan_page
 from vfs.storage.backends.database.pages import covered_chunk_page
 from vfs.storage.backends.database.reads import (
@@ -77,6 +84,7 @@ from vfs.storage.backends.database.reads import (
 
 if TYPE_CHECKING:
     import pathlib
+    from collections.abc import Callable
 
     from sqlalchemy import Select, Table
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,8 +100,6 @@ PLAN_BODY = "plan body"
 # The path index's name as every engine reports it, case aside.
 PATH_INDEX = "ix_vfs_entries_path"
 
-# The index of the rows awaiting the index, which a scan-tier statement may seek on any bound, case aside.
-DIRTY_INDEX = "ix_vfs_entries_encoded_kind"
 # The indexes it may seek on an equality alone: the caller's own rows (the owner floor) and paths.
 EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", PATH_INDEX})
 
@@ -101,6 +107,19 @@ EQUALITY_INDEXES = frozenset({"ix_vfs_entries_owner_id", PATH_INDEX})
 LEADING_COLUMNS: Final[dict[str, str]] = {
     index.name.lower(): next(iter(index.columns)).name for index in build_vfs_tables().entry.indexes if index.name
 }
+
+
+def dirty_indexes(table: Table) -> frozenset[str]:
+    """*table*'s indexes led by ``encoded``, case aside: a seek bounding that column reads the rows awaiting the index.
+
+    An index holding ``encoded`` past its first column is not one: it seeks
+    on its leading column, and a seek there reads whatever that column holds.
+    """
+    return frozenset(index.name.lower() for index in table.indexes if index.name and index.columns[0].name == "encoded")
+
+
+# The indexes of the rows awaiting the index, which a scan-tier statement may seek on any bound of their leading column.
+DIRTY_INDEXES: Final = dirty_indexes(build_vfs_tables().entry)
 
 # The arms' facts beside the root OR, as any dialect spells them: a name or ext test.
 FACTS_CONJUNCT = re.compile(r"\bvfs_entries\.(name|ext)\s*(=|LIKE)", re.IGNORECASE)
@@ -130,6 +149,31 @@ OVERLAY_ROOTS = 300
 
 OVERLAY_HALF_ROOTS = 1_000
 """The roots the half caller reads: about half the store's rows, the shape that most tempts a planner to its grants."""
+
+REFRESH_ROOT = "/refresh"
+REFRESH_FILES = 1_000
+"""The refresh readings' files: outside every plan root, a fifth of them too short to index, a tenth then trashed."""
+
+REFUSED_TEXTS = 2_000
+"""Refusal rows per model the refresh readings' store holds: hundreds of times one pass's chunk rows."""
+
+# Either chunk index led by ``entry_id`` serves the embed step's read; MariaDB and SQL Server pick the unique one.
+_CHUNK_ENTRY_KEYS: Final = "(?:ix_vfs_chunks_entry_id|uq_vfs_chunks_entry_index)"
+# A primary key as each engine names it: SQLite's row id or its key index, then Postgres, MariaDB, SQL Server, Oracle.
+_CHUNK_KEY: Final = r"(?:INTEGER PRIMARY KEY|vfs_chunks_pkey|PRIMARY|PK__vfs_chun\w*|SYS_C\d+)"
+_REFUSAL_KEY: Final = (
+    r"(?:sqlite_autoindex_vfs_embed_refusals_1|vfs_embed_refusals_pkey|PRIMARY|PK__vfs_embe\w*|SYS_C\d+)"
+)
+REFRESH_INDEXES: Final[dict[str, tuple[str, str]]] = {
+    "render": ("vfs_entries", "ix_vfs_entries_render_status"),
+    "slice": ("vfs_entries", "ix_vfs_entries_index_pending"),
+    "posting": ("vfs_entries", "ix_vfs_entries_index_pending"),
+    "kept": ("vfs_entries", "ix_vfs_entries_index_pending"),
+    "embed": ("vfs_chunks", _CHUNK_ENTRY_KEYS),
+    "refusals": ("vfs_embed_refusals", _REFUSAL_KEY),
+    "page": ("vfs_chunks", _CHUNK_KEY),
+}
+"""Each refresh reading's table and the index it must seek there, as every engine reports it, case aside."""
 
 OVERLAY_READER = "plan-reader"
 OVERLAY_HALF_READER = "plan-half-reader"
@@ -235,6 +279,89 @@ async def overlay_readings(storage: DatabaseStorage) -> OverlayPlans:
     )
 
 
+async def refresh_readings(storage: DatabaseStorage) -> dict[str, str]:
+    """The four reads a refresh issues to find its work, each spelled with literal values and planned.
+
+    Taken last, after the scan tier's readings, so the store's own
+    pending-row counts stay what those readings mean: :data:`REFRESH_FILES`
+    files under :data:`REFRESH_ROOT`, a fifth too short to index, posted by a
+    refresh, a tenth of them then trashed, five more written, the statistics
+    step, and one more refresh whose render read, slice read and two delta
+    scans are recorded as built.
+    """
+    system = Authority.system()
+    bodies = [
+        Entry(path=Path(f"{REFRESH_ROOT}/f{n:04}.txt"), content="ab" if n % 5 == 0 else f"{PLAN_BODY} {n}")
+        for n in range(REFRESH_FILES)
+    ]
+    assert (await storage.write(entries=bodies, parents=True, authority=system)).success is True
+    assert (await storage.refresh()).success is True
+    for n in range(0, REFRESH_FILES, 10):
+        assert (await storage.delete(path=Path(f"{REFRESH_ROOT}/f{n + 1:04}.txt"), authority=system)).success
+    later = [Entry(path=Path(f"{REFRESH_ROOT}/late{n}.txt"), content=f"{PLAN_BODY} late {n}") for n in range(5)]
+    assert (await storage.write(entries=later, authority=system)).success is True
+    await _refused_texts(storage)
+    await _gather_statistics(storage)
+    recorded: dict[str, Select[Any]] = {}
+    real_render, real_size = maintenance_module.select_render_dirty, indexing._size_read
+    real_scans = indexing._delta_scans
+
+    async def render(session: Any, *args: Any, **kwargs: Any) -> Any:
+        statements: list[Any] = []
+        rows = await real_render(cast("AsyncSession", RecordingSession(session, statements)), *args, **kwargs)
+        recorded.setdefault("render", statements[0])
+        return rows
+
+    def size(*args: Any, **kwargs: Any) -> Select[Any]:
+        return recorded.setdefault("slice", real_size(*args, **kwargs))
+
+    def scans(*args: Any, **kwargs: Any) -> tuple[Select[Any], Select[Any]]:
+        kept, posting = real_scans(*args, **kwargs)
+        recorded.update(kept=kept, posting=posting)
+        return kept, posting
+
+    with (
+        mock.patch.object(maintenance_module, "select_render_dirty", render),
+        mock.patch.object(indexing, "_size_read", size),
+        mock.patch.object(indexing, "_delta_scans", scans),
+    ):
+        assert (await storage.refresh()).success is True
+    recorded.update(await _embed_readings(storage, [f"{REFRESH_ROOT}/late{n}.txt" for n in range(5)]))
+    return {name: await _plan_text(storage, _literal(storage, statement)) for name, statement in recorded.items()}
+
+
+async def _refused_texts(storage: DatabaseStorage) -> None:
+    """:data:`REFUSED_TEXTS` refusal rows for the plan store's own model and as many for another: a table far
+    larger than any one pass's chunk rows, so a plan that walks it shows."""
+    refusals = storage._host.tables.embed_refusals
+    models = (_PLAN_REFUSAL_KEY, ("plan-store-other", -1, -1))
+    rows = [
+        {"content_hash": f"{side}{n:063x}", "model_id": model, "max_input_tokens": cap, "max_batch_tokens": batch}
+        for side, (model, cap, batch) in enumerate(models)
+        for n in range(REFUSED_TEXTS)
+    ]
+    async with storage._host.session_factory() as session:
+        for page in chunked(rows, 500):
+            await session.execute(refusals.insert(), page)
+        await session.commit()
+
+
+async def _embed_readings(storage: DatabaseStorage, paths: list[str]) -> dict[str, Any]:
+    """A refresh's embed reads over *paths*' entries as the backend issues them: the read of the pass's rows
+    without a vector, the probe of their texts' refusals, and the first page of ids."""
+    host, entry = storage._host, storage._host.tables.entry
+    async with host.session_factory() as session:
+        ids = list((await session.execute(select(entry.c.entry_id).where(entry.c.path.in_(paths)))).scalars())
+        statements: list[Any] = []
+        recording = cast("AsyncSession", RecordingSession(session, statements))
+        found = await pass_unembedded(
+            recording, host.tables, _PLAN_REFUSAL_KEY, host.profile, host.membership_budget, ids
+        )
+        await select_pass_page(recording, host.tables, host.profile, found.ids[:EMBED_PAGE_ROWS])
+    rows, refusals, page = statements
+    return {"embed": rows, "refusals": refusals, "page": page}
+
+
 async def pending_content_rows(storage: DatabaseStorage) -> int:
     """The live content rows awaiting the index: the rows the scan tier's dirty-row seek returns."""
     entry = storage._host.tables.entry
@@ -251,7 +378,8 @@ def entry_access(engine: str, plan: str) -> list[EntryAccess]:
 def bounded_access(access: EntryAccess) -> bool:
     """Whether *access* is a seek the scan tier's statement means, never a scan of the table or a walk of an index.
 
-    The seek may be of the ``(encoded, kind)`` index, the rows awaiting
+    The seek may be of an index led by ``encoded`` (:data:`DIRTY_INDEXES`:
+    ``(encoded, kind)``, and the refresh's pending index), the rows awaiting
     the index, or an equality seek of the owner index or the path index,
     the caller's own rows or paths. A range over a path index is refused:
     over a caller who reads half the store it visits half the table. A
@@ -260,7 +388,7 @@ def bounded_access(access: EntryAccess) -> bool:
     if not access.seeks or access.index is None:
         return False
     names = [name.strip().lower() for name in access.index.split(",")]
-    return all(name == DIRTY_INDEX or (name in EQUALITY_INDEXES and access.equality) for name in names)
+    return all(name in DIRTY_INDEXES or (name in EQUALITY_INDEXES and access.equality) for name in names)
 
 
 async def read_plan(storage: DatabaseStorage, *, facts: bool) -> PlanReading:
@@ -382,6 +510,7 @@ class PlanReadings(NamedTuple):
     overlay_whole: list[tuple[str, str]]
     overlay_partial: list[tuple[str, str]]
     overlay_half: list[tuple[str, str]]
+    refresh_plans: dict[str, str]
 
 
 def plan_readings(backend: PlanBackend, workdir: pathlib.Path) -> dict[str, Any]:
@@ -411,6 +540,7 @@ def decoded(data: dict[str, Any]) -> PlanReadings:
         [(statement, plan) for statement, plan in data["overlay_whole"]],
         [(statement, plan) for statement, plan in data["overlay_partial"]],
         [(statement, plan) for statement, plan in data["overlay_half"]],
+        data["refresh_plans"],
     )
 
 
@@ -440,6 +570,7 @@ async def _measured(url: str, schema: str | None) -> dict[str, Any]:
         }
         overlay = await overlay_readings(storage)
         readings.update(overlay_whole=overlay.whole, overlay_partial=overlay.partial, overlay_half=overlay.half)
+        readings["refresh_plans"] = await refresh_readings(storage)
         return readings
     finally:
         await storage.close()
@@ -505,9 +636,23 @@ async def _median_chunk_id(storage: DatabaseStorage) -> int:
 
 
 def _literal(storage: DatabaseStorage, statement: Select[Any]) -> str:
-    """*statement* spelled with literal values on the store's own dialect."""
+    """*statement* spelled with literal values on the store's own dialect, an entry id as the engine's key literal."""
     dialect = storage._host.engine.sync_engine.dialect
-    return str(statement.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
+    with mock.patch.object(ULIDKey, "literal_processor", _ulid_literal):
+        return str(statement.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
+
+
+def _ulid_literal(_type: ULIDKey, dialect: Any) -> Callable[[str], str]:
+    """An entry id spelled inline as the key the engine stores: a uuid on Postgres, sixteen bytes elsewhere."""
+
+    def spelled(value: str) -> str:
+        ulid = ULID.from_str(value)
+        if dialect.name == "postgresql":
+            return f"'{ulid.to_uuid()}'::uuid"
+        hexed = ulid.bytes.hex().upper()
+        return {"oracle": f"HEXTORAW('{hexed}')", "mssql": f"0x{hexed}"}.get(dialect.name, f"X'{hexed}'")
+
+    return spelled
 
 
 async def _plan_text(storage: DatabaseStorage, literal: str) -> str:

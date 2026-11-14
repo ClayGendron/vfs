@@ -1,7 +1,9 @@
 """The index maintenance pipeline and the index lease.
 
-The phases a full pass runs and the lease one pass holds at a time, written
-as functions over a :class:`MaintenanceContext` that the backend builds per pass.
+The phases the full pass and the incremental pass run and the lease one
+pass of either holds at a time, written as functions over a
+:class:`MaintenanceContext` that the backend builds per pass and that
+names the running verb.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from functools import partial
 from time import time
-from typing import TYPE_CHECKING, Any, Final, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, TypeVar, cast
 
 from sqlalchemy import or_, select, update
 from ulid import ULID
@@ -21,33 +23,38 @@ from vfs.offload import call_offloaded, offload_pool
 from vfs.paths import Path
 from vfs.rendering.seam import failure
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
-from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES
+from vfs.storage.backends.database.dialects import BLOB_PAGE_BYTES, chunked
 from vfs.storage.backends.database.edges import EdgeRebuildState, collect_edge_drift, repair_edge_drift
 from vfs.storage.backends.database.embed import (
     EMBED_PAGE_ROWS,
     EmbedReport,
+    EmbedRow,
     cached_vectors,
     clear_embeddings,
     count_refused,
     count_unembedded,
     embed_page,
+    pass_unembedded,
     read_identity,
     refusal_key,
     refused_paths,
+    select_pass_page,
     select_unembedded,
     write_vectors,
 )
+from vfs.storage.backends.database.flags import FlagRebuildState, collect_flag_drift, repair_flag_drift
 from vfs.storage.backends.database.indexing import (
     ChunkCursor,
-    FlagRebuildState,
+    DeltaState,
     RebuildState,
+    build_delta,
     build_epoch,
     chunk_dirty,
-    collect_flag_drift,
+    publish_delta,
     publish_epoch,
     reclaim_built_epoch,
     reclaim_epochs,
-    repair_flag_drift,
+    refresh_refusal,
     stale_generation,
 )
 from vfs.storage.backends.database.render import (
@@ -80,6 +87,8 @@ if TYPE_CHECKING:
     from vfs.models.rows import VFSTables
     from vfs.rendering.registry import RendererRegistry
     from vfs.rendering.seam import RenderLimits
+    from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.backends.database.embed import PassRows, RefusalKey
     from vfs.storage.backends.database.engine import EngineHost
     from vfs.storage.ranking import Ranker
 
@@ -104,10 +113,11 @@ class _RowsRunner(Protocol):
 
 @dataclass(frozen=True)
 class MaintenanceContext:
-    """The backend as the pipeline reads it: the host, the render and rank settings, the four runners.
+    """The backend as the pipeline reads it: the host, the render and rank settings, the four runners, the verb.
 
     ``ranker`` is a getter, not a value: the signal phase calls it when
     it starts, so a ranker set while a pass runs is the one that phase reads.
+    ``verb`` names the running pass in the shared phases' runner labels and seams.
     """
 
     host: EngineHost
@@ -120,6 +130,7 @@ class MaintenanceContext:
     execute_maintenance: _Runner
     execute_leased: _Runner
     rows: _RowsRunner
+    verb: Literal["rebuild", "refresh"]
 
 
 # ---------------------------------------------------------------------------
@@ -135,13 +146,36 @@ async def rebuild(context: MaintenanceContext) -> Result:
     if not claimed.success:
         return claimed
     async with _held_index_lease(context, tables, token) as lost:
-        result = await _rebuild_phases(context, tables, lost, token)
-        if not result.success or context.host.embedder is None:
-            return result
-        embedded = await _embed_step(context, tables, lost, token)
-        errors = [*result.errors, *embedded.errors]
-        extras = {**(result.model_extra or {}), **(embedded.model_extra or {})}
-        return Result(ops=result.ops, observations=result.observations, errors=errors, **extras)
+        return await _embedded(context, tables, lost, token, await _rebuild_phases(context, tables, lost, token))
+
+
+async def refresh(context: MaintenanceContext) -> Result:
+    """The incremental pass over *context*: what writes changed since the last pass, indexed into a delta.
+
+    It claims the lease the full pass holds, then refuses before any phase
+    writes, each record naming ``rebuild``, when no index is published yet
+    or the published one was built under other index options. Then the
+    render step over the bytes rows a write changed, the chunk pass over the
+    rows not yet chunked, the delta build of the dirty entries no live
+    segment holds, its publish under the base and the lease holder, and the
+    vectors. Cost, O(dirty): every read that finds its work seeks an index
+    over live rows, so a pass costs what was written since the last one,
+    never the corpus; a new renderer, link or chunk generation is the next
+    rebuild's work. No segment, edge, flag or signal pass runs. Every Result
+    answers under ``ops=("refresh",)``.
+    """
+    tables = context.host.tables
+    token = str(ULID())
+    claimed = await context.execute_maintenance("refresh", lambda session: claim_index_lease(session, tables, token))
+    if not claimed.success:
+        return _as_refresh(claimed)
+    async with _held_index_lease(context, tables, token) as lost:
+        refusal = await context.rows("refresh", partial(refresh_refusal, tables=tables))
+        if refusal is not None:
+            return Result(ops=("refresh",), errors=[refusal])
+        cursor = ChunkCursor()
+        result = await _refresh_phases(context, tables, lost, token, cursor)
+        return _as_refresh(await _embedded(context, tables, lost, token, result, cursor.resplit))
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +200,7 @@ async def claim_index_lease(session: AsyncSession, tables: VFSTables, token: str
         return Result(ops=("rebuild",))
     held = (await session.execute(select(lease.c.lease_heartbeat).where(lease.c.id == 1))).scalar_one_or_none()
     age = max(0, now - held) // 1000 if held is not None else 0
-    detail = f"a rebuild is already running (lease heartbeat {age}s ago); retry after it finishes"
+    detail = f"an index run is already running (lease heartbeat {age}s ago); retry after it finishes"
     return Result(ops=("rebuild",), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
 
 
@@ -262,7 +296,7 @@ async def _held_index_lease(context: MaintenanceContext, tables: VFSTables, toke
         beat.cancel()
         with suppress(asyncio.CancelledError):
             await beat
-        await context.execute_maintenance("rebuild", lambda session: release_index_lease(session, tables, token))
+        await context.execute_maintenance(context.verb, lambda session: release_index_lease(session, tables, token))
 
 
 async def _beat_index_lease(context: MaintenanceContext, tables: VFSTables, token: str, lost: asyncio.Event) -> None:
@@ -278,7 +312,7 @@ async def _beat_index_lease(context: MaintenanceContext, tables: VFSTables, toke
     while True:
         await asyncio.sleep(INDEX_LEASE_HEARTBEAT_SECONDS)
         beat = await context.execute_maintenance(
-            "rebuild", lambda session: heartbeat_index_lease(session, tables, token)
+            context.verb, lambda session: heartbeat_index_lease(session, tables, token)
         )
         if lease_lost(beat):
             lost.set()
@@ -378,9 +412,12 @@ async def _rebuild_phases(context: MaintenanceContext, tables: VFSTables, lost: 
 
 
 async def _render_step(
-    context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str
+    context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str, *, regenerate: bool = True
 ) -> tuple[Result | None, RenderReport]:
     """Render every dirty bytes row in short, resumable pages under the held lease.
+
+    Without *regenerate* the rows read are those whose bytes a write changed, so a renderer's new generation
+    waits for the next rebuild, and ``unrendered`` is the rows read that no landing reached, never a count.
 
     Pages advance by keyset and are cut by bytes in flight; each cut
     borrows the settled renderings its hashes already have, reads the
@@ -395,13 +432,24 @@ async def _render_step(
     claims = registry.claims()
     profile, budget = context.host.profile, context.host.membership_budget
     report = RenderReport()
+    verb = context.verb
     last = 0
+    read = 0
     while True:
-        select_page = partial(select_render_dirty, tables=tables, claims=claims, after=last, limit=RENDER_PAGE_ROWS)
-        page = await context.rows("rebuild", select_page)
+        select_page = partial(
+            select_render_dirty,
+            tables=tables,
+            claims=claims,
+            after=last,
+            limit=RENDER_PAGE_ROWS,
+            profile=profile,
+            regenerate=regenerate,
+        )
+        page = await context.rows(verb, select_page)
         if not page:
             break
         last = page[-1].id
+        read += len(page)
         for cut in byte_chunked(page, row_size, BLOB_PAGE_BYTES):
             lend = partial(
                 cached_renderings,
@@ -411,20 +459,23 @@ async def _render_step(
                 hashes=[row.content_hash for row in cut],
                 claims=claims,
             )
-            cached = await context.rows("rebuild", lend)
+            cached = await context.rows(verb, lend)
             wanted = [row.entry_id for row in cut if row.key(registry) not in cached]
             fetch = partial(load_blobs, tables=tables, profile=profile, membership_budget=budget, entry_ids=wanted)
-            blobs = await context.rows("rebuild", fetch) if wanted else {}
-            await seam("rebuild:before-render")
+            blobs = await context.rows(verb, fetch) if wanted else {}
+            await seam(f"{verb}:before-render")
             work = partial(render_rows, cut, blobs, registry, limits, cached)
             rendered = await call_offloaded(offload_pool(), work)
-            await seam("rebuild:before-render-land")
+            await seam(f"{verb}:before-render-land")
             if lost.is_set():
                 return lease_lost_result(), report
             refused = await _land(context, tables, rendered, report, token)
             if refused is not None:
                 return refused, report
-    report.unrendered = await context.rows("rebuild", partial(count_unrendered, tables=tables))
+    if regenerate:
+        report.unrendered = await context.rows(verb, partial(count_unrendered, tables=tables, profile=profile))
+    else:
+        report.unrendered = read - sum(report.as_extra().values())
     return None, report
 
 
@@ -445,7 +496,7 @@ async def _land(
 
     def fenced(batch: list[Rendered]) -> Awaitable[Result]:
         landing = partial(land, rendered=batch, report=report)
-        return context.execute_leased("rebuild", lease_fenced(tables, token, landing))
+        return context.execute_leased(context.verb, lease_fenced(tables, token, landing))
 
     outcome = await fenced(rendered)
     if lease_lost(outcome):
@@ -504,11 +555,69 @@ async def _gram_phases(context: MaintenanceContext, tables: VFSTables, lost: asy
     return with_notes(reclaimed, notes)
 
 
-async def _chunk_pass(context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
-    """The chunk pass, one leased and fenced slice a transaction; the committed slices' link counts make one
-    record, which rides on the pass's Result or on the first failing one."""
+async def _refresh_phases(
+    context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str, cursor: ChunkCursor
+) -> Result:
+    """The incremental pass's lease-held phases: the renderings, the chunk pass, then the delta's build and publish.
+
+    The render step reads only the rows whose bytes changed and the chunk
+    pass only the rows not yet chunked, so a pass after a renderer, link or
+    chunk generation change still reads what writes dirtied. The build
+    lists the kept entries and posts the rest; a pass with neither writes
+    nothing more, and one with only kept entries publishes their flips and
+    the generation alone. A publish that loses its race reclaims its own
+    delta, which no live set ever named.
+    """
+    rendered, report = await _render_step(context, tables, lost, token, regenerate=False)
+    if rendered is not None:
+        return rendered
+    result = await _chunk_pass(context, tables, lost, token, cursor)
+    if not result.success:
+        return result
+    notes = list(result.errors)
+    if lost.is_set():
+        return lease_lost_result()
     host = context.host
-    cursor = ChunkCursor(stale=await context.rows("rebuild", partial(stale_generation, tables=tables)))
+    state = DeltaState(token=token)
+    build = partial(build_delta, tables=tables, state=state, executor=offload_pool(), profile=host.profile)
+    result = await context.execute_maintenance("refresh", partial(build, membership_budget=host.membership_budget))
+    if not result.success:
+        return with_notes(result, notes)
+    if state.kept or state.posted:
+        await seam("refresh:before-publish")
+        if lost.is_set():
+            return lease_lost_result()
+        budgets = (host.profile, host.parameter_budget, host.membership_budget)
+        result = await context.execute_leased(
+            "refresh", lambda session: publish_delta(session, tables, *budgets, state)
+        )
+        if not result.success:
+            if state.epoch is not None:
+                reclaim = partial(reclaim_built_epoch, tables=tables, built=state.epoch)
+                await context.execute_maintenance("refresh", reclaim)
+            return with_notes(result, notes)
+    if report.unrendered:
+        detail = f"{report.unrendered} binaries are still pending a rendering; run refresh again"
+        warning = classified(
+            ErrorKind.unavailable, severity=Severity.warning, detail=detail, retryable=True, data=report.as_extra()
+        )
+        notes.append(warning)
+    extras = {"rendering": report.as_extra()} if report.touched else {}
+    return Result(ops=("refresh",), errors=notes, **extras)
+
+
+async def _chunk_pass(
+    context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str, cursor: ChunkCursor | None = None
+) -> Result:
+    """The chunk pass, one leased and fenced slice a transaction; the committed slices' link counts make one
+    record, which rides on the pass's Result or on the first failing one. Given the refresh's *cursor* the pass
+    skips the generation probe and its slices seek the rows not yet chunked, so a new generation waits for a
+    rebuild, and the cursor keeps the entries its slices split."""
+    host = context.host
+    regenerate = cursor is None
+    if cursor is None:
+        stale = await context.rows(context.verb, partial(stale_generation, tables=tables))
+        cursor = ChunkCursor(stale=stale)
     while not cursor.done:
         if lost.is_set():
             return with_notes(lease_lost_result(), cursor.links_record())
@@ -521,12 +630,38 @@ async def _chunk_pass(context: MaintenanceContext, tables: VFSTables, lost: asyn
             executor=offload_pool(),
             cursor=cursor,
             carry_embeddings=not host.embedding_stale,
+            verb=context.verb,
+            seek=not regenerate,
         )
-        sliced = await context.execute_leased("rebuild", lease_fenced(tables, token, work))
+        sliced = await context.execute_leased(context.verb, lease_fenced(tables, token, work))
         if not sliced.success:
             return with_notes(sliced, cursor.links_record())
         cursor.adopt()
-    return Result(ops=("rebuild",), errors=cursor.links_record())
+    return Result(ops=(context.verb,), errors=cursor.links_record())
+
+
+async def _embedded(
+    context: MaintenanceContext,
+    tables: VFSTables,
+    lost: asyncio.Event,
+    token: str,
+    result: Result,
+    entries: list[str] | None = None,
+) -> Result:
+    """*result*, then the embed step's records and counts beside its own when an embedder is configured: over
+    a refresh's *entries*, the entries its chunk pass split, their rows alone."""
+    if not result.success or context.host.embedder is None:
+        return result
+    embedded = await _embed_step(context, tables, lost, token, entries=entries)
+    errors = [*result.errors, *embedded.errors]
+    extras = {**(result.model_extra or {}), **(embedded.model_extra or {})}
+    return Result(ops=result.ops, observations=result.observations, errors=errors, **extras)
+
+
+def _as_refresh(result: Result) -> Result:
+    """*result* answered under the incremental pass's name: the lease's and shared phases' own label is ``rebuild``."""
+    extras = result.model_extra or {}
+    return Result(ops=("refresh",), observations=result.observations, errors=result.errors, **extras)
 
 
 async def _reconverge(
@@ -576,7 +711,13 @@ async def _signal_phase(context: MaintenanceContext, tables: VFSTables, lost: as
     return None if swept.success else swept
 
 
-async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
+async def _embed_step(
+    context: MaintenanceContext,
+    tables: VFSTables,
+    lost: asyncio.Event,
+    token: str,
+    entries: list[str] | None = None,
+) -> Result:
     """Fill every NULL embedding in short, resumable batches under the held lease.
 
     A stale stored identity is migrated first — every vector
@@ -589,15 +730,27 @@ async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyn
     input is recorded, skipped from then on, and named in one
     ``invalid`` warning, and the step moves on. The result's
     ``embedding`` extra reports the counts.
+
+    Given a refresh's *entries*, the entries its chunk pass split, the
+    step reads and counts only their rows (:func:`_embed_pages`), so it
+    costs what the pass chunked; a stale identity then answers a warning
+    naming ``rebuild``, never a migration, and the rows a transient
+    failure leaves NULL wait for the next rebuild, not the next run.
     """
     provider = context.host.embedder
     assert provider is not None
     identity = (provider.model_id, provider.dimension)
     # Re-read, never trusted from first touch: a rival's run may have stamped or migrated since.
-    context.host.embedding_identity = await context.rows("rebuild", partial(read_identity, tables=tables))
+    verb = context.verb
+    profile = context.host.profile
+    context.host.embedding_identity = await context.rows(verb, partial(read_identity, tables=tables))
     if context.host.embedding_identity is not None and context.host.embedding_identity != identity:
+        if entries is not None:
+            detail = "the embedding model changed since the last rebuild; run rebuild"
+            stale = classified(ErrorKind.unavailable, severity=Severity.warning, detail=detail, retryable=False)
+            return Result(ops=("rebuild",), errors=[stale])
         migration = lease_fenced(tables, token, lambda session: clear_embeddings(session, tables))
-        cleared = await context.execute_leased("rebuild", migration)
+        cleared = await context.execute_leased(verb, migration)
         if not cleared.success:
             return cleared
         context.host.embedding_identity = None
@@ -609,26 +762,11 @@ async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyn
     semaphore = asyncio.Semaphore(context.embed_concurrency)
     known: dict[str, list[float]] = {}
     budget = context.host.membership_budget
-    last = 0
-    while not lost.is_set():
-        unembedded = partial(
-            select_unembedded,
-            tables=tables,
-            after=last,
-            limit=EMBED_PAGE_ROWS,
-            key=key,
-            profile=context.host.profile,
-        )
-        page = await context.rows("rebuild", unembedded)
-        if not page:
-            break
-        last = page[-1].id
+    async for page in _embed_pages(context, tables, lost, key, entries):
         hashes = [row.content_hash for row in page if row.content_hash is not None and row.content_hash not in known]
-        lend = partial(
-            cached_vectors, tables=tables, profile=context.host.profile, hashes=hashes, membership_budget=budget
-        )
-        known.update(await context.rows("rebuild", lend))
-        await seam("rebuild:before-embed")
+        lend = partial(cached_vectors, tables=tables, profile=profile, hashes=hashes, membership_budget=budget)
+        known.update(await context.rows(verb, lend))
+        await seam(f"{verb}:before-embed")
         outcome = await embed_page(page, provider, known, report, semaphore, timeout=context.embed_timeout)
         # A recorded refusal stamps too: the canary proved the provider answers in its space.
         answered = bool(outcome.vectors or outcome.refused)
@@ -643,7 +781,7 @@ async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyn
             profile=context.host.profile,
             membership_budget=budget,
         )
-        written = await context.execute_leased("rebuild", lease_fenced(tables, token, land))
+        written = await context.execute_leased(verb, lease_fenced(tables, token, land))
         if not written.success:
             return written
         if answered:
@@ -660,12 +798,17 @@ async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyn
             break
     if lost.is_set():
         return lease_lost_result()
-    report.unembedded = await context.rows("rebuild", lambda session: count_unembedded(session, tables, key))
-    report.refused = await context.rows("rebuild", lambda session: count_refused(session, tables, key))
+    if entries is None:
+        report.unembedded = await context.rows(verb, lambda session: count_unembedded(session, tables, key))
+        report.refused = await context.rows(verb, lambda session: count_refused(session, tables, key))
+    else:
+        left = await context.rows(verb, _pass_read(tables, key, profile, budget, entries))
+        report.unembedded = len(left.ids)
+        report.refused = left.refused
     errors: list[ResultError] = []
     if refused_rows:
         paths = await context.rows(
-            "rebuild",
+            verb,
             partial(
                 refused_paths,
                 tables=tables,
@@ -688,16 +831,66 @@ async def _embed_step(context: MaintenanceContext, tables: VFSTables, lost: asyn
             )
         )
     if report.stopped_by is not None:
+        detail = f"embedding stopped after {report.requests} answered requests: {report.stopped_by}"
+        if entries is not None:
+            detail += "; the chunks this pass left without a vector are embedded by the next rebuild"
         errors.append(
             classified(
                 ErrorKind.unavailable,
                 severity=Severity.warning,
-                detail=f"embedding stopped after {report.requests} answered requests: {report.stopped_by}",
-                retryable=True,
+                detail=detail,
+                retryable=entries is None,
                 data={"provider": provider.model_id},
             )
         )
     return Result(ops=("rebuild",), errors=errors, embedding=report.as_extra(provider.model_id))
+
+
+async def _embed_pages(
+    context: MaintenanceContext,
+    tables: VFSTables,
+    lost: asyncio.Event,
+    key: RefusalKey,
+    entries: list[str] | None,
+) -> AsyncIterator[list[EmbedRow]]:
+    """The rows the embed step fills, a page at a time, until the lease is lost.
+
+    For the rebuild, the whole chunk table by keyset on chunk id. For a
+    refresh, its *entries*' rows alone: their ids read once by the keys
+    the pass holds (:func:`~vfs.storage.backends.database.embed.pass_unembedded`),
+    then paged by the primary key, so no read orders the chunk table or
+    leans on the order identity values were handed out in. The ids are
+    held in memory for the step, one per chunk row the pass wrote.
+    """
+    verb = context.verb
+    profile = context.host.profile
+    budget = context.host.membership_budget
+    if entries is None:
+        last = 0
+        while not lost.is_set():
+            read = partial(
+                select_unembedded, tables=tables, after=last, limit=EMBED_PAGE_ROWS, key=key, profile=profile
+            )
+            page = await context.rows(verb, read)
+            if not page:
+                return
+            last = page[-1].id
+            yield page
+        return
+    left = await context.rows(verb, _pass_read(tables, key, profile, budget, entries))
+    for ids in chunked(left.ids, EMBED_PAGE_ROWS):
+        if lost.is_set():
+            return
+        yield await context.rows(verb, partial(select_pass_page, tables=tables, profile=profile, chunk_ids=ids))
+
+
+def _pass_read(
+    tables: VFSTables, key: RefusalKey, profile: DialectProfile, budget: int, entries: list[str]
+) -> Callable[[AsyncSession], Awaitable[PassRows]]:
+    """The read of a refresh's own rows without a vector, as the session callable the context runs."""
+    return partial(
+        pass_unembedded, tables=tables, key=key, profile=profile, membership_budget=budget, entry_ids=entries
+    )
 
 
 def _now_ms() -> int:

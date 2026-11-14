@@ -33,6 +33,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
+from tests.support.database_helpers import _url
+from tests.support.oracles.postings import decode_postings
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.models import Edge, Entry
 from vfs.paths import Path
@@ -48,6 +50,14 @@ from vfs.storage.replace import EditOperation
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
 _RACE_KINDS = frozenset({ErrorKind.not_found, ErrorKind.conflict, ErrorKind.exists, ErrorKind.invalid})
+
+# On the engines that lock index keys: a session's own id, and whether that session now waits on a row lock.
+_SESSION_ID = {"mariadb": "SELECT CONNECTION_ID()", "mssql": "SELECT @@SPID"}
+_LOCK_WAIT = {
+    "mariadb": "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_mysql_thread_id = :id"
+    " AND trx_state = 'LOCK WAIT'",
+    "mssql": "SELECT COUNT(*) FROM sys.dm_exec_requests WHERE session_id = :id AND wait_type LIKE 'LCK_M_%'",
+}
 
 
 async def _audit(storage: DatabaseStorage) -> None:
@@ -1048,8 +1058,8 @@ class TestLeaseFence:
             publishes = _counted(monkeypatch, "publish_epoch")
             real_flip = indexing._flip_flags
 
-            async def beaten(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
-                await real_flip(session, *args, assignments=assignments)
+            async def beaten(session: Any, *args: Any, assignments: dict[str, Any], **stamp: Any) -> None:
+                await real_flip(session, *args, assignments=assignments, **stamp)
                 if assignments == {"encoded": True}:
                     await _beat(beater)
 
@@ -1071,8 +1081,8 @@ class TestLeaseFence:
             passes = _counted(monkeypatch, "chunk_dirty")
             real_flip = indexing._flip_flags
 
-            async def beaten(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
-                await real_flip(session, *args, assignments=assignments)
+            async def beaten(session: Any, *args: Any, assignments: dict[str, Any], **stamp: Any) -> None:
+                await real_flip(session, *args, assignments=assignments, **stamp)
                 if _eligible(assignments):
                     await _beat(beater)
 
@@ -1100,11 +1110,15 @@ class TestLeaseFence:
             relabels: list[int] = []
             holding = asyncio.Event()
             started: list[asyncio.Task[Result]] = []
+            engine, sessions = storage._host.profile.name, []
+            watcher = sibling(env_var, storage)
 
             async def relabel(session: Any) -> Result:
                 relabels.append(len(relabels))
                 tables = writer._host.tables
                 await hold_revision(session, tables)
+                if engine in _SESSION_ID:
+                    sessions.append((await session.execute(text(_SESSION_ID[engine]))).scalar_one())
                 holding.set()
                 stmt = update(tables.entry).where(tables.entry.c.entry_id == target).values(everyone_level=level)
                 await session.execute(stmt)
@@ -1112,12 +1126,14 @@ class TestLeaseFence:
 
             real_flip = indexing._flip_flags
 
-            async def crossed(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
-                await real_flip(session, *args, assignments=assignments)
+            async def crossed(session: Any, *args: Any, assignments: dict[str, Any], **stamp: Any) -> None:
+                await real_flip(session, *args, assignments=assignments, **stamp)
                 ours = _eligible(assignments) if phase == "chunk" else assignments == {"encoded": True}
                 if ours and not started:
                     started.append(asyncio.create_task(writer._execute_topology("posture", relabel)))
-                    await holding.wait()
+                    await _arrived(holding, started[0])
+                    if sessions:  # the relabel parked on the slice's row, holding whatever key it sought
+                        await asyncio.wait_for(_lock_waiting(watcher, engine, sessions[0]), 30)
 
             monkeypatch.setattr(indexing, "_flip_flags", crossed)
             try:
@@ -1125,6 +1141,7 @@ class TestLeaseFence:
                 written = await started[0]
             finally:
                 await writer.close()
+                await watcher.close()
             assert result.success is True, result.errors
             assert written.success is True, written.errors
             assert (len(attempts), len(relabels)) == (1, 1)
@@ -1169,10 +1186,11 @@ class TestLeaseFence:
                 pairs: list[tuple[str, int]],
                 *,
                 assignments: dict[str, Any],
+                **stamp: Any,
             ) -> None:
                 flip = partial(real_flip, session, entry, profile, parameter_budget, membership_budget)
                 if not _eligible(assignments):
-                    await flip(pairs, assignments=assignments)
+                    await flip(pairs, assignments=assignments, **stamp)
                     return
                 if not started:
                     started.append(asyncio.create_task(writer._execute_topology("write", crossing)))
@@ -1254,3 +1272,369 @@ class TestGenerationRedirtyLockScope:
                 await rival_engine.dispose()
             assert served == [True]
             await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
+# Generation consistency — a refresh's commits against a running read
+# ---------------------------------------------------------------------------
+
+
+def _unpinned(storage: DatabaseStorage) -> bool:
+    """Whether each statement of a read attempt sees the latest commit: no snapshot pin on the profile."""
+    return storage._host.profile.op_isolation is None
+
+
+async def _generation(storage: DatabaseStorage) -> tuple[int | None, int]:
+    index_state = storage._host.tables.index_state
+    async with storage._host.engine.connect() as conn:
+        row = (await conn.execute(select(index_state.c.current_gram_epoch, index_state.c.index_generation))).one()
+    return row._tuple()
+
+
+async def _live_epochs(storage: DatabaseStorage) -> tuple[int, ...]:
+    tables = storage._host.tables
+    async with storage._host.session_factory() as session:
+        return await indexing.live_set(session, tables, await indexing.current_epoch(session, tables))
+
+
+async def _segments_of(storage: DatabaseStorage, path: str) -> set[int]:
+    """The live segments whose ``vfs_lex_docs`` name *path*'s chunks."""
+    docs = storage._host.tables.lex_docs
+    live = await _live_epochs(storage)
+    entry_id = await _entry_id(storage, path)
+    async with storage._host.engine.connect() as conn:
+        epochs = set((await conn.execute(select(docs.c.epoch).where(docs.c.entry_id == entry_id))).scalars())
+    return epochs & set(live)
+
+
+async def _gram_posted(storage: DatabaseStorage, path: str, epoch: int) -> bool:
+    surrogate = (await _row(storage, path)).id
+    postings = storage._host.tables.posting_list
+    async with storage._host.engine.connect() as conn:
+        blobs = (await conn.execute(select(postings.c.postings).where(postings.c.epoch == epoch))).scalars()
+        return any(surrogate in decode_postings(bytes(blob)) for blob in blobs)
+
+
+class TestGenerationConsistency:
+    """A refresh moves the generation, never the pointer; readers redrive on it exactly where an engine shows it."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_delta_publish_mid_call_redrives_grep_and_search(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="quokka alpha")])).success
+            assert (await storage.rebuild()).success is True
+            rival = sibling(env_var, storage)
+            try:
+                for verb in ("grep", "search"):
+                    path = f"/{verb}.txt"
+                    assert (await storage.write(entries=[Entry(path=Path(path), content="wombat fresh")])).success
+                    before = await _generation(storage)
+                    seen, refreshed_once = _refreshing_once(rival)
+                    with seams.installed(f"{verb}:after-pointer-read", refreshed_once):
+                        found = storage.grep(pattern="wombat") if verb == "grep" else storage.search(query="wombat")
+                        result = await found
+                    after = await _generation(storage)
+                    assert (after[0], after[1]) == (before[0], before[1] + 1)
+                    assert len(seen) == (2 if _unpinned(storage) else 1), verb
+                    assert path in [str(o.path) for o in result.observations], verb
+            finally:
+                await rival.close()
+
+    async def test_a_delta_published_mid_full_build_fails_the_full_publish(self, tmp_path) -> None:
+        url = _url(tmp_path)
+        storage, rival = DatabaseStorage(url=url), DatabaseStorage(url=url)
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+        assert (await storage.rebuild()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/x.txt"), content="xylophone body")])).success
+        arrived, released = asyncio.Event(), asyncio.Event()
+
+        async def hold() -> None:
+            arrived.set()
+            await released.wait()
+
+        try:
+            with seams.installed("rebuild:before-publish", hold):
+                full = asyncio.create_task(storage.rebuild())
+                await _arrived(arrived, full)
+                built = (await _gram_rows(storage))[-1]
+                await _made_stale(storage)
+                assert (await rival.refresh()).success is True
+                released.set()
+                lost = await full
+        finally:
+            await rival.close()
+        [error] = lost.errors
+        assert (error.kind, error.retryable) == (ErrorKind.conflict, False)
+        assert error.message.endswith(f"rebuild lost the index publish race for epoch {built}"), error.message
+        assert all(epoch != built for epoch in await _gram_rows(storage))
+        live = await _live_epochs(storage)
+        for path in ("/a.txt", "/x.txt"):
+            assert (await _row(storage, path)).encoded is True
+            assert any([await _gram_posted(storage, path, epoch) for epoch in live]), path
+        await storage.close()
+
+    async def test_a_write_during_a_publish_keeps_one_posting(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+        assert (await storage.rebuild()).success is True
+        for verb, path in (("refresh", "/p.txt"), ("rebuild", "/q.txt")):
+            entries = [Entry(path=Path(path), content=f"{path} body words")]
+            assert (await storage.write(entries=entries)).success
+            with seams.installed(f"{verb}:before-publish", _written_once(storage, f"{verb}:before-publish", entries)):
+                assert (await getattr(storage, verb)()).success is True
+            row = await _row(storage, path)
+            assert row.encoded is False and row.indexed_epoch == max(await _live_epochs(storage))
+            epochs = await _gram_rows(storage)
+            assert (await storage.refresh()).success is True
+            assert await _gram_rows(storage) == epochs
+            assert (await _row(storage, path)).encoded is True
+            assert len(await _segments_of(storage, path)) == 1
+        await storage.close()
+
+    @pytest.mark.parametrize("case", ["a", "b", "c"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_refresh_redrives_a_search_as_decision_30_counts(self, env_var: str, case: str) -> None:
+        files = {
+            "/notes.txt": "tokens tokens tokens here",
+            "/a.txt": "tokens tokens in a",
+            "/b.txt": "tokens in b",
+            "/c.txt": "tokens in c",
+        }
+        async with server_storage(env_var) as storage:
+            entries = [Entry(path=Path(p), content=c) for p, c in files.items()]
+            assert (await storage.write(entries=entries)).success
+            assert (await storage.rebuild()).success is True
+            storage._host._retry_base_delay = 0.0
+            rival = sibling(env_var, storage)
+            attempts: list[int] = []
+            held, release = asyncio.Event(), asyncio.Event()
+            background: list[asyncio.Task[Result]] = []
+            windows: list[int] = []
+
+            async def at_pointer() -> None:
+                attempts.append(len(attempts))
+                if case == "c":
+                    fresh = [Entry(path=Path(f"/n{len(attempts)}.txt"), content="tokens fresh")]
+                    assert (await rival.write(entries=fresh)).success
+                    assert (await rival.refresh()).success is True
+                elif case == "b" and background and not release.is_set():
+                    release.set()
+                    assert (await background[0]).success is True
+
+            async def at_texts() -> None:
+                if windows:
+                    return
+                windows.append(1)
+                if case == "a":
+                    rewritten = [Entry(path=Path("/notes.txt"), content="tokens rewritten")]
+                    assert (await rival.write(entries=rewritten)).success
+                    assert (await rival.refresh()).success is True
+                elif case == "b":
+                    overwritten = [Entry(path=Path("/notes.txt"), data=b"\x01\x02bytes")]
+                    assert (await rival.write(entries=overwritten)).success
+                    assert (await rival.write(entries=[Entry(path=Path("/new.txt"), content="tokens new")])).success
+                    background.append(asyncio.create_task(rival.refresh()))
+                    await held.wait()
+
+            async def at_publish() -> None:
+                held.set()
+                await release.wait()
+
+            try:
+                with (
+                    seams.installed("search:after-pointer-read", at_pointer),
+                    seams.installed("search:before-chunk-texts", at_texts),
+                    seams.installed("refresh:before-publish", at_publish if case == "b" else _noop),
+                ):
+                    result = await storage.search(query="tokens")
+                    release.set()
+                    for task in background:
+                        await task
+            finally:
+                await rival.close()
+            paths = [str(o.path) for o in result.observations]
+            if not _unpinned(storage):
+                assert len(attempts) == 1, (case, attempts)
+            elif case == "a":
+                assert len(attempts) == 1 and result.success, result.errors
+                [notes] = [o for o in result.observations if str(o.path) == "/notes.txt"]
+                assert len(notes.matches or []) == 1 and (notes.matches or [])[0].content is None
+            elif case == "b":
+                assert len(attempts) == 3 and "/notes.txt" not in paths and "/new.txt" in paths, (attempts, paths)
+            else:
+                assert len(attempts) == 4 and result.success is False
+                [error] = result.errors
+                assert (error.kind, error.retryable) == (ErrorKind.conflict, True)
+                ending = "search kept losing to concurrent changes: the index generation moved mid-search"
+                assert error.message.endswith(ending), error.message
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_lapsed_refresh_chunk_pass_never_strands_the_holders_delta(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+            assert (await storage.rebuild()).success is True
+            assert (await storage.write(entries=[Entry(path=Path("/n.txt"), content="narwhal body")])).success
+            holder = sibling(env_var, storage)
+            split, released, holding, published = asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Event()
+            arrivals: list[str] = []
+
+            async def lapsed_at_the_split() -> None:
+                if not split.is_set():
+                    split.set()
+                    await released.wait()
+
+            async def at_the_publish() -> None:
+                arrivals.append("lapsed" if released.is_set() else "holder")
+                if not released.is_set():
+                    holding.set()
+                    await published.wait()
+
+            try:
+                with (
+                    seams.installed("refresh:before-chunk-split", lapsed_at_the_split),
+                    seams.installed("refresh:before-publish", at_the_publish),
+                ):
+                    first = asyncio.create_task(storage.refresh())
+                    await _arrived(split, first)
+                    await _made_stale(storage)
+                    second = asyncio.create_task(holder.refresh())
+                    await _arrived(holding, second)
+                    released.set()
+                    lapsed = await first
+                    published.set()
+                    won = await second
+            finally:
+                await holder.close()
+            assert maintenance_module.lease_lost(lapsed), lapsed.errors
+            assert arrivals == ["holder"]
+            assert won.success is True, won.errors
+            delta = max(await _live_epochs(storage))
+            assert (await _row(storage, "/n.txt")).indexed_epoch == delta
+            docs = storage._host.tables.lex_docs
+            entry_id = await _entry_id(storage, "/n.txt")
+            stmt = select(docs.c.chunk_id).where(docs.c.entry_id == entry_id, docs.c.epoch == delta)
+            async with storage._host.engine.connect() as conn:
+                named = set((await conn.execute(stmt)).scalars())
+            assert named == await _chunk_ids(storage, "/n.txt")
+            assert [str(o.path) for o in (await storage.search(query="narwhal")).observations] == ["/n.txt"]
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_write_between_a_refreshs_two_reads_never_splits_an_entry(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            files = {"/a.txt": "apricot body", "/b.txt": "bravo body", "/d/x.txt": "xylophone body"}
+            entries = [Entry(path=Path(p), content=c) for p, c in files.items()]
+            assert (await storage.write(entries=entries, parents=True)).success
+            assert (await storage.rebuild()).success is True
+            changed = [
+                Entry(path=Path("/a.txt"), content="apricot changed"),
+                Entry(path=Path("/d/x.txt"), content="xylophone changed"),
+            ]
+            assert (await storage.write(entries=changed)).success
+            assert (await storage.delete(path=Path("/b.txt"))).success
+            rival = sibling(env_var, storage)
+
+            async def rivals() -> None:
+                seams.clear("refresh:before-lexical")
+                assert (await rival.write(entries=[Entry(path=Path("/a.txt"), content="apricot changed")])).success
+                assert (await rival.restore(path=Path("/b.txt"))).success
+                assert (await rival.delete(path=Path("/d"))).success
+
+            try:
+                with seams.installed("refresh:before-lexical", rivals):
+                    assert (await storage.refresh()).success is True
+            finally:
+                await rival.close()
+            delta = max(await _live_epochs(storage))
+            docs = storage._host.tables.lex_docs
+            for path in ("/a.txt", "/b.txt", "/d/x.txt"):
+                entry_id = await _entry_id(storage, path)
+                async with storage._host.engine.connect() as conn:
+                    stmt = select(docs.c.chunk_id).where(docs.c.entry_id == entry_id, docs.c.epoch == delta)
+                    lexical = bool((await conn.execute(stmt)).first())
+                grams = await _gram_posted(storage, path, delta)
+                assert grams == lexical, path
+                if (await _row(storage, path)).encoded:
+                    assert grams and lexical, path
+            assert (await storage.refresh()).success is True
+            assert len(await _segments_of(storage, "/b.txt")) == 1
+            assert [str(o.path) for o in (await storage.search(query="apricot")).observations] == ["/a.txt"]
+            assert (await storage.restore(path=Path("/d"))).success
+            assert (await storage.refresh()).success is True
+            assert [str(o.path) for o in (await storage.search(query="xylophone")).observations] == ["/d/x.txt"]
+            assert [str(o.path) for o in (await storage.grep(pattern="xylophone")).observations] == ["/d/x.txt"]
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_heartbeat_inside_the_delta_publish_never_fails_it(self, env_var: str, monkeypatch) -> None:
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+            assert (await storage.rebuild()).success is True
+            assert (await storage.write(entries=[Entry(path=Path("/b.txt"), content="bravo body")])).success
+            beater = sibling(env_var, storage)
+            publishes = _counted(monkeypatch, "publish_delta")
+            real_flip = indexing._flip_flags
+
+            async def beaten(session: Any, *args: Any, assignments: dict[str, Any], **stamp: Any) -> None:
+                await real_flip(session, *args, assignments=assignments, **stamp)
+                if assignments == {"encoded": True}:
+                    await _beat(beater)
+
+            monkeypatch.setattr(indexing, "_flip_flags", beaten)
+            try:
+                result = await storage.refresh()
+            finally:
+                await beater.close()
+            assert result.success is True, result.errors
+            assert len(publishes) == 1
+            assert (await _row(storage, "/b.txt")).encoded is True
+
+
+async def _noop() -> None:
+    return None
+
+
+async def _lock_waiting(watcher: DatabaseStorage, engine: str, session_id: int) -> None:
+    """Return once the server reports *session_id* waiting on a row lock, read on *watcher*'s own connection."""
+    query = text(_LOCK_WAIT[engine])
+    async with watcher._host.engine.connect() as conn:
+        while not (await conn.execute(query, {"id": session_id})).scalar_one():
+            await conn.rollback()  # each poll reads the server's live lock table, never a held snapshot
+
+
+async def _arrived(event: asyncio.Event, *running: asyncio.Task[Any]) -> None:
+    """Wait for *event*; fail at once, never hang, when a task in *running* ends before it is set."""
+    waiter = asyncio.ensure_future(event.wait())
+    done, _pending = await asyncio.wait({waiter, *running}, return_when=asyncio.FIRST_COMPLETED)
+    if waiter not in done:
+        waiter.cancel()
+        ended = [task.result() for task in running if task.done()]
+        raise AssertionError(f"a run ended before it reached its seam: {ended}")
+
+
+def _refreshing_once(rival: DatabaseStorage) -> tuple[list[int], Any]:
+    """A seam handler counting its arrivals that runs one refresh on *rival* at the first; the count."""
+    seen: list[int] = []
+
+    async def refreshed_once() -> None:
+        seen.append(len(seen))
+        if len(seen) == 1:
+            assert (await rival.refresh()).success is True
+
+    return seen, refreshed_once
+
+
+def _written_once(storage: DatabaseStorage, name: str, entries: list[Entry]) -> Any:
+    """A seam handler that uninstalls itself and writes *entries* through *storage*."""
+
+    async def written() -> None:
+        seams.clear(name)
+        assert (await storage.write(entries=entries)).success
+
+    return written
+
+
+async def _gram_rows(storage: DatabaseStorage) -> list[int]:
+    epochs = storage._host.tables.gram_epochs
+    async with storage._host.engine.connect() as conn:
+        return sorted((await conn.execute(select(epochs.c.epoch))).scalars())

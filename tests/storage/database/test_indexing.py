@@ -33,6 +33,7 @@ from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database import DatabaseStorage, indexing
+from vfs.storage.backends.database import flags as flags_module
 from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
 from vfs.storage.backends.database.engine import EngineHost
@@ -236,7 +237,7 @@ class TestRebuild:
         assert maintenance_module.lease_lost(lost), lost.errors
         assert [dirty.ops, clean.ops, lost.ops, refused.ops] == [("rebuild",)] * 4
         assert "the index lease expired mid-run" in lost.errors[0].message
-        assert "a rebuild is already running" in refused.errors[0].message
+        assert "an index run is already running" in refused.errors[0].message
         assert lost.errors[0].data == {"index_lease": "lost"}
         assert labels == {"rebuild"}
         await storage.close()
@@ -358,7 +359,7 @@ class TestRebuild:
             conn = await session.connection(execution_options={"vfs_writer": True})
             await conn.execute(update(entry).where(predated).values(encoded=False))
             await session.commit()
-        collect = indexing.collect_flag_drift
+        collect = flags_module.collect_flag_drift
 
         async def rekinded(session, tables, state) -> Result:
             result = await collect(session, tables, state)
@@ -389,7 +390,7 @@ class TestRebuild:
             await conn.execute(update(entry).where(entry.c.path == "/a").values(encoded=False))
             await session.commit()
         lost = asyncio.Event()
-        collect = indexing.collect_flag_drift
+        collect = flags_module.collect_flag_drift
 
         async def poisoned(session, tables, state) -> Result:
             lost.set()
@@ -448,14 +449,16 @@ class TestRebuild:
         real_flip = indexing._flip_flags
         written: list[str] = []
 
-        async def written_after_the_read(session: AsyncSession, entry: Any, *args: Any, assignments: Any) -> None:
+        async def written_after_the_read(
+            session: AsyncSession, entry: Any, *args: Any, assignments: Any, **stamp: Any
+        ) -> None:
             # A write after the slice's dirty read bumps the version, as an overwrite does; staged in-session.
             pairs = args[-1]
             if pairs and not written:
                 written.append(pairs[0][0])
                 bump = update(entry).values(version=entry.c.version + 1)
                 await session.execute(bump.where(entry.c.entry_id == pairs[0][0]))
-            await real_flip(session, entry, *args, assignments=assignments)
+            await real_flip(session, entry, *args, assignments=assignments, **stamp)
 
         monkeypatch.setattr(indexing, "_flip_flags", written_after_the_read)
         assert (await storage.rebuild()).success is True
@@ -1131,16 +1134,16 @@ class TestFlipArms:
 
     async def test_every_flip_spelling_lands_only_on_a_live_row(self) -> None:
         """Guards: ``deleted_at IS NULL`` dropped from any one spelling's guard — the VALUES join, the
-        row-constructor ``IN`` or the executemany floor — so a tombstoned row is flipped."""
+        row-constructor ``IN``'s CASE or the executemany floor — so a tombstoned row is flipped."""
         entry = build_vfs_tables().entry
         pairs = [("01A", 1), ("01B", 2)]
-        # Per spelling: (binds in the compiled statement, executemany rows), as before the liveness term.
+        # Per spelling: where the liveness term sits, (binds in the compiled statement, executemany rows).
         spellings = (
-            (POSTGRESQL, _values_join_dialect(), [(5, None)]),
-            (SQLITE, sqlite.dialect(), [(2, None)]),
-            (GENERIC, postgresql.dialect(), [(3, 2)]),
+            (POSTGRESQL, _values_join_dialect(), "where", [(5, None)]),
+            (SQLITE, sqlite.dialect(), "case", [(3, None)]),  # the ids that key the unique index beside the pairs
+            (GENERIC, postgresql.dialect(), "where", [(3, 2)]),
         )
-        for profile, dialect, shape in spellings:
+        for profile, dialect, place, shape in spellings:
             session = _RecordingSession(dialect)
             await indexing._flip_flags(
                 cast("AsyncSession", session), entry, profile, 2_000, 1_000, pairs, assignments={"encoded": True}
@@ -1148,8 +1151,9 @@ class TestFlipArms:
             seen = []
             for stmt, params in session.calls:
                 compiled = stmt.compile(dialect=dialect)
-                where = str(compiled).partition(" WHERE ")[2]
-                assert "vfs_entries.deleted_at IS NULL" in where, (profile.name, str(compiled))
+                assignment, _where, where = str(compiled).partition(" WHERE ")
+                guarded = "CASE WHEN (vfs_entries.deleted_at IS NULL) THEN" in assignment
+                assert guarded if place == "case" else "vfs_entries.deleted_at IS NULL" in where, str(compiled)
                 seen.append((len(compiled.params), None if params is None else len(params)))
             assert seen == shape, profile.name
 
@@ -2052,3 +2056,186 @@ class TestSplitBatchBudget:
         # are declared twins; an insert's payload is far under a feed's.
         assert indexing._SPLIT_BATCH_BYTES == indexing._EXTRACT_BATCH_BYTES
         assert 0 < indexing._POSTING_BATCH_BYTES < indexing._EXTRACT_BATCH_BYTES
+
+
+async def _stamp(storage: DatabaseStorage, path: str) -> int | None:
+    entry = storage._host.tables.entry
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(entry.c.indexed_epoch).where(entry.c.path == path))).scalar_one()
+
+
+class TestIndexedStamp:
+    """``indexed_epoch`` names the published segment holding an entry's current chunks, or nothing."""
+
+    async def test_the_full_publish_stamps_every_covered_entry(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        files = [Entry(path=Path(f"/f{n}.txt"), content=f"stamped body {n}") for n in range(3)]
+        assert (await storage.write(entries=[*files, Entry(path=Path("/ab.txt"), content="ab")])).success is True
+        assert (await storage.rebuild()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/f0.txt"), content="stamped other")])).success
+        assert (await storage.rebuild()).success is True
+        current = await _epoch(storage)
+        assert [await _stamp(storage, f"/f{n}.txt") for n in range(3)] == [current] * 3
+        assert await _stamp(storage, "/ab.txt") is None  # never indexable, never posted
+        await storage.close()
+
+    async def test_a_missed_flip_is_stamped_all_the_same(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success is True
+
+        async def overwrite() -> None:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+
+        with installed("rebuild:before-publish", overwrite):
+            assert (await storage.rebuild()).success is True
+        assert await _flags(storage, "/a.txt") == (False, False)
+        assert await _stamp(storage, "/a.txt") == await _epoch(storage)
+        await storage.close()
+
+    async def test_a_re_split_clears_the_stamp(self, tmp_path, monkeypatch) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/b.txt"), content="bravo body")])).success is True
+        assert (await storage.rebuild()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")])).success
+        assert (await storage.write(entries=[Entry(path=Path("/b.txt"), content="bravo body")])).success
+        seen: dict[str, int | None] = {}
+
+        async def at_the_flip() -> None:
+            seen.update({path: await _stamp(storage, path) for path in ("/a.txt", "/b.txt")})
+
+        stop = RuntimeError("stopped after the slice")
+
+        async def stopped(*args: Any, **kwargs: Any) -> Result:
+            raise stop
+
+        with installed("rebuild:before-chunk-flip", at_the_flip):
+            monkeypatch.setattr(maintenance_module, "build_epoch", stopped)
+            with pytest.raises(RuntimeError):
+                await storage.rebuild()
+        assert seen == {"/a.txt": 1, "/b.txt": 1}
+        assert (await _stamp(storage, "/a.txt"), await _stamp(storage, "/b.txt")) == (None, 1)
+        await storage.close()
+
+    async def test_live_deltas_are_work_pending(self, tmp_path) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success is True
+        assert (await storage.rebuild()).success is True
+        tables = storage._host.tables
+        async with storage._host.session_factory() as session:
+            assert await indexing._work_pending(session, tables, 1) is False
+        assert (await storage.write(entries=[Entry(path=Path("/b.txt"), content="bravo body")])).success is True
+        assert (await storage.refresh()).success is True
+        async with storage._host.session_factory() as session:
+            assert await indexing._work_pending(session, tables, 1) is True
+        await storage.close()
+
+    async def test_every_flip_spelling_stamps_by_id_and_guards_the_flag(self) -> None:
+        """Guards: the stamp following the version or liveness guard, or the guard leaving the ``encoded`` CASE."""
+        entry = build_vfs_tables().entry
+        pairs = [("01A", 1), ("01B", 2), ("01C", 3)]
+        # The row-constructor form binds three values a row: six binds take two rows a statement.
+        spellings = (
+            (POSTGRESQL, _values_join_dialect(), 2_000, 1),
+            (SQLITE, sqlite.dialect(), 6, 2),
+            (GENERIC, postgresql.dialect(), 2_000, 1),
+        )
+        for profile, dialect, budget, statements in spellings:
+            session = _RecordingSession(dialect)
+            await indexing._flip_flags(
+                cast("AsyncSession", session),
+                entry,
+                profile,
+                2_000,
+                budget,
+                pairs,
+                assignments={"encoded": True},
+                stamp={"indexed_epoch": 7},
+            )
+            assert len(session.calls) == statements, profile.name
+            for stmt, _params in session.calls:
+                sql = str(stmt.compile(dialect=dialect))
+                setting, _, where = sql.partition(" WHERE ")
+                assert "indexed_epoch=" in setting.replace(" ", "") and "CASE WHEN" in setting, (profile.name, sql)
+                assert "deleted_at IS NULL" in setting and "deleted_at" not in where, (profile.name, sql)
+                assert "version" not in where, (profile.name, sql)
+
+
+class TestRareTerm:
+    def test_only_sqlite_is_told_a_term_is_rare(self) -> None:
+        """Guards: the hint dropped from SQLite, whose planner then walks the primary key under the limit, or
+        rendered on an engine that has no such function."""
+        tables = build_vfs_tables()
+        terms = [tables.entry.c.deleted_at.is_(None), ~tables.entry.c.chunked]
+        for profile, dialect, expected in (
+            (SQLITE, sqlite.dialect(), "unlikely(vfs_entries.encoded = 0) AND vfs_entries.indexable = 0"),
+            (POSTGRESQL, postgresql.dialect(), "AND NOT vfs_entries.encoded AND NOT vfs_entries.indexable"),
+            (MSSQL, mssql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
+            (MARIADB, mysql.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
+            (ORACLE, oracle.dialect(), "AND vfs_entries.encoded = 0 AND vfs_entries.indexable = 0"),
+        ):
+            read = indexing._size_read(tables, profile, terms, past=0, wanted=4, seek=True)
+            sql = " ".join(str(read.compile(dialect=dialect)).split())
+            assert expected in sql, (profile.name, sql)
+            assert "unlikely" not in sql or profile.rarity_hint == "unlikely", (profile.name, sql)
+
+
+class TestGenerationLaw:
+    async def test_a_restore_across_a_bump_is_posted_until_the_rebuild_re_splits_it(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        files = [Entry(path=Path(p), content=c) for p, c in (("/a.txt", "alpha body"), ("/t.txt", "trashed body"))]
+        assert (await storage.write(entries=files)).success is True
+        assert (await storage.rebuild()).success is True
+        assert (await storage.delete(path=Path("/t.txt"))).success is True
+        real = chunk_generation
+        monkeypatch.setattr(indexing, "chunk_generation", lambda: real() + "-bumped")
+        assert (await storage.rebuild()).success is True
+        held = await _chunk_ids(storage, "/t.txt")
+        assert (await storage.restore(path=Path("/t.txt"))).success is True
+        split: list[list[str]] = []
+        real_split = indexing._assess_and_split
+
+        def counting(rows: Any, *args: Any) -> Any:
+            split.append([row.path for row in rows])
+            return real_split(rows, *args)
+
+        monkeypatch.setattr(indexing, "_assess_and_split", counting)
+        assert (await storage.refresh()).success is True
+        assert split == []
+        delta = await _scalar_max_epoch(storage)
+        assert await _chunk_ids(storage, "/t.txt") == held
+        assert await _stamp(storage, "/t.txt") == delta
+        assert await _segments_holding(storage, held) == {delta}
+        assert (await storage.rebuild()).success is True
+        assert split == [["/t.txt"]]
+        assert not await _chunk_ids(storage, "/t.txt") & held
+        assert await _stamp(storage, "/t.txt") == await _epoch(storage)
+        assert await _stranded_ids(storage) == 0
+        monkeypatch.setattr(indexing, "link_generation", lambda: "a-newer-extractor")
+        stamps = {path: await _stamp(storage, path) for path in ("/a.txt", "/t.txt")}
+        split.clear()
+        assert (await storage.refresh()).success is True
+        assert split == [] and {path: await _stamp(storage, path) for path in stamps} == stamps
+        await storage.close()
+
+
+async def _scalar_max_epoch(storage: DatabaseStorage) -> int:
+    epochs = storage._host.tables.gram_epochs
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(func.max(epochs.c.epoch)))).scalar_one()
+
+
+async def _segments_holding(storage: DatabaseStorage, chunk_ids: set[int]) -> set[int]:
+    docs = storage._host.tables.lex_docs
+    async with storage._host.engine.connect() as conn:
+        rows = await conn.execute(select(docs.c.epoch).where(docs.c.chunk_id.in_(sorted(chunk_ids))))
+        return set(rows.scalars())
+
+
+async def _stranded_ids(storage: DatabaseStorage) -> int:
+    docs, chunks = storage._host.tables.lex_docs, storage._host.tables.chunks
+    held = select(chunks.c.id).where(chunks.c.id == docs.c.chunk_id).exists()
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(func.count()).select_from(docs).where(~held))).scalar_one()

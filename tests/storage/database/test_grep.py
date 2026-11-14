@@ -33,6 +33,7 @@ from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE, arm_budget
@@ -870,6 +871,66 @@ class TestBudgets:
         await storage.close()
 
 
+class TestLiveSet:
+    async def test_a_refreshed_body_is_found_from_the_index_tier(self, tmp_path, monkeypatch) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
+        assert (await storage.rebuild()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/c.txt"), content="zebrafish stripes")])).success
+        assert (await storage.write(entries=[Entry(path=Path("/d.txt"), content="needle again")])).success
+        assert (await storage.refresh()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/e.txt"), content="needle third")])).success
+        assert (await storage.refresh()).success is True
+        entry = storage._host.tables.entry
+        async with storage._host.engine.connect() as conn:
+            assert all((await conn.execute(select(entry.c.encoded).where(entry.c.kind == "file"))).scalars())
+        scanned = _scan_statements(monkeypatch)
+        real = grep_module.extension
+        groups: list[int] = []
+
+        class Counting:
+            def __getattr__(self, name: str) -> Any:
+                return getattr(real(), name)
+
+            def candidate_ids(self, fed: Any, allow: Any, cap: int) -> Any:
+                groups.append(len(fed))
+                return real().candidate_ids(fed, allow, cap)
+
+        monkeypatch.setattr(grep_module, "extension", Counting)
+        result = await storage.grep(pattern="zebrafish")
+        assert _paths(result) == ["/c.txt"] and scanned == []
+        assert groups == [1]  # one AND-group, held by one live segment of the three
+        groups.clear()
+        result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt", "/d.txt", "/e.txt"] and scanned == []
+        assert groups == [3]  # the base and both deltas each hold the group's grams
+        await storage.close()
+
+    async def test_a_moved_generation_redrives_grep_once(self, tmp_path, monkeypatch) -> None:
+        storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
+        assert (await storage.rebuild()).success is True
+        assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
+        real, pointers = grep_module.current_generation, []
+        index_state = storage._host.tables.index_state
+
+        async def one_ahead(session, tables):
+            pointers.append((await session.execute(select(index_state.c.current_gram_epoch))).scalar_one())
+            generation = await real(session, tables)
+            return generation + 1 if len(pointers) == 1 else generation
+
+        monkeypatch.setattr(grep_module, "current_generation", one_ahead)
+        attempts: list[int] = []
+
+        async def counted() -> None:
+            attempts.append(len(attempts))
+
+        with installed("grep:after-pointer-read", counted):
+            result = await storage.grep(pattern="needle")
+        assert _paths(result) == ["/a.txt", "/fresh.txt"]
+        assert (len(attempts), pointers) == (2, [1, 1])
+        await storage.close()
+
+
 class TestEpochLadder:
     async def test_a_moved_pointer_redrives_the_call_once(self, tmp_path, monkeypatch) -> None:
         # The post-scan re-read sees the pointer move on attempt one; the
@@ -878,22 +939,22 @@ class TestEpochLadder:
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
         assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
-        real = grep_module.current_epoch
+        real = grep_module.current_generation
         calls = {"n": 0}
 
         async def moved_once(session, tables):
             calls["n"] += 1
             current = await real(session, tables)
             if calls["n"] == 1:  # the first attempt's post-scan re-read
-                return (current or 0) + 1
+                return current + 1
             return current
 
-        monkeypatch.setattr(grep_module, "current_epoch", moved_once)
+        monkeypatch.setattr(grep_module, "current_generation", moved_once)
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
-        # Pointer reads ride the combined overlay statement, so
-        # current_epoch serves only the busy-store post-scan re-read.
+        # Generation reads ride the combined overlay statement, so
+        # current_generation serves only the busy-store post-scan re-read.
         assert calls["n"] == 2  # one re-read per attempt: exactly one redrive
         await storage.close()
 
@@ -903,14 +964,14 @@ class TestEpochLadder:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
-        real = grep_module.current_epoch
+        real = grep_module.current_generation
         calls = {"n": 0}
 
         async def always_moving(session, tables):
             calls["n"] += 1
-            return ((await real(session, tables)) or 0) + calls["n"]
+            return (await real(session, tables)) + calls["n"]
 
-        monkeypatch.setattr(grep_module, "current_epoch", always_moving)
+        monkeypatch.setattr(grep_module, "current_generation", always_moving)
         result = await storage.grep(pattern="needle")
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict
@@ -922,13 +983,13 @@ class TestEpochLadder:
         # initial pointer read nor the re-read should ever run.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         calls = {"n": 0}
-        real = grep_module.current_epoch
+        real = grep_module.current_generation
 
         async def counting(session, tables):
             calls["n"] += 1
             return await real(session, tables)
 
-        monkeypatch.setattr(grep_module, "current_epoch", counting)
+        monkeypatch.setattr(grep_module, "current_generation", counting)
         result = await storage.grep(pattern="needle", invert_match=True)
         assert result.success is True
         assert result.observations == []
@@ -1108,7 +1169,8 @@ class TestOverlayGate:
         host = storage._host
         async with host.session_factory() as session:
             await session.execute(host.tables.index_state.delete())
-            assert await grep_module.pointer_with_overlay(session, host.tables) == (None, False)
+            missing = indexing_module.IndexSnapshot(None, 0, False)
+            assert await grep_module.pointer_with_overlay(session, host.tables) == missing
         await storage.close()
 
     async def test_a_rival_demotion_between_verdict_and_fetch_serves_the_row(self, tmp_path: Any) -> None:
@@ -1140,12 +1202,12 @@ class TestOverlayGate:
 
         async def blind_preamble(session, tables):
             calls["n"] += 1
-            pointer, overlay_empty = await real(session, tables)
+            snapshot = await real(session, tables)
             if calls["n"] == 1:  # the advisory read, blind to the overlay
-                return pointer, True
-            return pointer, overlay_empty
+                return snapshot._replace(overlay_empty=True)
+            return snapshot
 
-        real_epoch = grep_module.current_epoch
+        real_epoch = grep_module.current_generation
         epoch_calls = {"n": 0}
 
         async def counting_epoch(session, tables):
@@ -1153,7 +1215,7 @@ class TestOverlayGate:
             return await real_epoch(session, tables)
 
         monkeypatch.setattr(grep_module, "pointer_with_overlay", blind_preamble)
-        monkeypatch.setattr(grep_module, "current_epoch", counting_epoch)
+        monkeypatch.setattr(grep_module, "current_generation", counting_epoch)
         result = await storage.grep(pattern="needle")
         assert result.success is True, result.errors
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
@@ -1176,10 +1238,10 @@ class TestOverlayGate:
 
         async def moved_at_recheck(session, tables):
             calls["n"] += 1
-            pointer, overlay_empty = await real(session, tables)
+            snapshot = await real(session, tables)
             if calls["n"] == 2:  # the first attempt's authoritative read
-                return ((pointer or 0) + 1), overlay_empty
-            return pointer, overlay_empty
+                return snapshot._replace(generation=snapshot.generation + 1)
+            return snapshot
 
         monkeypatch.setattr(grep_module, "pointer_with_overlay", moved_at_recheck)
         result = await storage.grep(pattern="needle")
@@ -1192,12 +1254,12 @@ class TestOverlayGate:
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Two combined reads replace one combined read plus one pointer
-        # recheck: the quiet-store skip path never touches current_epoch.
+        # recheck: the quiet-store skip path never touches current_generation.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         assert (await storage.rebuild()).success is True
         counts = {"combined": 0, "pointer": 0}
         real_combined = grep_module.pointer_with_overlay
-        real_pointer = grep_module.current_epoch
+        real_pointer = grep_module.current_generation
 
         async def counting_combined(session, tables):
             counts["combined"] += 1
@@ -1208,7 +1270,7 @@ class TestOverlayGate:
             return await real_pointer(session, tables)
 
         monkeypatch.setattr(grep_module, "pointer_with_overlay", counting_combined)
-        monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
+        monkeypatch.setattr(grep_module, "current_generation", counting_pointer)
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         assert counts == {"combined": 2, "pointer": 0}
@@ -1224,7 +1286,7 @@ class TestOverlayGate:
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         counts = {"combined": 0, "pointer": 0}
         real_combined = grep_module.pointer_with_overlay
-        real_pointer = grep_module.current_epoch
+        real_pointer = grep_module.current_generation
 
         async def counting_combined(session, tables):
             counts["combined"] += 1
@@ -1235,7 +1297,7 @@ class TestOverlayGate:
             return await real_pointer(session, tables)
 
         monkeypatch.setattr(grep_module, "pointer_with_overlay", counting_combined)
-        monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
+        monkeypatch.setattr(grep_module, "current_generation", counting_pointer)
         scanned = _scan_statements(monkeypatch)
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt", "/fresh.txt"]

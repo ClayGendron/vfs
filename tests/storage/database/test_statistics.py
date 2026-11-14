@@ -376,7 +376,7 @@ class TestPlannerStatistics:
         storage = DatabaseStorage(url=_copied(large_store, tmp_path))
         rows = await _stat_rows(storage, "vfs_entries")
         indexes = await _index_list(storage, "vfs_entries")
-        assert len(rows) == len(indexes) == 13
+        assert len(rows) == len(indexes) == 14
         assert await _deleted_at_stat(storage) == "11201 11201"
         await storage.close()
 
@@ -941,7 +941,7 @@ class TestPlannerStatistics:
         assert (await storage.write(entries=_entries(LARGE_ROOTS), parents=True)).success is True
         await storage._host.settle_statistics()
         rows = await _stat_rows(storage, "vfs_entries")
-        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 13
+        assert len(rows) == len(await _index_list(storage, "vfs_entries")) == 14
         assert invalidations == []
         await storage.close()
         assert (await storage.first_touch()).success is True

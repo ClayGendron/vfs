@@ -94,6 +94,7 @@ pub enum LexicalError {
     Sealed,
     TruncatedSummary,
     NonMonotoneSummary,
+    IdfCount { given: usize, terms: usize },
 }
 
 impl std::fmt::Display for LexicalError {
@@ -103,6 +104,9 @@ impl std::fmt::Display for LexicalError {
                 write!(f, "doc ids must be strictly increasing and positive; got {doc_id} after {last}")
             }
             Self::Sealed => write!(f, "statistics are fixed; create a fresh builder"),
+            Self::IdfCount { given, terms } => {
+                write!(f, "one idf per vocabulary term is required; got {given} for {terms} terms")
+            }
             Self::TruncatedSummary => write!(f, "truncated summary blob"),
             Self::NonMonotoneSummary => write!(f, "summary first ids not monotone"),
         }
@@ -488,9 +492,10 @@ pub fn idf(df: u64, n_docs: u64) -> f64 {
     (1.0 + ((n_docs - df) as f64 + 0.5) / (df as f64 + 0.5)).ln()
 }
 
-/// One posting's contribution, in the host formula's operation order.
+/// One posting's contribution, in the host formula's operation order; a corpus
+/// with no mean length takes the length ratio as 1, so the weight is total.
 pub fn term_weight(tf: f64, dl: f64, avg_dl: f64, term_idf: f64) -> f64 {
-    let norm = BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl);
+    let norm = if avg_dl > 0.0 { BM25_K1 * (1.0 - BM25_B + BM25_B * dl / avg_dl) } else { BM25_K1 };
     term_idf * tf * (BM25_K1 + 1.0) / (tf + norm)
 }
 
@@ -655,8 +660,32 @@ impl LexicalAccumulator {
         Ok(dl)
     }
 
+    /// Each distinct term held, with its document count, in term order: the order `finish` drains.
+    pub fn vocabulary(&self) -> Vec<(String, u32)> {
+        let mut terms: Vec<(String, u32)> =
+            self.interner.iter().map(|(term, &slot)| (term.clone(), self.lists[slot as usize].df)).collect();
+        terms.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        terms
+    }
+
     /// Fix the statistics and every term's idf, block maxima and summary.
     pub fn finish(self) -> DrainedLexical {
+        let n_docs = self.n_docs;
+        let avg_dl = if n_docs == 0 { 0.0 } else { self.total_dl as f64 / n_docs as f64 };
+        self.drain(avg_dl, |_position, df| idf(u64::from(df), n_docs))
+    }
+
+    /// Fix every block's maximum under another corpus's mean length and one given idf per
+    /// vocabulary term, in term order; the statistics it reports stay the fed documents' own.
+    pub fn finish_under(self, avg_dl: f64, idfs: &[f64]) -> Result<DrainedLexical, LexicalError> {
+        if idfs.len() != self.lists.len() {
+            return Err(LexicalError::IdfCount { given: idfs.len(), terms: self.lists.len() });
+        }
+        Ok(self.drain(avg_dl, |position, _df| idfs[position]))
+    }
+
+    /// Drain every term in term order, weighing its blocks under `weigh_avg_dl` and `term_idf(position, df)`.
+    fn drain(self, weigh_avg_dl: f64, term_idf: impl Fn(usize, u32) -> f64) -> DrainedLexical {
         let n_docs = self.n_docs;
         let avg_dl = if n_docs == 0 { 0.0 } else { self.total_dl as f64 / n_docs as f64 };
         // Lay the terms out by slot, then pair each with its list: the interner's
@@ -672,8 +701,9 @@ impl LexicalAccumulator {
         let mut dls = Vec::new();
         let drained = terms
             .into_iter()
-            .map(|(term, list)| {
-                let term_idf = idf(u64::from(list.df), n_docs);
+            .enumerate()
+            .map(|(position, (term, list))| {
+                let term_idf = term_idf(position, list.df);
                 let mut summary = Vec::new();
                 let mut max_weight = 0.0f64;
                 let mut previous_first = 0i64;
@@ -688,7 +718,7 @@ impl LexicalAccumulator {
                     let block_max = tfs
                         .iter()
                         .zip(&dls)
-                        .map(|(&tf, &dl)| term_weight(tf as f64, dl as f64, avg_dl, term_idf))
+                        .map(|(&tf, &dl)| term_weight(tf as f64, dl as f64, weigh_avg_dl, term_idf))
                         .fold(0.0f64, f64::max);
                     append_varint(&mut summary, (first - previous_first) as u64);
                     summary.extend_from_slice(&block_max.to_le_bytes());
@@ -1049,6 +1079,28 @@ mod tests {
         assert_eq!(dls, [[4, 4], [4, 4], [4, 4]]);
     }
 
+    /// Guards against the vocabulary leaving term order, against the given
+    /// idfs being ignored or misaligned, against the reported statistics
+    /// being the ones handed in, and against a short idf list being taken.
+    #[test]
+    fn finish_under_weighs_under_the_given_statistics() {
+        let mut acc = LexicalAccumulator::new();
+        acc.add_doc(1, "gamma alpha alpha").unwrap();
+        acc.add_doc(2, "beta alpha").unwrap();
+        assert_eq!(acc.vocabulary(), [("alpha".to_owned(), 2), ("beta".to_owned(), 1), ("gamma".to_owned(), 1)]);
+        let mut short = LexicalAccumulator::new();
+        short.add_doc(1, "gamma alpha").unwrap();
+        assert_eq!(short.finish_under(9.0, &[1.0]).err(), Some(LexicalError::IdfCount { given: 1, terms: 2 }));
+        let mut drained = acc.finish_under(9.0, &[0.5, 2.0, 3.0]).unwrap();
+        assert_eq!((drained.n_docs, drained.avg_dl), (2, 2.5));
+        let summaries = drained.next_df_batch(10).unwrap();
+        let idfs: Vec<f64> = summaries.iter().map(|s| s.idf).collect();
+        assert_eq!(idfs, [0.5, 2.0, 3.0]);
+        // alpha's best posting is tf 2 in a three-token document, weighed under the given mean length.
+        assert_eq!(summaries[0].max_weight, term_weight(2.0, 3.0, 9.0, 0.5));
+        assert_eq!(summaries[1].max_weight, term_weight(1.0, 2.0, 9.0, 2.0));
+    }
+
     #[test]
     fn scorer_ranks_and_skips_exactly() {
         let mut acc = LexicalAccumulator::new();
@@ -1135,5 +1187,18 @@ mod tests {
         // a's block 0: 2.0 + 0.5 >= 2.4 -> in. b's block 0: 0.5 < 2.4, lift 0.1 -> out.
         assert_eq!(selected, vec![Vec::<usize>::new(), vec![0], Vec::<usize>::new()]);
         assert_eq!(select_blocks(&[], &[1], &[1.0], 0.0), Vec::<Vec<usize>>::new());
+    }
+
+    #[test]
+    fn term_weight_is_total_at_a_zero_mean_length() {
+        for tf in [1.0, 3.0] {
+            for dl in [0.0, 7.0] {
+                let weight = term_weight(tf, dl, 0.0, 2.5);
+                assert!(weight.is_finite());
+                assert_eq!(weight, 2.5 * tf * (BM25_K1 + 1.0) / (tf + BM25_K1));
+            }
+        }
+        let norm = BM25_K1 * (1.0 - BM25_B + BM25_B * 7.0 / 9.0);
+        assert_eq!(term_weight(3.0, 7.0, 9.0, 2.5), 2.5 * 3.0 * (BM25_K1 + 1.0) / (3.0 + norm));
     }
 }

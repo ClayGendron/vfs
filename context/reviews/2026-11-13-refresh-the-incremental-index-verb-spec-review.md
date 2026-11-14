@@ -508,3 +508,108 @@ Every finding of this file's earlier readings, and of [the review of 2026-11-12]
 2026-11-13, re-read on the answered draft over `5d47a21a`, SHA-256 `f53598eb0eef3a9eb244fced618b2c761a54df09dbc85c30b34c6293ad662aa6`: Fit to build. The third round's H1, M1, L21 and L22 are closed: every read a refresh issues to find its work seeks and stays flat raw and after `ANALYZE`, and each of D12's three directions, D13 and D14 has a red direction run here. The landing reset is kept by ruling. L23 and L24 are write-ins with their fix text and hold nothing; this file links none of the three rendering fixes.
 
 2026-11-13, re-read on the draft over `5d47a21a`, SHA-256 `37f36e2b5fcac3e84b9c32a1e4cab0fc68e89907a28b9a630e86a4ce81f9097d`: Fit to build. L23 and L24 are applied by their fix text and nothing else changed (EXECUTED: the copy at this digest, with criterion 40's plan assertion and criterion 41's `[landing]` node reversed by two edits, the five rows' state moved back out of the node's trailing clause among them, hashes to `f53598eb0eef3a9eb244fced618b2c761a54df09dbc85c30b34c6293ad662aa6`).
+
+### Re-read of the amendments of 2026-11-14, after the code review
+
+The same reviewer, briefed by the session lead on 2026-11-14. I re-read the spec at SHA-256 beginning `4b4174e8b2b5`, judging the text above "## Landing notes". I read the amendments by `git diff c0fbda4b` (29 insertions, 10 deletions) and every paragraph they touch whole: decisions 9, 10, 17, 19, 28, 31, 32 and 36, the Design's verb, build and size paragraphs, the Scale section, Scope, and criteria 40 and 42 to 46. I read the cause in [the code review of 2026-11-14](2026-11-14-refresh-the-incremental-index-verb-code-review.md), findings F1 to F7 and L1 to L5.
+
+The code was read only by `git show c0fbda4b:<path>`. No file under `src/`, `tests/` or `crates/` was touched and Docker was not used.
+
+EXECUTED, under the session scratchpad's `review/refresh-spec-5/`:
+- `live_chunks_count.py`, decision 9's split reimplemented as the amendment words it and as `membership.py:62` to `:72` at `c0fbda4b` built it;
+- `embed_seek_probe.py`, a plain `sqlite3` table shaped as `vfs_chunks` at `c0fbda4b` (`models/rows.py:580` to `:597`), timing the pass-scoped embed page and count against today's walk, raw and after `ANALYZE`.
+
+The session lead's rulings:
+
+1. **F1 holds as ruled.**
+   - The refusal is safe in its place (READ, INFERRED). `refresh_refusal` is the refresh's first read under the lease (decision 18). A rebuild can publish a textless base after it only through a lapsed lease. A lapse moves `lease_holder`, so this run's delta compare-and-set (`current_gram_epoch = :base AND lease_holder = :token`, decision 13) misses whatever `:base` the build read.
+   - The operator's first day reads as the verbs do (READ against `_work_pending`, `indexing.py:713` to `:722` at `5d47a21a`). The empty store's rebuild publishes an epoch of `n_docs` 0. The first rebuild after an ingest finds dirty rows, builds whole and publishes a base with text.
+   - The total scorer's value is the right one. With no indexed length to normalise against, `tf (k1 + 1) / (tf + k1)` is BM25 without length normalisation, finite, and unchanged wherever `avg_dl > 0`.
+   - It also covers a case the refusal cannot: a base whose `n_docs` is above 0 and whose every document has length 0 passes the refusal and still carries `avg_dl` 0 (INFERRED; not staged).
+   - No other corpus statistic divides by zero (READ at `c0fbda4b`). `idf` divides by `df + 0.5`. The visible lexicon guards both of its means (`lexical.py:399`, `:412`). In Rust the unguarded division gives NaN rather than a panic, which the amendment's Rust guard removes.
+2. **F2 holds as ruled**, with one promise the amendment leaves false (M1 below).
+   - The set the embed step reads is the slice's `resplit_ids`. `_assess_and_split` appends every row the fingerprint-skip does not keep (`indexing.py:702` to `:715` at `c0fbda4b`), so a new file, whose `chunk_source_hash` is null, is in it. The word "replaced" undersells that (L25).
+   - It grows only with the pass's committed slices, because `adopt()` takes the slice's `next_*` values only after a commit (`indexing.py:218` to `:233`).
+   - A slice that loses the lease commits nothing and adds nothing.
+   - A resumed pass starts a new cursor and holds only its own slices.
+   - The seek is a seek on SQLite (EXECUTED, `embed_seek_probe.py`). The page over 20 entries' chunks took 4,014 VM steps at 10,000 and at 40,000 chunk rows, raw and after `ANALYZE`, through `ix_vfs_chunks_entry_id`, with `embedding IS NULL` a filter over those entries' chunks alone. The count took 1,375 at both sizes. Today's walk took 30,609 then 120,609.
+   - On the servers the chunk table's `entry_id` index (`models/rows.py:586`) serves the same `IN` (INFERRED; criterion 44 holds SQLite only, L28).
+   - The ids are held for the pass. This is honest only if said, and the size paragraph does not say it (L26).
+3. **F3, F5, F6 and F7 hold as ruled** (READ).
+   - The F6 counts recount exactly (EXECUTED, `live_chunks_count.py`): 29 pairs at 1,440 epochs, 5,000 keys and budget 1,000 (slices of 500, 500 and 440, with 10, 10 and 9 key slices), every epoch slice at most 500 and every pair at most 1,000; 6 at 96 epochs; 15 probes at budget 16 with 40 segments and 20 terms. The first split gives 5,009, 6 and 44.
+   - `lexical_stats` passes `membership_budget` to `live_chunks` unreduced (`lexical.py:214`), so 15 is the statement count the criterion reads.
+
+The author's four decisions:
+
+1. **A refresh never migrates the embedding space: accepted.** The migration clears every vector, a corpus write. The warning names the verb that does it. Nothing a refresh could embed meanwhile belongs to the configured space.
+2. **No ledger row for F7: accepted.** It is a spelling whose only observable is a SQL Server plan, and a recorded plan is the evidence the code review offered as the alternative.
+3. **No `rare_term` helper: accepted.** One conditional spelled as `scope.py:328` spells it, at three sites, is the house's precedent. A helper is the follow-on if a fourth site appears.
+4. **29 and not 30: accepted.** EXECUTED above.
+
+What a refresh now leaves to the daily rebuild, and what search answers meanwhile (READ, INFERRED):
+- **What is left:**
+  - a text the provider refused (retried by neither verb until its text, the model or its caps change, as today);
+  - every chunk a provider outage left unembedded, including every file changed during an afternoon-long outage;
+  - the chunks of slices committed before a lease was lost, or before a delta publish lost its race;
+  - every file written while the stored identity differs from the configured provider's.
+- **What search answers for those files:** they are posted and `encoded`, so search ranks them from the lexical leg alone and the vector leg does not see them. Decisions 25 and 28 say nothing of the vector leg, and no Result says a hit lacks a vector.
+- **Ruling on the trade:** the lexical-only window is bounded by the daily rebuild, the same class of staleness decision 35 accepts for priors and decision 33 for renderings. It is the right trade against a chunk walk every pass. A marker of the entry ids a pass left unembedded, read by the next pass by membership, is the bounded middle. It is a new store object written every pass for a window the rebuild already closes. The spec should name it as the direction rather than adopt it now, and it must say what search answers (L27).
+- **Where the amendment is wrong to the caller:** the record a refresh returns on an outage (M1).
+
+Criterion 44:
+- It cannot be gamed by the collapsed texts. It also bounds every `SELECT`'s VM steps, which count rows visited whatever the text.
+- 1.5 times at four times the files sits between a seek's 1.0 and a walk's 3.2 to 4 (EXECUTED in the earlier rounds).
+- N = 1,000 and 4,000 were enough for SQLite's statistics to flip a plan to a walk in every case measured in those rounds.
+- It can miss three ways:
+  - its ten changes run no markdown link resolution, no restore (a kept flip on a revived row) and no refused text, so those statements are never measured;
+  - it replays only `SELECT`s, so an `UPDATE` or `DELETE` whose plan walks would pass;
+  - criterion 40's server plan rows cover four reads while criterion 44 adds the embed step's page and counts and the render step's reads on SQLite alone.
+- L28 gives the widening.
+
+The seams with what was signed:
+- The size paragraph's starting counts are the counts at `c0fbda4b`, and the amendments' net growth fits each ceiling (EXECUTED, `git show c0fbda4b:<path> | wc -l`): `indexing.py` 966, `maintenance.py` 811, `render.py` 424, `models/lexical.py` 380, `membership.py` 111, `lexical.py` 647, `search.py` 974, `embed.py` 520.
+- Scope names `embed.py`, `models/lexical.py` and `crates/vfs-core/src/lexical.rs`.
+- Three things lag the amendments (L29): criterion 33 still says rows D1 to D9; Scope's ledger list skips the build's D15 and D16; and the diagram's refresh label shows neither the no-text refusal nor the pass-scoped embed.
+
+New findings:
+
+1. **M1. A refresh's outage record promises a retry that no later refresh makes** ([Decisions](../specifications/active/2026-10-31-refresh-the-incremental-index-verb.md#decisions), 19 as amended).
+   - The shared `_embed_step` ends a transient provider failure with `classified(ErrorKind.unavailable, severity=Severity.warning, detail=f"embedding stopped after {report.requests} answered requests: {report.stopped_by}", retryable=True, …)`. Its docstring says it "leaves the rest NULL for the next run" (`maintenance.py:692` to `:693` and `:796` to `:804` at `c0fbda4b`, READ).
+   - Under the amendment, a later refresh reads only the chunks its own slices write, so the next refresh never embeds the rest. A caller or scheduler that retries the refresh on that record gets success and the same missing vectors until the rebuild.
+   - The amendment changes what the step does and leaves this record's promise as it was.
+   - Closes with fix text, in decision 19's amendment and the Design's verb paragraph: "In a refresh, the transient-failure warning's detail ends `; the chunks this pass left without a vector are embedded by the next rebuild`, and it is not retryable, since no later refresh reads them; the rebuild's warning keeps its text and stays retryable. `_embed_step`'s docstring says the rest wait for the next rebuild when `entries` is given."
+   - Closes also with a node in criterion 46: "`[outage]`: a provider double that fails after its first request; `refresh()`'s warning is not retryable and names `rebuild`, and the next `refresh()` with no write embeds nothing."
+2. **L25. Say that "re-split" includes first chunking.** Fix text, in decision 19's amendment: replace "the entry ids whose chunk rows a committed slice replaced" with "the entry ids a committed slice split, every row the fingerprint-skip did not keep, a new file's first chunking among them (`_assess_and_split`'s `resplit_ids`)".
+3. **L26. Say what holding the ids costs.** Fix text, in the Design's "Sizes that matter" paragraph: "`ChunkCursor.resplit` holds the pass's split entry ids until its embed step, one 26-character id a split entry, about 4 MB for a nightly pass of 45,000 files and about 100 MB for a pass after a blackout that split a million; it is in proportion to the pass's own changes, as the posted pairs are."
+4. **L27. Say what search answers for a chunk a refresh leaves unembedded, and name the direction.** Fix text, after the amendment's list of what an earlier pass leaves: "Until the rebuild embeds them, those files are ranked by the lexical leg alone and the vector leg does not see them; no Result marks such a hit. A marker of the entry ids a pass left unembedded, read by the next pass by membership, would close that window to one interval and is the direction; it is not adopted, because it adds a store object written every pass for a window the daily rebuild already closes."
+5. **L28. Widen criteria 44 and 40.** Fix text, in criterion 44: "the ten changes include one markdown file with a link to another file and one restore of a trashed indexed file, and the embedder runs include one text the provider double refuses; every `UPDATE` and `DELETE` the refresh issues is shown by `EXPLAIN QUERY PLAN` to name no `SCAN vfs_entries` and no `SCAN vfs_chunks`". In criterion 40: "the server plan rows also cover the refresh's embed page and its two pass-scoped counts".
+6. **L29. Bring three references level with the amendments.** Fix text:
+   - criterion 33: "Each mutation of rows D1 to D23 (decision 31)";
+   - Scope: "rows D1 to D23 (D15 and D16 added by the build)";
+   - the diagram's refresh label: "refresh_refusal: a published base with text and no fingerprint drift" and "embed (fenced, the pass's own split entries)".
+
+2026-11-14, re-read on the amended draft in the worktree over `c0fbda4b`, SHA-256 beginning `4b4174e8b2b5`: Not yet: M1 (a refresh's outage warning is retryable and promises the next run, where under decision 19's amendment no later refresh reads the chunks it left). The session lead's rulings on F1, F2, F3, F5, F6 and F7 hold, and the author's four decisions are accepted; L25 to L29 are write-ins with their fix text; this file links none of the three rendering fixes.
+
+### Re-read of M1 and L25 to L29 applied, the same day
+
+The same reviewer, briefed again by the session lead. The spec is at SHA-256 `24c4748b9a878ac67b53eabd760f39482c4d0f1c227dedd7cb94323e05ff6aa3`. I kept no copy of `4b4174e8b2b5`, so I checked that nothing else moved another way (EXECUTED, copies under the session scratchpad's `review/refresh-spec-5/`).
+
+Against `git show c0fbda4b:<spec>`, the paragraphs that differ are exactly those the 2026-11-14 amendments touched, plus three more: the diagram's refresh label, the "Sizes that matter" paragraph and criterion 33. Those three are L26 and L29's places. Every other paragraph is the committed text, so none of them moved since my last read. The Landing notes, from their heading to the end, hash alike in the working copy and in `git show HEAD:<spec>` (`bc9350bfca74`), so they are byte-identical.
+
+Each place, read against what I asked (READ):
+
+- **M1 is closed.** Decision 19's amendment and the verb paragraph give the refresh-only warning, not retryable, ending "; the chunks this pass left without a vector are embedded by the next rebuild", with the rebuild's keeping its text and its retry. The docstring rule says "the next rebuild" when `entries` is given and "the next run" when it is not. Row D24 is the mutation and `[outage]` its killer.
+- **The author's added clause holds and is right to have.** A `rebuild()` meeting the same failing double answers its own warning, retryable and with today's detail. That kills a rewording that leaks from the refresh into the rebuild, which D24 alone would not.
+- **L25** is applied word for word.
+- **L26** is applied, with INFERRED on the figures and a direction that is no cap.
+- **L27** is applied, with the four ways, the lexical-leg-alone sentence and the marker named and not adopted, with its reason.
+- **L28** is applied in criteria 40 and 44.
+- **L29** is applied in criterion 33, Scope and the diagram.
+
+Three wording remainders, which hold nothing:
+
+1. **L30. The opening paragraph's ledger list skips the build's rows.** It still reads "rows D1 to D14 to the mutant ledger, and D17 to D24". Fix text: "rows D1 to D24 to the mutant ledger (D15 and D16 added by the build, D17 to D24 by the amendments of 2026-11-14)".
+2. **L31. Criterion 44's embedded count no longer holds once a text is refused.** It ends with the embedding extra's `embedded` equal to "the new chunk rows of the changed files at both sizes", but its embedder runs now include one refused text. Fix text: "equals the new chunk rows of the changed files less the refused text's, and `refused` equals the refused text's chunk rows, at both sizes".
+3. **L32. `[outage]` stages its failure only if the pass makes a second request.** Two small files' chunks may fit one request, and then a double that fails after its first request never fails. Fix text: "with a provider double that fails on its first request" (every chunk of the two files is then left for the rebuild, which the node's last clauses already expect).
+
+2026-11-14, re-read on the amended draft in the worktree over `c0fbda4b`, SHA-256 `24c4748b9a878ac67b53eabd760f39482c4d0f1c227dedd7cb94323e05ff6aa3`: Fit to build. M1 and L25 to L29 are applied as their fix text gives them, the added `[outage]` clause is sound, and nothing else in the spec moved; L30 to L32 are write-ins with their fix text and hold nothing; this file links none of the three rendering fixes.

@@ -9,6 +9,7 @@ engine's plan — the plan and lock profile are pinned on the mssql leg.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,7 +20,7 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 
 from vfs.models.rows import MSSQL_UTF8_COLLATION, BytewiseString, ULIDKey
 from vfs.storage.backends.database.dialects import MSSQL, POSTGRESQL, SQLITE, DialectProfile
-from vfs.storage.backends.database.membership import locked_lookup, membership
+from vfs.storage.backends.database.membership import live_chunks, locked_lookup, membership
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Dialect
@@ -32,6 +33,7 @@ _ENTRY = Table(
     Column("entry_id", ULIDKey()),
     Column("path", BytewiseString(1024)),
     Column("kind", String(16)),
+    Column("name", String(255).with_variant(String(255, collation=MSSQL_UTF8_COLLATION), "mssql")),
 )
 _KEYS = ["/a", "/b"]
 
@@ -56,9 +58,13 @@ class TestMembership:
         assert f"entry.path IN (SELECT CAST(keys.v COLLATE {MSSQL_UTF8_COLLATION} AS VARCHAR(1024))" in sql
         assert "FROM (VALUES (:param_1), (:param_2)) AS keys (v)" in sql
 
-    def test_mssql_plain_string_columns_take_the_same_cast_at_their_own_length(self) -> None:
+    def test_mssql_keys_take_their_columns_own_collation_at_its_own_length(self) -> None:
+        """Guards: a plain column's keys cast through the UTF-8 collation it does not carry, which costs the
+        seek of its key (a hash's refusal probe planned as a clustered index scan)."""
         sql = _sql(select(_ENTRY.c.id).where(membership(_ENTRY.c.kind, ["file"], MSSQL)), mssql_dialect.dialect())
-        assert f"CAST(keys.v COLLATE {MSSQL_UTF8_COLLATION} AS VARCHAR(16))" in sql
+        assert "IN (SELECT CAST(keys.v AS VARCHAR(16))" in sql and "COLLATE" not in sql
+        sql = _sql(select(_ENTRY.c.id).where(membership(_ENTRY.c.name, ["a"], MSSQL)), mssql_dialect.dialect())
+        assert f"IN (SELECT CAST(keys.v COLLATE {MSSQL_UTF8_COLLATION} AS VARCHAR(255))" in sql
 
     @pytest.mark.parametrize("target", [_ENTRY.c.entry_id, _ENTRY.c.id], ids=["ulid", "integer"])
     def test_mssql_binary_and_integer_keys_join_uncast(self, target: Column[object]) -> None:
@@ -100,3 +106,14 @@ class TestLockedLookup:
     def test_mssql_binary_keys_join_on_the_bare_column(self) -> None:
         stmt = locked_lookup(_ENTRY, _ENTRY.c.entry_id, ["01ARZ3NDEKTSV4RRFFQ69G5FAV"], [_ENTRY.c.path], MSSQL)
         assert "JOIN entry WITH (UPDLOCK, FORCESEEK) ON entry.entry_id = keys.v" in _sql(stmt, mssql_dialect.dialect())
+
+
+def test_live_chunks_splits_the_budget_in_half() -> None:
+    """Guards: the epoch slice put back at ``budget - 1``, so a long live set leaves one key a statement."""
+    keys = list(range(5_000))
+    pairs = list(live_chunks(range(1_440), keys, 1_000))
+    assert len(pairs) == 29
+    assert [len(epochs) for epochs, _keys in pairs[::10]] == [500, 500, 440]
+    assert Counter(len(epochs) for epochs, _keys in pairs) == Counter({500: 20, 440: 9})
+    assert all(len(epochs) <= 500 and len(epochs) + len(probe) <= 1_000 for epochs, probe in pairs)
+    assert len(list(live_chunks(range(96), keys, 1_000))) == 6

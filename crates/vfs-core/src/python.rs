@@ -26,7 +26,7 @@ use crate::verify::{Matcher, count_batch, hits_batch};
 
 /// Bumped on any change to the seam's shapes or semantics; the Python side
 /// refuses to import on a mismatch rather than guessing.
-const PROTOCOL_VERSION: u32 = 14;
+const PROTOCOL_VERSION: u32 = 15;
 
 static GATE: OnceLock<Mutex<GramExtractor>> = OnceLock::new();
 
@@ -359,7 +359,8 @@ type BlockTuple<'py> = (String, u32, u32, Bound<'py, PyBytes>, Bound<'py, PyByte
 
 /// Streaming lexical builder: feed `(doc_id, text)` in strictly increasing
 /// doc-id order (each call returns the docs' token counts), `finish` for
-/// `(n_docs, avg_dl)`, then drain term-ordered summary rows and block rows.
+/// `(n_docs, avg_dl)` — or `vocabulary` then `finish_under` a base's mean
+/// length and one idf per term — then drain term-ordered summary and block rows.
 #[pyclass]
 struct LexicalBuilder {
     accumulator: Option<LexicalAccumulator>,
@@ -397,6 +398,29 @@ impl LexicalBuilder {
     fn finish(&mut self, py: Python<'_>) -> (u64, f64) {
         let drained = self.sealed(py);
         (drained.n_docs, drained.avg_dl)
+    }
+
+    fn vocabulary(&self) -> PyResult<Vec<(String, u32)>> {
+        let Some(accumulator) = self.accumulator.as_ref() else {
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
+        };
+        Ok(accumulator.vocabulary())
+    }
+
+    fn finish_under(&mut self, py: Python<'_>, avg_dl: f64, idfs: Vec<f64>) -> PyResult<(u64, f64)> {
+        let Some(accumulator) = self.accumulator.take() else {
+            return Err(PyValueError::new_err(lexical::LexicalError::Sealed.to_string()));
+        };
+        let terms = accumulator.distinct_terms();
+        if idfs.len() != terms {
+            self.accumulator = Some(accumulator);
+            let refusal = lexical::LexicalError::IdfCount { given: idfs.len(), terms };
+            return Err(PyValueError::new_err(refusal.to_string()));
+        }
+        let drained = py.detach(|| accumulator.finish_under(avg_dl, &idfs)).expect("the idf count was checked");
+        let stats = (drained.n_docs, drained.avg_dl);
+        self.drained = Some(drained);
+        Ok(stats)
     }
 
     fn next_df_batch<'py>(&mut self, py: Python<'py>, row_cap: usize) -> Option<Vec<SummaryTuple<'py>>> {
