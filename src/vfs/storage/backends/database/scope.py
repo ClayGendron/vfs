@@ -24,15 +24,17 @@ the patterns compile, and the liveness term flips on every tier.
 
 from __future__ import annotations
 
+from itertools import product
 from typing import TYPE_CHECKING, Final, NamedTuple
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
 from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, compile_filter, escape_glob
+from vfs.storage.backends.database import dialects
 from vfs.storage.backends.database.addressing import address_channel
 from vfs.storage.backends.database.descent import liveness_filters
-from vfs.storage.backends.database.dialects import arm_budget, chunked
+from vfs.storage.backends.database.dialects import EXPRESSION_DEPTH_RESERVE, arm_budget, chunked
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
 from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
@@ -44,7 +46,7 @@ from vfs.storage.backends.database.reads import (
     pattern_arm,
     scope_fan,
 )
-from vfs.storage.backends.database.rights import RIGHTS_FIELDS
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS, Clause
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
     from vfs.pattern_matching import GlobFilter, GlobGates, ScopeChannel
     from vfs.storage.backends.database.dialects import DialectProfile
     from vfs.storage.backends.database.reads import AdmittedScope
+    from vfs.storage.backends.database.rights import Visibility
 
 # Columns every candidate fetch rides beside the caller's mask: the row-gate
 # facts, size_bytes (prices the content read), the tombstone, and what a
@@ -278,6 +281,7 @@ async def entries_for_scan(
     trashed: bool = False,
     scope_roots: Sequence[str] = (),
     scope_facts: ScopeFacts = NO_SCOPE_FACTS,
+    view: Visibility | None = None,
 ) -> ScanNominees:
     """Scan-tier candidate entry rows in path order, capped at *limit*.
 
@@ -297,7 +301,24 @@ async def entries_for_scan(
     planner whose statistics average the column keeps the seek on the
     (encoded, kind) index rather than walking the path index for the
     few content rows awaiting the index; a directory never awaits it,
-    and is created ``encoded``.
+    and is created ``encoded``. Under a partial *view* every statement
+    carries one packed group of the caller's compiled visibility
+    clauses, merged within half the parameter budget and the depth
+    budget, one statement per arm chunk per group, merged by path; the
+    clauses are exact, so the cut counts only rows the caller may read,
+    and every merged row still passes the view before the cut as a
+    backstop. The statement's shape lets an engine start from the rows
+    awaiting the index; on SQLite the rarity hint holds that seek, and
+    another engine's planner may serve a group from the caller's own
+    ranges or owner rows when its statistics say those are fewer. Each
+    row the seek visits evaluates its statement's whole group, so a
+    statement's engine work is the rows awaiting the index times the
+    group's terms, and the deadline, read before each statement, does
+    not interrupt one in flight; a predicate over a bound list of the
+    caller's spans is the direction that stops that work growing with
+    the caller's grants. SQL Server scans the table instead, for every
+    caller, a whole one included, once about one row in a hundred
+    awaits the index.
     """
     entry = tables.entry
     kinds = kind_membership(entry)
@@ -306,44 +327,74 @@ async def entries_for_scan(
         pending = ~entry.c.encoded
         base.append(pending if profile.rarity_hint is None else getattr(func, profile.rarity_hint)(pending))
     columns = [entry.c.entry_id, *(entry.c[field] for field in sorted((fetched | FETCH_RIDE) - {"content"}))]
-    merged: dict[str, RowMapping] = {}
-    overflow = False
+    clauses = None if view is None else view.clauses()
+    cap = min(parameter_budget // 2, profile.expression_depth_budget - EXPRESSION_DEPTH_RESERVE)
+    groups = [] if clauses is None else _packed(clauses, cap)
+    spend = max((group.binds for group in groups), default=0)
+    rights: list[tuple[ColumnElement[bool], ...]] = [()] if clauses is None else [(g.predicate,) for g in groups]
+    # The ext ride fits what the widest group leaves; wider, it drops to the gate.
+    room = min(membership_budget, dialects.membership_budget(profile, parameter_budget - spend))
+    ride = ext_membership(entry, wanted, room)
     if gates or scope_roots:
-        built = (pattern_arm(entry, gate, wanted, profile, membership_budget, trashed=trashed) for gate in gates)
+        built = (pattern_arm(entry, gate, wanted, profile, room, trashed=trashed) for gate in gates)
         arms = [arm for arm in built if arm is not None]
-        ride = ext_membership(entry, wanted, membership_budget)
-        chunk_size = arm_budget(profile, parameter_budget, ARM_FIXED_BINDS + ride.binds + kinds.binds)
+        chunk_size = arm_budget(profile, parameter_budget - spend, ARM_FIXED_BINDS + ride.binds + kinds.binds)
         wheres = [or_(*chunk) for chunk in chunked(arms, chunk_size)]
         wheres += scope_fan(
             entry,
             profile,
             parameter_budget,
-            membership_budget,
+            room,
             scope_roots,
             scope_facts,
             wanted,
             trashed=trashed,
-            reserved=kinds.binds,
+            reserved=kinds.binds + spend,
         )
         if not wheres:
             return ScanNominees([], False)
-        for where in wheres:
-            if deadline.expired():
-                break
-            stmt = select(*columns).where(*base, where).order_by(entry.c.path).limit(limit + 1)
-            fetched_rows = list((await session.execute(stmt)).mappings())
-            overflow = overflow or len(fetched_rows) > limit
-            merged.update({mapping["path"]: mapping for mapping in fetched_rows})
-            if len(merged) > limit + 1:
-                merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
     else:
-        terms = [*base, entry.c.path != "/", *liveness_filters(entry, profile, include_meta=False, trashed=trashed)]
-        ride = ext_membership(entry, wanted, membership_budget)
-        if ride.predicate is not None:
-            terms.append(ride.predicate)
-        stmt = select(*columns).where(*terms).order_by(entry.c.path).limit(limit + 1)
-        merged = {mapping["path"]: mapping for mapping in (await session.execute(stmt)).mappings()}
-    rows = [merged[path] for path in sorted(merged)]
+        liveness = liveness_filters(entry, profile, include_meta=False, trashed=trashed)
+        ridden = () if ride.predicate is None else (ride.predicate,)
+        wheres = [and_(entry.c.path != "/", *liveness, *ridden)]
+    merged: dict[str, RowMapping] = {}
+    overflow = False
+    for where, group in product(wheres, rights):
+        if deadline.expired():
+            break
+        stmt = select(*columns).where(*base, where, *group).order_by(entry.c.path).limit(limit + 1)
+        fetched_rows = list((await session.execute(stmt)).mappings())
+        overflow = overflow or len(fetched_rows) > limit
+        merged.update({mapping["path"]: mapping for mapping in fetched_rows})
+        if len(merged) > limit + 1:
+            merged = {path: merged[path] for path in sorted(merged)[: limit + 1]}
+    rows = [merged[path] for path in sorted(merged) if view is None or view.holds(merged[path], view.need)]
     if len(rows) > limit:
         return ScanNominees(rows[:limit], True)
     return ScanNominees(rows, overflow)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _packed(clauses: Sequence[Clause], cap: int) -> list[Clause]:
+    """Consecutive *clauses* merged into groups whose summed binds stay within *cap*.
+
+    A clause wider than *cap* is a group of its own. Every unit of a
+    clause spends at least one bind, so a group within the cap is at
+    most that many terms deep.
+    """
+    groups: list[Clause] = []
+    pending: list[Clause] = []
+    spend = 0
+    for clause in clauses:
+        if pending and spend + clause.binds > cap:
+            groups.append(Clause(or_(*(p.predicate for p in pending)), spend))
+            pending, spend = [], 0
+        pending.append(clause)
+        spend += clause.binds
+    if pending:
+        groups.append(Clause(or_(*(p.predicate for p in pending)), spend))
+    return groups

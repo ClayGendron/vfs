@@ -1,0 +1,4 @@
+| Id  | Operation                           | Name                        | Rows  | Bytes | Cost (%CPU)| Time     |
+|   0 | SELECT STATEMENT                    |                             |  1051 | 24173 |    39   (0)| 00:00:01 |
+|   1 |  TABLE ACCESS BY INDEX ROWID BATCHED| VFS_ENTRIES                 |  1051 | 24173 |    39   (0)| 00:00:01 |
+|*  2 |   INDEX SKIP SCAN                   | IX_VFS_ENTRIES_ENCODED_KIND |  1051 |       |     9   (0)| 00:00:01 |

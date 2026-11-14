@@ -1,0 +1,6 @@
+Limit  (cost=0.29..24.85 rows=2 width=1236)
+  ->  Append  (cost=0.29..24.85 rows=2 width=1236)
+        ->  Index Scan using ix_vfs_entries_encoded_kind on vfs_entries  (cost=0.29..16.67 rows=1 width=1236)
+              Index Cond: ((encoded = false) AND ((kind)::text = ANY ('{chunk,file,version}'::text[])))
+        ->  Tid Range Scan on vfs_entries vfs_entries_1  (cost=0.00..8.17 rows=1 width=1236)
+              TID Cond: (ctid >= '(0,1)'::tid)

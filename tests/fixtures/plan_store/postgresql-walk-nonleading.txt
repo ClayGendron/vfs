@@ -1,0 +1,2 @@
+Index Only Scan using ix_vfs_entries_encoded_kind on vfs_entries  (cost=0.28..239.53 rows=2000 width=6)
+  Index Cond: (kind = 'file'::text)

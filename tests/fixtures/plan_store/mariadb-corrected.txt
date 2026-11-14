@@ -1,0 +1,1 @@
+{'id': 1, 'select_type': 'SIMPLE', 'table': 'vfs_entries', 'type': 'range', 'possible_keys': 'ix_vfs_entries_path,ix_vfs_entries_encoded_kind,ix_vfs_entries_deleted_at,ix_vfs_entries_kind,ix_vfs_entries_everyone_path', 'key': 'ix_vfs_entries_encoded_kind', 'key_len': '131', 'ref': None, 'rows': '3', 'Extra': 'Using index condition; Using where; Using filesort'}

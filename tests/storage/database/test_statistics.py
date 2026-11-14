@@ -37,7 +37,7 @@ from tests.support.plan_store import (
 )
 from tests.support.statements import is_statistics_statement
 from vfs import sync as sync_module
-from vfs.authority import Authority
+from vfs.authority import Authority, Principal
 from vfs.base import AsyncVirtualFileSystem
 from vfs.models import Entry, Observation
 from vfs.paths import Path
@@ -48,6 +48,7 @@ from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import engine as engine_module
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import STATISTICS_NAME
+from vfs.storage.backends.database.rights import Resolution, RightsCache, resolve_authority, visibility_clauses
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.sync import VirtualFileSystem
 
@@ -972,6 +973,44 @@ class TestPlannerStatistics:
         overlay = [(statement, parameters) for statement, parameters in selects if "unlikely(" in statement]
         assert len(overlay) >= 1, [statement for statement, _ in selects]
         for statement, parameters in overlay:
+            details = await _plan(storage, statement, parameters)
+            entry_details = [detail for detail in details if "vfs_entries" in detail]
+            assert entry_details, details
+            assert all(detail.startswith("SEARCH vfs_entries") for detail in entry_details), details
+            assert all("ix_vfs_entries_encoded_kind" in detail for detail in entry_details), details
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_a_partial_callers_overlay_fetch_keeps_its_seek_under_statistics(self, tmp_path, large_store) -> None:
+        """Guards: a partial caller's rights riding the overlay statement and moving the planner off the
+        (encoded, kind) seek; the mutant is the packed group left out of the scan-tier statement."""
+        storage = DatabaseStorage(url=_copied(large_store, tmp_path))
+        roots = [f"/d{index:05d}" for index in range(20)]
+        reader = Authority.of(Principal("reader"))
+        assert (await storage.reindex()).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        for root in roots:
+            granted = await storage.grant(path=Path(root), principal="reader", level="read", authority=SYSTEM)
+            assert granted.success is True, granted.errors
+        late = Entry(path=Path("/d00000/a/late.txt"), content="alpha beta gamma")
+        assert (await storage.write(entries=[late], authority=SYSTEM)).success is True
+        await storage._host.settle_statistics()
+        host = storage._host
+        async with host.session_factory() as session:
+            resolved = await resolve_authority(
+                session, host.tables, host.profile, host.membership_budget, reader, RightsCache()
+            )
+        assert isinstance(resolved, Resolution), resolved
+        # Twenty roots compile to one clause, so the one packed group is that clause.
+        [clause] = visibility_clauses(host.tables.entry, resolved.at("read"), host.profile, host.parameter_budget) or []
+        group = str(clause.predicate.compile(dialect=host.engine.sync_engine.dialect))
+        selects = _recorded_selects(host.engine)
+        found = await storage.grep(pattern="alpha", globs=tuple(f"{root}/**" for root in roots), authority=reader)
+        assert found.success is True and len(found.observations) > 0
+        overlay = [(statement, parameters) for statement, parameters in selects if "unlikely(" in statement]
+        assert len(overlay) >= 1, [statement for statement, _ in selects]
+        for statement, parameters in overlay:
+            assert statement.count(group) == 1, (group, statement)
             details = await _plan(storage, statement, parameters)
             entry_details = [detail for detail in details if "vfs_entries" in detail]
             assert entry_details, details

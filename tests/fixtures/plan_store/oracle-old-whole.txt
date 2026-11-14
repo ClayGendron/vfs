@@ -1,0 +1,3 @@
+| Id  | Operation               | Name        | Rows  | Bytes |TempSpc| Cost (%CPU)| Time     |
+|*  3 |    SORT ORDER BY STOPKEY|             | 45989 |    13M|    15M|  3742   (1)| 00:00:01 |
+|*  4 |     TABLE ACCESS FULL   | VFS_ENTRIES | 45989 |    13M|       |   717   (1)| 00:00:01 |

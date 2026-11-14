@@ -1,0 +1,2 @@
+SEARCH vfs_entries USING INDEX ix_vfs_entries_encoded_kind (encoded=? AND kind=?)
+SCAN TABLE vfs_entries

@@ -13,13 +13,14 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 
 from tests.support.database_helpers import _url
+from tests.support.partial_callers import BOB, SYSTEM, RecordingSession, partial_store
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import WALL_TIME_CAUSE, Deadline
 from vfs.models import CONTENT_KINDS, Entry
@@ -34,13 +35,26 @@ from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import scope as scope_module
-from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
+from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE, arm_budget
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.pathterms import compile_channel
-from vfs.storage.backends.database.reads import AdmittedScope
+from vfs.storage.backends.database.reads import ARM_FIXED_BINDS, AdmittedScope, ext_membership, kind_membership
+from vfs.storage.backends.database.rights import Clause
 from vfs.storage.backends.database.seams import installed
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from vfs.storage.backends.database.rights import Visibility
+
+# One call per scan-tier mode: the overlay of an indexed pattern, the gramless opt-in, and the inversion.
+GREP_MODES: dict[str, dict[str, Any]] = {
+    "overlay": {"pattern": "lantern"},
+    "allow_scan": {"pattern": "an", "allow_scan": True},
+    "invert_match": {"pattern": "zebra", "invert_match": True},
+}
 
 
 async def _fresh(tmp_path, files: dict[str, str]) -> DatabaseStorage:
@@ -56,6 +70,59 @@ _VARINT_MAX = bytes([0xFF] * 8 + [0x7F])
 
 def _paths(result: Result) -> list[str]:
     return [str(o.path) for o in result.observations]
+
+
+def _seen(result: Result) -> tuple[Any, ...]:
+    """What a caller observes of a grep: paths, order and scores, and every error whole."""
+    observed = [(str(o.path), o.score) for o in result.observations]
+    return observed, [(e.kind, e.severity, e.data, e.message) for e in result.errors]
+
+
+def _scan_statements(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The statements grep's scan tier issues from here on, as the statement objects it built."""
+    recorded: list[Any] = []
+    real = grep_module.entries_for_scan
+
+    async def recording(session: Any, *args: Any, **kwargs: Any) -> Any:
+        return await real(cast("AsyncSession", RecordingSession(session, recorded)), *args, **kwargs)
+
+    monkeypatch.setattr(grep_module, "entries_for_scan", recording)
+    return recorded
+
+
+def _packings(monkeypatch: pytest.MonkeyPatch) -> list[list[Clause]]:
+    """The packed groups the scan tier makes from here on, one list a call."""
+    made: list[list[Clause]] = []
+    real = scope_module._packed
+
+    def recording(clauses: Sequence[Clause], cap: int) -> list[Clause]:
+        groups = real(clauses, cap)
+        made.append(groups)
+        return groups
+
+    monkeypatch.setattr(scope_module, "_packed", recording)
+    return made
+
+
+class _NoClauses:
+    """A view whose rights compile to no clause and hold no row: a caller who may read nothing."""
+
+    need = "read"
+
+    def clauses(self) -> list[Clause]:
+        return []
+
+    def holds(self, mapping: Any, rung: str) -> bool:
+        return False
+
+
+def _assert_one_group_each(statements: Sequence[Any], groups: Sequence[Clause], budget: int) -> None:
+    """Every scan-tier statement carries exactly one of *groups* and binds at most *budget* parameters."""
+    assert statements
+    for statement in statements:
+        carried = [group for group in groups if any(term is group.predicate for term in statement._where_criteria)]
+        assert len(carried) == 1, statement
+        assert len(statement.compile(compile_kwargs={"render_postcompile": True}).params) <= budget
 
 
 class _JudgedSet:
@@ -926,6 +993,31 @@ class TestScanMergeBounds:
         assert overflow is False
         await storage.close()
 
+    async def test_a_view_that_compiles_to_no_clause_issues_no_scan_statement(self, tmp_path) -> None:
+        """Guards: a view whose rights compile to no clause read as no view at all, so the scan tier runs the whole
+        caller's statement and serves rows the caller holds nothing on."""
+        storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two"})
+        host = storage._host
+        for gates in ([], [compile_filter("*.txt")]):
+            recorded: list[Any] = []
+            async with host.session_factory() as session:
+                nominated, overflow = await scope_module.entries_for_scan(
+                    cast("AsyncSession", RecordingSession(session, recorded)),
+                    host.tables,
+                    host.profile,
+                    host.parameter_budget,
+                    host.membership_budget,
+                    gates,
+                    frozenset(),
+                    everything=True,
+                    fetched=frozenset({"path"}),
+                    limit=10,
+                    deadline=Deadline.after(60),
+                    view=cast("Visibility", _NoClauses()),
+                )
+            assert (recorded, nominated, overflow) == ([], [], False), gates
+        await storage.close()
+
     async def test_the_merge_prunes_to_the_lowest_paths_across_chunks(self, tmp_path, monkeypatch) -> None:
         # Two arm chunks each return limit+1 rows: the merge must hold
         # only the lowest limit+1 paths, and truncate with overflow.
@@ -1144,10 +1236,30 @@ class TestOverlayGate:
 
         monkeypatch.setattr(grep_module, "pointer_with_overlay", counting_combined)
         monkeypatch.setattr(grep_module, "current_epoch", counting_pointer)
+        scanned = _scan_statements(monkeypatch)
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
         assert counts == {"combined": 1, "pointer": 1}
+        # A whole caller's scan tier is one statement: no rights term fans it.
+        assert len(scanned) == 1
         await storage.close()
+
+    @pytest.mark.parametrize("mode", list(GREP_MODES))
+    async def test_two_stores_that_differ_only_in_hidden_dirty_rows_grep_alike(
+        self, monkeypatch: pytest.MonkeyPatch, mode: str
+    ) -> None:
+        """Guards: the scan tier cut before the caller's view in any of its three modes, so dirty rows it cannot
+        read take the cut's places and move its record; the mutant is the packed group left out of the statement."""
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
+        alone, beside = await partial_store(0), await partial_store(5)
+        try:
+            answers = [await store.grep(**GREP_MODES[mode], authority=BOB) for store in (alone, beside)]
+        finally:
+            await alone.close()
+            await beside.close()
+        assert answers[0].success is True, answers[0].errors
+        assert answers[0].observations
+        assert _seen(answers[1]) == _seen(answers[0])
 
     async def test_allow_scan_with_an_indexable_pattern_is_still_gated(
         self, tmp_path: Any, scan_spy: list[bool]
@@ -1438,6 +1550,162 @@ class TestPushdownBindAccounting:
         assert _paths(result) == sorted(files)
         assert captured and max(captured) <= 40
         await storage.close()
+
+    async def test_the_packed_groups_binds_are_reserved_from_the_arm_chunk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a scan-tier statement overdrawing the engine's bind cap beside the caller's packed rights; the
+        mutant sizes the arm chunk on the whole parameter budget, not on what the widest packed group leaves."""
+        storage = await partial_store(0)
+        globs = tuple(f"/pub/g{n:02}/*.md" for n in range(40))
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 56))
+        statements = _scan_statements(monkeypatch)
+        made = _packings(monkeypatch)
+        result = await storage.grep(pattern="lantern", globs=globs, authority=BOB)
+        assert result.success is True, result.errors
+        [groups] = made
+        _assert_one_group_each(statements, groups, 56)
+        host = storage._host
+        spend = max(group.binds for group in groups)
+        kinds = kind_membership(host.tables.entry)
+        per_arm = ARM_FIXED_BINDS + ext_membership(host.tables.entry, frozenset(), host.membership_budget).binds
+        per_arm += kinds.binds
+        reserved = math.ceil(len(globs) / arm_budget(host.profile, 56 - spend, per_arm))
+        assert reserved != math.ceil(len(globs) / arm_budget(host.profile, 56, per_arm))
+        assert len(statements) == len(groups) * reserved
+        await storage.close()
+
+    async def test_a_fanned_callers_arm_chunk_is_sized_on_its_widest_group(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the arm chunk sized on a narrower packed group than the widest, so the widest group's statements
+        carry more arms than its binds leave room for; the mutant reserves the narrowest group's binds."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        folders = [f"/f{n:02}" for n in range(30)]
+        docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
+        assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        for folder in folders:
+            granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
+            assert granted.success is True, granted.errors
+        assert (await storage.reindex()).success is True
+        assert (
+            await storage.write(entries=[Entry(path=Path("/f00/r.md"), content="lantern")], authority=SYSTEM)
+        ).success
+        globs = tuple(f"{folder}/x{m}/*.md" for folder in folders for m in range(3))
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 120))
+        statements = _scan_statements(monkeypatch)
+        made = _packings(monkeypatch)
+        result = await storage.grep(pattern="lantern", globs=globs, authority=BOB)
+        assert result.success is True, result.errors
+        [groups] = made
+        assert len({group.binds for group in groups}) > 1, [group.binds for group in groups]
+        _assert_one_group_each(statements, groups, 120)
+        host = storage._host
+        per_arm = ARM_FIXED_BINDS + kind_membership(host.tables.entry).binds
+        widest = math.ceil(len(globs) / arm_budget(host.profile, 120 - max(g.binds for g in groups), per_arm))
+        assert widest != math.ceil(len(globs) / arm_budget(host.profile, 120 - min(g.binds for g in groups), per_arm))
+        assert len(statements) == len(groups) * widest
+        await storage.close()
+
+    async def test_the_packed_groups_binds_are_reserved_from_the_root_fan(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a scope's root fan overdrawing the engine's bind cap beside the caller's packed rights; the
+        mutant sizes the fan's chunk on what the kind membership alone reserves, leaving out the widest group."""
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
+        storage = await partial_store(0)
+        scope = ScopeChannel(roots=tuple(Path(f"/pub/g{n:02}") for n in range(40)), arms=("**",))
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 56))
+        statements = _scan_statements(monkeypatch)
+        made = _packings(monkeypatch)
+        result = await storage.grep(pattern="lantern", scope=scope, authority=BOB)
+        assert result.success is True, result.errors
+        [groups] = made
+        _assert_one_group_each(statements, groups, 56)
+        host = storage._host
+        entry = host.tables.entry
+        spend = max(group.binds for group in groups)
+        kinds = kind_membership(entry)
+        facts = reads_module.scope_facts(entry, host.profile, 56, host.membership_budget, scope.arms)
+        per_root = reads_module.ROOT_ARM_BINDS + ext_membership(entry, frozenset(), host.membership_budget).binds
+        reserved = math.ceil(
+            len(scope.roots) / arm_budget(host.profile, 56 - facts.binds - kinds.binds - spend, per_root)
+        )
+        assert reserved != math.ceil(
+            len(scope.roots) / arm_budget(host.profile, 56 - facts.binds - kinds.binds, per_root)
+        )
+        assert len(statements) == len(groups) * reserved
+        await storage.close()
+
+    async def test_a_wide_ext_filter_beside_the_widest_group_stays_inside_sql_servers_budget(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the ext membership riding a scan-tier statement at its full width beside a wide packed group, so
+        the statement binds past SQL Server's 2,099 parameters; the mutant sizes the ride on the whole membership
+        budget, not on what the widest group leaves."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        folders = [f"/f{n:03}" for n in range(400)]
+        docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
+        assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        for folder in folders:
+            granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
+            assert granted.success is True, granted.errors
+        assert (await storage.reindex()).success is True
+        fresh = Entry(path=Path("/f000/r.e0000"), content="lantern")
+        assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 2_099))
+        statements = _scan_statements(monkeypatch)
+        ext = tuple(f"e{n:04}" for n in range(1_500))
+        scope = ScopeChannel(roots=(Path("/f000"), Path("/f001")), arms=("**",))
+        shapes: list[dict[str, Any]] = [{}, {"globs": ("/f00*/**",)}, {"scope": scope}]
+        for shape in shapes:
+            result = await storage.grep(pattern="lantern", ext=ext, authority=BOB, **shape)
+            assert result.success is True, (shape, result.errors)
+            assert [str(o.path) for o in result.observations] == ["/f000/r.e0000"], shape
+        assert statements
+        widest = max(len(s.compile(compile_kwargs={"render_postcompile": True}).params) for s in statements)
+        assert widest <= 2_099, widest
+        await storage.close()
+
+    @pytest.mark.slow
+    async def test_a_caller_of_many_grants_packs_within_the_depth_budget(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the packing cap taking only half the parameter budget, so on an engine as generous as SQLite one
+        group ORs past the expression-depth budget and the statement is refused ("Expression tree is too large")."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        folders = [f"/f{n:04}" for n in range(1_000)]
+        docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words") for folder in folders]
+        assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
+        assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+        for folder in folders:
+            granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
+            assert granted.success is True, granted.errors
+        assert (await storage.reindex()).success is True
+        fresh = Entry(path=Path("/f0000/r.md"), content="lantern")
+        assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
+        statements = _scan_statements(monkeypatch)
+        made = _packings(monkeypatch)
+        result = await storage.grep(pattern="lantern", authority=BOB)
+        assert result.success is True, result.errors
+        assert _paths(result) == ["/f0000/r.md"]
+        [groups] = made
+        assert len(groups) > 1
+        assert len(statements) == len(groups)
+        await storage.close()
+
+    def test_packing_merges_consecutive_clauses_within_the_cap(self) -> None:
+        """Guards: a packed group overrunning its bind cap (the merge test reading the running sum without the
+        next clause), or splitting a run that exactly fills the cap."""
+        entry = build_vfs_tables().entry
+        clauses = [Clause(entry.c.everyone_level >= n, binds) for n, binds in enumerate((3, 4, 5, 30, 2, 6, 2))]
+        groups = scope_module._packed(clauses, 10)
+        assert [group.binds for group in groups] == [7, 5, 30, 10]
+        assert [str(group.predicate).count(" OR ") for group in groups] == [1, 0, 0, 2]
+        assert scope_module._packed([], 10) == []
 
 
 class TestChannelStatementGrowth:

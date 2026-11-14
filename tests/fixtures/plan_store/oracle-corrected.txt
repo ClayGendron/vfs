@@ -1,0 +1,7 @@
+| Id  | Operation                              | Name                        | Rows  | Bytes | Cost (%CPU)| Time     |
+|   0 | SELECT STATEMENT                       |                             |     1 |  1207 |     4  (25)| 00:00:01 |
+|*  1 |  COUNT STOPKEY                         |                             |       |       |            |          |
+|   2 |   VIEW                                 |                             |     1 |  1207 |     4  (25)| 00:00:01 |
+|*  3 |    SORT ORDER BY STOPKEY               |                             |     1 |   309 |     4  (25)| 00:00:01 |
+|*  4 |     TABLE ACCESS BY INDEX ROWID BATCHED| VFS_ENTRIES                 |     1 |   309 |     3   (0)| 00:00:01 |
+|*  5 |      INDEX RANGE SCAN                  | IX_VFS_ENTRIES_ENCODED_KIND |     1 |       |     2   (0)| 00:00:01 |

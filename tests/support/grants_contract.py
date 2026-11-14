@@ -41,7 +41,9 @@ from vfs.storage import (
     SupportsRankedSearch,
     SupportsReindex,
 )
+from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import rights
+from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.labels import Relabeller, mark_relabel
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.grants import LEVEL_RANK, MAX_GROUP_DEPTH, GrantLevel, GrantRow, Rights
@@ -69,6 +71,10 @@ FILES = {
     "/hr/other.md": "other text",
 }
 
+
+# bob's dirty files in the scan-tier rows, and the cut those rows patch onto both verbs.
+SCAN_TIER_FRESH = ("/pub/fresh0.md", "/pub/fresh1.md")
+SCAN_TIER_CUT = 2
 
 # The planted-ladder probe word and the known counts of its ladder words.
 PROBE = "e48213"
@@ -1272,6 +1278,41 @@ class GrantsContract:
         # The control: a whole-mount caller counts the new rows, so its scores move.
         assert dict(whole_after)["/pub/bob/probe.md"] != dict(whole_before)["/pub/bob/probe.md"]
 
+    @needs("grant", "search", "grep", "write")
+    async def test_hidden_dirty_rows_never_change_what_search_and_grep_show(
+        self, storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the scan tier's cut taken before the caller's view on this engine, so dirty rows bob cannot
+        read move what he sees; the mutant is the packed group left out of the scan-tier statement."""
+        await _scan_tier_world(storage, monkeypatch)
+        before = await _scan_tier_answers(storage)
+        hidden = [Entry(path=Path(f"/hr/fresh{n}.md"), content="quarantine hidden") for n in range(3)]
+        assert (await storage.write(entries=hidden, authority=SYSTEM)).success is True
+        after = await _scan_tier_answers(storage)
+        assert after == before, (before, after)
+
+    @needs("grant", "search", "grep", "write")
+    async def test_readable_dirty_rows_are_never_crowded_out_by_hidden_ones(
+        self, storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: dirty rows bob cannot read, sorted ahead of his own, filling the scan tier's cut on this
+        engine; the mutant is the packed group left out of the scan-tier statement."""
+        await _scan_tier_world(storage, monkeypatch)
+        hidden = [Entry(path=Path(f"/hr/fresh{n}.md"), content="quarantine hidden") for n in range(5)]
+        assert (await storage.write(entries=hidden, authority=SYSTEM)).success is True
+        searched = await storage.search(query="quarantine", authority=BOB)
+        assert searched.success is True, searched.errors
+        found = [str(o.path) for o in searched.observations]
+        assert found[:2] == list(SCAN_TIER_FRESH), (found, searched.errors)
+        assert all(path.startswith("/pub/") for path in found), found
+        hits = (searched.model_extra or {})["legs"]["lexical"]["hits"]
+        assert hits == 2, hits
+        assert not [e for e in searched.errors if e.kind == ErrorKind.truncated], searched.errors
+        grepped = await storage.grep(pattern="quarantine", authority=BOB)
+        assert grepped.success is True, grepped.errors
+        assert [str(o.path) for o in grepped.observations] == list(SCAN_TIER_FRESH), grepped.errors
+        assert not [e for e in grepped.errors if e.kind == ErrorKind.truncated], grepped.errors
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -1405,6 +1446,37 @@ def _n_docs(result: Result) -> int:
     n_docs = (result.model_extra or {})["lexical_stats"]["n_docs"]
     assert isinstance(n_docs, int)
     return n_docs
+
+
+async def _scan_tier_world(storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The world reindexed, both verbs' scan tier cut at :data:`SCAN_TIER_CUT`, and bob's two dirty files written.
+
+    The dirty bodies hold a word no indexed file holds, so the index side
+    nominates nothing and the scan tier alone answers.
+    """
+    await _world(storage)
+    assert (await _reindexer(storage).reindex()).success is True
+    monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", SCAN_TIER_CUT)
+    monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", SCAN_TIER_CUT)
+    fresh = [Entry(path=Path(path), content="quarantine fresh") for path in SCAN_TIER_FRESH]
+    assert (await storage.write(entries=fresh, authority=SYSTEM)).success is True
+
+
+async def _scan_tier_answers(storage: GrantsBackend) -> list[tuple[Any, ...]]:
+    """bob's search and grep of the dirty bodies' word: paths, order and scores, and every error whole."""
+    answers = [
+        await storage.search(query="quarantine", authority=BOB),
+        await storage.grep(pattern="quarantine", authority=BOB),
+    ]
+    for answer in answers:
+        assert answer.success is True, answer.errors
+    return [
+        (
+            [(str(o.path), o.score) for o in answer.observations],
+            [(e.kind, e.severity, e.data, e.message) for e in answer.errors],
+        )
+        for answer in answers
+    ]
 
 
 def _reindexer(storage: GrantsBackend) -> SupportsReindex:

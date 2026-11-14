@@ -1,0 +1,6 @@
+Limit  (cost=16.92..16.93 rows=1 width=1236)
+  ->  Sort  (cost=16.92..16.93 rows=1 width=1236)
+        Sort Key: path COLLATE "C"
+        ->  Index Scan using ix_vfs_entries_encoded_kind on vfs_entries  (cost=0.29..16.91 rows=1 width=1236)
+              Index Cond: ((encoded = false) AND ((kind)::text = ANY ('{chunk,file,version}'::text[])))
+              Filter: ((deleted_at IS NULL) AND ((path)::text <> '/'::text) AND ((path)::text <> '/.vfs'::text) AND ((path)::text !~~ '/.vfs/%'::text) AND ((everyone_level >= 2) OR ((path)::text = '/d00000'::text) OR ((path)::text = '/d00001'::text)

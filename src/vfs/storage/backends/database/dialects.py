@@ -723,7 +723,7 @@ _FILTER_BIND_RESERVE: Final = 32
 
 # Depth units held back from each OR-fan chunk for the fixed predicates
 # AND-chained above the fan.
-_EXPRESSION_DEPTH_RESERVE: Final = 64
+EXPRESSION_DEPTH_RESERVE: Final = 64
 
 
 def membership_budget(profile: DialectProfile, parameter_budget: int) -> int:
@@ -750,7 +750,7 @@ def arm_budget(profile: DialectProfile, parameter_budget: int, arm_binds: int) -
     on every profiled dialect.
     """
     by_binds = membership_budget(profile, parameter_budget) // max(1, arm_binds)
-    by_depth = profile.expression_depth_budget - _EXPRESSION_DEPTH_RESERVE
+    by_depth = profile.expression_depth_budget - EXPRESSION_DEPTH_RESERVE
     return max(1, min(_PATTERN_ARM_CEILING, by_binds, by_depth))
 
 

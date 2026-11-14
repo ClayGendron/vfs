@@ -439,15 +439,12 @@ async def search_rows(
             trashed=gated.trashed,
             scope_roots=channels.roots,
             scope_facts=scope_facts(entry, profile, parameter_budget, membership_budget, channels.arms),
+            view=view,
         )
         verdicts, completed = await gated.judge(executor, nominees.rows, deadline)
         if not completed:
             _record_wall(truncations)
-        admitted = [
-            m
-            for m in nominees.rows
-            if gated.admits(m, verdicts[m["entry_id"]]) and (view is None or view.holds(m, view.need))
-        ]
+        admitted = [m for m in nominees.rows if gated.admits(m, verdicts[m["entry_id"]])]
         overlay, completed = await _overlay(
             session, tables, profile, membership_budget, executor, admitted, terms, stats, deadline
         )

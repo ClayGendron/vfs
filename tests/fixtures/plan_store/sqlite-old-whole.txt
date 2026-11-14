@@ -1,0 +1,1 @@
+SCAN vfs_entries USING INDEX ix_vfs_entries_path

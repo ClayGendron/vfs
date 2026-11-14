@@ -1,0 +1,3 @@
+Limit  (cost=0.41..8408.15 rows=25001 width=1236)
+  ->  Index Scan using ix_vfs_entries_path on vfs_entries  (cost=0.41..15041.59 rows=44726 width=1236)
+        Filter: ((NOT encoded) AND (deleted_at IS NULL) AND ((path)::text <> '/'::text) AND ((path)::text <> '/.vfs'::text) AND ((path)::text !~~ '/.vfs/%'::text) AND ((kind)::text = ANY ('{chunk,file,version}'::text[])))

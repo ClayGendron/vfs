@@ -194,8 +194,8 @@ async def grep_rows(
     budget; the declared default keeps direct callers honest. Under a
     partial *view* every candidate passes the view beside the structural
     gates, before any body is fetched, so the matcher never reads a row
-    the caller cannot see. The candidate budget still counts hidden
-    candidates, so a partial caller can reach it sooner than a whole one.
+    the caller cannot see. The scan tier's cut counts only rows the caller may read; the index side's cuts,
+    over surrogate ids, still count hidden ones, files awaiting the index among them.
     """
     try:
         admissions, trashed = trash_scope(globs, scope)
@@ -320,6 +320,7 @@ async def grep_rows(
                     trashed=trashed,
                     scope_roots=channels.roots,
                     scope_facts=scope_facts(tables.entry, profile, parameter_budget, membership_budget, channels.arms),
+                    view=view,
                 )
                 scanned = len(nominated)
                 if overflow and "candidate budget" not in truncations:
@@ -330,8 +331,7 @@ async def grep_rows(
                 if not completed and WALL_TIME_CAUSE not in truncations:
                     truncations.append(WALL_TIME_CAUSE)
                 for mapping in admitted:
-                    if view is None or view.holds(mapping, view.need):
-                        candidates.setdefault(mapping["path"], mapping)
+                    candidates.setdefault(mapping["path"], mapping)
     if deadline.expired() and WALL_TIME_CAUSE not in truncations:
         truncations.append(WALL_TIME_CAUSE)
     if not scan_all and not skip_verified and await current_epoch(session, tables) != epoch:

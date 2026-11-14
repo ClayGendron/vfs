@@ -36,9 +36,12 @@ from tests.support.oracles import graph_walk, meeting_subgraph
 from tests.support.plan_store import (
     ENTRY_JOIN,
     FACTS_CONJUNCT,
+    RIGHTS_TERM,
     PlanBackend,
     PlanReadings,
+    bounded_access,
     decoded,
+    entry_access,
     plan_readings,
 )
 from tests.support.shared_builds import build_once, shared_directory
@@ -1456,6 +1459,34 @@ class StorageContract:
             if plan_store.engine == "postgresql":
                 assert not any("SubPlan" in line for line in lines), (page, plan)
                 assert sum("Index Scan using vfs_chunks_pkey" in line for line in lines) == 1, (page, plan)
+
+    @pytest.mark.slow
+    @needs("write", "grep", "grant")
+    def test_every_callers_scan_statement_only_seeks(self, plan_store: PlanReadings) -> None:
+        """Guards: a scan-tier statement, a whole caller's or one carrying a partial caller's packed rights, planned
+        as a scan of the entries table, a walk of one of its indexes, or a range over a path index; the mutants are
+        the packed group left out, and the group loop stopping at its first.
+
+        The world holds no row awaiting the index after the reindex and
+        exactly one after the late write, which the plan store asserts; the
+        partial callers are the 300-root one and the half one, whose grants
+        cover about half the rows. Every access must be a seek the scan tier
+        means (:func:`~tests.support.plan_store.bounded_access`): of the
+        ``(encoded, kind)`` index, or an equality seek of the owner index or
+        the path index.
+        """
+        assert plan_store.overlay_whole, "the whole caller's grep issued no scan-tier statement"
+        assert len(plan_store.overlay_partial) > 1, plan_store.overlay_partial
+        assert len(plan_store.overlay_half) > 1, plan_store.overlay_half
+        ridden = [statement for statement, _plan in plan_store.overlay_whole if RIGHTS_TERM.search(statement)]
+        assert ridden == [], ridden
+        for statement, _plan in [*plan_store.overlay_partial, *plan_store.overlay_half]:
+            assert RIGHTS_TERM.search(statement), statement
+        for _statement, plan in [*plan_store.overlay_whole, *plan_store.overlay_partial, *plan_store.overlay_half]:
+            accesses = entry_access(plan_store.engine, plan)
+            assert accesses, plan
+            strays = [access for access in accesses if not bounded_access(access)]
+            assert strays == [], (strays, plan)
 
     # ------------------------------------------------------------------
     # LIKE metacharacters in stored paths — near-miss decoys never leak

@@ -21,9 +21,9 @@ from sqlalchemy.dialects import mssql, sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
+from tests.support.partial_callers import BOB, SYSTEM, partial_store
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
-from vfs.authority import Authority, Principal
 from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
@@ -41,15 +41,25 @@ from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
+from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.reads import AdmittedScope
-from vfs.storage.backends.database.rights import Resolution, Visibility
+from vfs.storage.backends.database.rights import (
+    Clause,
+    Resolution,
+    RightsCache,
+    Visibility,
+    resolve_authority,
+    visibility_clauses,
+)
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 from vfs.storage.grants import GrantRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+
+    from vfs.authority import Authority
 
 # The overlay's three SQL legs as SQLite spells them: the body fetch (the
 # preview fetch takes the same shape), the surrogate-id fetch and the
@@ -162,6 +172,42 @@ async def _entry_ids(storage: DatabaseStorage, paths: Sequence[str]) -> set[Any]
     stmt = select(entry.c.entry_id).where(entry.c.path.in_(list(paths)))
     async with storage._host.session_factory() as session:
         return set((await session.execute(stmt)).scalars().all())
+
+
+def _seen(result: Result) -> tuple[Any, ...]:
+    """What a caller observes: paths, order and scores, every error whole, and the search envelope's two exports."""
+    extra = result.model_extra or {}
+    observed = [(str(o.path), o.score) for o in result.observations]
+    errors = [(e.kind, e.severity, e.data, e.message) for e in result.errors]
+    return observed, errors, extra.get("lexical_stats"), extra.get("legs")
+
+
+async def _twenty_folders(tmp_path: Any, readable: Sequence[str], hidden: Sequence[str]) -> DatabaseStorage:
+    """bob reads twenty folders ``/f00`` to ``/f19``, indexed, then *readable* and *hidden* written as dirty files."""
+    storage = DatabaseStorage(url=_url(tmp_path))
+    folders = [f"/f{n:02}" for n in range(20)]
+    docs = [Entry(path=Path(f"{folder}/doc.md"), content="plain words\n") for folder in folders]
+    assert (await storage.write(entries=docs, parents=True, authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    for folder in folders:
+        granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
+        assert granted.success is True, granted.errors
+    assert (await storage.reindex()).success is True
+    dirty = [Entry(path=Path(path), content="lantern hidden\n") for path in hidden]
+    dirty += [Entry(path=Path(path), content="lantern readable\n") for path in readable]
+    assert (await storage.write(entries=dirty, parents=True, authority=SYSTEM)).success is True
+    return storage
+
+
+async def _read_clauses(storage: DatabaseStorage, authority: Authority, parameter_budget: int) -> list[Clause]:
+    """*authority*'s compiled read clauses on the store's entries table at *parameter_budget*."""
+    host = storage._host
+    async with host.session_factory() as session:
+        resolved = await resolve_authority(
+            session, host.tables, host.profile, host.membership_budget, authority, RightsCache()
+        )
+    assert isinstance(resolved, Resolution), resolved
+    return visibility_clauses(host.tables.entry, resolved.at("read"), host.profile, parameter_budget) or []
 
 
 async def test_the_backend_answers_search_with_its_own_op_name(tmp_path: Any) -> None:
@@ -585,6 +631,77 @@ class TestOverlay:
         assert record.kind == ErrorKind.truncated and record.data == {"scanned": 2, "budget": 2}
         await storage.close()
 
+    async def test_two_stores_that_differ_only_in_hidden_dirty_rows_answer_alike(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the scan tier cut before the caller's view, so dirty rows it cannot read take the cut's places
+        and move its record; the mutant is the packed group left out of the scan-tier statement."""
+        monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", 2)
+        alone, beside = await partial_store(0), await partial_store(5)
+        try:
+            answers = [await store.search(query="lantern", authority=BOB) for store in (alone, beside)]
+        finally:
+            await alone.close()
+            await beside.close()
+        assert answers[0].success is True, answers[0].errors
+        assert {"/pub/fresh0.md", "/pub/fresh1.md"} <= set(_paths(answers[0]))
+        assert _seen(answers[1]) == _seen(answers[0])
+
+    async def test_a_widened_clause_never_serves_a_hidden_dirty_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the view's check dropped from the scan tier's rows, so a pushdown that admits too much is
+        trusted; the clause is widened to admit every row, and the authority must still hold."""
+        storage = await partial_store(5)
+        monkeypatch.setattr(Visibility, "clauses", lambda _self, entry=None: [Clause(true(), 0)])
+        try:
+            result = await storage.search(query="lantern", authority=BOB)
+        finally:
+            await storage.close()
+        assert result.success is True, result.errors
+        assert sorted(_paths(result)) == ["/pub/fresh0.md", "/pub/fresh1.md", "/pub/indexed.md"]
+
+    async def test_a_fanned_view_keeps_every_readable_dirty_row(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: hidden dirty rows ahead of a caller whose rights fan into several packed groups; the mutants are
+        the packed group left out of the statement, and the group loop stopping after its first group."""
+        readable = [f"/f{n:02}/r.md" for n in range(3)]
+        storage = await _twenty_folders(tmp_path, readable, [f"/a{n}/h.md" for n in range(5)])
+        monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", 3)
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 56))
+        with _recorded(storage) as statements:
+            result = await storage.search(query="lantern", authority=BOB)
+        assert result.success is True, result.errors
+        assert sorted(_paths(result)) == readable
+        assert [e.data for e in result.errors if e.kind == ErrorKind.truncated] == []
+        # At 56 binds the depth half of the packing cap (936) is wider than the bind half.
+        groups = scope_module._packed(await _read_clauses(storage, BOB, 56), 56 // 2)
+        assert len(groups) > 1
+        assert sum("unlikely(" in statement for statement in statements) == len(groups)
+        await storage.close()
+
+    async def test_a_fanned_views_merge_keeps_the_window_that_reports_its_overflow(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the merge across a fanned caller's packed groups pruned to the lowest ``limit`` paths, not
+        ``limit + 1``, so readable rows past the cut vanish and no truncation record says so.
+
+        Each readable dirty file sits under a folder another group admits, so
+        no one statement overflows and only the merged window can.
+        """
+        readable = ["/f00/r.md", "/f06/r.md", "/f12/r.md", "/f18/r.md"]
+        storage = await _twenty_folders(tmp_path, readable, [])
+        monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", 2)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
+        monkeypatch.setattr(EngineHost, "parameter_budget", property(lambda _self: 56))
+        searched = await storage.search(query="lantern", authority=BOB)
+        grepped = await storage.grep(pattern="lantern", authority=BOB)
+        await storage.close()
+        assert sorted(_paths(searched)) == readable[:2]
+        assert [e.data for e in searched.errors if e.kind == ErrorKind.truncated] == [{"scanned": 2, "budget": 2}]
+        assert _paths(grepped) == readable[:2]
+        truncated = [e.data for e in grepped.errors if e.kind == ErrorKind.truncated]
+        assert truncated == [{"scanned": 2, "index": 0, "budget": 2}]
+
     async def test_the_kernel_overlay_scores_as_the_oracle_does(
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -958,9 +1075,6 @@ class TestBudgets:
         assert traits["search_signals"] == "lexical" and traits["search_staleness"] == "overlay"
         await storage.close()
 
-
-BOB = Authority.of(Principal("bob"))
-SYSTEM = Authority.system()
 
 # A partial caller's store: bob reads ``/d`` alone, and the file a whole caller ranks first is under ``/h``.
 PARTIAL = {
