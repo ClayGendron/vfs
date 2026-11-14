@@ -10,7 +10,11 @@ the normalisation that keeps line numbers stable across re-renders
 (trailing spaces stripped, blank runs collapsed to one, NULs and lone
 surrogates removed, one final newline), the character and unit
 budgets, the wall clock, and the status the finished rendering
-carries.
+carries. A renderer that builds a line from repeated or declared input
+stops before the Builder would refuse it, reading what the budget has
+left (:attr:`Builder.remaining`) against what the line must cost
+(:func:`kept_length`), and hands a table's rows to :meth:`Builder.table`
+one at a time with their ``width``.
 
     started = monotonic()
     pages = parse(data)
@@ -25,13 +29,14 @@ carries.
 from __future__ import annotations
 
 import re
+from itertools import chain
 from time import monotonic
 from typing import TYPE_CHECKING, Final
 
 from vfs.rendering.seam import RENDER_RATIO_FLOOR, Rendering, Unit, bounded_detail, failure, sanitize
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from vfs.models.media import RenderStatus
     from vfs.rendering.seam import RenderLimits
@@ -74,6 +79,11 @@ def table_cell(value: object) -> str:
     if value is None:
         return ""
     return flatten(str(value)).replace("|", "\\|")
+
+
+def kept_length(text: str) -> int:
+    """The characters of *text* no line rule can drop, whitespace and NULs aside: appended text costs at least this."""
+    return len("".join(text.split())) - text.count("\x00")
 
 
 class Builder:
@@ -119,6 +129,16 @@ class Builder:
     def spent(self) -> bool:
         """Whether the character budget is used up."""
         return self._chars >= self._budget
+
+    @property
+    def remaining(self) -> int:
+        """The characters the budget still admits; ``0`` once the rendering has stopped.
+
+        Never negative, because no line or blank is written past the
+        budget. The ratio guard is not folded in: passing it is a loud
+        failure, not a cut.
+        """
+        return 0 if self.stopped else self._budget - self._chars
 
     @property
     def stopped(self) -> bool:
@@ -188,13 +208,24 @@ class Builder:
         if emitted:
             self._blank()
 
-    def table(self, rows: Sequence[Sequence[object]]) -> bool:
-        """A GFM pipe table whose first row is the header; ``False`` when cut mid-table."""
-        if not rows or self.stopped:
-            return not self.stopped
-        width = max(len(row) for row in rows)
+    def table(self, rows: Iterable[Sequence[object]], *, width: int | None = None) -> bool:
+        """A GFM pipe table whose first row is the header; ``False`` when cut mid-table.
+
+        With a *width*, rows are drawn one at a time, each only after the
+        line before it was written, so a cut ends the draw; without one,
+        every row is read first and the longest sets the width.
+        """
+        if self.stopped:
+            return False
+        if width is None:
+            rows = list(rows)
+            width = max((len(row) for row in rows), default=0)
+        drawn = iter(rows)
+        first = next(drawn, None)
+        if first is None:
+            return True
         self._blank()
-        for index, row in enumerate(rows):
+        for index, row in enumerate(chain((first,), drawn)):
             if index and self.out_of_time():
                 # Cut inside the unit: it closes incomplete, uncounted.
                 self._open = False

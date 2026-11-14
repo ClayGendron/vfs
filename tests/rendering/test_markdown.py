@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from vfs.rendering import Builder, RenderLimits, unit_marker
-from vfs.rendering.markdown import flatten, table_cell, truncation_marker
+from vfs.rendering.markdown import flatten, kept_length, table_cell, truncation_marker
 from vfs.rendering.seam import RENDER_RATIO_FLOOR
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def _build(limits: RenderLimits | None = None, *, input_bytes: int = 1_000, total_units: int | None = None) -> Builder:
@@ -265,3 +269,43 @@ class TestTableFit:
         rendering = builder.build()
         assert rendering.status == "truncated"
         assert rendering.text == "| abc | de |\n\n<!-- truncated: 0 of 1 units -->\n"
+
+
+class TestWhatIsLeft:
+    def test_remaining_counts_down_and_is_zero_once_stopped(self) -> None:
+        """Each line and its blank come off the budget, and a refused line leaves nothing; ignoring the stop fails."""
+        builder = _build(RenderLimits(chars=100))
+        assert builder.remaining == 100
+        builder.paragraph("abc")
+        assert builder.remaining == 100 - len("abc\n") - 1
+        builder.paragraph("de")
+        assert builder.remaining == 100 - len("abc\n") - 1 - len("de\n") - 1
+        builder.paragraph("x" * 200)
+        assert builder.stopped
+        assert builder.remaining == 0
+
+    def test_kept_length_drops_whitespace_and_nuls(self) -> None:
+        """Whitespace of every kind and NULs cost nothing a line rule cannot drop; counting NULs fails."""
+        assert kept_length("") == 0
+        assert kept_length(" a\tb\n　c\x00 ") == 3
+        assert kept_length("\x00\x00") == 0
+        assert kept_length("|") == 1
+
+    def test_a_table_with_a_width_draws_each_row_after_the_line_before(self) -> None:
+        """Rows are pulled one at a time after the line before is written; reading every row first fails."""
+        builder = _build(RenderLimits(chars=30))
+        pulls: list[int] = []
+
+        def rows() -> Iterator[list[str]]:
+            for row in (["h"], ["a", "b"], ["c", "d"], ["e", "f"]):
+                pulls.append(builder.remaining)
+                yield row
+
+        assert builder.table(rows(), width=2) is False
+        assert pulls == [30, 30 - len("| h |  |\n") - len("| --- | --- |\n")]
+        # A stopped Builder draws no row, and even an empty table is refused by it.
+        assert builder.table(rows(), width=2) is False
+        assert builder.table([], width=2) is False
+        rendering = builder.build()
+        assert rendering.status == "truncated"
+        assert rendering.text is not None and rendering.text.startswith("| h |  |\n| --- | --- |\n")
