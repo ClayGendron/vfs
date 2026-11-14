@@ -59,8 +59,8 @@ RENDER_EMBEDDED_DEPTH: Final = 1
 RENDER_EMBEDDED_COUNT: Final = 1_000
 # Units (pages, slides, sheets) one rendering walks before it is cut.
 RENDER_PAGES: Final = 10_000
-# Wall seconds one render runs under: a container still being verified is refused, and a rendering stops at its
-# next unit or table row and keeps its text as partial; a library's own open is not interrupted.
+# Wall seconds one render runs under: a container still being verified is refused; a rendering stops at its
+# next unit, table row or 64th counted step and keeps its lines as partial; a library's own open runs on.
 RENDER_SECONDS: Final = 60.0
 
 # Members one Office container's directory may list: the most a zip directory counts without

@@ -60,7 +60,9 @@ oracle = ["oracledb>=2.0"]
 pdf = ["pypdf>=5.0"]
 docx = ["python-docx>=1.2"]
 pptx = ["python-pptx>=1.0"]
-xlsx = ["openpyxl>=3.1"]
+# The xlsx renderer reads openpyxl's own sheet parser, which its parity test proves from 3.1.3 (earlier
+# releases' own walk drops duration formats); a new minor line is admitted once that test passes on it.
+xlsx = ["openpyxl>=3.1.3,<3.2"]
 documents = ["vfs-py[pdf,docx,pptx,xlsx]"]
 all = ["vfs-py[openai,langchain,embed-local,postgres,mssql,mariadb,oracle,documents]"]
 

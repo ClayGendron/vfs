@@ -7,6 +7,7 @@ document holds and asserts what the rendering says about it.
 
 from __future__ import annotations
 
+import re
 import struct
 import warnings
 import zipfile
@@ -215,8 +216,18 @@ def pptx_bytes(
 # ---------------------------------------------------------------------------
 
 
-def xlsx_bytes(sheets: Mapping[str, Mapping[str, object]], *, hidden: Sequence[str] = ()) -> bytes:
-    """One sheet per name holding the given ``cell address → value`` entries; *hidden* names are hidden."""
+# The dimension element a worksheet part states its extent in, as the writer spells it.
+_DIMENSION = re.compile(rb'<dimension ref="[^"]*"/>')
+
+
+def xlsx_bytes(
+    sheets: Mapping[str, Mapping[str, object]], *, hidden: Sequence[str] = (), dimension: str | None = None
+) -> bytes:
+    """One sheet per name holding the given ``cell address → value`` entries; *hidden* names are hidden.
+
+    A *dimension* (``"A1:Z200"``) is stated by every worksheet part in
+    place of the one the writer computed from its cells.
+    """
     workbook = openpyxl.Workbook()
     first = True
     for name, cells in sheets.items():
@@ -229,7 +240,18 @@ def xlsx_bytes(sheets: Mapping[str, Mapping[str, object]], *, hidden: Sequence[s
             sheet.sheet_state = "hidden"
     out = BytesIO()
     workbook.save(out)
-    return out.getvalue()
+    if dimension is None:
+        return out.getvalue()
+    stated = f'<dimension ref="{dimension}"/>'.encode()
+    restated = BytesIO()
+    with zipfile.ZipFile(out) as source, zipfile.ZipFile(restated, "w") as target:
+        for info in source.infolist():
+            body = source.read(info)
+            if info.filename.startswith("xl/worksheets/sheet"):
+                body, count = _DIMENSION.subn(stated, body, count=1)
+                assert count == 1  # the writer states a dimension in every worksheet part
+            target.writestr(_entry(info, info.compress_type), body)
+    return restated.getvalue()
 
 
 # ---------------------------------------------------------------------------

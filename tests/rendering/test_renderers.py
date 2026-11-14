@@ -241,6 +241,12 @@ class TestXlsx:
         assert rendering.status == "truncated"
         assert rendering.detail == "0 of 1 units within 120 characters"
 
+    def test_the_revision_marks_the_changed_output(self) -> None:
+        """The renderer's own output changed, so its revision rose and its generation names it: back to 1 fails."""
+        assert XlsxRenderer.revision == 2
+        version = XlsxRenderer().version
+        assert version is not None and version.startswith("2+openpyxl-")
+
 
 class TestXlsxRegions:
     def test_regions_follow_contiguous_cells_not_row_runs(self) -> None:
@@ -276,7 +282,8 @@ class TestXlsxRegions:
         cells = {(row, column): "v" for row in range(1, 4_001) for column in range(1, 7)}
         assert regions(cells) == [Box(1, 1, 4_000, 6)]
         sparse = {(row, 1): "v" for row in range(1, 8_001, 2)}
-        assert len(regions(sparse)) == 4_000
+        boxes = regions(sparse)
+        assert boxes is not None and len(boxes) == 4_000
 
     def test_a_region_inside_another_region_s_box_merges_into_it(self) -> None:
         # A bar with a leg encloses a lone cell it never touches: one table, no cell twice.

@@ -33,6 +33,7 @@ from itertools import chain
 from time import monotonic
 from typing import TYPE_CHECKING, Final
 
+from vfs.deadline import CHECK_EVERY
 from vfs.rendering.seam import RENDER_RATIO_FLOOR, Rendering, Unit, bounded_detail, failure, sanitize
 
 if TYPE_CHECKING:
@@ -98,8 +99,12 @@ class Builder:
     oversized unit is cut inside itself and nothing renders past the
     budget; the unit cap (``RenderLimits.pages``) applies to marked
     units only, because a markerless format counts body blocks, not
-    pages. The clock is checked at unit boundaries and table rows; it
-    starts at *started* (the renderer's entry, before parsing) or now.
+    pages. The clock is checked at unit boundaries and table rows, and
+    on every ``CHECK_EVERY``-th :meth:`step` a renderer counts in its own
+    loops; it starts at *started* (the renderer's entry, before parsing)
+    or now. A rendering the clock stops before any document text is
+    never ``empty``: it is ``partial`` with the lines written so far, or
+    ``failed`` when not one line was written.
     """
 
     def __init__(
@@ -119,6 +124,7 @@ class Builder:
         self._cut_by: str | None = None
         self._bombed = False
         self._timed_out = False
+        self._steps = 0
         self._embedded = 0
         self._dropped = False
         self._has_text = False
@@ -150,6 +156,22 @@ class Builder:
         if not self._timed_out and monotonic() > self._deadline:
             self._timed_out = True
         return self._timed_out
+
+    def step(self) -> bool:
+        """Count one item of a renderer's walk; ``False`` once the rendering has stopped or the clock has run out.
+
+        The clock is read on every ``CHECK_EVERY``-th count, so a loop
+        over input of any size reads it within that many items. A stop
+        inside an open unit closes it incomplete, as a clock cut inside a
+        table does.
+        """
+        if self.stopped or self._timed_out:
+            return False
+        self._steps += 1
+        if self._steps % CHECK_EVERY == 0 and self.out_of_time():
+            self._open = False
+            return False
+        return True
 
     # -- units --------------------------------------------------------------
 
@@ -264,6 +286,14 @@ class Builder:
             ratio = self._limits.ratio
             detail = f"{self._chars} output characters exceed {ratio}x the {self._input_bytes}-byte input"
             return failure("failed", detail)
+        if self._timed_out and not self._has_text and self._cut_by is None:
+            # The clock ended the walk before any text: what the file holds is unknown, so never empty.
+            detail = f"{self._complete} of {total} units within {self._limits.seconds:g} seconds"
+            while self._lines and not self._lines[-1]:
+                self._lines.pop()
+            if not self._lines:
+                return failure("failed", detail + ", before any line was written")
+            return Rendering("partial", "\n".join(self._lines) + "\n", tuple(self._units), bounded_detail(detail))
         if not self._has_text:
             return failure("empty", f"no text in {total} units")
         status: RenderStatus = "ok"
