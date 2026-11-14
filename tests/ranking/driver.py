@@ -74,9 +74,9 @@ async def load_corpus(storage: DatabaseStorage, corpus: Corpus) -> Loaded:
     indexed = await storage.reindex()
     assert indexed.success is True, indexed.errors
     tables = storage._host.tables
-    entry, chunks, meta = tables.entry, tables.chunks, tables.meta
+    entry, chunks, index_state = tables.entry, tables.chunks, tables.index_state
     async with storage._host.engine.connect() as conn:
-        epoch = (await conn.execute(select(meta.c.current_gram_epoch))).scalar_one()
+        epoch = (await conn.execute(select(index_state.c.current_gram_epoch))).scalar_one()
         located = select(chunks.c.id, entry.c.path).select_from(
             chunks.join(entry, entry.c.entry_id == chunks.c.entry_id)
         )

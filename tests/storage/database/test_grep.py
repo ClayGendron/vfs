@@ -941,9 +941,9 @@ class TestSnapshotState:
         # No published epoch: the index side is empty by construction
         # and the NOT-encoded partition owns the whole store.
         storage = await _fresh(tmp_path, {"/a.txt": "needle"})
-        meta = storage._host.tables.meta
+        index_state = storage._host.tables.index_state
         async with storage._host.engine.connect() as conn:
-            assert (await conn.execute(select(meta.c.current_gram_epoch))).scalar_one() is None
+            assert (await conn.execute(select(index_state.c.current_gram_epoch))).scalar_one() is None
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         await storage.close()
@@ -1102,12 +1102,12 @@ class TestOverlayGate:
         assert scan_spy == [False]
         await storage.close()
 
-    async def test_a_missing_meta_row_reads_as_unpublished_and_pending(self, tmp_path: Any) -> None:
+    async def test_a_missing_index_state_row_reads_as_unpublished_and_pending(self, tmp_path: Any) -> None:
         # A malformed store degrades to the scan side, never a crash.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         host = storage._host
         async with host.session_factory() as session:
-            await session.execute(host.tables.meta.delete())
+            await session.execute(host.tables.index_state.delete())
             assert await grep_module.pointer_with_overlay(session, host.tables) == (None, False)
         await storage.close()
 

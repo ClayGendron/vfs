@@ -1,8 +1,8 @@
 """The lexical index's storage half: the epoch build and the statistics probe.
 
-The build is one step of the gram epoch's build phase: one stream over
-the chunk rows of every ``chunked ∧ indexable ∧ live`` entry — the same
-coverage set the gram scan flips ``encoded`` for — fed to the active
+The build is one step of the gram epoch's build phase: one keyset pass
+over the chunk table keeping the chunks of exactly the entries the gram
+scan covered — the set the publish flips ``encoded`` for — fed to the active
 engine's builder in byte-bounded batches, its doc rows written as each
 batch completes; then the fixed statistics, the term summaries and the
 block rows, drained in term order and written in row-bounded inserts
@@ -29,10 +29,9 @@ from vfs.batching import ByteBatcher
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
 from vfs.offload import call_offloaded
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
-from vfs.storage.backends.database.pages import covered_chunk_page
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Container, Sequence
     from concurrent.futures import Executor
 
     from sqlalchemy import Select
@@ -40,7 +39,6 @@ if TYPE_CHECKING:
 
     from vfs.models.lexical import LexicalBuilder
     from vfs.models.rows import VFSTables
-    from vfs.storage.backends.database.dialects import DialectProfile
 
 # One tokenize call's content payload (chars as the byte proxy): bounds a
 # hop's copy and the batch's transient token lists.
@@ -75,7 +73,7 @@ class TermStatistics(NamedTuple):
 
 
 async def build_lexical_epoch(
-    session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor, profile: DialectProfile
+    session: AsyncSession, tables: VFSTables, epoch: int, executor: Executor, covered: Container[str]
 ) -> None:
     """Stream every covered chunk once and write the epoch's four row sets.
 
@@ -84,11 +82,11 @@ async def build_lexical_epoch(
     fixed statistics then write ``lex_stats``, and the two drains write
     ``lex_df`` and ``lex_postings`` in term order. A rival building the
     same epoch collides on a primary key here exactly as on the postings
-    table, and the caller's stale-snapshot redrive owns that. *profile*
-    shapes the scan's pages.
+    table, and the caller's stale-snapshot redrive owns that. The feed
+    keeps the chunks of the *covered* entries alone.
     """
     builder = lexical_builder()
-    async for batch in _chunk_batches(session, tables, profile):
+    async for batch in _chunk_batches(session, tables, covered):
         docs = [(chunk_id, content) for chunk_id, _entry_id, content in batch]
         lengths = await call_offloaded(executor, partial(builder.add_docs, docs))
         rows = [
@@ -106,17 +104,11 @@ async def build_lexical_epoch(
         await bulk_insert(session, tables.lex_postings, blocks)
 
 
-def lexical_scan_page(tables: VFSTables, profile: DialectProfile, *, after: int) -> Select[Any]:
-    """The build scan's next keyset page past chunk id *after*: the chunks of ``chunked ∧ indexable ∧ live`` entries."""
-    chunks, entry = tables.chunks, tables.entry
-    return covered_chunk_page(
-        tables,
-        profile,
-        [chunks.c.id, chunks.c.entry_id, chunks.c.content],
-        [entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None)],
-        after=after,
-        limit=_SCAN_PAGE_ROWS,
-    )
+def lexical_scan_page(tables: VFSTables, *, after: int) -> Select[Any]:
+    """The build scan's next keyset page past chunk id *after*: chunk rows alone, no entry row read."""
+    chunks = tables.chunks
+    page = select(chunks.c.id, chunks.c.entry_id, chunks.c.content).where(chunks.c.id > after)
+    return page.order_by(chunks.c.id).limit(_SCAN_PAGE_ROWS)
 
 
 # ---------------------------------------------------------------------------
@@ -161,19 +153,20 @@ async def lexical_stats(
 
 
 async def _chunk_batches(
-    session: AsyncSession, tables: VFSTables, profile: DialectProfile
+    session: AsyncSession, tables: VFSTables, covered: Container[str]
 ) -> AsyncIterator[list[tuple[int, str, str]]]:
-    """The covered chunk rows — every chunk of a ``chunked ∧ indexable ∧ live``
-    entry, ascending id — in byte-bounded batches.
+    """The covered chunk rows — every chunk of an entry in *covered*, ascending id — in byte-bounded batches.
 
     Read by keyset pages, never a streaming cursor, each fully fetched
-    before the batch it completes is handed out; :mod:`.pages` says why
-    and why the page takes the profile's shape.
+    before the batch it completes is handed out (:mod:`.pages` says why);
+    a row whose entry is not covered is dropped before the batcher.
     """
     batcher: ByteBatcher[tuple[int, str, str]] = ByteBatcher(_doc_size, _TOKENIZE_BATCH_BYTES)
     last = 0
-    while page := (await session.execute(lexical_scan_page(tables, profile, after=last))).all():
+    while page := (await session.execute(lexical_scan_page(tables, after=last))).all():
         for row in page:
+            if row.entry_id not in covered:
+                continue
             full = batcher.add((row.id, row.entry_id, row.content))
             if full is not None:
                 yield full

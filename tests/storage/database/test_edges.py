@@ -32,6 +32,7 @@ from vfs.storage.backends.database.edges import (
     _touch_rows,
     mkedge_rows,
 )
+from vfs.storage.backends.database.indexing import claim_reindex_lease
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.replace import EditOperation
 
@@ -517,7 +518,9 @@ class TestEdgeRebuild:
         async def flag() -> None:
             lost.set()
 
+        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        assert claimed.success is True
         with installed("reindex:before-reclaim", flag):
-            result = await storage._reindex_phases(tables, lost)
+            result = await storage._reindex_phases(tables, lost, "MINE")
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message

@@ -136,7 +136,7 @@ MODEL_COLUMN_RENAMES: Final[dict[str, dict[str, str]]] = {
 
 # First-touch writes this into the meta row; every later first touch compares
 # and refuses loudly on mismatch — never PRAGMA/catalog sniffing.
-SCHEMA_FORMAT_VERSION: Final = 24
+SCHEMA_FORMAT_VERSION: Final = 25
 
 # The widest principal id a grant, membership, or owner column stores.
 MAX_PRINCIPAL_ID_LENGTH: Final = 255
@@ -346,6 +346,7 @@ class VFSTables(NamedTuple):
     chunks: Table
     edges: Table
     meta: Table
+    index_state: Table
     lock: Table
     gram_epochs: Table
     posting_list: Table
@@ -643,21 +644,15 @@ def build_vfs_tables(
     )
 
     # Single-row mount metadata: the schema-format version first touch
-    # verifies, the durable mount identity that keys the per-mount advisory
-    # lock, and the current-epoch pointer whose one-row flip publishes a
-    # rebuilt gram index atomically. Versions are per-entry monotone
-    # values on their own rows — the mount keeps no version sequence.
+    # verifies and the durable mount identity that keys the per-mount
+    # advisory lock. Versions are per-entry monotone values on their own
+    # rows — the mount keeps no version sequence.
     meta = Table(
         "vfs_meta",
         metadata,
         Column("id", Integer, primary_key=True, autoincrement=False),
         Column("schema_format_version", Integer, nullable=False),
         Column("mount_identity", String(ULID_LENGTH), nullable=False),
-        Column("current_gram_epoch", Integer),
-        # Reindex single-runner lease: holder token + last-heartbeat epoch
-        # millis. NULL holder or a stale heartbeat means the lease is free.
-        Column("reindex_holder", String(ULID_LENGTH)),
-        Column("reindex_heartbeat", BigInteger),
         # The mount's one embedding space — the provider- and dimension-
         # qualified model id and its width, stamped by the first embed.
         Column("embedding_model", _string(MAX_MODEL_ID_LENGTH)),
@@ -667,6 +662,19 @@ def build_vfs_tables(
         Column("grant_revision", BigInteger, nullable=False, default=0),
         Column("created_at", _timestamp()),
         CheckConstraint("id = 1", name="ck_vfs_meta_single_row"),
+        schema=schema,
+    )
+
+    # The published epoch, whose one-row flip publishes a rebuilt index, and the single-runner lease: on a
+    # row of their own, so the admin lock's row is never one a lease-held commit takes.
+    index_state = Table(
+        "vfs_index_state",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=False),
+        Column("current_gram_epoch", Integer),
+        Column("lease_holder", String(ULID_LENGTH)),
+        Column("lease_heartbeat", BigInteger),
+        CheckConstraint("id = 1", name="ck_vfs_index_state_single_row"),
         schema=schema,
     )
 
@@ -875,6 +883,7 @@ def build_vfs_tables(
         chunks=chunks,
         edges=edges,
         meta=meta,
+        index_state=index_state,
         lock=lock,
         gram_epochs=gram_epochs,
         posting_list=posting_list,

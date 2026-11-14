@@ -77,7 +77,7 @@ class _PgError(Exception):
 class _MySQLError(Exception):
     """PyMySQL-shaped: args lead with the errno; the server's SQLSTATE rides on ``sqlstate``."""
 
-    _SQLSTATES: ClassVar[dict[int, str]] = {1213: "40001", 1205: "HY000", 1062: "23000"}
+    _SQLSTATES: ClassVar[dict[int, str]] = {1213: "40001", 1205: "HY000", 1062: "23000", 1048: "23000"}
 
     def __init__(self, errno: int) -> None:
         super().__init__(errno, "deadlock found when trying to get lock")
@@ -126,6 +126,12 @@ class TestDialectPolicy:
         engine whose planner serves the join, Postgres JIT-compiling the probe, sent the probe unmeasured."""
         assert SQLITE.probe_entry_filter is True
         assert [p.probe_entry_filter for p in (POSTGRESQL, MSSQL, MARIADB, ORACLE, GENERIC)] == [False] * 5
+
+    def test_the_stored_length_is_the_function_that_reads_no_body(self) -> None:
+        """Guards: an engine sizing a stored rendering with a function that reads it, Postgres's ``length``
+        detoasting it and SQL Server's ``LEN`` reading its LOB pages, where a stored-size function reads none."""
+        assert (POSTGRESQL.stored_length, MSSQL.stored_length) == ("octet_length", "datalength")
+        assert [p.stored_length for p in (SQLITE, MARIADB, ORACLE, GENERIC)] == ["length"] * 4
 
     def test_serialization_sqlstates_are_retryable(self) -> None:
         assert is_retryable(POSTGRESQL, _PgError("40001")) is True
@@ -322,6 +328,46 @@ class TestDialectPolicy:
         assert error.kind == ErrorKind.internal
         assert error.retryable is False
         await storage.close()
+
+
+def _sqlite_integrity_errors() -> list[sqlite3.IntegrityError]:
+    """Real SQLite failures, in order: a unique key repeated, a primary key repeated, a NOT NULL refused."""
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, k INTEGER NOT NULL UNIQUE)")
+    connection.execute("INSERT INTO t VALUES (1, 1)")
+    raised: list[sqlite3.IntegrityError] = []
+    for row in ((2, 1), (1, 2), (3, None)):
+        try:
+            connection.execute("INSERT INTO t VALUES (?, ?)", row)
+        except sqlite3.IntegrityError as exc:
+            raised.append(exc)
+    connection.close()
+    return raised
+
+
+def _odbc(native: int) -> Exception:
+    """pyodbc-shaped: SQLSTATE 23000 for every integrity class, the native number in the diagnostic's parentheses."""
+    driver = "[Microsoft][ODBC Driver 18 for SQL Server][SQL Server]"
+    first = f"[23000] {driver}The key value is (7). ({native}) (SQLExecDirectW)"
+    return Exception("23000", f"{first}; [01000] {driver}The statement has been terminated. (3621)")
+
+
+def test_a_unique_violation_is_told_from_every_other_integrity_failure() -> None:
+    """Guards: a dialect's unique-violation code dropped from the classifier, or a non-unique code added,
+    so a rival chunk pass's collision is mistaken for a defect or a defect redrives as a collision."""
+    unique, primary, not_null = _sqlite_integrity_errors()
+    pairs = [
+        (unique, not_null),
+        (primary, not_null),
+        (_PgError("23505"), _PgError("23502")),
+        (_MySQLError(1062), _MySQLError(1048)),
+        (_OracleError(1), _OracleError(1400)),
+        (_odbc(2627), _odbc(515)),
+        (_odbc(2601), _odbc(515)),
+    ]
+    for violation, other in pairs:
+        assert dialects.is_unique_violation(IntegrityError("INSERT", None, violation)) is True, violation
+        assert dialects.is_unique_violation(IntegrityError("INSERT", None, other)) is False, other
 
 
 # ---------------------------------------------------------------------------

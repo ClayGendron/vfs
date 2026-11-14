@@ -65,7 +65,8 @@ from vfs.pattern_matching import ScopeChannel
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database.embed import EMBED_PAGE_ROWS, unembedded_page
-from vfs.storage.backends.database.lexical import lexical_scan_page
+from vfs.storage.backends.database.lexical import _SCAN_PAGE_ROWS, lexical_scan_page
+from vfs.storage.backends.database.pages import covered_chunk_page
 from vfs.storage.backends.database.reads import (
     ENTRY_OBSERVATION_FIELDS,
     NO_SCOPE_FACTS,
@@ -310,7 +311,7 @@ async def chunk_page_statements(storage: DatabaseStorage) -> dict[str, str]:
     host = storage._host
     after = await _median_chunk_id(storage)
     pages = {
-        "build": lexical_scan_page(host.tables, host.profile, after=after),
+        "build": lexical_scan_page(host.tables, after=after),
         "embed": unembedded_page(host.tables, after, EMBED_PAGE_ROWS, _PLAN_REFUSAL_KEY, host.profile),
     }
     return {page: _literal(storage, statement) for page, statement in pages.items()}
@@ -323,14 +324,24 @@ async def chunk_page_plans(storage: DatabaseStorage) -> dict[str, str]:
 
 
 async def shipped_join_plan(storage: DatabaseStorage) -> str:
-    """The plan text of the build's chunk page spelled as the join to the entry table, at the median chunk id.
+    """The plan text of the build's former chunk page spelled as the join to the entry table, at the median chunk id.
 
     The join is what every engine but SQLite runs, and what SQLite ran
     before its profile declared the probe: the red the SQLite pins read.
+    The build's page has since stopped reading the entry table, so the
+    page is spelled here as it stood: the covered entries' chunks.
     """
     host = storage._host
-    joined = replace(host.profile, probe_entry_filter=False)
-    page = lexical_scan_page(host.tables, joined, after=await _median_chunk_id(storage))
+    tables, joined = host.tables, replace(host.profile, probe_entry_filter=False)
+    chunks, entry = tables.chunks, tables.entry
+    page = covered_chunk_page(
+        tables,
+        joined,
+        [chunks.c.id, chunks.c.entry_id, chunks.c.content],
+        [entry.c.chunked, entry.c.indexable, entry.c.deleted_at.is_(None)],
+        after=await _median_chunk_id(storage),
+        limit=_SCAN_PAGE_ROWS,
+    )
     return await _plan_text(storage, _literal(storage, page))
 
 

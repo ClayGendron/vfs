@@ -710,6 +710,7 @@ class EngineHost:
                 created_at=now,
             )
         )
+        await conn.execute(insert(self.tables.index_state).values(id=1))
         await conn.execute(insert(self.tables.lock).values(id=1))
         await conn.execute(insert(self.tables.grants).values(**posture_row(self.posture, now)))
         await conn.execute(

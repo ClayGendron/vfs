@@ -2,9 +2,10 @@
 
 SQLite takes the filter as a correlated probe on the entry table compared
 to a constant, the one spelling its planner never rewrites into a join;
-every other profile keeps the join. These pins hold the rendered SQL; the
-plans themselves are pinned on a filled store by the statistics pins and
-the conformance row.
+every other profile keeps the join. These pins hold the rendered SQL of
+the embed step's page, the one page that reads the filter; the plans
+themselves are pinned on a filled store by the statistics pins and the
+conformance row.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from vfs.models.rows import build_vfs_tables
 from vfs.storage.backends.database import pages
 from vfs.storage.backends.database.dialects import POSTGRESQL, SQLITE
-from vfs.storage.backends.database.lexical import lexical_scan_page
+from vfs.storage.backends.database.embed import EMBED_PAGE_ROWS, unembedded_page
 
 if TYPE_CHECKING:
     from sqlalchemy import Select
@@ -31,9 +32,9 @@ if TYPE_CHECKING:
 _ABOVE = frozenset({"indexing", "lexical", "embed", "backend"})
 
 
-def _build_page(profile: DialectProfile) -> Select:
-    """The index build's page as the backend builds it, past chunk id 1,000."""
-    return lexical_scan_page(build_vfs_tables(), profile, after=1_000)
+def _embed_page(profile: DialectProfile) -> Select:
+    """The embed step's page as the backend builds it, past chunk id 1,000."""
+    return unembedded_page(build_vfs_tables(), 1_000, EMBED_PAGE_ROWS, ("pages", -1, -1), profile)
 
 
 def _literal(statement: Select, dialect: Dialect) -> str:
@@ -44,10 +45,10 @@ def test_the_page_probes_on_sqlite_and_joins_elsewhere() -> None:
     """Guards: the SQLite page spelled as the join (its planner rebuilds a
     Bloom filter on every page) or as a labelled bind, and the other
     engines losing the join their planners serve."""
-    probe = _literal(_build_page(SQLITE), sqlite_dialect.dialect())
+    probe = _literal(_embed_page(SQLITE), sqlite_dialect.dialect())
     assert "(SELECT 1 " in probe and "FROM vfs_entries" in probe and ") = 1" in probe, probe
     assert "anon_1" not in probe and "JOIN" not in probe, probe
-    join = _literal(_build_page(POSTGRESQL), postgresql_dialect.dialect())
+    join = _literal(_embed_page(POSTGRESQL), postgresql_dialect.dialect())
     assert "JOIN vfs_entries" in join and "SELECT 1" not in join, join
 
 

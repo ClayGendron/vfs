@@ -1437,19 +1437,27 @@ class StorageContract:
     @pytest.mark.slow
     @needs("write", "search")
     def test_the_chunk_page_plan_is_the_engines_own(self, plan_store: PlanReadings) -> None:
-        """Guards: an engine's chunk pages taking the other shape than its profile declares — SQLite joining
-        the entries, a per-page filter build, or Postgres taking the probe its JIT turns into a regression.
+        """Guards: the build's chunk page reading the entry table again, or the embed step's taking the other
+        shape than its profile declares — SQLite joining the entries, a per-page filter build, or Postgres
+        taking the probe its JIT turns into a regression.
 
-        A profile that declares the probe reads it and no filter step; one
-        that keeps the join reads the join, Postgres as the chunk primary-key
-        range and no subplan, and the others' plans are what the landing
-        notes read for a per-page build.
+        The build's page reads the chunk table alone on every engine, on
+        Postgres one range on the chunk primary key. Of the embed step's, a
+        profile that declares the probe reads it and no filter step; one that
+        keeps the join reads the join, Postgres as the chunk primary-key range
+        and no subplan, and the others' plans are what the landing notes read
+        for a per-page build.
         """
         assert set(plan_store.chunk_pages) == set(plan_store.chunk_statements) == {"build", "embed"}
         for page, plan in plan_store.chunk_pages.items():
             statement = plan_store.chunk_statements[page]
             lines = plan.splitlines()
             assert plan.strip(), (page, statement)
+            if page == "build":
+                assert "vfs_entries" not in statement, statement
+                if plan_store.engine == "postgresql":
+                    assert sum("Index Scan using vfs_chunks_pkey" in line for line in lines) == 1, plan
+                continue
             if plan_store.probes:
                 assert "JOIN" not in statement, statement
                 assert not any("BLOOM FILTER" in line for line in lines), (page, plan)

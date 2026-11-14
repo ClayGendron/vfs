@@ -5,10 +5,12 @@ probe, the batch budgets, and the BM25 fidelity referees on sqlite.
 
 from __future__ import annotations
 
+import inspect
 from functools import partial
 from typing import Any
 
 from sqlalchemy import event, func, select, update
+from sqlalchemy.dialects import mssql, oracle, postgresql, sqlite
 
 from tests.support.database_helpers import _url
 from tests.support.lexical_fidelity import assert_lexical_fidelity, assert_two_round_fidelity
@@ -18,6 +20,7 @@ from tests.support.oracles.postings import decode_postings, decode_varints
 from vfs.models import Entry
 from vfs.models import lexical as lexical_model
 from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, decode_summary, idf, term_weight
+from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage.backends.database import DatabaseStorage, indexing
@@ -33,9 +36,9 @@ BODIES = {
 
 
 async def _epoch(storage: DatabaseStorage) -> int | None:
-    meta = storage._host.tables.meta
+    index_state = storage._host.tables.index_state
     async with storage._host.engine.connect() as conn:
-        return (await conn.execute(select(meta.c.current_gram_epoch))).scalar_one()
+        return (await conn.execute(select(index_state.c.current_gram_epoch))).scalar_one()
 
 
 async def _count(storage: DatabaseStorage, table: Any, epoch: int | None = None) -> int:
@@ -237,6 +240,15 @@ class TestBuild:
         assert dfs["rows"] == 2  # df counts the two live bodies only
         await storage.close()
 
+    def test_the_build_page_reads_the_chunk_table_alone(self) -> None:
+        """Guards: the build's page given back the entry terms, so the lexical feed re-tests the flags the
+        posting scan already read."""
+        assert "profile" not in inspect.signature(lexical_store.lexical_scan_page).parameters
+        page = lexical_store.lexical_scan_page(build_vfs_tables(), after=1_000)
+        for dialect in (sqlite.dialect(), postgresql.dialect(), mssql.dialect(), oracle.dialect()):
+            sql = str(page.compile(dialect=dialect))
+            assert "vfs_chunks" in sql and "vfs_entries" not in sql, (dialect.name, sql)
+
     async def test_the_build_cpu_hops_through_the_offload_pool(self, tmp_path, monkeypatch) -> None:
         hops: list[str] = []
         real = lexical_store.call_offloaded
@@ -317,11 +329,11 @@ class TestReclaim:
     async def test_a_cas_loser_reclaims_its_lexical_build(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="raced_body = 1\n")])).success
-        meta = storage._host.tables.meta
+        index_state = storage._host.tables.index_state
 
         async def rival() -> None:
             async with storage._host.engine.begin() as conn:
-                await conn.execute(update(meta).values(current_gram_epoch=99))
+                await conn.execute(update(index_state).values(current_gram_epoch=99))
 
         with installed("reindex:before-publish", rival):
             result = await storage.reindex()

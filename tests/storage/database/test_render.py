@@ -31,7 +31,7 @@ from vfs.rendering import Builder, RendererRegistry, Rendering, RenderLimits, Re
 from vfs.rendering.pdf import PdfRenderer
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import render as render_module
 from vfs.storage.backends.database import topology as topology_module
@@ -441,7 +441,7 @@ class TestLanding:
             lost.set()
 
         with installed("reindex:before-render-land", rival_claimed):
-            result, report = await storage._render_step(storage._host.tables, lost)
+            result, report = await storage._render_step(storage._host.tables, lost, "MINE")
         assert result is not None and lease_lost(result)
         assert report.rendered == 0
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
@@ -452,8 +452,63 @@ class TestLanding:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         lost = asyncio.Event()
         lost.set()
-        result = await storage._reindex_phases(storage._host.tables, lost)
+        result = await storage._reindex_phases(storage._host.tables, lost, "MINE")
         assert result.success is False and lease_lost(result)
+        assert (await _row(storage, "/q.pdf")).render_status == "pending"
+        await storage.close()
+
+    async def test_a_landing_after_the_lease_was_taken_commits_nothing(self, tmp_path, monkeypatch) -> None:
+        """Guards: the fence voided, so a landing commits after a rival claimed the run's lease; and the cut's
+        lease-lost verdict read as a refusal, so its rows are retried one by one."""
+        storage = _mount(tmp_path)
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        tables = storage._host.tables
+        index_state = tables.index_state
+        real = backend_module.land_renderings
+        landings: list[int] = []
+
+        async def counted(session: Any, **kwargs: Any) -> Result:
+            landings.append(len(landings))
+            return await real(session, **kwargs)
+
+        monkeypatch.setattr(backend_module, "land_renderings", counted)
+
+        async def rival_claims() -> None:
+            async with storage._host.engine.begin() as conn:
+                await conn.execute(update(index_state).values(lease_holder="RIVAL", lease_heartbeat=indexing._now_ms()))
+
+        with installed("reindex:before-render-land", rival_claims):
+            result = await storage.reindex()
+        assert lease_lost(result), result.errors
+        assert landings == [0]  # the cut alone: a taken lease is never retried row by row
+        assert (await _row(storage, "/q.pdf")).render_status == "pending"
+        bodies = select(func.count()).select_from(tables.content_joined()).where(tables.content.c.entry_id.isnot(None))
+        async with storage._host.engine.connect() as conn:
+            assert (await conn.execute(bodies.where(tables.entry.c.path == "/q.pdf"))).scalar_one() == 0
+            assert (await conn.execute(select(index_state.c.lease_holder))).scalar_one() == "RIVAL"
+        await storage.close()
+
+    async def test_a_lease_taken_before_the_row_by_row_retry_stops_it(self, tmp_path, monkeypatch) -> None:
+        """Guards: the row-by-row retry reading a lease-lost row as a refused one and landing it as failed."""
+        storage = _mount(tmp_path)
+        await _put(storage, "/q.pdf", QUOKKA_PDF)
+        index_state = storage._host.tables.index_state
+        real = backend_module.land_renderings
+        landings: list[int] = []
+
+        async def refused_then_taken(session: Any, **kwargs: Any) -> Result:
+            # On SQLite no rival commits inside a landing, so the claim's effect is staged in its own session.
+            landings.append(len(landings))
+            if len(landings) == 1:
+                refusal = backend_module.ResultError(kind=ErrorKind.unavailable, message="refused")
+                return Result(ops=("reindex",), errors=[refusal])
+            await session.execute(update(index_state).values(lease_holder="RIVAL"))
+            return await real(session, **kwargs)
+
+        monkeypatch.setattr(backend_module, "land_renderings", refused_then_taken)
+        result = await storage.reindex()
+        assert lease_lost(result), result.errors
+        assert landings == [0, 1]  # the cut, then its one row; never the quarantined row
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
         await storage.close()
 

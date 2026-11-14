@@ -61,6 +61,7 @@ TABLE_ATTRS = (
     "chunks",
     "edges",
     "meta",
+    "index_state",
     "lock",
     "gram_epochs",
     "posting_list",
@@ -175,6 +176,7 @@ class TestBuildVFSTables:
             "vfs_chunks",
             "vfs_edges",
             "vfs_meta",
+            "vfs_index_state",
             "vfs_lock",
             "vfs_gram_epochs",
             "vfs_grams_posting_list",
@@ -193,6 +195,9 @@ class TestBuildVFSTables:
         }
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
+        # The pointer and the lease live on a row of their own, apart from the admin lock's.
+        assert not {"current_gram_epoch", "reindex_holder", "reindex_heartbeat"} & set(tables.meta.c.keys())
+        assert SCHEMA_FORMAT_VERSION == 25
 
     def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:
         other = build_vfs_tables(schema="tenant")

@@ -24,6 +24,7 @@ integer driver error number — never by message text.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple, TypeVar, cast
@@ -387,11 +388,11 @@ class DialectProfile:
     every page; the probe is one unique-index lookup per chunk row and
     builds nothing. Every other engine keeps the join: Postgres was
     measured to serve it as a memoized index probe and to JIT-compile
-    the probe into a regression; MariaDB, SQL Server and Oracle serve
-    the join's build page as an index probe per row, Oracle's embed page
-    hashes the entry table per page, and the probe is unmeasured on all
-    three. A SQLite planner that took the ``LIMIT`` into its filter
-    estimate would let the join come back.
+    the probe into a regression; MariaDB, SQL Server and Oracle served
+    the build's page, when it read the filter, as an index probe per row,
+    Oracle's embed page hashes the entry table per page, and the probe
+    is unmeasured on all three. A SQLite planner that took the ``LIMIT``
+    into its filter estimate would let the join come back.
     """
 
     name: str
@@ -440,6 +441,9 @@ class DialectProfile:
     statistics_listing: str | None = None
     rarity_hint: str | None = None
     probe_entry_filter: bool = False
+    # The ``sqlalchemy.func`` name that sizes a stored body without reading it, which SQLAlchemy does not model:
+    # exact bytes on SQL Server, encoding bytes on Postgres and MariaDB, characters elsewhere (the floor's ``length``).
+    stored_length: str = "length"
 
 
 SQLITE_VEC_PROBE: Final = "SELECT vec_version()"
@@ -531,6 +535,7 @@ POSTGRESQL: Final = DialectProfile(
     ann_honours_scope=True,
     # Plan-pinned: a BitmapOr of path-index scans with the facts beside the OR, as without them.
     scope_facts_beside_fan=True,
+    stored_length="octet_length",
 )
 
 MSSQL: Final = DialectProfile(
@@ -558,6 +563,7 @@ MSSQL: Final = DialectProfile(
     vector_dimension_cap=1_998,
     # Plan-pinned: an Index Seek on the path index with the facts beside the OR, as without them.
     scope_facts_beside_fan=True,
+    stored_length="datalength",
 )
 
 # catch_retry, not upsert: ON DUPLICATE KEY UPDATE takes no conflict
@@ -921,6 +927,14 @@ async def bulk_insert(session: AsyncSession, table: Table, rows: Sequence[Mappin
 # falls through to the driver errno instead of judging by it.
 _SQLSTATE_GENERAL_ERROR: Final = "HY000"
 
+# A unique-key violation by each driver's own code: SQLite's extended codes, the MySQL family's
+# errno and python-oracledb's ORA number, the standard's SQLSTATE, and SQL Server's native numbers.
+_SQLITE_UNIQUE_CODES: Final = frozenset({2067, 1555})
+_DRIVER_UNIQUE_CODES: Final = frozenset({1062, 1})
+_SQLSTATE_UNIQUE_VIOLATION: Final = "23505"
+_SQLSTATE_BARE_INTEGRITY: Final = "23000"
+_MSSQL_UNIQUE_NUMBERS: Final = frozenset({2627, 2601})
+
 # Exception-context links walked for a transient cause behind an unwind error.
 _UNWIND_DEPTH: Final = 4
 
@@ -959,6 +973,25 @@ def is_retryable(profile: DialectProfile, exc: BaseException) -> bool:
         current = current.__context__
         seen += 1
     return False
+
+
+def is_unique_violation(exc: BaseException) -> bool:
+    """Whether *exc* is a unique-key violation, told from every other integrity failure by the driver's code.
+
+    SQLite's extended code; else the integer code the MySQL family and
+    python-oracledb lead with, read before the SQLSTATE since aiomysql
+    gives 23000 for every integrity class; else the SQLSTATE. SQL Server's
+    driver gives that bare class and nothing else, so there alone the
+    native numbers its ODBC diagnostics carry in parentheses are read.
+    """
+    origin = driver_origin(exc)
+    if (sqlite_code := getattr(origin, "sqlite_errorcode", None)) is not None:
+        return sqlite_code in _SQLITE_UNIQUE_CODES
+    if (code := _driver_code_of(origin)) is not None:
+        return code in _DRIVER_UNIQUE_CODES
+    if (state := _sqlstate_of(origin)) != _SQLSTATE_BARE_INTEGRITY:
+        return state == _SQLSTATE_UNIQUE_VIOLATION
+    return any(int(number) in _MSSQL_UNIQUE_NUMBERS for number in re.findall(r"\((\d+)\)", str(origin)))
 
 
 def _is_retryable_alone(profile: DialectProfile, exc: BaseException) -> bool:

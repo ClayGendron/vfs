@@ -26,6 +26,7 @@ from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import segments as segments_module
+from vfs.storage.backends.database.indexing import claim_reindex_lease
 from vfs.storage.backends.database.segments import (
     EntryDelta,
     SegmentRebuildState,
@@ -427,7 +428,10 @@ class TestSegmentPhaseBoundaries:
             return Result(ops=("reindex",))
 
         monkeypatch.setattr(backend_module, "collect_segment_drift", poisoned)
-        result = await storage._reindex_phases(storage._host.tables, lost)
+        tables = storage._host.tables
+        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        assert claimed.success is True
+        result = await storage._reindex_phases(tables, lost, "MINE")
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message
         # The drift was left untouched — no repair transaction ran.

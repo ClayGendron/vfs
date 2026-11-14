@@ -122,14 +122,23 @@ def chunk_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     """200 long text files of about ten chunks each, written once per module, reindexed, statistics settled.
 
     Ten chunks per entry, the reference ratio, is past the four to five
-    at which SQLite's planner puts a filter on the chunk page's join.
+    at which SQLite's planner puts a filter on the chunk page's join. The
+    chunk pass commits in slices and the statistics step analyses after
+    the first, so the statistics are emptied and taken again over the
+    whole store once the reindex is done.
     """
     target = tmp_path_factory.mktemp("chunks") / "vfs.sqlite"
+    url = f"sqlite+aiosqlite:///{target}"
 
     async def build() -> None:
-        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{target}")
+        storage = DatabaseStorage(url=url)
         assert (await storage.write(entries=chunk_entries(), parents=True)).success is True
         assert (await storage.reindex()).success is True
+        await storage._host.settle_statistics()
+        await storage.close()
+        _empty_statistics(url)
+        storage = DatabaseStorage(url=url)
+        assert (await storage.mkdir(path=Path("/settled"))).success is True
         await storage._host.settle_statistics()
         await storage.close()
 
@@ -1028,8 +1037,9 @@ class TestPlannerStatistics:
 
     @pytest.mark.slow
     async def test_the_chunk_pages_build_no_filter_per_page(self, tmp_path, chunk_store) -> None:
-        """Guards: the build's or the embed step's chunk page joining the entry table on SQLite, a Bloom filter
-        over every entry row rebuilt on each page; the mutant is ``probe_entry_filter`` dropped from SQLITE.
+        """Guards: the embed step's chunk page joining the entry table on SQLite, a Bloom filter over every
+        entry row rebuilt on each page (the mutant is ``probe_entry_filter`` dropped from SQLITE), and the
+        build's page reading the entry table at all.
 
         The embed page's refusal term plans as a correlated subquery of its
         own, so the count is of subqueries whose next step searches the entries.
@@ -1037,17 +1047,16 @@ class TestPlannerStatistics:
         storage = DatabaseStorage(url=_copied(chunk_store, tmp_path))
         plans = await chunk_page_plans(storage)
         assert set(plans) == {"build", "embed"}
-        for page, plan in plans.items():
-            lines = plan.splitlines()
-            probes = [
-                step
-                for step, child in pairwise(lines)
-                if "CORRELATED SCALAR SUBQUERY" in step and child.startswith("SEARCH vfs_entries")
-            ]
-            assert not any("BLOOM FILTER" in line for line in lines), (page, plan)
-            assert len(probes) == 1, (page, plan)
         build = plans["build"].splitlines()
-        assert sum("CORRELATED SCALAR SUBQUERY" in line for line in build) == 1, build
+        assert any("vfs_chunks" in line for line in build) and not any("vfs_entries" in line for line in build), build
+        embed = plans["embed"].splitlines()
+        probes = [
+            step
+            for step, child in pairwise(embed)
+            if "CORRELATED SCALAR SUBQUERY" in step and child.startswith("SEARCH vfs_entries")
+        ]
+        assert not any("BLOOM FILTER" in line for line in embed), embed
+        assert len(probes) == 1, embed
         await storage.close()
 
     @pytest.mark.slow

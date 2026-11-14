@@ -694,9 +694,9 @@ async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tupl
     wrapper is what lets engines without boolean select-list expressions
     (SQL Server) carry the EXISTS.
     """
-    entry = tables.entry
+    entry, state = tables.entry, tables.index_state
     pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
-    stmt = select(tables.meta.c.current_gram_epoch, case((pending, 1), else_=0)).where(tables.meta.c.id == 1)
+    stmt = select(state.c.current_gram_epoch, case((pending, 1), else_=0)).where(state.c.id == 1)
     row = (await session.execute(stmt)).one_or_none()
     if row is None:
         return None, False

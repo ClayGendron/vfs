@@ -21,10 +21,11 @@ from vfs.models import Entry
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
-from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import DatabaseStorage, indexing
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import embed as embed_module
 from vfs.storage.backends.database.embed import EmbedRow, token_batched, truncated_for
+from vfs.storage.backends.database.indexing import claim_reindex_lease, lease_lost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -85,6 +86,33 @@ async def _identity(storage: DatabaseStorage) -> tuple[str | None, int | None]:
     async with storage._host.engine.connect() as conn:
         row = (await conn.execute(select(meta.c.embedding_model, meta.c.embedding_dimension))).one()
         return (row.embedding_model, row.embedding_dimension)
+
+
+async def _landed(storage: DatabaseStorage) -> list[tuple[str, list[float] | None]]:
+    """Every chunk row's text with its vector, in id order."""
+    chunks = storage._host.tables.chunks
+    async with storage._host.engine.connect() as conn:
+        rows = await conn.execute(select(chunks.c.content, chunks.c.embedding).order_by(chunks.c.id))
+        return [(row.content, None if row.embedding is None else list(row.embedding)) for row in rows]
+
+
+def _near(stored: list[float], expected: list[float]) -> bool:
+    return len(stored) == len(expected) and all(abs(a - b) < 1e-5 for a, b in zip(stored, expected, strict=True))
+
+
+async def _made_stale(storage: DatabaseStorage) -> None:
+    """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
+    index_state = storage._host.tables.index_state
+    stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+    async with storage._host.engine.begin() as conn:
+        await conn.execute(update(index_state).values(lease_heartbeat=stale))
+
+
+class _SpacedProvider(ScriptedProvider):
+    """A scripted provider whose vectors depend on its model, so two models of one width land apart."""
+
+    def vector(self, text: str) -> list[float]:
+        return super().vector(f"{self.model_id}\n{text}")
 
 
 def _extra(result: Any) -> dict[str, Any]:
@@ -166,15 +194,11 @@ class TestStep:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, embedder=provider)
         failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="write broke")])
-        real = storage._execute_maintenance
 
-        async def failing(op: str, fn: Any) -> Result:
-            partial_fn = getattr(fn, "func", None)
-            if partial_fn is embed_module.write_vectors:
-                return failure
-            return await real(op, fn)
+        async def failing(session: Any, **_kwargs: Any) -> Result:
+            return failure
 
-        monkeypatch.setattr(storage, "_execute_maintenance", failing)
+        monkeypatch.setattr(backend_module, "write_vectors", failing)
         result = await storage.reindex()
         assert result.success is False and result.errors[0].message == "write broke"
         await storage.close()
@@ -185,14 +209,11 @@ class TestStep:
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(model="two"))
         failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="clear broke")])
-        real = other._execute_maintenance
 
-        async def failing(op: str, fn: Any) -> Result:
-            if "clear_embeddings" in getattr(getattr(fn, "__code__", None), "co_names", ()):
-                return failure
-            return await real(op, fn)
+        async def failing(session: Any, tables: Any) -> Result:
+            return failure
 
-        monkeypatch.setattr(other, "_execute_maintenance", failing)
+        monkeypatch.setattr(backend_module, "clear_embeddings", failing)
         result = await other.reindex()
         assert result.success is False and result.errors[0].message == "clear broke"
         await other.close()
@@ -314,12 +335,15 @@ class TestStep:
         assert (await storage.reindex()).success is True  # chunk rows exist, every vector NULL
         provider.fail_after = None
         lost = asyncio.Event()
+        tables = storage._host.tables
+        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        assert claimed.success is True
 
         async def rival() -> None:
             lost.set()
 
         with installed("reindex:before-embed", rival):
-            result = await storage._embed_step(storage._host.tables, lost)
+            result = await storage._embed_step(tables, lost, "MINE")
         assert result.success is False and result.errors[0].kind == ErrorKind.conflict
         vectors = await _vectors(storage)
         assert sum(v is not None for v in vectors.values()) == 2  # the page in flight landed; nothing more
@@ -328,16 +352,16 @@ class TestStep:
     async def test_the_beat_keeps_ticking_through_a_slow_batch(self, tmp_path: Any, monkeypatch) -> None:
         monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.02)
         beats = 0
+        paged = False
         provider = _WaitsForBeats(lambda: beats, wanted=5)
         storage = await _fresh(tmp_path, {"/a.txt": "slow body\n"}, embedder=provider)
 
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
-            nonlocal beats
-            if (
-                statement.startswith("UPDATE")
-                and "reindex_heartbeat" in statement
-                and "reindex_holder=" not in statement
-            ):
+            # A fence is the same UPDATE as a beat: count only after the step's first page is read.
+            nonlocal beats, paged
+            paged = paged or (statement.startswith("SELECT") and "vfs_chunks.embedding IS NULL" in statement)
+            beat = statement.startswith("UPDATE") and "lease_heartbeat" in statement
+            if paged and beat and "lease_holder=" not in statement:
                 beats += 1
 
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
@@ -377,6 +401,76 @@ class TestStep:
         result = await storage.reindex()
         assert result.success is False and provider.batches == []
         await storage.close()
+
+    async def test_a_landing_after_the_lease_was_taken_commits_nothing(self, tmp_path: Any) -> None:
+        """Guards: the embed landing taken out of the fence, so a lapsed run lands a retired model's vectors
+        on rows the holder's migration cleared, under the holder's identity, for good."""
+        old, new = _SpacedProvider(model="old"), _SpacedProvider(model="new")
+        files = {**CORPUS, "/f.txt": "papa quebec romeo\n"}
+        early, late = dict(list(files.items())[:3]), dict(list(files.items())[3:])
+        lapsed = await _fresh(tmp_path, early, embedder=old)
+        assert (await lapsed.reindex()).success is True
+        assert (await lapsed.write(entries=[Entry(path=Path(p), content=b) for p, b in late.items()])).success
+        holder = DatabaseStorage(url=_url(tmp_path), embedder=new)
+        arrived, released = [asyncio.Event(), asyncio.Event()], [asyncio.Event(), asyncio.Event()]
+
+        async def hold() -> None:
+            for arrival, release in zip(arrived, released, strict=True):
+                if not arrival.is_set():
+                    arrival.set()
+                    await release.wait()
+                    return
+
+        with installed("reindex:before-embed", hold):
+            first = asyncio.create_task(lapsed.reindex())
+            await arrived[0].wait()
+            await _made_stale(lapsed)
+            second = asyncio.create_task(holder.reindex())
+            await arrived[1].wait()
+            released[0].set()
+            lost = await first
+            released[1].set()
+            won = await second
+        assert lease_lost(lost), lost.errors
+        assert won.success is True, won.errors
+        assert await _identity(holder) == (new.model_id, 4)
+        landed = await _landed(holder)
+        assert len(landed) == len(files)
+        for content, vector in landed:
+            assert vector is not None and _near(vector, embed_module.unit_vector(new.vector(content))), content
+        await holder.close()
+        await lapsed.close()
+
+    async def test_a_migration_after_the_lease_was_taken_clears_nothing(self, tmp_path: Any) -> None:
+        """Guards: the embed migration taken out of the fence, so a lapsed run on a new model clears
+        every vector and the identity the holder's run just left."""
+        old, new = _SpacedProvider(model="old"), _SpacedProvider(model="new")
+        holder = await _fresh(tmp_path, embedder=old)
+        assert (await holder.reindex()).success is True
+        lapsed = DatabaseStorage(url=_url(tmp_path), embedder=new)
+        assert (await lapsed.write(entries=[Entry(path=Path("/late.txt"), content="sierra tango uniform\n")])).success
+        arrived, released = asyncio.Event(), asyncio.Event()
+
+        async def hold() -> None:
+            if not arrived.is_set():
+                arrived.set()
+                await released.wait()
+
+        with installed("reindex:before-reclaim", hold):
+            first = asyncio.create_task(lapsed.reindex())
+            await arrived.wait()
+            await _made_stale(lapsed)
+            assert (await holder.reindex()).success is True
+            released.set()
+            lost = await first
+        assert lease_lost(lost), lost.errors
+        assert await _identity(holder) == (old.model_id, 4)
+        landed = await _landed(holder)
+        assert len(landed) == len(CORPUS) + 1
+        for content, vector in landed:
+            assert vector is not None and _near(vector, embed_module.unit_vector(old.vector(content))), content
+        await holder.close()
+        await lapsed.close()
 
 
 class TestBatcher:

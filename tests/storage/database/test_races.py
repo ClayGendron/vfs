@@ -24,25 +24,26 @@ import asyncio
 import os
 import random
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, ClassVar
+from functools import partial
+from typing import Any, ClassVar
 
 import pytest
 from sqlalchemy import insert, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from ulid import ULID
 
 from tests.support.server_schemas import ENGINE_LEGS, server_storage, sibling
 from vfs.models import Edge, Entry
 from vfs.paths import Path
-from vfs.results import ErrorKind
+from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
-from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.backends.database import DatabaseStorage, dialects, indexing, seams
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import search as search_module
+from vfs.storage.backends.database.revision import hold_revision
 from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
-
-if TYPE_CHECKING:
-    from vfs.results import Result
 
 # Kinds that may lawfully surface from a lost race; anything else — above
 # all ``unavailable`` with raw driver text — is a classification defect.
@@ -810,6 +811,406 @@ class TestSearchChunkConsistency:
                 [match] = notes.matches or []
                 assert match.content is None and match.preview == "A stream of **tokens**, rewritten."
             await _audit(storage)
+
+
+# ---------------------------------------------------------------------------
+# The index publishes only what its build read — the feed, the flip, the lease
+# ---------------------------------------------------------------------------
+
+
+async def _entry_id(storage: DatabaseStorage, path: str) -> str:
+    entry = storage._host.tables.entry
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(entry.c.entry_id).where(entry.c.path == path))).scalar_one()
+
+
+async def _epoch(storage: DatabaseStorage) -> int | None:
+    index_state = storage._host.tables.index_state
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(index_state.c.current_gram_epoch))).scalar_one()
+
+
+async def _chunk_ids(storage: DatabaseStorage, path: str) -> set[int]:
+    chunks = storage._host.tables.chunks
+    stmt = select(chunks.c.id).where(chunks.c.entry_id == await _entry_id(storage, path))
+    async with storage._host.engine.connect() as conn:
+        return set((await conn.execute(stmt)).scalars())
+
+
+async def _lexical_chunk_ids(storage: DatabaseStorage, path: str) -> set[int]:
+    """The chunk ids the published epoch's ``vfs_lex_docs`` names for *path*."""
+    docs = storage._host.tables.lex_docs
+    entry_id, epoch = await _entry_id(storage, path), await _epoch(storage)
+    stmt = select(docs.c.chunk_id).where(docs.c.epoch == epoch, docs.c.entry_id == entry_id)
+    async with storage._host.engine.connect() as conn:
+        return set((await conn.execute(stmt)).scalars())
+
+
+async def _lexical_entries(storage: DatabaseStorage) -> set[str]:
+    docs = storage._host.tables.lex_docs
+    stmt = select(docs.c.entry_id).where(docs.c.epoch == await _epoch(storage)).distinct()
+    async with storage._host.engine.connect() as conn:
+        return set((await conn.execute(stmt)).scalars())
+
+
+async def _row(storage: DatabaseStorage, path: str) -> Any:
+    entry = storage._host.tables.entry
+    async with storage._host.engine.connect() as conn:
+        return (await conn.execute(select(entry).where(entry.c.path == path))).one()
+
+
+async def _made_stale(storage: DatabaseStorage) -> None:
+    """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
+    index_state = storage._host.tables.index_state
+    stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+    async with storage._host.engine.begin() as conn:
+        await conn.execute(update(index_state).values(lease_heartbeat=stale))
+
+
+async def _beat(beater: DatabaseStorage) -> None:
+    """Commit the running lease's own heartbeat from *beater*, a second handle on the mount."""
+    tables = beater._host.tables
+    async with beater._host.engine.connect() as conn:
+        token = (await conn.execute(select(tables.index_state.c.lease_holder))).scalar_one()
+    beat = await beater._execute_maintenance("reindex", lambda s: indexing.heartbeat_reindex_lease(s, tables, token))
+    assert beat.success, beat.errors
+
+
+def _counted(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
+    """Count the backend's calls of the phase function *name*; the list holds one item per call."""
+    calls: list[int] = []
+    real = getattr(backend_module, name)
+
+    async def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(len(calls))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(backend_module, name, counted)
+    return calls
+
+
+def _eligible(assignments: dict[str, Any]) -> bool:
+    """Whether a flip is the chunk pass's eligible stamp (the publish's sets ``encoded`` alone)."""
+    return assignments.get("indexable") is True
+
+
+class TestBuildAgreement:
+    """The lexical feed takes exactly the entries the posting scan covered, whatever commits between the reads."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_write_between_the_two_reads_never_splits_an_entry(self, env_var: str, monkeypatch) -> None:
+        # No snapshot spans the build on SQL Server and Oracle: a write committed between the posting
+        # scan and the lexical pages changes what a second read of the entry flags would choose.
+        async with server_storage(env_var) as storage:
+            words = {"/d/x.txt": "xylophone", "/a.txt": "alpha", "/b.txt": "bravo"}
+            entries = [Entry(path=Path(path), content=f"{word} body") for path, word in words.items()]
+            assert (await storage.write(entries=entries, parents=True)).success
+            assert (await storage.delete(path=Path("/b.txt"))).success
+            rival = sibling(env_var, storage)
+            outcomes: list[bool] = []
+
+            async def between_the_reads() -> None:
+                seams.clear("reindex:before-lexical")
+                outcomes.append((await rival.delete(path=Path("/d"))).success)
+                same = Entry(path=Path("/a.txt"), content="alpha body")
+                outcomes.append((await rival.write(entries=[same], overwrite=True)).success)
+                outcomes.append((await rival.restore(path=Path("/b.txt"))).success)
+
+            received: dict[str, int] = {}
+            real_publish = backend_module.publish_epoch
+
+            async def capturing(session: Any, *args: Any) -> Result:
+                received.update(args[-1].covered)
+                return await real_publish(session, *args)
+
+            monkeypatch.setattr(backend_module, "publish_epoch", capturing)
+            try:
+                with seams.installed("reindex:before-lexical", between_the_reads):
+                    assert (await storage.reindex()).success is True
+            finally:
+                await rival.close()
+            assert outcomes == [True, True, True]
+            lexical = await _lexical_entries(storage)
+            for path in words:
+                entry_id = await _entry_id(storage, path)
+                assert (entry_id in received) == (entry_id in lexical), path
+            entry = storage._host.tables.entry
+            async with storage._host.engine.connect() as conn:
+                stmt = select(entry.c.entry_id).where(entry.c.encoded, entry.c.kind != "directory")
+                encoded = set((await conn.execute(stmt)).scalars())
+            assert encoded <= set(received) & lexical
+            # Covered and fed, so only its flag can show a flip that landed on a tombstoned row.
+            assert (await _row(storage, "/d/x.txt")).encoded is False
+            assert (await storage.restore(path=Path("/d"))).success
+            for path, word in words.items():
+                assert [str(o.path) for o in (await storage.grep(pattern=word)).observations] == [path], word
+                assert [str(o.path) for o in (await storage.search(query=word)).observations] == [path], word
+            await _audit(storage)
+
+
+class TestLeaseFence:
+    """Every lease-held commit lands only while its run holds the lease, and none cycles with an admin write."""
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_lapsed_chunk_pass_never_strands_the_holders_epoch(self, env_var: str) -> None:
+        # The lapsed run read its dirty set before the holder chunked and built the same entry;
+        # its chunk rows must never replace the ones the holder's epoch names.
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/n.txt"), content="narwhal body")])).success
+            holder = sibling(env_var, storage)
+            split, released, holding = asyncio.Event(), asyncio.Event(), asyncio.Event()
+            published = asyncio.Event()
+            arrivals: list[str] = []
+
+            async def lapsed_at_the_split() -> None:
+                if not split.is_set():
+                    split.set()
+                    await released.wait()
+
+            async def at_the_publish() -> None:
+                arrivals.append("lapsed" if released.is_set() else "holder")
+                if not released.is_set():
+                    holding.set()
+                    await published.wait()
+
+            try:
+                with (
+                    seams.installed("reindex:before-chunk-split", lapsed_at_the_split),
+                    seams.installed("reindex:before-publish", at_the_publish),
+                ):
+                    first = asyncio.create_task(storage.reindex())
+                    await split.wait()
+                    await _made_stale(storage)
+                    second = asyncio.create_task(holder.reindex())
+                    await holding.wait()
+                    released.set()
+                    lapsed = await first
+                    published.set()
+                    won = await second
+            finally:
+                await holder.close()
+            assert indexing.lease_lost(lapsed), lapsed.errors
+            assert arrivals == ["holder"]
+            assert won.success is True, won.errors
+            row = await _row(storage, "/n.txt")
+            assert (row.chunked, row.encoded) == (True, True)
+            assert await _lexical_chunk_ids(storage, "/n.txt") == await _chunk_ids(storage, "/n.txt")
+            assert [str(o.path) for o in (await storage.search(query="narwhal")).observations] == ["/n.txt"]
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_run_whose_lease_was_taken_publishes_nothing(self, env_var: str, monkeypatch) -> None:
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/e.txt"), content="echo body")])).success
+            assert (await storage.reindex()).success is True
+            assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="foxtrot body")])).success
+            holder = sibling(env_var, storage)
+            arrived, released = [asyncio.Event(), asyncio.Event()], [asyncio.Event(), asyncio.Event()]
+
+            async def hold() -> None:
+                for arrival, release in zip(arrived, released, strict=True):
+                    if not arrival.is_set():
+                        arrival.set()
+                        await release.wait()
+                        return
+
+            try:
+                with seams.installed("reindex:before-publish", hold):
+                    first = asyncio.create_task(storage.reindex())
+                    await arrived[0].wait()
+                    await _made_stale(storage)
+                    # A newer chunker: the holder re-splits every entry with no version bump.
+                    monkeypatch.setattr(indexing, "chunk_generation", lambda: "a-newer-chunker")
+                    second = asyncio.create_task(holder.reindex())
+                    await arrived[1].wait()
+                    released[0].set()
+                    lost = await first
+                    released[1].set()
+                    won = await second
+            finally:
+                await holder.close()
+            [error] = lost.errors
+            assert (error.kind, error.retryable) == (ErrorKind.conflict, False)
+            assert error.message.endswith("reindex lost the index publish race for epoch 2"), error.message
+            assert won.success is True, won.errors
+            assert await _epoch(storage) == 3
+            assert await _lexical_chunk_ids(storage, "/e.txt") == await _chunk_ids(storage, "/e.txt")
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_heartbeat_inside_the_publish_never_fails_it(self, env_var: str, monkeypatch) -> None:
+        # Under a snapshot isolation the compare-and-set updates a row the run's own beat changed.
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+            beater = sibling(env_var, storage)
+            publishes = _counted(monkeypatch, "publish_epoch")
+            real_flip = indexing._flip_flags
+
+            async def beaten(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
+                await real_flip(session, *args, assignments=assignments)
+                if assignments == {"encoded": True}:
+                    await _beat(beater)
+
+            monkeypatch.setattr(indexing, "_flip_flags", beaten)
+            try:
+                result = await storage.reindex()
+            finally:
+                await beater.close()
+            assert result.success is True, result.errors
+            assert len(publishes) == 1
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_heartbeat_inside_the_chunk_pass_never_fails_its_fence(self, env_var: str, monkeypatch) -> None:
+        # Under a snapshot isolation the fence updates a row the run's own beat changed after the pass's reads.
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+            beater = sibling(env_var, storage)
+            passes = _counted(monkeypatch, "chunk_dirty")
+            real_flip = indexing._flip_flags
+
+            async def beaten(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
+                await real_flip(session, *args, assignments=assignments)
+                if _eligible(assignments):
+                    await _beat(beater)
+
+            monkeypatch.setattr(indexing, "_flip_flags", beaten)
+            try:
+                result = await storage.reindex()
+            finally:
+                await beater.close()
+            assert result.success is True, result.errors
+            assert len(passes) == 1
+            await _audit(storage)
+
+    @pytest.mark.parametrize("phase", ["chunk", "publish"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_an_admin_lock_never_deadlocks_a_lease_held_commit(
+        self, env_var: str, phase: str, monkeypatch
+    ) -> None:
+        # A relabel step takes the admin lock first and entry rows after it; a lease-held commit takes
+        # entry rows first and must never then ask for the admin lock's row.
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/x.txt"), content="xray body")])).success
+            writer = sibling(env_var, storage)
+            target, level = await _entry_id(storage, "/x.txt"), LEVEL_RANK["list"]
+            attempts = _counted(monkeypatch, "chunk_dirty" if phase == "chunk" else "publish_epoch")
+            relabels: list[int] = []
+            holding = asyncio.Event()
+            started: list[asyncio.Task[Result]] = []
+
+            async def relabel(session: Any) -> Result:
+                relabels.append(len(relabels))
+                tables = writer._host.tables
+                await hold_revision(session, tables)
+                holding.set()
+                stmt = update(tables.entry).where(tables.entry.c.entry_id == target).values(everyone_level=level)
+                await session.execute(stmt)
+                return Result(ops=("posture",))
+
+            real_flip = indexing._flip_flags
+
+            async def crossed(session: Any, *args: Any, assignments: dict[str, Any]) -> None:
+                await real_flip(session, *args, assignments=assignments)
+                ours = _eligible(assignments) if phase == "chunk" else assignments == {"encoded": True}
+                if ours and not started:
+                    started.append(asyncio.create_task(writer._execute_topology("posture", relabel)))
+                    await holding.wait()
+
+            monkeypatch.setattr(indexing, "_flip_flags", crossed)
+            try:
+                result = await storage.reindex()
+                written = await started[0]
+            finally:
+                await writer.close()
+            assert result.success is True, result.errors
+            assert written.success is True, written.errors
+            assert (len(attempts), len(relabels)) == (1, 1)
+            row = await _row(storage, "/x.txt")
+            assert (row.chunked, row.encoded, row.everyone_level) == (True, True, level)
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_an_entry_row_interleaving_lands_each_writer_once_within_the_retry_budget(
+        self, env_var: str, monkeypatch
+    ) -> None:
+        # Two writers each updating two entry rows in opposite orders: whether a cycle closes and
+        # which side the engine aborts are the engine's; each side's work lands once either way.
+        async with server_storage(env_var) as storage:
+            bodies = {"/x.txt": "xray body", "/y.txt": "yankee body"}
+            assert (await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])).success
+            writer = sibling(env_var, storage)
+            ids = {path: await _entry_id(storage, path) for path in bodies}
+            level = LEVEL_RANK["list"]
+            passes = _counted(monkeypatch, "chunk_dirty")
+            writes: list[int] = []
+            holding = asyncio.Event()
+            started: list[asyncio.Task[Result]] = []
+
+            async def crossing(session: Any) -> Result:
+                writes.append(len(writes))
+                entry = writer._host.tables.entry
+                relabelled = update(entry).values(everyone_level=level)
+                await session.execute(relabelled.where(entry.c.entry_id == ids["/y.txt"]))
+                holding.set()
+                await session.execute(relabelled.where(entry.c.entry_id == ids["/x.txt"]))
+                return Result(ops=("write",))
+
+            real_flip = indexing._flip_flags
+
+            async def split(
+                session: Any,
+                entry: Any,
+                profile: Any,
+                parameter_budget: int,
+                membership_budget: int,
+                pairs: list[tuple[str, int]],
+                *,
+                assignments: dict[str, Any],
+            ) -> None:
+                flip = partial(real_flip, session, entry, profile, parameter_budget, membership_budget)
+                if not _eligible(assignments):
+                    await flip(pairs, assignments=assignments)
+                    return
+                if not started:
+                    started.append(asyncio.create_task(writer._execute_topology("write", crossing)))
+                await holding.wait()
+                for path in ("/x.txt", "/y.txt"):
+                    await flip([pair for pair in pairs if pair[0] == ids[path]], assignments=assignments)
+
+            monkeypatch.setattr(indexing, "_flip_flags", split)
+            try:
+                result = await storage.reindex()
+                written = await started[0]
+            finally:
+                await writer.close()
+            assert result.success is True, result.errors
+            assert written.success is True, written.errors
+            assert len(passes) + len(writes) <= 3 and max(len(passes), len(writes)) <= 4
+            assert not [e for e in [*result.errors, *written.errors] if e.kind == ErrorKind.unavailable]
+            for path in bodies:
+                row = await _row(storage, path)
+                assert (row.chunked, row.everyone_level) == (True, level), path
+                assert await _chunk_ids(storage, path), path
+            await _audit(storage)
+
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_chunk_row_collision_is_recognised_from_the_engines_own_error(self, env_var: str) -> None:
+        async with server_storage(env_var) as storage:
+            assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha body")])).success
+            assert (await storage.reindex()).success is True
+            chunks = storage._host.tables.chunks
+            columns = [chunks.c[name] for name in ("entry_id", "chunk_index", "line_start", "line_end")]
+            columns += [chunks.c.content_hash, chunks.c.encoded, chunks.c.content]
+            async with storage._host.engine.connect() as conn:
+                existing = dict((await conn.execute(select(*columns))).mappings().one())
+            for row, unique in ((existing, True), ({**existing, "entry_id": None}, False)):
+                async with storage._host.session_factory() as session:
+                    await session.connection(execution_options={"vfs_writer": True})
+                    with pytest.raises(IntegrityError) as raised:
+                        await dialects.bulk_insert(session, chunks, [row])
+                    assert dialects.is_unique_violation(raised.value) is unique, raised.value
+                    await session.rollback()
 
 
 @pytest.mark.mariadb
