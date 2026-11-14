@@ -82,6 +82,7 @@ The spec has seven gap-free decisions, each with a reason, and no open-question 
 - L4: fixed: the Design's Scale line names about 7 MB on disk and 2 MB compressed for 0.1.0a1, 282 files, and no cap. READ, confirmed.
 - L5: fixed: decision 5 names the departure from AGENTS.md's one-line rule, in the way `experiments/` already departs. READ, confirmed.
 - L6: fixed: the diagram has the planned `reviews/README.md` box fed by the audit shape, and Terms list `architecture.md`. READ, confirmed.
+- 2026-11-12, the author's true-up over `f7539910`, for a confirming re-read: the line citations of The problem are re-read (`shapes.py:39`, `:234-250`, `:289-310`, `:305`, `:31`); the grant-gate spec is linked under `archive/`, landed at `92190579`; The problem gains three paragraphs, on the layer-map rule landed at `b2a32c37` (it reads only `-code-review.md` names, so the third kind is untouched), on the high and the eight mediums whose fixes have landed and the five confirmed mediums that have no fix spec, and on the line two landed specs ask the record to carry; the Design's record paragraph carries that line and the first verdict word the lint will require. No Decision, Scope item or criterion changed.
 
 ## Verdict
 
@@ -90,3 +91,5 @@ Not yet: H1, H2, M1, M2, M3, on the uncommitted draft over `3586750`.
 2026-11-07, re-read on the amended draft over `3586750`: Not yet: H1, criterion 5's grep refuses the namespace paths the record keeps.
 
 2026-11-07, second re-read on the amended draft over `3586750`: Fit to build.
+
+2026-11-12, re-read on the amended draft over `f7539910`, SHA-256 beginning `7f83723c8726`: Fit to build, by the fresh review of [2026-11-12](2026-11-12-the-release-audit-is-a-review-spec-review.md), whose findings are answered and whose last dated line signs this text; this file's findings are all still answered in it.

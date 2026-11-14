@@ -1,0 +1,21 @@
+# What marks an entry for re-splitting when a move changes the splitter that applies to it
+
+A placeholder memo. The reviewer of [the index publishes only what its build read](../specifications/active/2026-11-13-the-index-publishes-only-what-its-build-read.md) raised it on 2026-11-13 as finding L7 of [that spec's review](../reviews/2026-11-13-the-index-publishes-only-what-its-build-read-spec-review.md), and the session lead ruled that it predates that spec and stays out of it. It holds a defect of today's chunk pass: a move or rename that changes a file's extension keeps the chunk rows the old extension's splitter cut, through every later run. The spec that takes the answer is not yet written; it will be a fix to the chunk pass's dirty rule, landing after [refresh, the incremental index verb](../specifications/active/2026-10-31-refresh-the-incremental-index-verb.md), whose kept-entry rule reads the same stamps. No spec waits on it: the index-publish spec lists it as Out, and its invariants hold with the defect in place, because they compare the chunk rows a build read with the chunk rows its publish finds, not with the rows the current path's splitter would cut. Time box for the research: one session of two hours, with the executed probe below as its starting point.
+
+Labels: EXECUTED means a command ran for this memo; READ means read in the file cited, at `5d47a21a`; INFERRED means reasoning.
+
+## The question
+
+When a move or rename changes the splitter that applies to a file (its extension, or any other part of the path the splitter reads), what should mark the entry for re-splitting, so that its chunk rows are the ones the current path's splitter cuts? The choice to be made is among, at least: the move clearing `chunked` on every moved entry whose splitter changes, which a directory move of a large subtree would turn into a write per entry; a splitter fingerprint stamped beside `chunk_source_hash` and `chunk_generation` and compared by the chunk pass's dirty rule, which is a schema change; or the move clearing `chunked` on the moved root alone, since a directory move keeps every descendant's name and extension and only a rename of a file changes its extension.
+
+## What is known today
+
+- The splitter is chosen per row from its path and extension: `_assess_and_split` calls `Chunk.split_batch([(Path(row.path), row.content, row.ext) …])` (READ, `src/vfs/storage/backends/database/indexing.py:632`).
+- The fingerprint-skip law keeps a dirty entry's chunk rows when `content_hash` equals its stamped `chunk_source_hash` under the current `chunk_generation`; neither stamp records the extension or the path (READ, `indexing.py:618` to 624).
+- A move rewrites the root's `path`, `name` and `ext`, bumps its version and leaves `chunked`, `encoded` and its chunk rows as they were (READ, `src/vfs/storage/backends/database/topology.py:308` to 318); a descendant's path is rewritten with no version bump and its name and extension are unchanged (READ, `topology.py:360` to 376).
+- EXECUTED with the review's `rename_probe.py`, copied to this session's scratch folder and run on `5d47a21a`: a file written as `/a.txt` with twelve Markdown headings, reindexed, moved to `/a.md` and reindexed twice more, keeps 4 chunks spanning lines 1 to 14, 15 to 26, 27 to 38 and 39 to 47; the same body written as `/b.md` splits at 1 to 12, 13 to 24, 25 to 36 and 37 to 47.
+- So the grams of such a file are right (they are cut from the body alone), and its chunk rows, its lexical rows and its vectors are the old splitter's until its body is written again or the chunk generation changes (INFERRED from the two facts above).
+
+## The experiment that answers it
+
+Count, over the reference deployment's shapes in [the 2026-11-09 memo](2026-11-09-what-an-enterprise-scale-deployment-looks-like.md), how many entries a day change splitter under a move (renames that change an extension against directory moves), then build each candidate on a scratch copy and count, per candidate: the statements and row writes a move of one file and of a 100,000-entry subtree issues, the entries the next chunk pass re-splits, and whether the chunk rows after one run equal a fresh write's split, using `rename_probe.py`'s comparison as the referee.
