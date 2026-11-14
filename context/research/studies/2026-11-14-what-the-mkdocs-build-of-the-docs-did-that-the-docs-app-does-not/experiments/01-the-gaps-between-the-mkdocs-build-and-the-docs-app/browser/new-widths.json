@@ -1,0 +1,36 @@
+{
+ "390": {
+  "toc": "hidden",
+  "leftNav": "absent",
+  "tabs": "hidden",
+  "menuButton": "visible 32x32",
+  "github": "hidden",
+  "drawerLinks": [
+   "Home",
+   "Tutorials",
+   "How-to Guides",
+   "Reference",
+   "Explanation",
+   "Get Started",
+   "Overview",
+   "History"
+  ],
+  "pageScrollsSideways": false
+ },
+ "800": {
+  "toc": "hidden",
+  "leftNav": "visible 256x772",
+  "tabs": "visible 412x22",
+  "menuButton": "hidden",
+  "github": "visible 42x22",
+  "pageScrollsSideways": false
+ },
+ "1100": {
+  "toc": "hidden",
+  "leftNav": "visible 256x772",
+  "tabs": "visible 412x22",
+  "menuButton": "hidden",
+  "github": "visible 42x22",
+  "pageScrollsSideways": false
+ }
+}

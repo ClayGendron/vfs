@@ -1,0 +1,18 @@
+{
+ "light": {
+  "bodyBackground": "rgb(243, 240, 232)",
+  "h2": 6,
+  "svg": 2,
+  "highlightedSpans": 8,
+  "navLinks": 56
+ },
+ "dark": {
+  "bodyBackground": "rgb(22, 20, 15)",
+  "h2": 6,
+  "svg": 2,
+  "highlightedSpans": 8,
+  "navLinks": 56
+ },
+ "phoneDrawerLinksVisible": 38,
+ "phoneNavLinksVisible": 52
+}

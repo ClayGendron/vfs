@@ -33,7 +33,10 @@ A new `VirtualFileSystem` **stores its files in memory by default**, so there is
 Write your first file by giving it a path and its content.
 
 ```python
-fs.write(path="/hello_world.py", content='print("Hello, world!")')
+fs.write(
+    path="/hello_world.py",
+    content='print("Hello, world!")',
+)
 ```
 
 ```text

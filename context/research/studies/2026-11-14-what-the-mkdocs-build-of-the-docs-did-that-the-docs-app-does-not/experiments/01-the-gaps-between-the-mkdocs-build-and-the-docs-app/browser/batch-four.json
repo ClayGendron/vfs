@@ -1,0 +1,16 @@
+{
+ "oldOverviewTabStopsToArticle": 28,
+ "newOverviewTabStopsToArticle": 12,
+ "oldApiTabStopsToArticle": 57,
+ "newApiTabStopsToArticle": 23,
+ "oldAnchorTop": {
+  "headingTop": 84,
+  "headerBottom": 65
+ },
+ "newAnchorTop": {
+  "headingTop": 96,
+  "headerBottom": 72
+ },
+ "oldPhoneHeaderTitleAfterScroll": "vfs Overview",
+ "oldPhoneHeaderActiveTopic": 1
+}

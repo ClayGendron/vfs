@@ -19,7 +19,11 @@ from vfs import VirtualFileSystem
 
 fs = VirtualFileSystem()
 
-fs.write(path="/notes/hello.md", content="Hello from VFS.", parents=True)
+fs.write(
+    path="/notes/hello.md",
+    content="Hello from VFS.",
+    parents=True,
+)
 
 print(fs.read("/notes/hello.md"))
 ```

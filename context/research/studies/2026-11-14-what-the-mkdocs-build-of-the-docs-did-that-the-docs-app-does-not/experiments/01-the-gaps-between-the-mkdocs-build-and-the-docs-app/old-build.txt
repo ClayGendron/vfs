@@ -1,0 +1,22 @@
+Installed 33 packages in 607ms
+INFO    -  Cleaning site directory
+INFO    -  Building documentation to directory: /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site
+INFO    -  Downloading external file: https://unpkg.com/mermaid@11/dist/mermaid.min.js
+WARNING -  The following pages exist in the docs directory, but are not included in the "nav" configuration:
+  - introduction.md
+  - reference/python-api/index.md
+  - reference/python-api/async-virtual-file-system.md
+  - reference/python-api/authority.md
+  - reference/python-api/entry.md
+  - reference/python-api/errors.md
+  - reference/python-api/mounts.md
+  - reference/python-api/path.md
+  - reference/python-api/permissions.md
+  - reference/python-api/results.md
+  - reference/python-api/sessions.md
+  - reference/python-api/storage.md
+  - reference/python-api/virtual-file-system.md
+INFO    -  mkdocstrings_handlers: Formatting signatures requires either Black or Ruff to be installed.
+INFO    -  Downloading external file: https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=IBM+Plex+Sans:ital,wght@0,100..700;1,100..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Saira+Stencil:ital,wght@1,700&display=swap
+INFO    -  Documentation built in 1.98 seconds
+exit 0

@@ -1,0 +1,143 @@
+{
+ "newPhoneSideways": {
+  "/reference/python-api/async-virtual-file-system": {
+   "scrollWidth": 395,
+   "vw": 390,
+   "offenders": [
+    "code#. right=395"
+   ],
+   "count": 1
+  },
+  "/reference/python-api/sessions": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/reference/python-api/results": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/reference/python-api/entry": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/reference/python-api/errors": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/overview": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/reference/glossary": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/tutorials/use-the-cli": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  },
+  "/": {
+   "scrollWidth": 390,
+   "vw": 390,
+   "offenders": [],
+   "count": 0
+  }
+ },
+ "oldPrintLinks": "none",
+ "oldHome": "Governed Data Access for AI Agents VFS is a virtual file system that gives AI agents one governed namespace for data and tools. AI agents navigate it with commands they already know, and every command is checked against permissions before it runs. Get Started Read the Overview Explore the Docs¶ Tutorials Learn VFS step by step. Start here if you are new. How-to Guides Get a specific job done, such as loading a folder of files. Reference Look up the facts, such as what each access level allows. Explanation Understand why VFS is built the way it is.",
+ "newHome": "Governed Data Access for AI Agents VFS is a virtual file system that gives AI agents one governed namespace for data and tools. AI agents navigate it with commands they already know, and every command is checked against permissions before it runs. Get Started Read the Overview Explore the Docs Tutorials Learn VFS step by step. Start here if you are new. How-to Guides Get a specific job done, such as loading a folder of files. Reference Look up the facts, such as what each access level allows. Explanation Understand why VFS is built the way it is.",
+ "newHomeTitle": "VFS Docs",
+ "newHomeMeta": 1,
+ "anchorDiffs": {
+  "overview": {
+   "old": 14,
+   "new": 14,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "history": {
+   "old": 1,
+   "new": 1,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "get-started": {
+   "old": 4,
+   "new": 4,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "reference/glossary": {
+   "old": 4,
+   "new": 4,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "reference/access-levels": {
+   "old": 9,
+   "new": 9,
+   "onlyOld": [
+    "how-a-callers-level-is-decided"
+   ],
+   "onlyNew": [
+    "how-a-caller-s-level-is-decided"
+   ]
+  },
+  "tutorials/use-the-cli": {
+   "old": 11,
+   "new": 11,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "tutorials/build-your-first-file-system": {
+   "old": 8,
+   "new": 8,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "tutorials/keep-your-files-in-a-database": {
+   "old": 9,
+   "new": 9,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "tutorials/give-an-ai-agent-the-file-system": {
+   "old": 7,
+   "new": 7,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "tutorials/control-who-can-access-files": {
+   "old": 10,
+   "new": 10,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "how-to/load-a-folder-of-files": {
+   "old": 13,
+   "new": 13,
+   "onlyOld": [],
+   "onlyNew": []
+  },
+  "explanation/why-vfs-stores-files-in-a-database": {
+   "old": 6,
+   "new": 6,
+   "onlyOld": [],
+   "onlyNew": []
+  }
+ }
+}

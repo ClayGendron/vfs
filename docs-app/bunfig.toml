@@ -1,0 +1,3 @@
+[test]
+# The browser tests are Playwright's; `bun test` runs the build tests only.
+pathIgnorePatterns = ["tests/layout.spec.ts"]

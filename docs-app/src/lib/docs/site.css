@@ -1,0 +1,147 @@
+/* The docs app's own styles: the wordmark's typeface and the prose. The theme itself is in src/app.css. */
+@import "@fontsource/saira-stencil/latin-700-italic.css";
+@import "./prose.css";
+
+/* VFS has no logo, so its name is the mark: the one typeface that is the product's own and not the design system's. */
+.vfs-wordmark {
+  font-family: "Saira Stencil", var(--font-heading);
+  font-size: var(--text-2xl);
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: lowercase;
+}
+
+/* What an API name is (class, meth, attr, func, mod), shown before it in a heading and in the table of contents. */
+/* Each kind takes the code colour of the thing it names, so a method reads as a function does in a code block. */
+[data-api-symbol] {
+  color: var(--code-keyword);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: normal;
+  margin-inline-end: 0.5rem;
+}
+
+[data-api-symbol="class"] {
+  color: var(--code-type);
+}
+
+[data-api-symbol="meth"],
+[data-api-symbol="func"] {
+  color: var(--code-function);
+}
+
+[data-api-symbol="attr"] {
+  color: var(--code-property);
+}
+
+/* How an API name is declared (async, property, classmethod), shown after it: small, muted, on the code ground. */
+[data-api-label] {
+  background-color: var(--code-background);
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: normal;
+  margin-inline-start: 0.5rem;
+  padding: 0.125rem 0.375rem;
+  vertical-align: middle;
+}
+
+/* The skip link is off the window until the keyboard reaches it, then sits over the header's start. */
+.docs-skip {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-size: var(--text-sm);
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0.5rem;
+  outline: var(--focus-width) solid var(--ring);
+  padding: 0.5rem 0.75rem;
+  position: fixed;
+  transform: translateY(-200%);
+  z-index: 50;
+}
+
+.docs-skip:focus {
+  transform: none;
+}
+
+/* The menu for a phone with scripts off: a plain list that drops under the header when opened. */
+[data-slot="docs-menu-noscript"] .docs-menu-noscript-list {
+  background-color: var(--background);
+  border-bottom: var(--line-width) solid var(--border);
+  font-size: var(--text-sm);
+  inset-block-start: var(--size-bar);
+  inset-inline: 0;
+  max-height: calc(100svh - var(--size-bar));
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  position: absolute;
+}
+
+[data-slot="docs-menu-noscript"] ul + ul,
+[data-slot="docs-menu-noscript"] p {
+  margin-top: 1rem;
+}
+
+[data-slot="docs-menu-noscript"] p {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+[data-slot="docs-menu-noscript"] a {
+  display: block;
+  padding: 0.375rem 0;
+}
+
+[data-slot="docs-menu-noscript"] a[aria-current="page"] {
+  font-weight: 500;
+}
+
+/* With scripts off the drawer's button does nothing, so it is not drawn: the menu beside it takes its place. */
+@media (scripting: none) {
+  [data-slot="sidebar-trigger"] {
+    display: none;
+  }
+}
+
+/* On paper a page is its article alone, at the paper's width, and a line of code wraps since paper cannot scroll. */
+@media print {
+  .docs-skip,
+  .docs-anchor,
+  footer,
+  [data-slot="docs-header"],
+  [data-slot="sidebar"],
+  [data-slot="docs-toc"],
+  [data-slot="docs-toc-folded"],
+  [data-slot="docs-pager"],
+  [data-slot="docs-back-to-top"],
+  [data-slot="code-block-actions"] {
+    display: none !important;
+  }
+
+  main > div {
+    max-width: none;
+  }
+
+  [data-slot="code-block-content"] {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  [data-slot="code-block-code"] {
+    min-width: 0;
+  }
+}
+
+/* "Docs" follows the mark as one phrase: the heading typeface, upright, regular and muted. */
+.vfs-wordmark-site {
+  color: var(--muted-foreground);
+  font-family: var(--font-heading);
+  font-size: var(--text-2xl);
+  font-weight: 400;
+  line-height: 1;
+}

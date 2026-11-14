@@ -229,6 +229,12 @@ tests_old/fixtures/repos/
 # Node modules (vfs-app and any other JS subprojects)
 node_modules/
 
+# The docs app: its framework's working folder, the API export, and the browser tests' output
+docs-app/.svelte-kit/
+docs-app/src/lib/generated/
+docs-app/test-results/
+docs-app/playwright-report/
+
 # SQLite databases (local test/dev artifacts)
 *.db
 *.db-wal

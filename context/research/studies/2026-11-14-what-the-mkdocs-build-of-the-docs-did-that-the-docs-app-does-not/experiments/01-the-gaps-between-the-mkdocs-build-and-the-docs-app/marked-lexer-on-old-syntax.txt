@@ -1,0 +1,14 @@
+admonition: paragraph text
+details: paragraph text
+footnote: paragraph text space paragraph text
+def_list: paragraph text
+tabbed: paragraph text space code(indented,lang=undefined)
+mark: paragraph text
+attr_list: paragraph link text text
+tasklist: list list_item checkbox text text list_item checkbox text text
+mermaid: code(fenced,lang="mermaid")
+snippets: paragraph text
+inlinehilite: paragraph codespan
+strikethrough: paragraph del text
+raw_html: html space paragraph text space html
+fence_options: code(fenced,lang="python title=\"a.py\" hl_lines=\"1\"")

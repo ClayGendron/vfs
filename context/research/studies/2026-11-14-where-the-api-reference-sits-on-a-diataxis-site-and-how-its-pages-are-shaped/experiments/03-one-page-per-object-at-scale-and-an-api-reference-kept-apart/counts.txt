@@ -1,0 +1,94 @@
+Researcher 03, commands run on 2026-11-14 and the figures they printed. Clones under /Users/claygendron/Git/Repos.
+
+CLONES
+numpy   d63a30827d 2026-11-14   BSD-3-Clause
+polars  2d9938d    2026-11-14   MIT
+cpython b968417    2026-11-14   PSF-2.0 (shallow clone)
+
+LIVE INVENTORIES (curl of objects.inv, decoded with inv.py and kinds.py in this folder)
+https://numpy.org/doc/stable/objects.inv                NumPy 2.5    8,274 objects  2,671 distinct pages  50 std:term
+  by top folder: reference 2,443; release 132; user 37; f2py 22; dev 18; building 9
+  reference/generated 2,148; reference/random 206; reference/c-api 13
+  kinds.py reference/generated: method 848, function 801, attribute 235, data 164, property 51, class 35, exception 7, module 7; 2,145 pages hold one object, 3 hold more
+https://docs.pola.rs/api/python/stable/objects.inv      Polars       3,370 objects  1,545 distinct pages  0 std:term
+  reference 1,541: expressions 541; series 446; api 206; dataframe 153; lazyframe 128; sql 26; catalog 15; datatype_expr 14
+  kinds.py reference/: 1,446 pages hold a Python object: method 1,167, function 157, class 63, exception 31, property 21, attribute 4, data 2, module 1; 1,382 hold one object, 64 hold more
+https://docs.python.org/3/objects.inv                   Python 3.15  20,514 objects  556 distinct pages  178 std:term
+  by top folder: library 328; c-api 80; howto 30; whatsnew 26; deprecations 18; tutorial 17; reference 11; using 9; faq 9; extending 8; builtins 7
+  kinds.py library/: 280 pages hold a Python object: module first on 262; 245 hold two or more objects, 35 hold one
+
+NUMPY SOURCE (in numpy/doc/source unless a path says otherwise)
+find reference -name '*.rst' | wc -l                                  113
+find . -name '*.rst' | wc -l                                          351
+grep -rn '^\s*\.\. autosummary::' --include='*.rst' | wc -l           238, in 46 files
+grep -rn ':toctree:' --include='*.rst' | wc -l                        226, of which 220 name generated
+wc -l _templates/autosummary/*.rst                                    7 files, 131 lines
+wc -l reference/arrays.ndarray.rst                                    644; 119 lines list an ndarray member under an autosummary table
+wc -l ../../tools/refguide_check.py ../preprocess.py ../postprocess.py    665, 51, 50
+grep -roE ':(func|class|meth|obj|attr|mod|data|exc):`' user | wc -l   396, in a folder of 39 rst files
+grep -roE ':ref:`[^`]*`' ../../numpy --include='*.py' | wc -l         75
+grep -roE ':ref:`' reference --include='*.rst' | wc -l                165
+grep -ro 'array_like' ../../numpy --include='*.py' | wc -l            1,053
+
+NUMPY GLOSSARY
+wc -l glossary.rst                                                    564
+grep -cE '^   [^ ]' glossary.rst                                      50 terms
+grep -ro ':term:`' . --include='*.rst' | wc -l                        100: 26 inside glossary.rst, 74 outside, 73 outside the release notes; 18 files
+grep -ro ':term:`' ../../numpy --include='*.py' | wc -l               9, in 6 files: generic type 3, sequences 1, python:path-like object 1, casting 1, row-major 1, column-major 1, array_like 1
+grep -ro ':term:`' ../../numpy over .c .h .pyx .pyi .src .cpp         0
+
+POLARS SOURCE
+find py-polars/docs/source -name '*.rst' | wc -l                      101: expressions 22, series 20, sql 17, dataframe 11, lazyframe 11, datatype_expr 5, catalog 2, schema 1, 11 single files, index
+grep -rn 'autosummary::' py-polars/docs/source | wc -l                120; 119 carry :toctree: api/
+grep -rhE '^\s{3,}[A-Za-z_][A-Za-z0-9_.]*$' py-polars/docs/source/reference | wc -l    1,641 names listed by hand
+cat py-polars/docs/_templates/autosummary/*.rst | wc -l               6 files, 63 lines
+find docs/source -name '*.md' | wc -l                                 87
+grep -rhn '{{ *code_block' docs/source --include='*.md' | wc -l       335
+wc -l docs/source/_build/API_REFERENCE_LINKS.yml                      505; 154 lines hold a Python API URL; 143 distinct URLs once fragments are cut
+wc -l docs/source/_build/scripts/macro.py                             188
+grep -rn 'docs.pola.rs/api/python\|api/python' docs/source --include='*.md' | wc -l    20, in 11 files
+docstring links to the guide in py-polars/src/polars                  4
+
+POLARS LINK TABLE, HEAD request on each of the 143 distinct URLs
+200: 140
+404: 3
+  https://docs.pola.rs/api/python/stable/reference/api/polars.dtype_of.html
+  https://docs.pola.rs/api/python/stable/reference/expressions/api/polars.Expr.list.html
+  https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.fetch.html
+
+CPYTHON SOURCE (in cpython/Doc)
+find library -name '*.rst' | wc -l                                    329; builtins holds 7 more
+grep -rnE '^\s*\.\. auto(class|function|module|method|summary)::' .   0
+files in library with a module directive                              269 (325 directives); 60 without
+library/index.rst toctree entries                                     34
+hand-written object directives in library and builtins               function 2,209; method 3,638; class 1,043; attribute 1,396; data 1,320; exception 320; decorator 69; classmethod 60; staticmethod 4; property 1; total 10,060
+most method directives in one file                                    library/tkinter.rst 568; builtins/stdtypes.rst 167; library/decimal.rst 118; library/pathlib.rst 58
+longest files                                                         builtins/stdtypes.rst 7,003 lines; library/tkinter.rst 7,002; library/os.rst 6,514
+files sharing a module prefix                                         asyncio 19; email 16; tkinter 10; xml 9
+object roles in tutorial and howto                                    1,492, in 47 files
+seealso blocks in library and builtins                                263
+builtins/exceptions.rst                                               1,104 lines, 72 exception directives
+
+CPYTHON GLOSSARY
+wc -l glossary.rst                                                    1,745
+grep -cE '^   [^ ].*$' glossary.rst                                   178 terms
+grep -ro ':term:`' . --include='*.rst' | wc -l                        2,335: 262 inside glossary.rst, 2,073 outside; 262 files; 1,048 in library and builtins
+grep -ro ':term:`' ../Lib --include='*.py' | wc -l                    0
+grep -ro ':term:`' ../Objects ../Modules ../Python over .c .h         0
+
+LIVE PAGES (curl; bytes; signatures counted as '<dt class="sig'; table rows as class="row-odd" or "row-even")
+numpy  reference/generated/numpy.ndarray.html           79,626    1 signature    53 table rows
+numpy  reference/generated/numpy.ndarray.sort.html      37,339    1 signature    article about 9,900 bytes; 95 links
+numpy  reference/arrays.ndarray.html                   134,804    0 signatures  121 table rows; 8 h2, 9 h3
+polars reference/dataframe/index.html                1,508,248  136 signatures  159 table rows
+polars reference/expressions/index.html              1,695,019  214 signatures  213 table rows
+polars reference/dataframe/api/polars.DataFrame.filter.html   268,936    1 signature    article about 16,500 bytes; 1,597 links; sidebar entries 18 + 276 + 1,270
+python library/pathlib.html                            271,233   81 signatures    8 h2, 19 h3
+python library/stdtypes.html                           815,874  306 signatures   17 h2, 46 h3; canonical link names builtins/stdtypes.html
+
+SPHINX PROBE (uvx --from sphinx sphinx-build, version 9.2.0, a two-file project with one known and one unknown :term:)
+without -W: WARNING: term not in glossary: 'gadget' [ref.term], exit 0
+with -W:    the same warning, exit 1
+
+VFS PUBLIC NAMES (uv run python, inspect over vfs.__all__; members are a class's own public names plus its model fields, a rough count)
+22 names; about 266 own public members; VirtualFileSystem 38, AsyncVirtualFileSystem 36, DatabaseStorage 35, AsyncSession 28, Session 28, Result 24, Entry 23, Authority 13, ResultError 12, Path 10, MountInfo 9, Principal 5, PermissionMap 4, MountError 1; seven classes have none of their own (InMemoryStorage, PermissionsPayload, NotFoundError, UnauthenticatedError, VFSError, ValidationError, WriteConflictError) and permissions is a module

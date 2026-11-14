@@ -1,0 +1,316 @@
+"""The docs export reads the public API from the source, links glossary terms, and refuses a name it cannot place."""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+_SCRIPT = REPO / "scripts" / "docs_export.py"
+_SPEC = importlib.util.spec_from_file_location("docs_export", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+docs_export = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(docs_export)
+
+GLOSSARY = "# Glossary\n\n## Arm\n\nOne plain pattern.\n\n## Mount\n\nA storage attached at a path.\n"
+
+THINGS = '''
+"""A module of things."""
+
+
+class Thing:
+    """A thing that sits on a :term:`mount`."""
+
+    zeta: int = 1
+    _hidden: int = 2
+
+    def __init__(self, name: str, *, size: int = 0) -> None:
+        self.name = name
+
+    def walk(self, depth: int) -> list[str]:
+        """Walk the thing."""
+        return []
+
+    def _private(self) -> None:
+        """Not for callers."""
+
+    def alpha(self) -> None:
+        """Comes last in the source and first in the alphabet."""
+
+    def __len__(self) -> int:
+        return 0
+
+
+def helper(path: str) -> bool:
+    """Help with a path."""
+    return True
+'''
+
+
+def _package(root: Path, *, things: str = THINGS, names: tuple[str, ...] = ("Thing", "helper")) -> Path:
+    """A source folder holding one small package, ``pkg``, that exports *names* from ``pkg.things``."""
+    package = root / "src" / "pkg"
+    package.mkdir(parents=True)
+    exported = ", ".join(names)
+    (package / "__init__.py").write_text(f"from pkg.things import {exported}\n\n__all__ = {list(names)!r}\n")
+    (package / "things.py").write_text(things)
+    return root / "src"
+
+
+def _pages(root: Path, pages: dict[str, str], *, glossary: str = GLOSSARY) -> Path:
+    """A documentation folder holding the glossary and *pages*, each a path under ``reference/python-api/``."""
+    documentation = root / "documentation"
+    (documentation / "reference" / "python-api").mkdir(parents=True)
+    (documentation / "reference" / "glossary.md").write_text(glossary)
+    for name, text in pages.items():
+        (documentation / "reference" / "python-api" / name).write_text(text)
+    return documentation
+
+
+def _export(root: Path, *, things: str = THINGS, pages: dict[str, str] | None = None) -> dict[str, Any]:
+    source = _package(root, things=things)
+    documentation = _pages(root, pages or {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"})
+    return docs_export.export(source, documentation, package="pkg")
+
+
+@pytest.fixture(scope="module")
+def real_export() -> dict[str, Any]:
+    """The export of the real tree, loaded once: Griffe reads every file under ``src/vfs``."""
+    return docs_export.export(REPO / "src", REPO / "documentation")
+
+
+def test_the_export_holds_exactly_the_names_of_all(real_export: dict[str, Any]) -> None:
+    """Reading the names from anywhere but ``__all__``, or dropping one that fails to resolve, breaks the equality."""
+    tree = ast.parse((REPO / "src" / "vfs" / "__init__.py").read_text())
+    exported = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets)
+    )
+    assert real_export["names"] == list(exported)
+    assert set(real_export["objects"]) == set(exported)
+
+
+def test_the_export_has_the_documented_shape(tmp_path: Path) -> None:
+    """A renamed key, or a missing value written as an absent key and not as null, breaks the app's reader."""
+    exported = _export(tmp_path)
+    assert set(exported) == {"names", "objects"}
+    thing = exported["objects"]["Thing"]
+    assert set(thing) == {"kind", "labels", "signature", "bases", "doc", "members"}
+    assert thing["kind"] == "class"
+    assert thing["signature"] == "(name: str, *, size: int = 0) -> None"
+    member_keys = {"name", "kind", "labels", "signature", "annotation", "value", "doc", "members"}
+    assert all(set(member) == member_keys for member in thing["members"])
+    zeta = thing["members"][0]
+    assert (zeta["name"], zeta["kind"], zeta["annotation"], zeta["value"], zeta["signature"]) == (
+        "zeta",
+        "attribute",
+        "int",
+        "1",
+        None,
+    )
+    helper = exported["objects"]["helper"]
+    assert (helper["kind"], helper["signature"], helper["members"]) == ("function", "(path: str) -> bool", [])
+
+
+def test_the_source_is_read_and_never_imported(tmp_path: Path) -> None:
+    """Loading the package by import would run the module's body, and the body raises."""
+    exported = _export(tmp_path, things='raise RuntimeError("the module was imported")\n' + THINGS)
+    assert exported["names"] == ["Thing", "helper"]
+    assert exported["objects"]["helper"]["doc"] == "Help with a path."
+
+
+def test_members_are_public_and_in_source_order(tmp_path: Path) -> None:
+    """Sorting the members, or keeping an underscore-led one or the constructor, changes the list.
+
+    ``name`` is the attribute the constructor assigns: a public attribute, listed where it is assigned.
+    """
+    members = [member["name"] for member in _export(tmp_path)["objects"]["Thing"]["members"]]
+    assert members == ["zeta", "name", "walk", "alpha", "__len__"]
+
+
+def test_an_attribute_set_in_the_constructor_exports_no_value(tmp_path: Path) -> None:
+    """Exporting the right-hand side of ``self.name = name`` would print the parameter's name as a value."""
+    members = {member["name"]: member for member in _export(tmp_path)["objects"]["Thing"]["members"]}
+    assert (members["name"]["kind"], members["name"]["value"]) == ("attribute", None)
+    assert members["zeta"]["value"] == "1"
+
+
+LABELLED = '''
+"""A module of labelled things."""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Thing:
+    """A thing."""
+
+    size: int = 0
+
+    @property
+    def area(self) -> int:
+        """Its area."""
+        return 0
+
+    @classmethod
+    def make(cls) -> "Thing":
+        """Make one."""
+        return cls()
+
+    async def fetch(self) -> None:
+        """Fetch it."""
+
+    def plain(self) -> None:
+        """Nothing special."""
+
+
+def helper(path: str) -> bool:
+    """Help with a path."""
+    return True
+'''
+
+
+def test_labels_say_how_a_name_is_declared(tmp_path: Path) -> None:
+    """Dropping the labels leaves a page unable to tell a property from a field, or an async call from a plain one."""
+    exported = _export(tmp_path, things=LABELLED)
+    thing = exported["objects"]["Thing"]
+    assert thing["labels"] == ["dataclass"]
+    assert exported["objects"]["helper"]["labels"] == []
+    declared = {member["name"]: (member["kind"], member["labels"]) for member in thing["members"]}
+    assert declared == {
+        "size": ("attribute", ["class-attribute", "instance-attribute"]),
+        "area": ("attribute", ["property"]),
+        "make": ("function", ["classmethod"]),
+        "fetch": ("function", ["async"]),
+        "plain": ("function", []),
+    }
+
+
+MODULE_HEAD = (
+    'import os\nfrom pathlib import Path\n\nLIMIT: int = 3\n"""The most things one call takes."""\n\n_SECRET = 1\n'
+)
+
+
+def _module_export(root: Path, *, names: tuple[str, ...]) -> dict[str, Any]:
+    """The export of a package whose ``things`` module is exported, beside any of its names in *names*."""
+    source = _package(root, names=names)
+    imports = "".join(f"from pkg.things import {name}\n" for name in names if name != "things")
+    (source / "pkg" / "__init__.py").write_text(f"from pkg import things\n{imports}\n__all__ = {list(names)!r}\n")
+    (source / "pkg" / "things.py").write_text(MODULE_HEAD + THINGS)
+    blocks = "".join(f"\n::: pkg.{name}\n" for name in names)
+    documentation = _pages(root, {"things.md": f"# Things\n{blocks}"})
+    return docs_export.export(source, documentation, package="pkg")["objects"]
+
+
+def test_a_module_lists_what_it_defines(tmp_path: Path) -> None:
+    """Listing a module's imports, or dropping its own attributes, misstates what the module holds."""
+    module = _module_export(tmp_path, names=("things",))["things"]
+    assert module["kind"] == "module"
+    assert [member["name"] for member in module["members"]] == ["LIMIT", "Thing", "helper"]
+    limit = module["members"][0]
+    assert (limit["kind"], limit["annotation"], limit["value"], limit["doc"]) == (
+        "attribute",
+        "int",
+        "3",
+        "The most things one call takes.",
+    )
+
+
+def test_a_class_only_a_module_lists_carries_its_own_members(tmp_path: Path) -> None:
+    """A class no page pulls in by name has no other place for its members; an exported one would list them twice."""
+    only_here = _module_export(tmp_path / "only", names=("things",))["things"]
+    thing = next(member for member in only_here["members"] if member["name"] == "Thing")
+    assert [member["name"] for member in thing["members"]] == ["zeta", "name", "walk", "alpha", "__len__"]
+    assert all(member["members"] == [] for member in thing["members"])
+    exported_too = _module_export(tmp_path / "both", names=("things", "Thing"))
+    thing = next(member for member in exported_too["things"]["members"] if member["name"] == "Thing")
+    assert thing["members"] == []
+    assert len(exported_too["Thing"]["members"]) == 5
+
+
+@pytest.mark.parametrize(
+    ("marker", "link"),
+    [
+        (":term:`mount`", "[mount](/reference/glossary#mount)"),
+        (":term:`Mount`", "[Mount](/reference/glossary#mount)"),
+        (":term:`arms <arm>`", "[arms](/reference/glossary#arm)"),
+    ],
+)
+def test_a_term_marker_becomes_a_glossary_link(tmp_path: Path, marker: str, link: str) -> None:
+    """Matching the term by exact case, or showing the target where the marker gives its own words, breaks a leg."""
+    things = THINGS.replace("A thing that sits on a :term:`mount`.", f"A thing with {marker} in it.")
+    assert _export(tmp_path, things=things)["objects"]["Thing"]["doc"] == f"A thing with {link} in it."
+
+
+def test_a_term_the_glossary_lacks_refuses_the_export(tmp_path: Path) -> None:
+    """Logging the unknown term and writing the file anyway would publish a marker nobody defined."""
+    things = THINGS.replace(":term:`mount`", ":term:`mountain`")
+    source = _package(tmp_path, things=things)
+    documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"})
+    with pytest.raises(docs_export.ExportError) as refusal:
+        docs_export.export(source, documentation, package="pkg")
+    assert "pkg.things.Thing" in str(refusal.value)
+    assert "mountain" in str(refusal.value)
+    out = tmp_path / "api.json"
+    code = docs_export.main(
+        ["--source", str(source), "--documentation", str(documentation), "--package", "pkg", "--out", str(out)]
+    )
+    assert code == 1
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    ("role", "code"),
+    [
+        (":func:`helper`", "`helper`"),
+        (":meth:`Thing.walk`", "`Thing.walk`"),
+        (":class:`Thing`", "`Thing`"),
+        (":func:`~pkg.things.helper`", "`helper`"),
+    ],
+)
+def test_a_code_role_becomes_inline_code(tmp_path: Path, role: str, code: str) -> None:
+    """Leaving the role as written, or keeping the dotted path a leading tilde asks to drop, breaks a leg."""
+    things = THINGS.replace("Help with a path.", f"Help with a path, as {role} does.")
+    assert _export(tmp_path, things=things)["objects"]["helper"]["doc"] == f"Help with a path, as {code} does."
+
+
+@pytest.mark.parametrize(
+    ("pages", "named"),
+    [
+        ({"things.md": "# Things\n\n::: pkg.Thing\n"}, ("pkg.helper",)),
+        (
+            {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n", "more.md": "# More\n\n::: pkg.helper\n"},
+            ("pkg.helper", "things.md", "more.md"),
+        ),
+        (
+            {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n\n::: pkg.secret\n"},
+            ("pkg.secret", "things.md"),
+        ),
+    ],
+    ids=["on-no-page", "on-two-pages", "not-exported"],
+)
+def test_every_exported_name_is_on_exactly_one_page(
+    tmp_path: Path, pages: dict[str, str], named: tuple[str, ...]
+) -> None:
+    """Checking one direction only lets an undocumented name, a doubled one, or a private one through."""
+    with pytest.raises(docs_export.ExportError) as refusal:
+        _export(tmp_path, pages=pages)
+    assert all(name in str(refusal.value) for name in named)
+
+
+def test_the_command_writes_the_export_as_json(tmp_path: Path) -> None:
+    """Writing anything but the export's own JSON to the path the app reads leaves the app with no API."""
+    source = _package(tmp_path)
+    documentation = _pages(tmp_path, {"things.md": "# Things\n\n::: pkg.Thing\n\n::: pkg.helper\n"})
+    out = tmp_path / "generated" / "api.json"
+    code = docs_export.main(
+        ["--source", str(source), "--documentation", str(documentation), "--package", "pkg", "--out", str(out)]
+    )
+    assert code == 0
+    assert json.loads(out.read_text()) == docs_export.export(source, documentation, package="pkg")

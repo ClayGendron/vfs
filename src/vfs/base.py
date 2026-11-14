@@ -178,7 +178,7 @@ class Binding(NamedTuple):
 
 
 class MountInfo(NamedTuple):
-    """One ``mounts()`` row — table facts and bind-time snapshots, JSON-native.
+    """One ``mounts()`` row for one :term:`mount` — table facts and bind-time snapshots, JSON-native.
 
     Every field is a JSON fixed point (str, bool, None, or containers of
     these), so ``json.dumps(row._asdict())`` always succeeds.  Mounter-
@@ -417,7 +417,7 @@ class AsyncVirtualFileSystem:
         no_overlay: bool = False,
         owned: bool = True,
     ) -> None:
-        """Bind *storage* at *path* — the mount primitive.
+        """Bind *storage* at *path* — the :term:`mount` primitive.
 
         The site must already exist as an **empty directory** in the storage
         owning the parent path (the ``graft_tree`` rule: exists, is a
@@ -1286,7 +1286,7 @@ class AsyncVirtualFileSystem:
         admitted by *pattern* and rejected by any *globs_not* glob, the
         *ext*/*ext_not* facts, and a *kind* mismatch. Scoping crosses
         the storage seam in one shape: each root rides beside the
-        uncomposed arms into the entry that owns it, so the plan and the
+        uncomposed :term:`arms <arm>` into the entry that owns it, so the plan and the
         SQL grow with roots plus arms rather than their product. A root
         that names an entry whole, or sits above one, composes into one
         spatial pattern instead, and residuation puts those members in

@@ -17,7 +17,9 @@ Open a new notebook and run this in the first cell.
 ```python
 from vfs import DatabaseStorage, VirtualFileSystem
 
-fs = VirtualFileSystem(storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"))
+fs = VirtualFileSystem(
+    storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"),
+)
 ```
 
 This cell prints nothing. The `storage` argument tells the file system where to keep its files, and the URL names the database. Here, `sqlite+aiosqlite` is the kind of database and its driver, which is installed with `vfs-py`, and `vfs.db` is the file the database lives in.
@@ -27,7 +29,10 @@ This cell prints nothing. The `storage` argument tells the file system where to 
 Write a file exactly as you did in the first tutorial.
 
 ```python
-fs.write(path="/hello_world.py", content='print("Hello, world!")')
+fs.write(
+    path="/hello_world.py",
+    content='print("Hello, world!")',
+)
 ```
 
 ```text
@@ -65,7 +70,9 @@ fs.close()
 This cell prints nothing. The file system is gone from memory, as if your application had stopped. Now create it again on the same database and read the file.
 
 ```python
-fs = VirtualFileSystem(storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"))
+fs = VirtualFileSystem(
+    storage=DatabaseStorage(url="sqlite+aiosqlite:///vfs.db"),
+)
 
 fs.read("/hello_world.py")
 ```

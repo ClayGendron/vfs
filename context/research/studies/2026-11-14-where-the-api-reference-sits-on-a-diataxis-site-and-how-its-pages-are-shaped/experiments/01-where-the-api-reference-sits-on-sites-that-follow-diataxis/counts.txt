@@ -1,0 +1,87 @@
+Commands run by Researcher 01 on 2026-11-14 between 15:05 and 15:12 EST, each from /Users/claygendron/Git/Repos, with the figure each printed. Clones were read only.
+
+== commits (git -C <clone> log -1 --format='%h %cs') ==
+diataxis-documentation-framework 957c09c 2026-08-06
+django f24f38c 2026-11-13
+pytest fc9a7ef 2026-11-11
+hypothesis 9ab0be6 2026-11-06
+numpy d63a30827d 2026-11-14
+toga c2e9a35 2026-11-13
+sphinx-docs-starter-pack 47c1ca7 2026-10-16
+lxd f051822 2026-11-13
+
+== diataxis-documentation-framework ==
+git log --diff-filter=D --format='%h %cs %s' -- complex-hierarchies.rst
+  c953482 2026-08-03 Added translation machinery and content   (272 lines deleted, not moved)
+git show c953482^:complex-hierarchies.rst   -> example tree: Reference <- landing page / Command-line tool / Available endpoints / API
+grep -rn -i -E 'landing page|hierarch|seven' source/*.rst   -> no output
+grep -n -i -E 'api|auto-?generat|docstring' source/reference.rst   -> lines 20-21, 45-49
+
+== django (docs/) ==
+find <dir> -name '*.txt' | wc -l   -> intro 14, topics 68, howto 38, ref 120, releases 400, internals 23, faq 9, misc 4, all 680
+ref subfolders: class-based-views 12, contrib 53, files 4, forms 8, models 14, templates 4; ref/index.txt lists 30 entries in file-name order
+grep -rn -E '^\s*\.\. auto(class|module|function|method)::' --include='*.txt' . | wc -l   -> 0
+hand directives in ref: class 679, method 670, function 138, attribute 944, setting 216, exception 50, data 39, templatetag 32, templatefilter 63
+ref files holding a class/function/method/attribute/module/exception/data directive: 97 of 120
+roles (:class: :meth: :func: :attr: :exc: :mod: :data: :setting: :djadmin: :ttag: :tfilter: :lookup:) -> intro 152, topics 2537, howto 487
+:doc: links into /ref/ -> intro 6, topics 54, howto 5; :doc: links from ref into topics/howto/intro -> 147
+glossary.txt: 12 terms; `.. glossary::` directives also in internals/release-process.txt, topics/http/urls.txt, topics/i18n/index.txt (two)
+grep -rno ':term:`' --include='*.txt' . | wc -l -> 73 (intro 3, topics 29, howto 1, ref 20, releases 8, internals 10, glossary.txt 2); in django/ source 0
+:term: markers outside glossary.txt that name one of the 12 glossary.txt terms -> 4 (slug, concrete model, project, property)
+
+== pytest (doc/en/) ==
+wc -l reference/*.rst -> customize 300, exit-codes 27, fixtures 457, index 15, plugin_list 17688, reference 3859
+reference/reference.rst top sections: Constants, Functions, Marks, Fixtures, Hooks, Collection tree objects, Objects, Global Variables, Environment Variables, Exceptions, Warnings, Configuration Options, Command-line Flags
+directives in reference/reference.rst: option 92, autofunction 81, autoclass 63, confval 56, hook 52, fixture 21, envvar 14, py:function 5, globalvar 4, class 4, function 2, autoexception 2, autoattribute 2
+glossary directive -> none; :term: -> 0 in doc/en and 0 in src
+roles into the reference -> how-to 292 (24 files), explanation 42 (8), getting-started 4, example 42 (10)
+
+== hypothesis (hypothesis/docs/) ==
+wc -l reference/*.rst -> api 529, index 18, integrations 308, internals 49, strategies 280
+directives in reference/*.rst: autofunction 74, autoclass 39, automodule 10, autodata 8, automethod 7, jsonschema 4, data 1
+glossary.rst: 5 terms (4 user, 1 developer); prolog.rst holds 209 substitution definitions, 11 of them wrap a :term:
+term substitutions used -> docs 23, src 34; raw :term: markers -> 13 in docs (11 of them the prolog definitions), 0 in src
+substitution uses -> tutorial 143 (9 files), how-to 40 (6), explanation 33 (3), quickstart 16
+
+== numpy (doc/source/) ==
+find -name '*.rst' | wc -l -> reference 113 (top level 72, random 24, c-api 13, simd 4), user 39, release 136, all 351
+autosummary directives in reference 233 across 44 files; entries listed under them 1674; other auto directives 74
+glossary.rst: about 50 term lines; listed only in the hidden "Extras" toctree of user/index.rst (line 51)
+:term: -> 100 in doc/source (user 20, reference 21, release 1, glossary.rst 26), 9 in numpy/ source
+roles from user/ into the API -> 397, plus 93 default-role back-tick names; default_role = "autolink" (conf.py line 159)
+
+== toga (docs/) ==
+find en -name '*.md' -not -path '*/snippets/*' | wc -l -> 121; reference 68 (api 56, platforms 11, index 1); tutorial 7, how-to 29, topics 9, about 6
+api folders: application 8, widgets 22, containers 4, style 1, data-representation 12, resources 4, hardware 4, index 1
+'::: ' lines in reference/api -> 185 across 55 files; elsewhere 3 files
+headings in reference/api -> "## Reference" 55, "## Usage" 53, "## Notes" 28
+autorefs into the API -> tutorial 12, how-to 30, topics 34; glossary -> none
+
+== sphinx-docs-starter-pack (docs/) ==
+wc -l docs/*/index.rst docs/index.rst -> 4 lines each for contribute, explanation, how-to, reference, release-notes, tutorials; index 43
+docs/reference/index.rst is a label and a title only
+
+== lxd (doc/) ==
+find . -name '*.md' -o -name '*.rst' | wc -l -> 231; reference/ 85 (release-notes 27); howto 87, explanation 15, tutorial 1; 42 .md files at the doc root
+wc -l -> rest-api.yaml 22076, metadata.txt 8310, api-extensions.md 3906
+config:option entries in metadata.txt 986; {config:option} role uses 590 (howto 116, explanation 23, tutorial 6); swagger: links 156
+glossary -> none; :term: -> 0
+
+== warnings as errors in the three glossary projects ==
+django/.readthedocs.yml:13 fail_on_warning: true; django/docs/Makefile:25 passes -n (nit-picky) and no -W by default; .github/workflows/docs.yml:50 runs the spelling build with -W
+numpy/doc/Makefile:14 SPHINXOPTS ?= -W
+hypothesis/hypothesis/docs/conf.py:29 nitpicky = True; hypothesis/tooling/src/hypothesistooling/release.py:141-146 sphinx-build --fail-on-warning
+pytest (no glossary) for comparison: .readthedocs.yaml:14 fail_on_warning: true; tox.ini:136 -W --keep-going
+grep -cE '^\s+reference/[^:]+: ' toga/docs/config.yml -> 39 redirects whose source is a reference page
+term substitutions used inside hypothesis/docs/glossary.rst itself -> 3 of the 23
+
+== live pages fetched 2026-11-14 ==
+https://diataxis.fr/complex-hierarchies/ -> HTTP 404
+https://diataxis.fr/reference/ -> same headings and sentences as source/reference.rst
+https://toga.beeware.org/en/latest/reference/ -> body lists API reference and Supported platforms
+https://hypothesis.readthedocs.io/en/latest/reference/index.html -> sidebar: Quickstart, Tutorial, How-to guides, Explanations, API Reference, Stateful tests, Extras, Glossary, Changelog
+https://docs.pytest.org/en/latest/reference/index.html -> Reference guides: API Reference, Fixtures reference, Configuration, Exit codes, Pytest Plugin List
+https://canonical.com/lxd/docs/latest/reference/ (redirect from documentation.ubuntu.com/lxd) -> seven groups, REST API under "API and integrations", release notes under "Releases"
+https://docs.djangoproject.com/en/dev/ref/ -> title "API Reference", 30-odd entries in file-name order
+https://numpy.org/doc/stable/ -> top bar: User Guide, API reference, Building from source, Development, Release notes, Learn, NEPs; no glossary link
+https://documentation.ubuntu.com/sphinx-stack/latest/ (redirect from canonical-starter-pack.readthedocs-hosted.com) -> four Diátaxis sections; no API guidance on the front page

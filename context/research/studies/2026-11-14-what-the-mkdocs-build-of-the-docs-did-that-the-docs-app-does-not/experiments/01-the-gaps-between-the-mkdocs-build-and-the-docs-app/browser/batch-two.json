@@ -1,0 +1,43 @@
+{
+ "old": {
+  "apiCopyButtons": 40,
+  "apiSignatures": 40,
+  "apiTocLinks": 39,
+  "apiTocFirst": {
+   "text": " unbind",
+   "symbol": "\"meth\""
+  },
+  "permissionAlias": " Permission module-attribute ¶\nPermission = Literal['read', 'read_write']\n\n\nFilesystem-level permission value.",
+  "focusablesBeforeArticle": 10,
+  "phoneTable": {
+   "pageScrollsSideways": false,
+   "tableWidth": 358,
+   "wrapWidth": 390,
+   "wrapOverflowX": "visible",
+   "grandOverflowX": "auto"
+  },
+  "phoneApiSideways": false
+ },
+ "new": {
+  "apiCopyButtons": 1,
+  "apiCodeBlocks": 38,
+  "apiTocLinks": 40,
+  "focusablesBeforeArticle": 22,
+  "clientNavigation": {
+   "url": "/history",
+   "navType": "http://127.0.0.1:8812/overview"
+  },
+  "themeToggle": [
+   "Toggle sidebar",
+   "Dark theme"
+  ],
+  "phoneTable": {
+   "pageScrollsSideways": false,
+   "tableWidth": 358,
+   "wrapWidth": 358,
+   "wrapOverflowX": "auto",
+   "grandOverflowX": "visible"
+  },
+  "phoneApiSideways": true
+ }
+}

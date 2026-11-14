@@ -1,0 +1,21 @@
+Run by the coordinator on 2026-11-14, after the four studies landed, on the vfs working tree over 7edd8901.
+
+What ran. The site's configuration, mkdocs-documentation.yml, was copied twice into a scratch folder outside the checkout with its relative paths made absolute. The first copy is unchanged ("base"). The second adds two handler options, `summary: true` and `signature_crossrefs: true` ("summary"). Each was built with:
+
+    uv run --all-extras --group dev --group docs mkdocs build -q -f <copy>.yml --strict -d <scratch>/site-<name>
+
+Versions: mkdocs 1.6.1, mkdocs-material 9.7.1, mkdocstrings 1.0.8, mkdocstrings-python 2.0.11.
+
+Both builds exited 0 under --strict.
+
+For three API pages the whole HTML file and its <article> element were measured in bytes, and inside the article the object headings (`<h1..6 id="vfs.`), the tables and the links made by autorefs (`class="autorefs`) were counted.
+
+variant  page                     page bytes  article bytes  headings  tables  linked names
+base     AsyncVirtualFileSystem       171078         122548        40       0             0
+base     Result                        86731          42177        34       0             0
+base     Entry                         66147          27227        23       0             0
+summary  AsyncVirtualFileSystem       200815         152285        40       2            66
+summary  Result                       106067          61513        34       2            50
+summary  Entry                         78656          39736        23       2            25
+
+Reading. The two options add about 30 KB to the largest page, two summary tables at its top (attributes, functions) and 66 links from signatures to the pages of the types they name. The largest page stays near 0.2 MB.

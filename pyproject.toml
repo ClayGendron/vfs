@@ -85,9 +85,12 @@ dev = [
     "pytest-timeout>=2.3",
     # scripts/bump_version.py parses and orders versions with it
     "packaging>=24",
+    # tests/scripts/test_docs_export.py runs the docs export
+    { include-group = "docs" },
 ]
 docs = [
-    "mkdocs-material>=9.0",
+    # scripts/docs_export.py reads the public API from the source for the docs app
+    "griffelib>=2.4",
 ]
 
 [tool.ruff]

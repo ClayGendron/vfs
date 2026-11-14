@@ -1,0 +1,48 @@
+{
+ "390": {
+  "toc": "hidden",
+  "leftNav": "visible 242x844",
+  "tabs": "hidden",
+  "menuButton": "visible 40x40",
+  "searchButton": "visible 40x40",
+  "drawerLinks": [
+   "Home",
+   "Home",
+   "",
+   "Get Started",
+   "Overview",
+   "Why VFS Was Built",
+   "Who VFS Is Built For",
+   "Developers",
+   "Enterprises",
+   "AI Agents",
+   "What VFS Is Designed Around",
+   "Everything is a File",
+   "Progressive Disclosure",
+   "Navigational Primitives",
+   "Command-Line Interface",
+   "Where VFS Runs",
+   "How VFS Enforces Governance",
+   "When to Use VFS",
+   "History",
+   "Tutorials"
+  ],
+  "pageScrollsSideways": false
+ },
+ "800": {
+  "toc": "hidden",
+  "leftNav": "visible 242x844",
+  "tabs": "hidden",
+  "menuButton": "visible 40x40",
+  "searchButton": "visible 40x40",
+  "pageScrollsSideways": false
+ },
+ "1100": {
+  "toc": "visible 242x78",
+  "leftNav": "visible 242x844",
+  "tabs": "hidden",
+  "menuButton": "visible 40x40",
+  "searchButton": "hidden",
+  "pageScrollsSideways": false
+ }
+}

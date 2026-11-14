@@ -1,0 +1,154 @@
+/* Long-form text rendered from Markdown. Every colour, size and typeface is a design-system token. */
+
+.docs-prose {
+  color: var(--foreground);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  min-width: 0;
+}
+
+.docs-prose :is(h1, h2, h3, h4) {
+  color: var(--foreground);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  /* A heading reached by a link clears the header that stays at the top of the window. */
+  scroll-margin-top: calc(var(--size-bar) + 1.5rem);
+}
+
+.docs-prose h1 {
+  font-size: clamp(2rem, 1.25rem + 2.4vw, var(--text-5xl));
+  letter-spacing: var(--tracking-display);
+  line-height: 1.15;
+  margin: 0 0 1rem;
+}
+
+.docs-prose h2 {
+  font-size: var(--text-2xl);
+  letter-spacing: var(--tracking-section);
+  line-height: 1.2;
+  margin: 4rem 0 0.75rem;
+}
+
+.docs-prose h3 {
+  font-size: var(--text-base);
+  line-height: 1.6;
+  margin: 2rem 0 0.5rem;
+}
+
+.docs-prose h4 {
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 1.6;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.docs-prose :is(p, ul, ol, blockquote, [data-slot="code-block"], [data-slot="table-container"], svg[role="img"]) {
+  margin: 0 0 1rem;
+}
+
+.docs-prose :is(ul, ol) {
+  padding-inline-start: 1.5rem;
+}
+
+.docs-prose ul {
+  list-style: disc;
+}
+
+.docs-prose ol {
+  list-style: decimal;
+}
+
+.docs-prose li {
+  margin: 0.25rem 0;
+}
+
+.docs-prose li > :is(ul, ol) {
+  margin: 0.25rem 0 0;
+}
+
+/* A link is the primary colour and underlined, so it is told from the text around it by more than colour. */
+.docs-prose a {
+  color: var(--primary);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: var(--line-width);
+  text-underline-offset: 0.25rem;
+}
+
+.docs-prose a:hover {
+  text-decoration-thickness: var(--focus-width);
+}
+
+/* A heading's link to itself: muted, with no underline, and hidden until the heading is hovered or it is focused. */
+.docs-prose .docs-anchor {
+  color: var(--muted-foreground);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  margin-inline-start: 0.5rem;
+  opacity: 0;
+  text-decoration: none;
+}
+
+.docs-prose :is(h1, h2, h3, h4):hover .docs-anchor,
+.docs-prose .docs-anchor:focus-visible {
+  opacity: 1;
+}
+
+/* The table of contents folded under the title on a narrow window: a list of links in the page's own colour. */
+.docs-prose [data-slot="docs-toc-folded"] a {
+  color: var(--muted-foreground);
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.docs-prose [data-slot="docs-toc-folded"] a:hover {
+  color: var(--foreground);
+}
+
+.docs-prose hr {
+  border: 0;
+  border-bottom: var(--line-width) solid var(--border);
+  margin: 3rem 0;
+}
+
+.docs-prose blockquote {
+  border-inline-start: var(--focus-width) solid var(--input);
+  color: var(--muted-foreground);
+  padding-inline-start: 1rem;
+}
+
+/* Inline code sits on the code ground, as a code block does: a small inset, a step smaller than the text. */
+.docs-prose :not(pre) > code {
+  background-color: var(--code-background);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  padding: 0.125rem 0.375rem;
+}
+
+/* A diagram placed inline keeps its drawn size and shrinks with a narrow column. */
+.docs-prose svg[role="img"] {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
+
+/* A block of code scrolls sideways when a line is wider than the column, and never up and down. */
+.docs-prose [data-slot="code-block-content"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* A member's name is in the mono face, under a line that sets it apart from the member before it. */
+.docs-prose h3[data-api-member] {
+  border-top: var(--line-width) solid var(--border);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+}
+
+/* A field of a class that a module lists: the mono face too, set in from the class it belongs to by no line. */
+.docs-prose h4[data-api-member] {
+  font-family: var(--font-mono);
+}

@@ -19,8 +19,16 @@ from vfs import VirtualFileSystem
 
 fs = VirtualFileSystem()
 
-fs.write(path="/handbook/welcome.md", content="Welcome to the team.", parents=True)
-fs.write(path="/finance/salaries.md", content="Salaries are reviewed every March.", parents=True)
+fs.write(
+    path="/handbook/welcome.md",
+    content="Welcome to the team.",
+    parents=True,
+)
+fs.write(
+    path="/finance/salaries.md",
+    content="Salaries are reviewed every March.",
+    parents=True,
+)
 ```
 
 ```text

@@ -1,0 +1,36 @@
+admonition: 0 pages
+attr_list: 0 pages
+def_list: 0 pages
+footnotes: 0 pages
+raw_html: 0 pages
+tables: 3 pages
+grep: unrecognized option `--8<--'
+usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] [-A num] [-B num] [-C[num]]
+	[-e pattern] [-f file] [--binary-files=value] [--color=when]
+	[--context[=num]] [--directories=action] [--label] [--line-buffered]
+	[--null] [pattern] [file ...]
+snippets: 0 pages
+mermaid: 0 pages
+tabbed: 0 pages
+mark: 0 pages
+tasklist: 0 pages
+inlinehilite: 0 pages
+fence_options: 0 pages
+front_matter: 0 pages
+blockquote: 0 pages
+fence languages:
+ 100 ```
+   5 ```bash
+  60 ```python
+  35 ```text
+images:
+./overview.md:69:![The line of optimal disclosure, where the tokens an AI agent uses equal the tokens a problem needs. Above the line cost i
+./overview.md:119:![The VFS architecture. An AI agent and the VFS kernel run in one application process, and the kernel is the one layer tha
+external links in pages:
+   1 ](https://github.com/ClayGendron/vfs/blob/main/src/vfs/base.py)
+   1 ](https://github.com/ClayGendron/vfs/blob/main/src/vfs/paths.py)
+   3 ](https://github.com/ClayGendron/vfs/blob/main/src/vfs/pattern_matching/glob.py)
+   1 ](https://github.com/ClayGendron/vfs/blob/main/src/vfs/storage/protocol.py)
+   1 ](https://www.gartner.com/en/newsroom/press-releases/2025-02-26-lack-of-ai-ready-data-puts-ai-projects-at-risk)
+   1 ](https://www.gartner.com/en/newsroom/press-releases/gartner-survey-finds-only-22-percent-of-organizations-have-successfully-scaled-ai-across-multiple-business-units)
+total pages:       24

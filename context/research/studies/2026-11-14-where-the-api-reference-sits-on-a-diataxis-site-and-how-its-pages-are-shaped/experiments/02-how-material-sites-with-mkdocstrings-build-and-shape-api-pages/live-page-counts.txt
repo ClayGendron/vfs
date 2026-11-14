@@ -1,0 +1,9 @@
+Live API pages fetched with curl on 2026-11-14; counts by regular expression over the saved HTML.
+file | bytes | generator | in-page toc anchors (unique #fragment links inside md-nav--secondary) | h1-h6 with class doc-heading | 'Source code in' blocks | doc-symbol-heading | doc-symbol-toc | doc-backlink-list | words (tags stripped)
+https://fastapi.tiangolo.com/reference/fastapi/ | 1223839 | zensical-0.0.65 | 32 | 20 | 16 | 55 | 40 | 0 | 34404
+https://mkdocstrings.github.io/griffe/reference/api/ | 107210 | zensical-0.0.71 | 11 | 1 | 0 | 60 | 0 | 0 | 1355
+https://mkdocstrings.github.io/griffe/reference/api/models/class/ | 774579 | zensical-0.0.71 | 112 | 112 | 19 | 345 | 980 | 236 | 9593
+https://mkdocstrings.github.io/griffe/reference/api/models/ | 1185837 | zensical-0.0.71 | 215 | 211 | 44 | 527 | 1250 | 325 | 18711
+https://mkdocstrings.github.io/python/usage/ | 71373 | none stated | 0 | 0 | 0 | 0 | 0 | 0 | 2044
+https://pydantic.dev/docs/validation/latest/api/pydantic/base_model/ | 276451 | Astro v7.4.4 + Starlight v0.41.11 | n/a | 0 | 0 | 0 | 0 | 0 | 4046
+https://textual.textualize.io/api/app/ | 524561 | mkdocs-1.6.1, mkdocs-material-9.6.22 | 197 | 196 | 0 | 0 | 0 | 0 | 10313

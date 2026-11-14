@@ -1,0 +1,5 @@
+Counts run on 2026-11-14 over the clones; one line per project: API page files, ::: directives in them, ::: directives elsewhere in the docs, per-page 'options:' blocks in the API pages.
+fastapi 913c68062: files=24 directives=61 elsewhere=0 options_blocks=13
+pydantic 560f0f9: files=36 directives=39 elsewhere=1 options_blocks=11
+textual 5e5b7ef: files=50 directives=53 elsewhere=113 options_blocks=2
+griffe 698e528: files=22 directives=225 elsewhere=25 options_blocks=5

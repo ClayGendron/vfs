@@ -34,7 +34,7 @@ class NotFoundError(VFSError):
 
 
 class MountError(VFSError, ValueError):
-    """Mount administration failed — ``add_mount``/``remove_mount``.
+    """Administration of a :term:`mount` failed — ``add_mount``/``remove_mount``.
 
     ``str()`` stays the prose (and ``ValueError`` keeps string-matching
     callers working); the structured evidence rides on ``errors`` — the

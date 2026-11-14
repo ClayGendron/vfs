@@ -1,0 +1,64 @@
+{
+  "tabs": [
+    {
+      "title": "Home",
+      "groups": [
+        {
+          "title": null,
+          "pages": [
+            "/get-started",
+            { "route": "/overview", "title": "Overview" },
+            { "route": "/history", "title": "History" }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Tutorials",
+      "groups": [
+        {
+          "title": null,
+          "pages": [
+            "/tutorials/build-your-first-file-system",
+            "/tutorials/use-the-cli",
+            "/tutorials/keep-your-files-in-a-database",
+            "/tutorials/give-an-ai-agent-the-file-system",
+            "/tutorials/control-who-can-access-files"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "How-to Guides",
+      "groups": [{ "title": null, "pages": ["/how-to/load-a-folder-of-files"] }]
+    },
+    {
+      "title": "Reference",
+      "groups": [
+        {
+          "title": "Python API",
+          "pages": [
+            "/reference/python-api",
+            "/reference/python-api/async-virtual-file-system",
+            "/reference/python-api/virtual-file-system",
+            "/reference/python-api/entry",
+            "/reference/python-api/path",
+            "/reference/python-api/sessions",
+            "/reference/python-api/results",
+            "/reference/python-api/authority",
+            "/reference/python-api/permissions",
+            "/reference/python-api/mounts",
+            "/reference/python-api/storage",
+            "/reference/python-api/errors"
+          ]
+        },
+        { "title": null, "pages": ["/reference/access-levels"] },
+        { "title": null, "pages": ["/reference/glossary"] }
+      ]
+    },
+    {
+      "title": "Explanation",
+      "groups": [{ "title": null, "pages": ["/explanation/why-vfs-stores-files-in-a-database"] }]
+    }
+  ]
+}

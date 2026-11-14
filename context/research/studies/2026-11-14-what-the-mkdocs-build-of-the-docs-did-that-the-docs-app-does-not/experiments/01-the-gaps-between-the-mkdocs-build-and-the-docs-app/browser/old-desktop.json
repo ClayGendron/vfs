@@ -1,0 +1,56 @@
+{
+ "copyButtons": 1,
+ "codeBlocks": 1,
+ "codeTabindex": 0,
+ "toc": "visible 242x126",
+ "leftNav": "visible 242x126",
+ "slashFocusesSearch": "query",
+ "searchResults": 10,
+ "searchMeta": "16 matching documents",
+ "afterEnterUrl": "http://127.0.0.1:8811/reference/python-api/permissions/?h=permission",
+ "highlightMarks": 86,
+ "afterN": "http://127.0.0.1:8811/history/",
+ "afterP": "http://127.0.0.1:8811/overview/",
+ "backToTop": "visible 133x40",
+ "backToTopText": " Back to top",
+ "tocActive": "\n    \n      \n        Everything is a File\n      \n    \n  ",
+ "firstTab": "md-skip focus-visible | Skip to content",
+ "permalinkOpacity": "1",
+ "h2ScrollMargin": "0px",
+ "print": {
+  "header": "hidden",
+  "leftNav": "hidden",
+  "toc": "hidden",
+  "footer": "hidden"
+ },
+ "apiToc": [
+  " path",
+  " name",
+  " kind",
+  " external_id",
+  " content",
+  " data",
+  " source",
+  " render_status",
+  " content_hash",
+  " mime_type",
+  " ext",
+  " lines"
+ ],
+ "apiH": [
+  " vfs.Entry ¶",
+  " path instance-attribute ¶",
+  " name class-attribute instance-attribute ¶",
+  " kind class-attribute instance-attribute ¶",
+  " external_id class-attribute instance-attribute ¶",
+  " content class-attribute instance-attribute ¶"
+ ],
+ "symbolText": "\"attr\"",
+ "asyncLabels": {
+  "instance-attribute": 3,
+  "async": 33
+ },
+ "asyncMembers": 39,
+ "asyncSig": "name = name\n",
+ "notFound": "404 - Not found"
+}

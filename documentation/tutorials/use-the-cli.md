@@ -20,9 +20,17 @@ from vfs import VirtualFileSystem
 fs = VirtualFileSystem()
 
 files = {
-    "/policies/mfa.md": "All logins require MFA.\nReport a lost device within 24 hours.\n",
-    "/policies/passwords.md": "Passwords rotate every 90 days.\nMFA is required to reset a password.\n",
-    "/runbooks/reset-mfa.md": "To reset MFA, open a ticket with the service desk.\n",
+    "/policies/mfa.md": (
+        "All logins require MFA.\n"
+        "Report a lost device within 24 hours.\n"
+    ),
+    "/policies/passwords.md": (
+        "Passwords rotate every 90 days.\n"
+        "MFA is required to reset a password.\n"
+    ),
+    "/runbooks/reset-mfa.md": (
+        "To reset MFA, open a ticket with the service desk.\n"
+    ),
 }
 
 for path, content in files.items():
@@ -116,7 +124,10 @@ This is how an AI agent keeps its reading small. **It asks for only the part of 
 Write a new file with `echo` and a redirect.
 
 ```python
-fs.cli("echo 'Lock your screen when you leave your desk.' > /policies/screens.md")
+fs.cli(
+    "echo 'Lock your screen when you leave your desk.' "
+    "> /policies/screens.md"
+)
 ```
 
 This cell prints nothing, the same as in a terminal. List the directory to see the new file.

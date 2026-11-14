@@ -1,0 +1,51 @@
+name: Docs site
+
+# The docs app's gate: the API export, the static build, the type check and the app's
+# tests, run by scripts/docs.sh check. A docstring is a page's content, so a change
+# under src/vfs is a change to the docs. The Python gate (test.yml) needs no bun; this
+# job is where a dead link, an unknown glossary term or an undocumented name goes red.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "documentation/**"
+      - "docs-app/**"
+      - "src/vfs/**"
+      - "scripts/docs_export.py"
+      - "scripts/docs.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs-site.yml"
+  pull_request:
+    paths:
+      - "documentation/**"
+      - "docs-app/**"
+      - "src/vfs/**"
+      - "scripts/docs_export.py"
+      - "scripts/docs.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs-site.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install the app and the browser its layout tests run in
+        run: cd docs-app && bun install --frozen-lockfile && bunx --bun playwright install --with-deps chromium
+
+      - name: Export, build, type check and test the docs
+        run: scripts/docs.sh check

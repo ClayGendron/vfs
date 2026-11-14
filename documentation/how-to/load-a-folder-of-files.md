@@ -36,8 +36,13 @@ from pathlib import Path
 folder = Path("vfs")
 destination = "/vfs"
 
-suffixes = {".md", ".py", ".rs", ".toml", ".txt", ".sh", ".yml", ".json"}
-skip = {".git", ".venv", "node_modules", "__pycache__", "target"}
+suffixes = {
+    ".md", ".py", ".rs", ".toml",
+    ".txt", ".sh", ".yml", ".json",
+}
+skip = {
+    ".git", ".venv", "node_modules", "__pycache__", "target",
+}
 
 files = [
     file
@@ -79,7 +84,9 @@ for file in files:
     except UnicodeDecodeError:
         unreadable.append(file)
         continue
-    path = f"{destination}/{file.relative_to(folder).as_posix()}"
+    path = (
+        f"{destination}/{file.relative_to(folder).as_posix()}"
+    )
     entries.append(Entry(path=path, content=content))
 
 len(entries), len(unreadable)
@@ -233,7 +240,10 @@ One call can carry ten thousand files. For a larger folder, load it in batches, 
 for start in range(0, len(files), 10_000):
     batch = [
         Entry(
-            path=f"{destination}/{file.relative_to(folder).as_posix()}",
+            path=(
+                f"{destination}/"
+                f"{file.relative_to(folder).as_posix()}"
+            ),
             content=file.read_text(encoding="utf-8"),
         )
         for file in files[start : start + 10_000]
@@ -252,7 +262,11 @@ After you set a posture of `none`, a call with no name attached is refused. Load
 ```python
 from vfs import Authority
 
-result = fs.write(entries, parents=True, authority=Authority.system())
+result = fs.write(
+    entries,
+    parents=True,
+    authority=Authority.system(),
+)
 ```
 
 The loaded files belong to no person, so who can read them is decided only by the grants and the posture you set. [Access Levels](../reference/access-levels.md) lists what each level allows.

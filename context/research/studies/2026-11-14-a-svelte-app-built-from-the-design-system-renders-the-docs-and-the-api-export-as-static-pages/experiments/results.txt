@@ -1,0 +1,57 @@
+The probe behind the memo, run by the session's author on 2026-11-14 on the vfs working tree over 7edd8901, on an Apple-silicon Mac with bun 1.4.4, node 22.14.0 and uv.
+Nothing was written under the vfs checkout or the design-system checkout: the app lived in a scratch folder outside both.
+
+1. The starting app
+   The design system's own smoke fixture, design-system/tests/smoke/fixtures/kit3 at tag v0.11.0, copied to the scratch folder: package.json, components.json, tsconfig.json, vite.config.ts, bun.lock, src/.
+   Its versions: svelte 5.57.3, @sveltejs/kit 3.1.0, @sveltejs/adapter-static 4.0.0, @sveltejs/vite-plugin-svelte 7.3.1, vite 8.3.5, tailwindcss 4.3.3, typescript 6.0.3.
+   $ bun install
+   66 packages installed
+
+2. Installing design-system items
+   The registry's built JSON, design-system/static/r at v0.11.0 (76 JSON files), was served from the local checkout on a loopback port.
+   $ REGISTRY_URL=http://localhost:8767/r bunx --bun shadcn-svelte@1.7.1 add sidebar code-block table alert breadcrumb theme -y -o
+   Success! Components added.   (exit 0)
+   Landed: 97 files under src/lib (sidebar, kbd, tooltip, code-block, input, alert, skeleton, separator, spinner, status, button, theme, table, breadcrumb, sheet; hooks/use-highlighted-code, hooks/is-mobile; highlighter.ts; utils.ts).
+   Packages added: @fontsource-variable/geist, @fontsource-variable/ibm-plex-sans, @fontsource-variable/jetbrains-mono, @internationalized/date, bits-ui, cn, phosphor-svelte, shadcn-svelte, shiki, tailwind-variants.
+   src/app.css gained the theme: the font imports, shadcn-svelte/tailwind.css, and the token values under :root.
+   $ bun add marked
+   1 package installed
+
+3. The export of the public API (export_api.py)
+   $ uv run --all-extras --group dev --group docs python export_api.py <app>/src/lib/api.json
+   names 22  members 298  bytes 125489  unknown terms []
+   kinds ['class', 'module']  functions with no docstring 125
+     AsyncVirtualFileSystem: class, members 39
+     Entry: class, members 22
+     MountInfo: class, members 9
+     MountError: class, members 1
+     Result: class, members 33
+     permissions: module, members 0
+   Griffe read the source under src/ and did not import the package.
+
+4. The static build (app/ holds the six files written for the probe)
+   $ bunx --bun vite build
+   Using @sveltejs/adapter-static ... Wrote site to "build"   (exit 0)
+   html pages: 35 (12 pages of documentation/ other than index.md, 22 API pages, 1 index)
+   build folder: 5.4M; JavaScript: 2,745,724 bytes in 56 files, most of it Shiki grammars in chunks no built page names
+   reference/api/AsyncVirtualFileSystem.html: 187,351 bytes, 39 h2, 111 code-block slots, 11 script files named (156,019 bytes)
+   tutorials/build-your-first-file-system.html: 39,862 bytes, 7 h2, 38 code-block slots, 26 highlighted-token classes, 11 script files named (155,318 bytes)
+   reference/glossary.html: 50,818 bytes, 3 h2, 38 table slots, 11 script files named
+   The build passing means every internal link and anchor resolved, among them the glossary's links to /reference/api/Entry and to /reference/api/AsyncVirtualFileSystem#vfs.AsyncVirtualFileSystem.bind, and the links the export wrote from :term: markers to /reference/glossary#mount, #entry and #arm.
+
+5. A dead link and a dead anchor (two copies of documentation/ in the scratch folder, one line appended to get-started.md in each)
+   $ DOCS_DIR=<copy with a link to no-such-page.md> bunx --bun vite build
+   prerender_http_error: Failed to prerender `/no-such-page` ... [Error: Prerendering failed]   (exit 1)
+   $ DOCS_DIR=<copy with a link to reference/glossary.md#no-such-term> bunx --bun vite build
+   The following pages contain links to `/reference/glossary#no-such-term`, but no element with `id="no-such-term"` exists on `/reference/glossary`: - /get-started ... [Error: Prerendering failed]   (exit 1)
+   READ in node_modules/@sveltejs/kit/types/index.d.ts: handleHttpError and handleMissingId both default to "fail".
+
+6. Local preview
+   $ bunx --bun vite dev --port 8768 --host 127.0.0.1
+   /reference/glossary -> 200, 114076 bytes
+   /reference/api/Entry -> 200, 92599 bytes
+   /tutorials/use-the-cli -> 200, 143347 bytes
+
+7. What the documentation pages use (grep over documentation/**/*.md)
+   pages 13; words 11,374; fenced code blocks 89 (python 49, text 35, bash 5); table separator rows 9; images 2; raw HTML lines 4, all in index.md
+   admonitions 0; content tabs 0; footnotes 0; definition lists 0; task lists 0; attribute lists 0; snippets 0; mermaid fences 0

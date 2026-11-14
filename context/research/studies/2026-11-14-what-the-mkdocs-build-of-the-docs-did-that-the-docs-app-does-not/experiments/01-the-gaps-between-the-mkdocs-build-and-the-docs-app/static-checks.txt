@@ -1,0 +1,158 @@
+== snippets marker in pages: 0
+== OLD top-level files
+404.html
+assets
+explanation
+get-started
+history
+how-to
+images
+index.html
+introduction
+javascripts
+navigation.json
+objects.inv
+overview
+reference
+search
+sitemap.xml
+sitemap.xml.gz
+stylesheets
+tutorials
+== NEW top-level files
+__data.json
+_app
+404.html
+explanation
+get-started
+get-started.html
+history
+history.html
+how-to
+index.html
+overview
+overview.html
+reference
+tutorials
+== OLD head of overview
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Governed data access for AI agents.">
+<link rel="canonical" href="https://claygendron.github.io/vfs/overview/">
+<link rel="prev" href="../get-started/">
+<link rel="next" href="../history/">
+<link rel="icon" href="../assets/images/favicon.png">
+<meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">
+<title>Overview - VFS</title>
+<link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+<link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+<link rel="stylesheet" href="../assets/external/fonts.googleapis.com/css2.337f5fb1.css">
+<link rel="stylesheet" href="../assets/_mkdocstrings.css">
+<link rel="stylesheet" href="../stylesheets/theme.css">
+<title id="vfs-optimal-disclosure-title">Tokens Used vs. Tokens Needed</title>
+<title id="vfs-architecture-title">VFS Architecture</title>
+== NEW head of overview
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VFS: Governed Data Access for AI Agents · VFS Docs</title>
+<link href="./_app/immutable/assets/0.CPhrCTU2.css" rel="stylesheet">
+<title id="vfs-optimal-disclosure-title">Tokens Used vs. Tokens Needed</title>
+<title id="vfs-architecture-title">VFS Architecture</title>
+== NEW modulepreload count:       12
+== OLD sitemap entries: 31
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://claygendron.github.io/vfs/</loc>
+         <lastmod>2026-11-14</lastmod>
+    </url>
+    <url>
+         <loc>https://claygendron.github.io/vfs/get-started/</loc>
+         <lastmod>2026-11-14</lastmod>
+    </url>
+    <url>
+         <loc>https://claygendron.github.io/vfs/
+== NEW sitemap/robots:
+ls: /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/robots.txt: No such file or directory
+ls: /private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/sitemap.xml: No such file or directory
+== OLD 404 title
+<title>VFS</title>
+== NEW 404 title
+== OLD search index
+total 576
+drwxr-xr-x@  3 claygendron  wheel      96 Nov 14 17:10 .
+drwxr-xr-x@ 21 claygendron  wheel     672 Nov 14 17:10 ..
+-rw-r--r--@  1 claygendron  wheel  290958 Nov 14 17:10 search_index.json
+docs in index 579
+{'lang': ['en'], 'separator': '[\\s\\-]+', 'pipeline': ['stopWordFilter'], 'fields': {'title': {'boost': 1000.0}, 'text': {'boost': 1.0}, 'tags': {'boost': 1000000.0}}}
+== NEW any search
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/explanation/why-vfs-stores-files-in-a-database.html
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/overview.html
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/how-to/load-a-folder-of-files.html
+(end)
+== OLD objects.inv bytes:     5001
+== OLD permalinks on overview:       14
+<a class="headerlink" href="#vfs-governed-data-access-for-ai-agents" title="Permanent link">&para;</a>
+<a class="headerlink" href="#why-vfs-was-built" title="Permanent link">&para;</a>
+== NEW heading anchors on overview
+<h2 id="why-vfs-was-built"><!--[--><!--[0-->Why VFS Was Built<!--]--><!--]--><!----></h2><!----><!--]--><!--[1--><p><!--[--><!--[0-->VFS started fr
+<h2 id="who-vfs-is-built-for"><!--[--><!--[0-->Who VFS Is Built For<!--]--><!--]--><!----></h2><!----><!--]--><!--[1--><p><!--[--><!--[0-->VFS is buil
+== OLD external link attrs
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/overview/index.html:<a href="https://www.gartner.com/en/newsroom/press-releases/gartner-survey-finds-only-22-percent-of-organizations-have-successfully-scaled-ai-across-multiple-business-units" target="_blank" aria-describedby="vfs-new-tab" rel="noopener">
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/overview/index.html:<a href="https://www.gartner.com/en/newsroom/press-releases/2025-02-26-lack-of-ai-ready-data-puts-ai-projects-at-risk" target="_blank" aria-describedby="vfs-new-tab" rel="noopener">
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/reference/glossary/index.html:<a href="https://github.com/ClayGendron/vfs/blob/main/src/vfs/pattern_matching/glob.py" target="_blank" aria-describedby="vfs-new-tab" rel="noopener">
+== NEW external link attrs
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/overview.html:<a href="https://www.gartner.com/en/newsroom/press-releases/gartner-survey-finds-only-22-percent-of-organizations-have-successfully-scaled-ai-across-multiple-business-units">
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/overview.html:<a href="https://www.gartner.com/en/newsroom/press-releases/2025-02-26-lack-of-ai-ready-data-puts-ai-projects-at-risk">
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/reference/glossary.html:<a href="https://github.com/ClayGendron/vfs/blob/main/src/vfs/pattern_matching/glob.py">
+== OLD vfs-new-tab span: 1
+== OLD skip link
+<a href="#vfs-governed-data-access-for-ai-agents" class="md-skip">
+== NEW skip link
+== OLD back to top
+<button type="button" class="md-top md-icon" data-md-component="top" hidden>
+== NEW back to top
+== OLD footer nav
+<a href="../get-started/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Get Started">
+<a href="../history/" class="md-footer__link md-footer__link--next" aria-label="Next: History">
+== NEW pager
+<nav aria-label="Previous and next page" data-slot="docs-pager" class="mt-16 flex justify-between gap-6 pt-6 text-sm groove">
+== OLD code copy (data-clipboard / content.code.copy in features)
+== NEW copy buttons in overview:    1 aria-label="Copy code"
+== OLD noscript
+1
+== NEW noscript
+== OLD fonts served
+   1 fonts.googleapis.com
+  32 fonts.gstatic.com
+   1 unpkg.com
+== NEW fonts served
+      17
+   7 http://www.w3.org
+   2 https://github.com
+   4 https://www.gartner.com
+== OLD external hosts referenced in HTML
+   1 href="https://claygendron.github.io
+   4 href="https://github.com
+   2 href="https://www.gartner.com
+== OLD mermaid js
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/assets/external/unpkg.com/mermaid@11
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/assets/external/unpkg.com/mermaid@11/dist/mermaid.min.js
+== OLD lang attr / NEW lang attr
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site/overview/index.html:<html lang="en" class="no-js">
+/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site/overview.html:<html lang="en">
+== OLD print css
+1
+== NEW print css
+       0
+== OLD site sizes
+8.7M	/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/old-site
+7.4M	/private/tmp/claude-501/-Users-claygendron-Git-Repos-vfs/96ca7b12-ae8e-42f1-8e39-f71cf4e99e78/scratchpad/gap-study/new-site
+pages: old       31 new       26
+== OLD canonical on api page
+<link rel="canonical" href="https://claygendron.github.io/vfs/tutorials/use-the-cli/">
+<link rel="prev" href="../build-your-first-file-system/">
+<link rel="next" href="../keep-your-files-in-a-database/">
+== OLD generator/meta description on a tutorial
+<meta name="description" content="Governed data access for AI agents.">
+<meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.1">

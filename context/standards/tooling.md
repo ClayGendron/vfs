@@ -17,7 +17,7 @@ How we install, lint, type-check and test this repository. The commands here are
 uv sync --all-extras --group dev
 ```
 
-The extras are not optional: without them `uv sync` strips the database drivers the engine legs need (this happened, 2026-09-04). Dev dependencies live in `[dependency-groups]`; user-facing extras live in `[project.optional-dependencies]`; `scripts/ci.sh` adds `--group docs` for the docs fences.
+The extras are not optional: without them `uv sync` strips the database drivers the engine legs need (this happened, 2026-09-04). Dev dependencies live in `[dependency-groups]`; user-facing extras live in `[project.optional-dependencies]`. The `docs` group holds Griffe, which `scripts/docs_export.py` reads the public API with; `dev` includes it, so the export's tests run after the install above, and `scripts/ci.sh` still names it.
 
 After editing anything under `crates/`, reinstall the wheel, because `uv` caches the built wheel and does not rebuild on Rust-only edits:
 
@@ -66,5 +66,16 @@ scripts/ci.sh
 ```
 
 It mirrors the CI Tests job's Python 3.13 leg exactly: install, lint, format, types, tests under 100% coverage, the docs fences and the wheel budget, about a minute warm. Green here means green there. `scripts/ci.sh 3.14` reproduces one other matrix leg when CI goes red; the other legs are CI's job on every push, not a local gate.
+
+## The docs site
+
+The docs site is a second tree with its own toolchain: `docs-app/`, a Svelte app run with `bun`, that draws the Markdown pages of `documentation/` and the public API with the Pluto Systems design system. Its components are design-system items installed as source at a release tag, which `docs-app/README.md` names with the install command; they are a dependency, not copied prior art, and they are not edited here.
+
+```bash
+scripts/docs.sh dev      # preview locally
+scripts/docs.sh check    # the gate for a docs change
+```
+
+Before any commit touching `documentation/`, `docs-app/`, `scripts/docs_export.py`, `scripts/docs.sh` or a docstring under `src/vfs/`, run `scripts/docs.sh check`. It writes the API export from the docstrings (never stored: `docs-app/src/lib/generated/` is ignored), builds the static site, type-checks the app and runs its tests: `bun test` for what the build writes and refuses, and Playwright in Chromium for the layout. The build itself fails on a link to a page or a heading that does not exist. The `Docs site` workflow runs the same command. `scripts/ci.sh` does not need `bun` and does not build the docs; the export's own rules are pinned in `tests/scripts/test_docs_export.py`, which it does run.
 
 How a change lands, from the review file to the one landing commit, is in [landing.md](landing.md); the release process layers on top in [release.md](release.md).

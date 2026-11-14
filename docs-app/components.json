@@ -1,0 +1,14 @@
+{
+  "$schema": "https://shadcn-svelte.com/schema.json",
+  "tailwind": { "css": "src/app.css", "baseColor": "neutral" },
+  "aliases": {
+    "components": "#lib/components",
+    "ui": "#lib/components/ui",
+    "hooks": "#lib/hooks",
+    "utils": "#lib/utils",
+    "lib": "#lib"
+  },
+  "typescript": true,
+  "registry": "https://raw.githubusercontent.com/plutosystemsco/design-system/v0.11.0/static/r",
+  "style": "maia"
+}

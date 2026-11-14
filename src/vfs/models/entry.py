@@ -68,7 +68,7 @@ MEASURED_BODY: Final = "measured_body"
 
 
 class Entry(BaseModel):
-    """The full record of one object in the VFS namespace: a file or directory.
+    """The full record of one :term:`entry` in the VFS namespace: a file or directory.
 
     A pure detached value: constructing one runs the validators but never
     touches a database. Both kinds share one row shape — a directory simply

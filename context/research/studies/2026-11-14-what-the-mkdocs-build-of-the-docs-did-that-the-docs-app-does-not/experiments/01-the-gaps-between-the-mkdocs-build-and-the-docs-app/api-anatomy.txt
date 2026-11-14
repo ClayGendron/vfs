@@ -1,0 +1,30 @@
+OLD labels over the 12 python-api pages: {'instance-attribute': 67, 'async': 90, 'dataclass': 4, 'class-attribute': 38, 'property': 32, 'classmethod': 9, 'module-attribute': 1, 'writable': 1}
+OLD symbol kinds: {'class': 24, 'attribute': 100, 'method': 209, 'module': 1, 'function': 6}
+OLD ids 343 NEW ids 329
+async-virtual-file-system old 40 new 40 only old: [] only new: []
+authority old 22 new 22 only old: [] only new: []
+entry old 23 new 23 only old: [] only new: []
+errors old 8 new 8 only old: [] only new: []
+mounts old 10 new 10 only old: [] only new: []
+path old 15 new 15 only old: [] only new: []
+permissions old 33 new 19 only old: ['vfs.permissions--helpers', 'vfs.permissions--limitations', 'vfs.permissions--resolution-semantics', 'vfs.permissions.Permission', 'vfs.permissions.PermissionLayer.mount_prefix', 'vfs.permissions.PermissionLayer.permission_map', 'vfs.permissions.PermissionLayer.rel', 'vfs.permissions.PermissionMap.__post_init__', 'vfs.permissions.PermissionMap.default', 'vfs.permissions.PermissionMap.overrides', 'vfs.permissions.PermissionMap.resolve', 'vfs.permissions.PermissionMap.to_payload'] only new: []
+results old 47 new 47 only old: [] only new: []
+sessions old 64 new 64 only old: [] only new: []
+storage old 39 new 39 only old: [] only new: []
+virtual-file-system old 42 new 42 only old: [] only new: []
+OLD api toc sample: md-nav--secondary" aria-label="Table of contents"> Table of contents &nbsp;name &nbsp;title &nbsp;description &nbsp;bind &nbsp;unbind &nbsp;add_mount &nbsp;remove_mount &nbsp;remount &nbsp;close &nbsp;mounts &nbsp;locate &nbsp;locate_edge &nbsp;session &nbsp;capabilities &nbsp;read &nbsp;stat &nbsp;ls &nbsp;tree &nbsp;write &nbsp;edit &nbsp;delete &nbsp;restore &nbsp;sweep &nbsp;mkdir &nbsp;mkedge
+OLD toc symbol codes: Counter({'method': 72, 'attribute': 6})
+OLD bind block: an> = description
+            bind
+      async
+&para;
+bind(
+    storage: StorageBackend,
+    path: str,
+    *,
+    permissions: Permission | PermissionMap | None = None,
+    deny_ops: Iterable[Op] = (),
+    no_overlay: bool = False,
+    owned: bool = True,
+<a id="__codelineno-0-9" name="__code
+OLD title tag: ['<title>AsyncVirtualFileSystem - VFS</title>']

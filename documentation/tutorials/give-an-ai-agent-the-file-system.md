@@ -26,9 +26,17 @@ from vfs import VirtualFileSystem
 fs = VirtualFileSystem()
 
 files = {
-    "/policies/mfa.md": "All logins require MFA.\nReport a lost device within 24 hours.\n",
-    "/policies/passwords.md": "Passwords rotate every 90 days.\nMFA is required to reset a password.\n",
-    "/runbooks/reset-mfa.md": "To reset MFA, open a ticket with the service desk.\n",
+    "/policies/mfa.md": (
+        "All logins require MFA.\n"
+        "Report a lost device within 24 hours.\n"
+    ),
+    "/policies/passwords.md": (
+        "Passwords rotate every 90 days.\n"
+        "MFA is required to reset a password.\n"
+    ),
+    "/runbooks/reset-mfa.md": (
+        "To reset MFA, open a ticket with the service desk.\n"
+    ),
 }
 
 for path, content in files.items():
@@ -47,13 +55,16 @@ from anthropic import beta_tool
 
 @beta_tool
 def cli(command: str) -> str:
-    """Run a shell command in a virtual file system and return what it prints.
+    """Run a shell command in a virtual file system and return
+    what it prints.
 
-    The file system holds company documents. The shell supports ls, cat,
-    grep, find, head, tail, wc, and pipes. It has no network access.
+    The file system holds company documents. The shell supports
+    ls, cat, grep, find, head, tail, wc, and pipes. It has no
+    network access.
 
     Args:
-        command: The command line to run, such as "ls /" or "grep -rn MFA /".
+        command: The command line to run, such as "ls /" or
+            "grep -rn MFA /".
     """
     print(f"$ {command}")
     return str(fs.cli(command)) or "(no output)"
@@ -75,9 +86,18 @@ client = anthropic.Anthropic()
 runner = client.beta.messages.tool_runner(
     model="claude-opus-5-5",
     max_tokens=16000,
-    system="You answer questions about company documents. The documents are in a file system that you explore with the cli tool.",
+    system=(
+        "You answer questions about company documents. "
+        "The documents are in a file system that you explore "
+        "with the cli tool."
+    ),
     tools=[cli],
-    messages=[{"role": "user", "content": "Do I need MFA to reset my password?"}],
+    messages=[
+        {
+            "role": "user",
+            "content": "Do I need MFA to reset my password?",
+        },
+    ],
 )
 
 answer = runner.until_done()

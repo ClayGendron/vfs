@@ -1,0 +1,63 @@
+{
+ "copyButtons": 1,
+ "codeBlocks": 1,
+ "codeTabindex": 1,
+ "toc": "visible 256x828",
+ "leftNav": "visible 256x828",
+ "slashFocus": "BODY",
+ "searchInputs": 0,
+ "afterN": "http://127.0.0.1:8812/overview",
+ "backToTop": 0,
+ "tocActive": "Everything is a File",
+ "firstTab": "A | VFS Docs, home",
+ "h2Links": 0,
+ "h2ScrollMargin": "96px",
+ "extLinkTarget": "null null",
+ "headerGithub": "null null",
+ "print": {
+  "header": "visible 1280x72",
+  "leftNav": "visible 256x828",
+  "toc": "visible 256x828",
+  "footer": "visible 768x125",
+  "headerPosition": "sticky"
+ },
+ "apiToc": [
+  "Entry",
+  "path",
+  "name",
+  "kind",
+  "external_id",
+  "content",
+  "data",
+  "source",
+  "render_status",
+  "content_hash",
+  "mime_type",
+  "ext"
+ ],
+ "apiH": [
+  "Entry",
+  "CLASSEntry",
+  "path",
+  "name",
+  "kind",
+  "external_id"
+ ],
+ "entryMembers": 22,
+ "entryText": "Entry\n\nThe full record of one file or directory.\n\nfrom vfs import Entry\nCLASSEntry\n\nBases: BaseModel\n\nThe full record of one entry in the VFS namespace: a file or directory.\n\nA pure detached value: constructing one runs the validators but never touches a database. Both kinds share one row shape — a directory simply carries no content — so one model covers them; the genuinely different things (chunks, versions, edges) are their own models.\n\nAn Entry is always the whole truth about its object. It exists in two ways only: a caller authors one (validators run, recording intent), or the repository hydrates one whole from a stored row. There is no partial Entry — partial, query-time views are Observation rows. Database identifiers (the row id, the *_id references) never appear on it, and neither does the per-entry version: like the ids, it is minted and guarded inside the persistence layer and reported on observations — a caller cannot author one. path is the model's only identity.\n\nmodel_fields_set semantics, repo-wide: the set records every field assigned rather than defaulted — and validator assignments count. After construction it holds the caller's keys plus everything the validators derived (kind, name, ext, the content metrics, the timestamps). It is a pure record of caller intent only for fields no validator assigns (mime_type, external_id, ...) — there it still distinguishes an explicit None from an unset default.\n\npath\npath: Path\nname\nname: str = ''\nkind\nkind: ObjectKind ",
+ "asyncMembers": 39,
+ "asyncFirstSig": "bind(\n    storage: StorageBackend,\n    path: str,\n    *,\n    permissions: Permission | PermissionMap | None = None,\n    deny_ops: Iterable[Op] = (),\n    no_overlay: bool = False,\n    owned: bool = True,\n) -> None",
+ "asyncWordCounts": {
+  "property": 0,
+  "async": 1,
+  "classmethod": 0
+ },
+ "notFound": "404\n\nThis page does not exist\n\nThe address matches no page of the docs.\n\nGo to the docs home",
+ "notFoundTitle": "Page not found · VFS Docs",
+ "failed": [
+  "404 http://127.0.0.1:8812/nope",
+  "404 http://127.0.0.1:8812/nope/__data.json?x-sveltekit-invalidated=11",
+  "404 http://127.0.0.1:8812/nope/__data.json?x-sveltekit-invalidated=1"
+ ],
+ "htmlClass": ""
+}
