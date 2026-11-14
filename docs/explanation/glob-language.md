@@ -36,7 +36,7 @@ Shells hide dotfiles; ripgrep skips hidden files by default. Both are *presentat
 
 ## How patterns meet mounts
 
-A pattern is the *whole* query: scope roots compose into pattern text (`/src` + `*.py` → `/src/**/*.py`), and at each mount seam the router computes the pattern's **residual** — the part left over after the mount path consumes its share — and sends each backend only its own local remainder. When a call names so many roots that composing every arm under every root would build more than the router's composition limit of arms for one backend, the router sends that backend its roots beside the uncomposed arms instead; the backend applies the same law (a row strictly beneath a root, its remainder or its name matching an arm) without composing, and answers exactly as the composed patterns would. The executable walkthrough of this algebra, with the frontier printed step by step, lives in `examples/glob_residuation.ipynb`.
+A pattern is the *whole* query: a scope root and a pattern mean what their joined text means as one pattern (`/src` + `*.py` → `/src/**/*.py`), and at each mount seam the router computes the pattern's **residual** — the part left over after the mount path consumes its share — and sends each backend only its own local remainder. The router does not write that joined text out for the roots that sit inside a backend: the roots ride beside the uncomposed arms, and the backend applies the same law (a row strictly beneath a root, its remainder or its name matching an arm) without composing, answering exactly as the composed patterns would, however many roots the call names. The executable walkthrough of this algebra, with the frontier printed step by step, lives in `examples/glob_residuation.ipynb`.
 
 ## The field at a glance
 

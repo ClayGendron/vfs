@@ -1,13 +1,16 @@
-"""The namespaces the both-shapes rows run against: composed scope against the scope channel.
+"""The namespaces the both-prefilters rows run against: the composed prefilter against the scope fan.
 
-The router composes every arm under every owned root up to its
-composition limit and sends the roots beside the arms past it, so one
-call can be asked twice, once per shape, by patching the limit to ``0``
-and to ``10**9``. The worlds here hold what makes the two shapes differ
-if either is wrong: a mount at ``/m`` with a second mount beneath
+The router sends every root strictly beneath an entry beside the
+uncomposed arms, and storage prefilters a side with its roots composed
+under its arms up to the composed prefilter's limit and with one clause
+per root past it, so one call can be asked twice, once per plan, by
+patching the limit to ``0`` and to ``10**9``. The worlds here hold what
+makes the two plans differ if either is wrong: a mount at ``/m`` with a
+second mount beneath
 ``/m/p000``, nested and metacharacter roots, tombstoned directories
-under the root entry's trash view, and two posture worlds whose mount
-root is private to everyone.
+under the root entry's trash view, a directory under the meta root
+beside a live one a wildcard reads alike, and two posture worlds whose
+mount root is private to everyone.
 
 The worlds cost thousands of rows and 603 posture changes, so they are
 built once per test session into SQLite files (:func:`build_world_files`,
@@ -57,6 +60,11 @@ TRASHED: tuple[str, ...] = tuple(f"/t{i:03}" for i in range(250))
 TRASHED_FILES = ("x.txt", "y.py")
 TRASH_ROOTS: tuple[str, ...] = tuple(f"/.vfs/trash{path}" for path in TRASHED)
 
+# A directory under the meta root and a live one a wildcard reads alike, each holding one file:
+# a wildcard-headed pattern serves the second and never the first.
+META_DIRECTORY = "/.vfs/state"
+META_LOOKALIKE = "/.vfx"
+
 # The posture worlds' directories: each holds a.py and src/c.py.
 POSTURE_DIRECTORIES: tuple[str, ...] = tuple(f"/m/d{i:03}" for i in range(201))
 
@@ -79,7 +87,7 @@ class ShapeWorlds(NamedTuple):
 
 
 class ShapeCall(NamedTuple):
-    """One scoped call asked of both shapes: its verb, subject, scope roots, world and keywords."""
+    """One scoped call asked under both prefilter plans: its verb, subject, scope roots, world and keywords."""
 
     name: str
     verb: str
@@ -147,10 +155,11 @@ def _storage(directory: pathlib.Path, index: int) -> DatabaseStorage:
 
 
 async def _fill_main_world(fs: AsyncVirtualFileSystem) -> None:
-    """The main world's rows: the plain, nested-host, metacharacter and trashed directories, the nested mount's own."""
+    """The main world's rows: the plain, nested-host, metacharacter, trashed and meta directories, the nested mount."""
     rows = [*_files(DIRECTORIES, DIRECTORY_FILES), *_files(METACHAR_DIRECTORIES, METACHAR_FILES)]
     rows += [*_files((NESTED_HOST,), ("a.py", "src/c.py")), *_files(("/m",), ("top.py",))]
     rows += [*_files(TRASHED, TRASHED_FILES), *_files(("/",), ("live.txt",))]
+    rows += [*_files((META_DIRECTORY,), ("s.txt",)), *_files((META_LOOKALIKE,), ("k.txt",))]
     rows += _files((NESTED_MOUNT,), NESTED_FILES)
     assert (await fs.write(entries=rows, parents=True, authority=_SYSTEM)).success is True
     gone = [Observation(path=Path(path)) for path in TRASHED]

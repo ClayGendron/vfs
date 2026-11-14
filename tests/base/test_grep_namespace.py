@@ -32,7 +32,6 @@ from tests.support.shared_builds import build_once, shared_directory
 from vfs import base as base_module
 from vfs import chain as chain_module
 from vfs import deadline as deadline_module
-from vfs import fanout as fanout_module
 from vfs import offload as offload_module
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
@@ -43,7 +42,7 @@ from vfs.paths import Path
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
-from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.memory import InMemoryStorage
 
 if TYPE_CHECKING:
@@ -203,10 +202,10 @@ async def test_a_dead_admission_set_is_routing_not_a_skip() -> None:
 
 
 async def test_ten_thousand_roots_stay_two_calls() -> None:
-    # The ETL scale row: contract-scale root batches reach storage as
-    # exactly one grep call and one probe call — every root contributes
-    # its literal to the entry-wide globs, and rides the scope beside
-    # the one arm past the composition limit.
+    """The ETL scale row: contract-scale root batches reach storage as
+    exactly one grep call and one probe call — every root contributes
+    its literal to the entry-wide globs, and rides the scope beside
+    the one arm."""
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     data = RecorderStorage()
     await fs.add_mount(data, "/data")
@@ -665,7 +664,11 @@ async def test_chained_grep_refuses_a_batch_that_is_not_rows(batch: object) -> N
 
 
 async def test_grep_root_admissions_judge_once_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Guards: the admissions compiled and matched once per root per glob per entry."""
+    """Guards: the admissions compiled and matched once per root per glob per entry.
+
+    The non-path sets are the router's one for the root admissions and one
+    per entry for its scope's name arm, which storage builds once per call.
+    """
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     for mount in ("/a", "/b"):
         await fs.add_mount(InMemoryStorage(), mount)
@@ -685,7 +688,7 @@ async def test_grep_root_admissions_judge_once_per_call(monkeypatch: pytest.Monk
     assert sorted(str(o.path) for o in result.observations) == sorted(roots)
     assert len(executors) == 1 and executors[0] is offload_pool()
     router_sets = [programs for programs in built if not any(by_path for _atoms, by_path in programs)]
-    assert [len(programs) for programs in router_sets] == [1]
+    assert [len(programs) for programs in router_sets] == [1, 1, 1]
     await fs.close()
 
 
@@ -758,7 +761,7 @@ async def test_a_planning_stop_keeps_every_undecided_skip(monkeypatch: pytest.Mo
 
 
 # ----------------------------------------------------------------------
-# Both shapes — composed globs against the scope channel, one answer
+# Both prefilters — the composed plan against the scope fan, one answer
 # ----------------------------------------------------------------------
 
 SCOPED_GREP_CALLS = (
@@ -791,9 +794,13 @@ SCOPED_GREP_CALLS = (
 )
 
 
+# The calls the anonymous posture gate refuses whole, before any prefilter is chosen.
+_REFUSED_WHOLE = frozenset({"anonymous-private-roots", "anonymous-private-src", "anonymous-path-arm-private-src"})
+
+
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[ShapeWorlds]:
-    """The both-shapes worlds, built once per session, opened from copies per module; the rows only read them."""
+    """The both-prefilters worlds, built once per session, opened from copies per module; the rows only read them."""
     shared = shared_directory(tmp_path_factory)
     source = await asyncio.to_thread(build_once, shared, "scope-worlds", build_world_files)
     worlds = await open_worlds(pathlib.Path(source), tmp_path_factory.mktemp("shape-worlds"))
@@ -805,28 +812,31 @@ async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterato
 @pytest.mark.slow
 @pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("call", SCOPED_GREP_CALLS, ids=[call.name for call in SCOPED_GREP_CALLS])
-async def test_both_shapes_answer_alike(
+async def test_both_prefilters_answer_alike(
     call: ShapeCall, shape_worlds: ShapeWorlds, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Guards: any row, refusal or record that differs between composing every
-    root's globs and literal into the batch and sending the roots beside the arms."""
+    """Guards: any row, refusal or record that differs between prefiltering a scope
+    with its root clauses and with its roots composed under its arms, or a side
+    that takes the other plan than the limit names."""
     answers: list[Result] = []
-    scopes: list[int] = []
+    plans: list[set[bool]] = []
+    real = reads_module.AdmittedScope.composed
     for limit in (0, 10**9):
-        monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", limit)
-        admitted: list[object] = []
-        real = backend_module.admit_scope
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", limit)
+        taken: set[bool] = set()
 
-        def counted(scope: Any, channel: Any, real: Any = real, admitted: list[object] = admitted) -> Any:
-            admitted.append(scope)
-            return real(scope, channel)
+        def spied(self: Any, *, trashed: bool, taken: set[bool] = taken) -> Any:
+            answer = real(self, trashed=trashed)
+            if self.roots(trashed=trashed):
+                taken.add(answer is not None)
+            return answer
 
-        monkeypatch.setattr(backend_module, "admit_scope", counted)
+        monkeypatch.setattr(reads_module.AdmittedScope, "composed", spied)
         answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
-        scopes.append(sum(scope is not None for scope in admitted))
-    channel, composed = answers
-    assert scopes[0] > 0 and scopes[1] == 0, scopes
-    assert channel.observations == composed.observations
-    assert channel.errors == composed.errors
+        plans.append(taken)
+    fan, composed = answers
+    assert plans == ([set(), set()] if call.name in _REFUSED_WHOLE else [{False}, {True}])
+    assert fan.observations == composed.observations
+    assert fan.errors == composed.errors
     assert composed.observations or composed.errors
     assert not any(error.kind is ErrorKind.truncated for error in composed.errors)

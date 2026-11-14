@@ -22,8 +22,10 @@ import pytest_asyncio
 from tests.support.base_doubles import BindableStorage, RecorderStorage
 from tests.support.loop_ticks import LoopTicker
 from tests.support.oracles import glob as oracle
+from tests.support.oracles.grants import GrantWorld, everyone_rank
 from tests.support.scope_worlds import (
     DIRECTORIES,
+    META_DIRECTORY,
     METACHAR_DIRECTORIES,
     NESTED_HOST,
     POSTURE_DIRECTORIES,
@@ -38,22 +40,25 @@ from vfs import base as base_module
 from vfs import chain as chain_module
 from vfs import deadline as deadline_module
 from vfs import fanout as fanout_module
-from vfs.authority import Authority
+from vfs.authority import EVERYONE_NAME, Authority
 from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import Deadline
 from vfs.models import Entry, Observation
 from vfs.offload import offload_pool
-from vfs.paths import Path
-from vfs.pattern_matching import canonical_pattern
+from vfs.paths import Path, address_of
+from vfs.pattern_matching import canonical_pattern, composed_pattern
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result
 from vfs.results.kinds import Severity
-from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import reads as reads_module
+from vfs.storage.backends.database.addressing import addressed_by
 from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.grants import LEVEL_RANK, GrantRow
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Sequence
+
+    from vfs.storage.grants import Posture
 
 # The demo tree: /notes.txt at the root, a.txt and deep/b.txt under /data.
 TREE = (("/notes.txt", "root"), ("/data/a.txt", "a"), ("/data/deep/b.txt", "b"))
@@ -705,11 +710,10 @@ async def test_a_root_probe_past_its_wall_warns(monkeypatch: pytest.MonkeyPatch)
 
 async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guards: the residual walk run inline on the loop, which then cannot turn."""
-    # Composition kept at every size, so the walk residuates every root's arms.
-    monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", 10**9)
+    # The namespace root composes whole, so the walk residuates every arm in every entry.
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
-    assert (await fs.mkdir(path="/m")).success is True
-    await fs.add_mount(RecorderStorage(), "/m/n")
+    for index in range(8):
+        await fs.add_mount(RecorderStorage(), f"/m{index}")
     turns = [0]
     readings: list[tuple[int, int]] = []
     real = base_module.plan_scope
@@ -727,7 +731,8 @@ async def test_planning_leaves_the_loop(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(base_module, "plan_scope", watched)
     counter = asyncio.ensure_future(count_turns())
-    result = await fs.glob(_arms("x") + "*.txt", paths=tuple(f"/m/n/r{i:04}" for i in range(2_000)))
+    exclusions = tuple(_arms(f"e{j:02}x") for j in range(31))
+    result = await fs.glob(_arms("x") + "*.txt", paths=("/",), globs_not=exclusions)
     counter.cancel()
     assert result.ops == ("glob",)
     [(start, end)] = readings
@@ -828,7 +833,7 @@ async def test_a_close_during_the_planning_hop_answers_a_result(verb: str, yield
 
 
 # ----------------------------------------------------------------------
-# The scope channel — past the composition limit, roots ride beside the arms
+# The scope channel — roots ride beside the arms
 # ----------------------------------------------------------------------
 
 
@@ -847,8 +852,9 @@ def _counted(monkeypatch: pytest.MonkeyPatch, module: Any, name: str) -> list[tu
 
 @pytest.mark.slow
 async def test_a_wide_scoped_glob_builds_roots_plus_arms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Guards: the router composing every arm under every root past the limit,
-    so storage builds one pattern arm per product element."""
+    """Guards: the router composing every arm under every root, or storage taking
+    the composed prefilter past its limit, so one pattern arm is built per
+    product element."""
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     data = InMemoryStorage()
     await fs.add_mount(data, "/data")
@@ -869,8 +875,8 @@ async def test_a_wide_scoped_glob_builds_roots_plus_arms(monkeypatch: pytest.Mon
 
 
 async def test_planning_composes_only_the_bounded_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Guards: planning composing every owned root's arms past the limit, the
-    product the scope channel exists to avoid."""
+    """Guards: planning composing every owned root's arms, the product the
+    scope channel exists to avoid."""
     fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
     await fs.add_mount(BindableStorage(), "/data")
     await fs.add_mount(RecorderStorage(), "/data/part00007/inner")
@@ -893,14 +899,19 @@ SCOPED_GLOB_CALLS = (
     ShapeCall("trash-view", "glob", "*", ("/.vfs/trash", *TRASH_ROOTS)),
     ShapeCall("nested-roots", "glob", "*.py", tuple(p for d in DIRECTORIES[:125] for p in (d, f"{d}/src"))),
     ShapeCall("metachar-roots", "glob", "[ab]*", METACHAR_DIRECTORIES),
+    ShapeCall("meta-root", "glob", ".vf?/**", ("/", META_DIRECTORY)),
     ShapeCall("anonymous-private-roots", "glob", "src/**", POSTURE_DIRECTORIES, world="private_roots"),
     ShapeCall("anonymous-private-src", "glob", "src/**", POSTURE_DIRECTORIES, world="private_src"),
 )
 
 
+# The one call the anonymous posture gate refuses whole, before any prefilter is chosen.
+_REFUSED_WHOLE = frozenset({"anonymous-private-src"})
+
+
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[ShapeWorlds]:
-    """The both-shapes worlds, built once per session, opened from copies per module; the rows only read them."""
+    """The both-prefilters worlds, built once per session, opened from copies per module; the rows only read them."""
     shared = shared_directory(tmp_path_factory)
     source = await asyncio.to_thread(build_once, shared, "scope-worlds", build_world_files)
     worlds = await open_worlds(pathlib.Path(source), tmp_path_factory.mktemp("shape-worlds"))
@@ -912,21 +923,130 @@ async def shape_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterato
 @pytest.mark.slow
 @pytest.mark.asyncio(loop_scope="module")
 @pytest.mark.parametrize("call", SCOPED_GLOB_CALLS, ids=[call.name for call in SCOPED_GLOB_CALLS])
-async def test_both_shapes_answer_alike(
+async def test_both_prefilters_answer_alike(
     call: ShapeCall, shape_worlds: ShapeWorlds, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Guards: any row, refusal or record that differs between composing every
-    arm under every root and sending the roots beside the arms."""
+    """Guards: any row, refusal or record that differs between prefiltering a scope
+    with its root clauses and with its roots composed under its arms, or a side
+    that takes the other plan than the limit names."""
     answers: list[Result] = []
-    scopes: list[int] = []
+    plans: list[set[bool]] = []
+    real = reads_module.AdmittedScope.composed
     for limit in (0, 10**9):
-        monkeypatch.setattr(fanout_module, "COMPOSED_ARM_LIMIT", limit)
-        admitted = _counted(monkeypatch, backend_module, "admit_scope")
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", limit)
+        taken: set[bool] = set()
+
+        def spied(self: Any, *, trashed: bool, taken: set[bool] = taken) -> Any:
+            answer = real(self, trashed=trashed)
+            if self.roots(trashed=trashed):
+                taken.add(answer is not None)
+            return answer
+
+        monkeypatch.setattr(reads_module.AdmittedScope, "composed", spied)
         answers.append(await asyncio.wait_for(call.run(shape_worlds), 60))
-        scopes.append(sum(scope is not None for scope, _channel in admitted))
-    channel, composed = answers
-    assert scopes[0] > 0 and scopes[1] == 0, scopes
-    assert channel.observations == composed.observations
-    assert channel.errors == composed.errors
+        plans.append(taken)
+    fan, composed = answers
+    assert plans == ([set(), set()] if call.name in _REFUSED_WHOLE else [{False}, {True}])
+    assert fan.observations == composed.observations
+    assert fan.errors == composed.errors
     assert composed.observations or composed.errors
     assert not any(error.kind is ErrorKind.truncated for error in composed.errors)
+
+
+# ----------------------------------------------------------------------
+# A view-ancestor root — a live root above the trash head reads as its joined text
+# ----------------------------------------------------------------------
+
+_VIEW_ROOT = "/.vfs"
+_VIEW_ARM = "trash/t/src/**"
+
+# What everyone holds at each postured path of the trashed tree, in both orders.
+_VIEW_POSTURES: dict[str, dict[str, Posture]] = {
+    "private-roots": {"/": "none", "/t": "none", "/t/src": "read"},
+    "private-src": {"/": "none", "/t": "read", "/t/src": "none"},
+}
+
+
+def _private(world: GrantWorld, path: str) -> bool:
+    """Whether the test's own posture table gives everyone nothing at *path*."""
+    return everyone_rank(world, path) == LEVEL_RANK["none"]
+
+
+async def _ask_the_view(fs: AsyncVirtualFileSystem, verb: str, authority: Authority) -> Result:
+    """The one scoped call of *verb* whose root is the view ancestor and whose arm enters the trash view."""
+    if verb == "glob":
+        return await fs.glob(_VIEW_ARM, paths=(_VIEW_ROOT,), authority=authority)
+    return await getattr(fs, verb)("needle", paths=(_VIEW_ROOT,), globs=(_VIEW_ARM,), authority=authority)
+
+
+@pytest.mark.parametrize("order", sorted(_VIEW_POSTURES))
+@pytest.mark.parametrize("verb", ["glob", "grep", "search"])
+async def test_a_view_ancestor_root_leaks_nothing_under_either_posture_order(verb: str, order: str) -> None:
+    """Guards: a live root above the trash head read apart from its arm, so the
+    anonymous gate judges beneath the head, where no posture stands, and the
+    trash view's rows are lost or served past a private directory."""
+    postures = _VIEW_POSTURES[order]
+    world = GrantWorld(grants=[GrantRow(EVERYONE_NAME, path, level) for path, level in postures.items()])
+    system = Authority.system()
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    rows = [Entry(path=Path(f"/t/{name}"), content="needle") for name in ("a.py", "src/c.py")]
+    assert (await fs.write(entries=rows, parents=True, authority=system)).success is True
+    for path, level in postures.items():
+        assert (await fs.posture(path, level, authority=system)).success is True
+    assert (await fs.delete(observations=[Observation(path=Path("/t"))], authority=system)).success is True
+    composed = [composed_pattern(Path(_VIEW_ROOT), _VIEW_ARM)]
+    judged = {address_of(path).stored for path in addressed_by(composed)}
+    refusals = {path for path in judged if _private(world, path)}
+    result = await _ask_the_view(fs, verb, Authority.anonymous())
+    # The router's own probe of the root answers for /.vfs itself; the gate's records are the rest.
+    refused = {str(error.path) for error in result.errors if error.kind is ErrorKind.unauthenticated} - {_VIEW_ROOT}
+    assert refused == refusals
+    reference = await _ask_the_view(fs, verb, system)
+    readable = [str(o.path) for o in reference.observations if not _private(world, str(o.path))]
+    served = [str(o.path) for o in result.observations]
+    assert served == ([] if refusals else readable)
+    assert not any(_private(world, path) for path in served)
+    assert (judged, served) == ({"/t/src"}, ["/t/src/c.py"] if order == "private-roots" else [])
+    await fs.close()
+
+
+async def test_a_wildcard_headed_pattern_hides_the_meta_root_at_every_size() -> None:
+    """Guards: a row beneath ``/.vfs`` served to a wildcard-headed pattern once the
+    call names enough roots to change storage's prefilter, where the same call
+    with two roots hides it; a root that names the meta subtree still serves it."""
+    system = Authority.system()
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    others = tuple(f"/o{index:03}" for index in range(201))
+    rows = [Entry(path=Path("/.vfs/state/s.txt"), content="x"), Entry(path=Path("/.vfx/k.txt"), content="x")]
+    rows += [Entry(path=Path(f"{other}/k.txt"), content="x") for other in others]
+    assert (await fs.write(entries=rows, parents=True, authority=system)).success is True
+    for paths in (("/", "/.vfs/state"), ("/", "/.vfs/state", *others)):
+        result = await fs.glob(".vf?/**", paths=paths, authority=system)
+        assert (sorted(result.paths), result.errors) == (["/.vfx/k.txt"], [])
+    named = await fs.glob("*.txt", paths=("/.vfs/state", *others[:1]), authority=system)
+    assert sorted(named.paths) == ["/.vfs/state/s.txt", "/o000/k.txt"]
+    await fs.close()
+
+
+async def test_a_view_ancestor_root_reads_its_joined_text_at_every_size() -> None:
+    """Guards: a live root above the trash head riding the scope beside many roots,
+    where its arm no longer enters the trash view and the bare head is no longer refused."""
+    system = Authority.system()
+    fs = AsyncVirtualFileSystem(storage=InMemoryStorage())
+    others = tuple(f"/o{index:03}" for index in range(201))
+    rows = [Entry(path=Path(f"/x/{name}"), content="x") for name in ("a.py", "b.py")]
+    rows += [Entry(path=Path(f"{other}/k.txt"), content="x") for other in others]
+    assert (await fs.write(entries=rows, parents=True, authority=system)).success is True
+    assert (await fs.delete(observations=[Observation(path=Path("/x"))], authority=system)).success is True
+    alone = await fs.glob("trash/x/**", paths=(_VIEW_ROOT,), authority=system)
+    crowded = await fs.glob("trash/x/**", paths=(_VIEW_ROOT, *others), authority=system)
+    assert sorted(alone.paths) == ["/x/a.py", "/x/b.py"]
+    assert sorted(crowded.paths) == ["/x/a.py", "/x/b.py"]
+    # No row is stored at /.vfs, and the root's own probe says so at every size.
+    probe = [(ErrorKind.not_found, _VIEW_ROOT)]
+    assert [(error.kind, error.path) for error in alone.errors] == probe
+    assert crowded.errors == alone.errors
+    head = await fs.glob("/trash", paths=(_VIEW_ROOT, *others), authority=system)
+    assert head.observations == []
+    assert [(error.kind, error.path) for error in head.errors] == [*probe, (ErrorKind.invalid, None)]
+    await fs.close()

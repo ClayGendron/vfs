@@ -2,9 +2,9 @@
 
 The verb is grep's shape with a scorer where grep has a matcher: one
 session, SELECTs only, the backend's redrive around it, scope crossing
-the seam as pattern text on the ``globs`` channels, or past the router's
-composition limit as roots beside the arms (``scope``), with the ``ext``
-channels beside them. A query's terms go through the index's tokenizer;
+the seam in one shape: the ``globs`` channels entry-wide, roots beside
+the arms (``scope``), and the ``ext`` channels beside both. A query's
+terms go through the index's tokenizer;
 **round one** probes their summary rows (``lex_df`` with the epoch's
 statistics) and fetches every term's head blocks (``block_no <
 HEAD_BLOCKS``); the engine scores what it has at the fusion depth;
@@ -271,11 +271,11 @@ async def search_rows(
 ) -> Result:
     """One row per entry, best first: the legs fused, the index side unioned with the overlay.
 
-    Scoping arrives in grep's two shapes: pattern text on the ``globs``
-    channels below the router's composition limit, or past it the roots
-    beside the arms as *scope*, in the same one call and snapshot, read
-    by the allow-list, the pushdown, the overlay's root fan and the
-    gates exactly as grep reads them; piped
+    Scoping arrives in grep's one shape: the ``globs`` channels
+    entry-wide and the roots beside the arms as *scope*, in the same one
+    call and snapshot, read by the allow-list, the pushdown, the
+    overlay's fan and the gates exactly as grep reads them, under the
+    prefilter the scope's side chose; piped
     *observations* are rows in entry coordinates and admit their own
     paths literally. *limit* counts entries. *wall_seconds* is the
     caller-configured wall-clock budget; the declared default keeps
@@ -305,7 +305,7 @@ async def search_rows(
         return Result(ops=("search",), errors=[classified(ErrorKind.invalid, detail=str(exc))])
     side = side_scope(scope, trashed=trashed)
     entry = tables.entry
-    channels = scope_channels(admissions, side)
+    channels = scope_channels(admissions, side, None if scope is None else scope.composed(trashed=trashed))
     channel = channels.allowed
     fan_arms = arm_budget(profile, parameter_budget, CHANNEL_ARM_BINDS)
     gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped, scope=side)
@@ -428,7 +428,7 @@ async def search_rows(
             profile,
             parameter_budget,
             membership_budget,
-            gated.gates.admissions,
+            (*gated.gates.admissions, *channels.prefilter),
             gated.gates.wanted,
             everything=False,
             fetched=fetched,

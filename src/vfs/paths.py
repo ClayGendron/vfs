@@ -800,6 +800,20 @@ class Address(NamedTuple):
     def meta(self) -> bool:
         return _under_meta_root(self.stored)
 
+    @property
+    def holds_trash_head(self) -> bool:
+        """Whether the trash view's head lies at or beneath the addressed path.
+
+        True for the root, for the head itself, and for a live proper
+        ancestor of the head (``/.vfs``); a tombstoned path lies beneath
+        the head and never holds it. The subtree of such a path is not
+        the rows of one side of the tombstone: text joined beneath it
+        can enter the view, name the bare head, or leave no remainder at
+        all, so a scope reads it joined with each pattern as one
+        pattern, never as a root with a remainder judged apart.
+        """
+        return self.stored == "/" or (not self.trashed and TRASH_ROOT.startswith(self.stored + "/"))
+
 
 def address_of(value: str) -> Address:
     """A value under the trash head names the tombstoned row at the path beneath it; any other names a live row."""

@@ -1,12 +1,14 @@
 """The fan-out planner: a scoped call's roots, patterns and exclusions, planned entry by entry.
 
 A fan-out that names scope roots, path-arm patterns or capability skips
-is planned before it is dispatched. :func:`plan_scope` composes each
-pattern under each root into every entry the root reaches, residuates
-the composed text into that entry's coordinates, and returns a
-:class:`ScopePlan` of plain data. Past :data:`COMPOSED_ARM_LIMIT`
-composed arms, an entry's owned roots ride beside the uncomposed arms
-as its scope channel instead.
+is planned before it is dispatched. :func:`plan_scope` sends each root
+strictly beneath its owning entry beside the uncomposed arms, as that
+entry's scope channel, rewritten once into the entry's coordinates. Two
+bounded kinds of root compose instead, each pattern joined under the
+root and residuated into the entry's coordinates: a root whose joined
+text must be read whole (an entry's own root, its trash view's head, a
+live root above that head), and a root above a nested entry. The answer
+is a :class:`ScopePlan` of plain data.
 
     plan = plan_scope(owners, keys, skip_paths, roots, patterns, exclusions, reach, literals, deadline)
 
@@ -18,7 +20,7 @@ at all. :func:`walks` says whether a call's plan needs the worker.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from vfs.deadline import CHECK_EVERY
 from vfs.paths import ROOT, address_of
@@ -30,10 +32,6 @@ if TYPE_CHECKING:
     from vfs.deadline import Deadline
     from vfs.paths import Path
 
-# Past this many composed arms in one entry (owned roots times arms), the roots
-# ride beside the arms as a scope channel; the storage fan's arm ceiling.
-COMPOSED_ARM_LIMIT: Final = 200
-
 
 class ScopePlan(NamedTuple):
     """A fan-out's planned scope: what the residual walk derived, entry by entry.
@@ -44,9 +42,9 @@ class ScopePlan(NamedTuple):
     members, ``skips`` the capability-skip paths whose reach the walk
     found or could not determine, ``roots`` the scope roots planned
     whole, and ``completed`` whether the walk finished before its wall.
-    ``scopes`` maps each entry past the composition limit to its scope
-    channel: its owned roots in entry coordinates beside the uncomposed
-    arms and exclusion arms.
+    ``scopes`` maps each entry owning a root strictly beneath its side to
+    its scope channel: those roots in entry coordinates beside the
+    uncomposed arms and exclusion arms.
     """
 
     members: dict[Path, set[str] | None]
@@ -74,10 +72,13 @@ class _WallReached(Exception):  # noqa: N818 - a control-flow signal, not an err
 
 
 class _Walk:
-    """The planning walk's residuations, its deadline read before every ``CHECK_EVERY``th one.
+    """The planning walk's steps, its deadline read before every ``CHECK_EVERY``th one.
 
-    The residuations arrive one call at a time, never as a sequence to
-    chunk, so the walk counts them and reads the deadline it holds.
+    A step is one residuation or one root rewritten into its entry's
+    coordinates. The steps arrive one call at a time, never as a
+    sequence to chunk, so the walk counts them and reads the deadline it
+    holds: a plan that only rewrites roots is bounded as one that
+    residuates is.
     """
 
     def __init__(self, deadline: Deadline) -> None:
@@ -86,10 +87,19 @@ class _Walk:
 
     def residuals(self, pattern: str, bind_path: Path) -> frozenset[tuple[str, ...]]:
         """:func:`~vfs.pattern_matching.residuals`, or :class:`_WallReached` past the deadline."""
+        self._step()
+        return residuals(pattern, bind_path)
+
+    def rewritten(self, root: Path, key: Path) -> Path:
+        """*root* in the coordinates of the entry bound at *key*, or :class:`_WallReached` past the deadline."""
+        self._step()
+        return root.without_mount(key)
+
+    def _step(self) -> None:
+        """Count one step, the deadline read before every ``CHECK_EVERY``th; :class:`_WallReached` once it passed."""
         if self._count % CHECK_EVERY == 0 and self._deadline.expired():
             raise _WallReached
         self._count += 1
-        return residuals(pattern, bind_path)
 
 
 def plan_scope(
@@ -109,27 +119,29 @@ def plan_scope(
     loop (*owners* maps each scope root to its owning entry's bind path,
     *keys* are the capable entries' bind paths, *skip_paths* the
     capability skips') and the pattern text, so it runs on a worker.
-    Each root composes *patterns* and *exclusions* under itself into
-    every entry it reaches and residuates them there; a root in
-    *literals* also rides its owning entry as its own literal path. With
-    no root, name arms copy verbatim, path arms residuate, and no
-    *patterns* at all is unrestricted. A skip is kept where some *reach*
-    pattern can reach its entry's rows.
+    A root strictly beneath its owning entry's side rides that entry's
+    scope channel beside the uncomposed *patterns* and *exclusions*,
+    rewritten once into its coordinates; a root in *literals* also rides
+    the entry as its own literal path. With no root, name arms copy
+    verbatim, path arms residuate, and no *patterns* at all is
+    unrestricted. A skip is kept where some *reach* pattern can reach
+    its entry's rows.
 
-    Composition is the product of an entry's owned roots and the arms,
-    so past :data:`COMPOSED_ARM_LIMIT` composed arms an entry's owned
-    roots (each rewritten once into its coordinates) ride its scope
-    channel beside the arms instead. Three things still compose at any
-    size, being bounded: an entry's owned roots within the limit, roots
-    that address its whole side (its bind path, the trash head; at most
-    two), and roots above a nested entry (at most its bind depth). A
-    root's literal, under *literals*, stays on the entry-wide channel,
-    one per root.
+    Two kinds of root compose instead, each arm joined under the root
+    and residuated into every entry it reaches, and both are bounded. A
+    root whose joined text must be read whole: an entry's own root or
+    its trash view's head, which address a whole side, and a live root
+    above that head, whose text with an arm can enter the view (at most
+    three an entry). And a root above a nested entry (at most its bind
+    depth). So a root and an arm mean what their joined text means as
+    one pattern, however many roots the call names, and the plan's cost
+    is linear in the roots. A root's literal, under *literals*, stays on
+    the entry-wide channel, one per root.
 
-    The deadline is read before every ``CHECK_EVERY``th residuation,
-    inside a root as well as between roots (between entries when there
-    is no root), so the walk overruns its wall by at most that many
-    residuations. A root, or
+    The deadline is read before every ``CHECK_EVERY``th step, a
+    residuation or a root's rewrite, inside a root as well as between
+    roots (between entries when there is no root), so the walk overruns
+    its wall by at most that many steps. A root, or
     with no root an entry, whose walk is stopped is dropped from the
     plan whole, its exclusions with it, and every skip not yet decided
     is kept: a coverage record never hides. Pure Python on its worker,
@@ -139,8 +151,7 @@ def plan_scope(
     walk = _Walk(deadline)
     members: dict[Path, set[str] | None] = {key: set() for key in keys} if roots else {}
     excluded: dict[Path, set[str]] = {key: set() for key in keys} if roots else {}
-    switched = _switched_entries(owners, roots, len(patterns) + len(exclusions))
-    channeled: dict[Path, list[Path]] = {key: [] for key in switched}
+    channeled: dict[Path, list[Path]] = {key: [] for key in keys}
     planned: list[Path] = []
     kept: set[Path] = set()
     decided = 0
@@ -151,9 +162,9 @@ def plan_scope(
                 for key in keys:
                     if key != owners[root] and not _path_covers(root, key):
                         continue
-                    if key in switched and key == owners[root] and not _addresses_whole_side(root, key):
+                    if key == owners[root] and not _composes_whole(root, key):
                         literal = _root_literal(root, key, literals, walk)
-                        staged[key] = (literal, set(), root.without_mount(key))
+                        staged[key] = (literal, set(), walk.rewritten(root, key))
                         continue
                     admitted, refused = _root_members(root, key, owners, patterns, exclusions, literals, walk)
                     staged[key] = (admitted, refused, None)
@@ -194,23 +205,17 @@ def _path_covers(ancestor: Path, descendant: Path) -> bool:
     return str(descendant).startswith(str(ancestor) + "/")
 
 
-def _switched_entries(owners: Mapping[Path, Path], roots: tuple[Path, ...], arms: int) -> frozenset[Path]:
-    """The entries whose owned roots, times the call's *arms*, compose past :data:`COMPOSED_ARM_LIMIT`.
+def _composes_whole(root: Path, key: Path) -> bool:
+    """Whether *root*, owned by the entry bound at *key*, must compose with each arm instead of riding the scope.
 
-    Only owned roots strictly beneath the entry's side count: a root that
-    addresses the whole side composes at any size.
+    True when the trash view's head lies at or beneath the root in its
+    entry's coordinates: the entry's root and the head itself address a
+    whole side and leave no remainder to judge an arm against, and the
+    text of a live root above the head, joined with an arm, can enter
+    the view. Storage refuses the same roots on the scope by the same
+    test, so the planner never sends one there.
     """
-    counts: dict[Path, int] = {}
-    for root in roots:
-        key = owners[root]
-        if not _addresses_whole_side(root, key):
-            counts[key] = counts.get(key, 0) + 1
-    return frozenset(key for key, count in counts.items() if count * arms > COMPOSED_ARM_LIMIT)
-
-
-def _addresses_whole_side(root: Path, key: Path) -> bool:
-    """Whether *root*, owned by the entry bound at *key*, is that entry's root or its trash view's head."""
-    return address_of(str(root.without_mount(key))).stored == "/"
+    return address_of(str(root.without_mount(key))).holds_trash_head
 
 
 def _root_literal(root: Path, key: Path, literals: frozenset[Path], walk: _Walk) -> set[str]:
@@ -223,7 +228,7 @@ def _root_literal(root: Path, key: Path, literals: frozenset[Path], walk: _Walk)
 def _scope_channels(
     channeled: Mapping[Path, list[Path]], patterns: tuple[str, ...], exclusions: tuple[str, ...]
 ) -> dict[Path, ScopeChannel]:
-    """Each switched entry's scope channel: its planned owned roots beside the call's uncomposed arms."""
+    """Each entry's scope channel, where it owns a planned root: those roots beside the call's uncomposed arms."""
     return {
         key: ScopeChannel(roots=tuple(dict.fromkeys(rels)), arms=patterns, arms_not=exclusions)
         for key, rels in channeled.items()

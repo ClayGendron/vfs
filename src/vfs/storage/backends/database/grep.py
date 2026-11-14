@@ -180,14 +180,16 @@ async def grep_rows(
 ) -> Result:
     """One row per matching entry, index side unioned with the scan side.
 
-    Scoping arrives in one of two shapes. Below the router's composition
-    limit it is pattern text on the ``globs`` channels, which the router
-    composes and residuates. Past it, the roots ride beside the arms as
-    *scope*, admitted at the seam, in the same one call and snapshot:
-    every tier reads them — the segment allow-list gains one
+    Scoping arrives in one shape: the ``globs`` channels are entry-wide,
+    and every root strictly beneath the entry rides beside the arms as
+    *scope*, admitted at the seam, in the same one call and snapshot.
+    Every tier reads the scope under the prefilter its side chose (see
+    ``AdmittedScope.composed``): the roots composed with the arms join
+    the allow-list, the pushdown and the scan side's pattern fan, or
+    past the composed prefilter's limit the allow-list gains one
     ``root/**`` arm per root, the pushdown the arms' facts, the scan side
-    glob's root fan — and the arms are judged once against each row's
-    remainder under every covering root. Root assertions stay the
+    glob's root fan. Under either, the arms are judged once against each
+    row's remainder under every covering root. Root assertions stay the
     router's. *wall_seconds* is the caller-configured wall-clock
     budget; the declared default keeps direct callers honest. Under a
     partial *view* every candidate passes the view beside the structural
@@ -218,7 +220,7 @@ async def grep_rows(
     errors: list[ResultError] = []
     gates = compile_gates(admissions, exclusions, ext=ext, ext_not=ext_not, marked=meta_scoped, scope=side)
     wanted = gates.wanted
-    channels = scope_channels(admissions, side)
+    channels = scope_channels(admissions, side, None if scope is None else scope.composed(trashed=trashed))
     channel = channels.allowed
     gated = bool(gates.has_patterns or gates.scoped or gates.wanted or gates.unwanted)
     fetched = effective_columns(columns, content=columns is not None)
@@ -309,7 +311,7 @@ async def grep_rows(
                     profile,
                     parameter_budget,
                     membership_budget,
-                    gates.admissions,
+                    (*gates.admissions, *channels.prefilter),
                     wanted,
                     everything=scan_all,
                     fetched=fetched,

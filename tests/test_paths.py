@@ -315,6 +315,16 @@ class TestCheckMutablePath:
         assert address_of("/.vfs/docs/x").meta is True and address_of("/.vfs/trash/.vfs/docs/x").meta is True
         assert address_of("/.vfs/trash/d").meta is False
 
+    def test_an_address_holds_the_trash_head_only_at_or_above_it(self):
+        """Guards: the root, the head or the live meta root read as a plain subtree,
+        or a tombstoned path, which lies beneath the head, read as holding it."""
+        for value in ("/", "/.vfs", "/.vfs/trash"):
+            assert address_of(value).holds_trash_head is True, value
+        beneath = ("/.vfs/trash/d", "/.vfs/trash/.vfs", "/.vfs/trash/.vfs/trash")
+        beside = ("/.vfs/state", "/.vfs/trashy", "/.vfsx", "/.v", "/d", "/d/.vfs")
+        for value in (*beneath, *beside):
+            assert address_of(value).holds_trash_head is False, value
+
 
 # =========================================================================
 # resolve_path  (the gate)

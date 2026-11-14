@@ -63,6 +63,7 @@ from vfs.storage import (
     SupportsTraits,
     SupportsTraversal,
 )
+from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.replace import EditOperation
 
 needs = pytest.mark.needs
@@ -258,6 +259,9 @@ SCOPE_MULTI_ROOT_CASES: tuple[ScopeCase, ...] = (
 SCOPE_TRASH_CASES: tuple[ScopeCase, ...] = tuple(
     ScopeCase((root,), arms, ()) for root in SCOPE_TRASH_ROOTS for arms in SCOPE_ARM_SETS
 )
+# The two prefilters a scope can take. Every case holds at most six pairs of root
+# and arm, so at the declared limit all compose and only a forced plan reaches the fan.
+SCOPE_PLANS: tuple[str, ...] = ("composed", "fan")
 
 
 async def _scope_world(storage: ConformanceBackend) -> None:
@@ -279,6 +283,15 @@ def _skip_a_proven_engine(contract: StorageContract) -> None:
 def _scoped_paths(result: Result) -> list[str]:
     assert result.success is True, result.errors
     return [str(row.path) for row in result.observations]
+
+
+def _hold_prefilter_plan(monkeypatch: pytest.MonkeyPatch, plan: str) -> None:
+    """Hold every scope to *plan*: ``fan`` sets the composed prefilter's limit to 0, ``composed`` leaves it declared.
+
+    Every leg's backend is the database adapter, so the one patch reaches each of them.
+    """
+    if plan == "fan":
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
 
 
 class StorageContract:
@@ -1326,10 +1339,15 @@ class StorageContract:
 
     @pytest.mark.slow
     @needs("write", "delete", "glob")
-    async def test_scope_channel_answers_as_composition(self, storage: ConformanceBackend) -> None:
+    @pytest.mark.parametrize("plan", SCOPE_PLANS)
+    async def test_scope_channel_answers_as_composition(
+        self, storage: ConformanceBackend, monkeypatch: pytest.MonkeyPatch, plan: str
+    ) -> None:
         """Guards: any row the scope channel admits or excludes differently from
-        the same roots and arms composed into pattern text."""
+        the same roots and arms composed into pattern text, under either
+        prefilter plan."""
         _skip_a_proven_engine(self)
+        _hold_prefilter_plan(monkeypatch, plan)
         await _scope_world(storage)
         for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
             patterns, globs_not = case.composed()
@@ -1340,10 +1358,15 @@ class StorageContract:
 
     @pytest.mark.slow
     @needs("write", "delete", "grep")
-    async def test_scope_channel_greps_as_composition(self, storage: ConformanceBackend) -> None:
+    @pytest.mark.parametrize("plan", SCOPE_PLANS)
+    async def test_scope_channel_greps_as_composition(
+        self, storage: ConformanceBackend, monkeypatch: pytest.MonkeyPatch, plan: str
+    ) -> None:
         """Guards: a grep tier (allow-list, pushdown, scan fan, gates) reading
-        the scope channel differently from the composed globs."""
+        the scope channel differently from the composed globs, under either
+        prefilter plan."""
         _skip_a_proven_engine(self)
+        _hold_prefilter_plan(monkeypatch, plan)
         await _scope_world(storage)
         reindexer = _reindexer_of(storage)
         for _world in ("overlay", "indexed"):
@@ -1356,10 +1379,14 @@ class StorageContract:
 
     @pytest.mark.slow
     @needs("write", "delete", "search")
-    async def test_scope_channel_searches_as_composition(self, storage: ConformanceBackend) -> None:
+    @pytest.mark.parametrize("plan", SCOPE_PLANS)
+    async def test_scope_channel_searches_as_composition(
+        self, storage: ConformanceBackend, monkeypatch: pytest.MonkeyPatch, plan: str
+    ) -> None:
         """Guards: search's rungs reading the scope channel differently from the
-        composed globs."""
+        composed globs, under either prefilter plan."""
         _skip_a_proven_engine(self)
+        _hold_prefilter_plan(monkeypatch, plan)
         await _scope_world(storage)
         reindexer = _reindexer_of(storage)
         for _world in ("overlay", "indexed"):

@@ -1,10 +1,12 @@
 """The structural scope every content search shares — grep's and search's.
 
-Scoping crosses the storage seam as pattern text on the ``globs``
-channels (the router composes scope roots into them), or past the
-router's composition limit as roots beside the arms (an admitted
-scope channel, :func:`scope_channels`), plus the two ``ext``
-channels. This module holds the pieces both verbs stand on:
+Scoping crosses the storage seam in one shape: the ``globs`` channels
+are entry-wide, every root strictly beneath the entry rides beside the
+arms (an admitted scope channel), and the two ``ext`` channels ride
+beside both. How a scope prefilters is storage's own choice, made per
+call (:func:`scope_channels`): its roots composed with its arms up to
+the composed prefilter's limit, its root clauses past it. This module
+holds the pieces both verbs stand on:
 the authoritative per-row gate (:func:`passes_gates`), the SQL terms a
 candidate fetch may ride beside its id chunk (:func:`pushdown_terms`,
 with true bind accounting), and the scan side's bounded, structurally
@@ -27,7 +29,8 @@ from typing import TYPE_CHECKING, Final, NamedTuple
 from sqlalchemy import func, or_, select
 
 from vfs.paths import TRASH_ROOT, _under_meta_root
-from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, escape_glob
+from vfs.pattern_matching import ROW_GATE_FIELDS, PatternError, compile_filter, escape_glob
+from vfs.storage.backends.database.addressing import address_channel
 from vfs.storage.backends.database.descent import liveness_filters
 from vfs.storage.backends.database.dialects import arm_budget, chunked
 from vfs.storage.backends.database.pathterms import ChannelTerms, compile_channel
@@ -35,7 +38,6 @@ from vfs.storage.backends.database.reads import (
     ARM_FIXED_BINDS,
     NO_SCOPE_FACTS,
     ScopeFacts,
-    address_channel,
     channel_facts,
     ext_membership,
     kind_membership,
@@ -134,29 +136,47 @@ def trash_scope(globs: Sequence[str], scope: AdmittedScope | None = None) -> tup
 
 
 class SearchChannels(NamedTuple):
-    """A content search's compiled channels: what nominates, what narrows the fetch, and the scope's roots.
+    """A content search's compiled channels: what nominates, what narrows the fetch, and the scope's prefilter.
 
-    ``allowed`` feeds the segment allow-list: the ``globs`` plus one
-    ``root/**`` arm per scope root, a superset of every admitted row,
-    linear in the roots, and void past the channel fan like any channel.
-    The arms' own segment terms are relative to the roots, so they never
-    join it. ``facts`` feeds the pushdown: the ``globs`` and the scope's
-    arms together, sound because every admitted row matches a glob or an
-    arm's leaf. ``roots`` and ``arms`` are the scope's on the search's
-    side, for the scan side's root fan.
+    A scope prefilters by one of two plans, and the fields hold
+    whichever the call chose. Under the root plan, ``allowed`` feeds the
+    segment allow-list the ``globs`` plus one ``root/**`` arm per scope
+    root, a superset of every admitted row, linear in the roots, and
+    void past the channel fan like any channel; the arms' own segment
+    terms are relative to the roots, so they never join it. ``facts``
+    feeds the pushdown the ``globs`` and the scope's arms together,
+    sound because every admitted row matches a glob or an arm's leaf.
+    ``roots`` and ``arms`` are the scope's on the search's side, for the
+    scan side's root fan. Under the composed plan, ``allowed`` and
+    ``facts`` are both the ``globs`` beside the scope's roots composed
+    with its arms, ``prefilter`` holds those composed patterns compiled
+    for the scan side's pattern fan, and ``roots`` and ``arms`` are
+    empty. Either way the fields only narrow a fetch: the gates compiled
+    from the scope decide every row.
     """
 
     allowed: ChannelTerms
     facts: ChannelTerms
     roots: tuple[Path, ...]
     arms: tuple[str, ...]
+    prefilter: tuple[GlobFilter, ...] = ()
 
 
-def scope_channels(admissions: Sequence[str], scope: ScopeChannel | None) -> SearchChannels:
-    """The search's channels over its admitted ``globs`` and its side's *scope* (stored roots)."""
+def scope_channels(
+    admissions: Sequence[str], scope: ScopeChannel | None, composed: tuple[str, ...] | None = None
+) -> SearchChannels:
+    """The search's channels over its admitted ``globs`` and its side's *scope* (stored roots).
+
+    *composed* is the side's answer from ``AdmittedScope.composed``: a
+    tuple takes the composed plan over those patterns, ``None`` the root
+    plan.
+    """
     if scope is None:
         channel = compile_channel(admissions)
         return SearchChannels(channel, channel, (), ())
+    if composed is not None:
+        channel = compile_channel([*admissions, *composed])
+        return SearchChannels(channel, channel, (), (), tuple(compile_filter(pattern) for pattern in composed))
     allowed = compile_channel([*admissions, *(escape_glob(str(root)) + "/**" for root in scope.roots)])
     facts = compile_channel([*admissions, *scope.arms])
     return SearchChannels(allowed, facts, scope.roots, scope.arms)

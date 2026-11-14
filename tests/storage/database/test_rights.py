@@ -9,7 +9,10 @@ a starved bind budget, so the chunked fan splits every predicate.
 
 from __future__ import annotations
 
+import asyncio
+import pathlib
 import random
+import shutil
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -17,11 +20,13 @@ from itertools import pairwise
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import and_, delete, event, insert, select, update
 from sqlalchemy.exc import OperationalError
 
 from tests.support.grant_worlds import DIRECTORIES, LAYOUTS, PATHS, SUBJECT_SETS, Layout, random_world
 from tests.support.oracles.grants import GrantWorld, everyone_rank, set_rank
+from tests.support.shared_builds import build_once, shared_directory
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
 from vfs.authority import ANONYMOUS_NAME, EVERYONE_NAME, Authority, Principal
@@ -29,19 +34,20 @@ from vfs.deadline import Deadline
 from vfs.models import Entry
 from vfs.models.rows import build_vfs_tables
 from vfs.ops import VERB_RUNGS
-from vfs.paths import Path
+from vfs.paths import Path, address_of
 from vfs.pattern_matching import ScopeChannel, composed_pattern
 from vfs.results import ErrorKind, Result
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import addressing as addressing_module
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import rights as rights_module
+from vfs.storage.backends.database.addressing import addressed_by
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.labels import Mark, Relabeller, mark_relabel
 from vfs.storage.backends.database.ranges import visible_entries
-from vfs.storage.backends.database.reads import addressed_by
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
     Resolution,
@@ -75,6 +81,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
     from sqlalchemy.engine import CursorResult, RowMapping
+
+    from vfs.paths import Address
 
 WORLDS = 30
 SYSTEM = Authority.system()
@@ -906,6 +914,80 @@ async def _resolution(storage: InMemoryStorage, authority: Authority) -> Resolut
 _SCOPE_ROOTS = tuple(Path(f"/r{i:03}") for i in range(201))
 _WALL_DETAIL = "the anonymous posture check reached the wall-time budget; narrow the roots or the arms, or authenticate"
 
+# The leak worlds' two root sets, each holding a.py and src/c.py and each asked alone:
+# plain names, and names holding the pattern language's metacharacters.
+_LEAK_ROOTS: dict[str, tuple[Path, ...]] = {
+    "plain": _SCOPE_ROOTS,
+    "metachar": (Path("/a*"), Path("/[x]"), Path("/{a,b}")),
+}
+_LEAK_ARM = "src/**"
+
+# Each posture order: what everyone holds at a root, and at its src. The mount root is private.
+_LEAK_ORDERS: dict[str, tuple[Posture, Posture]] = {"private-roots": ("none", "read"), "private-src": ("read", "none")}
+
+# The composed prefilter's limit that forces each plan on every side.
+_LEAK_PLANS: dict[str, int] = {"composed": 10**9, "fan": 0}
+
+
+def _leak_world(order: str) -> GrantWorld:
+    """The test's own posture table for one order: the mount root private, each root and its src postured apart.
+
+    A root left private is not postured: the mount root's posture covers it.
+    """
+    root_level, src_level = _LEAK_ORDERS[order]
+    world = GrantWorld(grants=[GrantRow(EVERYONE_NAME, "/", "none")])
+    for root in (root for roots in _LEAK_ROOTS.values() for root in roots):
+        if root_level != "none":
+            world.grants.append(GrantRow(EVERYONE_NAME, str(root), root_level))
+        world.grants.append(GrantRow(EVERYONE_NAME, f"{root}/src", src_level))
+    return world
+
+
+def _build_leak_worlds(directory: pathlib.Path) -> str:
+    """Both posture orders' mounts built into SQLite files under *directory*, on a loop of their own."""
+    asyncio.run(_fill_leak_worlds(directory))
+    return str(directory)
+
+
+async def _fill_leak_worlds(directory: pathlib.Path) -> None:
+    """One mount per posture order, holding both root sets, postured from the order's own table and closed."""
+    roots = [root for roots in _LEAK_ROOTS.values() for root in roots]
+    entries = [Entry(path=Path(f"{root}/{name}"), content="needle") for root in roots for name in ("a.py", "src/c.py")]
+    for order in _LEAK_ORDERS:
+        storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{directory}/{order}.sqlite")
+        try:
+            assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
+            for row in _leak_world(order).grants:
+                posted = await storage.posture(path=Path(row.path_prefix), posture=row.level, authority=SYSTEM)
+                assert posted.success is True
+        finally:
+            await storage.close()
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def leak_worlds(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[dict[str, DatabaseStorage]]:
+    """The leak worlds by posture order, built once per session, opened from copies per module; the rows only read."""
+    shared = shared_directory(tmp_path_factory)
+    source = pathlib.Path(await asyncio.to_thread(build_once, shared, "scope-leak-worlds", _build_leak_worlds))
+    target = tmp_path_factory.mktemp("leak-worlds")
+    worlds: dict[str, DatabaseStorage] = {}
+    for order in _LEAK_ORDERS:
+        for built in source.glob(f"{order}.sqlite*"):
+            shutil.copy(built, target / built.name)
+        worlds[order] = DatabaseStorage(url=f"sqlite+aiosqlite:///{target}/{order}.sqlite")
+    yield worlds
+    for storage in worlds.values():
+        await storage.close()
+
+
+async def _ask_scoped(storage: DatabaseStorage, verb: str, scope: ScopeChannel, authority: Authority) -> Result:
+    """One scoped call of *verb* with no entry-wide pattern: glob bare, grep and search for ``needle``."""
+    if verb == "glob":
+        return await storage.glob(patterns=(), scope=scope, authority=authority)
+    if verb == "grep":
+        return await storage.grep(pattern="needle", scope=scope, authority=authority)
+    return await storage.search(query="needle", scope=scope, authority=authority)
+
 
 class _Spied:
     """A stand-in recording each call's arguments and thread, then calling through."""
@@ -926,7 +1008,8 @@ class TestPostureGate:
         self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Guards: a scoped anonymous call judged at the bare roots, at the root
-        for an empty entry-wide channel, or judged inline on the loop."""
+        for an empty entry-wide channel, or judged inline on the loop; and the
+        judged order drifting from entry-wide first, then root order by arm order."""
         chain = _Spied(backend_module.posture_chain)
         refusals = _Spied(backend_module.posture_refusals)
         monkeypatch.setattr(backend_module, "posture_chain", chain)
@@ -939,8 +1022,8 @@ class TestPostureGate:
         composed = [composed_pattern(root, arm) for root in _SCOPE_ROOTS for arm in arms]
         [call] = refusals.calls
         judged = call[2]
-        assert judged == addressed_by(sorted((*patterns, *composed)))
-        assert set(judged) == {"/z", *(f"{root}/src" for root in _SCOPE_ROOTS), *(str(r) for r in _SCOPE_ROOTS)}
+        assert judged == ["/z", *(path for root in _SCOPE_ROOTS for path in (f"{root}/src", str(root)))]
+        assert set(judged) == {address_of(path).stored for path in addressed_by(sorted((*patterns, *composed)))}
         assert chain.calls[0][0] == judged
         assert all(name.startswith("vfs-offload") for name in (*chain.threads, *refusals.threads))
         assert (await storage.glob(patterns=(), scope=scope, authority=anon)).success is True
@@ -951,16 +1034,16 @@ class TestPostureGate:
     async def test_a_named_caller_builds_no_scope_paths(
         self, storage: InMemoryStorage, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Guards: the scope's composed paths built for every caller, as the
+        """Guards: the scope's judged paths built for every caller, as the
         entry-wide addressed paths are, though a named caller is never judged."""
-        composed = _Spied(reads_module.composed_pattern)
+        judged = _Spied(backend_module.scope_judged)
         addressed = _Spied(backend_module.addressed_by)
-        monkeypatch.setattr(reads_module, "composed_pattern", composed)
+        monkeypatch.setattr(backend_module, "scope_judged", judged)
         monkeypatch.setattr(backend_module, "addressed_by", addressed)
         ann = Authority.of(Principal("ann"))
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**", "*.py"))
         assert (await storage.glob(patterns=("/z/*.md",), scope=scope, authority=ann)).success is True
-        assert composed.calls == []
+        assert judged.calls == []
         assert addressed.calls == [(("/z/*.md",),)]
 
     async def test_a_gate_past_its_wall_refuses_the_call(
@@ -970,15 +1053,16 @@ class TestPostureGate:
         wall serving part of the call instead of refusing it whole."""
         read_body = _Spied(backend_module.glob_rows)
         monkeypatch.setattr(backend_module, "glob_rows", read_body)
-        judged: list[str] = []
-        real = reads_module.composed_pattern
+        read: list[str] = []
+        real = addressing_module.address_of
 
-        def counted(root: Path, arm: str) -> str:
-            judged.append(str(root))
-            return real(root, arm)
+        # The gate reads each root's stored form once; the clock passes the wall after the first.
+        def counted(value: str) -> Address:
+            read.append(value)
+            return real(value)
 
-        monkeypatch.setattr(reads_module, "composed_pattern", counted)
-        monkeypatch.setattr(deadline_module, "monotonic", lambda: 1e9 if judged else 0.0)
+        monkeypatch.setattr(addressing_module, "address_of", counted)
+        monkeypatch.setattr(deadline_module, "monotonic", lambda: 1e9 if read else 0.0)
         scope = ScopeChannel(roots=_SCOPE_ROOTS, arms=("src/**",))
         result = await storage.glob(patterns=(), scope=scope, authority=Authority.anonymous())
         [error] = result.errors
@@ -986,7 +1070,47 @@ class TestPostureGate:
         assert error.message.endswith(_WALL_DETAIL)
         assert result.observations == []
         assert read_body.calls == []
-        assert 1 <= len(judged) < len(_SCOPE_ROOTS)
+        assert 1 <= len(read) <= 200
+        assert read == [str(root) for root in _SCOPE_ROOTS[: len(read)]]
+
+    @pytest.mark.slow
+    @pytest.mark.asyncio(loop_scope="module")
+    @pytest.mark.parametrize("roots", sorted(_LEAK_ROOTS))
+    @pytest.mark.parametrize("order", sorted(_LEAK_ORDERS))
+    @pytest.mark.parametrize("plan", sorted(_LEAK_PLANS))
+    @pytest.mark.parametrize("verb", ["glob", "grep", "search"])
+    async def test_a_scoped_anonymous_call_leaks_nothing_under_either_posture_order(
+        self,
+        leak_worlds: dict[str, DatabaseStorage],
+        monkeypatch: pytest.MonkeyPatch,
+        verb: str,
+        plan: str,
+        order: str,
+        roots: str,
+    ) -> None:
+        """Guards: the gate judging a root at its bare join with the arm, where
+        composition judges a root holding a metacharacter at the directory above
+        it; and either prefilter serving a row beneath a private directory."""
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", _LEAK_PLANS[plan])
+        storage = leak_worlds[order]
+        world = _leak_world(order)
+        nothing = LEVEL_RANK["none"]
+        scope = ScopeChannel(roots=_LEAK_ROOTS[roots], arms=(_LEAK_ARM,))
+        composed = [composed_pattern(root, _LEAK_ARM) for root in scope.roots]
+        judged = {address_of(path).stored for path in addressed_by(composed)}
+        refusals = {path for path in judged if everyone_rank(world, path) == nothing}
+        result = await _ask_scoped(storage, verb, scope, Authority.anonymous())
+        refused = {str(error.path) for error in result.errors if error.kind is ErrorKind.unauthenticated}
+        assert refused == refusals
+        reference = await _ask_scoped(storage, verb, scope, SYSTEM)
+        readable = [str(o.path) for o in reference.observations if everyone_rank(world, str(o.path)) != nothing]
+        served = [str(o.path) for o in result.observations]
+        assert served == ([] if refusals else readable)
+        assert not any(everyone_rank(world, path) == nothing for path in served)
+        # The reference is never vacuous: plain roots refuse one path a root or serve, the others refuse at the root.
+        whole = roots == "plain" and order == "private-roots"
+        assert (refusals == set(), bool(served)) == (whole, whole)
+        assert refusals in (set(), {f"{root}/src" for root in scope.roots}, {"/"})
 
     @pytest.mark.parametrize("stage", ["posture_rows_for_chunks", "posture_refusals"])
     async def test_a_gate_past_its_wall_at_any_stage_refuses_the_call(

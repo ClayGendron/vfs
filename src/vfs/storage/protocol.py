@@ -44,11 +44,12 @@ scope; and **per-target
 classification** — a missing target in a batch classifies through the
 descent ladder beside the healthy targets' rows (partial results,
 per-target errors, never all-or-nothing).  Scope crosses this seam
-in one of two shapes: as composed pattern text, or, past the router's
-composition limit, as roots beside the arms (a ``scope=``
-:class:`~vfs.pattern_matching.ScopeChannel`) — either way in the
-same one call and snapshot per entry, with root assertions on the
-router's probe. Chained rows are filtered by the router without
+in one shape: the pattern channels are entry-wide, and every scope
+root strictly beneath the entry rides beside the arms (a ``scope=``
+:class:`~vfs.pattern_matching.ScopeChannel`), in the same one call
+and snapshot per entry, with root assertions on the router's probe.
+A backend reads the law from the scope and chooses its own
+prefilter. Chained rows are filtered by the router without
 reaching storage at all.
 """
 
@@ -253,14 +254,17 @@ class SupportsMutation(Protocol):
 class SupportsPatternSearch(Protocol):
     """The pattern-search family: literal/regex matching over names and content.
 
-    Namespace-wide queries.  Scoping crosses this seam in one of two
-    shapes.  Below the router's composition limit it is pattern text:
-    the router composes scope roots into glob's *patterns* batch and
-    into grep's ``globs``/``globs_not`` channels.  Past it, the roots
-    ride beside the arms as *scope* (a
-    :class:`~vfs.pattern_matching.ScopeChannel`): a row is admitted by
-    an entry-wide pattern, or by a root strictly above it whose
-    remainder or name matches an arm.  Either way the call is answered
+    Namespace-wide queries.  Scoping crosses this seam in one shape.
+    Glob's *patterns* batch and grep's ``globs``/``globs_not`` channels
+    are entry-wide: they hold the caller's unscoped patterns, and the
+    few roots whose text the router composes (the entry's whole side,
+    a live root above the trash view's head, a root above the entry).
+    Every root strictly beneath the entry rides beside the arms as
+    *scope* (a :class:`~vfs.pattern_matching.ScopeChannel`): a row is
+    admitted by an entry-wide pattern, or by a root strictly above it
+    whose remainder or name matches an arm.  That is the law; which
+    statement fetches the candidates is the backend's own choice, and
+    it must not change an answer.  The call is answered
     in one transaction and one snapshot, with root assertions on the
     router's probe.  Glob returns rows matching
     **any** pattern, one refusable pattern refusing the call whole;
@@ -313,12 +317,12 @@ class SupportsRankedSearch(Protocol):
 
     Its own family because it rides on retrieval indexes (vector, lexical,
     graph) a backend may not have even when it can glob/grep. Scoping
-    crosses this seam exactly as grep's does — as pattern text on the
-    ``globs``/``globs_not`` channels the router composes per scope root,
-    or past the router's composition limit as roots beside the arms
-    (*scope*), in the same one call and snapshot, with the ``ext``
-    channels verbatim; piped rows arrive as ``observations`` in entry
-    coordinates.
+    crosses this seam exactly as grep's does — the ``globs``/``globs_not``
+    channels entry-wide, every root strictly beneath the entry beside
+    the arms (*scope*), the law read from the scope and the prefilter
+    the backend's own — in the same one call and snapshot, with the
+    ``ext`` channels verbatim; piped rows arrive as ``observations`` in
+    entry coordinates.
     """
 
     async def search(

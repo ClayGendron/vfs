@@ -32,6 +32,7 @@ from vfs.exceptions import WriteConflictError, raise_if_failed
 from vfs.models import Edge, Entry, Observation
 from vfs.ops import ALL_OPS, Op, TwoPathOperation
 from vfs.paths import MAX_PATH_LENGTH, Path
+from vfs.pattern_matching import ScopeChannel
 from vfs.permissions import read_write
 from vfs.results import ErrorKind, Result, ResultError, RetryClass, Severity
 from vfs.storage import ResolvedPair
@@ -603,17 +604,18 @@ async def test_fanout_scoped_routes_only_the_target_terminal(op: str) -> None:
     result = await _fan(root, op, paths=("/a/src",))
     assert result.success is True
     if op == "glob":
-        # The scope crosses as pattern text; the root's assertion rides
+        # The root rides beside the uncomposed arm; its assertion rides
         # a stat probe against the same entry, never a sibling's.
         [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == "glob"]
-        assert kwargs["patterns"] == ("/src/**/*.py",)
+        assert kwargs["patterns"] == ()
+        assert kwargs["scope"] == ScopeChannel(roots=(Path("/src"),), arms=("*.py",), arms_not=())
         assert [o for o, _ in a.calls] == ["stat", "glob"]
     else:
-        # Grep's scope crosses as glob text — search's too: the composed
-        # subtree plus the root's own literal path (find's operand law),
-        # probe beside.
+        # Grep's root rides beside the subtree arm, search's too; the root's
+        # own literal path (find's operand law) stays entry-wide, probe beside.
         [(_, kwargs)] = [(o, kw) for o, kw in a.calls if o == op]
-        assert kwargs["globs"] == ("/src", "/src/**")
+        assert kwargs["globs"] == ("/src",)
+        assert kwargs["scope"] == ScopeChannel(roots=(Path("/src"),), arms=("**",), arms_not=())
         assert kwargs["globs_not"] == ()
         assert [o for o, _ in a.calls] == ["stat", op]
     assert b.calls == []
@@ -773,7 +775,8 @@ async def test_glob_scope_root_inside_a_mount_reads_root_relative() -> None:
     await root.add_mount(data, "/data")
     await root.glob("/x/*.py", paths=("/data/sub",))
     [(_, kwargs)] = [(op, kw) for op, kw in data.calls if op == "glob"]
-    assert kwargs["patterns"] == ("/sub/x/*.py",)
+    assert kwargs["patterns"] == ()
+    assert kwargs["scope"] == ScopeChannel(roots=(Path("/sub"),), arms=("/x/*.py",), arms_not=())
     [(_, probe)] = [(op, kw) for op, kw in data.calls if op == "stat"]
     assert [str(o.path) for o in probe["observations"]] == ["/sub"]
 
@@ -793,25 +796,27 @@ async def test_glob_disjoint_roots_dispatch_their_own_patterns() -> None:
 
 
 async def test_many_roots_into_one_entry_produce_one_batched_call() -> None:
-    # The scale shape: N roots resolving into one entry are one storage
-    # call carrying the deduped pattern tuple plus one grouped probe —
-    # zero per-root glob dispatches.
+    """The scale shape: N roots resolving into one entry are one storage
+    call carrying the deduped roots beside the one arm plus one grouped
+    probe — zero per-root glob dispatches."""
     root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
     roots = (*(f"/data/d{i}" for i in range(8)), "/data/d0")
     await root.glob("*.py", paths=roots)
     [glob_call] = [kw for op, kw in data.calls if op == "glob"]
-    assert glob_call["patterns"] == tuple(sorted(f"/d{i}/**/*.py" for i in range(8)))
+    assert glob_call["patterns"] == ()
+    assert glob_call["scope"] == ScopeChannel(
+        roots=tuple(Path(f"/d{i}") for i in range(8)), arms=("*.py",), arms_not=()
+    )
     [probe] = [kw for op, kw in data.calls if op == "stat"]
     assert sorted(str(o.path) for o in probe["observations"]) == sorted(f"/d{i}" for i in range(8))
 
 
 async def test_ten_thousand_roots_stay_two_calls() -> None:
-    # The ETL scale row: contract-scale root batches reach storage as
-    # exactly one glob call and one probe call — dispatch count never
-    # grows with root count. Past the composition limit the roots ride
-    # beside the arm, uncomposed.
+    """The ETL scale row: contract-scale root batches reach storage as
+    exactly one glob call and one probe call — dispatch count never
+    grows with root count. The roots ride beside the arm, uncomposed."""
     root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")
@@ -827,12 +832,11 @@ async def test_ten_thousand_roots_stay_two_calls() -> None:
 
 
 async def test_cap_expansion_across_many_roots_stays_one_call() -> None:
-    # The scale pin for brace expansion: a cap-sized arm fan crossed
-    # with a large scope still reaches storage as one glob call plus
-    # one probe — the arms never multiply by the roots: past the
-    # composition limit both ride the scope channel side by side. The
-    # storage-side chunk math is pinned by the 1,100-arm dialect row;
-    # this row pins the dispatch shape.
+    """The scale pin for brace expansion: a cap-sized arm fan crossed
+    with a large scope still reaches storage as one glob call plus
+    one probe — the arms never multiply by the roots: both ride the
+    scope channel side by side. The storage-side chunk math is pinned
+    by the 1,100-arm dialect row; this row pins the dispatch shape."""
     root = AsyncVirtualFileSystem()
     data = RecorderStorage()
     await root.add_mount(data, "/data")

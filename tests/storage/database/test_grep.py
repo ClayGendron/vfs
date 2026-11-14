@@ -20,6 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects import mssql, mysql, oracle, postgresql, sqlite
 
 from tests.support.database_helpers import _url
+from vfs.base import AsyncVirtualFileSystem
 from vfs.deadline import WALL_TIME_CAUSE, Deadline
 from vfs.models import CONTENT_KINDS, Entry
 from vfs.models.rows import build_vfs_tables
@@ -31,9 +32,11 @@ from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import reads as reads_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database.dialects import GENERIC, MSSQL, PROFILES, SQLITE
 from vfs.storage.backends.database.pathterms import compile_channel
+from vfs.storage.backends.database.reads import AdmittedScope
 from vfs.storage.backends.database.seams import installed
 
 if TYPE_CHECKING:
@@ -363,19 +366,69 @@ class TestScopeChannel:
 
     async def test_a_meta_root_marks_its_pairs(self, tmp_path) -> None:
         """Guards: a pair under a meta root judged unmarked, so default
-        enumeration's meta rule hides the very rows the root names."""
+        enumeration's meta rule hides the very rows the root names; and the
+        meta root itself, which holds the trash view's head, served on the
+        scope instead of refused there and answered through the router's
+        entry-wide composition."""
         storage = await _fresh(tmp_path, {"/.vfs/state/s.txt": "needle", "/.vfs/state/s.md": "needle"})
+        fs = AsyncVirtualFileSystem(storage=storage)
         for _ in range(2):
             whole = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/.vfs/state"),), arms=("**",)))
             assert _paths(whole) == ["/.vfs/state/s.md", "/.vfs/state/s.txt"]
             leaf = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/.vfs"),), arms=("*.txt",)))
-            assert _paths(leaf) == ["/.vfs/state/s.txt"]
+            [error] = leaf.errors
+            assert (error.kind, leaf.observations) == (ErrorKind.invalid, [])
+            assert error.message.endswith(
+                "scope root '/.vfs' holds the trash view's head; send its patterns on the entry-wide channel"
+            )
+            routed = await fs.grep("needle", paths=("/.vfs",), globs=("*.txt",))
+            assert (_paths(routed), routed.errors) == (["/.vfs/state/s.txt"], [])
             assert (await storage.reindex()).success is True
+        await fs.close()
+
+    @pytest.mark.parametrize(
+        ("arms", "composed", "pattern_arms"), [(20, 200, 200), (21, None, 0)], ids=["10-20", "10-21"]
+    )
+    async def test_the_prefilter_plan_switches_on_the_product(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, arms: int, composed: int | None, pattern_arms: int
+    ) -> None:
+        """Guards: grep's scan side prefiltering with the root fan under the limit
+        or with composed patterns past it, or choosing its plan apart from the
+        one answer ``AdmittedScope.composed`` gives every verb."""
+        # Never reindexed, so the scan side serves the call and builds the prefilter.
+        storage = await _fresh(tmp_path, {"/d00/x.e00": "needle", "/d00/x.zz": "needle", "/e/x.e00": "needle"})
+        answers: list[int | None] = []
+        real = AdmittedScope.composed
+
+        def spied(self: AdmittedScope, *, trashed: bool) -> tuple[str, ...] | None:
+            answer = real(self, trashed=trashed)
+            answers.append(None if answer is None else len(answer))
+            return answer
+
+        built: list[Any] = []
+        real_arm = scope_module.pattern_arm
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            built.append(args)
+            return real_arm(*args, **kwargs)
+
+        monkeypatch.setattr(AdmittedScope, "composed", spied)
+        monkeypatch.setattr(scope_module, "pattern_arm", counted)
+        scope = ScopeChannel(
+            roots=tuple(Path(f"/d{i:02}") for i in range(10)), arms=tuple(f"*.e{i:02}" for i in range(arms))
+        )
+        result = await storage.grep(pattern="needle", scope=scope)
+        assert _paths(result) == ["/d00/x.e00"]
+        assert (answers, len(built)) == ([composed], pattern_arms)
         await storage.close()
 
-    async def test_scope_roots_join_the_allow_list(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Guards: the scope's roots left out of the segment allow-list, so
-        nomination counts every indexed row instead of the scoped ones."""
+    @pytest.mark.parametrize("plan", ["composed", "fan"])
+    async def test_scope_roots_join_the_allow_list(self, tmp_path, monkeypatch: pytest.MonkeyPatch, plan: str) -> None:
+        """Guards: the scope's roots left out of the segment allow-list under
+        either prefilter plan, so nomination counts every indexed row instead
+        of the scoped ones."""
+        if plan == "fan":
+            monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
         files = {f"/d{i}/f{j}.txt": "needle" for i in range(6) for j in range(4)}
         storage = await _fresh(tmp_path, files)
         assert (await storage.reindex()).success is True

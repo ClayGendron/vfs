@@ -29,6 +29,7 @@ from vfs.models import Entry
 from vfs.models.lexical import OverlayPostings, encode_block
 from vfs.models.rows import build_vfs_tables
 from vfs.paths import Path
+from vfs.pattern_matching import ScopeChannel
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage.backends.database import DatabaseStorage
@@ -37,6 +38,7 @@ from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
+from vfs.storage.backends.database.reads import AdmittedScope
 from vfs.storage.backends.database.seams import installed
 
 if TYPE_CHECKING:
@@ -348,6 +350,49 @@ class TestScope:
         assert (await storage.reindex()).success is True
         after = await storage.search(query="tokens", globs=("src/**",))
         assert _paths(before) == _paths(after) == ["/src/lexer.py", "/src/parser.py"]
+        await storage.close()
+
+    @pytest.mark.parametrize(
+        ("arms", "composed", "pattern_arms"), [(20, 200, 200), (21, None, 0)], ids=["10-20", "10-21"]
+    )
+    async def test_the_prefilter_plan_switches_on_the_product(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, arms: int, composed: int | None, pattern_arms: int
+    ) -> None:
+        """Guards: search choosing its prefilter apart from the one answer
+        ``AdmittedScope.composed`` gives every verb, the overlay's fetch left
+        without the composed arms (so a scope beside an entry-wide glob loses
+        every unindexed row beneath its roots), or either plan losing a scoped
+        row before or after the index is built."""
+        files = {"/d00/x.e00": "tokens here\n", "/d00/x.zz": "tokens there\n", "/e/x.e00": "tokens elsewhere\n"}
+        storage = await _fresh(tmp_path, files)
+        answers: list[int | None] = []
+        real = AdmittedScope.composed
+
+        def spied(self: AdmittedScope, *, trashed: bool) -> tuple[str, ...] | None:
+            answer = real(self, trashed=trashed)
+            answers.append(None if answer is None else len(answer))
+            return answer
+
+        built: list[Any] = []
+        real_arm = scope_module.pattern_arm
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            built.append(args)
+            return real_arm(*args, **kwargs)
+
+        monkeypatch.setattr(AdmittedScope, "composed", spied)
+        monkeypatch.setattr(scope_module, "pattern_arm", counted)
+        scope = ScopeChannel(
+            roots=tuple(Path(f"/d{i:02}") for i in range(10)), arms=tuple(f"*.e{i:02}" for i in range(arms))
+        )
+        # Never reindexed yet: the overlay serves the call and builds the scan side's prefilter.
+        assert _paths(await storage.search(query="tokens", scope=scope)) == ["/d00/x.e00"]
+        assert len(built) == pattern_arms
+        beside = await storage.search(query="tokens", globs=("/d00",), scope=scope)
+        assert _paths(beside) == ["/d00/x.e00"]
+        assert (await storage.reindex()).success is True
+        assert _paths(await storage.search(query="tokens", scope=scope)) == ["/d00/x.e00"]
+        assert answers == [composed, composed, composed]
         await storage.close()
 
 

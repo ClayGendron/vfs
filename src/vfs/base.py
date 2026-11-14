@@ -298,9 +298,9 @@ class _PathFilters(NamedTuple):
 
     The one fan-out argument the pattern-search verbs hand the router
     apart from the forwarded keywords. The two glob channels are
-    rewritten per entry — composed under each scope root and residuated
-    into entry coordinates before they cross the seam, or past the
-    composition limit sent uncomposed beside the roots: ``admissions`` is
+    rewritten per entry before they cross the seam — sent uncomposed
+    beside the roots beneath the entry, composed and residuated into
+    entry coordinates for the few roots that compose: ``admissions`` is
     glob's pattern (its brace-expanded arms) or grep's ``globs``,
     ``exclusions`` is ``globs_not`` on both verbs. The two ext channels
     cross verbatim and are read here only by the root probe's gate.
@@ -1285,13 +1285,13 @@ class AsyncVirtualFileSystem:
         slash-free pattern matches leaf names at any depth. A row is
         admitted by *pattern* and rejected by any *globs_not* glob, the
         *ext*/*ext_not* facts, and a *kind* mismatch. Scoping crosses
-        the storage seam in one of two shapes. As pattern text: each
-        root composes into one spatial pattern and residuation puts every
-        entry's members in its own coordinates. Or, once an entry's
-        composed arms would pass the router's composition limit, as its
-        roots beside the uncomposed arms, so the SQL grows with roots
-        plus arms rather than their product. Either way each entry
-        answers its whole set in one call, and the shapes answer alike —
+        the storage seam in one shape: each root rides beside the
+        uncomposed arms into the entry that owns it, so the plan and the
+        SQL grow with roots plus arms rather than their product. A root
+        that names an entry whole, or sits above one, composes into one
+        spatial pattern instead, and residuation puts those members in
+        each entry's own coordinates. Each entry answers its whole set
+        in one call, as the same roots and arms composed would —
         so the match *set* is invariant to mount placement.
         Roots are find operands: a concurrent probe asserts each one
         (missing is a loud per-root error beside the healthy roots'
@@ -1398,10 +1398,10 @@ class AsyncVirtualFileSystem:
         *globs*/*globs_not* use glob's segment-aware pattern language:
         ``*`` within a segment, ``**`` across, any ``/`` anchors at the
         root, slash-free patterns match leaf names. Scoping crosses the
-        storage seam the way glob's does — as pattern text on the
-        ``globs`` channels, composed per scope root and residuated into
-        each entry's coordinates, or past the composition limit as the
-        roots beside the uncomposed globs — with a concurrent probe
+        storage seam the way glob's does — each root beside the
+        uncomposed globs in the entry that owns it, the ``globs``
+        channels entry-wide and residuated into each entry's
+        coordinates — with a concurrent probe
         asserting the roots (a missing root is a loud per-root error beside the
         healthy roots' rows; a root's own content joins the scan when
         the caller's globs pass its path). *pattern* is content-only
@@ -1977,8 +1977,8 @@ class AsyncVirtualFileSystem:
         entry dispatches once (unscoped) but its result still merges
         plain.  The pattern-search verbs build their dispatches apart
         (:meth:`_glob_dispatches` / :meth:`_grep_dispatches`): scoping
-        crosses the seam as pattern text, or past the composition limit
-        as roots beside the arms, one batched call per entry either way,
+        crosses the seam in one shape, roots beside the arms and the
+        pattern channels entry-wide, one batched call per entry,
         with root assertions on a concurrent probe that no dispatch
         shape can drop.  *row_cap*
         re-applies the caller's result bound after the merge on every
@@ -2099,23 +2099,23 @@ class AsyncVirtualFileSystem:
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
-        """Build glob's dispatches: scoping crosses the seam as pattern text, or as roots beside the arms.
+        """Build glob's dispatches: scoping crosses the seam in one shape, an entry's roots beside the uncomposed arms.
 
         The caller's pattern arrives brace-expanded as the filters'
         *admissions* (its arms) and ``globs_not`` as their *exclusions*;
         every step below is per-arm with any-arm admission and
-        any-exclusion rejection. Each scope root
-        composes each arm into one spatial pattern (name arm goes
-        ``root/**/pattern``, path arm anchors under the root), but only
-        into its owning entry and the entries beneath the root — never
-        an ancestor's shadowed region. Residuation then derives every
-        entry's members in entry-local coordinates, and each entry
-        receives its whole deduped set as one batched call — exclusions
-        compose per root identically, so one can never reach another
-        root's subtree. An entry whose owned roots times the arms pass
-        :data:`~vfs.fanout.COMPOSED_ARM_LIMIT` receives those roots beside the
-        uncomposed arms as its ``scope=`` channel instead, in the same
-        one call, and storage reads the same law without composing.
+        any-exclusion rejection. An entry receives every root strictly
+        beneath it beside the uncomposed arms as its ``scope=`` channel,
+        and storage reads the law (a row beneath a root, its remainder
+        or its name matching an arm) without composing. Two bounded
+        kinds of root compose each arm into one spatial pattern instead
+        (name arm goes ``root/**/pattern``, path arm anchors under the
+        root): a root whose joined text must be read whole, and a root
+        above a nested entry, which reaches that entry and never an
+        ancestor's shadowed region. Residuation derives those members in
+        entry-local coordinates, exclusions composing per root
+        identically, so one can never reach another root's subtree, and
+        each entry receives its whole deduped set in the same one call.
         That planning walk, :mod:`vfs.fanout`'s, runs in one hop on the
         process pool under its own wall; a walk
         that reaches it dispatches the roots it planned whole and says
@@ -2175,22 +2175,22 @@ class AsyncVirtualFileSystem:
         authority: Authority | None,
         **kwargs: object,
     ) -> _Dispatches | None:
-        """Build grep's dispatches (search's too): scoping crosses the seam as glob text, or as roots beside the arms.
+        """Build grep's dispatches (search's too): scoping crosses the seam in one shape, roots beside the globs.
 
         Glob's dispatch shape on grep's filters (*admissions* is the
         caller's ``globs``, *exclusions* its ``globs_not``, the ext
         channels forward as-is): each scope
-        root composes into the ``globs`` batch (no caller globs → the
-        root composes to ``root/**``), exclusions compose per root so one can
-        never reach another root's subtree, and a root whose path passes
-        the caller's globs rides the batch as its own literal path — find's
+        root rides its entry's ``scope=`` channel beside the caller's globs
+        (no caller globs → the one arm ``**``), exclusions ride beside them so
+        one can never reach another root's subtree, and a root whose path passes
+        the caller's globs rides the ``globs`` batch as its own literal path — find's
         operand law; the content test can only happen at storage, so for
         grep the root row joins the scan, not the probe. Those admissions
         are judged once per call, every distinct root in one hop on the
         process pool; no globs admit every root. Residuation, the owner
-        gate, dead-entry skips, the planning walk, the switch to a
-        ``scope=`` channel past the composition limit (each root's literal
-        staying on the ``globs`` batch) and the root probe are the glob
+        gate, dead-entry skips, the planning walk, the two bounded kinds
+        of root that compose into the ``globs`` batch (each root's literal
+        staying on that batch too) and the root probe are the glob
         machinery; the probe serves no rows, only classifications.
         ``None`` answers a ``close()`` that landed during a hop.
         """
@@ -3179,6 +3179,6 @@ def _is_tombstoned_site(result: Result, path: Path) -> bool:
 
 
 def _scoped(plan: ScopePlan, key: Path) -> dict[str, ScopeChannel]:
-    """The ``scope=`` keyword an entry's dispatch carries: its scope channel, or nothing below the limit."""
+    """The ``scope=`` keyword an entry's dispatch carries: its scope channel, or nothing with no root beneath it."""
     channel = plan.scopes.get(key)
     return {} if channel is None else {"scope": channel}

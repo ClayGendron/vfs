@@ -47,6 +47,7 @@ from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
 from vfs.rendering.seam import RenderLimits, failure
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
+from vfs.storage.backends.database.addressing import addressed_by, scope_judged
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
     BLOB_PAGE_BYTES,
@@ -102,13 +103,11 @@ from vfs.storage.backends.database.indexing import (
 from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
 from vfs.storage.backends.database.reads import (
     AdmittedScope,
-    addressed_by,
     admit_scope,
     effective_columns,
     glob_rows,
     ls_rows,
     read_rows,
-    scope_addressed,
     stat_rows,
     tree_rows,
 )
@@ -1738,11 +1737,11 @@ class DatabaseStorage:
     ) -> list[ResultError]:
         """An anonymous scoped call's refusals, judged where composition judges, under the verb's wall.
 
-        The judged paths are :func:`scope_addressed` over the entry-wide
-        patterns and every root composed with every arm — a product of the
-        caller's inputs, so the pure work runs on the offload pool in two
-        hops around the one chunked posture read: the judged paths and
-        their sorted, chunked ancestor chain first, each path's refusal
+        The judged paths are :func:`scope_judged`'s: the entry-wide patterns'
+        beside each root's literal directory joined with each arm's. They are
+        a product of the caller's inputs, so the pure work runs on the offload
+        pool in two hops around the one chunked posture read: the judged paths
+        and their sorted, chunked ancestor chain first, each path's refusal
         after. Each hop and the read check the wall, read when the gate
         starts; a gate that reaches it refuses the whole call as
         ``unauthenticated``, because a rights check never serves part of a
@@ -1754,7 +1753,7 @@ class DatabaseStorage:
         budget = host.membership_budget
 
         def chained() -> tuple[list[str], list[list[str]]] | None:
-            addressed = scope_addressed(gate.patterns, gate.scope, deadline=deadline)
+            addressed = scope_judged(gate.patterns, gate.scope, deadline=deadline)
             if addressed is None:
                 return None
             judged = list(dict.fromkeys(address_of(path).stored for path in (*addressed, *gate.piped)))

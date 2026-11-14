@@ -23,12 +23,10 @@ from ulid import ULID
 
 from tests.support.database_helpers import _SqliteError, _url
 from tests.support.loop_ticks import LoopTicker
-from vfs import deadline as deadline_module
-from vfs.deadline import Deadline
 from vfs.models import Edge, Entry, Observation
 from vfs.models.rows import SCHEMA_FORMAT_VERSION, build_vfs_tables
 from vfs.paths import Path, extract_extension
-from vfs.pattern_matching import ScopeChannel, composed_pattern
+from vfs.pattern_matching import ScopeChannel
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Severity
 from vfs.results.projection import OBSERVATION_FIELDS
@@ -44,13 +42,11 @@ from vfs.storage.backends.database.reads import (
     NO_SCOPE_FACTS,
     ROOT_ARM_BINDS,
     _glob_like,
-    addressed_by,
     admit_scope,
     channel_facts,
     effective_columns,
     ext_membership,
     render_notes,
-    scope_addressed,
     scope_facts,
     side_scope,
 )
@@ -59,6 +55,8 @@ from vfs.storage.grants import LEVEL_RANK
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from vfs.results import Result
 
 # ---------------------------------------------------------------------------
 # Read family + glob — seeded directly through Core (writes land later)
@@ -1054,6 +1052,11 @@ def _counted(monkeypatch: pytest.MonkeyPatch, name: str) -> list[tuple[Any, ...]
     return calls
 
 
+def _paths(result: Result) -> list[str]:
+    """The paths of the rows *result* serves, in the order it serves them."""
+    return [str(row.path) for row in result.observations]
+
+
 def _recorded(storage: DatabaseStorage) -> list[tuple[str, Any]]:
     """Every statement *storage* issues from here on, with its parameters."""
     statements: list[tuple[str, Any]] = []
@@ -1101,10 +1104,34 @@ class TestScopeChannel:
         assert pattern_arms == []
         await storage.close()
 
-    async def test_the_scope_fan_keeps_the_multi_index_or(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        ("roots", "arms", "pattern_arms", "root_arms"),
+        [(10, 20, 200, 0), (10, 21, 0, 10), (1, 0, 0, 1)],
+        ids=["10-20", "10-21", "1-0"],
+    )
+    async def test_the_prefilter_plan_switches_on_the_product(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, roots: int, arms: int, pattern_arms: int, root_arms: int
+    ) -> None:
+        """Guards: the limit read off by one (``<=`` made ``<``), a side past it
+        still composing, or a scope with no arm prefiltered by nothing at all."""
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/d00/x.e00", "file", "x"), ("/d00/x.zz", "file", "x"), ("/e/x.e00", "file", "x")])
+        scope = ScopeChannel(
+            roots=tuple(Path(f"/d{i:02}") for i in range(roots)), arms=tuple(f"*.e{i:02}" for i in range(arms))
+        )
+        built_patterns = _counted(monkeypatch, "pattern_arm")
+        built_roots = _counted(monkeypatch, "scope_root_arm")
+        result = await storage.glob(patterns=(), scope=scope)
+        assert [str(o.path) for o in result.observations] == (["/d00/x.e00"] if arms else [])
+        assert (len(built_patterns), len(built_roots)) == (pattern_arms, root_arms)
+        await storage.close()
+
+    async def test_the_scope_fan_keeps_the_multi_index_or(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: the arms' facts conjunct turned into the access path, demoting
         the root OR to a scan, on the statistics the store's writes leave and on
         none at all (SQLite before 3.46, or a store whose ``sqlite_stat1`` was emptied)."""
+        # 20 roots by 2 arms would take the composed prefilter; the pin is the fan's statement.
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [
             Entry(path=Path(f"/d{i:03}/{side}/f{j}.{ext}"), content="x")
@@ -1167,18 +1194,89 @@ class TestScopeChannel:
         )
         await storage.close()
 
-    @pytest.mark.parametrize("root", ["/", "/.vfs/trash"])
-    async def test_a_whole_side_scope_root_is_refused(self, tmp_path, root: str) -> None:
+    @pytest.mark.parametrize(
+        ("root", "detail"),
+        [
+            ("/", "addresses the whole entry"),
+            ("/.vfs/trash", "addresses the whole entry"),
+            ("/.vfs", "holds the trash view's head"),
+        ],
+    )
+    async def test_a_whole_side_scope_root_is_refused(self, tmp_path, root: str, detail: str) -> None:
+        """Guards: a root composition must read whole admitted on the scope, where
+        a live ancestor of the trash head would lose the view its joined text enters."""
         storage = DatabaseStorage(url=_url(tmp_path))
         await _seed(storage, [("/a/x.py", "file", "x")])
         statements = _recorded(storage)
         result = await storage.glob(patterns=(), scope=ScopeChannel(roots=(Path("/a"), Path(root)), arms=("*.py",)))
         [error] = result.errors
         assert error.kind is ErrorKind.invalid
-        assert error.message.endswith(
-            f"scope root {root!r} addresses the whole entry; send its patterns on the entry-wide channel"
-        )
+        assert error.message.endswith(f"scope root {root!r} {detail}; send its patterns on the entry-wide channel")
         assert statements == []
+        await storage.close()
+
+    @pytest.mark.parametrize("plan", ["composed", "fan"])
+    async def test_a_tombstoned_root_stored_at_the_meta_root_is_admitted(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, plan: str
+    ) -> None:
+        """Guards: the refusal of a root above the trash head forgetting the word
+        live, so the tombstoned root stored at ``/.vfs``, which lies beneath the
+        head and holds no view, is refused where its rows are due."""
+        if plan == "fan":
+            monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path("/.vfs/state/s.txt"), content="x"), Entry(path=Path("/live/k.txt"), content="x")]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        assert (await storage.delete(path=Path("/.vfs/state/s.txt"))).success is True
+        scope = ScopeChannel(roots=(Path("/.vfs/trash/.vfs"),), arms=("**",))
+        result = await storage.glob(patterns=(), scope=scope)
+        assert (_paths(result), result.errors) == (["/.vfs/state/s.txt"], [])
+        await storage.close()
+
+    @pytest.mark.parametrize("limit", [0, 200, 10**9], ids=["fan", "declared", "composed"])
+    async def test_an_unmarked_pattern_never_admits_a_meta_row_under_either_plan(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, limit: int
+    ) -> None:
+        """Guards: glob's law leaving the meta rule to its SQL arms alone, so a row
+        beneath ``/.vfs`` that a meta root's clause or a meta-headed arm fetched is
+        admitted by a wildcard-headed pattern, and the answer turns on the prefilter.
+        A pattern or a root that names the meta subtree still serves it."""
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", limit)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        await _seed(storage, [("/.vfs/state/s.txt", "file", "x"), ("/.vfx/k.txt", "file", "x")])
+        wildcard = "/.vf?/**"
+        meta_root = Path("/.vfs/state")
+        scoped = await storage.glob(patterns=(wildcard,), scope=ScopeChannel(roots=(meta_root,), arms=(".vf?/**",)))
+        assert _paths(scoped) == ["/.vfx/k.txt"]
+        classed = await storage.glob(patterns=(wildcard, "/.vfs/state/**/[q]*"))
+        assert _paths(classed) == ["/.vfx/k.txt"]
+        rooted = await storage.glob(patterns=(wildcard,), scope=ScopeChannel(roots=(meta_root,), arms=("**",)))
+        assert _paths(rooted) == ["/.vfs/state/s.txt", "/.vfx/k.txt"]
+        named = await storage.glob(patterns=(wildcard, "/.vfs/state/**"))
+        assert _paths(named) == ["/.vfs/state/s.txt", "/.vfx/k.txt"]
+        await storage.close()
+
+    @pytest.mark.parametrize("limit", [0, 200, 10**9], ids=["fan", "declared", "composed"])
+    async def test_an_unmarked_pattern_never_admits_a_tombstoned_meta_row_under_either_plan(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch, limit: int
+    ) -> None:
+        """Guards: the meta rule held on the live side of the tombstone alone
+        (``marked_only`` made false for a tombstoned row), so through the trash
+        view a row stored beneath ``/.vfs`` that a meta root fetched is admitted
+        by a pattern that names no meta subtree. The root still serves it."""
+        monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", limit)
+        storage = DatabaseStorage(url=_url(tmp_path))
+        gone = [Path("/.vfs/gone/g.txt"), Path("/dead/d.txt")]
+        entries = [Entry(path=path, content="x") for path in gone]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        for path in gone:
+            assert (await storage.delete(path=path)).success is True
+        unmarked = "/.vfs/trash/**/*.txt"
+        meta_root = Path("/.vfs/trash/.vfs/gone")
+        missed = await storage.glob(patterns=(unmarked,), scope=ScopeChannel(roots=(meta_root,), arms=("[z]*",)))
+        assert (_paths(missed), missed.errors) == (["/dead/d.txt"], [])
+        rooted = await storage.glob(patterns=(unmarked,), scope=ScopeChannel(roots=(meta_root,), arms=("**",)))
+        assert (_paths(rooted), rooted.errors) == (["/.vfs/gone/g.txt", "/dead/d.txt"], [])
         await storage.close()
 
     async def test_a_defective_arm_refuses_before_any_statement(self, tmp_path) -> None:
@@ -1219,28 +1317,3 @@ class TestScopeChannel:
         assert admit_scope(None, "pattern") is None
         assert side_scope(None, trashed=False) is None
         assert side_scope(admit_scope(ScopeChannel(roots=(Path("/a"),), arms=("*",)), "pattern"), trashed=True) is None
-
-    def test_scope_addressed_is_addressed_by_over_the_composition(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Guards: the sliced addressing dropping first-appearance order, a
-        refused pattern judged anywhere but the root, or a slice's deadline read
-        skipped."""
-        roots = tuple(Path(f"/r{i:03}") for i in range(70))
-        scope = ScopeChannel(roots=roots, arms=("src/**", "*.py"))
-        composed = [composed_pattern(root, arm) for root in roots for arm in scope.arms]
-        expected = addressed_by(sorted(("/z/*.md", *composed)))
-        never = Deadline.never()
-        assert scope_addressed(("/z/*.md",), scope, deadline=never) == expected
-        assert scope_addressed((), ScopeChannel(roots=roots, arms=()), deadline=never) == ["/"]
-        assert scope_addressed(("a**b",), scope, deadline=never) == ["/"]
-        reads = iter([0.0, 0.0, 0.0, 2.0])
-        monkeypatch.setattr(deadline_module, "monotonic", lambda: next(reads, 2.0))
-        stopped = scope_addressed((), ScopeChannel(roots=roots[:64], arms=("*.py", "*.md")), deadline=Deadline(at=1.0))
-        assert stopped is None
-
-    def test_scope_addressed_past_its_deadline_addresses_nothing(self) -> None:
-        """Guards: a composition the deadline stopped short read as the whole
-        scope, so an expired gate is judged at the root alone instead of refused."""
-        scope = ScopeChannel(roots=(Path("/a"), Path("/b")), arms=("*.py",))
-        past = Deadline(at=-1.0)
-        assert scope_addressed((), scope, deadline=past) is None
-        assert scope_addressed(("/z/*.md",), scope, deadline=past) is None
