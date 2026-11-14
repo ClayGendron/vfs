@@ -276,7 +276,7 @@ async def test_without_a_range_source_the_arms_answer_as_the_join_did(
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for folder in folders:
             assert (await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         bob = Authority.of(Principal("bob"))
         joined = await _answers(storage, bob)
         host = storage._host
@@ -303,7 +303,7 @@ async def test_a_partial_read_issues_the_profiles_range_settings_and_derived_hin
         assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         host = storage._host
         hints = host.profile.range_hints._replace(derived="/* {visible} {table} {index} */")
         pinned = replace(host.profile, range_settings=("PRAGMA query_only = 0",), range_hints=hints)

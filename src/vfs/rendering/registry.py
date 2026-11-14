@@ -50,7 +50,7 @@ class RendererRegistry:
 
         The generation string must fit the entry row's column: a stamp
         the engine would refuse is refused here, once and loudly, rather
-        than on every reindex of every length-enforcing engine.
+        than on every rebuild of every length-enforcing engine.
         """
         generation = generation_of(renderer)
         if len(generation) > MAX_RENDER_GENERATION_LENGTH:

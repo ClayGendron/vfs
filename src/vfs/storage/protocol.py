@@ -475,8 +475,8 @@ class SupportsTraits(Protocol):
 
 
 @runtime_checkable
-class SupportsReindex(Protocol):
-    """Optional index maintenance: a backend with a built search tier exposes ``reindex``.
+class SupportsRebuild(Protocol):
+    """Optional index maintenance: a backend with a built search tier exposes ``rebuild``.
 
     The contract: idempotent-cheap when nothing is dirty, safe under
     rivals (concurrent calls converge; a loser classifies ``conflict``),
@@ -484,7 +484,7 @@ class SupportsReindex(Protocol):
     ``search`` must serve correct results from their scan tier.
     """
 
-    async def reindex(self) -> Result: ...
+    async def rebuild(self) -> Result: ...
 
 
 @runtime_checkable

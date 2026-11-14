@@ -324,7 +324,7 @@ class TestDialectPolicy:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.first_touch()
         exc = ProgrammingError("SELECT EXISTS (SELECT 1)", None, Exception("42000", "Incorrect syntax"))
-        error = storage._host.classify_failure(exc, context="reindex")
+        error = storage._host.classify_failure(exc, context="rebuild")
         assert error.kind == ErrorKind.internal
         assert error.retryable is False
         await storage.close()

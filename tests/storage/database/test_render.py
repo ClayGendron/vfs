@@ -1,4 +1,4 @@
-"""The render stage of reindex against real sqlite rows: renderings land and are searchable, the
+"""The render stage of rebuild against real sqlite rows: renderings land and are searchable, the
 skip law and the generation law, dedup, the guarded landing, every status as a stamped state with
 no body, the lease, the offload hop, and the limits and registry a host configures.
 """
@@ -31,12 +31,13 @@ from vfs.rendering import Builder, RendererRegistry, Rendering, RenderLimits, Re
 from vfs.rendering.pdf import PdfRenderer
 from vfs.results import ErrorKind, Result, Severity
 from vfs.storage import ResolvedPair
-from vfs.storage.backends.database import DatabaseStorage, indexing
+from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import render as render_module
 from vfs.storage.backends.database import topology as topology_module
 from vfs.storage.backends.database.dialects import ValueCap
-from vfs.storage.backends.database.indexing import lease_lost
+from vfs.storage.backends.database.maintenance import lease_lost
 from vfs.storage.backends.database.render import RenderReport, RenderRow, land_renderings, render_rows
 from vfs.storage.backends.database.seams import installed
 
@@ -103,13 +104,13 @@ def _counts(**named: int) -> dict[str, int]:
 
 
 class TestRenderings:
-    async def test_reindex_renders_every_format_and_grep_hits_under_the_right_marker(self, tmp_path) -> None:
+    async def test_rebuild_renders_every_format_and_grep_hits_under_the_right_marker(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/docs/q.pdf", QUOKKA_PDF)
         await _put(storage, "/docs/w.docx", WOMBAT_DOCX)
         await _put(storage, "/docs/n.xlsx", SHEET)
         await _put(storage, "/docs/e.pptx", DECK)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert _report(result) == _counts(rendered=4)
         for path, needle, marker in (
@@ -139,16 +140,16 @@ class TestRenderings:
         await storage.close()
 
     async def test_the_rendering_is_chunked_in_the_same_run(self, tmp_path) -> None:
-        # A first reindex chunk-stamps the pending row as ineligible under
+        # A first rebuild chunk-stamps the pending row as ineligible under
         # its bytes hash; the landing must reset that so the text splits.
         storage = _mount(tmp_path, renderers=RendererRegistry((_Absent(),)))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         assert (row.render_status, row.chunked, row.indexable) == ("unavailable", True, False)
         await storage.close()
         storage = _mount(tmp_path)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         assert (row.chunked, row.indexable) == (True, True)
         assert row.chunk_source_hash == row.content_hash
@@ -158,7 +159,7 @@ class TestRenderings:
     async def test_a_text_only_mount_reports_no_rendering_extra(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/a.md"), content="# a\n")])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert "rendering" not in (result.model_extra or {})
         await storage.close()
@@ -166,7 +167,7 @@ class TestRenderings:
     async def test_the_extra_survives_the_embed_step(self, tmp_path) -> None:
         storage = _mount(tmp_path, embedder=HashEmbeddingProvider())
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         extras = result.model_extra or {}
         assert "rendering" in extras and "embedding" in extras
@@ -184,23 +185,23 @@ class TestSkipLaw:
         # law has nothing to compare: one re-render, then settled again.
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(rendered=1)
         assert (await _row(storage, "/q.pdf")).render_status == "ok"
-        assert "rendering" not in ((await storage.reindex()).model_extra or {})
+        assert "rendering" not in ((await storage.rebuild()).model_extra or {})
         await storage.close()
 
     async def test_a_settled_row_is_not_touched_again(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         await _put(storage, "/z.bin", b"\x00\x01")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         statements: list[str] = []
         _record_into(storage, statements)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert "rendering" not in (result.model_extra or {})
         assert _content_writes(statements) == []
@@ -209,9 +210,9 @@ class TestSkipLaw:
     async def test_changed_bytes_re_render(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await _put(storage, "/q.pdf", pdf_bytes(["A bilby instead"]))
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result)["rendered"] == 1
         text = (await storage.read(path=Path("/q.pdf"))).observations[0].content
         assert text is not None and "bilby" in text and "quokka" not in text
@@ -223,11 +224,11 @@ class TestSkipLaw:
         await _put(storage, "/a.pdf", QUOKKA_PDF)
         await _put(storage, "/b.pdf", pdf_bytes(["Second file"]))
         await _put(storage, "/w.docx", WOMBAT_DOCX)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(entry).where(entry.c.mime_type == PDF).values(render_generation="pdf/0+old"))
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(rendered=2)
         row = await _row(storage, "/a.pdf")
         assert row.render_generation == storage.renderers.generation(PDF)
@@ -238,13 +239,13 @@ class TestSkipLaw:
         storage = _mount(tmp_path)
         await _put(storage, "/one.pdf", QUOKKA_PDF)
         await _put(storage, "/two.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(rendered=1, cached=1)
         texts = await _content_rows(storage)
         assert texts["/one.pdf"] == texts["/two.pdf"]
         # A later copy borrows the settled rendering across runs too.
         await _put(storage, "/three.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(cached=1)
         assert (await _row(storage, "/three.pdf")).render_status == "ok"
         await storage.close()
@@ -253,7 +254,7 @@ class TestSkipLaw:
         storage = _mount(tmp_path)
         await _put(storage, "/a.docx", b"PK\x03\x04junk")
         await _put(storage, "/b.docx", b"PK\x03\x04junk")
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(cached=1, failed=1)
         for path in ("/a.docx", "/b.docx"):
             assert (await _row(storage, path)).render_status == "corrupt"
@@ -262,12 +263,12 @@ class TestSkipLaw:
     async def test_a_donor_without_its_content_row_is_not_borrowed(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/one.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         async with storage._host.engine.begin() as conn:
             await conn.execute(tables.content.delete())
         await _put(storage, "/two.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result)["rendered"] == 1
         await storage.close()
 
@@ -321,7 +322,7 @@ class TestStatuses:
     ) -> None:
         storage = _mount(tmp_path)
         await _put(storage, path, data)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         row = await _row(storage, path)
         assert row.render_status == status
@@ -340,14 +341,14 @@ class TestStatuses:
         counted = "empty" if status == "empty" else "unsupported" if status == "unsupported" else "failed"
         assert _report(result) == _counts(**{counted: 1})
         # Settled: the next run leaves it alone.
-        again = await storage.reindex()
+        again = await storage.rebuild()
         assert "rendering" not in (again.model_extra or {})
         await storage.close()
 
     async def test_a_missing_extra_is_unavailable_and_an_install_retries(self, tmp_path) -> None:
         storage = _mount(tmp_path, renderers=RendererRegistry((_Absent(),)))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(unsupported=1)
         row = await _row(storage, "/q.pdf")
         assert (row.render_status, row.render_generation) == ("unavailable", "pdf/unavailable")
@@ -356,7 +357,7 @@ class TestStatuses:
         await storage.close()
         # The same mount opened with the extra present: the generation differs, the skip law retries.
         storage = _mount(tmp_path)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result)["rendered"] == 1
         row = await _row(storage, "/q.pdf")
         assert row.render_status == "ok"
@@ -369,7 +370,7 @@ class TestStatuses:
     async def test_a_raising_renderer_is_failed(self, tmp_path) -> None:
         storage = _mount(tmp_path, renderers=RendererRegistry((_Raising(),)))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         assert (row.render_status, row.render_detail) == ("failed", "boom: RuntimeError: no parser today")
         assert "/q.pdf" not in await _content_rows(storage)
@@ -378,7 +379,7 @@ class TestStatuses:
     async def test_a_cut_rendering_is_truncated_with_an_info_note_on_read(self, tmp_path) -> None:
         storage = _mount(tmp_path, render_limits=RenderLimits(chars=60))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         assert row.render_status == "truncated"
         read = await storage.read(path=Path("/q.pdf"))
@@ -392,7 +393,7 @@ class TestStatuses:
     async def test_the_time_budget_keeps_the_text_so_far_as_partial(self, tmp_path) -> None:
         storage = _mount(tmp_path, renderers=RendererRegistry((_Slow(),)), render_limits=RenderLimits(seconds=0.01))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         assert row.render_status == "partial"
         assert (await _content_rows(storage))["/q.pdf"] == "<!-- page 1 -->\nfirst page text\n"
@@ -417,8 +418,8 @@ class TestLanding:
         async def rival() -> None:
             await _put(storage, "/q.pdf", fresh)
 
-        with installed("reindex:before-render-land", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-render-land", rival):
+            result = await storage.rebuild()
         assert result.success is True
         row = await _row(storage, "/q.pdf")
         assert row.render_status == "pending"
@@ -426,7 +427,8 @@ class TestLanding:
         assert _report(result)["unrendered"] == 1
         [warning] = [e for e in result.errors if e.kind == ErrorKind.unavailable]
         assert warning.severity == Severity.warning and warning.retryable is True
-        result = await storage.reindex()
+        assert "run rebuild again" in warning.message, warning.message
+        result = await storage.rebuild()
         assert _report(result)["rendered"] == 1
         text = (await storage.read(path=Path("/q.pdf"))).observations[0].content
         assert text is not None and "bilby" in text
@@ -440,8 +442,10 @@ class TestLanding:
         async def rival_claimed() -> None:
             lost.set()
 
-        with installed("reindex:before-render-land", rival_claimed):
-            result, report = await storage._render_step(storage._host.tables, lost, "MINE")
+        with installed("rebuild:before-render-land", rival_claimed):
+            result, report = await maintenance_module._render_step(
+                storage._maintenance(), storage._host.tables, lost, "MINE"
+            )
         assert result is not None and lease_lost(result)
         assert report.rendered == 0
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
@@ -452,7 +456,7 @@ class TestLanding:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         lost = asyncio.Event()
         lost.set()
-        result = await storage._reindex_phases(storage._host.tables, lost, "MINE")
+        result = await maintenance_module._rebuild_phases(storage._maintenance(), storage._host.tables, lost, "MINE")
         assert result.success is False and lease_lost(result)
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
         await storage.close()
@@ -464,21 +468,23 @@ class TestLanding:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         tables = storage._host.tables
         index_state = tables.index_state
-        real = backend_module.land_renderings
+        real = maintenance_module.land_renderings
         landings: list[int] = []
 
         async def counted(session: Any, **kwargs: Any) -> Result:
             landings.append(len(landings))
             return await real(session, **kwargs)
 
-        monkeypatch.setattr(backend_module, "land_renderings", counted)
+        monkeypatch.setattr(maintenance_module, "land_renderings", counted)
 
         async def rival_claims() -> None:
             async with storage._host.engine.begin() as conn:
-                await conn.execute(update(index_state).values(lease_holder="RIVAL", lease_heartbeat=indexing._now_ms()))
+                await conn.execute(
+                    update(index_state).values(lease_holder="RIVAL", lease_heartbeat=maintenance_module._now_ms())
+                )
 
-        with installed("reindex:before-render-land", rival_claims):
-            result = await storage.reindex()
+        with installed("rebuild:before-render-land", rival_claims):
+            result = await storage.rebuild()
         assert lease_lost(result), result.errors
         assert landings == [0]  # the cut alone: a taken lease is never retried row by row
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
@@ -493,7 +499,7 @@ class TestLanding:
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         index_state = storage._host.tables.index_state
-        real = backend_module.land_renderings
+        real = maintenance_module.land_renderings
         landings: list[int] = []
 
         async def refused_then_taken(session: Any, **kwargs: Any) -> Result:
@@ -501,12 +507,12 @@ class TestLanding:
             landings.append(len(landings))
             if len(landings) == 1:
                 refusal = backend_module.ResultError(kind=ErrorKind.unavailable, message="refused")
-                return Result(ops=("reindex",), errors=[refusal])
+                return Result(ops=("rebuild",), errors=[refusal])
             await session.execute(update(index_state).values(lease_holder="RIVAL"))
             return await real(session, **kwargs)
 
-        monkeypatch.setattr(backend_module, "land_renderings", refused_then_taken)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "land_renderings", refused_then_taken)
+        result = await storage.rebuild()
         assert lease_lost(result), result.errors
         assert landings == [0, 1]  # the cut, then its one row; never the quarantined row
         assert (await _row(storage, "/q.pdf")).render_status == "pending"
@@ -518,11 +524,11 @@ class TestLanding:
 
         async def refused(*args: Any, **kwargs: Any) -> Result:
             return Result(
-                ops=("reindex",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="disk")]
+                ops=("rebuild",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="disk")]
             )
 
-        monkeypatch.setattr(backend_module, "land_renderings", refused)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "land_renderings", refused)
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].message == "disk"
         await storage.close()
@@ -531,7 +537,7 @@ class TestLanding:
         # The guard: a row already carrying this exact stamp is not rewritten.
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await _row(storage, "/q.pdf")
         item = render_module.Rendered(
             row.entry_id, row.content_hash, row.render_generation, Rendering("ok", "other text\n"), cached=False
@@ -566,21 +572,21 @@ class TestLanding:
 
 class TestPaging:
     async def test_pages_advance_by_keyset_and_cut_by_bytes(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "RENDER_PAGE_ROWS", 2)
-        monkeypatch.setattr(backend_module, "BLOB_PAGE_BYTES", 1)
+        monkeypatch.setattr(maintenance_module, "RENDER_PAGE_ROWS", 2)
+        monkeypatch.setattr(maintenance_module, "BLOB_PAGE_BYTES", 1)
         storage = _mount(tmp_path)
         for index in range(5):
             await _put(storage, f"/d{index}.pdf", pdf_bytes([f"Document number {index}"]))
         landings = 0
-        real = backend_module.land_renderings
+        real = maintenance_module.land_renderings
 
         async def counting(*args: Any, **kwargs: Any) -> Result:
             nonlocal landings
             landings += 1
             return await real(*args, **kwargs)
 
-        monkeypatch.setattr(backend_module, "land_renderings", counting)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "land_renderings", counting)
+        result = await storage.rebuild()
         assert _report(result)["rendered"] == 5
         assert landings == 5  # one landing per bytes cut: every file rode alone
         await storage.close()
@@ -595,7 +601,7 @@ class TestPaging:
 
         storage = _mount(tmp_path, renderers=RendererRegistry((Recording(),)))
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert threads and all(ident != threading.get_ident() for ident in threads)
         await storage.close()
 
@@ -615,7 +621,7 @@ class TestPaging:
         await _put(storage, "/q.pdf", QUOKKA_PDF)
         await _put(storage, "/w.docx", WOMBAT_DOCX)
         await _put(storage, "/n.xlsx", SHEET)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         texts = await _content_rows(storage)
         assert texts["/q.pdf"] == "layout of q.pdf\n"
         assert texts["/w.docx"] == "layout of w.docx\n"
@@ -637,7 +643,7 @@ class TestPoison:
         await _put(storage, "/bad.pdf", surrogate_pdf_bytes())
         await _put(storage, "/good.pdf", QUOKKA_PDF)
         assert (await storage.write(entries=[Entry(path=Path("/notes.md"), content="# notes\n")])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert _report(result) == _counts(rendered=2)
         assert (await _row(storage, "/bad.pdf")).render_status == "ok"
@@ -653,24 +659,24 @@ class TestPoison:
         await _put(storage, "/bad.pdf", pdf_bytes(["poison text"]))
         await _put(storage, "/good.pdf", QUOKKA_PDF)
         bad_id = (await _row(storage, "/bad.pdf")).entry_id
-        real = backend_module.land_renderings
+        real = maintenance_module.land_renderings
 
         async def refusing(*args: Any, rendered: list[Any], report: Any, **kwargs: Any) -> Result:
             poisoned = [item for item in rendered if item.entry_id == bad_id and item.rendering.status == "ok"]
             if poisoned:
                 refusal = backend_module.ResultError(kind=ErrorKind.unavailable, message="engine refused the bind")
-                return Result(ops=("reindex",), errors=[refusal])
+                return Result(ops=("rebuild",), errors=[refusal])
             return await real(*args, rendered=rendered, report=report, **kwargs)
 
-        monkeypatch.setattr(backend_module, "land_renderings", refusing)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "land_renderings", refusing)
+        result = await storage.rebuild()
         assert result.success is True
         assert _report(result) == _counts(rendered=1, failed=1)
         bad = await _row(storage, "/bad.pdf")
         assert (bad.render_status, bad.render_detail) == ("failed", "landing refused: engine refused the bind")
         assert (await _row(storage, "/good.pdf")).render_status == "ok"
         assert "/bad.pdf" not in await _content_rows(storage)
-        assert "rendering" not in ((await storage.reindex()).model_extra or {})
+        assert "rendering" not in ((await storage.rebuild()).model_extra or {})
         await storage.close()
 
     async def test_a_row_refused_even_as_failed_ends_the_run_classified(self, tmp_path, monkeypatch) -> None:
@@ -679,11 +685,11 @@ class TestPoison:
 
         async def refusing(*args: Any, **kwargs: Any) -> Result:
             return Result(
-                ops=("reindex",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="down")]
+                ops=("rebuild",), errors=[backend_module.ResultError(kind=ErrorKind.unavailable, message="down")]
             )
 
-        monkeypatch.setattr(backend_module, "land_renderings", refusing)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "land_renderings", refusing)
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].message == "down"
         await storage.close()
@@ -708,13 +714,13 @@ class TestRetryByType:
     async def test_an_unsupported_row_is_retried_once_its_type_is_claimed(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/old.bin", b"\x00\x01\x02")
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(unsupported=1)
         await storage.close()
         registry = RendererRegistry.bundled()
         registry.register(_Bin())
         storage = _mount(tmp_path, renderers=registry)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(rendered=1)
         row = await _row(storage, "/old.bin")
         assert (row.render_status, row.render_generation) == ("ok", "bin/1")
@@ -725,10 +731,10 @@ class TestRetryByType:
         storage = _mount(tmp_path, renderers=RendererRegistry())
         await _put(storage, "/w.docm", WOMBAT_DOCX)
         assert (await _row(storage, "/w.docm")).mime_type == OOXML_TYPES["docm"]
-        assert _report(await storage.reindex()) == _counts(unsupported=1)
+        assert _report(await storage.rebuild()) == _counts(unsupported=1)
         await storage.close()
         storage = _mount(tmp_path)
-        assert _report(await storage.reindex()) == _counts(rendered=1)
+        assert _report(await storage.rebuild()) == _counts(rendered=1)
         assert (await _row(storage, "/w.docm")).render_generation == storage.renderers.generation(DOCX)
         await storage.close()
 
@@ -737,11 +743,11 @@ class TestRetryByType:
         # defensive arm of the skip law is pinned by direct SQL.
         storage = _mount(tmp_path)
         await _put(storage, "/q.pdf", QUOKKA_PDF)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(entry).values(render_source_hash="f" * 64))
-        assert _report(await storage.reindex()) == _counts(rendered=1)
+        assert _report(await storage.rebuild()) == _counts(rendered=1)
         row = await _row(storage, "/q.pdf")
         assert row.render_source_hash == row.content_hash
         await storage.close()
@@ -751,7 +757,7 @@ class TestRetryByType:
         await _put(storage, "/gone.pdf", pdf_bytes(["trashed text"]))
         assert (await storage.delete(path=Path("/gone.pdf"))).success is True
         await _put(storage, "/live.pdf", QUOKKA_PDF)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _report(result) == _counts(rendered=1)
         assert [e for e in result.errors if e.kind == ErrorKind.unavailable] == []
         [deleted] = (await storage.ls(path=Path("/.vfs/trash"))).observations
@@ -772,26 +778,26 @@ class TestBounds:
             await _put(storage, f"/d{index}.pdf", pdf_bytes([f"Document number {index}"]))
         statements: list[str] = []
         _record_into(storage, statements)
-        assert _report(await storage.reindex()) == _counts(rendered=3)
+        assert _report(await storage.rebuild()) == _counts(rendered=3)
         inserts = [s for s in statements if s.startswith("INSERT") and "vfs_content" in s]
         assert len(inserts) == 3  # one statement per rendering: every text rode alone under a 1-byte page
         await storage.close()
 
     async def test_dirty_pages_are_keyset_bounded(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "RENDER_PAGE_ROWS", 2)
+        monkeypatch.setattr(maintenance_module, "RENDER_PAGE_ROWS", 2)
         storage = _mount(tmp_path)
         for index in range(5):
             await _put(storage, f"/d{index}.pdf", pdf_bytes([f"Document number {index}"]))
         pages: list[int] = []
-        real = backend_module.select_render_dirty
+        real = maintenance_module.select_render_dirty
 
         async def recording(*args: Any, **kwargs: Any) -> list[Any]:
             page = await real(*args, **kwargs)
             pages.append(len(page))
             return page
 
-        monkeypatch.setattr(backend_module, "select_render_dirty", recording)
-        assert _report(await storage.reindex()) == _counts(rendered=5)
+        monkeypatch.setattr(maintenance_module, "select_render_dirty", recording)
+        assert _report(await storage.rebuild()) == _counts(rendered=5)
         assert pages == [2, 2, 1, 0]
         await storage.close()
 

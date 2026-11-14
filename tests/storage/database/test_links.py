@@ -1,6 +1,6 @@
 """Tests for the extracted ``links`` edges — markdown references minted inside the chunk pass.
 
-Every reindex rewrites the extracted out-edges of the markdown documents
+Every rebuild rewrites the extracted out-edges of the markdown documents
 whose stamp pair does not cover their body, and nothing else: a row a
 verb authored survives, a changed *target* keeps its in-edges, a
 same-body overwrite and a rename re-extract nothing, and a reference
@@ -96,15 +96,15 @@ def _link_notes(result: Result) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# What a reindex mints
+# What a rebuild mints
 # ---------------------------------------------------------------------------
 
 
 class TestExtraction:
-    async def test_reindex_mints_the_resolved_references_with_count_and_context(self, tmp_path) -> None:
+    async def test_rebuild_mints_the_resolved_references_with_count_and_context(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         edges = await _edges(storage)
         assert set(edges) == {
@@ -124,12 +124,12 @@ class TestExtraction:
         assert (await _stamps(storage, "/docs/guide.md"))[1] == links_model.link_generation()
         await storage.close()
 
-    async def test_a_second_reindex_touches_nothing(self, tmp_path) -> None:
+    async def test_a_second_rebuild_touches_nothing(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         before = await _edges(storage)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _link_notes(result) == []
         assert await _edges(storage) == before
         await storage.close()
@@ -137,7 +137,7 @@ class TestExtraction:
     async def test_a_document_without_references_stamps_but_mints_nothing(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _put(storage, "/plain.md", "no links here\n")
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _link_notes(result) == []
         assert await _edges(storage) == {}
         assert (await _stamps(storage, "/plain.md"))[1] == links_model.link_generation()
@@ -146,7 +146,7 @@ class TestExtraction:
     async def test_non_markdown_bodies_are_never_read(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert not any(source == "/docs/readme.txt" for source, _, _ in await _edges(storage))
         assert (await _stamps(storage, "/docs/readme.txt"))[1] == links_model.link_generation()
         await storage.close()
@@ -161,9 +161,9 @@ class TestLedger:
     async def test_a_changed_source_is_replaced_not_duplicated(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await _put(storage, "/docs/guide.md", "only [the hub](../hub.md) now\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         edges = await _edges(storage)
         assert {key for key in edges if key[0] == "/docs/guide.md"} == {("/docs/guide.md", "/hub.md", "links")}
         assert edges[("/docs/guide.md", "/hub.md", "links")][1] == 1.0
@@ -172,30 +172,30 @@ class TestLedger:
     async def test_a_source_whose_links_were_all_removed_loses_its_edges(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await _put(storage, "/docs/guide.md", "prose only\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert not any(source == "/docs/guide.md" for source, _, _ in await _edges(storage))
         await storage.close()
 
     async def test_a_changed_target_keeps_its_in_edges_untouched(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row_id = (await _edges(storage))[("/docs/guide.md", "/hub.md", "links")][0]
         await _put(storage, "/hub.md", "# hub, revised\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await _edges(storage))[("/docs/guide.md", "/hub.md", "links")][0] == row_id
 
     async def test_a_same_body_overwrite_and_a_rename_re_extract_nothing(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row_id = (await _edges(storage))[("/docs/guide.md", "/hub.md", "links")][0]
         await _put(storage, "/docs/guide.md", GUIDE)
         moved = ResolvedPair(src=Path("/docs/guide.md"), dest=Path("/docs/moved.md"))
         assert (await storage.move(operations=[moved])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _link_notes(result) == []
         assert (await _edges(storage))[("/docs/moved.md", "/hub.md", "links")][0] == row_id
         await storage.close()
@@ -205,7 +205,7 @@ class TestLedger:
         await _seed(storage)
         edge = Edge(source=Path("/docs/guide.md"), target=Path("/hub.md"), edge_type="links", weight=9.0)
         assert (await storage.mkedge(edges=[edge], provenance="user")).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         edges = await _edges(storage)
         assert edges[("/docs/guide.md", "/hub.md", "links")][1:] == (9.0, "user", None)
@@ -215,60 +215,60 @@ class TestLedger:
     async def test_a_touch_claims_an_extracted_row_and_the_extractor_then_leaves_it(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         edge = Edge(source=Path("/docs/guide.md"), target=Path("/hub.md"), edge_type="links", weight=5.0)
         assert (await storage.mkedge(edges=[edge], provenance="agent")).success is True
         await _put(storage, "/docs/guide.md", "[hub](../hub.md)\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await _edges(storage))[("/docs/guide.md", "/hub.md", "links")][1:3] == (5.0, "agent")
         await storage.close()
 
     async def test_rmedge_removes_an_extracted_row_until_its_source_changes(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         edge = Edge(source=Path("/docs/guide.md"), target=Path("/hub.md"), edge_type="links")
         assert (await storage.rmedge(edges=[edge])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert ("/docs/guide.md", "/hub.md", "links") not in await _edges(storage)
         await _put(storage, "/docs/guide.md", "[hub](../hub.md)\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert ("/docs/guide.md", "/hub.md", "links") in await _edges(storage)
         await storage.close()
 
     async def test_a_deleted_target_keeps_its_extracted_in_edges_for_its_return(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/hub.md"))).success is True
         assert any(target == "/hub.md" for _, target, _ in await _edges(storage))
-        assert (await storage.reindex()).success is True  # nothing reclaims them
+        assert (await storage.rebuild()).success is True  # nothing reclaims them
         assert any(target == "/hub.md" for _, target, _ in await _edges(storage))
         await storage.close()
 
     async def test_a_generation_bump_re_extracts_every_document_once(self, tmp_path, monkeypatch) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row_id = (await _edges(storage))[("/docs/guide.md", "/hub.md", "links")][0]
         monkeypatch.setattr(indexing_module, "link_generation", lambda: "md:test")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         edges = await _edges(storage)
         assert edges[("/docs/guide.md", "/hub.md", "links")][0] != row_id
         assert (await _stamps(storage, "/docs/guide.md"))[1] == "md:test"
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _edges(storage) == edges
         await storage.close()
 
     async def test_a_reference_resolves_once_its_target_exists_and_the_source_changes(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await _put(storage, "/docs/missing.md", "here now\n")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert ("/docs/guide.md", "/docs/missing.md", "links") not in await _edges(storage)
         await _put(storage, "/docs/guide.md", "[found](missing.md)\n")
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _link_notes(result) == []
         assert ("/docs/guide.md", "/docs/missing.md", "links") in await _edges(storage)
         await storage.close()
@@ -284,7 +284,7 @@ class TestSignals:
         ranker = Ranker(signals=(Signal("centrality", weight=0.5),))
         storage = _mount(tmp_path, ranker)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         signals, entry = storage._host.tables.signals, storage._host.tables.entry
         async with storage._host.session_factory() as session:
             rows = (
@@ -315,14 +315,14 @@ class TestEngineLegs:
             await _seed(storage)
             edge = Edge(source=Path("/docs/notes/plan.md"), target=Path("/hub.md"), edge_type="links", weight=3.0)
             assert (await storage.mkedge(edges=[edge], provenance="user")).success is True
-            result = await storage.reindex()
+            result = await storage.rebuild()
             assert result.success is True
             edges = await _edges(storage)
             assert edges[("/docs/guide.md", "/hub.md", "links")][1:3] == (2.0, "extracted")
             assert edges[("/docs/notes/plan.md", "/hub.md", "links")][1:3] == (3.0, "user")
             assert _link_notes(result) == [{"leg": "links", "sources": 3, "edges": 3, "unresolved": 1}]
             await _put(storage, "/docs/guide.md", "[hub](../hub.md)\n")
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             edges = await _edges(storage)
             assert {key for key in edges if key[0] == "/docs/guide.md"} == {("/docs/guide.md", "/hub.md", "links")}
             assert edges[("/docs/guide.md", "/hub.md", "links")][1] == 1.0

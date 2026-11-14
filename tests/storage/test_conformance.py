@@ -7,7 +7,7 @@ families as the sqlite-file leg, trash arc included; capability gating
 skips only what a backend leaves undeclared.
 
 Every leg carries the hashing embedder — no key, no download — so the
-reindex embed step runs on every engine. Real-server legs activate when
+rebuild embed step runs on every engine. Real-server legs activate when
 their ``VFS_TEST_<ENGINE>_URL`` variable is set and skip otherwise, so a
 plain run never needs Docker. Servers come from
 ``docker/compose.test.yml`` (same file CI uses); each test gets a clean
@@ -499,7 +499,7 @@ class TestMariaDBFlagFlipRoundTrips:
                     updates.append((statement, executemany))
 
             event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             assert all(many is False for _, many in updates)
             flips = [(s, many) for s, many in updates if "version" in s]
             assert len(flips) == 2  # ten pairs fit one statement per flag
@@ -520,15 +520,15 @@ class TestMSSQLChunkGuardRegression:
             assert (await storage.write(entries=[Entry(path=Path("/r.txt"), content="stale needle")])).success
 
             async def rival() -> None:
-                seams.clear("reindex:before-chunk-flip")
+                seams.clear("rebuild:before-chunk-flip")
                 fresh = Entry(path=Path("/r.txt"), content="fresh needle")
                 assert (await storage.write(entries=[fresh], overwrite=True)).success is True
 
-            with seams.installed("reindex:before-chunk-flip", rival):
-                assert (await storage.reindex()).success is True
+            with seams.installed("rebuild:before-chunk-flip", rival):
+                assert (await storage.rebuild()).success is True
             found = await storage.grep(pattern="fresh")
             assert [o.path for o in found.observations] == ["/r.txt"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             found = await storage.grep(pattern="fresh")
             assert [o.path for o in found.observations] == ["/r.txt"]
 
@@ -571,7 +571,7 @@ async def _segment_cascades_hold_the_mirror(env_var: str) -> None:
     The rename fast-path UPDATE, the per-segment delete+insert general
     path, the purge delete, and the trash-chain mint all run under the
     engine's own dialect arms; the mirror is re-derived after every verb,
-    and a final reindex must find zero drift.
+    and a final rebuild must find zero drift.
     """
     async with _server_storage(env_var) as storage:
         entries = [
@@ -596,9 +596,9 @@ async def _segment_cascades_hold_the_mirror(env_var: str) -> None:
         await _segment_postings_mirror(storage)
         assert (await storage.sweep(path=Path("/c"))).success is True
         await _segment_postings_mirror(storage)
-        reindexed = await storage.reindex()
-        assert reindexed.success is True
-        assert reindexed.errors == []
+        rebuilt = await storage.rebuild()
+        assert rebuilt.success is True
+        assert rebuilt.errors == []
 
 
 @pytest.mark.postgres
@@ -629,7 +629,7 @@ async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
     """The composite (encoded, kind) index on a real engine, both flag states.
 
     Grep must find fresh writes through the scan-tier overlay (encoded=0
-    rows seek through the composite) and the same rows post-reindex
+    rows seek through the composite) and the same rows post-rebuild
     (encoded flipped); reflection pins the index shape the engine built.
     """
     async with _server_storage(env_var) as storage:
@@ -637,7 +637,7 @@ async def _encoded_kind_index_serves_the_overlay(env_var: str) -> None:
         assert (await storage.write(entries=entries, parents=True)).success is True
         fresh = await storage.grep(pattern="haystack")
         assert sum(len(o.matches or ()) for o in fresh.observations) == 3
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         encoded = await storage.grep(pattern="haystack")
         assert sum(len(o.matches or ()) for o in encoded.observations) == 3
         # Reflection runs inside the schema's lifetime, before teardown drops it.

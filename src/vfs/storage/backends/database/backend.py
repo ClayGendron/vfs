@@ -29,15 +29,12 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from contextlib import asynccontextmanager, suppress
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
-from ulid import ULID
 
 from vfs.authority import Authority
-from vfs.batching import byte_chunked
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models.rows import PGVECTOR_INDEX_MAX_DIMENSION
 from vfs.offload import call_offloaded, offload_pool
@@ -45,65 +42,22 @@ from vfs.ops import TRAVERSE_DEPTH_DEFAULT, TRAVERSE_LIMIT_DEFAULT, VERB_RUNGS
 from vfs.paths import TRASH_ROOT, Path, address_of
 from vfs.pattern_matching import PatternError, ScopeChannel
 from vfs.rendering.registry import RendererRegistry
-from vfs.rendering.seam import RenderLimits, failure
+from vfs.rendering.seam import RenderLimits
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.addressing import addressed_by, scope_judged
 from vfs.storage.backends.database.descent import ROOT
 from vfs.storage.backends.database.dialects import (
-    BLOB_PAGE_BYTES,
     PROFILES,
     StaleSnapshot,
     op_execution_options,
     topology_execution_options,
 )
-from vfs.storage.backends.database.edges import (
-    EdgeRebuildState,
-    collect_edge_drift,
-    mkedge_rows,
-    repair_edge_drift,
-    rmedge_rows,
-)
-from vfs.storage.backends.database.embed import (
-    EMBED_CONCURRENCY,
-    EMBED_PAGE_ROWS,
-    EMBED_TIMEOUT_SECONDS,
-    EmbedReport,
-    cached_vectors,
-    clear_embeddings,
-    count_refused,
-    count_unembedded,
-    embed_page,
-    read_identity,
-    refusal_key,
-    refused_paths,
-    select_unembedded,
-    unit_vector,
-    write_vectors,
-)
+from vfs.storage.backends.database.edges import mkedge_rows, rmedge_rows
+from vfs.storage.backends.database.embed import EMBED_CONCURRENCY, EMBED_TIMEOUT_SECONDS, unit_vector
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.grep import grep_rows
-from vfs.storage.backends.database.indexing import (
-    REINDEX_HEARTBEAT_SECONDS,
-    ChunkCursor,
-    FlagRebuildState,
-    ReindexState,
-    build_epoch,
-    chunk_dirty,
-    claim_reindex_lease,
-    collect_flag_drift,
-    heartbeat_reindex_lease,
-    lease_fenced,
-    lease_lost,
-    lease_lost_result,
-    publish_epoch,
-    reclaim_built_epoch,
-    reclaim_epochs,
-    release_reindex_lease,
-    repair_flag_drift,
-    stale_generation,
-    with_notes,
-)
 from vfs.storage.backends.database.labels import Relabel, Relabeller, posture_rows_for_chunks
+from vfs.storage.backends.database.maintenance import MaintenanceContext, rebuild
 from vfs.storage.backends.database.reads import (
     AdmittedScope,
     admit_scope,
@@ -113,18 +67,6 @@ from vfs.storage.backends.database.reads import (
     read_rows,
     stat_rows,
     tree_rows,
-)
-from vfs.storage.backends.database.render import (
-    RENDER_PAGE_ROWS,
-    Rendered,
-    RenderReport,
-    cached_renderings,
-    count_unrendered,
-    land_renderings,
-    load_blobs,
-    render_rows,
-    row_size,
-    select_render_dirty,
 )
 from vfs.storage.backends.database.revision import bump_revision
 from vfs.storage.backends.database.rights import (
@@ -146,17 +88,6 @@ from vfs.storage.backends.database.rights import (
 )
 from vfs.storage.backends.database.seams import seam
 from vfs.storage.backends.database.search import VectorLeg, search_rows
-from vfs.storage.backends.database.segments import (
-    SegmentRebuildState,
-    collect_segment_drift,
-    repair_segment_drift,
-)
-from vfs.storage.backends.database.signals import (
-    collect_graph,
-    compute_signal,
-    publish_signal,
-    sweep_undeclared_signals,
-)
 from vfs.storage.backends.database.topology import transfer_rows
 from vfs.storage.backends.database.trash import delete_rows, restore_rows, sweep_rows
 from vfs.storage.backends.database.traverse import GraphRequest, Site, traverse_rows
@@ -165,13 +96,12 @@ from vfs.storage.protocol import storage_ops, targets_of
 from vfs.storage.ranking import Ranker
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+    from collections.abc import Awaitable, Callable, Iterable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.embedding import EmbeddingProvider
     from vfs.models import Edge, Entry, Observation
-    from vfs.models.rows import VFSTables
     from vfs.models.vector import NativeEmbeddingConfig
     from vfs.ops import CaseMode, GrepOutputMode, Needs, Op, Rung
     from vfs.paths import ObjectKind
@@ -295,7 +225,7 @@ class DatabaseStorage:
         """The mount's ranking declaration: its fusion and its chunk aggregate.
 
         Settable: fusion and aggregation are query-time choices over the
-        same index, so a mount may be re-ranked without a reindex.
+        same index, so a mount may be re-ranked without a rebuild.
         """
         return self._ranker
 
@@ -692,7 +622,7 @@ class DatabaseStorage:
                 severity=Severity.warning,
                 detail=(
                     f"the stored embeddings belong to {stored[0]!r} at {stored[1]} but the mount is configured for "
-                    f"{provider.model_id!r}; the lexical leg alone answered; run reindex to migrate"
+                    f"{provider.model_id!r}; the lexical leg alone answered; run rebuild to migrate"
                 ),
                 data={
                     "leg": "vector",
@@ -1183,7 +1113,7 @@ class DatabaseStorage:
             return Result(ops=("install_extensions",), errors=[refusal])
         return Result(ops=("install_extensions",))
 
-    async def reindex(self) -> Result:
+    async def rebuild(self) -> Result:
         """Batch index maintenance: binaries rendered, gram epochs rebuilt, segments re-converged, vectors filled.
 
         One runner at a time: the verb claims the single-runner lease up
@@ -1204,464 +1134,22 @@ class DatabaseStorage:
         vector and reports in the ``embedding`` extra. Every commit the
         index or the vector leg rests on is fenced by the lease.
         """
-        tables = self._host.tables
-        token = str(ULID())
-        claimed = await self._execute_maintenance(
-            "reindex", lambda session: claim_reindex_lease(session, tables, token)
+        return await rebuild(self._maintenance())
+
+    def _maintenance(self) -> MaintenanceContext:
+        """The pipeline's view of this backend, built per pass; the ranker is read when the signal phase starts."""
+        return MaintenanceContext(
+            host=self._host,
+            renderers=self._renderers,
+            render_limits=self._render_limits,
+            ranker=lambda: self._ranker,
+            embed_concurrency=self._embed_concurrency,
+            embed_timeout=self._embed_timeout,
+            execute=self._execute,
+            execute_maintenance=self._execute_maintenance,
+            execute_leased=self._execute_leased,
+            rows=self._rows,
         )
-        if not claimed.success:
-            return claimed
-        async with self._held_reindex_lease(tables, token) as lost:
-            result = await self._reindex_phases(tables, lost, token)
-            if not result.success or self._host.embedder is None:
-                return result
-            embedded = await self._embed_step(tables, lost, token)
-            errors = [*result.errors, *embedded.errors]
-            extras = {**(result.model_extra or {}), **(embedded.model_extra or {})}
-            return Result(ops=result.ops, observations=result.observations, errors=errors, **extras)
-
-    @asynccontextmanager
-    async def _held_reindex_lease(self, tables: VFSTables, token: str) -> AsyncIterator[asyncio.Event]:
-        """Hold a claimed lease: beat underneath, then cancel and release.
-
-        The beat task is cancelled and awaited *before* the best-effort
-        release, so a stray beat can never resurrect a released lease.
-        The yielded event is set when a beat proves the lease taken.
-        """
-        lost = asyncio.Event()
-        beat = asyncio.create_task(self._beat_reindex_lease(tables, token, lost))
-        try:
-            yield lost
-        finally:
-            beat.cancel()
-            with suppress(asyncio.CancelledError):
-                await beat
-            await self._execute_maintenance("reindex", lambda session: release_reindex_lease(session, tables, token))
-
-    async def _beat_reindex_lease(self, tables: VFSTables, token: str, lost: asyncio.Event) -> None:
-        """Pulse the lease heartbeat until cancelled or proven taken.
-
-        A transient beat failure is not a lost lease — the TTL absorbs
-        missed pulses, including a beat that never reaches its UPDATE
-        because the build phase holds SQLite's write lock for longer
-        than the beat's retries (that exhaustion is a ``conflict`` too);
-        only the zero-row refresh, the marked lease-lost verdict, means
-        a rival claimed through, and then the run must stop.
-        """
-        while True:
-            await asyncio.sleep(REINDEX_HEARTBEAT_SECONDS)
-            beat = await self._execute_maintenance(
-                "reindex", lambda session: heartbeat_reindex_lease(session, tables, token)
-            )
-            if lease_lost(beat):
-                lost.set()
-                return
-
-    async def _reindex_phases(self, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
-        """The lease-held phases: the renderings, the gram epochs, then the re-convergence passes.
-
-        The render stage runs first so the chunk pass splits the text it
-        wrote in the same run; its counts ride out as the ``rendering``
-        extra, at warning severity when bytes rows remain pending. The
-        segment pass rebuilds the path-segment postings and the edge
-        pass re-converges the fs mirror to ``parent_id`` — each wholesale
-        in effect, guarded delta in application: a plain read diffs the
-        table against the recomputed truth, and only found drift opens a
-        writer transaction, applied under per-row guards. Their warnings
-        (drift is a maintenance bug surfacing) ride on the verb's final
-        Result. The flag pass has the same shape and repairs the
-        directories a store wrote before a directory was created encoded;
-        it is the store predating a rule, not a bug, so it is reported
-        once, as a count, never retryable.
-        """
-        rendered, report = await self._render_step(tables, lost, token)
-        if rendered is not None:
-            return rendered
-        result = await self._gram_phases(tables, lost, token)
-        if not result.success:
-            return result
-        warnings: list[ResultError] = []
-        if report.unrendered:
-            warnings.append(
-                classified(
-                    ErrorKind.unavailable,
-                    severity=Severity.warning,
-                    detail=f"{report.unrendered} binaries are still pending a rendering; run reindex again",
-                    retryable=True,
-                    data=report.as_extra(),
-                )
-            )
-        segment_state = SegmentRebuildState()
-        outcome = await self._reconverge(
-            lost,
-            lambda session: collect_segment_drift(session, tables, segment_state),
-            lambda session: repair_segment_drift(
-                session, tables, self._host.profile, self._host.membership_budget, segment_state
-            ),
-            lambda: segment_state.clean,
-        )
-        if isinstance(outcome, Result):
-            return outcome
-        warnings.extend(outcome)
-        edge_state = EdgeRebuildState()
-        outcome = await self._reconverge(
-            lost,
-            lambda session: collect_edge_drift(session, tables, edge_state),
-            lambda session: repair_edge_drift(
-                session, tables, self._host.profile, self._host.membership_budget, edge_state
-            ),
-            lambda: edge_state.clean,
-        )
-        if isinstance(outcome, Result):
-            return outcome
-        warnings.extend(outcome)
-        flag_state = FlagRebuildState()
-        outcome = await self._reconverge(
-            lost,
-            lambda session: collect_flag_drift(session, tables, flag_state),
-            lambda session: repair_flag_drift(
-                session, tables, self._host.profile, self._host.membership_budget, flag_state
-            ),
-            lambda: flag_state.clean,
-        )
-        if isinstance(outcome, Result):
-            return outcome
-        if flag_state.repaired:
-            predated = "predated the rule that a directory never awaits the gram index"
-            warnings.append(
-                classified(
-                    ErrorKind.internal,
-                    severity=Severity.warning,
-                    detail=f"{flag_state.repaired} directories {predated}; repaired",
-                    retryable=False,
-                    data={"directories": flag_state.repaired},
-                )
-            )
-        outcome = await self._signal_phase(tables, lost)
-        if isinstance(outcome, Result):
-            return outcome
-        extras = {"rendering": report.as_extra()} if report.touched else {}
-        if not warnings and not extras:
-            return result
-        return Result(ops=result.ops, observations=result.observations, errors=[*result.errors, *warnings], **extras)
-
-    async def _render_step(
-        self, tables: VFSTables, lost: asyncio.Event, token: str
-    ) -> tuple[Result | None, RenderReport]:
-        """Render every dirty bytes row in short, resumable pages under the held lease.
-
-        Pages advance by keyset and are cut by bytes in flight; each cut
-        borrows the settled renderings its hashes already have, reads the
-        rest's blobs, renders them on the offload pool with no
-        transaction open, and lands in one short write. The lease's
-        ``lost`` flag is checked before every landing — a straggler never
-        stamps over a rival's run — and a stage with nothing to land
-        never consults it, so the phases after it still run. Answers the
-        failing Result, or ``None`` with the stage's counts.
-        """
-        registry, limits = self._renderers, self._render_limits
-        claims = registry.claims()
-        profile, budget = self._host.profile, self._host.membership_budget
-        report = RenderReport()
-        last = 0
-        while True:
-            select_page = partial(select_render_dirty, tables=tables, claims=claims, after=last, limit=RENDER_PAGE_ROWS)
-            page = await self._rows("reindex", select_page)
-            if not page:
-                break
-            last = page[-1].id
-            for cut in byte_chunked(page, row_size, BLOB_PAGE_BYTES):
-                lend = partial(
-                    cached_renderings,
-                    tables=tables,
-                    profile=profile,
-                    membership_budget=budget,
-                    hashes=[row.content_hash for row in cut],
-                    claims=claims,
-                )
-                cached = await self._rows("reindex", lend)
-                wanted = [row.entry_id for row in cut if row.key(registry) not in cached]
-                fetch = partial(load_blobs, tables=tables, profile=profile, membership_budget=budget, entry_ids=wanted)
-                blobs = await self._rows("reindex", fetch) if wanted else {}
-                await seam("reindex:before-render")
-                work = partial(render_rows, cut, blobs, registry, limits, cached)
-                rendered = await call_offloaded(offload_pool(), work)
-                await seam("reindex:before-render-land")
-                if lost.is_set():
-                    return lease_lost_result(), report
-                refused = await self._land(tables, rendered, report, token)
-                if refused is not None:
-                    return refused, report
-        report.unrendered = await self._rows("reindex", partial(count_unrendered, tables=tables))
-        return None, report
-
-    async def _land(
-        self, tables: VFSTables, rendered: list[Rendered], report: RenderReport, token: str
-    ) -> Result | None:
-        """Land one cut; a refused landing is retried row by row, and a row still refused lands as failed.
-
-        One bad row — a value the engine will not take, whatever the seam
-        missed — must not stop the stage or the phases after it: the
-        row's rendering is replaced by a ``failed`` state naming the
-        engine's refusal, which the skip law then leaves alone. Answers
-        the failing Result only when even that state cannot land, and the
-        lease-lost verdict at once: every landing is fenced by the lease.
-        """
-        host = self._host
-        land = partial(land_renderings, tables=tables, profile=host.profile, membership_budget=host.membership_budget)
-
-        def fenced(batch: list[Rendered]) -> Awaitable[Result]:
-            landing = partial(land, rendered=batch, report=report)
-            return self._execute_leased("reindex", lease_fenced(tables, token, landing))
-
-        outcome = await fenced(rendered)
-        if lease_lost(outcome):
-            return outcome
-        if outcome.success or len(rendered) == 0:
-            return None
-        for item in rendered:
-            single = await fenced([item])
-            if lease_lost(single):
-                return single
-            if single.success:
-                continue
-            reason = "; ".join(error.message for error in single.errors) or "the engine refused the row"
-            quarantined = item._replace(rendering=failure("failed", f"landing refused: {reason}"), cached=False)
-            fallback = await fenced([quarantined])
-            if not fallback.success:
-                return fallback
-        return None
-
-    async def _signal_phase(self, tables: VFSTables, lost: asyncio.Event) -> Result | None:
-        """Store every declared prior under a fresh generation; signals no longer declared are swept.
-
-        The graph is collected once in a read transaction; each signal
-        computes off the event loop and publishes in its own write
-        transaction, the lease's ``lost`` flag checked between them.
-        """
-        ranker = self._ranker
-        if ranker.signals:
-            graph = await self._rows("reindex", partial(collect_graph, tables=tables))
-            for signal in ranker.signals:
-                if lost.is_set():
-                    return lease_lost_result()
-                values = await compute_signal(offload_pool(), graph, signal)
-                generation = str(ULID())
-                publish = partial(publish_signal, tables=tables, signal=signal, generation=generation, values=values)
-                published = await self._execute_maintenance("reindex", publish)
-                if not published.success:
-                    return published
-        declared = [signal.name for signal in ranker.signals]
-        swept = await self._execute_maintenance(
-            "reindex", partial(sweep_undeclared_signals, tables=tables, profile=self._host.profile, declared=declared)
-        )
-        return None if swept.success else swept
-
-    async def _reconverge(
-        self,
-        lost: asyncio.Event,
-        collect: Callable[[AsyncSession], Awaitable[Result]],
-        repair: Callable[[AsyncSession], Awaitable[Result]],
-        clean: Callable[[], bool],
-    ) -> Result | list[ResultError]:
-        """One collect/repair pass: its warnings on success, the failing Result otherwise."""
-        collected = await self._execute("reindex", collect)
-        if not collected.success:
-            return collected
-        if clean():
-            return []
-        if lost.is_set():
-            return lease_lost_result()
-        repaired = await self._execute_maintenance("reindex", repair)
-        if not repaired.success:
-            return repaired
-        return list(repaired.errors)
-
-    async def _gram_phases(self, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
-        """The gram-index phases; a lost lease stops at the next boundary.
-
-        The chunk pass's advisory records (the extractor's unresolved
-        count) ride out on whatever Result the phases end with.
-        """
-        state = ReindexState(token=token)
-        result = await self._chunk_pass(tables, lost, token)
-        if not result.success:
-            return result
-        notes = list(result.errors)
-        if lost.is_set():
-            return lease_lost_result()
-        result = await self._execute_maintenance(
-            "reindex", lambda session: build_epoch(session, tables, state, offload_pool())
-        )
-        if not result.success or state.epoch is None:
-            return with_notes(result, notes)
-        await seam("reindex:before-publish")
-        if lost.is_set():
-            return lease_lost_result()
-        epoch = state.epoch
-        result = await self._execute_leased(
-            "reindex",
-            lambda session: publish_epoch(
-                session, tables, self._host.profile, self._host.parameter_budget, self._host.membership_budget, state
-            ),
-        )
-        if not result.success:
-            # The lost build's rows are unpublished residue — reclaim them
-            # so a rival's next mint is not forced past a dead number.
-            await self._execute_maintenance("reindex", lambda session: reclaim_built_epoch(session, tables, epoch))
-            return result
-        await seam("reindex:before-reclaim")
-        reclaimed = await self._execute_maintenance("reindex", lambda session: reclaim_epochs(session, tables))
-        return with_notes(reclaimed, notes)
-
-    async def _chunk_pass(self, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
-        """The chunk pass, one leased and fenced slice a transaction; the committed slices' link counts make one
-        record, which rides on the pass's Result or on the first failing one."""
-        host = self._host
-        cursor = ChunkCursor(stale=await self._rows("reindex", partial(stale_generation, tables=tables)))
-        while not cursor.done:
-            if lost.is_set():
-                return with_notes(lease_lost_result(), cursor.links_record())
-            work = partial(
-                chunk_dirty,
-                tables=tables,
-                profile=host.profile,
-                parameter_budget=host.parameter_budget,
-                membership_budget=host.membership_budget,
-                executor=offload_pool(),
-                cursor=cursor,
-                carry_embeddings=not host.embedding_stale,
-            )
-            sliced = await self._execute_leased("reindex", lease_fenced(tables, token, work))
-            if not sliced.success:
-                return with_notes(sliced, cursor.links_record())
-            cursor.adopt()
-        return Result(ops=("reindex",), errors=cursor.links_record())
-
-    async def _embed_step(self, tables: VFSTables, lost: asyncio.Event, token: str) -> Result:
-        """Fill every NULL embedding in short, resumable batches under the held lease.
-
-        A stale stored identity is migrated first — every vector
-        cleared, the pair unstamped — so the first batch written stamps
-        the configured space. Pages advance by keyset; each page's
-        batches embed with no transaction open and land in one short
-        write; the lease's ``lost`` flag is checked between pages. A
-        transient provider failure ends the step with a warning and
-        leaves the rest NULL for the next run; a text refused for its
-        input is recorded, skipped from then on, and named in one
-        ``invalid`` warning, and the step moves on. The result's
-        ``embedding`` extra reports the counts.
-        """
-        provider = self._host.embedder
-        assert provider is not None
-        identity = (provider.model_id, provider.dimension)
-        # Re-read, never trusted from first touch: a rival's run may have stamped or migrated since.
-        self._host.embedding_identity = await self._rows("reindex", partial(read_identity, tables=tables))
-        if self._host.embedding_identity is not None and self._host.embedding_identity != identity:
-            migration = lease_fenced(tables, token, lambda session: clear_embeddings(session, tables))
-            cleared = await self._execute_leased("reindex", migration)
-            if not cleared.success:
-                return cleared
-            self._host.embedding_identity = None
-        report = EmbedReport()
-        key = refusal_key(provider)
-        refused_entries: list[str] = []
-        listed: set[str] = set()
-        refused_rows = 0
-        semaphore = asyncio.Semaphore(self._embed_concurrency)
-        known: dict[str, list[float]] = {}
-        budget = self._host.membership_budget
-        last = 0
-        while not lost.is_set():
-            unembedded = partial(
-                select_unembedded,
-                tables=tables,
-                after=last,
-                limit=EMBED_PAGE_ROWS,
-                key=key,
-                profile=self._host.profile,
-            )
-            page = await self._rows("reindex", unembedded)
-            if not page:
-                break
-            last = page[-1].id
-            hashes = [
-                row.content_hash for row in page if row.content_hash is not None and row.content_hash not in known
-            ]
-            lend = partial(
-                cached_vectors, tables=tables, profile=self._host.profile, hashes=hashes, membership_budget=budget
-            )
-            known.update(await self._rows("reindex", lend))
-            await seam("reindex:before-embed")
-            outcome = await embed_page(page, provider, known, report, semaphore, timeout=self._embed_timeout)
-            # A recorded refusal stamps too: the canary proved the provider answers in its space.
-            answered = bool(outcome.vectors or outcome.refused)
-            stamp = identity if answered and self._host.embedding_identity is None else None
-            land = partial(
-                write_vectors,
-                tables=tables,
-                pairs=outcome.vectors,
-                stamp=stamp,
-                refused=[row.content_hash for row in outcome.refused if row.content_hash is not None],
-                key=key,
-                profile=self._host.profile,
-                membership_budget=budget,
-            )
-            written = await self._execute_leased("reindex", lease_fenced(tables, token, land))
-            if not written.success:
-                return written
-            if answered:
-                self._host.embedding_identity = identity
-            refused_rows += len(outcome.refused)
-            for row in sorted(outcome.refused):
-                if len(refused_entries) >= EMBED_PAGE_ROWS:
-                    break
-                if row.entry_id is not None and row.entry_id not in listed:
-                    listed.add(row.entry_id)
-                    refused_entries.append(row.entry_id)
-            if outcome.failure is not None:
-                report.stopped_by = f"{type(outcome.failure).__name__}: {outcome.failure}"
-                break
-        if lost.is_set():
-            return lease_lost_result()
-        report.unembedded = await self._rows("reindex", lambda session: count_unembedded(session, tables, key))
-        report.refused = await self._rows("reindex", lambda session: count_refused(session, tables, key))
-        errors: list[ResultError] = []
-        if refused_rows:
-            paths = await self._rows(
-                "reindex",
-                partial(
-                    refused_paths,
-                    tables=tables,
-                    entry_ids=refused_entries,
-                    profile=self._host.profile,
-                    membership_budget=budget,
-                ),
-            )
-            detail = (
-                f"the provider refused {refused_rows} chunks; they stay unembedded until their text,"
-                f" the model or its declared caps change: {report.refusal}"
-            )
-            errors.append(
-                classified(
-                    ErrorKind.invalid,
-                    Path(paths[0]) if paths else None,
-                    severity=Severity.warning,
-                    detail=detail,
-                    data={"provider": provider.model_id, "refused": refused_rows, "paths": paths},
-                )
-            )
-        if report.stopped_by is not None:
-            errors.append(
-                classified(
-                    ErrorKind.unavailable,
-                    severity=Severity.warning,
-                    detail=f"embedding stopped after {report.requests} answered requests: {report.stopped_by}",
-                    retryable=True,
-                    data={"provider": provider.model_id},
-                )
-            )
-        return Result(ops=("reindex",), errors=errors, embedding=report.as_extra(provider.model_id))
 
     async def close(self) -> None:
         await self._host.close()
@@ -1926,11 +1414,12 @@ class DatabaseStorage:
     async def _execute_maintenance(self, op: str, fn: Callable[[AsyncSession], Awaitable[Result]]) -> Result:
         """An internal commit = one writer transaction whose Result is the caller's to fold or discard.
 
-        The unfenced reindex phases, the lease's claim, beat and release,
-        and the posture verb's relabel chunks commit here. Their Results never
-        carry a held advisory: the phase folds or drops its errors, and
-        a fact about the store's health must reach a caller, so it waits
-        for the public verb that returns next.
+        The unfenced rebuild phases, in ``maintenance.py``, the lease's
+        claim, beat and release, and the posture verb's relabel chunks
+        commit here. Their Results never carry a held advisory: the phase
+        folds or drops its errors, and a fact about the store's health
+        must reach a caller, so it waits for the public verb that returns
+        next.
         """
         return await self._mutate(op, fn, op_execution_options(self._host.profile, writer=True))
 

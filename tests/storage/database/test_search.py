@@ -3,7 +3,7 @@ the overlay, records, the two-read protocol, ordering laws and the mask.
 
 Direct backend tests — capability declaration is a router concern, so
 these rows call ``storage.search`` straight through the seam. The
-overlay serves everything until ``reindex()`` runs; several rows run
+overlay serves everything until ``rebuild()`` runs; several rows run
 in both worlds because the answer must not depend on which side served.
 """
 
@@ -38,6 +38,7 @@ from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import indexing as indexing_module
+from vfs.storage.backends.database import lexical as lexical_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
@@ -91,7 +92,7 @@ async def _fresh(tmp_path: Any, files: dict[str, str] | None = None, **kwargs: A
 
 async def _indexed(tmp_path: Any, files: dict[str, str] | None = None, **kwargs: Any) -> DatabaseStorage:
     storage = await _fresh(tmp_path, files, **kwargs)
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     return storage
 
 
@@ -192,7 +193,7 @@ async def _twenty_folders(tmp_path: Any, readable: Sequence[str], hidden: Sequen
     for folder in folders:
         granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
         assert granted.success is True, granted.errors
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     dirty = [Entry(path=Path(path), content="lantern hidden\n") for path in hidden]
     dirty += [Entry(path=Path(path), content="lantern readable\n") for path in readable]
     assert (await storage.write(entries=dirty, parents=True, authority=SYSTEM)).success is True
@@ -338,13 +339,13 @@ class TestScope:
     async def test_globs_take_the_narrow_rung(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         storage = await _indexed(tmp_path)
         narrowed: list[int] = []
-        real = search_module._chunk_ids_for
+        real = search_module.chunk_ids_for
 
         async def spying(session, tables, epoch, doc_ids, profile, budget):
             narrowed.append(len(doc_ids))
             return await real(session, tables, epoch, doc_ids, profile, budget)
 
-        monkeypatch.setattr(search_module, "_chunk_ids_for", spying)
+        monkeypatch.setattr(search_module, "chunk_ids_for", spying)
         result = await storage.search(query="tokens", globs=("src/**",))
         assert set(_paths(result)) == {"/src/lexer.py", "/src/parser.py"}
         assert narrowed == [4]  # the segment index nominated the src entries, the deep directory among them
@@ -357,7 +358,7 @@ class TestScope:
         narrow = await storage.search(query="tokens", globs=("src/**",))
         monkeypatch.setattr(search_module, "SCOPE_ID_BUDGET", 1)
         narrowed: list[int] = []
-        monkeypatch.setattr(search_module, "_chunk_ids_for", lambda *a: narrowed.append(1))
+        monkeypatch.setattr(search_module, "chunk_ids_for", lambda *a: narrowed.append(1))
         wide = await storage.search(query="tokens", globs=("src/**",))
         assert narrowed == []  # over the budget: no allow-list resolution
         assert _paths(wide) == _paths(narrow) and wide.errors == narrow.errors
@@ -381,7 +382,7 @@ class TestScope:
         for _world in ("overlay", "indexed"):
             result = await storage.search(query="tokens", globs=("*.py",), ext=("md",))
             assert result.success is True and result.observations == []
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_the_meta_subtree_is_hidden_unless_addressed(self, tmp_path: Any) -> None:
@@ -389,7 +390,7 @@ class TestScope:
         assert (
             await storage.write(entries=[Entry(path=Path("/.vfs/hidden.txt"), content="tokens too\n")], parents=True)
         ).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert _paths(await storage.search(query="tokens")) == ["/a.txt"]
         assert _paths(await storage.search(query="tokens", globs=("/.vfs/**",))) == ["/.vfs/hidden.txt"]
         await storage.close()
@@ -401,10 +402,10 @@ class TestScope:
         assert _paths(piped) == [str(rows[0].path)]
         await storage.close()
 
-    async def test_the_same_scope_answers_identically_before_and_after_reindex(self, tmp_path: Any) -> None:
+    async def test_the_same_scope_answers_identically_before_and_after_rebuild(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
         before = await storage.search(query="tokens", globs=("src/**",))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         after = await storage.search(query="tokens", globs=("src/**",))
         assert _paths(before) == _paths(after) == ["/src/lexer.py", "/src/parser.py"]
         await storage.close()
@@ -442,12 +443,12 @@ class TestScope:
         scope = ScopeChannel(
             roots=tuple(Path(f"/d{i:02}") for i in range(10)), arms=tuple(f"*.e{i:02}" for i in range(arms))
         )
-        # Never reindexed yet: the overlay serves the call and builds the scan side's prefilter.
+        # Never rebuilt yet: the overlay serves the call and builds the scan side's prefilter.
         assert _paths(await storage.search(query="tokens", scope=scope)) == ["/d00/x.e00"]
         assert len(built) == pattern_arms
         beside = await storage.search(query="tokens", globs=("/d00",), scope=scope)
         assert _paths(beside) == ["/d00/x.e00"]
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert _paths(await storage.search(query="tokens", scope=scope)) == ["/d00/x.e00"]
         assert answers == [composed, composed, composed]
         await storage.close()
@@ -464,14 +465,14 @@ class TestRounds:
         reference = await storage.search(query="common anchor", limit=5)
         assert _paths(reference)[0] == "/c/0130.txt"
         wanted: list[dict[str, list[int]]] = []
-        real = search_module.tail_block_statements
+        real = lexical_module.tail_block_statements
 
         def spying(postings, epoch, asked, *rest):
             wanted.append({term: list(nos) for term, nos in asked.items()})
             return real(postings, epoch, asked, *rest)
 
-        monkeypatch.setattr(search_module, "tail_block_statements", spying)
-        monkeypatch.setattr(search_module, "HEAD_BLOCKS", 1)
+        monkeypatch.setattr(lexical_module, "tail_block_statements", spying)
+        monkeypatch.setattr(lexical_module, "HEAD_BLOCKS", 1)
         result = await storage.search(query="common anchor", limit=5)
         assert wanted == [{"common": [1]}]  # one term wanting one block: the second block of ``common``
         assert [(str(o.path), o.score) for o in result.observations] == [
@@ -493,20 +494,20 @@ class TestRounds:
         assert stat_rows > 0
         selected: list[list[int]] = []
         scored: list[list[int]] = []
-        real_select, real_score = search_module.select_blocks, search_module.score_blocks
+        real_select, real_score = lexical_module.select_blocks, lexical_module.score_blocks
 
         def recording_select(*args: Any, **kwargs: Any) -> Any:
             chosen = real_select(*args, **kwargs)
-            selected.extend([no for no in competing if no >= search_module.HEAD_BLOCKS] for competing in chosen)
+            selected.extend([no for no in competing if no >= lexical_module.HEAD_BLOCKS] for competing in chosen)
             return chosen
 
         def counting_score(blocks: Any, *args: Any, **kwargs: Any) -> Any:
             scored.append([block.term for block in blocks])
             return real_score(blocks, *args, **kwargs)
 
-        monkeypatch.setattr(search_module, "select_blocks", recording_select)
-        monkeypatch.setattr(search_module, "score_blocks", counting_score)
-        monkeypatch.setattr(search_module, "HEAD_BLOCKS", 1)
+        monkeypatch.setattr(lexical_module, "select_blocks", recording_select)
+        monkeypatch.setattr(lexical_module, "score_blocks", counting_score)
+        monkeypatch.setattr(lexical_module, "HEAD_BLOCKS", 1)
         result = await storage.search(query="zeta alpha anchor", limit=5)
         assert result.success is True
         assert [len(tail) for tail in selected] == [2, 2]
@@ -546,16 +547,16 @@ class TestProbes:
 
     def test_round_two_arms_pack_under_the_parameter_budget(self) -> None:
         arms = [(3, true()), (3, true()), (5, true()), (2, true())]
-        packed = search_module._packed_arms(arms, 6)
+        packed = lexical_module._packed_arms(arms, 6)
         assert [len(statement) for statement in packed] == [2, 1, 1]
-        assert search_module._packed_arms([], 6) == []
+        assert lexical_module._packed_arms([], 6) == []
 
     def test_the_tail_fetch_takes_the_tuple_form_where_declared(self) -> None:
         postings = build_vfs_tables().lex_postings
         wanted = {"the": [8, 9, 10], "is": [8, 9, 10, 11]}
 
         def compiled(profile: Any, dialect: Any, parameter_budget: int) -> list[tuple[str, int]]:
-            statements = search_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
+            statements = lexical_module.tail_block_statements(postings, 1, wanted, profile, parameter_budget, 4)
             rendered = [s.compile(dialect=dialect, compile_kwargs={"render_postcompile": True}) for s in statements]
             return [(str(c), len(c.params)) for c in rendered]
 
@@ -583,7 +584,7 @@ class TestOverlay:
         assert result.lexical_stats["n_docs"] == 0  # ty: ignore[unresolved-attribute]
         await storage.close()
 
-    async def test_a_written_file_with_a_new_word_is_found_before_reindex(self, tmp_path: Any) -> None:
+    async def test_a_written_file_with_a_new_word_is_found_before_rebuild(self, tmp_path: Any) -> None:
         storage = await _indexed(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="zebra tokens\n")])).success
         result = await storage.search(query="zebra")
@@ -724,6 +725,7 @@ class TestOverlay:
 
         monkeypatch.setattr(search_module, "overlay_postings", counted)
         monkeypatch.setattr(search_module, "score_blocks", pure_score_blocks)
+        monkeypatch.setattr(lexical_module, "score_blocks", pure_score_blocks)
         oracle = await storage.search(query="tokens parser stream", limit=20)
         assert _ranked(kernel) == _ranked(oracle)
         await storage.close()
@@ -843,7 +845,7 @@ class TestOverlay:
         async def rival() -> None:
             if moves["n"] == 0:
                 moves["n"] += 1
-                assert (await storage.reindex()).success is True
+                assert (await storage.rebuild()).success is True
 
         with installed("search:after-pointer-read", rival):
             result = await storage.search(query="tokens")
@@ -1091,7 +1093,7 @@ async def _partial_store(tmp_path: Any = None) -> DatabaseStorage:
     assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
     assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success is True
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     return storage
 
 
@@ -1184,7 +1186,7 @@ class TestVanishedChunks:
         settled = await storage.search(query="tokens")
         assert settled.success is True and len(settled.observations) == 4
         _bump_the_chunk_generation(monkeypatch)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         bumped = await storage.search(query="tokens")
         assert bumped.success is True, bumped.errors
         assert _ranked(bumped) == _ranked(settled)
@@ -1207,8 +1209,8 @@ class TestVanishedChunks:
                 result = await storage.search(query="tokens")
             during.append((result, len(statements)))
 
-        with installed("reindex:before-publish", observe):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", observe):
+            assert (await storage.rebuild()).success is True
         [(result, issued)] = during
         assert result.success is True, result.errors
         assert _ranked(result) == _ranked(settled) and result.errors == settled.errors
@@ -1240,8 +1242,8 @@ class TestVanishedChunks:
         async def observe() -> None:
             during.append((await storage.search(query="lantern"), await storage.grep(pattern="lantern")))
 
-        with installed("reindex:before-publish", observe):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", observe):
+            assert (await storage.rebuild()).success is True
         [(search_during, grep_during)] = during
         assert (_ranked(search_during), search_during.errors) == (_ranked(searched), searched.errors)
         assert (_paths(grep_during), grep_during.errors) == (_paths(grepped), grepped.errors)
@@ -1336,8 +1338,8 @@ class TestVanishedChunks:
         async def observe() -> None:
             during.append(await storage.search(query="tokens"))
 
-        with installed("reindex:before-publish", observe):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", observe):
+            assert (await storage.rebuild()).success is True
         [result] = during
         assert result.success is True, result.errors
         assert _ranked(result) == _ranked(settled)
@@ -1508,7 +1510,7 @@ class TestVanishedChunks:
         async def rival() -> None:
             if not committed:  # once: the second attempt meets the state this left
                 written = await storage.write(entries=[body], overwrite=True)
-                committed.append(written.success and (await storage.reindex()).success)
+                committed.append(written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):
             raced = await storage.search(query="tokens")
@@ -1536,7 +1538,7 @@ class TestVanishedChunks:
                 moved = await storage.move(operations=[pair], authority=SYSTEM)
                 rewritten = [Entry(path=Path("/h/a.txt"), content="tokens moved\n")]
                 written = await storage.write(entries=rewritten, overwrite=True, authority=SYSTEM)
-                committed.append(moved.success and written.success and (await storage.reindex()).success)
+                committed.append(moved.success and written.success and (await storage.rebuild()).success)
 
         with installed("search:before-chunk-texts", rival):
             raced = await storage.search(query="tokens", authority=BOB)

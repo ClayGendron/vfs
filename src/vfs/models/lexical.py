@@ -1,7 +1,7 @@
 """The lexical index's tokenizer, BM25 formula, block codec, builder and scorer.
 
 The gram index nominates exact matches and carries no term frequencies;
-the lexical index is the *ranked* leg beside it, built whole per reindex
+the lexical index is the *ranked* leg beside it, built whole per rebuild
 under the gram epoch and stored the way grams are: one row per
 ``(term, block)`` holding up to :data:`BLOCK_SIZE` postings as three
 delta+varint blobs, plus one summary row per term that bounds every

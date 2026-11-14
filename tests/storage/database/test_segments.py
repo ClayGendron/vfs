@@ -3,7 +3,7 @@
 The mirror invariant: after every verb, the segment posting table
 equals the recomputed ancestor segments of every stored path — every
 kind, trash included. The battery drives the public verbs and asserts
-the invariant after each step; the reindex tests seed drift directly
+the invariant after each step; the rebuild tests seed drift directly
 and prove the re-convergence repairs it loudly, under path guards that
 skip any row a concurrent writer owns.
 """
@@ -24,9 +24,9 @@ from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import segments as segments_module
-from vfs.storage.backends.database.indexing import claim_reindex_lease
+from vfs.storage.backends.database.maintenance import claim_index_lease
 from vfs.storage.backends.database.segments import (
     EntryDelta,
     SegmentRebuildState,
@@ -274,14 +274,14 @@ class TestRandomizedMirror:
 
 
 # ---------------------------------------------------------------------------
-# Reindex re-convergence — drift repaired loudly, guards honored
+# Rebuild re-convergence — drift repaired loudly, guards honored
 # ---------------------------------------------------------------------------
 
 
 class TestSegmentRebuild:
-    async def test_a_clean_store_reindexes_without_warnings(self, storage: DatabaseStorage) -> None:
+    async def test_a_clean_store_rebuilds_without_warnings(self, storage: DatabaseStorage) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert result.errors == []
         await _assert_mirror(storage)
@@ -302,22 +302,22 @@ class TestSegmentRebuild:
             await session.execute(insert(tables.segments), [{"segment": "ghost", "entry_id": ghost_host}])
             await session.execute(insert(tables.segments), [{"segment": "gone", "entry_id": str(ULID())}])
             await session.commit()
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         warnings = [error for error in result.errors if error.severity == Severity.warning]
         assert len(warnings) == 3
         messages = " | ".join(w.message for w in warnings)
-        assert "repaired segment postings" in messages
-        assert "orphaned segment posting" in messages
+        assert "rebuild repaired segment postings" in messages
+        assert "rebuild reclaimed" in messages and "orphaned segment posting" in messages
         await _assert_mirror(storage)
 
-    async def test_a_second_reindex_after_repair_is_quiet(self, storage: DatabaseStorage) -> None:
+    async def test_a_second_rebuild_after_repair_is_quiet(self, storage: DatabaseStorage) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
         async with storage._host.session_factory() as session:
             await session.execute(delete(storage._host.tables.segments))
             await session.commit()
-        assert (await storage.reindex()).success is True
-        second = await storage.reindex()
+        assert (await storage.rebuild()).success is True
+        second = await storage.rebuild()
         assert second.success is True
         assert second.errors == []
         await _assert_mirror(storage)
@@ -400,17 +400,17 @@ class TestSegmentRebuild:
 
 
 class TestSegmentPhaseBoundaries:
-    """The reindex segment phases' failure and lease arms."""
+    """The rebuild segment phases' failure and lease arms."""
 
     async def test_a_failed_collect_returns_its_classification(self, storage: DatabaseStorage, monkeypatch) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/f.txt"), content="x")], parents=True)).success
-        failed = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="collect broke")])
+        failed = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="collect broke")])
 
         async def broken(session, tables, state) -> Result:
             return failed
 
-        monkeypatch.setattr(backend_module, "collect_segment_drift", broken)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "collect_segment_drift", broken)
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].message == "collect broke"
 
@@ -425,13 +425,13 @@ class TestSegmentPhaseBoundaries:
         async def poisoned(session, tables, state) -> Result:
             state.orphans = {str(ULID()): ["ghost"]}
             lost.set()
-            return Result(ops=("reindex",))
+            return Result(ops=("rebuild",))
 
-        monkeypatch.setattr(backend_module, "collect_segment_drift", poisoned)
+        monkeypatch.setattr(maintenance_module, "collect_segment_drift", poisoned)
         tables = storage._host.tables
-        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        claimed = await storage._execute_maintenance("rebuild", lambda s: claim_index_lease(s, tables, "MINE"))
         assert claimed.success is True
-        result = await storage._reindex_phases(tables, lost, "MINE")
+        result = await maintenance_module._rebuild_phases(storage._maintenance(), tables, lost, "MINE")
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message
         # The drift was left untouched — no repair transaction ran.
@@ -443,12 +443,12 @@ class TestSegmentPhaseBoundaries:
         async with storage._host.session_factory() as session:
             await session.execute(insert(storage._host.tables.segments), [{"segment": "gone", "entry_id": str(ULID())}])
             await session.commit()
-        failed = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="repair broke")])
+        failed = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="repair broke")])
 
         async def broken(session, tables, profile, membership_budget, state) -> Result:
             return failed
 
-        monkeypatch.setattr(backend_module, "repair_segment_drift", broken)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "repair_segment_drift", broken)
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].message == "repair broke"

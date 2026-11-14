@@ -1,4 +1,4 @@
-"""The embed step of reindex against real sqlite rows: every chunk embedded and the
+"""The embed step of rebuild against real sqlite rows: every chunk embedded and the
 space stamped, the chunk-row cache (dedup and carry-over), migration on a model
 change, resume after a provider failure, the timeout and ``Retry-After``, the lease
 through a slow batch, the batcher's laws, and the identity refusals at first touch.
@@ -21,11 +21,11 @@ from vfs.models import Entry
 from vfs.models.vector import NativeEmbeddingConfig
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
-from vfs.storage.backends.database import DatabaseStorage, indexing
-from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import DatabaseStorage
 from vfs.storage.backends.database import embed as embed_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database.embed import EmbedRow, token_batched, truncated_for
-from vfs.storage.backends.database.indexing import claim_reindex_lease, lease_lost
+from vfs.storage.backends.database.maintenance import claim_index_lease, lease_lost
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.backends.memory import InMemoryStorage
 
@@ -47,7 +47,7 @@ def _long_body(tail: str) -> str:
 
 
 class _WaitsForBeats(ScriptedProvider):
-    """A provider whose batch returns once the reindex heartbeat has fired *wanted* times.
+    """A provider whose batch returns once the rebuild heartbeat has fired *wanted* times.
 
     Proves the loop stayed free while the provider waited: a held loop
     cannot beat, so the wait runs out its liveness bound and the beat
@@ -103,7 +103,7 @@ def _near(stored: list[float], expected: list[float]) -> bool:
 async def _made_stale(storage: DatabaseStorage) -> None:
     """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
     index_state = storage._host.tables.index_state
-    stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+    stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
     async with storage._host.engine.begin() as conn:
         await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
@@ -120,10 +120,10 @@ def _extra(result: Any) -> dict[str, Any]:
 
 
 class TestStep:
-    async def test_reindex_embeds_every_chunk_and_stamps_the_space(self, tmp_path: Any) -> None:
+    async def test_rebuild_embeds_every_chunk_and_stamps_the_space(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(max_batch_inputs=2)
         storage = await _fresh(tmp_path, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True, result.errors
         vectors = await _vectors(storage)
         assert len(vectors) == len(CORPUS) and all(v is not None and len(v) == 4 for v in vectors.values())
@@ -140,13 +140,13 @@ class TestStep:
         }
         assert await _identity(storage) == ("scripted/fake@4", 4)
         assert storage._host.embedding_identity == ("scripted/fake@4", 4)
-        again = await storage.reindex()
+        again = await storage.rebuild()
         assert again.success is True and _extra(again)["embedded"] == 0 and _extra(again)["requests"] == 0
         await storage.close()
 
     async def test_no_provider_means_no_step_and_no_extra(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and result.model_extra == {}
         assert all(v is None for v in (await _vectors(storage)).values())
         assert await _identity(storage) == (None, None)
@@ -157,7 +157,7 @@ class TestStep:
         provider = ScriptedProvider()
         files = {"/x/LICENSE": "license text\n", "/y/LICENSE": "license text\n", "/z/LICENSE": "license text\n"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert provider.batches == [["license text\n"]]
         assert (_extra(result)["embedded"], _extra(result)["cached"]) == (1, 2)
         vectors = await _vectors(storage)
@@ -165,11 +165,11 @@ class TestStep:
         await storage.close()
 
     async def test_a_later_page_borrows_a_vector_already_stored(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 1)
+        monkeypatch.setattr(maintenance_module, "EMBED_PAGE_ROWS", 1)
         provider = ScriptedProvider()
         files = {"/x/LICENSE": "license text\n", "/y/LICENSE": "license text\n", "/other.txt": "other\n"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert sorted(chain.from_iterable(provider.batches)) == ["license text\n", "other\n"]
         assert (_extra(result)["embedded"], _extra(result)["cached"]) == (2, 1)
         await storage.close()
@@ -177,11 +177,11 @@ class TestStep:
     async def test_a_hash_embedded_in_an_earlier_run_is_lent_from_the_table(self, tmp_path: Any) -> None:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, {"/x/LICENSE": "license text\n"}, embedder=provider)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (
             await storage.write(entries=[Entry(path=Path("/y/LICENSE"), content="license text\n")], parents=True)
         ).success
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert (_extra(result)["embedded"], _extra(result)["cached"], _extra(result)["requests"]) == (0, 1, 0)
         assert len({tuple(v) for v in (await _vectors(storage)).values() if v is not None}) == 1
         await storage.close()
@@ -193,42 +193,42 @@ class TestStep:
     async def test_a_failed_write_back_ends_the_step_with_its_failure(self, tmp_path: Any, monkeypatch) -> None:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, embedder=provider)
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="write broke")])
+        failure = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="write broke")])
 
         async def failing(session: Any, **_kwargs: Any) -> Result:
             return failure
 
-        monkeypatch.setattr(backend_module, "write_vectors", failing)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "write_vectors", failing)
+        result = await storage.rebuild()
         assert result.success is False and result.errors[0].message == "write broke"
         await storage.close()
 
     async def test_a_failed_migration_ends_the_step_with_its_failure(self, tmp_path: Any, monkeypatch) -> None:
         storage = await _fresh(tmp_path, embedder=ScriptedProvider(model="one"))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(model="two"))
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="clear broke")])
+        failure = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="clear broke")])
 
         async def failing(session: Any, tables: Any) -> Result:
             return failure
 
-        monkeypatch.setattr(backend_module, "clear_embeddings", failing)
-        result = await other.reindex()
+        monkeypatch.setattr(maintenance_module, "clear_embeddings", failing)
+        result = await other.rebuild()
         assert result.success is False and result.errors[0].message == "clear broke"
         await other.close()
 
     async def test_a_resplit_carries_vectors_onto_unchanged_chunks(self, tmp_path: Any) -> None:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, {"/doc.md": _long_body("first ending\n")}, embedder=provider)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         before = await _vectors(storage)
         assert len(before) >= 3
         sent = sum(len(batch) for batch in provider.batches)
         assert sent == len(before)
         rewritten = Entry(path=Path("/doc.md"), content=_long_body("second ending\n"))
         assert (await storage.write(entries=[rewritten])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         after = await _vectors(storage)
         assert len(after) == len(before) and all(v is not None for v in after.values())
         resent = sum(len(batch) for batch in provider.batches) - sent
@@ -239,14 +239,14 @@ class TestStep:
     async def test_a_model_change_migrates_the_whole_space(self, tmp_path: Any) -> None:
         first = ScriptedProvider(model="one")
         storage = await _fresh(tmp_path, embedder=first)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         old = await _vectors(storage)
         await storage.close()
         second = ScriptedProvider(model="two")
         storage = DatabaseStorage(url=_url(tmp_path), embedder=second)
         assert (await storage.first_touch()).success is True
         assert storage._host.embedding_stale is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True, result.errors
         assert _extra(result)["embedded"] == len(CORPUS) and len(second.batches) >= 1
         assert await _identity(storage) == ("scripted/two@4", 4)
@@ -258,7 +258,7 @@ class TestStep:
     async def test_a_provider_failure_stops_the_step_and_the_next_run_resumes(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(max_batch_inputs=2, fail_after=1)
         storage = await _fresh(tmp_path, embedder=provider, embed_concurrency=1)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         [record] = result.errors
         assert record.kind == ErrorKind.unavailable and record.severity == Severity.warning
@@ -267,7 +267,7 @@ class TestStep:
         assert (_extra(result)["embedded"], _extra(result)["unembedded"]) == (2, 3)
         assert await _identity(storage) == ("scripted/fake@4", 4)  # the first batch stamped
         provider.fail_after = None
-        resumed = await storage.reindex()
+        resumed = await storage.rebuild()
         assert resumed.success is True and resumed.errors == []
         assert (_extra(resumed)["embedded"], _extra(resumed)["unembedded"]) == (3, 0)
         assert all(v is not None for v in (await _vectors(storage)).values())
@@ -276,7 +276,7 @@ class TestStep:
     async def test_a_failure_before_any_vector_leaves_the_space_unstamped(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(fail_after=0)
         storage = await _fresh(tmp_path, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _extra(result)["unembedded"] == len(CORPUS)
         assert await _identity(storage) == (None, None)
         assert storage._host.embedding_identity is None
@@ -285,7 +285,7 @@ class TestStep:
     async def test_a_timeout_is_classified_and_the_rest_stays_null(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(delay=0.5)
         storage = await _fresh(tmp_path, embedder=provider, embed_timeout_seconds=0.01)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         [record] = result.errors
         assert record.kind == ErrorKind.unavailable and "TimeoutError" in record.message
@@ -301,11 +301,11 @@ class TestStep:
             await real_sleep(0)
 
         # The retry's own sleep, never the loop's: patching asyncio.sleep itself would make the
-        # heartbeat spin without yielding and starve the reindex, which once hung the suite.
+        # heartbeat spin without yielding and starve the rebuild, which once hung the suite.
         monkeypatch.setattr(embed_module, "sleep", recording)
         provider = ScriptedProvider(max_batch_inputs=3, failures=[RateLimitedError({"retry-after-ms": "250"})])
         storage = await _fresh(tmp_path, embedder=provider, embed_concurrency=1)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and result.errors == []
         assert slept == [0.25]
         assert _extra(result)["requests"] == 2 and _extra(result)["unembedded"] == 0
@@ -318,7 +318,7 @@ class TestStep:
         monkeypatch.setattr(embed_module, "sleep", instant)
         provider = ScriptedProvider(fail_after=0, error=RateLimitedError({"retry-after": "1"}))
         storage = await _fresh(tmp_path, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert "RateLimitedError" in result.errors[0].message
         await storage.close()
 
@@ -329,28 +329,28 @@ class TestStep:
         assert embed_module._retry_after_seconds(RateLimitedError({"retry-after": "2.5"})) == 2.5
 
     async def test_a_lost_lease_stops_between_pages(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 2)
+        monkeypatch.setattr(maintenance_module, "EMBED_PAGE_ROWS", 2)
         provider = ScriptedProvider(fail_after=0)
         storage = await _fresh(tmp_path, embedder=provider)
-        assert (await storage.reindex()).success is True  # chunk rows exist, every vector NULL
+        assert (await storage.rebuild()).success is True  # chunk rows exist, every vector NULL
         provider.fail_after = None
         lost = asyncio.Event()
         tables = storage._host.tables
-        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        claimed = await storage._execute_maintenance("rebuild", lambda s: claim_index_lease(s, tables, "MINE"))
         assert claimed.success is True
 
         async def rival() -> None:
             lost.set()
 
-        with installed("reindex:before-embed", rival):
-            result = await storage._embed_step(tables, lost, "MINE")
+        with installed("rebuild:before-embed", rival):
+            result = await maintenance_module._embed_step(storage._maintenance(), tables, lost, "MINE")
         assert result.success is False and result.errors[0].kind == ErrorKind.conflict
         vectors = await _vectors(storage)
         assert sum(v is not None for v in vectors.values()) == 2  # the page in flight landed; nothing more
         await storage.close()
 
     async def test_the_beat_keeps_ticking_through_a_slow_batch(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.02)
+        monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.02)
         beats = 0
         paged = False
         provider = _WaitsForBeats(lambda: beats, wanted=5)
@@ -365,7 +365,7 @@ class TestStep:
                 beats += 1
 
         event.listen(storage._host.engine.sync_engine, "before_cursor_execute", record)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True and _extra(result)["unembedded"] == 0
         assert beats >= 5  # the heartbeat ran while the provider waited: the loop stayed free
         await storage.close()
@@ -373,12 +373,12 @@ class TestStep:
     async def test_trashed_entries_are_not_embedded_nor_counted(self, tmp_path: Any) -> None:
         provider = ScriptedProvider()
         storage = await _fresh(tmp_path, embedder=provider)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         chunks = storage._host.tables.chunks
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(chunks).values(embedding=None))
         assert (await storage.delete(path=Path("/a.txt"))).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert (_extra(result)["embedded"], _extra(result)["unembedded"]) == (len(CORPUS) - 1, 0)
         await storage.close()
 
@@ -386,7 +386,7 @@ class TestStep:
         storage = InMemoryStorage()
         assert isinstance(storage.embedder, HashEmbeddingProvider)
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha beta")])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _extra(result)["model"] == "hash/blake2b-tokens-bigrams@64" and _extra(result)["unembedded"] == 0
         await storage.close()
 
@@ -395,10 +395,10 @@ class TestStep:
         storage = await _fresh(tmp_path, embedder=provider)
 
         async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw):
-            return Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
+            return Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
 
-        monkeypatch.setattr(backend_module, "chunk_dirty", broken)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "chunk_dirty", broken)
+        result = await storage.rebuild()
         assert result.success is False and provider.batches == []
         await storage.close()
 
@@ -409,7 +409,7 @@ class TestStep:
         files = {**CORPUS, "/f.txt": "papa quebec romeo\n"}
         early, late = dict(list(files.items())[:3]), dict(list(files.items())[3:])
         lapsed = await _fresh(tmp_path, early, embedder=old)
-        assert (await lapsed.reindex()).success is True
+        assert (await lapsed.rebuild()).success is True
         assert (await lapsed.write(entries=[Entry(path=Path(p), content=b) for p, b in late.items()])).success
         holder = DatabaseStorage(url=_url(tmp_path), embedder=new)
         arrived, released = [asyncio.Event(), asyncio.Event()], [asyncio.Event(), asyncio.Event()]
@@ -421,11 +421,11 @@ class TestStep:
                     await release.wait()
                     return
 
-        with installed("reindex:before-embed", hold):
-            first = asyncio.create_task(lapsed.reindex())
+        with installed("rebuild:before-embed", hold):
+            first = asyncio.create_task(lapsed.rebuild())
             await arrived[0].wait()
             await _made_stale(lapsed)
-            second = asyncio.create_task(holder.reindex())
+            second = asyncio.create_task(holder.rebuild())
             await arrived[1].wait()
             released[0].set()
             lost = await first
@@ -446,7 +446,7 @@ class TestStep:
         every vector and the identity the holder's run just left."""
         old, new = _SpacedProvider(model="old"), _SpacedProvider(model="new")
         holder = await _fresh(tmp_path, embedder=old)
-        assert (await holder.reindex()).success is True
+        assert (await holder.rebuild()).success is True
         lapsed = DatabaseStorage(url=_url(tmp_path), embedder=new)
         assert (await lapsed.write(entries=[Entry(path=Path("/late.txt"), content="sierra tango uniform\n")])).success
         arrived, released = asyncio.Event(), asyncio.Event()
@@ -456,11 +456,11 @@ class TestStep:
                 arrived.set()
                 await released.wait()
 
-        with installed("reindex:before-reclaim", hold):
-            first = asyncio.create_task(lapsed.reindex())
+        with installed("rebuild:before-reclaim", hold):
+            first = asyncio.create_task(lapsed.rebuild())
             await arrived.wait()
             await _made_stale(lapsed)
-            assert (await holder.reindex()).success is True
+            assert (await holder.rebuild()).success is True
             released.set()
             lost = await first
         assert lease_lost(lost), lost.errors
@@ -502,7 +502,7 @@ class TestBatcher:
     async def test_over_cap_inputs_are_truncated_and_counted(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(max_input_tokens=2)
         storage = await _fresh(tmp_path, {"/a.txt": "a" * 40 + "\n", "/b.txt": "bb\n"}, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _extra(result)["truncated"] == 1
         sent = sorted(chain.from_iterable(provider.batches), key=len)
         assert [len(sent[0]), provider.estimate_tokens(sent[1])] == [3, 2] and 6 <= len(sent[1]) <= 8
@@ -524,7 +524,7 @@ class TestIdentity:
 
     async def test_a_stored_width_other_than_the_native_columns_refuses_at_first_touch(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path, embedder=ScriptedProvider(4))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage.close()
         wider = DatabaseStorage(url=_url(tmp_path), native_embedding=NativeEmbeddingConfig(dimension=8))
         result = await wider.first_touch()
@@ -534,7 +534,7 @@ class TestIdentity:
 
     async def test_a_stored_model_mismatch_is_stale_not_refused(self, tmp_path: Any) -> None:
         storage = await _fresh(tmp_path, embedder=ScriptedProvider(4, model="one"))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage.close()
         other = DatabaseStorage(url=_url(tmp_path), embedder=ScriptedProvider(4, model="two"))
         assert (await other.first_touch()).success is True
@@ -582,7 +582,7 @@ class TestRefusals:
         files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
         files.update({f"/bob/{i}.txt": f"bob file {i}" for i in range(10)})
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.errors == []
         assert (_extra(result)["unembedded"], _extra(result)["refused"]) == (0, 0)
         assert all(v is not None for v in (await _vectors(storage)).values())
@@ -593,7 +593,7 @@ class TestRefusals:
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         files = {"/w/long.md": CJK + "\n", **{f"/w/{i}.txt": f"plain file {i}\n" for i in range(9)}}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert _extra(result)["refused"] == 1 and _extra(result)["unembedded"] == 0
         assert [e.kind for e in result.errors] == [ErrorKind.invalid]
         [warning] = _refusal_warnings(result)
@@ -602,7 +602,7 @@ class TestRefusals:
         assert warning.data["paths"] == ["/w/long.md"]
         assert sum(v is not None for v in (await _vectors(storage)).values()) == 9
         provider.calls.clear()
-        again = await storage.reindex()
+        again = await storage.rebuild()
         assert provider.calls == [] and _refusal_warnings(again) == []
         assert _extra(again)["refused"] == 1
         await storage.close()
@@ -610,7 +610,7 @@ class TestRefusals:
     async def test_a_refusal_survives_the_resplit_and_covers_twins(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         storage = await _fresh(tmp_path, {"/w/long.md": LONG_MD}, embedder=provider)
-        first = await storage.reindex()
+        first = await storage.rebuild()
         assert _extra(first)["refused"] == 1
         refused_text = next(text for text in _sent(provider) if CJK in text)
         provider.calls.clear()
@@ -618,7 +618,7 @@ class TestRefusals:
         copy = LONG_MD.replace("alpha bravo", "golf hotel")
         writes = [Entry(path=Path("/w/long.md"), content=edited), Entry(path=Path("/w/copy.md"), content=copy)]
         assert (await storage.write(entries=writes, overwrite=True)).success is True
-        second = await storage.reindex()
+        second = await storage.rebuild()
         assert second.success is True
         assert refused_text not in _sent(provider)
         assert provider.calls != []
@@ -629,7 +629,7 @@ class TestRefusals:
         provider = ScriptedProvider(refuse_all=True, max_batch_inputs=8)
         files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert len(provider.calls) == 8 and provider.calls[-1] == [embed_module.EMBED_CANARY]
         [record] = result.errors
         assert record.kind is ErrorKind.unavailable and "InputRefusedError" in record.message
@@ -638,11 +638,11 @@ class TestRefusals:
         await storage.close()
 
     async def test_a_provider_turning_mid_step_records_nothing(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 2)
+        monkeypatch.setattr(maintenance_module, "EMBED_PAGE_ROWS", 2)
         provider = ScriptedProvider(refuse_all_after=1, max_batch_inputs=8)
         files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert sum(v is not None for v in (await _vectors(storage)).values()) == 2
         assert await _refusal_rows(storage) == []
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
@@ -651,7 +651,7 @@ class TestRefusals:
     async def test_an_auth_refusal_is_transient(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(status_error=InputRefusedError(401))
         storage = await _fresh(tmp_path, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert len(provider.calls) == 1
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
         assert await _refusal_rows(storage) == []
@@ -661,10 +661,10 @@ class TestRefusals:
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         files = {"/w/long.md": CJK + "\n", "/w/a.txt": "plain\n"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        assert _extra(await storage.reindex())["refused"] == 1
+        assert _extra(await storage.rebuild())["refused"] == 1
         provider.model_id, provider.real_input_tokens = "scripted/two@4", None
         provider.calls.clear()
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert any(CJK in text for text in _sent(provider))
         assert (_extra(result)["refused"], _extra(result)["unembedded"]) == (0, 0)
         assert await _refusal_rows(storage) == []
@@ -672,10 +672,10 @@ class TestRefusals:
         lone = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         (tmp_path / "solo").mkdir()
         solo = await _fresh(tmp_path / "solo", {"/w/long.md": CJK + "\n"}, embedder=lone)
-        assert _extra(await solo.reindex())["refused"] == 1
+        assert _extra(await solo.rebuild())["refused"] == 1
         assert await _identity(solo) == ("scripted/fake@4", 4)
         lone.model_id, lone.real_input_tokens = "scripted/two@4", None
-        assert _extra(await solo.reindex())["refused"] == 0
+        assert _extra(await solo.rebuild())["refused"] == 0
         assert all(v is not None for v in (await _vectors(solo)).values())
         await solo.close()
 
@@ -695,34 +695,34 @@ class TestRefusals:
 
     @staticmethod
     async def _raise_the_cap(storage: DatabaseStorage, provider: ScriptedProvider) -> None:
-        assert _extra(await storage.reindex())["refused"] == 1
+        assert _extra(await storage.rebuild())["refused"] == 1
         provider.max_input_tokens = 2_000
         provider.calls.clear()
-        again = await storage.reindex()
+        again = await storage.rebuild()
         assert any(CJK in text for text in _sent(provider))
         assert again.success is True and [e.kind for e in again.errors] == [ErrorKind.invalid]
         rows = await _refusal_rows(storage)
         assert [(model, cap) for _, model, cap, _ in rows] == [("scripted/fake@4", 2_000)]
         provider.calls.clear()
-        await storage.reindex()
+        await storage.rebuild()
         assert provider.calls == []
 
     async def test_a_transient_failure_beside_a_refusal_records_nothing(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(max_batch_inputs=1, failures=[InputRefusedError(400), RuntimeError("down")])
         storage = await _fresh(tmp_path, embedder=provider, embed_concurrency=1)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert embed_module.EMBED_CANARY not in _sent(provider)
         assert await _refusal_rows(storage) == []
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
         await storage.close()
 
     async def test_a_recorded_refusal_never_stops_the_step(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 1)
+        monkeypatch.setattr(maintenance_module, "EMBED_PAGE_ROWS", 1)
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
         plain = [Entry(path=Path(f"/w/{i}.txt"), content=f"plain file {i}\n") for i in range(3)]
         assert (await storage.write(entries=plain)).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         vectors = await _vectors(storage)
         assert vectors[min(vectors)] is None  # the refused chunk is on the first page
         assert _extra(result)["unembedded"] == 0
@@ -734,7 +734,7 @@ class TestRefusals:
         files = {f"/alice/{i}.txt": "漢" * 30 + f"{i:02d}" for i in range(40)}
         storage = await _fresh(tmp_path, files, embedder=provider, embed_concurrency=1)
         # A hang guard only: a split that held its slot would wait on itself forever.
-        result = await asyncio.wait_for(storage.reindex(), 60)
+        result = await asyncio.wait_for(storage.rebuild(), 60)
         assert result.errors == [] and _extra(result)["unembedded"] == 0
         await storage.close()
 
@@ -746,7 +746,7 @@ class TestRefusals:
 
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, refusal_error=refusal)
         storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n", "/w/a.txt": "plain\n"}, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert [e.kind for e in result.errors] == [ErrorKind.invalid]
         assert len(await _refusal_rows(storage)) == 1
         await storage.close()
@@ -765,7 +765,7 @@ class TestRefusals:
         monkeypatch.setattr(embed_module, "sleep", instant)
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, refusal_error=lambda: error)
         storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
         assert await _refusal_rows(storage) == []
         await storage.close()
@@ -773,10 +773,10 @@ class TestRefusals:
     async def test_a_raised_batch_cap_gives_refused_texts_another_try(self, tmp_path: Any) -> None:
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50, max_batch_tokens=8_000)
         storage = await _fresh(tmp_path, {"/w/long.md": CJK + "\n"}, embedder=provider)
-        assert _extra(await storage.reindex())["refused"] == 1
+        assert _extra(await storage.rebuild())["refused"] == 1
         provider.max_batch_tokens = 9_000
         provider.calls.clear()
-        await storage.reindex()
+        await storage.rebuild()
         assert any(CJK in text for text in _sent(provider))
         assert [cap for _, _, _, cap in await _refusal_rows(storage)] == [9_000]
         await storage.close()
@@ -786,7 +786,7 @@ class TestRefusals:
         storage = await _fresh(tmp_path, {"/w/a.md": CJK + "\n"}, embedder=provider)
         for path, body in (("/w/b.md", CJK + "\n"), ("/w/z.md", "字" * 200 + "\n"), ("/w/p.txt", "plain\n")):
             assert (await storage.write(entries=[Entry(path=Path(path), content=body)])).success is True
-        result = await storage.reindex()
+        result = await storage.rebuild()
         [warning] = result.errors
         assert warning.kind is ErrorKind.invalid and str(warning.path) == "/w/a.md"
         assert warning.data is not None and warning.data["refused"] == 3
@@ -794,11 +794,11 @@ class TestRefusals:
         await storage.close()
 
     async def test_the_warning_lists_at_most_a_page_of_paths(self, tmp_path: Any, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "EMBED_PAGE_ROWS", 2)
+        monkeypatch.setattr(maintenance_module, "EMBED_PAGE_ROWS", 2)
         provider = ScriptedProvider(token_of=_non_ascii, real_input_tokens=50)
         files = {f"/w/{i}.md": chr(0x4E00 + i) * 200 + "\n" for i in range(3)}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         [warning] = result.errors
         assert warning.data is not None and warning.data["refused"] == 3 and len(warning.data["paths"]) == 2
         await storage.close()
@@ -819,7 +819,7 @@ class TestRefusals:
             return await real(texts)
 
         provider.embed_documents = right_half_fails  # ty: ignore[invalid-assignment]
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
         assert sum(v is not None for v in (await _vectors(storage)).values()) == 2
         await storage.close()
@@ -829,7 +829,7 @@ class TestRefusals:
         provider = ScriptedProvider(max_batch_inputs=8, failures=[InputRefusedError(400), RuntimeError("down")])
         files: dict[str, str] = {f"/{name}.txt": f"{name} body\n" for name in "abcd"}
         storage = await _fresh(tmp_path, files, embedder=provider)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert len(provider.calls) == 2
         assert [e.kind for e in result.errors] == [ErrorKind.unavailable]
         assert await _refusal_rows(storage) == []
@@ -842,7 +842,7 @@ class TestRefusals:
                 return Embedded(answer.vectors[:-1], answer.tokens)
 
         storage = await _fresh(tmp_path, embedder=Short(max_batch_inputs=8))
-        result = await storage.reindex()
+        result = await storage.rebuild()
         [record] = result.errors
         assert record.kind is ErrorKind.unavailable and "ValueError" in record.message
         await storage.close()

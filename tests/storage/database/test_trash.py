@@ -273,7 +273,7 @@ class TestTombstone:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.mkdir(path=Path("/d/sub"), parents=True)).success is True
         assert (await storage.write(entries=[Entry(path=Path("/d/f.txt"), content="needle body")])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
 
         async def encoded() -> dict[str, bool]:
@@ -810,9 +810,9 @@ class TestTrashView:
     async def test_tree_glob_grep_and_search_under_the_head_match_row_paths(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _tree(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/d"))).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         walked = await storage.tree(path=Path("/.vfs/trash"))
         assert [str(o.path) for o in walked.observations] == ["/d", "/d/a.txt", "/d/sub", "/d/sub/b.txt"]
         shallow = await storage.tree(path=Path("/.vfs/trash/d"), max_depth=1)
@@ -905,9 +905,9 @@ class TestTrashView:
         storage = DatabaseStorage(url=_url(tmp_path))
         await _tree(storage)
         await storage.write(entries=[Entry(path=Path("/notes/c.txt"), content="live needle")], parents=True)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/d"))).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         live = await storage.glob(patterns=("/**/*.txt",), globs_not=("/.vfs/trash/d/**",))
         assert [str(o.path) for o in live.observations] == ["/keep.txt", "/notes/c.txt"]
         trashed = await storage.glob(patterns=("/.vfs/trash/**/*.txt",), globs_not=("/d/**",))
@@ -1021,10 +1021,10 @@ class TestEdges:
         assert (await storage.delete(path=Path("/d/a.txt"))).success is True
         assert (await storage.write(entries=[Entry(path=Path("/d/a.txt"), content="revived")])).success is True
         assert await graph_edges() == 1
-        # The reindex reclaims nothing: a tombstoned endpoint is an entry like any other.
+        # The rebuild reclaims nothing: a tombstoned endpoint is an entry like any other.
         assert (await storage.delete(path=Path("/d/a.txt"))).success is True
-        reindexed = await storage.reindex()
-        assert reindexed.success is True and all("edge" not in e.message for e in reindexed.errors)
+        rebuilt = await storage.rebuild()
+        assert rebuilt.success is True and all("edge" not in e.message for e in rebuilt.errors)
         assert await _count(storage, "edges") == 6
         await storage.close()
 

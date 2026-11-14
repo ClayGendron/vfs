@@ -265,7 +265,7 @@ class TestHybridArms:
 
 @pytest.mark.asyncio(loop_scope="module")
 class TestSignalArms:
-    """The stored priors on the golden set, whose reference edges the reindex extracts from its markdown.
+    """The stored priors on the golden set, whose reference edges the rebuild extracts from its markdown.
 
     The centrality arm reads the extracted ``links`` rows; the recorded
     arm is the one shape the measure-by-gamma table found neutral on this

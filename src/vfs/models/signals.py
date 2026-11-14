@@ -1,4 +1,4 @@
-"""The centrality prior — the ranking-signal kernel behind ``reindex``, from the engine.
+"""The centrality prior — the ranking-signal kernel behind ``rebuild``, from the engine.
 
 The owner of one seam: a reference graph over dense node indices, the
 containing tree, and a link measure go in; one prior per node in

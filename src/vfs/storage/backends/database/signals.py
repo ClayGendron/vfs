@@ -1,9 +1,9 @@
-"""Ranking signals — stored priors: the reindex phase that computes them, the probe search reads.
+"""Ranking signals — stored priors: the rebuild phase that computes them, the probe search reads.
 
 A signal is a query-independent importance prior, one float per entry
 in ``[0, 1]``, declared on the mount's :class:`~vfs.storage.ranking.Ranker`
 and stored in the ``signals`` table under a generation. It is computed
-whole-corpus as a phase of ``reindex`` — :func:`collect_graph` reads the
+whole-corpus as a phase of ``rebuild`` — :func:`collect_graph` reads the
 live entries, their tree, and the reference edges (never the ``fs``
 mirror) in keyset pages; :func:`compute_signal` runs the measure, the
 hierarchy smoothing, and the scaling off the event loop through the
@@ -65,7 +65,7 @@ class GraphInputs(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# The reindex phase — collect, compute, publish
+# The rebuild phase — collect, compute, publish
 # ---------------------------------------------------------------------------
 
 
@@ -161,7 +161,7 @@ async def publish_signal(
     if flipped.rowcount == 0:
         await session.execute(insert(epochs).values(signal=signal.name, created_at=datetime.now(UTC), **stamp))
     await session.execute(delete(table).where(table.c.signal == signal.name, table.c.generation != generation))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def sweep_undeclared_signals(
@@ -175,7 +175,7 @@ async def sweep_undeclared_signals(
     else:
         await session.execute(delete(table))
         await session.execute(delete(epochs))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +218,9 @@ async def signal_factors(
     for signal in ranker.signals:
         row = pointer.get(signal.name)
         if row is None:
-            reason = "not computed yet; run reindex"
+            reason = "not computed yet; run rebuild"
         elif row.options_hash != signal.options_hash():
-            reason = "computed under other options; run reindex"
+            reason = "computed under other options; run rebuild"
         elif row.row_count == 0:
             reason = "no entry earned a value"
         else:

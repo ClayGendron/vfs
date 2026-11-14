@@ -59,7 +59,7 @@ class TestCopy:
         storage = DatabaseStorage(url=_url(tmp_path))
         written = await storage.write(entries=[Entry(path=Path("/src/f.txt"), content="needle body")], parents=True)
         assert written.success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         copied = await storage.copy(operations=[ResolvedPair(src=Path("/src"), dest=Path("/dst"))])
         assert copied.success is True
         entry = storage._host.tables.entry

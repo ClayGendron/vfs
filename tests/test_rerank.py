@@ -86,12 +86,12 @@ class TestPieces:
 
     async def test_the_stage_folds_the_query_like_the_index(self) -> None:
         stats = Statistics(n_docs=10, avg_dl=2.0, df={}, exported=1)
-        row = _row("/a", 0.5, "reindexHeartbeat")
+        row = _row("/a", 0.5, "rebuildHeartbeat")
         [scored] = await BM25Rerank().rerank(
-            "Reindex_Heartbeat", [Candidate(0, Path("/m"), 0, row, 0.5, (0.5,), stats)], limit=5
+            "Rebuild_Heartbeat", [Candidate(0, Path("/m"), 0, row, 0.5, (0.5,), stats)], limit=5
         )
         assert scored.score > 0.0
-        assert set(tokenize("reindexHeartbeat")) >= {"reindex", "heartbeat"}
+        assert set(tokenize("rebuildHeartbeat")) >= {"rebuild", "heartbeat"}
 
     async def test_an_empty_region_scores_zero(self) -> None:
         stats = Statistics(n_docs=10, avg_dl=2.0, df={"lease": 1}, exported=1)

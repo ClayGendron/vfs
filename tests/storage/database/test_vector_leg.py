@@ -74,7 +74,7 @@ async def _indexed(tmp_path: Any, files: dict[str, str] | None = None, **kwargs:
     storage = DatabaseStorage(url=_url(tmp_path), **kwargs)
     entries = [Entry(path=Path(path), content=body) for path, body in (files or FILES).items()]
     assert (await storage.write(entries=entries, parents=True)).success is True
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     return storage
 
 

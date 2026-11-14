@@ -39,7 +39,7 @@ from vfs.storage import (
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
-    SupportsReindex,
+    SupportsRebuild,
 )
 from vfs.storage.backends.database import grep as grep_module
 from vfs.storage.backends.database import rights
@@ -287,7 +287,7 @@ class GrantsContract:
     async def test_grep_never_matches_inside_a_hidden_row_through_the_index(self, storage: GrantsBackend) -> None:
         # The same answer once the index serves the candidates, with and without the scan tier.
         await _world(storage)
-        assert (await _reindexer(storage).reindex()).success is True
+        assert (await _rebuilder(storage).rebuild()).success is True
         for allow_scan in (True, False):
             result = await storage.grep(pattern="lantern", allow_scan=allow_scan, output_mode="files", authority=BOB)
             assert result.success is True, result.errors
@@ -1210,7 +1210,7 @@ class GrantsContract:
         await _world(storage)
         hidden = Entry(path=Path("/hr/secret.md"), content="quarantine lantern")
         assert (await storage.write(entries=[hidden], authority=SYSTEM)).success is True
-        assert (await _reindexer(storage).reindex()).success is True
+        assert (await _rebuilder(storage).rebuild()).success is True
         result = await storage.search(query="quarantine lantern", authority=BOB)
         assert result.success is True
         exported = (result.model_extra or {})["lexical_stats"]
@@ -1224,7 +1224,7 @@ class GrantsContract:
         # Write-then-search is the agent's path: a fresh hidden row is served
         # from the overlay, and must neither rank nor count for bob.
         await _world(storage)
-        assert (await _reindexer(storage).reindex()).success is True
+        assert (await _rebuilder(storage).rebuild()).success is True
         before = await storage.search(query="quarantine lantern", authority=BOB)
         fresh = Entry(path=Path("/hr/fresh.md"), content="quarantine lantern")
         assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
@@ -1244,16 +1244,16 @@ class GrantsContract:
         # The visible document count is an aggregate no row check follows,
         # so a pushdown admitting "/pub-x" or "/pub0" would leak its size.
         await _world(storage)
-        reindexer = _reindexer(storage)
-        assert (await reindexer.reindex()).success is True
+        rebuilder = _rebuilder(storage)
+        assert (await rebuilder.rebuild()).success is True
         before = _n_docs(await storage.search(query="lantern", authority=BOB))
         outside = [Entry(path=Path(p), content="lantern") for p in ("/pub-x/a.md", "/pub0.md")]
         assert (await storage.write(entries=outside, parents=True, authority=SYSTEM)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert _n_docs(await storage.search(query="lantern", authority=BOB)) == before
         inside = Entry(path=Path("/pub/deep0.md"), content="lantern")
         assert (await storage.write(entries=[inside], authority=SYSTEM)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert _n_docs(await storage.search(query="lantern", authority=BOB)) == before + 1
 
     @needs("grant", "search")
@@ -1262,15 +1262,15 @@ class GrantsContract:
         # known counts; if hidden rows counted in the statistics, hidden
         # mentions of the probe would move its score against the ladder.
         await _world(storage)
-        reindexer = _reindexer(storage)
+        rebuilder = _rebuilder(storage)
         assert (await storage.write(entries=_ladder(), parents=True, authority=SYSTEM)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         query = " ".join((PROBE, *(f"zqx{k}vk" for k in LADDER)))
         bob_before = _scores(await storage.search(query=query, limit=20, authority=BOB))
         whole_before = _scores(await storage.search(query=query, limit=20, authority=SYSTEM))
         mentions = [Entry(path=Path(f"/hr/leak/{n}.md"), content=f"about {PROBE}") for n in range(3)]
         assert (await storage.write(entries=mentions, parents=True, authority=SYSTEM)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         bob_after = _scores(await storage.search(query=query, limit=20, authority=BOB))
         whole_after = _scores(await storage.search(query=query, limit=20, authority=SYSTEM))
         assert bob_after == bob_before
@@ -1449,13 +1449,13 @@ def _n_docs(result: Result) -> int:
 
 
 async def _scan_tier_world(storage: GrantsBackend, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The world reindexed, both verbs' scan tier cut at :data:`SCAN_TIER_CUT`, and bob's two dirty files written.
+    """The world rebuilt, both verbs' scan tier cut at :data:`SCAN_TIER_CUT`, and bob's two dirty files written.
 
     The dirty bodies hold a word no indexed file holds, so the index side
     nominates nothing and the scan tier alone answers.
     """
     await _world(storage)
-    assert (await _reindexer(storage).reindex()).success is True
+    assert (await _rebuilder(storage).rebuild()).success is True
     monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", SCAN_TIER_CUT)
     monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", SCAN_TIER_CUT)
     fresh = [Entry(path=Path(path), content="quarantine fresh") for path in SCAN_TIER_FRESH]
@@ -1479,7 +1479,7 @@ async def _scan_tier_answers(storage: GrantsBackend) -> list[tuple[Any, ...]]:
     ]
 
 
-def _reindexer(storage: GrantsBackend) -> SupportsReindex:
-    if not isinstance(storage, SupportsReindex):
-        pytest.skip("backend does not expose reindex")
+def _rebuilder(storage: GrantsBackend) -> SupportsRebuild:
+    if not isinstance(storage, SupportsRebuild):
+        pytest.skip("backend does not expose rebuild")
     return storage

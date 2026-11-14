@@ -221,7 +221,7 @@ async def _match_in_hand(
 
     The deadline is absolute and the budget is cut at worker start, so
     time queued for a thread shortens it. Batches are metered in
-    characters, an ASCII-dominant proxy, as the reindex batchers are.
+    characters, an ASCII-dominant proxy, as the rebuild batchers are.
     A wall passed before a batch, or a batch the matcher could not
     finish, stops matching with one truncation warning.
     """

@@ -1,7 +1,7 @@
-"""The embed step of ``reindex`` — fill ``chunks.embedding`` in short, resumable batches.
+"""The embed step of ``rebuild`` — fill ``chunks.embedding`` in short, resumable batches.
 
 Embedding is one of the indexes vfs builds, so it runs under the same
-``reindex`` call as the chunks, grams and lexical postings — but not as
+``rebuild`` call as the chunks, grams and lexical postings — but not as
 one of their phases. A 10,000-file store is ~10⁵ chunks and, against a
 hosted provider at a low rate-limit tier, tens of minutes of network
 wait: no writer transaction spans that, and the event loop is never
@@ -64,7 +64,7 @@ if TYPE_CHECKING:
     from vfs.storage.backends.database.dialects import DialectProfile
 
 EMBED_CONCURRENCY: Final = 4
-"""Provider requests in flight per reindex; TPM binds long before latency, so more buys only 429s."""
+"""Provider requests in flight per rebuild; TPM binds long before latency, so more buys only 429s."""
 
 EMBED_PAGE_ROWS: Final = 4_096
 """Chunk rows one short read selects — bounds the loop's residency, never the corpus."""
@@ -106,7 +106,7 @@ class EmbedRow(NamedTuple):
 
 @dataclass
 class EmbedReport:
-    """What the step did — the ``embedding`` extra on the reindex result."""
+    """What the step did — the ``embedding`` extra on the rebuild result."""
 
     embedded: int = 0
     cached: int = 0
@@ -205,7 +205,7 @@ async def clear_embeddings(session: AsyncSession, tables: VFSTables) -> Result:
     await session.execute(
         update(tables.meta).where(tables.meta.c.id == 1).values(embedding_model=None, embedding_dimension=None)
     )
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def select_unembedded(
@@ -311,7 +311,7 @@ async def write_vectors(
             for h in hashes
         ]
         await session.execute(insert(table), rows)
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def count_unembedded(session: AsyncSession, tables: VFSTables, key: RefusalKey) -> int:

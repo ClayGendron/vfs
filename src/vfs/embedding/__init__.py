@@ -1,4 +1,4 @@
-"""Embedding providers: the seam ``reindex`` fills ``chunks.embedding`` through.
+"""Embedding providers: the seam ``rebuild`` fills ``chunks.embedding`` through.
 
 ``provider`` holds the protocol and the CPU-provider base; ``hashing``
 the deterministic zero-dependency floor; ``model2vec``, ``openai`` and

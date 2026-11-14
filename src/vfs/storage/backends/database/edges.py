@@ -1,5 +1,5 @@
 """Edge-row maintenance for ``DatabaseStorage`` — the fs mirror and
-reindex re-convergence.
+rebuild re-convergence.
 
 One reserved-type ``"fs"`` edge row per non-root entry, ``(parent →
 entry)``, minted and maintained inside the same transactions that mutate
@@ -21,7 +21,7 @@ revive. Authored edges (every non-``fs`` row) die in exactly two ways:
 so a rival delete serializes behind the insert and no verb lands an
 edge on a tombstoned entry.
 
-The reindex verb re-converges the fs rows to ``parent_id`` — the
+The rebuild verb re-converges the fs rows to ``parent_id`` — the
 segment-postings discipline: :func:`collect_edge_drift` diffs from a
 plain read, :func:`repair_edge_drift` applies each entry's delta only
 while the row still holds the parent the delta was computed from (the
@@ -239,7 +239,7 @@ async def rmedge_rows(
 
 
 # ---------------------------------------------------------------------------
-# Reindex re-convergence — collect drift, repair it under parent guards
+# Rebuild re-convergence — collect drift, repair it under parent guards
 # ---------------------------------------------------------------------------
 
 
@@ -255,7 +255,7 @@ class FsDelta:
 
 @dataclass
 class EdgeRebuildState:
-    """Carry-over between the reindex edge phases' separate transactions."""
+    """Carry-over between the rebuild edge phases' separate transactions."""
 
     deltas: list[FsDelta] = field(default_factory=list)
     dangling: list[int] = field(default_factory=list)
@@ -295,7 +295,7 @@ async def collect_edge_drift(session: AsyncSession, tables: VFSTables, state: Ed
         missing = parent_id is not None and not any(source_id == parent_id for _, source_id in rows)
         if wrong or missing:
             state.deltas.append(FsDelta(entry_id, parent_id, wrong, missing))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def repair_edge_drift(
@@ -328,7 +328,7 @@ async def repair_edge_drift(
     warnings = [_drift_warning(delta) for delta in confirmed]
     if state.dangling:
         warnings.append(_dangling_warning(len(state.dangling)))
-    return Result(ops=("reindex",), errors=warnings)
+    return Result(ops=("rebuild",), errors=warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +535,7 @@ def _observe_edge(edge: Edge, *, status: Literal["created", "updated", "deleted"
 
 def _drift_warning(delta: FsDelta) -> ResultError:
     detail = (
-        f"reindex repaired the fs mirror for entry {delta.entry_id}: "
+        f"rebuild repaired the fs mirror for entry {delta.entry_id}: "
         f"{len(delta.wrong_row_ids)} wrong row(s), {'1' if delta.missing else '0'} missing"
     )
     return classified(
@@ -547,7 +547,7 @@ def _drift_warning(delta: FsDelta) -> ResultError:
 
 
 def _dangling_warning(count: int) -> ResultError:
-    detail = f"reindex reclaimed {count} edge row(s) naming an endpoint with no entry row"
+    detail = f"rebuild reclaimed {count} edge row(s) naming an endpoint with no entry row"
     return classified(
         ErrorKind.internal,
         detail=detail,

@@ -283,7 +283,7 @@ class EngineHost:
 
         ``False`` with no embedder or no stored identity: nothing to
         compare. A stale space is served lexical-only and migrated by
-        the next ``reindex``.
+        the next ``rebuild``.
         """
         if self.embedder is None or self.embedding_identity is None:
             return False
@@ -945,7 +945,7 @@ class EngineHost:
         column refuses outright: the column physically cannot hold the
         configured vectors, and the fix is DDL, out of every verb's
         reach. A stored *model* mismatch is not refused here — the
-        vector leg declines it per call and ``reindex`` migrates.
+        vector leg declines it per call and ``rebuild`` migrates.
         """
         if row.schema_format_version != SCHEMA_FORMAT_VERSION:
             return classified(

@@ -29,7 +29,7 @@ async def partial_store(hidden: int) -> InMemoryStorage:
     assert (await storage.write(entries=[indexed], parents=True, authority=SYSTEM)).success is True
     assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
     assert (await storage.grant(path=Path("/pub"), principal="bob", level="read", authority=SYSTEM)).success is True
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     dirty = [Entry(path=Path(f"/pub/fresh{n}.md"), content="lantern fresh\n") for n in range(2)]
     dirty += [Entry(path=Path(f"/hr/h{n}.md"), content="lantern hidden\n") for n in range(hidden)]
     assert (await storage.write(entries=dirty, parents=True, authority=SYSTEM)).success is True

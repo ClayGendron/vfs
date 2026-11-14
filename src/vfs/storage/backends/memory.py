@@ -35,7 +35,7 @@ class InMemoryStorage(DatabaseStorage):
     Construction-only subclass: every verb, capability, and trait comes
     from ``DatabaseStorage``. Each instance owns a fresh database — two
     instances never share state. The default embedder is the hashing
-    provider — no key, no download — so ``reindex`` fills vectors here
+    provider — no key, no download — so ``rebuild`` fills vectors here
     exactly as it does on a server engine.
     """
 

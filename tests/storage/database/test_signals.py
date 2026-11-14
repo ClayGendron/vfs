@@ -20,7 +20,7 @@ from vfs.models import Edge, Entry
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database import signals as phase
 from vfs.storage.backends.database.signals import collect_graph, signal_factors, signal_values
 from vfs.storage.ranking import Log1p, PageRank, PathShape, Ranker, Signal
@@ -96,10 +96,10 @@ def _signal_records(result) -> list[str]:
 
 
 class TestPhase:
-    async def test_reindex_stores_the_prior_sparse_and_points_at_its_generation(self, tmp_path) -> None:
+    async def test_rebuild_stores_the_prior_sparse_and_points_at_its_generation(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         stored = await _stored(storage)
         assert stored[("centrality", "/deep/b.md")] == 1.0
         # a and c earn a smoothed share; every stored value is above zero.
@@ -109,13 +109,13 @@ class TestPhase:
         assert pointers["centrality"][1:] == (CENTRALITY.options_hash(), len(stored))
         await storage.close()
 
-    async def test_a_second_reindex_replaces_the_generation_whole(self, tmp_path) -> None:
+    async def test_a_second_rebuild_replaces_the_generation_whole(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         first = (await _pointers(storage))["centrality"][0]
         assert (await storage.rmedge(edges=EDGES[:1])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         second = (await _pointers(storage))["centrality"][0]
         assert second != first
         table = storage._host.tables.signals
@@ -127,23 +127,23 @@ class TestPhase:
     async def test_undeclared_signals_are_swept(self, tmp_path) -> None:
         storage = _mount(tmp_path, Ranker(signals=(CENTRALITY, Signal("shape", measure=PathShape()))))
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert set(await _pointers(storage)) == {"centrality", "shape"}
         await storage.close()
         narrowed = _mount(tmp_path, Ranker(signals=(CENTRALITY,)))
-        assert (await narrowed.reindex()).success is True
+        assert (await narrowed.rebuild()).success is True
         assert set(await _pointers(narrowed)) == {"centrality"}
         assert {signal for signal, _ in await _stored(narrowed)} == {"centrality"}
         await narrowed.close()
         plain = _mount(tmp_path, Ranker())
-        assert (await plain.reindex()).success is True
+        assert (await plain.rebuild()).success is True
         assert await _pointers(plain) == {} and await _count(plain, plain._host.tables.signals) == 0
         await plain.close()
 
     async def test_a_zero_edge_mount_writes_no_rows_but_a_pointer(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage, edges=False)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _stored(storage) == {}
         assert (await _pointers(storage))["centrality"][2] == 0
         await storage.close()
@@ -187,14 +187,14 @@ class TestPhase:
         assert signal_values(graph, Signal("shape", measure=PathShape())) == {}
         await storage.close()
 
-    async def test_a_failed_publish_fails_the_reindex(self, tmp_path, monkeypatch) -> None:
+    async def test_a_failed_publish_fails_the_rebuild(self, tmp_path, monkeypatch) -> None:
         async def broken(session, tables, signal, generation, values) -> Result:
-            return Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="publish broke")])
+            return Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="publish broke")])
 
-        monkeypatch.setattr(backend_module, "publish_signal", broken)
+        monkeypatch.setattr(maintenance_module, "publish_signal", broken)
         storage = _mount(tmp_path)
         await _seed(storage)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is False and result.errors[0].message == "publish broke"
         assert await _pointers(storage) == {}
         await storage.close()
@@ -204,7 +204,7 @@ class TestPhase:
         await _seed(storage)
         lost = asyncio.Event()
         lost.set()
-        outcome = await storage._signal_phase(storage._host.tables, lost)
+        outcome = await maintenance_module._signal_phase(storage._maintenance(), storage._host.tables, lost)
         assert outcome is not None and outcome.success is False
         assert outcome.errors[0].kind is ErrorKind.conflict
         assert await _pointers(storage) == {}
@@ -224,7 +224,8 @@ class TestProbe:
         assert _order(before) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         assert _signal_records(before) == ["centrality"]
         assert _legs(before)["signals"]["centrality"]["applied"] is False
-        assert (await storage.reindex()).success is True
+        assert _legs(before)["signals"]["centrality"]["reason"] == "not computed yet; run rebuild"
+        assert (await storage.rebuild()).success is True
         after = await storage.search(query="needle")
         assert _order(after)[0] == "/deep/b.md" and after.observations[0].score == 1.0
         assert _signal_records(after) == []
@@ -237,20 +238,20 @@ class TestProbe:
     async def test_a_signal_computed_under_other_options_is_dropped_with_a_record(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage.close()
         changed = _mount(tmp_path, Ranker(signals=(Signal("centrality", measure=PageRank()),)))
         result = await changed.search(query="needle")
         records = [error for error in result.errors if error.data and error.data.get("leg") == "signal"]
         assert len(records) == 1 and records[0].severity is Severity.warning
-        assert records[0].kind is ErrorKind.unavailable and "other options" in records[0].message
+        assert records[0].kind is ErrorKind.unavailable and "other options; run rebuild" in records[0].message
         assert _order(result) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         await changed.close()
 
     async def test_a_signal_with_no_rows_is_dropped_with_a_record(self, tmp_path) -> None:
         storage = _mount(tmp_path)
         await _seed(storage, edges=False)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.search(query="needle")
         assert _signal_records(result) == ["centrality"]
         assert "no entry earned" in _legs(result)["signals"]["centrality"]["reason"]
@@ -266,7 +267,7 @@ class TestProbe:
             Edge(source=Path("/deep/c.md"), target=Path("/a.md"), edge_type="ref"),
         ]
         assert (await storage.mkedge(edges=ring)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.search(query="needle")
         assert _order(result) == ["/a.md", "/deep/b.md", "/deep/c.md"]
         assert [row.score for row in result.observations] == [1.0, 1.0, 1.0]
@@ -275,7 +276,7 @@ class TestProbe:
     async def test_the_probe_is_chunked_and_applies_the_transform(self, tmp_path) -> None:
         storage = _mount(tmp_path, Ranker(signals=(Signal("centrality", transform=Log1p(), weight=1.0),)))
         await _seed(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         async with storage._host.session_factory() as session:
             ids = list((await session.execute(select(tables.entry.c.entry_id))).scalars())
@@ -304,10 +305,10 @@ class TestEngineLegs:
     async def test_the_prior_is_stored_and_reorders_on_every_engine(self, env_var: str) -> None:
         async with _server_storage(env_var) as storage:
             await _seed(storage)
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             stored = await _stored(storage)
             assert stored[("centrality", "/deep/b.md")] == 1.0
             result = await storage.search(query="needle")
             assert _order(result)[0] == "/deep/b.md" and _signal_records(result) == []
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             assert len(await _pointers(storage)) == 1

@@ -1,4 +1,4 @@
-"""Provider doubles for the embedding seam and the reindex embed step.
+"""Provider doubles for the embedding seam and the rebuild embed step.
 
 ``ScriptedProvider`` is a protocol-complete fake whose behaviour a test
 dials: caps, a per-request delay, a failure after N requests, an

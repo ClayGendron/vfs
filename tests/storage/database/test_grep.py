@@ -2,7 +2,7 @@
 
 Direct backend tests — capability declaration is a router concern, so
 these rows call ``storage.grep`` straight through the seam. The scan
-side serves everything until ``reindex()`` runs, which is itself the
+side serves everything until ``rebuild()`` runs, which is itself the
 overlay contract: the same call must answer identically before and
 after an index build, so several rows run their assertions in both
 worlds.
@@ -200,23 +200,23 @@ class TestRefusalGate:
         assert [m.content for m in matches] == ["keep"]
         await storage.close()
 
-    async def test_allow_scan_after_reindex_still_scans_everything(self, tmp_path) -> None:
+    async def test_allow_scan_after_rebuild_still_scans_everything(self, tmp_path) -> None:
         # The opt-out runs the whole scope on the scan tier — encoded
         # entries included — so it can never lose an indexed row.
         storage = await _fresh(tmp_path, {"/a.txt": "ab here"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="ab", allow_scan=True)
         assert _paths(result) == ["/a.txt"]
         await storage.close()
 
 
 class TestOverlayPartition:
-    async def test_reindexed_content_serves_from_the_index_side(self, tmp_path) -> None:
-        # After reindex the entry is encoded, which the scan side's
+    async def test_rebuilt_content_serves_from_the_index_side(self, tmp_path) -> None:
+        # After rebuild the entry is encoded, which the scan side's
         # NOT-encoded partition excludes — the row can only have come
         # through the posting ladder.
         storage = await _fresh(tmp_path, {"/a.py": "needle body", "/b.py": "other body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert _paths(result) == ["/a.py"]
@@ -224,34 +224,34 @@ class TestOverlayPartition:
 
     async def test_dirty_and_encoded_entries_union_without_double_serving(self, tmp_path) -> None:
         storage = await _fresh(tmp_path, {"/clean.txt": "needle one", "/dirty.txt": "needle two"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/dirty.txt"), content="needle three")])).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/clean.txt", "/dirty.txt"]
         await storage.close()
 
-    async def test_invert_match_scans_everything_after_reindex(self, tmp_path) -> None:
+    async def test_invert_match_scans_everything_after_rebuild(self, tmp_path) -> None:
         # invert is scan-shaped by construction: encoded rows must still
         # be scanned, so dropping invert from scan_all loses this row.
         storage = await _fresh(tmp_path, {"/with.txt": "needle here", "/without.txt": "clean body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle", invert_match=True)
         assert result.success is True
         assert _paths(result) == ["/without.txt"]
         await storage.close()
 
-    async def test_fixed_strings_serves_encoded_rows_after_reindex(self, tmp_path) -> None:
+    async def test_fixed_strings_serves_encoded_rows_after_rebuild(self, tmp_path) -> None:
         # The literal plan must nominate encoded rows too — the regex
         # metachar is literal text, and the index side owns the row now.
         storage = await _fresh(tmp_path, {"/dot.txt": "call a.b here", "/x.txt": "call axb here"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="a.b", fixed_strings=True)
         assert _paths(result) == ["/dot.txt"]
         await storage.close()
 
-    async def test_word_regexp_serves_encoded_rows_after_reindex(self, tmp_path) -> None:
+    async def test_word_regexp_serves_encoded_rows_after_rebuild(self, tmp_path) -> None:
         storage = await _fresh(tmp_path, {"/word.txt": "the needle word", "/sub.txt": "needles inside"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle", word_regexp=True)
         assert _paths(result) == ["/word.txt"]
         await storage.close()
@@ -261,7 +261,7 @@ class TestOverlayPartition:
         # reset the flags: the index side drops the entry at the encoded
         # gate and the scan side sees only the fresh body.
         storage = await _fresh(tmp_path, {"/a.txt": "old needle"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="fresh body")])).success is True
         gone = await storage.grep(pattern="needle")
         assert gone.success is True
@@ -272,14 +272,14 @@ class TestOverlayPartition:
 
     async def test_alternation_plans_grams_per_branch(self, tmp_path) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "alpha body", "/b.txt": "beta body", "/c.txt": "gamma body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="alpha|beta")
         assert _paths(result) == ["/a.txt", "/b.txt"]
         await storage.close()
 
     async def test_an_absent_gram_short_circuits_to_empty(self, tmp_path) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "steady body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="zzzqqq")
         assert result.success is True
         assert result.observations == []
@@ -289,7 +289,7 @@ class TestOverlayPartition:
         # Both grams are indexed but no chunk holds both: the ladder's
         # intersection empties mid-way and short-circuits.
         storage = await _fresh(tmp_path, {"/a.txt": "abc alone", "/b.txt": "xyz alone"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="abc.*xyz")
         assert result.success is True
         assert result.observations == []
@@ -299,7 +299,7 @@ class TestOverlayPartition:
         # Mid-rebuild — next epoch's posting rows committed, publish not
         # yet run — grep answers exactly as before the build started.
         storage = await _fresh(tmp_path, {"/a.txt": "alphaone body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="betatwo body")])).success is True
         posting = storage._host.tables.posting_list
         mid_window: list[tuple[list[str], list[str], int]] = []
@@ -311,8 +311,8 @@ class TestOverlayPartition:
                 staged = await conn.execute(select(func.count()).select_from(posting).where(posting.c.epoch == 2))
             mid_window.append((_paths(fresh), _paths(stale), staged.scalar_one()))
 
-        with installed("reindex:before-publish", observe):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", observe):
+            assert (await storage.rebuild()).success is True
         fresh_paths, stale_paths, staged_rows = mid_window[0]
         assert fresh_paths == ["/a.txt"]  # the old world: served by the scan overlay
         assert stale_paths == []
@@ -336,7 +336,7 @@ class TestOverlayPartition:
     )
     async def test_a_corrupt_posting_blob_classifies_internal(self, tmp_path, blob: bytes, message: str) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         posting = storage._host.tables.posting_list
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(posting).values(postings=blob))
@@ -357,7 +357,7 @@ class TestStructuralGates:
             assert _paths(dropped) == ["/docs/b.txt"]
             anchored = await storage.grep(pattern="needle", globs=("/docs/**",))
             assert _paths(anchored) == ["/docs/b.txt"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_ext_filters_read_the_path_derived_extension(self, tmp_path) -> None:
@@ -367,7 +367,7 @@ class TestStructuralGates:
             assert _paths(kept) == ["/a.py"]
             dropped = await storage.grep(pattern="needle", ext_not=(".PY",))
             assert _paths(dropped) == ["/b.txt"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_contradictory_glob_and_ext_is_clean_empty(self, tmp_path) -> None:
@@ -390,13 +390,13 @@ class TestStructuralGates:
             assert _paths(lifted) == ["/.vfs/state/s.txt"]
             wildcard = await storage.grep(pattern="needle", globs=("/.v*/**",))
             assert wildcard.observations == []
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_the_structural_gate_judges_off_the_loop(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: one hop per candidate row, or the gates built again for the scan side."""
         storage = await _fresh(tmp_path, {"/indexed.txt": "needle one"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/overlay.txt"), content="needle two")])).success
         spy = _SetSpy(monkeypatch)
         result = await storage.grep(pattern="needle", globs=("*.txt",))
@@ -408,7 +408,7 @@ class TestStructuralGates:
     async def test_an_unfinished_gate_judgement_truncates_once(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Guards: an unfinished judgement recorded once per hop, or not at all."""
         storage = await _fresh(tmp_path, {"/indexed.txt": "needle one"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/overlay.txt"), content="needle two")])).success
         _SetSpy(monkeypatch, unfinished=True)
         result = await storage.grep(pattern="needle", globs=("*.txt",))
@@ -450,7 +450,7 @@ class TestScopeChannel:
             )
             routed = await fs.grep("needle", paths=("/.vfs",), globs=("*.txt",))
             assert (_paths(routed), routed.errors) == (["/.vfs/state/s.txt"], [])
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await fs.close()
 
     @pytest.mark.parametrize(
@@ -462,7 +462,7 @@ class TestScopeChannel:
         """Guards: grep's scan side prefiltering with the root fan under the limit
         or with composed patterns past it, or choosing its plan apart from the
         one answer ``AdmittedScope.composed`` gives every verb."""
-        # Never reindexed, so the scan side serves the call and builds the prefilter.
+        # Never rebuilt, so the scan side serves the call and builds the prefilter.
         storage = await _fresh(tmp_path, {"/d00/x.e00": "needle", "/d00/x.zz": "needle", "/e/x.e00": "needle"})
         answers: list[int | None] = []
         real = AdmittedScope.composed
@@ -498,7 +498,7 @@ class TestScopeChannel:
             monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
         files = {f"/d{i}/f{j}.txt": "needle" for i in range(6) for j in range(4)}
         storage = await _fresh(tmp_path, files)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         nominated: list[int] = []
         real = grep_module.allow_list_ids
 
@@ -521,7 +521,7 @@ class TestScopeChannel:
         for _ in range(2):
             result = await storage.grep(pattern="needle", scope=ScopeChannel(roots=(Path("/a"),), arms=()))
             assert result.success is True and _paths(result) == []
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_mixing_the_trash_view_across_channels_refuses(self, tmp_path) -> None:
@@ -549,7 +549,7 @@ class TestScopedNomination:
         files = {f"/bulk/f{i:02}.txt": "needle body" for i in range(10)}
         files |= {f"/scoped/g{i}.txt": "needle body" for i in range(3)}
         storage = await _fresh(tmp_path, files)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle", globs=("scoped/**",))
         assert _paths(result) == [f"/scoped/g{i}.txt" for i in range(3)]
         assert result.errors == []
@@ -562,12 +562,12 @@ class TestScopedNomination:
         for _ in range(2):
             result = await storage.grep(pattern="needle", globs=("*.txt",))
             assert _paths(result) == ["/a/one.txt"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_a_dead_scope_short_circuits_the_index_side(self, tmp_path) -> None:
         storage = await _fresh(tmp_path, {"/src/a.txt": "needle"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle", globs=("nosuchdir/**",))
         assert result.success is True
         assert result.observations == []
@@ -580,7 +580,7 @@ class TestScopedNomination:
         for _ in range(2):
             result = await storage.grep(pattern="needle", globs=("src/*.py",))
             assert _paths(result) == ["/src/.py", "/src/real.py"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_basename_literal_scope_pins_the_name_column(self, tmp_path) -> None:
@@ -588,7 +588,7 @@ class TestScopedNomination:
         for _ in range(2):
             result = await storage.grep(pattern="needle", globs=("src/**/Makefile",))
             assert _paths(result) == ["/src/Makefile"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_stem_prefix_scope_rides_a_sargable_like(self, tmp_path) -> None:
@@ -598,14 +598,14 @@ class TestScopedNomination:
         for _ in range(2):
             result = await storage.grep(pattern="needle", globs=("t/test_*.py",))
             assert _paths(result) == ["/t/test_a.py"]
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
         await storage.close()
 
     async def test_a_rename_is_visible_to_the_next_scoped_grep(self, tmp_path) -> None:
         # Segment postings are live truth while gram postings are
-        # epoch-scoped: a rename lands in scope with no reindex between.
+        # epoch-scoped: a rename lands in scope with no rebuild between.
         storage = await _fresh(tmp_path, {"/old/a.txt": "needle"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.move(operations=[ResolvedPair(src=Path("/old"), dest=Path("/new"))])).success is True
         found = await storage.grep(pattern="needle", globs=("new/**",))
         assert _paths(found) == ["/new/a.txt"]
@@ -669,7 +669,7 @@ class TestOutputModes:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         expected = {"path", "kind", "version", "content", "matches"}
         scanned = await storage.grep(pattern="needle", columns=frozenset({"content"}))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         indexed = await storage.grep(pattern="needle", columns=frozenset({"content"}))
         for row in (scanned.observations[0], indexed.observations[0]):
             assert row.populated == expected
@@ -695,7 +695,7 @@ class TestBudgets:
     async def test_candidate_budget_also_caps_the_index_side(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 1)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle")
         assert result.success is True
         assert len(result.observations) == 1
@@ -722,7 +722,7 @@ class TestBudgets:
         # rarest gram alone — a superset the verifier then narrows.
         monkeypatch.setattr(grep_module, "POSTING_BYTE_BUDGET", 1)
         storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         assert result.errors == []
@@ -733,7 +733,7 @@ class TestBudgets:
         # budget must not silently drop a later branch's only blob.
         monkeypatch.setattr(grep_module, "POSTING_BYTE_BUDGET", 1)
         storage = await _fresh(tmp_path, {"/a.txt": "alpha_first body", "/b.txt": "omega_second body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="alpha_first|omega_second")
         assert _paths(result) == ["/a.txt", "/b.txt"]
         assert result.errors == []
@@ -748,7 +748,7 @@ class TestBudgets:
             Entry(path=Path("/b.txt"), content="omega_second"),
         ]
         assert (await storage.write(entries=entries, parents=True)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="alpha_first|omega_second")
         assert result.success is True
         assert result.observations == []
@@ -762,7 +762,7 @@ class TestBudgets:
         # the index side took the whole pool.
         monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.txt": "needle two", "/c.txt": "needle three"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle four")])).success is True
         result = await storage.grep(pattern="needle")
         assert result.success is True
@@ -812,7 +812,7 @@ class TestBudgets:
         # room) and the scan overflow — yet the seam emits one record.
         monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 2)
         storage = await _fresh(tmp_path, {"/a.txt": "needle one", "/b.py": "needle two", "/c.txt": "needle three"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         fresh = [Entry(path=Path("/d.txt"), content="needle four"), Entry(path=Path("/e.txt"), content="needle five")]
         assert (await storage.write(entries=fresh)).success is True
         result = await storage.grep(pattern="needle", ext=("txt",))
@@ -876,7 +876,7 @@ class TestEpochLadder:
         # redrive re-reads everything from current state and serves correctly.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.current_epoch
         calls = {"n": 0}
@@ -901,7 +901,7 @@ class TestEpochLadder:
         # Bounded retries, then loud: the exhausted redrive leaves as a
         # retryable conflict, never a silent empty success.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.current_epoch
         calls = {"n": 0}
@@ -937,7 +937,7 @@ class TestEpochLadder:
 
 
 class TestSnapshotState:
-    async def test_grep_before_any_reindex_serves_from_the_scan_side(self, tmp_path) -> None:
+    async def test_grep_before_any_rebuild_serves_from_the_scan_side(self, tmp_path) -> None:
         # No published epoch: the index side is empty by construction
         # and the NOT-encoded partition owns the whole store.
         storage = await _fresh(tmp_path, {"/a.txt": "needle"})
@@ -962,7 +962,7 @@ class TestSnapshotState:
         # The index stream is folded; the verifier is not. A sensitive
         # search for the exact case must come back through the ladder.
         storage = await _fresh(tmp_path, {"/a.txt": "Needle body", "/b.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="Needle")
         assert _paths(result) == ["/a.txt"]
         await storage.close()
@@ -1063,7 +1063,7 @@ class TestOverlayGate:
 
     async def test_empty_overlay_skips_the_scan_statement(self, tmp_path: Any, scan_spy: list[bool]) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt"]
         assert scan_spy == []
@@ -1071,7 +1071,7 @@ class TestOverlayGate:
 
     async def test_unencoded_rows_run_the_scan(self, tmp_path: Any, scan_spy: list[bool]) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/a.txt", "/fresh.txt"]
@@ -1080,7 +1080,7 @@ class TestOverlayGate:
 
     async def test_trashed_rows_keep_the_gate_honest(self, tmp_path: Any, scan_spy: list[bool]) -> None:
         storage = await _fresh(tmp_path, {"/keep.txt": "needle keep", "/gone.txt": "needle gone"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
         result = await storage.grep(pattern="needle")
         assert _paths(result) == ["/keep.txt"]
@@ -1089,7 +1089,7 @@ class TestOverlayGate:
 
     async def test_scan_callers_ignore_the_gate(self, tmp_path: Any, scan_spy: list[bool]) -> None:
         storage = await _fresh(tmp_path, {"/a.txt": "ab here"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="ab", allow_scan=True)
         assert _paths(result) == ["/a.txt"]
         assert scan_spy == [True]
@@ -1115,7 +1115,7 @@ class TestOverlayGate:
         # A rival content write demotes an indexed row mid-call: either
         # the fetch serves its snapshot or the late verdict forces the scan.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body", "/b.txt": "other body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
 
         async def rival() -> None:
             entries = [Entry(path=Path("/a.txt"), content="needle changed")]
@@ -1133,7 +1133,7 @@ class TestOverlayGate:
         # The unpinned-engine race shape: overlay rows the preamble missed
         # are seen by the authoritative read, and the mid-call scan serves them.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         real = grep_module.pointer_with_overlay
         calls = {"n": 0}
@@ -1170,7 +1170,7 @@ class TestOverlayGate:
         # Movement between the two combined reads is a mixed-epoch call:
         # redrive once, then serve whole from current state.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         real = grep_module.pointer_with_overlay
         calls = {"n": 0}
 
@@ -1194,7 +1194,7 @@ class TestOverlayGate:
         # Two combined reads replace one combined read plus one pointer
         # recheck: the quiet-store skip path never touches current_epoch.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         counts = {"combined": 0, "pointer": 0}
         real_combined = grep_module.pointer_with_overlay
         real_pointer = grep_module.current_epoch
@@ -1220,7 +1220,7 @@ class TestOverlayGate:
         # A non-empty advisory verdict routes to the scan with no second
         # combined read; the post-scan recheck stays the pointer read.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="needle late")])).success is True
         counts = {"combined": 0, "pointer": 0}
         real_combined = grep_module.pointer_with_overlay
@@ -1267,7 +1267,7 @@ class TestOverlayGate:
         # allow_scan widens the refusal gate, not the plan: an indexable
         # pattern rides the ladder and the empty-overlay skip still holds.
         storage = await _fresh(tmp_path, {"/a.txt": "needle body"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         result = await storage.grep(pattern="needle", allow_scan=True)
         assert _paths(result) == ["/a.txt"]
         assert scan_spy == []
@@ -1305,7 +1305,7 @@ class TestBytesContentPath:
         storage = await _fresh(tmp_path, {"/u.txt": body, "/miss.txt": "nothing\n"})
         for world in ("overlay", "encoded"):
             if world == "encoded":
-                assert (await storage.reindex()).success is True
+                assert (await storage.rebuild()).success is True
             lines = await storage.grep(pattern="needle", columns=frozenset({"content"}))
             assert _paths(lines) == ["/u.txt"]
             assert lines.observations[0].content == body
@@ -1329,7 +1329,7 @@ class TestMixedChannelSoundness:
         expected = ["/docs/readme.md", "/src/a.py"]
         scanned = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
         assert _paths(scanned) == expected
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         indexed = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
         assert _paths(indexed) == expected
         await storage.close()
@@ -1418,7 +1418,7 @@ class TestLadderPricing:
         files = {"/one/only.txt": "needle body"}
         files |= {f"/bulk/f{i}.txt": "needle filler" for i in range(30)}
         storage = await _fresh(tmp_path, files)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         calls: list[Any] = []
         real = grep_module._posting_blobs
 
@@ -1440,7 +1440,7 @@ class TestLadderPricing:
         files = {"/one/only.txt": "needle body"}
         files |= {f"/bulk/f{i}.txt": "needle filler" for i in range(30)}
         storage = await _fresh(tmp_path, files)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         calls: list[Any] = []
         real = grep_module._posting_blobs
 
@@ -1511,7 +1511,7 @@ class TestPushdownBindAccounting:
         # under a tightened budget every executed statement stays inside.
         files = {f"/d/f{i}.x{i % 32:02d}": "needle body" for i in range(64)}
         storage = await _fresh(tmp_path, files)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         host = storage._host
         captured: list[int] = []
         async with host.session_factory() as session:
@@ -1588,7 +1588,7 @@ class TestPushdownBindAccounting:
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (
             await storage.write(entries=[Entry(path=Path("/f00/r.md"), content="lantern")], authority=SYSTEM)
         ).success
@@ -1652,7 +1652,7 @@ class TestPushdownBindAccounting:
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         fresh = Entry(path=Path("/f000/r.e0000"), content="lantern")
         assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
         monkeypatch.setattr(reads_module, "COMPOSED_PREFILTER_LIMIT", 0)
@@ -1684,7 +1684,7 @@ class TestPushdownBindAccounting:
         for folder in folders:
             granted = await storage.grant(path=Path(folder), principal="bob", level="read", authority=SYSTEM)
             assert granted.success is True, granted.errors
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         fresh = Entry(path=Path("/f0000/r.md"), content="lantern")
         assert (await storage.write(entries=[fresh], authority=SYSTEM)).success is True
         statements = _scan_statements(monkeypatch)
@@ -1715,7 +1715,7 @@ class TestChannelStatementGrowth:
         # 499 plain globs killed sqlite's expression tree before the fan
         # bound; the measured boundary and far past it must both serve.
         storage = await _fresh(tmp_path, {"/src/keep.py": "needle body", "/docs/skip.md": "needle other"})
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         for width in (499, 2000):
             globs = (*(f"gen{i}_*.py" for i in range(width)), "*.py")
             result = await storage.grep(pattern="needle", globs=globs)

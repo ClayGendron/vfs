@@ -44,8 +44,8 @@ from vfs.paths import Path
 from vfs.pattern_matching import composed_pattern
 from vfs.results import ErrorKind, Severity
 from vfs.storage.backends.database import DatabaseStorage
-from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import engine as engine_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database.dialects import SQLITE
 from vfs.storage.backends.database.engine import STATISTICS_NAME
 from vfs.storage.backends.database.rights import Resolution, RightsCache, resolve_authority, visibility_clauses
@@ -93,7 +93,7 @@ def _entries(roots: int, prefix: str = "/d") -> list[Entry]:
 
 
 def _text_entries(roots: int) -> list[Entry]:
-    """The crossing store with text bodies, so reindex fills the chunk and gram tables."""
+    """The crossing store with text bodies, so rebuild fills the chunk and gram tables."""
     return [
         Entry(path=Path(f"/t{root:05d}/f{index:02d}.md"), content=f"alpha beta gamma {root} delta {index}")
         for root in range(roots)
@@ -119,13 +119,13 @@ def large_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
 
 @pytest.fixture(scope="module")
 def chunk_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
-    """200 long text files of about ten chunks each, written once per module, reindexed, statistics settled.
+    """200 long text files of about ten chunks each, written once per module, rebuilt, statistics settled.
 
     Ten chunks per entry, the reference ratio, is past the four to five
     at which SQLite's planner puts a filter on the chunk page's join. The
     chunk pass commits in slices and the statistics step analyses after
     the first, so the statistics are emptied and taken again over the
-    whole store once the reindex is done.
+    whole store once the rebuild is done.
     """
     target = tmp_path_factory.mktemp("chunks") / "vfs.sqlite"
     url = f"sqlite+aiosqlite:///{target}"
@@ -133,7 +133,7 @@ def chunk_store(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
     async def build() -> None:
         storage = DatabaseStorage(url=url)
         assert (await storage.write(entries=chunk_entries(), parents=True)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage._host.settle_statistics()
         await storage.close()
         _empty_statistics(url)
@@ -654,9 +654,9 @@ class TestPlannerStatistics:
         await storage.close()
 
     @pytest.mark.slow
-    async def test_a_pass_failure_during_reindex_skips_the_internal_commits(self, tmp_path, monkeypatch) -> None:
-        """Guards: a held pass failure swallowed by an internal commit, or riding on reindex's own result."""
-        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.02)
+    async def test_a_pass_failure_during_rebuild_skips_the_internal_commits(self, tmp_path, monkeypatch) -> None:
+        """Guards: a held pass failure swallowed by an internal commit, or riding on rebuild's own result."""
+        monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.02)
         storage = DatabaseStorage(url=_url(tmp_path))
         engine = storage._host.engine
         assert (await storage.write(entries=_text_entries(CROSSING_ROOTS), parents=True)).success is True
@@ -666,20 +666,20 @@ class TestPlannerStatistics:
 
         async def spied(op: str, fn: Any) -> Any:
             result = await original(op, fn)
-            if op == "reindex":
+            if op == "rebuild":
                 internal.append(result)
             return result
 
         monkeypatch.setattr(storage, "_execute_maintenance", spied)
         failing = _fail_analyze(engine, ordinal=1)
-        reindexed = await storage.reindex()
+        rebuilt = await storage.rebuild()
         await storage._host.settle_statistics()
         failing["armed"] = False
-        assert reindexed.success is True
+        assert rebuilt.success is True
         assert failing["seen"] >= 1
         assert len(internal) >= 3
         assert [error for result in internal for error in result.errors] == []
-        assert _statistics_errors(reindexed) == []
+        assert _statistics_errors(rebuilt) == []
         next_write = await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])
         assert next_write.success is True and len(_statistics_errors(next_write)) == 1
         await storage._host.settle_statistics()
@@ -949,11 +949,11 @@ class TestPlannerStatistics:
         await storage.close()
 
     @pytest.mark.slow
-    async def test_reindex_leaves_every_filled_table_analyzed(self, tmp_path) -> None:
-        """Guards: a reindex phase whose commit detects nothing, leaving the tables it filled without statistics."""
+    async def test_rebuild_leaves_every_filled_table_analyzed(self, tmp_path) -> None:
+        """Guards: a rebuild phase whose commit detects nothing, leaving the tables it filled without statistics."""
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=_text_entries(CROSSING_ROOTS), parents=True)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage._host.settle_statistics()
         unanalyzed: list[str] = []
         for table in storage._host.tables.metadata.tables.values():
@@ -971,7 +971,7 @@ class TestPlannerStatistics:
     async def test_the_overlay_fetch_keeps_its_seek_under_statistics(self, tmp_path, large_store) -> None:
         """Guards: the planner walking the path index for the rows awaiting the index once statistics exist."""
         storage = DatabaseStorage(url=_copied(large_store, tmp_path))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage._host.settle_statistics()
         late = Entry(path=Path("/d00000/a/late.txt"), content="alpha beta gamma")
         assert (await storage.write(entries=[late])).success is True
@@ -996,7 +996,7 @@ class TestPlannerStatistics:
         storage = DatabaseStorage(url=_copied(large_store, tmp_path))
         roots = [f"/d{index:05d}" for index in range(20)]
         reader = Authority.of(Principal("reader"))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
         for root in roots:
             granted = await storage.grant(path=Path(root), principal="reader", level="read", authority=SYSTEM)

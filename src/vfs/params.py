@@ -217,7 +217,7 @@ PARAMS: Final[dict[Op, tuple[ParamSpec, ...]]] = {
             nullable=False,
             default="system",
             choices=frozenset({"user", "agent", "system"}),
-            doc="author class stamped on every edge in the call; 'extracted' is reserved to reindex",
+            doc="author class stamped on every edge in the call; 'extracted' is reserved to rebuild",
         ),
         _AUTHORITY,
     ),

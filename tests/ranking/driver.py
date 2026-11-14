@@ -1,10 +1,10 @@
 """The BM25 baseline driver: the lexical index read the way the search leg reads it.
 
-``load_corpus`` writes a corpus into a backend and reindexes it;
+``load_corpus`` writes a corpus into a backend and rebuilds it;
 ``entry_ranking`` runs one query as two rounds over the block tables —
 the head fetch, the engine's scorer, block selection for the overflowing
 terms, the round-two key fetch through the leg's own builder
-(:func:`~vfs.storage.backends.database.search.tail_block_statements`), the
+(:func:`~vfs.storage.backends.database.lexical.tail_block_statements`), the
 scorer again — then MaxP to entries. Scores are rounded to
 :data:`SCORE_DECIMALS` and ordered ``score DESC, path ASC`` so the
 ordered list is identical on every engine and across rebuilds (entry
@@ -27,8 +27,7 @@ from vfs.models import Entry
 from vfs.models.lexical import ScoreBlock, decode_summary, score_blocks, select_blocks, tokenize
 from vfs.paths import Path
 from vfs.storage.backends.database.dialects import chunked
-from vfs.storage.backends.database.lexical import lexical_stats
-from vfs.storage.backends.database.search import posting_columns, tail_block_statements
+from vfs.storage.backends.database.lexical import lexical_stats, posting_columns, tail_block_statements
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -66,12 +65,12 @@ class Loaded(NamedTuple):
 
 
 async def load_corpus(storage: DatabaseStorage, corpus: Corpus) -> Loaded:
-    """Write every document, reindex, and read the chunk → path map once."""
+    """Write every document, rebuild, and read the chunk → path map once."""
     entries = [Entry(path=Path(corpus.paths[doc]), content=text) for doc, text in corpus.docs.items()]
     for batch in chunked(entries, WRITE_BATCH):
         written = await storage.write(entries=list(batch), parents=True)
         assert written.success is True, written.errors
-    indexed = await storage.reindex()
+    indexed = await storage.rebuild()
     assert indexed.success is True, indexed.errors
     tables = storage._host.tables
     entry, chunks, index_state = tables.entry, tables.chunks, tables.index_state

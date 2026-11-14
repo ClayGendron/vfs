@@ -692,7 +692,7 @@ async def test_close_leaves_the_process_pool_alone(tmp_path: Any, fresh_process_
     assert pool.submit(_thread_name).result(timeout=5.0).startswith("vfs-offload")
 
 
-@pytest.mark.parametrize("verb", ["grep", "reindex"])
+@pytest.mark.parametrize("verb", ["grep", "rebuild"])
 async def test_a_hop_captured_before_shutdown_is_served_inline(
     verb: str, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, fresh_process_pool: None
 ) -> None:
@@ -703,7 +703,7 @@ async def test_a_hop_captured_before_shutdown_is_served_inline(
     assert (await storage.write(entries=entries)).success is True
     threads = _trace_verifiers(monkeypatch, grep_module)
     seam_name = "grep:after-pointer-read"
-    if verb == "reindex":
+    if verb == "rebuild":
         threads = []
         real = indexing_module._assess_and_split
 
@@ -712,17 +712,17 @@ async def test_a_hop_captured_before_shutdown_is_served_inline(
             return real(*args, **kwargs)
 
         monkeypatch.setattr(indexing_module, "_assess_and_split", tracing)
-        seam_name = "reindex:before-chunk-split"
+        seam_name = "rebuild:before-chunk-split"
 
     async def shut() -> None:
         seams.clear(seam_name)
         shutdown_offload_pool()
 
     with seams.installed(seam_name, shut):
-        raced = await (storage.reindex() if verb == "reindex" else storage.grep(pattern="return", allow_scan=True))
+        raced = await (storage.rebuild() if verb == "rebuild" else storage.grep(pattern="return", allow_scan=True))
     assert raced.success is True, raced.errors
     assert threads == [threading.main_thread().name], threads
-    # Every match, and after a reindex every chunk: the index tier answers with no scan.
+    # Every match, and after a rebuild every chunk: the index tier answers with no scan.
     found = raced if verb == "grep" else await storage.grep(pattern="return")
     assert found.success is True, found.errors
     assert sorted(str(row.path) for row in found.observations) == ["/f0.py", "/f1.py", "/f2.py"]

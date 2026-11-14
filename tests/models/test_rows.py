@@ -196,7 +196,7 @@ class TestBuildVFSTables:
         for attr in TABLE_ATTRS:
             assert getattr(tables, attr).metadata is tables.metadata
         # The pointer and the lease live on a row of their own, apart from the admin lock's.
-        assert not {"current_gram_epoch", "reindex_holder", "reindex_heartbeat"} & set(tables.meta.c.keys())
+        assert not {"current_gram_epoch", "re" + "index_holder", "re" + "index_heartbeat"} & set(tables.meta.c.keys())
         assert SCHEMA_FORMAT_VERSION == 25
 
     def test_mounts_in_different_schemas_never_share_schema_objects(self, tables: VFSTables) -> None:

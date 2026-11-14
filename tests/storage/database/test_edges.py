@@ -5,7 +5,7 @@ The mirror invariant: after every verb, the fs edge rows equal the
 included — one row per non-root entry, ``provenance='system'``, payload
 NULL. Authored edges die in exactly two ways: removed by triple, or an
 endpoint is deleted — soft delete included. The battery drives the
-public verbs and asserts both after each step; the reindex tests seed
+public verbs and asserts both after each step; the rebuild tests seed
 drift directly and prove the re-convergence repairs it loudly.
 """
 
@@ -28,11 +28,12 @@ from vfs.paths import Path
 from vfs.results import ErrorKind, Severity
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database.edges import (
     _touch_rows,
     mkedge_rows,
 )
-from vfs.storage.backends.database.indexing import claim_reindex_lease
+from vfs.storage.backends.database.maintenance import claim_index_lease
 from vfs.storage.backends.database.seams import installed
 from vfs.storage.replace import EditOperation
 
@@ -457,14 +458,14 @@ class TestRandomizedMirror:
 
 
 # ---------------------------------------------------------------------------
-# Reindex re-convergence — drift repaired loudly, guards honored
+# Rebuild re-convergence — drift repaired loudly, guards honored
 # ---------------------------------------------------------------------------
 
 
 class TestEdgeRebuild:
-    async def test_a_clean_store_reindexes_without_warnings(self, storage: DatabaseStorage) -> None:
+    async def test_a_clean_store_rebuilds_without_warnings(self, storage: DatabaseStorage) -> None:
         assert (await storage.write(entries=[Entry(path=Path("/a/b/f.txt"), content="x")], parents=True)).success
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         assert result.errors == []
         await _assert_mirror(storage)
@@ -492,12 +493,12 @@ class TestEdgeRebuild:
                 insert(edges).values(source_id=victim, target_id=str(ULID()), edge_type="ref", provenance="user")
             )
             await session.commit()
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True
         warnings = [error for error in result.errors if error.severity == Severity.warning]
         messages = " | ".join(w.message for w in warnings)
-        assert "repaired the fs mirror" in messages
-        assert "no entry row" in messages
+        assert "rebuild repaired the fs mirror" in messages
+        assert "rebuild reclaimed" in messages and "no entry row" in messages
         await _assert_mirror(storage)
         # The dangling authored edge is gone with the drift.
         assert await _authored(storage) == set()
@@ -518,9 +519,9 @@ class TestEdgeRebuild:
         async def flag() -> None:
             lost.set()
 
-        claimed = await storage._execute_maintenance("reindex", lambda s: claim_reindex_lease(s, tables, "MINE"))
+        claimed = await storage._execute_maintenance("rebuild", lambda s: claim_index_lease(s, tables, "MINE"))
         assert claimed.success is True
-        with installed("reindex:before-reclaim", flag):
-            result = await storage._reindex_phases(tables, lost, "MINE")
+        with installed("rebuild:before-reclaim", flag):
+            result = await maintenance_module._rebuild_phases(storage._maintenance(), tables, lost, "MINE")
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message

@@ -1,4 +1,4 @@
-"""The render stage of ``reindex`` — bytes entries to text renderings in short, resumable pages.
+"""The render stage of ``rebuild`` — bytes entries to text renderings in short, resumable pages.
 
 A bytes entry's text is a rendering made by a per-format renderer and
 written to the content row under the same entry id, so chunking, the
@@ -10,7 +10,7 @@ for chunks and links: same bytes under the same generation, nothing
 to do; a generation bump (a renderer or library upgrade, an extra
 installed) re-dirties every entry of that type on the next run.
 
-The stage runs first in the reindex pass, under the lease, before the
+The stage runs first in the rebuild pass, under the lease, before the
 chunk pass that will split the new text. It is a streaming loop like
 the embed step: a short read selects one keyset page of dirty bytes
 rows, the page is cut by bytes in flight, each cut's blobs are read,
@@ -95,7 +95,7 @@ class Rendered(NamedTuple):
 
 @dataclass
 class RenderReport:
-    """What the stage did — the ``rendering`` extra on the reindex result.
+    """What the stage did — the ``rendering`` extra on the rebuild result.
 
     Every row the stage landed is counted exactly once: ``rendered``
     (text served: ok, truncated or partial), ``empty`` (parsed, no
@@ -332,7 +332,7 @@ async def land_renderings(
     values, with a RETURNING of the rows reached, is the direction.
     """
     if not rendered:
-        return Result(ops=("reindex",))
+        return Result(ops=("rebuild",))
     entry, content = tables.entry, tables.content
     b_id, b_hash, b_gen = bindparam("b_id"), bindparam("b_hash"), bindparam("b_gen")
     stamp = (
@@ -379,7 +379,7 @@ async def land_renderings(
         await bulk_insert(session, content, page)
     for item in landed:
         report.record(item)
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def count_unrendered(session: AsyncSession, tables: VFSTables) -> int:

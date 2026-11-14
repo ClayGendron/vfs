@@ -92,7 +92,7 @@ Spec 166 defines the lane. This section says what each gate waits for. An **alph
 | 1 | Public kernel API | **Built** as 25 async verbs behind one gate (`base.py:2835–3088`; `tests/test_ops.py:246` pins `ALL_OPS`). **None** of ADR 087's arguments exist: no cursor, no `range=`, no `if_version=`, no `replace=`, no request key, no `versions`. All three ADR 087 probes still reproduce on SQLite: twenty concurrent appends keep one line; a body changed by raw SQL reads as success; a replayed `move` is a bare `not_found` with no data. |
 | 1 | Interrupts | **Missing**, and the record contradicts itself: ADR 063 rule 5 and specs 148/149 define a `pending` kind and an ask ledger; the later ADR 084 pin 4 says "no `ask` inside vfs"; spec 170 maps a server's elicitation to `unsupported`. `cancelled` and `timeout` are declared kinds with no producer in `src/`. No run ledger exists; spec 169c's `/.vfs/run` record is per process by design. |
 | 2 | SQLite, Postgres, MSSQL, Oracle | **Built**, plus MariaDB and a generic floor (`dialects.py:389–561`). All four engine legs green together on 2026-10-15 (`ac5c515`). On 2026-10-28 the MSSQL leg is red at its `apt` step (run 40689014566; the tests never ran), so the five `fix(storage)` and one `perf(base)` commits of 2026-10-24 have no SQL Server evidence. No migration story: a format mismatch refuses "re-provision". |
-| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `reindex` (`backend.py:554–687`, `search.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
+| 3 | Embedding provider, BM25 + vector | **Built**: query-time embedding of the query, lexical and vector legs, client-side convex fusion, four providers (hashing, model2vec, OpenAI, LangChain), vectors built at `rebuild` (`backend.py:554–687`, `search.py:215–513`). ADR 060's fastembed/MiniLM default was never built. A slow provider never converges (120 s per request × 2,048-input batches). |
 | 4 | Three tool kinds | **Missing**. `run` is a routed verb no storage serves. Specs 169/170 drafted. "MCP servers authenticating as the user" is undecided; spec 170 §3.1 pins the opposite (one host credential per server). |
 | 5 | Sync calls, Jupyter, ETL | **Missing** sync facade. `asyncio.run` fails inside a running loop (reproduced). A 25-line thread-loop prototype works in a script and over the in-memory backend (audit 06). A 10,000-row `write` lands in 35–49 statements on SQLite depending on whether the parent exists and how the hook counts. |
 | 6 | Serve vfs as MCP | **Missing**. Spec 171 drafted (verbs as tools + one `cli` tool); spec 149 (token → `Authority`) a seed. No `[project.scripts]` entry; spec 171 decision 7 says "no `vfs serve`". |
@@ -510,7 +510,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 |---|---|
 | Lexical leg (block postings scored in Rust) + vector leg (in-engine cosine per dialect) + client-side convex fusion | built on all five engines |
 | Query-time embedding of the query string, 256-entry cache | built |
-| Embed step at `reindex`: keyset pages, bounded batches, identity on the meta row, re-embed on model change at equal width | built |
+| Embed step at `rebuild`: keyset pages, bounded batches, identity on the meta row, re-embed on model change at equal width | built |
 | Without a provider: lexical-only with an info record; stale identity: lexical-only with `conflict`; embed failure: retryable `unavailable` | built |
 | Default local model | model2vec potion shipped; ADR 060 says fastembed/MiniLM; no fastembed anywhere |
 | Slow-provider convergence | broken: never converges under ~17 chunks/s |
@@ -536,7 +536,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 #### E2 — The embed step converges for slow providers · M · gate b
 
 *Depends on.* Nothing. *Acceptance.*
-1. A scripted provider that raises `TimeoutError` for any batch above N inputs (no clock) finishes `reindex` with `unembedded == 0`; requests issued equal `ceil(pages / N)` plus the retries below.
+1. A scripted provider that raises `TimeoutError` for any batch above N inputs (no clock) finishes `rebuild` with `unembedded == 0`; requests issued equal `ceil(pages / N)` plus the retries below.
 2. A batch that times out is retried at a smaller size at most `log2(max_batch_inputs)` times before the step records `unavailable`; requests issued are pinned.
 3. `LocalEmbeddingProvider.max_batch_inputs` defaults to ≤ 256 and the declared-caps pin is updated.
 4. A timed-out local batch never leaves a worker computing past the next page (counted `embed_batch` calls after the timeout).
@@ -560,7 +560,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 *Depends on.* Nothing. *Acceptance.*
 1. A test hides half a corpus from `bob` and asserts every probe term's `df` and every visible row's score are identical whether the hidden half exists or has been deleted; the same holds under the generic floor's clause fan.
-2. `traits()` says `search_staleness` is `overlay` for the lexical leg and `reindex` for the vector leg; the protocol vocabulary and its drift test agree.
+2. `traits()` says `search_staleness` is `overlay` for the lexical leg and `rebuild` for the vector leg; the protocol vocabulary and its drift test agree.
 
 #### E6 — search reference docs and the embedder how-to · S · gate f
 
@@ -568,7 +568,7 @@ One line: vfs stops and describes; the host asks; the run continues from where i
 
 #### E7 — Width change is a migration, not a re-provision · M · gate 0.2
 
-ADR 054 promised "reindex is the migration"; at a new width on a native column first touch refuses. Engine-specific DDL under the reindex lease, after D2's registry.
+ADR 054 promised "reindex is the migration"; at a new width on a native column first touch refuses. Engine-specific DDL under the index lease, after D2's registry.
 
 #### E8 — Render at write (159), images (152 C), `imports` edges (147), tuned fusion defaults · gate 0.2
 
@@ -766,10 +766,10 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 #### M2 — The one-line entry point: `vfs serve` and `python -m vfs.mcp` · new · M · gate b
 
 *Why.* "Easy to serve" means a line a Claude Desktop, Codex or LangGraph config can name. It needs a router-from-URL constructor, which is small: a URL, an embedder spec (E3), a workdir, an authority or a verifier. *Depends on.* M1, E3, D3; D24. *Acceptance.*
-1. `vfs.mcp.router_from_url(url, *, embedder=None, workdir="/", authority=None, verifier=None) -> VirtualFileSystem` is the one constructor `serve`, `sh` and `reindex` share; a drift test pins its signature.
+1. `vfs.mcp.router_from_url(url, *, embedder=None, workdir="/", authority=None, verifier=None) -> VirtualFileSystem` is the one constructor `serve`, `sh` and `rebuild` share; a drift test pins its signature.
 2. `[project.scripts] vfs = "vfs.cli:main"`; `vfs serve --url sqlite+aiosqlite:///x.db --transport stdio --as me` and `python -m vfs.mcp …` start a server whose `tools/list` equals M1's; `--embedder openai:text-embedding-3-small@1024` configures the mount.
 3. Starting against an open mount exits 78 (`EX_CONFIG`) naming every open mount unless `--allow-open`; `--as system` exits 64 (`EX_USAGE`) before binding; both print to stderr and start no transport (spied).
-4. `vfs --help` works without the `mcp` extra (import-graph test); the subcommands at 0.1.0 are `serve`, `sh` (one `cli` line or a REPL over a URL) and `reindex`.
+4. `vfs --help` works without the `mcp` extra (import-graph test); the subcommands at 0.1.0 are `serve`, `sh` (one `cli` line or a REPL over a URL) and `rebuild`.
 5. `docs/how-to/expose-over-mcp.md` has the steps and a Claude Desktop config block; the fences pass.
 
 #### M3 — `pending` on the wire · amends spec 171 scope · M · gate f
@@ -824,7 +824,7 @@ Nothing is built. Spec 171 is drafted and reviewed. Spec 171 decision 7 says "`s
 *Acceptance.*
 1. `docs/tutorials/getting-started.md`: install → construct → write → `glob`/`grep`/`search` → one rendered `Result`, every step a fence Sybil runs, no Postgres needed; the README's quick-start block is fence-tested too.
 2. `docs/how-to/use-vfs-in-a-notebook.md` shows the sync and the `await` paths side by side and names the two `RuntimeError`s a user sees from `asyncio.run`.
-3. `docs/how-to/bulk-load-from-a-pipeline.md`: a 10k batch from an iterable, the whole-batch-atomic rule, `reindex()` after binary writes and its `conflict` retry.
+3. `docs/how-to/bulk-load-from-a-pipeline.md`: a 10k batch from an iterable, the whole-batch-atomic rule, `rebuild()` after binary writes and its `conflict` retry.
 4. `docs/how-to/human-in-the-loop.md` (H3's example).
 5. A test asserts every `docs/**/*.md` is referenced by the mkdocs nav; `mkdocs build --strict` passes.
 

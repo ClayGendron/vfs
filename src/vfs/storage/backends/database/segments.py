@@ -9,7 +9,7 @@ the postings mirror the column at every commit boundary — no flag, no
 overlay arm, no staleness window. Every entry row of every kind carries
 its postings, trash included; liveness stays a resolution-time concern.
 
-The reindex verb re-converges the table to the recomputed segments of
+The rebuild verb re-converges the table to the recomputed segments of
 every stored path — a drop-and-rebuild's end state, so drift can never
 accumulate — but applied as guarded deltas rather than a wholesale
 replace: :func:`collect_segment_drift` computes the difference from a
@@ -139,13 +139,13 @@ async def move_postings(
 
 
 # ---------------------------------------------------------------------------
-# Reindex re-convergence — collect drift, repair it under path guards
+# Rebuild re-convergence — collect drift, repair it under path guards
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SegmentRebuildState:
-    """Carry-over between the reindex segment phases' separate transactions."""
+    """Carry-over between the rebuild segment phases' separate transactions."""
 
     deltas: list[EntryDelta] = field(default_factory=list)
     orphans: dict[str, list[str]] = field(default_factory=dict)
@@ -187,7 +187,7 @@ async def collect_segment_drift(session: AsyncSession, tables: VFSTables, state:
         if missing or excess:
             state.deltas.append(EntryDelta(row.entry_id, row.path, missing, excess))
     state.orphans = {entry_id: sorted(held) for entry_id, held in stored.items()}
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def repair_segment_drift(
@@ -234,7 +234,7 @@ async def repair_segment_drift(
         await bulk_insert(session, segments, additions)
     warnings = [_drift_warning(delta) for delta in confirmed]
     warnings.extend(_orphan_warning(entry_id, held) for entry_id, held in orphaned.items())
-    return Result(ops=("reindex",), errors=warnings)
+    return Result(ops=("rebuild",), errors=warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +244,7 @@ async def repair_segment_drift(
 
 def _drift_warning(delta: EntryDelta) -> ResultError:
     detail = (
-        f"reindex repaired segment postings for entry {delta.entry_id}: "
+        f"rebuild repaired segment postings for entry {delta.entry_id}: "
         f"{len(delta.missing)} missing, {len(delta.excess)} excess"
     )
     return classified(
@@ -257,7 +257,7 @@ def _drift_warning(delta: EntryDelta) -> ResultError:
 
 
 def _orphan_warning(entry_id: str, held: list[str]) -> ResultError:
-    detail = f"reindex reclaimed {len(held)} orphaned segment posting(s) for entry {entry_id}: no entry row"
+    detail = f"rebuild reclaimed {len(held)} orphaned segment posting(s) for entry {entry_id}: no entry row"
     return classified(
         ErrorKind.internal,
         detail=detail,

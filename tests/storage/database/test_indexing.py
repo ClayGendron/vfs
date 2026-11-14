@@ -1,6 +1,6 @@
-"""The reindex verb: chunking, epoch builds, publish atomicity, gates.
+"""The rebuild verb: chunking, epoch builds, publish atomicity, gates.
 
-Direct backend tests (reindex is an admin method beside close(), not a
+Direct backend tests (rebuild is an admin method beside close(), not a
 routed verb): flag lifecycle against real sqlite rows, the epoch
 fingerprint no-op, drop-and-rebuild on options drift, the eligibility
 gates' scan-side residency, and the publish CAS losing to a rival.
@@ -33,7 +33,7 @@ from vfs.models.rows import ENCODING_DELTA_VARINT, build_vfs_tables
 from vfs.paths import Path
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database import DatabaseStorage, indexing
-from vfs.storage.backends.database import backend as backend_module
+from vfs.storage.backends.database import maintenance as maintenance_module
 from vfs.storage.backends.database.dialects import GENERIC, MARIADB, MSSQL, ORACLE, POSTGRESQL, SQLITE
 from vfs.storage.backends.database.engine import EngineHost
 from vfs.storage.backends.database.seams import installed
@@ -72,7 +72,9 @@ async def _count(storage: DatabaseStorage, table) -> int:
 async def _claimed(storage: DatabaseStorage, token: str = "MINE") -> str:
     """Claim the lease for *token*, as the verb does before its phases; the token the fences then check."""
     tables = storage._host.tables
-    claim = await storage._execute_maintenance("reindex", lambda s: indexing.claim_reindex_lease(s, tables, token))
+    claim = await storage._execute_maintenance(
+        "rebuild", lambda s: maintenance_module.claim_index_lease(s, tables, token)
+    )
     assert claim.success, claim.errors
     return token
 
@@ -165,7 +167,7 @@ def _spy_fenced(storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch) -> li
     """Every fenced transaction the backend runs from here on, in order (a redriven body is listed per attempt)."""
     fenced: list[_Fenced] = []
     open_bodies: list[list[str]] = []
-    real = backend_module.lease_fenced
+    real = maintenance_module.lease_fenced
 
     @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
     def record(conn, cursor, statement, parameters, context, executemany) -> None:
@@ -187,7 +189,7 @@ def _spy_fenced(storage: DatabaseStorage, monkeypatch: pytest.MonkeyPatch) -> li
 
         return observed
 
-    monkeypatch.setattr(backend_module, "lease_fenced", spy, raising=False)
+    monkeypatch.setattr(maintenance_module, "lease_fenced", spy, raising=False)
     return fenced
 
 
@@ -196,11 +198,53 @@ def _body(index: int, size: int) -> str:
     return (f"body {index} line " * size)[: size - 1] + "\n"
 
 
-class TestReindex:
-    async def test_reindex_chunks_encodes_and_publishes(self, tmp_path) -> None:
+class TestRebuild:
+    async def test_the_full_pass_answers_as_rebuild(self, tmp_path, monkeypatch) -> None:
+        """A dirty pass, a clean pass, a pass whose lease a rival took and a refused claim each answer under
+        the verb's own op, in their records too, and hand their runners no other op label.
+
+        Mutant: the reclaim's success, the claim's refusal, the lease-lost verdict or a runner's label answers
+        under the old op name.
+        """
+        storage = DatabaseStorage(url=_url(tmp_path), embedder=HashEmbeddingProvider())
+        labels: set[str] = set()
+        for runner in ("_execute", "_execute_maintenance", "_execute_leased", "_rows"):
+            real = getattr(storage, runner)
+
+            async def labelled(op: str, fn: Any, real: Any = real) -> Any:
+                labels.add(op)
+                return await real(op, fn)
+
+            monkeypatch.setattr(storage, runner, labelled)
+        await storage.write(entries=[Entry(path=Path("/a.py"), content="needle one\nneedle two")])
+        labels.clear()
+        dirty = await storage.rebuild()
+        clean = await storage.rebuild()
+        written = [Entry(path=Path("/b.txt"), content="bravo body"), Entry(path=Path("/c.pdf"), data=pdf_bytes(["c"]))]
+        assert (await storage.write(entries=written)).success is True
+
+        async def rival_claims() -> None:
+            index_state = storage._host.tables.index_state
+            async with storage._host.engine.begin() as conn:
+                await conn.execute(update(index_state).values(lease_heartbeat=0))
+            await _claimed(storage, "RIVAL")
+
+        with installed("rebuild:before-render-land", rival_claims):
+            lost = await storage.rebuild()
+        refused = await storage.rebuild()
+        assert (dirty.success, clean.success, lost.success, refused.success) == (True, True, False, False)
+        assert maintenance_module.lease_lost(lost), lost.errors
+        assert [dirty.ops, clean.ops, lost.ops, refused.ops] == [("rebuild",)] * 4
+        assert "the index lease expired mid-run" in lost.errors[0].message
+        assert "a rebuild is already running" in refused.errors[0].message
+        assert lost.errors[0].data == {"index_lease": "lost"}
+        assert labels == {"rebuild"}
+        await storage.close()
+
+    async def test_rebuild_chunks_encodes_and_publishes(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.py"), content="needle one\nneedle two")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         assert await _flags(storage, "/a.py") == (True, True)
         assert await _epoch(storage) == 1
@@ -223,22 +267,22 @@ class TestReindex:
         assert fingerprint.options_hash == indexing.index_options_hash()
         await storage.close()
 
-    async def test_reindex_is_idempotent_cheap_when_nothing_is_dirty(self, tmp_path) -> None:
+    async def test_rebuild_is_idempotent_cheap_when_nothing_is_dirty(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="stable body")])
-        assert (await storage.reindex()).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 1
         assert await _count(storage, storage._host.tables.gram_epochs) == 1
         await storage.close()
 
-    async def test_rewrite_dirties_and_the_next_reindex_advances_the_epoch(self, tmp_path) -> None:
+    async def test_rewrite_dirties_and_the_next_rebuild_advances_the_epoch(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="first body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="second body")])
         assert await _flags(storage, "/a.txt") == (False, False)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (True, True)
         assert await _epoch(storage) == 2
         tables = storage._host.tables
@@ -250,10 +294,10 @@ class TestReindex:
 
     async def test_empty_store_mints_an_empty_epoch_once(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 1
         assert await _count(storage, storage._host.tables.posting_list) == 0
-        assert (await storage.reindex()).success is True  # and now a no-op
+        assert (await storage.rebuild()).success is True  # and now a no-op
         assert await _epoch(storage) == 1
         await storage.close()
 
@@ -261,7 +305,7 @@ class TestReindex:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="trashed body")])
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
         async with storage._host.engine.connect() as conn:
             row = (
@@ -270,9 +314,9 @@ class TestReindex:
         assert row._tuple() == (False, False)  # scan-side wherever it resurfaces
         await storage.close()
 
-    async def test_reindex_repairs_directories_written_before_the_rule(self, tmp_path) -> None:
+    async def test_rebuild_repairs_directories_written_before_the_rule(self, tmp_path) -> None:
         # A store written before directories were created encoded holds
-        # them false; one reindex repairs them and reports the count once.
+        # them false; one rebuild repairs them and reports the count once.
         storage = DatabaseStorage(url=_url(tmp_path))
         for name in ("a", "b", "c"):
             assert (await storage.mkdir(path=Path(f"/{name}"))).success is True
@@ -286,7 +330,7 @@ class TestReindex:
         async def repairs(result: Result) -> list[ResultError]:
             return [error for error in result.errors if (error.data or {}).get("directories") is not None]
 
-        first = await storage.reindex()
+        first = await storage.rebuild()
         assert first.success is True
         [warning] = await repairs(first)
         assert warning.kind == ErrorKind.internal
@@ -297,7 +341,7 @@ class TestReindex:
         async with storage._host.engine.connect() as conn:
             flags = (await conn.execute(select(entry.c.encoded).where(predated))).scalars().all()
         assert flags == [True, True, True]
-        second = await storage.reindex()
+        second = await storage.rebuild()
         assert second.success is True
         assert await repairs(second) == []
         await storage.close()
@@ -324,8 +368,8 @@ class TestReindex:
                 await rival.commit()
             return result
 
-        monkeypatch.setattr(backend_module, "collect_flag_drift", rekinded)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "collect_flag_drift", rekinded)
+        result = await storage.rebuild()
         assert result.success is True
         [warning] = [error for error in result.errors if (error.data or {}).get("directories") is not None]
         assert warning.data == {"directories": 1}
@@ -351,8 +395,10 @@ class TestReindex:
             lost.set()
             return await collect(session, tables, state)
 
-        monkeypatch.setattr(backend_module, "collect_flag_drift", poisoned)
-        result = await storage._reindex_phases(storage._host.tables, lost, await _claimed(storage))
+        monkeypatch.setattr(maintenance_module, "collect_flag_drift", poisoned)
+        result = await maintenance_module._rebuild_phases(
+            storage._maintenance(), storage._host.tables, lost, await _claimed(storage)
+        )
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message
         async with storage._host.engine.connect() as conn:
@@ -365,11 +411,11 @@ class TestReindex:
         storage = DatabaseStorage(url=_url(tmp_path))
         bodies = {"/b.md": "# Bravo\n\nbravo body\n", "/a.md": "# Alpha\n\nSee [bravo](b.md).\n"}
         assert (await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         rewritten = Entry(path=Path("/a.md"), content="# Alpha\n\nStill see [bravo](b.md), rewritten.\n")
         assert (await storage.write(entries=[rewritten])).success is True
         statements = _recorded(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         flips, chunk_writes, edge_writes = _write_order(statements)
         assert flips and chunk_writes and edge_writes, statements
         assert flips[0] < chunk_writes[0] and flips[0] < edge_writes[0], (flips, chunk_writes, edge_writes)
@@ -382,7 +428,7 @@ class TestReindex:
         bodies = {f"/f{i}.txt": f"file {i} body\n" for i in range(5)}
         assert (await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])).success
         fenced = _spy_fenced(storage, monkeypatch)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert [len(each.chunked) for each in fenced] == [2, 4, 5]
         for each in fenced:
             flips, chunk_writes, _edge_writes = _write_order(each.statements)
@@ -412,9 +458,9 @@ class TestReindex:
             await real_flip(session, entry, *args, assignments=assignments)
 
         monkeypatch.setattr(indexing, "_flip_flags", written_after_the_read)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert [await _flags(storage, path) for path in bodies] == [(False, False), (True, True)]
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert [await _flags(storage, path) for path in bodies] == [(True, True), (True, True)]
         await storage.close()
 
@@ -433,11 +479,11 @@ class TestReindex:
         def link_records(result: Result) -> list[dict[str, Any]]:
             return [error.data for error in result.errors if error.data and error.data.get("leg") == "links"]
 
-        first = await storage.reindex()
+        first = await storage.rebuild()
         assert link_records(first) == [{"leg": "links", "sources": 3, "edges": 3, "unresolved": 1}]
         assert (await storage.write(entries=[Entry(path=Path("/gone.md"), content="here now\n")])).success
         assert (await storage.write(entries=[Entry(path=Path("/a.md"), content=bodies["/a.md"] + "\n")])).success
-        second = await storage.reindex()
+        second = await storage.rebuild()
         assert second.success is True and link_records(second) == []
         await storage.close()
 
@@ -448,7 +494,7 @@ class TestReindex:
         storage = DatabaseStorage(url=_url(tmp_path), embedder=HashEmbeddingProvider(8))
         entries = [Entry(path=Path(f"/v{i}.txt"), content=f"vector body {i}\n") for i in range(6)]
         assert (await storage.write(entries=entries)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         entry, chunks = tables.entry, tables.chunks
         reachable = (
@@ -473,8 +519,8 @@ class TestReindex:
             if slices == 2:
                 counts.append(await vector_leg())
 
-        with installed("reindex:before-chunk-split", counted_at_the_second_slice):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-chunk-split", counted_at_the_second_slice):
+            assert (await storage.rebuild()).success is True
         assert counts == [6]
         assert await vector_leg() == 6
         async with storage._host.engine.connect() as conn:
@@ -493,7 +539,7 @@ class TestReindex:
             written = await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])
             assert written.success is True
             before = len(fenced)
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             counts.append(len(fenced) - before)
             for path, body in bodies.items():
                 assert await _flags(storage, path) == (True, True)
@@ -511,7 +557,7 @@ class TestReindex:
         for index, (path, size) in enumerate(sizes.items()):
             assert (await storage.write(entries=[Entry(path=Path(path), content=_body(index, size))])).success
         fenced = _spy_fenced(storage, monkeypatch)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         slices: list[list[str]] = []
         done: set[str] = set()
         for each in fenced:
@@ -529,10 +575,10 @@ class TestReindex:
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/s{i}.txt"), content=f"steady body {i}\n") for i in range(2)]
         assert (await storage.write(entries=entries)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.write(entries=[Entry(path=Path("/s0.txt"), content="steady body, rewritten\n")])).success
         statements = _recorded(storage)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         wheres = [s.partition("WHERE")[2] for s in statements if s.startswith("SELECT") and "vfs_entries" in s]
         named = [where for where in wheres if "chunk_generation" in where]
         assert len(named) == 1, named  # the probe's, and no slice read's
@@ -546,7 +592,7 @@ class TestReindex:
         for index in range(files):
             entry = Entry(path=Path(f"/p{index:02}.pdf"), data=pdf_bytes([f"first {index:02}"]))
             assert (await storage.write(entries=[entry])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         for index in range(files):
             entry = Entry(path=Path(f"/p{index:02}.pdf"), data=pdf_bytes([f"again {index:02}"]))
             assert (await storage.write(entries=[entry])).success
@@ -563,7 +609,7 @@ class TestReindex:
         await storage._host.engine.dispose()
         statements = _recorded(storage)
         monkeypatch.setattr(indexing, "CHUNK_SLICE_BYTES", 1)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         size_reads = [s for s in statements if s.startswith("SELECT") and "CASE WHEN" in s and "meter" in s]
         assert len(size_reads) == files  # a slice of one each
         assert len(measured) == files  # each rendering measured once, where re-reading measured 1,830
@@ -592,7 +638,7 @@ class TestReindex:
             return result
 
         monkeypatch.setattr(storage, "_execute_leased", writes_between_slices)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert written == [True, True]
         assert await _flags(storage, "/f2.txt") == (True, True)
         assert await _split_is_stored(storage, "/f2.txt", rewritten)
@@ -611,9 +657,9 @@ class TestReindex:
         async def split() -> None:
             splits.append(len(splits))
 
-        with installed("reindex:before-chunk-split", split):
+        with installed("rebuild:before-chunk-split", split):
             for _ in range(2):
-                assert (await storage.reindex()).success is True
+                assert (await storage.rebuild()).success is True
         assert splits == []
         assert await _count(storage, storage._host.tables.chunks) == 0
         await storage.close()
@@ -622,14 +668,14 @@ class TestReindex:
         """Guards: an empty slice going on to read bodies by an empty id list and to hop to the offload pool."""
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.txt"), content="settled body\n")])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         splits: list[int] = []
 
         async def split() -> None:
             splits.append(len(splits))
 
-        with installed("reindex:before-chunk-split", split):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-chunk-split", split):
+            assert (await storage.rebuild()).success is True
         assert splits == []
         await storage.close()
 
@@ -642,7 +688,7 @@ class TestReindex:
         pdfs = {"/p0.pdf": ("kiwi", "kowi"), "/p1.pdf": ("emu", "ume"), "/p2.pdf": ("moa", "mao")}
         for path, (first, _second) in pdfs.items():
             assert (await storage.write(entries=[Entry(path=Path(path), data=pdf_bytes([first]))])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         stored = select(func.sum(func.length(tables.content.c.content))).select_from(tables.content_joined())
         async with storage._host.engine.connect() as conn:
             renderings = (await conn.execute(stored.where(entry.c.path.in_(pdfs)))).scalar_one()
@@ -654,7 +700,7 @@ class TestReindex:
         assert 0 < renderings < least - 1, (renderings, least)
         monkeypatch.setattr(indexing, "CHUNK_SLICE_BYTES", least - 1)
         fenced = _spy_fenced(storage, monkeypatch)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert len(fenced) == 2  # the renderings' one landing, then one chunk-pass slice
         assert {path for path in pdfs if await _flags(storage, path) == (True, True)} == set(pdfs)
         await storage.close()
@@ -665,12 +711,12 @@ class TestEligibilityGates:
         monkeypatch.setattr(indexing, "MAX_INDEXABLE_BYTES", 8)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/big.txt"), content="well past eight bytes")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/big.txt") == (True, False)
         assert await _indexable_flag(storage, "/big.txt") is False
         assert await _count(storage, storage._host.tables.chunks) == 0
         epoch = await _epoch(storage)
-        assert (await storage.reindex()).success is True  # ineligible ≠ pending
+        assert (await storage.rebuild()).success is True  # ineligible ≠ pending
         assert await _epoch(storage) == epoch
         await storage.close()
 
@@ -678,7 +724,7 @@ class TestEligibilityGates:
         monkeypatch.setattr(indexing, "MAX_DISTINCT_GRAMS", 2)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/wide.txt"), content="abcdefgh")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/wide.txt") == (True, False)
         assert await _indexable_flag(storage, "/wide.txt") is False
         await storage.close()
@@ -688,11 +734,11 @@ class TestEligibilityGates:
         # scan-side, where a gramless pattern's opt-out scan can serve it.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/tiny.txt"), content="ab")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/tiny.txt") == (True, False)
         assert await _indexable_flag(storage, "/tiny.txt") is False
         epoch = await _epoch(storage)
-        assert (await storage.reindex()).success is True  # ineligible ≠ pending
+        assert (await storage.rebuild()).success is True  # ineligible ≠ pending
         assert await _epoch(storage) == epoch
         found = await storage.grep(pattern="ab", allow_scan=True)
         assert [str(o.path) for o in found.observations] == ["/tiny.txt"]
@@ -701,17 +747,17 @@ class TestEligibilityGates:
     async def test_eligible_content_is_stamped_indexable(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/ok.txt"), content="plenty of body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _indexable_flag(storage, "/ok.txt") is True
         await storage.close()
 
     async def test_options_drift_forces_a_rebuild_with_no_dirty_rows(self, tmp_path, monkeypatch) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="steady body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 1
         monkeypatch.setattr(indexing, "MAX_DISTINCT_GRAMS", 19_000)  # options hash moves
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         await storage.close()
 
@@ -719,11 +765,11 @@ class TestEligibilityGates:
         # A pointer with no fingerprint row is unverifiable — rebuild.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="steady body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         async with storage._host.engine.begin() as conn:
             await conn.execute(tables.gram_epochs.delete())
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         await storage.close()
 
@@ -770,7 +816,7 @@ class TestPublishRace:
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="abc")])
         await _seed_built_epoch(storage, 1, with_fingerprint=False)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is False
         error = result.errors[0]
         assert error.kind == ErrorKind.conflict
@@ -784,7 +830,7 @@ class TestPublishRace:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="abc")])
         await _seed_built_epoch(storage, 7, with_fingerprint=True)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 8
         tables = storage._host.tables
         async with storage._host.engine.connect() as conn:
@@ -802,8 +848,8 @@ class TestPublishRace:
             async with storage._host.engine.begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
-        with installed("reindex:before-publish", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-publish", rival):
+            result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict
         assert await _epoch(storage) == 99  # the rival's publish stood
@@ -814,26 +860,26 @@ class TestFlagAlgebra:
     async def test_delete_demotes_encoded_at_the_claim(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (True, True)
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         assert await _flags(storage, "/a.txt") == (True, False)
         await storage.close()
 
-    async def test_delete_reindex_restore_stays_greppable_on_both_tiers(self, tmp_path) -> None:
+    async def test_delete_rebuild_restore_stays_greppable_on_both_tiers(self, tmp_path) -> None:
         # The forbidden state: a live row invisible to both tiers after
         # delete → rebuild → restore. Demote-at-delete closes it.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/a.txt"))).success is True
         await storage.write(entries=[Entry(path=Path("/b.txt"), content="other stuff")])
-        assert (await storage.reindex()).success is True  # a rebuild without the deleted row
+        assert (await storage.rebuild()).success is True  # a rebuild without the deleted row
         assert (await storage.restore(path=Path("/a.txt"))).success is True
         assert await _flags(storage, "/a.txt") == (True, False)  # pending — the scan side serves
         found = await storage.grep(pattern="needle")
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
-        assert (await storage.reindex()).success is True  # and the next build re-covers
+        assert (await storage.rebuild()).success is True  # and the next build re-covers
         assert await _flags(storage, "/a.txt") == (True, True)
         found = await storage.grep(pattern="needle")
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
@@ -842,9 +888,9 @@ class TestFlagAlgebra:
     async def test_trash_scoped_grep_serves_the_trashed_root_scan_side(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/a.txt"))).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.grep(pattern="needle")).observations == []  # default scope hides the deleted
         found = await storage.grep(pattern="needle", globs=("/.vfs/trash/a.txt",))
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
@@ -856,7 +902,7 @@ class TestFlagAlgebra:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/src.txt"), content="alpha needle")])
         await storage.write(entries=[Entry(path=Path("/dst.txt"), content="bravo body")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         pair = ResolvedPair(Path("/src.txt"), Path("/dst.txt"))
         refused = await storage.copy(operations=[pair])
         assert [e.kind for e in refused.errors] == [ErrorKind.exists]
@@ -877,12 +923,12 @@ class TestFlagAlgebra:
             fresh = Entry(path=Path("/a.txt"), content="fresh needle")
             assert (await storage.write(entries=[fresh], overwrite=True)).success is True
 
-        with installed("reindex:before-publish", rival):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", rival):
+            assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (False, False)
         found = await storage.grep(pattern="fresh")
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/a.txt") == (True, True)
         found = await storage.grep(pattern="fresh")
         assert [str(o.path) for o in found.observations] == ["/a.txt"]
@@ -899,16 +945,16 @@ class TestFlagAlgebra:
         async def rival() -> None:
             deleted.append((await storage.delete(path=Path("/d"))).success)
 
-        with installed("reindex:before-publish", rival):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", rival):
+            assert (await storage.rebuild()).success is True
         assert deleted == [True]
         assert await _flags(storage, "/d/x.txt") == (True, False)
         assert (await storage.write(entries=[Entry(path=Path("/g.txt"), content="golf body")])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.restore(path=Path("/d"))).success is True
         assert [str(o.path) for o in (await storage.search(query="xylophone")).observations] == ["/d/x.txt"]
         assert [str(o.path) for o in (await storage.grep(pattern="xylophone")).observations] == ["/d/x.txt"]
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _flags(storage, "/d/x.txt") == (True, True)
         await storage.close()
 
@@ -923,11 +969,11 @@ class TestBuildAgreement:
         files = {"/d/x.txt": "xylophone body", "/b.txt": "bravo body", "/e.txt": "echo body"}
         written = await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in files.items()], parents=True)
         assert written.success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert (await storage.delete(path=Path("/b.txt"))).success is True
         assert (await storage.write(entries=[Entry(path=Path("/f.txt"), content="foxtrot body")])).success is True
         entry = storage._host.tables.entry
-        real_lexical, real_publish = indexing.build_lexical_epoch, backend_module.publish_epoch
+        real_lexical, real_publish = indexing.build_lexical_epoch, maintenance_module.publish_epoch
         received: dict[str, int] = {}
 
         async def rivals_first(session: AsyncSession, *args: Any, **kwargs: Any) -> None:
@@ -948,8 +994,8 @@ class TestBuildAgreement:
             return await real_publish(session, *args)
 
         monkeypatch.setattr(indexing, "build_lexical_epoch", rivals_first)
-        monkeypatch.setattr(backend_module, "publish_epoch", capturing)
-        assert (await storage.reindex()).success is True
+        monkeypatch.setattr(maintenance_module, "publish_epoch", capturing)
+        assert (await storage.rebuild()).success is True
         lexical = await _lexical_entries(storage)
         for path in (*files, "/f.txt"):
             entry_id = await _entry_id(storage, path)
@@ -972,8 +1018,8 @@ class TestReclaim:
             async with storage._host.engine.begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
-        with installed("reindex:before-publish", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-publish", rival):
+            result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict
         tables = storage._host.tables
@@ -993,8 +1039,8 @@ class TestReclaim:
             async with storage._host.engine.begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=2))
 
-        with installed("reindex:before-reclaim", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-reclaim", rival):
+            result = await storage.rebuild()
         assert result.success is True
         assert await _epoch(storage) == 2
         tables = storage._host.tables
@@ -1014,7 +1060,7 @@ class TestReclaim:
     async def test_reclaim_built_epoch_never_touches_the_published_pointer(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="abc")])
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         async with storage._host.session_factory() as session:
             result = await indexing.reclaim_built_epoch(session, storage._host.tables, 1)
         assert result.success is True
@@ -1149,7 +1195,7 @@ class TestPostingBatches:
         monkeypatch.setattr(indexing, "_POSTING_BATCH_BYTES", 1)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="abcd")])
-        assert (await storage.reindex()).success is True  # every row its own statement
+        assert (await storage.rebuild()).success is True  # every row its own statement
         assert await _count(storage, storage._host.tables.posting_list) > 1
         await storage.close()
 
@@ -1169,7 +1215,7 @@ class TestPostingBatches:
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i}.txt"), content=f"needle {i} padding") for i in range(5)]
         assert (await storage.write(entries=entries)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         # The existence referee: each over-budget body fed alone — a
         # whole-corpus reversion collapses this to one feed.
         assert feeds == 5
@@ -1190,7 +1236,7 @@ class TestPostingBatches:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append(statement)
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         inserts = [s for s in statements if s.startswith("INSERT") and "grams_posting_list" in s]
         assert len(inserts) > 1
         await storage.close()
@@ -1210,7 +1256,7 @@ class TestPostingBatches:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append((statement, executemany))
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         inserts = [(s, many) for s, many in statements if s.startswith("INSERT") and "grams_posting_list" in s]
         assert len(inserts) == 1, inserts  # no vfs-side row cap splits the batch
         statement, many = inserts[0]
@@ -1219,7 +1265,7 @@ class TestPostingBatches:
         assert grams * 6 > 42  # the batch genuinely outgrew the budget
         await storage.close()
 
-    async def test_no_reindex_statement_grows_with_entry_count(self, tmp_path, monkeypatch) -> None:
+    async def test_no_rebuild_statement_grows_with_entry_count(self, tmp_path, monkeypatch) -> None:
         # The scale law under a tightened budget: stale-chunk deletes
         # chunk their IN-lists, and no statement's bind count exceeds it.
         monkeypatch.setattr(EngineHost, "membership_budget", property(lambda self: 4))
@@ -1232,7 +1278,7 @@ class TestPostingBatches:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append(statement)
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         deletes = [s for s in statements if s.startswith("DELETE") and "chunks" in s]
         assert len(deletes) == 3  # ten entries at a budget of four: 4 + 4 + 2
         assert all(s.count("?") <= 4 for s in deletes)
@@ -1251,7 +1297,7 @@ class TestPostingBatches:
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append((statement, executemany))
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         updates = [(s, many) for s, many in statements if s.startswith("UPDATE") and ("chunked" in s or "encoded" in s)]
         assert all(many is False for _, many in updates)
         flips = [(s, many) for s, many in updates if "version" in s]
@@ -1259,20 +1305,20 @@ class TestPostingBatches:
         assert len(updates) == len(flips)  # no stale generations: the probe skips the re-dirty
         await storage.close()
 
-    async def test_steady_state_reindex_issues_no_entry_update(self, tmp_path) -> None:
-        # The probe-guarded re-dirty: a settled store's reindex must not
+    async def test_steady_state_rebuild_issues_no_entry_update(self, tmp_path) -> None:
+        # The probe-guarded re-dirty: a settled store's rebuild must not
         # UPDATE the entry table at all (scan-locking engines lock the scan).
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i:02}.txt"), content=f"needle body {i:02}") for i in range(10)]
         assert (await storage.write(entries=entries)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         statements: list[str] = []
 
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
             statements.append(statement)
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert not [s for s in statements if s.startswith("UPDATE") and "chunked" in s]
         await storage.close()
 
@@ -1309,7 +1355,7 @@ class TestChunkProvenance:
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         # A sub-trigram body: chunk-ineligible, but provenance still stamps.
         assert (await storage.write(entries=[Entry(path=Path("/tiny.py"), content="hi")])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         for path, indexable in (("/a.py", True), ("/tiny.py", False)):
             row = await self._entry_row(storage, path)
             assert row.chunked is True
@@ -1321,7 +1367,7 @@ class TestChunkProvenance:
     async def test_same_body_overwrite_skips_the_resplit(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         statements: list[str] = []
         self._record_into(storage, statements)
         # A same-body overwrite dirties the entry (content writes reset the
@@ -1329,7 +1375,7 @@ class TestChunkProvenance:
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
         row = await self._entry_row(storage, "/a.py")
         assert row.chunked is False
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert self._chunk_writes(statements) == []
         row = await self._entry_row(storage, "/a.py")
         assert row.chunked is True
@@ -1339,12 +1385,12 @@ class TestChunkProvenance:
         """Guards the skip condition losing its body-hash equality (skip-everything)."""
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         statements: list[str] = []
         self._record_into(storage, statements)
         changed = self.BODY + "tail_marker = True\n"
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=changed)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         writes = self._chunk_writes(statements)
         assert any(s.startswith("DELETE") for s in writes)
         assert any(s.startswith("INSERT") for s in writes)
@@ -1354,7 +1400,7 @@ class TestChunkProvenance:
         assert any("tail_marker" in body for body in bodies)
         await storage.close()
 
-    async def test_a_malformed_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+    async def test_a_malformed_notebook_never_wedges_the_rebuild(self, tmp_path) -> None:
         # A user-writable file must not jam the maintenance verb: junk
         # kernel metadata degrades to the default grammar and chunks.
         storage = DatabaseStorage(url=_url(tmp_path))
@@ -1365,7 +1411,7 @@ class TestChunkProvenance:
             },
         )
         assert (await storage.write(entries=[Entry(path=Path("/bad.ipynb"), content=body)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await self._entry_row(storage, "/bad.ipynb")
         assert row.chunked is True
         chunks = storage._host.tables.chunks
@@ -1375,13 +1421,13 @@ class TestChunkProvenance:
         assert all("needle_value" in body for body in bodies)
         await storage.close()
 
-    async def test_a_deep_nested_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+    async def test_a_deep_nested_notebook_never_wedges_the_rebuild(self, tmp_path) -> None:
         # Nesting past the JSON parser's recursion budget must degrade to
         # the fallback split, never wedge the maintenance verb.
         storage = DatabaseStorage(url=_url(tmp_path))
         body = "[" * 10_000 + "]" * 10_000
         assert (await storage.write(entries=[Entry(path=Path("/deep.ipynb"), content=body)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await self._entry_row(storage, "/deep.ipynb")
         assert row.chunked is True
         chunks = storage._host.tables.chunks
@@ -1391,14 +1437,14 @@ class TestChunkProvenance:
         assert bodies and "".join(bodies) == body
         await storage.close()
 
-    async def test_a_surrogate_escape_notebook_never_wedges_the_reindex(self, tmp_path) -> None:
+    async def test_a_surrogate_escape_notebook_never_wedges_the_rebuild(self, tmp_path) -> None:
         # Pure-ASCII JSON passes the write gate; json.loads manufactures
         # the lone surrogate, which must degrade in chunks, never raise.
         storage = DatabaseStorage(url=_url(tmp_path))
         body = json.dumps({"cells": [{"cell_type": "code", "source": "needle_value = 1  # \ud800\n" * 40}]})
         assert body.isascii()
         assert (await storage.write(entries=[Entry(path=Path("/escape.ipynb"), content=body)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         row = await self._entry_row(storage, "/escape.ipynb")
         assert row.chunked is True
         chunks = storage._host.tables.chunks
@@ -1415,13 +1461,13 @@ class TestChunkProvenance:
         """Guards the skip condition losing its generation term, and the re-dirty statement vanishing."""
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=self.BODY)])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         entry = storage._host.tables.entry
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(entry).values(chunk_generation="stale:0"))
         statements: list[str] = []
         self._record_into(storage, statements)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         writes = self._chunk_writes(statements)
         assert any(s.startswith("DELETE") for s in writes)  # stale generation re-split, not skipped
         row = await self._entry_row(storage, "/a.py")
@@ -1433,7 +1479,7 @@ class TestChunkProvenance:
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(path), content=body) for path, body in self.FOUR.items()]
         assert (await storage.write(entries=entries, parents=True)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         return storage
 
     async def _pointer(self, storage: DatabaseStorage) -> int | None:
@@ -1459,7 +1505,7 @@ class TestChunkProvenance:
         real = indexing.chunk_generation
         monkeypatch.setattr(indexing, "chunk_generation", lambda: real() + "-bumped")
         assert indexing.index_options_hash() != settled
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await self._pointer(storage) == 2
         renamed, resplit = await self._chunk_ids(storage)
         assert not resplit & held  # the bump re-split every entry into fresh ids
@@ -1481,14 +1527,14 @@ class TestChunkProvenance:
                 rows = await conn.execute(flags.where(entry.c.path.in_(list(self.FOUR))).order_by(entry.c.path))
                 seen.extend(row._tuple() for row in rows)
 
-        with installed("reindex:before-publish", observe):
-            assert (await storage.reindex()).success is True
+        with installed("rebuild:before-publish", observe):
+            assert (await storage.rebuild()).success is True
         # Read once, after the chunk pass re-split all four and before the publish.
         assert seen == [(path, real() + "-bumped", True, True) for path in sorted(self.FOUR)]
         await storage.close()
 
 
-class TestReindexLease:
+class TestIndexLease:
     async def _stamped(self, storage: DatabaseStorage, holder: str | None, heartbeat: int | None) -> None:
         index_state = storage._host.tables.index_state
         async with storage._host.engine.begin() as conn:
@@ -1503,15 +1549,15 @@ class TestReindexLease:
     async def _made_stale(self, storage: DatabaseStorage) -> None:
         """Backdate the running lease past its TTL, as a run stalled past it leaves the row; the holder stays."""
         index_state = storage._host.tables.index_state
-        stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+        stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
         async with storage._host.engine.begin() as conn:
             await conn.execute(update(index_state).values(lease_heartbeat=stale))
 
-    async def test_a_live_lease_refuses_a_second_reindex(self, tmp_path) -> None:
+    async def test_a_live_lease_refuses_a_second_rebuild(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        await self._stamped(storage, "RIVAL", indexing._now_ms())
-        result = await storage.reindex()
+        await self._stamped(storage, "RIVAL", maintenance_module._now_ms())
+        result = await storage.rebuild()
         assert result.success is False
         [error] = result.errors
         assert error.kind == ErrorKind.conflict
@@ -1526,9 +1572,9 @@ class TestReindexLease:
         # claimant takes over, runs, and leaves the lease clear.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        stale = indexing._now_ms() - indexing.REINDEX_LEASE_TTL_MS - 1_000
+        stale = maintenance_module._now_ms() - maintenance_module.INDEX_LEASE_TTL_MS - 1_000
         await self._stamped(storage, "DEAD", stale)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await self._lease(storage) == (None, None)
         await storage.close()
 
@@ -1543,8 +1589,8 @@ class TestReindexLease:
             async with storage._host.engine.begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
-        with installed("reindex:before-publish", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-publish", rival):
+            result = await storage.rebuild()
         assert result.success is False
         assert await self._lease(storage) == (None, None)
         await storage.close()
@@ -1556,7 +1602,9 @@ class TestReindexLease:
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         lost = asyncio.Event()
         lost.set()
-        result = await storage._reindex_phases(storage._host.tables, lost, await _claimed(storage))
+        result = await maintenance_module._rebuild_phases(
+            storage._maintenance(), storage._host.tables, lost, await _claimed(storage)
+        )
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict
         assert "expired mid-run" in result.errors[0].message
@@ -1564,12 +1612,14 @@ class TestReindexLease:
         await storage.close()
 
     async def test_the_beat_task_flags_a_taken_lease(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.01)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        await self._stamped(storage, "RIVAL", indexing._now_ms())
+        await self._stamped(storage, "RIVAL", maintenance_module._now_ms())
         lost = asyncio.Event()
-        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        task = asyncio.create_task(
+            maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
+        )
         await asyncio.wait_for(lost.wait(), timeout=5)
         await asyncio.wait_for(task, timeout=5)
         await storage.close()
@@ -1578,12 +1628,12 @@ class TestReindexLease:
         """A beat that cannot get a writer (the build phase holds SQLite's
         lock past the beat's retries) comes back a ``conflict`` too; only
         the marked zero-row verdict stops the run — the TTL absorbs the rest."""
-        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.01)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
         stalled = Result(
-            ops=("reindex",),
-            errors=[ResultError(kind=ErrorKind.conflict, message="reindex kept losing", retryable=True)],
+            ops=("rebuild",),
+            errors=[ResultError(kind=ErrorKind.conflict, message="rebuild kept losing", retryable=True)],
         )
         beats = 0
 
@@ -1594,7 +1644,9 @@ class TestReindexLease:
 
         monkeypatch.setattr(storage, "_execute_maintenance", stalled_write)
         lost = asyncio.Event()
-        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        task = asyncio.create_task(
+            maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
+        )
         for _ in range(50):
             await asyncio.sleep(0.02)
             if beats >= 5:
@@ -1603,17 +1655,21 @@ class TestReindexLease:
         with suppress(asyncio.CancelledError):
             await task
         assert beats >= 5 and not lost.is_set()
-        assert indexing.lease_lost(indexing.lease_lost_result()) and not indexing.lease_lost(stalled)
+        assert maintenance_module.lease_lost(
+            maintenance_module.lease_lost_result()
+        ) and not maintenance_module.lease_lost(stalled)
         await storage.close()
 
     async def test_a_successful_beat_advances_the_heartbeat(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr(backend_module, "REINDEX_HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr(maintenance_module, "INDEX_LEASE_HEARTBEAT_SECONDS", 0.01)
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        backdated = indexing._now_ms() - 60_000
+        backdated = maintenance_module._now_ms() - 60_000
         await self._stamped(storage, "MINE", backdated)
         lost = asyncio.Event()
-        task = asyncio.create_task(storage._beat_reindex_lease(storage._host.tables, "MINE", lost))
+        task = asyncio.create_task(
+            maintenance_module._beat_index_lease(storage._maintenance(), storage._host.tables, "MINE", lost)
+        )
         for _ in range(200):
             await asyncio.sleep(0.02)
             _, heartbeat = await self._lease(storage)
@@ -1632,13 +1688,13 @@ class TestReindexLease:
         # clears the lease for the next claimant.
         storage = DatabaseStorage(url=_url(tmp_path))
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="needle body")])
-        failure = Result(ops=("reindex",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
+        failure = Result(ops=("rebuild",), errors=[ResultError(kind=ErrorKind.internal, message="chunk broke")])
 
         async def broken(session, tables, profile, parameter_budget, membership_budget, executor, **_kw) -> Result:
             return failure
 
-        monkeypatch.setattr(backend_module, "chunk_dirty", broken)
-        result = await storage.reindex()
+        monkeypatch.setattr(maintenance_module, "chunk_dirty", broken)
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].message == "chunk broke"
         assert await self._lease(storage) == (None, None)
@@ -1658,7 +1714,9 @@ class TestReindexLease:
                 type(self).calls += 1
                 return type(self).calls >= 3
 
-        result = await storage._reindex_phases(storage._host.tables, FlipsOnThirdCheck(), await _claimed(storage))
+        result = await maintenance_module._rebuild_phases(
+            storage._maintenance(), storage._host.tables, FlipsOnThirdCheck(), await _claimed(storage)
+        )
         assert result.success is False
         assert "expired mid-run" in result.errors[0].message
         assert await _epoch(storage) is None  # the publish never ran
@@ -1669,7 +1727,7 @@ class TestReindexLease:
         whose lease a rival claimed publishes an epoch naming chunk rows the rival has replaced."""
         lapsed = DatabaseStorage(url=_url(tmp_path))
         assert (await lapsed.write(entries=[Entry(path=Path("/e.txt"), content="echo body")])).success is True
-        assert (await lapsed.reindex()).success is True
+        assert (await lapsed.rebuild()).success is True
         assert (await lapsed.write(entries=[Entry(path=Path("/f.txt"), content="foxtrot body")])).success is True
         holder = DatabaseStorage(url=_url(tmp_path))
         arrived = [asyncio.Event(), asyncio.Event()]
@@ -1680,13 +1738,13 @@ class TestReindexLease:
             arrived[mine].set()
             await released[mine].wait()
 
-        with installed("reindex:before-publish", hold):
-            first = asyncio.create_task(lapsed.reindex())
+        with installed("rebuild:before-publish", hold):
+            first = asyncio.create_task(lapsed.rebuild())
             await arrived[0].wait()
             await self._made_stale(lapsed)
             # A newer chunker: the holder re-splits every entry with no version bump.
             monkeypatch.setattr(indexing, "chunk_generation", lambda: "a-newer-chunker")
-            second = asyncio.create_task(holder.reindex())
+            second = asyncio.create_task(holder.rebuild())
             await arrived[1].wait()
             released[0].set()
             lost = await first
@@ -1694,16 +1752,17 @@ class TestReindexLease:
             won = await second
         [error] = lost.errors
         assert (error.kind, error.retryable) == (ErrorKind.conflict, False)
-        assert error.message.endswith("reindex lost the index publish race for epoch 2"), error.message
+        assert error.message.endswith("rebuild lost the index publish race for epoch 2"), error.message
+        assert lost.ops == ("rebuild",)
         assert won.success is True, won.errors
         assert await _epoch(lapsed) == 3
         assert await _lexical_chunk_ids(lapsed, "/e.txt") == await _chunk_ids(lapsed, "/e.txt")
         with pytest.raises(TypeError):
-            indexing.ReindexState()  # ty: ignore[missing-argument]
+            indexing.RebuildState()  # ty: ignore[missing-argument]
         tables = lapsed._host.tables
         for previous in (None, 3):
             session = _MatchingSession(sqlite.dialect())
-            state = indexing.ReindexState(token="THE-TOKEN", previous_epoch=previous, epoch=4)
+            state = indexing.RebuildState(token="THE-TOKEN", previous_epoch=previous, epoch=4)
             await indexing.publish_epoch(cast("AsyncSession", session), tables, SQLITE, 2_000, 1_000, state)
             [(cas, _params)] = session.calls
             for dialect in (sqlite.dialect(), postgresql.dialect(), mysql.dialect(), mssql.dialect(), oracle.dialect()):
@@ -1711,14 +1770,14 @@ class TestReindexLease:
                 assert "lease_holder IS NULL" not in str(compiled), (dialect.name, compiled)
                 assert "THE-TOKEN" in compiled.params.values(), (dialect.name, compiled.params)
         assert await self._lease(lapsed) == (None, None)
-        never = indexing.ReindexState(token="NEVER-CLAIMED", previous_epoch=3, epoch=4)
+        never = indexing.RebuildState(token="NEVER-CLAIMED", previous_epoch=3, epoch=4)
         profile, budgets = lapsed._host.profile, (lapsed._host.parameter_budget, lapsed._host.membership_budget)
         missed = await lapsed._execute_maintenance(
-            "reindex", lambda session: indexing.publish_epoch(session, tables, profile, *budgets, never)
+            "rebuild", lambda session: indexing.publish_epoch(session, tables, profile, *budgets, never)
         )
         [error] = missed.errors
         assert (error.kind, error.retryable) == (ErrorKind.conflict, False)
-        assert error.message.endswith("reindex lost the index publish race for epoch 4"), error.message
+        assert error.message.endswith("rebuild lost the index publish race for epoch 4"), error.message
         assert await _epoch(lapsed) == 3
         await holder.close()
         await lapsed.close()
@@ -1735,9 +1794,11 @@ class TestReindexLease:
         async def beat_proves_it_taken() -> None:
             lost.set()
 
-        with installed("reindex:before-chunk-split", beat_proves_it_taken):
-            result = await storage._reindex_phases(storage._host.tables, lost, await _claimed(storage))
-        assert indexing.lease_lost(result), result.errors
+        with installed("rebuild:before-chunk-split", beat_proves_it_taken):
+            result = await maintenance_module._rebuild_phases(
+                storage._maintenance(), storage._host.tables, lost, await _claimed(storage)
+            )
+        assert maintenance_module.lease_lost(result), result.errors
         assert {path for path in bodies if (await _flags(storage, path))[0]} == {"/f0.md", "/f1.md"}
         links = [error.data for error in result.errors if error.data and error.data.get("leg") == "links"]
         assert links == [{"leg": "links", "sources": 2, "edges": 0, "unresolved": 2}]
@@ -1752,9 +1813,11 @@ class TestReindexLease:
         async def beat_proves_it_taken() -> None:
             lost.set()
 
-        with installed("reindex:before-chunk-split", beat_proves_it_taken):
-            result = await storage._reindex_phases(storage._host.tables, lost, await _claimed(storage))
-        assert indexing.lease_lost(result), result.errors
+        with installed("rebuild:before-chunk-split", beat_proves_it_taken):
+            result = await maintenance_module._rebuild_phases(
+                storage._maintenance(), storage._host.tables, lost, await _claimed(storage)
+            )
+        assert maintenance_module.lease_lost(result), result.errors
         assert await _flags(storage, "/a.txt") == (True, False)  # the slice committed; no build followed
         assert await _count(storage, storage._host.tables.gram_epochs) == 0
         assert await _epoch(storage) is None
@@ -1764,7 +1827,7 @@ class TestReindexLease:
         """Guards: a slice its fence refused reporting the links of work it rolled back, a record raised when no
         reference is unresolved, or a failing pass dropping the counts of the slices it committed."""
         monkeypatch.setattr(indexing, "CHUNK_SLICE_ENTRIES", 2)
-        real_beat = indexing.heartbeat_reindex_lease
+        real_beat = maintenance_module.heartbeat_index_lease
         fences = 0
 
         async def taken_before_the_second_fence(session: AsyncSession, tables: VFSTables, token: str) -> Result:
@@ -1774,15 +1837,15 @@ class TestReindexLease:
                 await session.execute(update(tables.index_state).values(lease_holder="RIVAL"))
             return await real_beat(session, tables, token)
 
-        monkeypatch.setattr(indexing, "heartbeat_reindex_lease", taken_before_the_second_fence)
+        monkeypatch.setattr(maintenance_module, "heartbeat_index_lease", taken_before_the_second_fence)
         for name, target in (("dead", "gone"), ("live", "here")):
             (tmp_path / name).mkdir()
             storage = DatabaseStorage(url=_url(tmp_path / name))
             bodies = {f"/f{i}.md": f"See [{target}]({target}.md).\n" for i in range(4)}
             bodies["/here.md"] = "here\n"
             assert (await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])).success
-            result = await storage.reindex()
-            assert indexing.lease_lost(result), result.errors
+            result = await storage.rebuild()
+            assert maintenance_module.lease_lost(result), result.errors
             links = [error.data for error in result.errors if error.data and error.data.get("leg") == "links"]
             expected = [{"leg": "links", "sources": 2, "edges": 0, "unresolved": 2}] if name == "dead" else []
             assert links == expected, name
@@ -1794,25 +1857,25 @@ class TestReindexLease:
         note = classified(ErrorKind.not_found, severity=Severity.info, detail="an advisory the body returned")
 
         async def body(session: AsyncSession) -> Result:
-            return Result(ops=("reindex",), errors=[note])
+            return Result(ops=("rebuild",), errors=[note])
 
-        fenced = indexing.lease_fenced(storage._host.tables, "NEVER-CLAIMED", body)
-        result = await storage._execute_leased("reindex", fenced)
-        assert indexing.lease_lost(result) and result.errors[0] == note, result.errors
+        fenced = maintenance_module.lease_fenced(storage._host.tables, "NEVER-CLAIMED", body)
+        result = await storage._execute_leased("rebuild", fenced)
+        assert maintenance_module.lease_lost(result) and result.errors[0] == note, result.errors
         await storage.close()
 
     async def test_a_rival_chunk_row_collision_redrives_and_is_classified(self, tmp_path, monkeypatch) -> None:
         """Guards: the chunk pass's collision handler deleted, so a rival's chunk rows end the run in the
         driver's text; and the handler recognising every integrity failure, so a NOT NULL redrives as a conflict."""
         passes = 0
-        real_pass, real_insert = backend_module.chunk_dirty, indexing.bulk_insert
+        real_pass, real_insert = maintenance_module.chunk_dirty, indexing.bulk_insert
 
         async def counted(*args: Any, **kwargs: Any) -> Result:
             nonlocal passes
             passes += 1
             return await real_pass(*args, **kwargs)
 
-        monkeypatch.setattr(backend_module, "chunk_dirty", counted)
+        monkeypatch.setattr(maintenance_module, "chunk_dirty", counted)
         body = TestChunkProvenance.BODY
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content=body)])).success is True
@@ -1825,7 +1888,7 @@ class TestReindexLease:
             await real_insert(session, table, rows)
 
         monkeypatch.setattr(indexing, "bulk_insert", collided)
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is True, result.errors
         assert passes == 2
         assert not [error for error in result.errors if error.kind == ErrorKind.unavailable]
@@ -1842,7 +1905,7 @@ class TestReindexLease:
             await real_insert(session, table, orphaned)
 
         monkeypatch.setattr(indexing, "bulk_insert", unowned)
-        failed = await defect.reindex()
+        failed = await defect.rebuild()
         [error] = failed.errors
         assert failed.success is False and passes == 1
         assert not (error.kind == ErrorKind.conflict and error.retryable), error
@@ -1856,7 +1919,7 @@ class TestReindexLease:
         storage = DatabaseStorage(url=_url(tmp_path))
         bodies = {f"/f{i}.txt": f"file {i} body\n" for i in range(5)}
         assert (await storage.write(entries=[Entry(path=Path(p), content=c) for p, c in bodies.items()])).success
-        real_beat = indexing.heartbeat_reindex_lease
+        real_beat = maintenance_module.heartbeat_index_lease
         fences = 0
 
         async def taken_before_the_second_fence(session: AsyncSession, tables: VFSTables, token: str) -> Result:
@@ -1867,14 +1930,14 @@ class TestReindexLease:
                 await session.execute(update(tables.index_state).values(lease_holder="RIVAL"))
             return await real_beat(session, tables, token)
 
-        monkeypatch.setattr(indexing, "heartbeat_reindex_lease", taken_before_the_second_fence)
-        result = await storage.reindex()
-        assert indexing.lease_lost(result), result.errors
+        monkeypatch.setattr(maintenance_module, "heartbeat_index_lease", taken_before_the_second_fence)
+        result = await storage.rebuild()
+        assert maintenance_module.lease_lost(result), result.errors
         first = {"/f0.txt", "/f1.txt"}
         assert {path for path in bodies if (await _flags(storage, path))[0]} == first
         kept = {path: await _chunk_ids(storage, path) for path in first}
         fenced = _spy_fenced(storage, monkeypatch)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert [len(each.chunked) for each in fenced] == [4, 5]
         assert {path: await _chunk_ids(storage, path) for path in first} == kept  # no committed slice repeated
         for path, body in bodies.items():
@@ -1884,7 +1947,7 @@ class TestReindexLease:
 
 
 # ---------------------------------------------------------------------------
-# The offload seam: reindex CPU leaves the event loop
+# The offload seam: rebuild CPU leaves the event loop
 # ---------------------------------------------------------------------------
 
 
@@ -1904,8 +1967,8 @@ class _HoppingBuilder:
         return self._inner.next_batch(cap)
 
 
-class TestReindexLoopResponsiveness:
-    async def test_the_loop_keeps_ticking_through_every_reindex_hop(self, tmp_path, monkeypatch) -> None:
+class TestRebuildLoopResponsiveness:
+    async def test_the_loop_keeps_ticking_through_every_rebuild_hop(self, tmp_path, monkeypatch) -> None:
         """Guards: chunk_dirty's assessment-and-split, build_epoch's
         fold-and-feed, or the drain running inline on the loop."""
         real_assess = indexing._assess_and_split
@@ -1922,7 +1985,7 @@ class TestReindexLoopResponsiveness:
         entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn_{i}():\n    return {i}\n") for i in range(8)]
         assert (await storage.write(entries=entries, parents=True)).success is True
         ticker.start()
-        result = await storage.reindex()
+        result = await storage.rebuild()
         ticker.stop()
         assert result.success is True, result.errors
         # One assessment, at least one feed and one drain: every hop saw the loop turn.
@@ -1957,7 +2020,7 @@ class TestSplitBatchBudget:
             storage = DatabaseStorage(url=f"sqlite+aiosqlite:///{tmp_path}/{name}.sqlite")
             entries = [Entry(path=Path(path), content=content) for path, content in files.items()]
             assert (await storage.write(entries=entries, parents=True)).success is True
-            assert (await storage.reindex()).success is True
+            assert (await storage.rebuild()).success is True
             answers.append(await chunk_rows(storage))
             await storage.close()
         whole, batched = answers
@@ -1980,7 +2043,7 @@ class TestSplitBatchBudget:
         storage = DatabaseStorage(url=_url(tmp_path))
         entries = [Entry(path=Path(f"/f{i}.py"), content=f"def fn{i}():\n    return {i}\n") for i in range(3)]
         assert (await storage.write(entries=entries)).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert calls == 3
         await storage.close()
 

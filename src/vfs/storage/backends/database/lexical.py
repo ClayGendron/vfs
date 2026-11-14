@@ -1,4 +1,10 @@
-"""The lexical index's storage half: the epoch build and the statistics probe.
+"""The lexical index's storage half: the epoch build, the statistics probe, and the reads the lexical leg ranks from.
+
+The reads are the leg's two rounds over the posting blocks
+(:func:`chunk_ranking`, :func:`tail_block_statements`), the narrow rung's
+chunk ids for an allow-list (:func:`chunk_ids_for`), and the visible
+lexicon, the statistics a partial caller's leg is scored under
+(:func:`visible_lexicon`).
 
 The build is one step of the gram epoch's build phase: one keyset pass
 over the chunk table keeping the chunks of exactly the entries the gram
@@ -23,22 +29,38 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import insert, select
+from sqlalchemy import and_, func, insert, or_, select, tuple_
 
 from vfs.batching import ByteBatcher
-from vfs.models.lexical import BM25_B, BM25_K1, SummaryRow, lexical_builder
+from vfs.models.lexical import (
+    BM25_B,
+    BM25_K1,
+    ScoreBlock,
+    SummaryRow,
+    decode_summary,
+    idf,
+    lexical_builder,
+    score_blocks,
+    select_blocks,
+)
+from vfs.native import extension
 from vfs.offload import call_offloaded
 from vfs.storage.backends.database.dialects import bulk_insert, chunked
+from vfs.storage.backends.database.membership import membership
+from vfs.storage.backends.database.ranges import derived_hint
+from vfs.storage.backends.database.rights import RIGHTS_FIELDS
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Container, Sequence
+    from collections.abc import AsyncIterator, Container, Mapping, Sequence
     from concurrent.futures import Executor
 
-    from sqlalchemy import Select
+    from sqlalchemy import Column, ColumnElement, Select, Table
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from vfs.models.lexical import LexicalBuilder
     from vfs.models.rows import VFSTables
+    from vfs.storage.backends.database.dialects import DialectProfile
+    from vfs.storage.backends.database.rights import Visibility
 
 # One tokenize call's content payload (chars as the byte proxy): bounds a
 # hop's copy and the batch's transient token lists.
@@ -50,6 +72,12 @@ _LEXICAL_INSERT_ROWS: Final = 20_000
 
 # Chunk rows per keyset page of the build's scan (a page is one round trip).
 _SCAN_PAGE_ROWS: Final = 256
+
+HEAD_BLOCKS: Final = 8
+"""Blocks per term fetched in round one — a term of ≤ 1,024 postings is complete there."""
+
+ChunkId = int
+Ranking = list[tuple[ChunkId, float]]
 
 
 class TermStatistics(NamedTuple):
@@ -65,6 +93,20 @@ class TermStatistics(NamedTuple):
     avg_dl: float
     k1: float
     b: float
+
+
+class Lexicon(NamedTuple):
+    """A partial caller's lexical leg: visible-set statistics, every block rebounded, the visible chunks.
+
+    ``blocks`` index their term by position in the visible statistics'
+    term order, which is the query's order with invisible terms dropped;
+    ``visible`` is sorted, the scorer's candidate set.
+    """
+
+    stats: TermStatistics
+    blocks: list[ScoreBlock]
+    idfs: list[float]
+    visible: list[ChunkId]
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +190,194 @@ async def lexical_stats(
 
 
 # ---------------------------------------------------------------------------
+# Block reads
+# ---------------------------------------------------------------------------
+
+
+async def chunk_ranking(
+    session: AsyncSession,
+    tables: VFSTables,
+    epoch: int,
+    stats: TermStatistics,
+    present: Sequence[str],
+    k: int,
+    candidates: Sequence[ChunkId] | None,
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+) -> Ranking:
+    """Top-``k`` ``(chunk_id, score)`` from the head fetch plus the selected blocks."""
+    postings = tables.lex_postings
+    columns = posting_columns(postings)
+    summaries = {term: decode_summary(stats.terms[term].blocks) for term in present}
+    idfs = [stats.terms[term].idf for term in present]
+    index = {term: position for position, term in enumerate(present)}
+
+    def as_blocks(fetched: Sequence[Any]) -> list[ScoreBlock]:
+        return [
+            ScoreBlock(
+                index[r.term], summaries[r.term].max_weights[r.block_no], bytes(r.doc_ids), bytes(r.tfs), bytes(r.dls)
+            )
+            for r in fetched
+        ]
+
+    blocks: list[ScoreBlock] = []
+    for probe in chunked(list(present), membership_budget):
+        head = select(*columns).where(
+            postings.c.epoch == epoch, postings.c.term.in_(probe), postings.c.block_no < HEAD_BLOCKS
+        )
+        blocks += as_blocks((await session.execute(head)).all())
+    scored = score_blocks(blocks, idfs, stats.avg_dl, 10**9, candidates=candidates)
+    theta = scored[k - 1][1] if len(scored) >= k else 0.0
+    score_of = dict(scored)
+    sorted_candidates = sorted(score_of)
+    tail = [score_of[chunk] for chunk in sorted_candidates]
+    overflowing = [term for term in present if len(summaries[term].first_ids) > HEAD_BLOCKS]
+    selected = select_blocks([summaries[term] for term in overflowing], sorted_candidates, tail, theta)
+    wanted = {
+        term: [no for no in competing if no >= HEAD_BLOCKS]
+        for term, competing in zip(overflowing, selected, strict=True)
+    }
+    for statement in tail_block_statements(postings, epoch, wanted, profile, parameter_budget, membership_budget):
+        blocks += as_blocks((await session.execute(statement)).all())
+    return score_blocks(blocks, idfs, stats.avg_dl, k, candidates=candidates)
+
+
+def tail_block_statements(
+    postings: Table,
+    epoch: int,
+    wanted: Mapping[str, Sequence[int]],
+    profile: DialectProfile,
+    parameter_budget: int,
+    membership_budget: int,
+) -> list[Select[Any]]:
+    """The tail fetch: the statements that read the ``wanted`` blocks (term → block numbers) by key.
+
+    Two spellings, chosen by the profile. Where the engine accepts a
+    row-value constructor inside ``IN`` (``tuple_in``), every statement
+    is ``epoch = ? AND (term, block_no) IN (pairs)``, the pairs chunked
+    at half the membership budget because each binds two values, and no
+    statement carries an ``OR``. Elsewhere the arms are
+    ``epoch = ? AND term = ? AND block_no IN (...)``, one per term and
+    chunk of block numbers, packed into ``OR`` statements under the
+    parameter budget.
+
+    The tuple form exists because SQLite's planner loses rows from the OR
+    form: over the postings table's ``WITHOUT ROWID`` key, once the store
+    has planner statistics, a ``MULTI-INDEX OR`` whose later arm lists
+    more than one block and names a term that sorts before an earlier
+    arm's returns none of that arm's rows. A statement with no ``OR``
+    cannot take that plan. The ranking harness driver calls this builder
+    too, so the referee and the leg cannot drift apart.
+    """
+    columns = posting_columns(postings)
+    if profile.tuple_in:
+        pairs = [(term, no) for term, nos in wanted.items() for no in nos]
+        return [
+            select(*columns).where(
+                postings.c.epoch == epoch, tuple_(postings.c.term, postings.c.block_no).in_(list(chunk))
+            )
+            for chunk in chunked(pairs, max(1, membership_budget // 2))
+        ]
+    arms: list[tuple[int, ColumnElement[bool]]] = []
+    for term, nos in wanted.items():
+        for chunk in chunked(list(nos), membership_budget):
+            arm = and_(postings.c.epoch == epoch, postings.c.term == term, postings.c.block_no.in_(list(chunk)))
+            arms.append((len(chunk) + 2, arm))
+    return [select(*columns).where(or_(*statement)) for statement in _packed_arms(arms, parameter_budget)]
+
+
+def posting_columns(postings: Table) -> tuple[Column[Any], ...]:
+    """The five posting columns every block fetch projects, in the order the scorer's block reader expects."""
+    return (postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
+
+
+async def chunk_ids_for(
+    session: AsyncSession,
+    tables: VFSTables,
+    epoch: int,
+    doc_ids: Sequence[int],
+    profile: DialectProfile,
+    membership_budget: int,
+) -> list[ChunkId]:
+    """The epoch's chunk ids of the entries with surrogate ids *doc_ids*, sorted."""
+    entry, docs = tables.entry, tables.lex_docs
+    found: list[ChunkId] = []
+    for chunk in chunked(list(doc_ids), membership_budget):
+        stmt = (
+            select(docs.c.chunk_id)
+            .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
+            .where(docs.c.epoch == epoch, membership(entry.c.id, chunk, profile))
+        )
+        found.extend((await session.execute(stmt)).scalars())
+    found.sort()
+    return found
+
+
+# ---------------------------------------------------------------------------
+# The visible lexicon — statistics over what a partial caller can see
+# ---------------------------------------------------------------------------
+
+
+async def visible_lexicon(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    epoch: int,
+    stats: TermStatistics,
+    terms: Sequence[str],
+    view: Visibility,
+) -> Lexicon:
+    """The query's BM25 inputs counted over the rows *view* admits, and the blocks to score them.
+
+    ``N`` and the mean length come from the visible chunks of the epoch;
+    each term's ``df`` from its postings met with the visible chunks
+    among them. A term no visible row contains drops out, so it neither
+    scores nor appears in the export. Every block's stored bound was
+    taken under the corpus statistics, so it is rescaled —
+    ``max_weight * idf_v / idf_g * max(1, avg_dl_v / avg_dl_g)``, never
+    below the true bound — before the scorer prunes on it.
+
+    Cost profile, stated plainly: this reads every block of every query
+    term and resolves the visibility of every chunk those blocks name —
+    work that grows with the terms' corpus-wide document frequency, not
+    with what the caller sees. Numbering chunks in path order, so a
+    folder is one id range, is the known way to make it flat.
+    """
+    n_docs, total_dl = await _visible_corpus(session, tables, profile, epoch, view)
+    avg_dl = total_dl / n_docs if n_docs else 0.0
+    probed = [term for term in terms if term in stats.terms]
+    by_term = await _all_blocks(session, tables, epoch, probed, membership_budget)
+    engine = extension()
+    union: list[int] = []
+    if probed:
+        groups = [[bytes(block.doc_ids)] for term in probed for block in by_term[term]]
+        union, _count = engine.candidate_ids(groups, None, sum(stats.terms[term].df for term in probed))
+    visible = sorted(await _visible_chunks(session, tables, profile, membership_budget, epoch, union, view))
+    kept: dict[str, SummaryRow] = {}
+    blocks: list[ScoreBlock] = []
+    idfs: list[float] = []
+    for term in probed:
+        term_blocks = by_term[term]
+        df = engine.candidate_ids([[bytes(b.doc_ids)] for b in term_blocks], visible, 0)[1] if visible else 0
+        if not df:
+            continue
+        row = stats.terms[term]
+        term_idf = idf(df, n_docs)
+        scale = term_idf / row.idf * max(1.0, avg_dl / stats.avg_dl)
+        maxima = decode_summary(row.blocks).max_weights
+        kept[term] = SummaryRow(term, df, term_idf, row.max_weight * scale, row.blocks)
+        position = len(idfs)
+        idfs.append(term_idf)
+        blocks += [
+            ScoreBlock(position, maxima[b.block_no] * scale, bytes(b.doc_ids), bytes(b.tfs), bytes(b.dls))
+            for b in term_blocks
+        ]
+    return Lexicon(TermStatistics(kept, n_docs, avg_dl, stats.k1, stats.b), blocks, idfs, visible)
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -210,3 +440,99 @@ def _block_rows(builder: LexicalBuilder, epoch: int) -> list[dict[str, object]] 
         }
         for term, block_no, doc_count, doc_ids, tfs, dls in batch
     ]
+
+
+def _packed_arms(
+    arms: Sequence[tuple[int, ColumnElement[bool]]], parameter_budget: int
+) -> list[list[ColumnElement[bool]]]:
+    """Round-two arms grouped into statements whose bind spend stays inside the budget."""
+    statements: list[list[ColumnElement[bool]]] = []
+    spend = 0
+    for binds, arm in arms:
+        if not statements or spend + binds > parameter_budget:
+            statements.append([])
+            spend = 0
+        statements[-1].append(arm)
+        spend += binds
+    return statements
+
+
+async def _visible_corpus(
+    session: AsyncSession, tables: VFSTables, profile: DialectProfile, epoch: int, view: Visibility
+) -> tuple[int, int]:
+    """``(chunk count, total length)`` over the epoch's chunks whose entry the view admits.
+
+    One aggregate over the chunks joined to the visible entries where the
+    dialect joins a range list, hinted where its planner would otherwise
+    drive the join from the chunks; otherwise one aggregate when the
+    predicate fits one statement, or each clause's rows read and
+    deduplicated here, since clauses overlap and a per-clause count
+    would double one.
+    """
+    docs, entry = tables.lex_docs, tables.entry
+    aggregate = (func.count(), func.coalesce(func.sum(docs.c.dl), 0))
+    visible = view.entries()
+    if visible is not None:
+        on_visible = docs.join(visible, visible.c.entry_id == docs.c.entry_id)
+        stmt = select(*aggregate).select_from(on_visible).where(docs.c.epoch == epoch)
+        hint = derived_hint(profile, docs, "epoch", "entry_id")
+        if hint is not None:
+            stmt = stmt.prefix_with(hint, dialect=profile.name)
+        count, total = (await session.execute(stmt)).one()
+        return int(count), int(total)
+    joined = docs.join(entry, entry.c.entry_id == docs.c.entry_id)
+    clauses = view.clauses() or []
+    if len(clauses) == 1:
+        stmt = select(*aggregate).select_from(joined).where(docs.c.epoch == epoch, clauses[0].predicate)
+        count, total = (await session.execute(stmt)).one()
+        return int(count), int(total)
+    lengths: dict[ChunkId, int] = {}
+    for clause in clauses:
+        stmt = (
+            select(docs.c.chunk_id, docs.c.dl, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
+            .select_from(joined)
+            .where(docs.c.epoch == epoch, clause.predicate)
+        )
+        for mapping in (await session.execute(stmt)).mappings():
+            if view.holds(mapping, view.need):
+                lengths[mapping["chunk_id"]] = mapping["dl"]
+    return len(lengths), sum(lengths.values())
+
+
+async def _all_blocks(
+    session: AsyncSession, tables: VFSTables, epoch: int, terms: Sequence[str], membership_budget: int
+) -> dict[str, list[Any]]:
+    """Every block of each of *terms*, in block order."""
+    postings = tables.lex_postings
+    out: dict[str, list[Any]] = {term: [] for term in terms}
+    for probe in chunked(list(terms), membership_budget):
+        stmt = (
+            select(postings.c.term, postings.c.block_no, postings.c.doc_ids, postings.c.tfs, postings.c.dls)
+            .where(postings.c.epoch == epoch, postings.c.term.in_(probe))
+            .order_by(postings.c.term, postings.c.block_no)
+        )
+        for row in await session.execute(stmt):
+            out[row.term].append(row)
+    return out
+
+
+async def _visible_chunks(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    epoch: int,
+    chunk_ids: Sequence[ChunkId],
+    view: Visibility,
+) -> set[ChunkId]:
+    """The *chunk_ids* whose entry the view admits."""
+    docs, entry = tables.lex_docs, tables.entry
+    visible: set[ChunkId] = set()
+    for chunk in chunked(list(chunk_ids), membership_budget):
+        stmt = (
+            select(docs.c.chunk_id, entry.c.path, *(entry.c[field] for field in sorted(RIGHTS_FIELDS)))
+            .select_from(docs.join(entry, entry.c.entry_id == docs.c.entry_id))
+            .where(docs.c.epoch == epoch, membership(docs.c.chunk_id, chunk, profile))
+        )
+        visible.update(m["chunk_id"] for m in (await session.execute(stmt)).mappings() if view.holds(m, view.need))
+    return visible

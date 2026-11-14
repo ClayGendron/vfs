@@ -974,7 +974,7 @@ class AsyncVirtualFileSystem:
         rebased, and gated per row before anything dispatches. *entries*
         and the single form are mutually exclusive, as are *content* (a
         text body) and *data* (a bytes body, whose text is a rendering
-        the reindex pass derives). The single form is sugar: this gate
+        the rebuild pass derives). The single form is sugar: this gate
         constructs the validated :class:`Entry`, and storage only ever
         receives entries — raw content never crosses the storage seam.
 
@@ -1182,7 +1182,7 @@ class AsyncVirtualFileSystem:
         mount (``cross_mount`` otherwise — cross-backend edges are a
         later story), and the write is permission-gated at both endpoint
         paths. *provenance* names the author class stamped on every edge
-        in the call; ``extracted`` is reserved to the reindex extractor.
+        in the call; ``extracted`` is reserved to the rebuild extractor.
         """
         refusal = self._gate_params(
             "mkedge",

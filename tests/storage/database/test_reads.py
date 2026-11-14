@@ -820,7 +820,7 @@ class TestUnlandedVerbStubs:
             stale.write(entries=[Entry(path=Path("/a"), content="x")]),
             stale.mkedge(edges=[edge]),
             stale.rmedge(edges=[edge]),
-            stale.reindex(),
+            stale.rebuild(),
         ):
             result = await call
             assert result.errors[0].kind == ErrorKind.schema_mismatch
@@ -900,7 +900,7 @@ class TestBytesReads:
             (ErrorKind.truncated, Severity.info, False, "/c.xlsx"),
             (ErrorKind.unsupported, Severity.warning, False, "/f.pdf"),
         ]
-        assert "run reindex" in notes[0].message and "(encrypted)" in notes[2].message
+        assert "run rebuild" in notes[0].message and "(encrypted)" in notes[2].message
         assert [n.data for n in notes] == [{"render_status": s} for s in ("pending", "truncated", "encrypted")]
 
     def test_render_notes_serve_an_empty_rendering_as_the_empty_string(self) -> None:

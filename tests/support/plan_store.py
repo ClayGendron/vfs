@@ -19,7 +19,7 @@ dialect, and reads the engine's plan: ``EXPLAIN QUERY PLAN`` on SQLite,
 ``DBMS_XPLAN`` on Oracle. A plan is judged by operator on the path
 index, never by time.
 
-The store also holds 200 long text files under ``/chunks``, reindexed
+The store also holds 200 long text files under ``/chunks``, rebuilt
 before the statistics step: about 2,200 chunk rows, so the chunk pages
 the index build and the embed step read plan over a filled chunk table.
 SQLite's planner builds a per-page filter on the join only above about
@@ -27,7 +27,7 @@ four to five chunks per entry, a ratio the store's 56,000 short rows
 keep it far below; the statistics pins build that ratio on a store of
 their own from the same 200 bodies.
 
-Every file's body is one the gram index encodes, so after the reindex
+Every file's body is one the gram index encodes, so after the rebuild
 no content row awaits the index; the build asserts it. A body the index
 never encodes (a sub-trigram one, say) stays ``NOT encoded`` for good,
 and a store of them would put nine tenths of its rows behind the
@@ -87,7 +87,7 @@ PLAN_ROOTS: tuple[str, ...] = tuple(f"/d{i:05}" for i in range(2_000))
 PLAN_ARMS: tuple[str, ...] = ("*.py", "*.ts", "a/*.md", "b/*.txt", "*.rs", "f0*", "a/f1*.py", "b/*.ts")
 PLAN_EXTENSIONS: tuple[str, ...] = ("py", "ts", "md", "txt", "rs")
 PLAN_BODY = "plan body"
-"""Every plan file's body: past the gram size, so the reindex encodes the file and the overlay holds none of them."""
+"""Every plan file's body: past the gram size, so the rebuild encodes the file and the overlay holds none of them."""
 
 # The path index's name as every engine reports it, case aside.
 PATH_INDEX = "ix_vfs_entries_path"
@@ -175,9 +175,9 @@ def chunk_entries() -> list[Entry]:
 
 
 async def build_plan_store(storage: DatabaseStorage) -> None:
-    """The store written in batches of 10,000, the long text files beside it, a reindex, then the statistics step.
+    """The store written in batches of 10,000, the long text files beside it, a rebuild, then the statistics step.
 
-    The reindex runs over every file, so each entry is chunked and the
+    The rebuild runs over every file, so each entry is chunked and the
     chunk pages' entry filter admits every chunk, as on a rebuilt store.
     """
     entries = [
@@ -191,10 +191,10 @@ async def build_plan_store(storage: DatabaseStorage) -> None:
         assert written.success is True, written.errors
     written = await storage.write(entries=chunk_entries(), parents=True)
     assert written.success is True, written.errors
-    reindexed = await storage.reindex()
-    assert reindexed.success is True, reindexed.errors
+    rebuilt = await storage.rebuild()
+    assert rebuilt.success is True, rebuilt.errors
     pending = await pending_content_rows(storage)
-    assert pending == 0, f"{pending} content rows still await the index after the reindex"
+    assert pending == 0, f"{pending} content rows still await the index after the rebuild"
     await _gather_statistics(storage)
 
 

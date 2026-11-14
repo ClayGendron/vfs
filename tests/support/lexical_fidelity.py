@@ -142,7 +142,7 @@ async def fetch_query(
 async def _write_and_index(storage: DatabaseStorage, corpus: dict[str, str]) -> tuple[int, dict[int, str]]:
     entries = [Entry(path=Path(path), content=text) for path, text in corpus.items()]
     assert (await storage.write(entries=entries, parents=True)).success is True
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     tables = storage._host.tables
     entry, chunks, index_state = tables.entry, tables.chunks, tables.index_state
     async with storage._host.engine.connect() as conn:
@@ -156,7 +156,7 @@ async def _write_and_index(storage: DatabaseStorage, corpus: dict[str, str]) -> 
 
 
 async def assert_lexical_fidelity(storage: DatabaseStorage) -> None:
-    """Write the corpus, reindex, and referee both scorers against pure BM25."""
+    """Write the corpus, rebuild, and referee both scorers against pure BM25."""
     epoch, path_of = await _write_and_index(storage, CORPUS)
     for query in QUERIES:
         blocks, idfs, avg_dl, _summaries = await fetch_query(storage, epoch, query)
@@ -175,7 +175,7 @@ async def assert_lexical_fidelity(storage: DatabaseStorage) -> None:
 
 
 async def assert_two_round_fidelity(storage: DatabaseStorage, count: int = 300) -> None:
-    """Write a block-spanning corpus, reindex, and prove the two-round fetch:
+    """Write a block-spanning corpus, rebuild, and prove the two-round fetch:
     head blocks plus the selected blocks rank exactly as the whole fetch."""
     epoch, path_of = await _write_and_index(storage, spanning_corpus(count))
     skipped: dict[str, int] = {}

@@ -222,7 +222,7 @@ def generation_of(renderer: Renderer) -> str:
     """``<name>/<version>``, or ``<name>/unavailable`` when the library is missing.
 
     Installing the extra changes the generation, so the skip law
-    retries every entry stamped unavailable on the next reindex.
+    retries every entry stamped unavailable on the next rebuild.
     """
     version = renderer.version
     return f"{renderer.name}/{UNAVAILABLE_VERSION if version is None else version}"

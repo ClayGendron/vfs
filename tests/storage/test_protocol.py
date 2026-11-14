@@ -232,6 +232,21 @@ def test_the_old_family_names_are_gone() -> None:
     assert importlib.import_module(f"{database}.traverse").__name__ == f"{database}.traverse"
 
 
+def test_the_old_index_names_are_gone() -> None:
+    # Mutant: re-export the old protocol name or declare the old verb beside the new one.
+    old_verb = "re" + "index"
+    old_class = "Supports" + "Re" + "index"
+    protocol = importlib.import_module("vfs.storage.protocol")
+    assert not hasattr(vfs.storage, old_class) and not hasattr(protocol, old_class)
+    rebuild = vfs.storage.SupportsRebuild
+    assert [name for name, value in vars(rebuild).items() if callable(value) and not name.startswith("_")] == [
+        "rebuild"
+    ]
+    declaring = {name for name, value in vars(protocol).items() if isinstance(value, type) and "rebuild" in vars(value)}
+    assert declaring == {"SupportsRebuild"}
+    assert not [name for name, value in vars(protocol).items() if isinstance(value, type) and old_verb in vars(value)]
+
+
 # ----------------------------------------------------------------------
 # StorageBackend — read family + name/description/capabilities() minimum
 # ----------------------------------------------------------------------

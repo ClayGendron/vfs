@@ -213,7 +213,7 @@ class MaxP:
 
 
 # ---------------------------------------------------------------------------
-# Signals — a stored prior per entry, computed at reindex, read at query time
+# Signals — a stored prior per entry, computed at rebuild, read at query time
 # ---------------------------------------------------------------------------
 
 
@@ -285,7 +285,7 @@ class PathShape:
 
 
 Measure = InDegree | PageRank | Katz | PathShape
-"""What the reindex phase computes for a signal."""
+"""What the rebuild phase computes for a signal."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,7 +342,7 @@ Transform = Linear | Log1p | Saturation | Sigmoid
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """One declared prior: what reindex stores under *name*, and how search applies it.
+    """One declared prior: what rebuild stores under *name*, and how search applies it.
 
     *measure* and *smoothing* (the hierarchy share ``gamma``) decide the
     stored value and make up its options fingerprint; *transform* and

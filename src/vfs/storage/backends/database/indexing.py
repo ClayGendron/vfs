@@ -1,6 +1,6 @@
 """Batch gram-index maintenance: assess the dirty, build postings, publish.
 
-The reindex verb's phases, each run by the backend in its own writer
+The rebuild verb's phases, each run by the backend in its own writer
 transaction: re-derive per-entry state for entries whose rows no
 longer reflect their content (semantic chunk rows for the embedding
 pipeline, plus the ``indexable`` gram-eligibility stamp), build the
@@ -9,7 +9,7 @@ publish by flipping per-entry ``encoded`` flags and the current-epoch
 pointer together, then reclaim dead epochs. Flag flips are
 version-guarded but never attributed — a miss just leaves the row on
 the scan side, which is always correct — while the epoch pointer flip
-is a compare-and-set so concurrent reindexers cannot publish over each
+is a compare-and-set so concurrent rebuilders cannot publish over each
 other.
 
 Gram extraction is entry-grain: one pass over each entry's full folded
@@ -37,13 +37,15 @@ content write resets both flags, and the delete claim demotes
 ``encoded`` as it stamps ``deleted_at`` — so no reachable state hides a
 live or trashed row from both tiers: an uncovered content row is always
 ``NOT encoded``, which is exactly the scan side's partition. A directory
-a store wrote false before this rule is repaired by its next reindex
+a store wrote false before this rule is repaired by its next rebuild
 (:func:`collect_flag_drift`, :func:`repair_flag_drift`).
 
-One reindex runs at a time, arbitrated by a crash-safe lease on the
-index-state row: the verb claims it up front (a live rival refuses
-loudly, naming the running lease's age), heartbeats it between phases,
-and releases it best-effort at the end — a crashed run just stops
+One rebuild runs at a time, arbitrated by a crash-safe lease on the
+index-state row, which :mod:`~vfs.storage.backends.database.maintenance`
+holds and whose phases claim, beat, fence and release it: the verb
+claims it up front (a live rival refuses loudly, naming the running
+lease's age), heartbeats it between phases, and releases it
+best-effort at the end — a crashed run just stops
 heartbeating, and the lease frees itself after the TTL with nothing
 to clean up, because unpublished build rows are already inert. The
 lease lives with the pointer on that row, apart from the admin lock,
@@ -58,7 +60,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from functools import partial
-from time import time
 from typing import TYPE_CHECKING, Annotated, Any, Final, NamedTuple, cast
 
 from sqlalchemy import bindparam, case, column, delete, func, insert, literal, or_, select, tuple_, update, values
@@ -90,7 +91,7 @@ from vfs.storage.backends.database.reads import kind_membership
 from vfs.storage.backends.database.seams import seam
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Sequence
     from concurrent.futures import Executor
 
     from sqlalchemy import ColumnElement, Row, Select, Table, Update
@@ -133,14 +134,6 @@ CHUNK_SLICE_BYTES: Final = 1 << 20
 
 _SCAN_YIELD_ROWS: Final = 256
 
-# Lease staleness horizon and beat interval: the beat task pulses every
-# interval, so the TTL tolerates four missed beats plus clock skew.
-REINDEX_LEASE_TTL_MS: Final = 5 * 60 * 1000
-REINDEX_HEARTBEAT_SECONDS: Final = 60.0
-
-# The lease-lost verdict's machine-readable mark on its ``ResultError``.
-LEASE_LOST_DATA: Final = {"reindex_lease": "lost"}
-
 
 def index_options_hash() -> str:
     """The options half of the epoch fingerprint; any change forces rebuild.
@@ -153,110 +146,13 @@ def index_options_hash() -> str:
 
 
 @dataclass
-class ReindexState:
-    """Carry-over between the reindex phases' separate transactions, for the run holding *token*'s lease."""
+class RebuildState:
+    """Carry-over between the rebuild phases' separate transactions, for the run holding *token*'s lease."""
 
     token: str
     previous_epoch: Epoch | None = None
     epoch: Epoch | None = None
     covered: list[tuple[str, int]] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# The single-runner lease — claim, heartbeat, release
-# ---------------------------------------------------------------------------
-
-
-async def claim_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
-    """Claim the reindex lease for *token*, or refuse naming the live run.
-
-    One guarded UPDATE: the lease is free when the holder is NULL or the
-    heartbeat is older than the TTL, so a crashed run frees itself by
-    silence — there is no cleanup state. A zero-row claim means a rival
-    is running; the refusal is the "reindex in progress" signal, loud
-    and retryable, carrying the running lease's heartbeat age.
-    """
-    lease = tables.index_state
-    now = _now_ms()
-    free = or_(lease.c.lease_holder.is_(None), lease.c.lease_heartbeat < now - REINDEX_LEASE_TTL_MS)
-    claim = update(lease).where(lease.c.id == 1, free).values(lease_holder=token, lease_heartbeat=now)
-    if cast("CursorResult[Any]", await session.execute(claim)).rowcount == 1:
-        return Result(ops=("reindex",))
-    held = (await session.execute(select(lease.c.lease_heartbeat).where(lease.c.id == 1))).scalar_one_or_none()
-    age = max(0, now - held) // 1000 if held is not None else 0
-    detail = f"a reindex is already running (lease heartbeat {age}s ago); retry after it finishes"
-    return Result(ops=("reindex",), errors=[classified(ErrorKind.conflict, retryable=True, detail=detail)])
-
-
-async def heartbeat_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
-    """Refresh *token*'s heartbeat; a miss means the lease was taken.
-
-    A zero-row refresh means the lease expired mid-run and a rival
-    claimed through. The beat task flags it and the run stops at the
-    next phase boundary — the rival is rebuilding everything this run
-    would have published — and every commit the index rests on ends
-    with this same statement (:func:`lease_fenced`), so none lands.
-    """
-    lease = tables.index_state
-    beat = update(lease).where(lease.c.id == 1, lease.c.lease_holder == token).values(lease_heartbeat=_now_ms())
-    if cast("CursorResult[Any]", await session.execute(beat)).rowcount == 1:
-        return Result(ops=("reindex",))
-    return lease_lost_result()
-
-
-def lease_fenced(
-    tables: VFSTables, token: str, fn: Callable[[AsyncSession], Awaitable[Result]]
-) -> Callable[[AsyncSession], Awaitable[Result]]:
-    """*fn*, then the lease's heartbeat as the same transaction's last statement.
-
-    A run whose lease was taken commits nothing: the zero-row heartbeat
-    answers the lease-lost verdict, carrying *fn*'s own records, and the
-    runner rolls the whole transaction back. Once the heartbeat has run,
-    a rival's claim waits on the index-state row until this transaction ends.
-    """
-
-    async def fenced(session: AsyncSession) -> Result:
-        result = await fn(session)
-        if not result.success:
-            return result
-        held = await heartbeat_reindex_lease(session, tables, token)
-        return result if held.success else with_notes(held, list(result.errors))
-
-    return fenced
-
-
-def lease_lost_result() -> Result:
-    """The one spelling of "a rival claimed through": conflict, retryable,
-    marked in ``data`` so the beat task can tell it from a transport
-    conflict (a writer stalled behind the build's own lock, on SQLite)."""
-    detail = "the reindex lease expired mid-run and was claimed by a rival; this run stopped"
-    error = classified(ErrorKind.conflict, retryable=True, detail=detail, data=LEASE_LOST_DATA)
-    return Result(ops=("reindex",), errors=[error])
-
-
-def with_notes(result: Result, notes: list[ResultError]) -> Result:
-    """*result* carrying *notes* — an earlier phase's advisory records — ahead of its own."""
-    if not notes:
-        return result
-    return Result(ops=result.ops, observations=result.observations, errors=[*notes, *result.errors])
-
-
-def lease_lost(result: Result) -> bool:
-    """Whether *result* is the lease-lost verdict itself, not another conflict."""
-    return any(error.data == LEASE_LOST_DATA for error in result.errors)
-
-
-async def release_reindex_lease(session: AsyncSession, tables: VFSTables, token: str) -> Result:
-    """Release *token*'s lease, best-effort; a taken lease is left alone.
-
-    The TTL, not this release, is the liveness guarantee — a release
-    that never runs (crash, transport loss) costs one TTL of refused
-    rivals and nothing else.
-    """
-    lease = tables.index_state
-    drop = update(lease).where(lease.c.id == 1, lease.c.lease_holder == token)
-    await session.execute(drop.values(lease_holder=None, lease_heartbeat=None))
-    return Result(ops=("reindex",))
 
 
 # ---------------------------------------------------------------------------
@@ -377,7 +273,7 @@ async def chunk_dirty(
     cursor.next_after, cursor.next_pending = kept[-1] if kept else cursor.after, candidates[len(kept) :]
     cursor.done, cursor.next_links = len(fresh) < wanted and not cursor.next_pending, cursor.links
     if not kept:
-        return Result(ops=("reindex",))
+        return Result(ops=("rebuild",))
     dirty = (
         select(
             entry.c.entry_id,
@@ -396,9 +292,9 @@ async def chunk_dirty(
         .order_by(entry.c.id)
     )
     rows = (await session.execute(dirty)).all()
-    await seam("reindex:before-chunk-split")
+    await seam("rebuild:before-chunk-split")
     work = await call_offloaded(executor, partial(_assess_and_split, rows, generation, links_generation))
-    await seam("reindex:before-chunk-flip")
+    await seam("rebuild:before-chunk-flip")
     provenance = {
         "chunk_source_hash": entry.c.content_hash,
         "chunk_generation": generation,
@@ -423,7 +319,7 @@ async def chunk_dirty(
         await _carry_embeddings(session, chunks, work, carried)
     links = await publish_links(session, tables, profile, membership_budget, work.links)
     cursor.next_links = LinkOutcome(*(total + count for total, count in zip(cursor.links, links, strict=True)))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +327,7 @@ async def chunk_dirty(
 # ---------------------------------------------------------------------------
 
 
-async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexState, executor: Executor) -> Result:
+async def build_epoch(session: AsyncSession, tables: VFSTables, state: RebuildState, executor: Executor) -> Result:
     """Build the full posting set under a fresh epoch, or no-op.
 
     The no-op check: no live entry awaits encoding and the current
@@ -472,7 +368,7 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
     entry = tables.entry
     state.previous_epoch = await current_epoch(session, tables)
     if not await _work_pending(session, tables, state.previous_epoch):
-        return Result(ops=("reindex",))
+        return Result(ops=("rebuild",))
     built = (await session.execute(select(func.max(tables.gram_epochs.c.epoch)))).scalar_one()
     epoch = max(built or 0, state.previous_epoch or 0) + 1
     scan = (
@@ -514,22 +410,46 @@ async def build_epoch(session: AsyncSession, tables: VFSTables, state: ReindexSt
                     for gram, blob, doc_count in drained
                 ],
             )
-        await seam("reindex:before-lexical")
+        await seam("rebuild:before-lexical")
         await build_lexical_epoch(session, tables, epoch, executor, covered)
         await session.execute(
             insert(tables.gram_epochs),
             [{"epoch": epoch, "format_version": INDEX_FORMAT_VERSION, "options_hash": index_options_hash()}],
         )
     except IntegrityError as exc:
-        raise StaleSnapshot(f"a rival reindex already built epoch {epoch}") from exc
+        raise StaleSnapshot(f"a rival rebuild already built epoch {epoch}") from exc
     state.epoch = epoch
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def current_epoch(session: AsyncSession, tables: VFSTables) -> Epoch | None:
     """The published epoch pointer; ``None`` before the first publish."""
     pointer = select(tables.index_state.c.current_gram_epoch).where(tables.index_state.c.id == 1)
     return (await session.execute(pointer)).scalar_one_or_none()
+
+
+async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
+    """The epoch pointer plus an overlay-emptiness verdict, one statement.
+
+    Issued twice on the skip path, once when the preamble verdict is
+    non-empty: the preamble read is advisory (non-empty settles it —
+    the scan tier will run, and no second combined read is issued),
+    while the authoritative post-fetch read's empty verdict alone
+    permits skipping the scan — with results identical to scanning —
+    and doubles as the epoch recheck. The predicate stays ORM-built — the
+    negation renders as an inline literal on every dialect, which keeps
+    the seek on the composite (encoded, kind) index reachable; the CASE
+    wrapper is what lets engines without boolean select-list expressions
+    (SQL Server) carry the EXISTS.
+    """
+    entry, state = tables.entry, tables.index_state
+    pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
+    stmt = select(state.c.current_gram_epoch, case((pending, 1), else_=0)).where(state.c.id == 1)
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
+        return None, False
+    pointer, has_pending = row
+    return pointer, not has_pending
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +463,7 @@ async def publish_epoch(
     profile: DialectProfile,
     parameter_budget: int,
     membership_budget: int,
-    state: ReindexState,
+    state: RebuildState,
 ) -> Result:
     """Flip covered entries' ``encoded`` and the epoch pointer together.
 
@@ -564,9 +484,9 @@ async def publish_epoch(
     cas = update(index).where(index.c.id == 1, started, index.c.lease_holder == state.token)
     result = cast("CursorResult[Any]", await session.execute(cas.values(current_gram_epoch=state.epoch)))
     if result.rowcount != 1:
-        detail = f"reindex lost the index publish race for epoch {state.epoch}"
-        return Result(ops=("reindex",), errors=[classified(ErrorKind.conflict, detail=detail)])
-    return Result(ops=("reindex",))
+        detail = f"rebuild lost the index publish race for epoch {state.epoch}"
+        return Result(ops=("rebuild",), errors=[classified(ErrorKind.conflict, detail=detail)])
+    return Result(ops=("rebuild",))
 
 
 async def reclaim_epochs(session: AsyncSession, tables: VFSTables) -> Result:
@@ -581,20 +501,20 @@ async def reclaim_epochs(session: AsyncSession, tables: VFSTables) -> Result:
     """
     current = await current_epoch(session, tables)
     if current is None:
-        return Result(ops=("reindex",))
+        return Result(ops=("rebuild",))
     for table in tables.epoch_scoped():
         await session.execute(delete(table).where(table.c.epoch < current))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: Epoch) -> Result:
     """Drop a build that lost its publish — never rows the pointer names."""
     current = await current_epoch(session, tables)
     if current == built:
-        return Result(ops=("reindex",))
+        return Result(ops=("rebuild",))
     for table in tables.epoch_scoped():
         await session.execute(delete(table).where(table.c.epoch == built))
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +524,7 @@ async def reclaim_built_epoch(session: AsyncSession, tables: VFSTables, built: E
 
 @dataclass
 class FlagRebuildState:
-    """Carry-over between the reindex flag phases' separate transactions."""
+    """Carry-over between the rebuild flag phases' separate transactions."""
 
     ids: list[str] = field(default_factory=list)
     repaired: int = 0
@@ -626,7 +546,7 @@ async def collect_flag_drift(session: AsyncSession, tables: VFSTables, state: Fl
     scan = select(entry.c.entry_id).where(entry.c.kind == "directory", ~entry.c.encoded)
     async for row in await session.stream(scan.execution_options(yield_per=_SCAN_YIELD_ROWS)):
         state.ids.append(row.entry_id)
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 async def repair_flag_drift(
@@ -651,17 +571,12 @@ async def repair_flag_drift(
             .values(encoded=True)
         )
         state.repaired += cast("CursorResult[Any]", await session.execute(stmt)).rowcount
-    return Result(ops=("reindex",))
+    return Result(ops=("rebuild",))
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _now_ms() -> int:
-    """Wall-clock epoch milliseconds — the lease's cross-instance currency."""
-    return int(time() * 1000)
 
 
 def _stale_generation(entry: Table) -> ColumnElement[bool]:

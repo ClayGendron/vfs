@@ -81,7 +81,7 @@ from vfs.pattern_matching import (
 )
 from vfs.results import ErrorKind, Result, ResultError, Severity, classified
 from vfs.storage.backends.database.dialects import StaleSnapshot, arm_budget, chunked
-from vfs.storage.backends.database.indexing import current_epoch
+from vfs.storage.backends.database.indexing import current_epoch, pointer_with_overlay
 from vfs.storage.backends.database.membership import membership
 from vfs.storage.backends.database.pathterms import allow_list_ids
 from vfs.storage.backends.database.reads import (
@@ -90,7 +90,6 @@ from vfs.storage.backends.database.reads import (
     effective_columns,
     kind_membership,
     meta_scoped,
-    pointer_with_overlay,
     scope_facts,
     side_scope,
 )

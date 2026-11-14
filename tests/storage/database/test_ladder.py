@@ -340,7 +340,7 @@ async def test_glob_and_tree_name_list_rows_bare_and_grep_and_search_never_searc
     )
     await _grant(storage, "/team", "bob", "list")
     await _grant(storage, "/pub", "bob", "read")
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     globbed = _shown(await storage.glob(patterns=("/**",), kind="file", ext=("md",), authority=BOB))
     assert set(globbed) == {"/team/plan.md", "/pub/faq.md"}
     assert globbed["/team/plan.md"] == BARE and globbed["/pub/faq.md"] > BARE

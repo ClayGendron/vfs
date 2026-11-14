@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import LargeBinary, and_, case, cast, func, or_, select
+from sqlalchemy import LargeBinary, and_, cast, func, or_, select
 
 from vfs.deadline import WALL_TIME_BUDGET, Deadline
 from vfs.models import CONTENT_KINDS, RENDERED_STATUSES, Observation
@@ -90,7 +90,6 @@ if TYPE_CHECKING:
     from vfs.models.rows import EntryId, VFSTables
     from vfs.pattern_matching import Body, GlobChannel
     from vfs.storage.backends.database.dialects import DialectProfile
-    from vfs.storage.backends.database.indexing import Epoch
     from vfs.storage.backends.database.rights import Visibility
 
 # Observation fields served directly by entries-table columns (the two
@@ -680,30 +679,6 @@ def kind_membership(entry: Table) -> KindMembership:
 # ---------------------------------------------------------------------------
 
 
-async def pointer_with_overlay(session: AsyncSession, tables: VFSTables) -> tuple[Epoch | None, bool]:
-    """The epoch pointer plus an overlay-emptiness verdict, one statement.
-
-    Issued twice on the skip path, once when the preamble verdict is
-    non-empty: the preamble read is advisory (non-empty settles it —
-    the scan tier will run, and no second combined read is issued),
-    while the authoritative post-fetch read's empty verdict alone
-    permits skipping the scan — with results identical to scanning —
-    and doubles as the epoch recheck. The predicate stays ORM-built — the
-    negation renders as an inline literal on every dialect, which keeps
-    the seek on the composite (encoded, kind) index reachable; the CASE
-    wrapper is what lets engines without boolean select-list expressions
-    (SQL Server) carry the EXISTS.
-    """
-    entry, state = tables.entry, tables.index_state
-    pending = select(entry.c.id).where(~entry.c.encoded, kind_membership(entry).predicate).exists()
-    stmt = select(state.c.current_gram_epoch, case((pending, 1), else_=0)).where(state.c.id == 1)
-    row = (await session.execute(stmt)).one_or_none()
-    if row is None:
-        return None, False
-    pointer, has_pending = row
-    return pointer, not has_pending
-
-
 async def content_for_entries(
     session: AsyncSession,
     tables: VFSTables,
@@ -892,7 +867,7 @@ def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[R
 
     The text is a rendering, so a status that left no content row is
     reported beside the row rather than invented: pending is a
-    transient absence (run ``reindex``), a failure is a permanent one
+    transient absence (run ``rebuild``), a failure is a permanent one
     naming its reason, and an empty rendering is the empty string. A
     cut rendering is served with an info note. Text rows pass untouched.
     """
@@ -908,7 +883,7 @@ def render_notes(rows: Sequence[Observation]) -> tuple[list[Observation], list[R
             continue
         shown.append(row)
         if status == "pending":
-            detail = "the binary awaits a rendering; run reindex"
+            detail = "the binary awaits a rendering; run rebuild"
             kind, severity, retryable = ErrorKind.unavailable, Severity.warning, True
         elif status in RENDERED_STATUSES:
             detail = f"the rendering was cut short ({status})"

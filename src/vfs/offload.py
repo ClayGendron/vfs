@@ -1,7 +1,7 @@
 """CPU-bound work leaves the event loop: the one process pool and the hop every stage takes.
 
 A stage that runs real CPU inside its coroutine holds the event loop
-against every other caller on the host: grep's verify stage, reindex's
+against every other caller on the host: grep's verify stage, rebuild's
 chunk and posting stages, a large write's measurement, edit's matching,
 glob judging in storage and in the router, and the router's chained
 grep and planning walk. Each hands its work to :func:`call_offloaded`
@@ -50,7 +50,7 @@ Across a fork, a child forgets the inherited pool and makes its own on
 its first hop. The engine's pool is not covered. A forked child may
 write, and may hop pure-Python work. If its parent ran a parallel
 kernel before the fork, the child's own kernel calls (grep, glob,
-search, reindex) never return once a batch is large enough to go
+search, rebuild) never return once a batch is large enough to go
 parallel; a call over one item returns. Start workers with ``spawn``
 or ``forkserver`` to avoid that.
 """

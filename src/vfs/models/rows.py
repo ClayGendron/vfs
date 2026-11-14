@@ -104,7 +104,7 @@ CHUNK_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "entry_id"})
 EDGE_ROW_ONLY_COLUMNS: Final[frozenset[str]] = frozenset({"id", "source_id", "target_id", "provenance", "context"})
 
 # Who authored an edge row. Minted by the layer, never the caller: the verb
-# gate stamps user/agent/system, the fs mirror stamps system, the reindex
+# gate stamps user/agent/system, the fs mirror stamps system, the rebuild
 # extractor stamps extracted — and each deleter touches only its own kind.
 EdgeProvenance = Literal["user", "agent", "system", "extracted"]
 EDGE_PROVENANCE_VALUES: Final[frozenset[str]] = frozenset({"user", "agent", "system", "extracted"})
@@ -691,7 +691,7 @@ def build_vfs_tables(
     # One row per gram-index build: the two-part fingerprint (format
     # version, options hash) — coverage is per-row flag state, not a
     # version threshold. Rows outside the current epoch are reclaimable
-    # garbage, swept by the reindex verb.
+    # garbage, swept by the rebuild verb.
     gram_epochs = Table(
         "vfs_gram_epochs",
         metadata,
@@ -735,7 +735,7 @@ def build_vfs_tables(
     )
 
     # The lexical (BM25) index, epoch-scoped beside the gram postings and
-    # rebuilt whole per reindex: one doc row per chunk with its exact
+    # rebuilt whole per rebuild: one doc row per chunk with its exact
     # token count; one row per (term, block) holding up to a block's
     # postings as three delta+varint blobs, keyed so a term's blocks are
     # contiguous; one summary row per term with its document frequency,

@@ -476,7 +476,7 @@ async def test_mkedge_refuses_the_reserved_fs_type() -> None:
 
 
 async def test_mkedge_refuses_extracted_provenance() -> None:
-    # 'extracted' is reserved to the reindex extractor; a caller
+    # 'extracted' is reserved to the rebuild extractor; a caller
     # stamping it directly refuses at the params gate.
     fs = RecorderFS()
     result = await fs.mkedge(

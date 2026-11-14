@@ -53,7 +53,7 @@ async def _seeded(tmp_path) -> DatabaseStorage:
     storage = DatabaseStorage(url=_url(tmp_path))
     entries = [Entry(path=Path(path), content=body) for path, body in BODIES.items()]
     assert (await storage.write(entries=entries)).success is True
-    assert (await storage.reindex()).success is True
+    assert (await storage.rebuild()).success is True
     return storage
 
 
@@ -104,7 +104,7 @@ class _Observed:
 
 
 class TestBuild:
-    async def test_reindex_builds_the_four_row_sets_under_the_gram_epoch(self, tmp_path) -> None:
+    async def test_rebuild_builds_the_four_row_sets_under_the_gram_epoch(self, tmp_path) -> None:
         storage = await _seeded(tmp_path)
         tables = storage._host.tables
         epoch = await _epoch(storage)
@@ -158,7 +158,7 @@ class TestBuild:
 
     async def test_an_empty_store_writes_the_stats_row_only(self, tmp_path) -> None:
         storage = DatabaseStorage(url=_url(tmp_path))
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         async with storage._host.engine.connect() as conn:
             stats = (await conn.execute(select(tables.lex_stats))).one()
@@ -173,7 +173,7 @@ class TestBuild:
         small = Entry(path=Path("/small.py"), content="tiny_body = 1\n")
         big = Entry(path=Path("/big.py"), content="oversized_body = " + "x" * 80 + "\n")
         assert (await storage.write(entries=[small, big])).success is True
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         tables = storage._host.tables
         async with storage._host.engine.connect() as conn:
             located = select(tables.entry.c.path, tables.entry.c.indexable, tables.lex_docs.c.chunk_id).select_from(
@@ -211,7 +211,7 @@ class TestBuild:
                 assert row.chunk_id == row.id, row.path  # every chunk of a covered entry is in the epoch
             else:
                 assert row.path == "/late.py" and row.chunk_id is None
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         async with storage._host.engine.connect() as conn:
             late = (await conn.execute(coverage(2).where(entry.c.path == "/late.py"))).all()
         assert len(late) == 1 and late[0].encoded is True and late[0].chunk_id == late[0].id
@@ -230,7 +230,7 @@ class TestBuild:
             ).scalar_one()
         assert (await storage.delete(path=Path("/a.py"))).success is True
         assert (await storage.write(entries=[Entry(path=Path("/d.py"), content="fresh_body = 4\n")])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         async with storage._host.engine.connect() as conn:
             docs = (await conn.execute(select(tables.lex_docs).where(tables.lex_docs.c.entry_id == trashed))).all()
@@ -275,7 +275,7 @@ class TestBuild:
         storage = DatabaseStorage(url=_url(tmp_path))
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="slow_body = 1\n")])).success is True
         ticker.start()
-        result = await storage.reindex()
+        result = await storage.rebuild()
         ticker.stop()
         assert result.success is True, result.errors
         assert ticker.hops >= 1  # the feed hopped off the loop and saw it turn
@@ -286,27 +286,27 @@ class TestFingerprint:
     async def test_a_bm25_constant_change_forces_a_rebuild(self, tmp_path, monkeypatch) -> None:
         storage = await _seeded(tmp_path)
         assert await _epoch(storage) == 1
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 1  # steady state is a no-op
         monkeypatch.setattr(lexical_model, "BM25_K1", 0.9)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         await storage.close()
 
     async def test_a_tokenizer_version_bump_forces_a_rebuild(self, tmp_path, monkeypatch) -> None:
         storage = await _seeded(tmp_path)
         monkeypatch.setattr(lexical_model, "TOKENIZER_VERSION", 2)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         await storage.close()
 
     async def test_a_block_size_or_codec_change_forces_a_rebuild(self, tmp_path, monkeypatch) -> None:
         storage = await _seeded(tmp_path)
         monkeypatch.setattr(lexical_model, "BLOCK_SIZE", 64)
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         monkeypatch.setattr(lexical_model, "BLOCK_CODEC", "other")
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 3
         await storage.close()
 
@@ -319,7 +319,7 @@ class TestReclaim:
     async def test_a_rewrite_reclaims_the_old_epochs_lexical_rows(self, tmp_path) -> None:
         storage = await _seeded(tmp_path)
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="rewritten_body = 2\n")])).success
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert await _epoch(storage) == 2
         for table in _lexical_tables(storage):
             assert await _count(storage, table, epoch=1) == 0
@@ -335,8 +335,8 @@ class TestReclaim:
             async with storage._host.engine.begin() as conn:
                 await conn.execute(update(index_state).values(current_gram_epoch=99))
 
-        with installed("reindex:before-publish", rival):
-            result = await storage.reindex()
+        with installed("rebuild:before-publish", rival):
+            result = await storage.rebuild()
         assert result.success is False and result.errors[0].kind == ErrorKind.conflict
         for table in _lexical_tables(storage):
             assert await _count(storage, table) == 0
@@ -360,7 +360,7 @@ class TestReclaim:
         monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)
         assert (await storage.write(entries=[Entry(path=Path("/a.py"), content="collide_body = 1\n")])).success
         await _seed_lexical_rows(storage, 1)  # only the lexical stats row: the postings insert never collides
-        result = await storage.reindex()
+        result = await storage.rebuild()
         assert result.success is False
         assert result.errors[0].kind == ErrorKind.conflict
         await storage.close()
@@ -418,7 +418,7 @@ class TestBatchBudgets:
             if statement.startswith("INSERT INTO vfs_lex_"):
                 inserts.append((statement.split(" ")[2], len(parameters) if executemany else 1))
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         by_table: dict[str, list[int]] = {}
         for table, rows in inserts:
             by_table.setdefault(table, []).append(rows)
@@ -454,7 +454,7 @@ class TestBatchBudgets:
             if statement.startswith("SELECT") and "vfs_chunks.content" in statement and "content_hash" not in statement:
                 pages.append(statement)
 
-        assert (await storage.reindex()).success is True
+        assert (await storage.rebuild()).success is True
         assert len(pages) == len(BODIES) + 1  # one row per page plus the empty page
         assert all("LIMIT" in p and "vfs_chunks.id >" in p for p in pages)
         await storage.close()

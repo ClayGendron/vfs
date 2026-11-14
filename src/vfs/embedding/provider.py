@@ -4,7 +4,7 @@ A provider names its vector space (``model_id``, ``dimension``), declares
 the caps one request must stay inside, and embeds **one batch** within
 them. It never batches across requests, never caches, never counts
 cost: storage owns budgets, the chunk-row cache and the streaming loop
-that feeds a provider during ``reindex``. Vectors cross the seam as
+that feeds a provider during ``rebuild``. Vectors cross the seam as
 plain ``list[list[float]]``.
 
     class MyProvider:
@@ -107,7 +107,7 @@ class LocalEmbeddingProvider:
     Subclasses set ``model_id`` and ``dimension`` and implement
     :meth:`embed_batch`. ``embed_documents`` runs the kernel on
     *executor* — the loop's default pool when none is given — so a
-    10⁵-chunk reindex never holds the event loop; ``embed_query`` runs
+    10⁵-chunk rebuild never holds the event loop; ``embed_query`` runs
     its one short text inline. Caps are unbounded except the per-hop
     input count, which only shapes a worker call's payload.
     """

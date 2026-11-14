@@ -62,7 +62,7 @@ from vfs.storage import (
     SupportsMutation,
     SupportsPatternSearch,
     SupportsRankedSearch,
-    SupportsReindex,
+    SupportsRebuild,
     SupportsTraits,
     SupportsTraversal,
 )
@@ -114,10 +114,10 @@ def _impatient(storage: ConformanceBackend) -> ConformanceBackend:
     return storage
 
 
-def _reindexer_of(storage: ConformanceBackend) -> SupportsReindex:
-    """The backend's reindex surface; backends without one skip these rows."""
-    if not isinstance(storage, SupportsReindex):
-        pytest.skip("backend does not expose reindex")
+def _rebuilder_of(storage: ConformanceBackend) -> SupportsRebuild:
+    """The backend's rebuild surface; backends without one skip these rows."""
+    if not isinstance(storage, SupportsRebuild):
+        pytest.skip("backend does not expose rebuild")
     return storage
 
 
@@ -1371,14 +1371,14 @@ class StorageContract:
         _skip_a_proven_engine(self)
         _hold_prefilter_plan(monkeypatch, plan)
         await _scope_world(storage)
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         for _world in ("overlay", "indexed"):
             for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
                 globs, globs_not = case.composed()
                 composed = _scoped_paths(await storage.grep(pattern="needle", globs=globs, globs_not=globs_not))
                 channel = _scoped_paths(await storage.grep(pattern="needle", scope=case.channel()))
                 assert channel == composed, case
-            assert (await reindexer.reindex()).success is True
+            assert (await rebuilder.rebuild()).success is True
 
     @pytest.mark.slow
     @needs("write", "delete", "search")
@@ -1391,14 +1391,14 @@ class StorageContract:
         _skip_a_proven_engine(self)
         _hold_prefilter_plan(monkeypatch, plan)
         await _scope_world(storage)
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         for _world in ("overlay", "indexed"):
             for case in (*SCOPE_CASES, *SCOPE_MULTI_ROOT_CASES, *SCOPE_TRASH_CASES):
                 globs, globs_not = case.composed()
                 composed = await storage.search(query="needle", limit=100, globs=globs, globs_not=globs_not)
                 channel = await storage.search(query="needle", limit=100, scope=case.channel())
                 assert _scoped_paths(channel) == _scoped_paths(composed), case
-            assert (await reindexer.reindex()).success is True
+            assert (await rebuilder.rebuild()).success is True
 
     plan_backend: ClassVar[PlanBackend | None] = None
     """Where this leg's plan store lives; ``None`` for a leg that plan-pins no engine of its own."""
@@ -1475,7 +1475,7 @@ class StorageContract:
         as a scan of the entries table, a walk of one of its indexes, or a range over a path index; the mutants are
         the packed group left out, and the group loop stopping at its first.
 
-        The world holds no row awaiting the index after the reindex and
+        The world holds no row awaiting the index after the rebuild and
         exactly one after the late write, which the plan store asserts; the
         partial callers are the 300-root one and the half one, whose grants
         cover about half the rows. Every access must be a seek the scan tier
@@ -1759,16 +1759,16 @@ class StorageContract:
         assert [o.path for o in scanned.observations] == ["/sharp.txt"]
 
     # ------------------------------------------------------------------
-    # Reindex — the index tier actually builds and serves, per engine
+    # Rebuild — the index tier actually builds and serves, per engine
     # ------------------------------------------------------------------
 
     @needs("write", "grep")
-    async def test_reindex_builds_and_the_indexed_tier_serves(self, storage: ConformanceBackend) -> None:
+    async def test_rebuild_builds_and_the_indexed_tier_serves(self, storage: ConformanceBackend) -> None:
         # After a successful build the row is index-partitioned — the
         # scan side excludes it, so only a live index can serve it.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/idx.txt"), content="magnet needle here")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         found = await storage.grep(pattern="magnet")
         assert [o.path for o in found.observations] == ["/idx.txt"]
 
@@ -1780,9 +1780,9 @@ class StorageContract:
         # anything else; every driver must hand LargeBinary back as bytes.
         if not _indexed_grep_tier(storage):
             pytest.skip("scan-tier backends fetch no posting blobs")
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/idx.txt"), content="magnet needle here")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         seen: list[type] = []
         real = _native.candidate_ids
 
@@ -1801,7 +1801,7 @@ class StorageContract:
     ) -> None:
         # globs mixing a fact-carrying arm (*.py pins ext) with a
         # fact-free arm (docs/** pins no column fact): both rows serve.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         files = (("/src/a.py", "needle py"), ("/docs/readme.md", "needle md"), ("/notes.txt", "needle txt"))
         for text, content in files:
             written = await storage.write(entries=[Entry(path=Path(text), content=content)], parents=True)
@@ -1809,7 +1809,7 @@ class StorageContract:
         expected = ["/docs/readme.md", "/src/a.py"]
         scanned = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
         assert [o.path for o in scanned.observations] == expected
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         indexed = await storage.grep(pattern="needle", globs=("*.py", "docs/**"))
         assert [o.path for o in indexed.observations] == expected
 
@@ -1818,26 +1818,26 @@ class StorageContract:
         # The engine-cap shape: enough candidates to fill an id chunk
         # plus a 40-member ext ride — the arithmetic must charge the
         # ride's true width so no statement crosses a parameter cap.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         entries = [Entry(path=Path(f"/w/f{i}.x{i % 40:02d}"), content="needle body") for i in range(2_200)]
         assert (await storage.write(entries=entries, parents=True)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         wanted = tuple(f"x{i:02d}" for i in range(40))
         found = await storage.grep(pattern="needle", ext=wanted, output_mode="files")
         assert found.success is True, found.errors
         assert len(found.observations) == 2_200
 
     @needs("write", "grep")
-    async def test_reindex_twice_then_a_rewrite_advances_the_epoch(self, storage: ConformanceBackend) -> None:
+    async def test_rebuild_twice_then_a_rewrite_advances_the_epoch(self, storage: ConformanceBackend) -> None:
         # The second build runs the pending probe against a live epoch —
         # a statement surface the first build never reaches.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/idx.txt"), content="first magnet")])
-        assert (await reindexer.reindex()).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
+        assert (await rebuilder.rebuild()).success is True
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
         assert (await storage.write(entries=[rewrite], overwrite=True)).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         stale = await storage.grep(pattern="magnet")
         assert stale.success is True and stale.observations == []
         fresh = await storage.grep(pattern="lodestone")
@@ -1847,51 +1847,51 @@ class StorageContract:
     async def test_restored_content_stays_greppable_after_a_rebuild(self, storage: ConformanceBackend) -> None:
         # The forbidden state: delete → rebuild → restore leaving a live
         # row invisible to both tiers. Coverage exit must demote.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
         await storage.write(entries=[Entry(path=Path("/other.txt"), content="steady text")])
-        assert (await reindexer.reindex()).success is True  # a rebuild without the deleted row
+        assert (await rebuilder.rebuild()).success is True  # a rebuild without the deleted row
         assert (await storage.restore(path=Path("/gone.txt"))).success is True
         found = await storage.grep(pattern="buried")
         assert [o.path for o in found.observations] == ["/gone.txt"]
-        assert (await reindexer.reindex()).success is True  # and the next build re-covers it
+        assert (await rebuilder.rebuild()).success is True  # and the next build re-covers it
         found = await storage.grep(pattern="buried")
         assert [o.path for o in found.observations] == ["/gone.txt"]
 
     @needs("write", "grep", "delete")
     async def test_trash_scoped_grep_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert (await storage.grep(pattern="buried")).observations == []  # default scope hides the deleted
         found = await storage.grep(pattern="buried", globs=("/.vfs/trash/gone.txt",))
         assert [str(o.path) for o in found.observations] == ["/gone.txt"]
 
     @needs("write", "grep")
-    async def test_a_needle_straddling_the_split_cut_is_served_after_reindex(self, storage: ConformanceBackend) -> None:
+    async def test_a_needle_straddling_the_split_cut_is_served_after_rebuild(self, storage: ConformanceBackend) -> None:
         # The minimal boundary shape: the needle's bytes sit on both
         # sides of a 2048 split cut; nomination must be immune to it.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         body = "a" * 2045 + "straddle_needle" + "b" * 3000
         await storage.write(entries=[Entry(path=Path("/cut.txt"), content=body)])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         found = await storage.grep(pattern="straddle_needle")
         assert [o.path for o in found.observations] == ["/cut.txt"]
 
     @needs("write", "grep")
-    async def test_long_single_line_bodies_stay_greppable_after_reindex(self, storage: ConformanceBackend) -> None:
+    async def test_long_single_line_bodies_stay_greppable_after_rebuild(self, storage: ConformanceBackend) -> None:
         # The ETL corpus shape: lines longer than any split budget
         # (minified JSON, long log lines) keep every match after a build.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         minified = "{" + ",".join(f'"key_{i}":"{"x" * 40}"' for i in range(60)) + "}"
         log_line = "ts=17 level=info " + "f" * 4096 + " marker_after_4k trailer"
         entries = [Entry(path=Path("/data.json"), content=minified), Entry(path=Path("/app.log"), content=log_line)]
         await storage.write(entries=entries)
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert [o.path for o in (await storage.grep(pattern="key_59")).observations] == ["/data.json"]
         assert [o.path for o in (await storage.grep(pattern="marker_after_4k")).observations] == ["/app.log"]
 
@@ -1907,15 +1907,15 @@ class StorageContract:
 
     @needs("write", "search")
     async def test_search_answers_entries_not_chunks_in_both_worlds(self, storage: ConformanceBackend) -> None:
-        # A long body splits into several chunks at reindex; the answer
+        # A long body splits into several chunks at rebuild; the answer
         # is still one row per entry, its best chunks riding as matches.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         sections = "".join(f"## Section {i}\n\nlantern words in section {i}, plain prose.\n\n" for i in range(120))
         await storage.write(entries=[Entry(path=Path("/long.md"), content=sections)])
         await storage.write(entries=[Entry(path=Path("/short.md"), content="one lantern here\n")])
         overlay = await storage.search(query="lantern")
         assert sorted(str(o.path) for o in overlay.observations) == ["/long.md", "/short.md"]
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         indexed = await storage.search(query="lantern")
         assert sorted(str(o.path) for o in indexed.observations) == ["/long.md", "/short.md"]
         [long_row] = [o for o in indexed.observations if str(o.path) == "/long.md"]
@@ -1924,7 +1924,7 @@ class StorageContract:
 
     @needs("write", "search")
     async def test_search_scores_are_unit_scaled_best_first_with_path_ties(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         files = {"/b.txt": "same words here", "/a.txt": "same words here", "/c.txt": "same words, same words"}
         await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
         for _world in ("overlay", "indexed"):
@@ -1933,13 +1933,13 @@ class StorageContract:
             scores = [o.score for o in result.observations]
             assert scores[0] == 1.0 and scores == sorted(scores, reverse=True)
             assert [str(o.path) for o in result.observations][1:] == ["/a.txt", "/b.txt"]  # the tie breaks by path
-            assert (await reindexer.reindex()).success is True
+            assert (await rebuilder.rebuild()).success is True
 
     @needs("write", "search")
     async def test_search_scope_is_exact_in_both_worlds(self, storage: ConformanceBackend) -> None:
         # Whichever rung the ladder takes, a scoped call never returns an
         # out-of-scope entry, and the gates compose as grep's do.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         for path in ("/src/a.txt", "/src/deep/c.txt", "/docs/b.txt", "/src/d.md"):
             await storage.write(entries=[Entry(path=Path(path), content="needle body")], parents=True)
         for _world in ("overlay", "indexed"):
@@ -1949,14 +1949,14 @@ class StorageContract:
             assert [str(o.path) for o in narrowed.observations] == ["/src/a.txt"]
             excluded = await storage.search(query="needle", ext_not=("txt",))
             assert [str(o.path) for o in excluded.observations] == ["/src/d.md"]
-            assert (await reindexer.reindex()).success is True
+            assert (await rebuilder.rebuild()).success is True
 
     @needs("write", "search")
     async def test_search_piped_observations_admit_their_own_paths(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         for path in ("/a.txt", "/b.txt", "/c.txt"):
             await storage.write(entries=[Entry(path=Path(path), content="needle body")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         rows = (await storage.search(query="needle")).observations
         assert len(rows) == 3
         piped = await storage.search(query="needle", observations=rows[:2])
@@ -1968,7 +1968,7 @@ class StorageContract:
     ) -> None:
         # /z outranks /a; the text never renders path-sorted, and every
         # region carries a preview cut inside its own bounds.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         files = {"/z.txt": "beacon beacon beacon\n", "/a.txt": "one beacon, then filler words here\n"}
         await storage.write(entries=[Entry(path=Path(path), content=body) for path, body in files.items()])
         for _world in ("overlay", "indexed"):
@@ -1982,19 +1982,19 @@ class StorageContract:
                     assert match.preview is not None and "**beacon**" in match.preview
                     assert match.preview_start is not None and match.preview_end is not None
                     assert match.start <= match.preview_start <= match.preview_end <= match.end
-            assert (await reindexer.reindex()).success is True
+            assert (await rebuilder.rebuild()).success is True
 
     @needs("write", "search")
     async def test_search_serves_the_dirty_set_and_partitions_the_index(self, storage: ConformanceBackend) -> None:
         # A row written since the last build answers from its live text;
         # a rewritten row's stale postings never answer for it.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/idx.txt"), content="first magnet")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         await storage.write(entries=[Entry(path=Path("/fresh.txt"), content="late magnet")])
         found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         found = await storage.search(query="magnet")
         assert sorted(str(o.path) for o in found.observations) == ["/fresh.txt", "/idx.txt"]
         rewrite = Entry(path=Path("/idx.txt"), content="second lodestone")
@@ -2012,9 +2012,9 @@ class StorageContract:
     async def test_both_verbs_see_the_six_hundred_and_first_dirty_row(self, storage: ConformanceBackend) -> None:
         """Guards: either verb cutting the path-ordered dirty rows at a count of its own below the shared one,
         so a file written past the old overlay count is grepped but not ranked."""
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="indexed filler")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         dirty = [Entry(path=Path(f"/dirty/f{i:03}.txt"), content=f"filler number {i}") for i in range(600)]
         dirty.append(Entry(path=Path("/dirty/last.txt"), content="the zymurgy sentinel"))
         assert (await storage.write(entries=dirty, parents=True)).success is True
@@ -2039,11 +2039,11 @@ class StorageContract:
 
     @needs("write", "search", "delete")
     async def test_trash_scoped_search_serves_a_trashed_root_after_a_rebuild(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         await storage.write(entries=[Entry(path=Path("/gone.txt"), content="buried needle")])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert (await storage.delete(path=Path("/gone.txt"))).success is True
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         assert (await storage.search(query="buried")).observations == []  # default scope hides the deleted
         found = await storage.search(query="buried", globs=("/.vfs/trash/gone.txt",))
         assert [str(o.path) for o in found.observations] == ["/gone.txt"]
@@ -2062,10 +2062,10 @@ class StorageContract:
     async def test_a_needle_with_interior_whitespace_survives_a_rebuild(self, storage: ConformanceBackend) -> None:
         # Splitters may drop whitespace-only spans; extraction must see
         # every byte of the body, interior space runs included.
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         body = "pad = '" + "p" * 2030 + "'\nleft_anchor      right_anchor\n"
         await storage.write(entries=[Entry(path=Path("/mod.py"), content=body)])
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         found = await storage.grep(pattern="left_anchor      right_anchor")
         assert [o.path for o in found.observations] == ["/mod.py"]
 
@@ -2877,43 +2877,43 @@ class StorageContract:
         assert sorted(str(o.path) for o in grepped.observations) == sorted(str(o.path) for o in globbed.observations)
 
     # ------------------------------------------------------------------
-    # reindex — the embed step, on every leg through the hashing provider
+    # rebuild — the embed step, on every leg through the hashing provider
     # ------------------------------------------------------------------
 
     @needs("write")
-    async def test_reindex_embeds_every_chunk_and_reports_the_space(self, storage: ConformanceBackend) -> None:
-        reindexer, provider = _reindexer_of(storage), _embedder_of(storage)
+    async def test_rebuild_embeds_every_chunk_and_reports_the_space(self, storage: ConformanceBackend) -> None:
+        rebuilder, provider = _rebuilder_of(storage), _embedder_of(storage)
         files = {"/e/a.txt": "alpha bravo\n", "/e/b.txt": "charlie delta\n", "/e/c.txt": "echo foxtrot\n"}
         await storage.write(entries=[Entry(path=Path(p), content=b) for p, b in files.items()], parents=True)
-        result = await reindexer.reindex()
+        result = await rebuilder.rebuild()
         assert result.success is True, result.errors
         report = result.embedding  # ty: ignore[unresolved-attribute]
         assert report["model"] == provider.model_id
         assert (report["embedded"], report["cached"], report["unembedded"]) == (3, 0, 0)
         assert report["requests"] >= 1 and report["tokens"] >= 3
-        again = await reindexer.reindex()
+        again = await rebuilder.rebuild()
         assert again.success is True
         assert (again.embedding["embedded"], again.embedding["requests"]) == (0, 0)  # ty: ignore[unresolved-attribute]
 
     @needs("write")
     async def test_a_rewrite_re_embeds_only_the_changed_entry(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         _embedder_of(storage)
         pair = [Entry(path=Path("/a.txt"), content="alpha"), Entry(path=Path("/b.txt"), content="bravo")]
         await storage.write(entries=pair)
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         await storage.write(entries=[Entry(path=Path("/a.txt"), content="alpha changed")], overwrite=True)
-        result = await reindexer.reindex()
+        result = await rebuilder.rebuild()
         assert result.success is True
         assert (result.embedding["embedded"], result.embedding["unembedded"]) == (1, 0)  # ty: ignore[unresolved-attribute]
 
     @needs("write")
     async def test_identical_bodies_share_one_embedding(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         _embedder_of(storage)
         copies = [Entry(path=Path(f"/v{i}/LICENSE"), content="license text\n") for i in range(3)]
         await storage.write(entries=copies, parents=True)
-        result = await reindexer.reindex()
+        result = await rebuilder.rebuild()
         assert result.success is True
         assert (result.embedding["embedded"], result.embedding["cached"]) == (1, 2)  # ty: ignore[unresolved-attribute]
 
@@ -3043,8 +3043,8 @@ class StorageContract:
         assert all(row.data is None and "data" not in row.populated for row in listing.observations)
 
     @needs("write", "read", "stat", "grep")
-    async def test_reindex_renders_binaries_and_grep_hits_inside_them(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+    async def test_rebuild_renders_binaries_and_grep_hits_inside_them(self, storage: ConformanceBackend) -> None:
+        rebuilder = _rebuilder_of(storage)
         documents = {
             "/docs/q.pdf": (pdf_bytes(["The quokka smiles"]), "quokka", "<!-- page 1 -->"),
             "/docs/w.docx": (docx_bytes(["A wombat digs"]), "wombat", None),
@@ -3059,7 +3059,7 @@ class StorageContract:
             assert back.observations[0].data == data
             assert (await storage.stat(path=Path(path))).observations[0].render_status == "pending"
             assert (await storage.grep(pattern=needle)).observations == []
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         for path, (_, needle, marker) in documents.items():
             hits = await storage.grep(pattern=needle)
             assert [str(row.path) for row in hits.observations] == [path]
@@ -3134,16 +3134,16 @@ class StorageContract:
 
     @needs("write", "read", "stat")
     async def test_a_rendering_is_never_lent_across_different_bodies(self, storage: ConformanceBackend) -> None:
-        reindexer = _reindexer_of(storage)
+        rebuilder = _rebuilder_of(storage)
         carol = pdf_bytes(["carol keeps this page"])
         dave = pdf_bytes(["dave wrote his own page"])
         assert (await storage.write(entries=[Entry(path=Path("/carol/n.pdf"), data=carol)], parents=True)).success
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         named = Entry(path=Path("/dave/y.pdf"), data=dave)
         named.content_hash = measure_bytes(carol).content_hash
         assert (await storage.write(entries=[named], parents=True)).success is True
         row = (await storage.stat(path=Path("/dave/y.pdf"))).one()
         assert row.content_hash == measure_bytes(dave).content_hash
-        assert (await reindexer.reindex()).success is True
+        assert (await rebuilder.rebuild()).success is True
         text = (await storage.read(path=Path("/dave/y.pdf"))).one().content
         assert text is not None and "dave wrote" in text and "carol" not in text
