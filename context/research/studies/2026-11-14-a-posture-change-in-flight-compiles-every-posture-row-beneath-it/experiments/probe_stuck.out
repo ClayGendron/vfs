@@ -1,0 +1,9 @@
+  steady: ann grep ok=True rows=167 statements=7
+  posture('/home', 'list') with its first chunk failing: success=False errors=[('vfs.unavailable', True)] grants=[('/home', 'list')] relabel=None
+  marks standing: ['/home']
+  stuck: ann grep ok=True rows=167 statements=14
+  after close and reopen, marks standing: ['/home']
+  stuck, reopened: ann grep ok=True rows=167 statements=14
+  an unrelated posture('/shared/s000', 'none'): success=True relabel={'rows': 7, 'statements': 4, 'transactions': 2}
+  marks standing: []
+  cleared: ann grep ok=True rows=167 statements=7

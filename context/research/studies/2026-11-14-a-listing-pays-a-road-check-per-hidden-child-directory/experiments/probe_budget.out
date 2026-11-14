@@ -1,0 +1,16 @@
+in_list=1000 ann    ls /             | N=1000: ok=True stmts=5 maxbinds=6 | N=10000: ok=True stmts=5 maxbinds=6
+in_list=1000 ann    ls /home         | N=1000: ok=True stmts=14 maxbinds=1000 | N=10000: ok=True stmts=53 maxbinds=1000
+in_list=1000 ann    ls /shared       | N=1000: ok=True stmts=10 maxbinds=170 | N=10000: ok=True stmts=10 maxbinds=170
+in_list=1000 ann    glob /home/**    | N=1000: ok=True stmts=13 maxbinds=1000 | N=10000: ok=True stmts=52 maxbinds=1000
+in_list=1000 ann    glob /shared/**  | N=1000: ok=True stmts=9 maxbinds=170 | N=10000: ok=True stmts=9 maxbinds=170
+in_list=1000 ann    grep needle      | N=1000: ok=True stmts=7 maxbinds=287 | N=10000: ok=True stmts=7 maxbinds=287
+in_list=1000 ann    read own         | N=1000: ok=True stmts=4 maxbinds=6 | N=10000: ok=True stmts=4 maxbinds=6
+in_list=1000 ann    write own        | N=1000: ok=True stmts=14 maxbinds=24 | N=10000: ok=True stmts=14 maxbinds=24
+in_list=1000 heavy  ls /             | N=1000: ok=True stmts=5 maxbinds=51 | N=10000: ok=True stmts=5 maxbinds=51
+in_list=1000 heavy  ls /home         | N=1000: ok=True stmts=22 maxbinds=1000 | N=10000: ok=True stmts=101 maxbinds=1000
+in_list=1000 heavy  ls /shared       | N=1000: ok=True stmts=5 maxbinds=51 | N=10000: ok=True stmts=5 maxbinds=51
+in_list=1000 heavy  glob /home/**    | N=1000: ok=True stmts=21 maxbinds=1000 | N=10000: ok=True stmts=100 maxbinds=1000
+in_list=1000 heavy  glob /shared/**  | N=1000: ok=True stmts=4 maxbinds=51 | N=10000: ok=True stmts=4 maxbinds=51
+in_list=1000 heavy  grep needle      | N=1000: ok=True stmts=7 maxbinds=827 | N=10000: ok=True stmts=7 maxbinds=827
+in_list=1000 heavy  read own         | N=1000: ok=True stmts=4 maxbinds=51 | N=10000: ok=True stmts=4 maxbinds=51
+in_list=1000 heavy  write own        | N=1000: ok=True stmts=14 maxbinds=51 | N=10000: ok=True stmts=14 maxbinds=51

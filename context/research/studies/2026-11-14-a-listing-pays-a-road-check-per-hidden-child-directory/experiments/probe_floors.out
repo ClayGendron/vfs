@@ -1,0 +1,87 @@
+== direct grants G=34: arm pieces=70 owner pieces=107 json≈1503B
+  sqlite     fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=4043 | road owner tests=3 per 32565 candidates
+  postgresql fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 32767) | range join binds=9 bound bytes=2683 | road owner tests=3 per 32565 candidates
+  mssql      fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 2100) | range join binds=7 bound bytes=4027 | road owner tests=3 per 1897 candidates
+  mariadb    fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 65535) | range join binds=11 bound bytes=4027 | road owner tests=3 per 32565 candidates
+  oracle     fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 65535) | range join binds=7 bound bytes=4027 | road owner tests=3 per 897 candidates
+  generic    fan clauses=   1 max binds=  287 | scan groups=   1 max binds=  287 (engine cap 1000) sqlite-parse=ok | road owner tests=3 per 897 candidates
+== direct grants G=100: arm pieces=202 owner pieces=305 json≈4341B
+  sqlite     fan clauses=   2 max binds=  521 | scan groups=   1 max binds=  819 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=11633 | road owner tests=7 per 32565 candidates
+  postgresql fan clauses=   2 max binds=  521 | scan groups=   1 max binds=  819 (engine cap 32767) | range join binds=9 bound bytes=7765 | road owner tests=7 per 32565 candidates
+  mssql      fan clauses=   2 max binds=  521 | scan groups=   1 max binds=  819 (engine cap 2100) | range join binds=7 bound bytes=11617 | road owner tests=7 per 1897 candidates
+  mariadb    fan clauses=   2 max binds=  521 | scan groups=   1 max binds=  819 (engine cap 65535) | range join binds=11 bound bytes=11617 | road owner tests=7 per 32565 candidates
+  oracle     fan clauses=   3 max binds=  409 | scan groups=   1 max binds=  819 (engine cap 65535) | range join binds=7 bound bytes=11617 | road owner tests=7 per 897 candidates
+  generic    fan clauses=   3 max binds=  409 | scan groups=   1 max binds=  819 (engine cap 1000) sqlite-parse=ok | road owner tests=7 per 897 candidates
+== direct grants G=500: arm pieces=1002 owner pieces=1505 json≈21541B
+  sqlite     fan clauses=   6 max binds= 2545 | scan groups=   3 max binds= 2545 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=57633 | road owner tests=31 per 32565 candidates
+  postgresql fan clauses=   6 max binds= 2545 | scan groups=   3 max binds= 2545 (engine cap 32767) | range join binds=9 bound bytes=38565 | road owner tests=31 per 32565 candidates
+  mssql      fan clauses=   8 max binds=  918 | scan groups=   5 max binds=  918 (engine cap 2100) | range join binds=7 bound bytes=57617 | road owner tests=31 per 1897 candidates
+  mariadb    fan clauses=   6 max binds= 2545 | scan groups=   3 max binds= 2545 (engine cap 65535) | range join binds=11 bound bytes=57617 | road owner tests=31 per 32565 candidates
+  oracle     fan clauses=  11 max binds=  465 | scan groups=   5 max binds=  918 (engine cap 65535) | range join binds=7 bound bytes=57617 | road owner tests=31 per 897 candidates
+  generic    fan clauses=  11 max binds=  465 | scan groups=   5 max binds=  918 (engine cap 1000) sqlite-parse=ok | road owner tests=31 per 897 candidates
+== direct grants G=1000: arm pieces=2002 owner pieces=3005 json≈43041B
+  sqlite     fan clauses=  11 max binds= 5075 | scan groups=   5 max binds= 5075 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=115133 | road owner tests=61 per 32565 candidates
+  postgresql fan clauses=  11 max binds= 5075 | scan groups=   5 max binds= 5075 (engine cap 32767) | range join binds=9 bound bytes=77065 | road owner tests=61 per 32565 candidates
+  mssql      fan clauses=  16 max binds=  975 | scan groups=  10 max binds=  975 (engine cap 2100) | range join binds=7 bound bytes=115117 | road owner tests=61 per 1897 candidates
+  mariadb    fan clauses=  11 max binds= 5075 | scan groups=   5 max binds= 5075 (engine cap 65535) | range join binds=11 bound bytes=115117 | road owner tests=61 per 32565 candidates
+  oracle     fan clauses=  23 max binds=  465 | scan groups=  10 max binds=  924 (engine cap 65535) | range join binds=7 bound bytes=115117 | road owner tests=61 per 897 candidates
+  generic    fan clauses=  23 max binds=  465 | scan groups=  10 max binds=  924 (engine cap 1000) sqlite-parse=ok | road owner tests=61 per 897 candidates
+== direct grants G=5000: arm pieces=10002 owner pieces=15005 json≈215041B
+  sqlite     fan clauses=  52 max binds=14901 | scan groups=  21 max binds=14901 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=575133 | road owner tests=301 per 32565 candidates
+  postgresql fan clauses=  52 max binds=14901 | scan groups=  21 max binds=14901 (engine cap 32767) | range join binds=9 bound bytes=385065 | road owner tests=301 per 32565 candidates
+  mssql      fan clauses=  78 max binds=  975 | scan groups=  47 max binds=  975 (engine cap 2100) | range join binds=7 bound bytes=575117 | road owner tests=301 per 1897 candidates
+  mariadb    fan clauses=  52 max binds=14901 | scan groups=  21 max binds=14901 (engine cap 65535) | range join binds=11 bound bytes=575117 | road owner tests=301 per 32565 candidates
+  oracle     fan clauses= 111 max binds=  465 | scan groups=  50 max binds=  924 (engine cap 65535) | range join binds=7 bound bytes=575117 | road owner tests=301 per 897 candidates
+  generic    fan clauses= 111 max binds=  465 | scan groups=  50 max binds=  924 (engine cap 1000) sqlite-parse=ok | road owner tests=301 per 897 candidates
+== direct grants G=20000: arm pieces=40002 owner pieces=60005 json≈860041B
+  sqlite     fan clauses= 207 max binds=16311 | scan groups=  82 max binds=16311 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=2300133 | road owner tests=1201 per 32565 candidates
+  postgresql fan clauses= 207 max binds=16311 | scan groups=  82 max binds=16311 (engine cap 32767) | range join binds=9 bound bytes=1540065 | road owner tests=1201 per 32565 candidates
+  mssql      fan clauses= 310 max binds=  975 | scan groups= 185 max binds=  975 (engine cap 2100) | range join binds=7 bound bytes=2300117 | road owner tests=1201 per 1897 candidates
+  mariadb    fan clauses= 207 max binds=16311 | scan groups=  82 max binds=16311 (engine cap 65535) | range join binds=11 bound bytes=2300117 | road owner tests=1201 per 32565 candidates
+  oracle     fan clauses= 445 max binds=  465 | scan groups= 198 max binds=  924 (engine cap 65535) | range join binds=7 bound bytes=2300117 | road owner tests=1201 per 897 candidates
+  generic    fan clauses= 445 max binds=  465 | scan groups= 198 max binds=  924 (engine cap 1000) sqlite-parse=ok | road owner tests=1201 per 897 candidates
+== 50 groups x 2 grants + 100 direct: arm pieces=402 owner pieces=605 json≈9241B
+  sqlite     fan clauses=   3 max binds= 1027 | scan groups=   2 max binds= 1027 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=24733 | road owner tests=13 per 32565 candidates
+  postgresql fan clauses=   3 max binds= 1027 | scan groups=   2 max binds= 1027 (engine cap 32767) | range join binds=9 bound bytes=17065 | road owner tests=13 per 32565 candidates
+  mssql      fan clauses=   4 max binds=  915 | scan groups=   3 max binds=  915 (engine cap 2100) | range join binds=7 bound bytes=24717 | road owner tests=13 per 1897 candidates
+  mariadb    fan clauses=   3 max binds= 1027 | scan groups=   2 max binds= 1027 (engine cap 65535) | range join binds=11 bound bytes=24717 | road owner tests=13 per 32565 candidates
+  oracle     fan clauses=   5 max binds=  410 | scan groups=   3 max binds=  814 (engine cap 65535) | range join binds=7 bound bytes=24717 | road owner tests=13 per 897 candidates
+  generic    fan clauses=   5 max binds=  410 | scan groups=   3 max binds=  814 (engine cap 1000) sqlite-parse=ok | road owner tests=13 per 897 candidates
+== 50 groups x 20 grants + 100 direct: arm pieces=2202 owner pieces=3305 json≈53341B
+  sqlite     fan clauses=  12 max binds= 5581 | scan groups=   5 max binds= 5581 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=142633 | road owner tests=67 per 32565 candidates
+  postgresql fan clauses=  12 max binds= 5581 | scan groups=   5 max binds= 5581 (engine cap 32767) | range join binds=9 bound bytes=100765 | road owner tests=67 per 32565 candidates
+  mssql      fan clauses=  17 max binds=  975 | scan groups=  10 max binds=  975 (engine cap 2100) | range join binds=7 bound bytes=142617 | road owner tests=67 per 1897 candidates
+  mariadb    fan clauses=  12 max binds= 5581 | scan groups=   5 max binds= 5581 (engine cap 65535) | range join binds=11 bound bytes=142617 | road owner tests=67 per 32565 candidates
+  oracle     fan clauses=  25 max binds=  465 | scan groups=  11 max binds=  924 (engine cap 65535) | range join binds=7 bound bytes=142617 | road owner tests=67 per 897 candidates
+  generic    fan clauses=  25 max binds=  465 | scan groups=  11 max binds=  924 (engine cap 1000) sqlite-parse=ok | road owner tests=67 per 897 candidates
+== 50 groups x 100 grants + 100 direct: arm pieces=10202 owner pieces=15305 json≈249341B
+  sqlite     fan clauses=  53 max binds=14801 | scan groups=  21 max binds=14801 (engine cap 32766) sqlite-parse=ok | range join binds=15 bound bytes=666633 | road owner tests=307 per 32565 candidates
+  postgresql fan clauses=  53 max binds=14801 | scan groups=  21 max binds=14801 (engine cap 32767) | range join binds=9 bound bytes=472765 | road owner tests=307 per 32565 candidates
+  mssql      fan clauses=  79 max binds=  975 | scan groups=  47 max binds=  975 (engine cap 2100) | range join binds=7 bound bytes=666617 | road owner tests=307 per 1897 candidates
+  mariadb    fan clauses=  53 max binds=14801 | scan groups=  21 max binds=14801 (engine cap 65535) | range join binds=11 bound bytes=666617 | road owner tests=307 per 32565 candidates
+  oracle     fan clauses= 114 max binds=  465 | scan groups=  50 max binds=  924 (engine cap 65535) | range join binds=7 bound bytes=666617 | road owner tests=307 per 897 candidates
+  generic    fan clauses= 114 max binds=  465 | scan groups=  50 max binds=  924 (engine cap 1000) sqlite-parse=ok | road owner tests=307 per 897 candidates
+== in flight at / over 100 deeper postures: hole pieces=0 spans=201 whole=False
+   narrowing / to list: hole pieces=302
+  sqlite     road hole_free binds=     6 bytes=8725 | scan-tier statements per arm chunk=1 (fan clauses 2) sqlite-parse=ok
+  postgresql road hole_free binds=     5 bytes=6303 | scan-tier statements per arm chunk=1 (fan clauses 2)
+  mssql      road hole_free binds=     4 bytes=8717 | scan-tier statements per arm chunk=1 (fan clauses 2)
+  mariadb    road hole_free binds=     4 bytes=8717 | scan-tier statements per arm chunk=1 (fan clauses 2)
+  oracle     road hole_free binds=     4 bytes=8717 | scan-tier statements per arm chunk=1 (fan clauses 2)
+  generic    road hole_free binds=   503 bytes=6303 | scan-tier statements per arm chunk=1 (fan clauses 2) sqlite-parse=ok
+== in flight at / over 1000 deeper postures: hole pieces=0 spans=2001 whole=False
+   narrowing / to list: hole pieces=3002
+  sqlite     road hole_free binds=     6 bytes=87025 | scan-tier statements per arm chunk=8 (fan clauses 11) sqlite-parse=ok
+  postgresql road hole_free binds=     5 bytes=63003 | scan-tier statements per arm chunk=8 (fan clauses 11)
+  mssql      road hole_free binds=     4 bytes=87017 | scan-tier statements per arm chunk=8 (fan clauses 11)
+  mariadb    road hole_free binds=     4 bytes=87017 | scan-tier statements per arm chunk=8 (fan clauses 11)
+  oracle     road hole_free binds=     4 bytes=87017 | scan-tier statements per arm chunk=8 (fan clauses 12)
+  generic    road hole_free binds=  5003 bytes=63003 | scan-tier statements per arm chunk=8 (fan clauses 12) sqlite-parse=Expression tree is too large (maximum depth 1000)
+== in flight at / over 10000 deeper postures: hole pieces=0 spans=20001 whole=False
+   narrowing / to list: hole pieces=30002
+  sqlite     road hole_free binds=     6 bytes=870025 | scan-tier statements per arm chunk=75 (fan clauses 101) sqlite-parse=ok
+  postgresql road hole_free binds=     5 bytes=630003 | scan-tier statements per arm chunk=75 (fan clauses 101)
+  mssql      road hole_free binds=     4 bytes=870017 | scan-tier statements per arm chunk=75 (fan clauses 101)
+  mariadb    road hole_free binds=     4 bytes=870017 | scan-tier statements per arm chunk=75 (fan clauses 101)
+  oracle     road hole_free binds=     4 bytes=870017 | scan-tier statements per arm chunk=85 (fan clauses 111)
+  generic    road hole_free binds= 50003 bytes=630003 | scan-tier statements per arm chunk=85 (fan clauses 111) sqlite-parse=Expression tree is too large (maximum depth 1000)

@@ -1,0 +1,249 @@
+===== N=1000
+--- ann: compile {"list": {"spans": 68, "roots": 34, "points": 34, "opens": 34, "owner_arms": 1, "owner_points": 35, "owner_opens": 69, "holes": 0, "json_bytes": 4719}, "read": {"spans": 68, "roots": 34, "points": 34, "opens": 34, "owner_arms": 1, "owner_points": 35, "owner_opens": 69, "holes": 0, "json_bytes": 4719}, "read_write": {"spans": 26, "roots": 13, "points": 13, "opens": 13, "owner_arms": 1, "owner_points": 14, "owner_opens": 27, "holes": 0, "json_bytes": 1800}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 6, 'max_bound_bytes': 48, 'text_hash': '68f28e91b4fc'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 10, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': '2f48acb5581e'}
+    ls /shared         {'ok': True, 'rows': 33, 'statements': 10, 'max_binds': 170, 'max_bound_bytes': 2059, 'text_hash': '1fe8352565b7'}
+    glob /shared/**    {'ok': True, 'rows': 198, 'statements': 9, 'max_binds': 170, 'max_bound_bytes': 2059, 'text_hash': 'cafc45cce5ca'}
+    tree /             {'ok': True, 'rows': 204, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4764, 'text_hash': 'cb0c5868339f'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4820, 'text_hash': '25a362771fcd'}
+    tree /shared       {'ok': True, 'rows': 198, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4842, 'text_hash': '25a362771fcd'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 9, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': 'd17cd44facef'}
+    grep needle        {'ok': True, 'rows': 167, 'statements': 7, 'max_binds': 287, 'max_bound_bytes': 3451, 'text_hash': '97a2dac87264'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 287, 'max_bound_bytes': 3451, 'text_hash': '11cfb6a6c213'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 6, 'max_bound_bytes': 48, 'text_hash': '0ec31b09353f'}
+    stat share         {'ok': False, 'rows': 0, 'statements': 9, 'max_binds': 104, 'max_bound_bytes': 1267, 'text_hash': '726c9a6957cd'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '5eaac27eda3c'}
+--- heavy: compile {"list": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}, "read": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}, "read_write": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '7f266ed5a182'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': '7737553b90cd'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '73bff25a0e05'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': 'e56abc4b6498'}
+    tree /             {'ok': True, 'rows': 606, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14097, 'text_hash': '3d5e0030cd20'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14153, 'text_hash': 'ee348caf0864'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14175, 'text_hash': 'ee348caf0864'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 13, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': 'e5106d3b22f0'}
+    grep needle        {'ok': True, 'rows': 502, 'statements': 7, 'max_binds': 827, 'max_bound_bytes': 10260, 'text_hash': '1b8e0c93fc17'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 827, 'max_bound_bytes': 10260, 'text_hash': 'a4361f092e02'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': 'e195e71faa49'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '3bf7a28533a5'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '1fa16c6b33ea'}
+--- granted: compile {"list": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14064}, "read": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14064}, "read_write": {"spans": 2, "roots": 1, "points": 1, "opens": 1, "owner_arms": 1, "owner_points": 2, "owner_opens": 3, "holes": 0, "json_bytes": 164}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '77e71d1f3f6c'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': '0e400f1d88a9'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': 'a23b572c7ed0'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': '45520fa613da'}
+    tree /             {'ok': True, 'rows': 606, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14117, 'text_hash': 'e96c3ead19af'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14173, 'text_hash': '6c3e5ae0fbc4'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14195, 'text_hash': '6c3e5ae0fbc4'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 13, 'max_binds': 1106, 'max_bound_bytes': 13290, 'text_hash': '8980e305ede4'}
+    grep needle        {'ok': True, 'rows': 502, 'statements': 7, 'max_binds': 827, 'max_bound_bytes': 10290, 'text_hash': '0846d4929eba'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 827, 'max_bound_bytes': 10290, 'text_hash': 'ff540c420ef8'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': 'a7a577279ced'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': 'e7750136a847'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 24, 'max_bound_bytes': 120, 'text_hash': 'e6cbf402a38f'}
+--- admin: compile {"list": "whole", "read": "whole", "read_write": "whole"}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '864517e4d03d'}
+    ls /home           {'ok': True, 'rows': 1004, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '9f518012ff5c'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '9f518012ff5c'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': '86348c72d733'}
+    tree /             {'ok': True, 'rows': 3617, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 13, 'text_hash': 'd320c21a002b'}
+    tree /home         {'ok': True, 'rows': 3015, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 19, 'text_hash': '4c21276d31fc'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 21, 'text_hash': '4c21276d31fc'}
+    glob /home/**      {'ok': True, 'rows': 3015, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': '86348c72d733'}
+    grep needle        {'ok': True, 'rows': 2508, 'statements': 7, 'max_binds': 2511, 'max_bound_bytes': 29, 'text_hash': 'fa4d77a482bc'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 2511, 'max_bound_bytes': 29, 'text_hash': '58992785ecb8'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 30, 'text_hash': 'd7284e5b1317'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': '2adeb04b413c'}
+    write own          {'ok': True, 'rows': 1, 'statements': 12, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '6fd7015843c4'}
+--- system: compile "everything"
+    ls /               {'ok': True, 'rows': 2, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '8eaad68fba84'}
+    ls /home           {'ok': True, 'rows': 1004, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '08ab852653db'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '08ab852653db'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': 'c48223ff5916'}
+    tree /             {'ok': True, 'rows': 3617, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 13, 'text_hash': '3fc2bb16627d'}
+    tree /home         {'ok': True, 'rows': 3015, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 19, 'text_hash': '8e8c219ce592'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 21, 'text_hash': '8e8c219ce592'}
+    glob /home/**      {'ok': True, 'rows': 3015, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': 'c48223ff5916'}
+    grep needle        {'ok': True, 'rows': 2508, 'statements': 5, 'max_binds': 2511, 'max_bound_bytes': 29, 'text_hash': '996cb4b53e78'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 8, 'max_binds': 2511, 'max_bound_bytes': 29, 'text_hash': '2695be5cc92c'}
+    read own           {'ok': True, 'rows': 1, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 30, 'text_hash': 'b21ff92a3c3b'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': '2eb25b9ca251'}
+    write own          {'ok': True, 'rows': 1, 'statements': 10, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '5303724bd700'}
+--- anonymous: compile {"list": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}, "read": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}, "read_write": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '911e571b38bb'}
+    ls /home           {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '3592e0480b79'}
+    ls /shared         {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '3592e0480b79'}
+    glob /shared/**    {'ok': True, 'rows': 0, 'statements': 5, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': 'a509069afd9a'}
+    tree /             {'ok': True, 'rows': 2, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 13, 'text_hash': '2e2f3afdbcf7'}
+    tree /home         {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 19, 'text_hash': '2d874e741b0c'}
+    tree /shared       {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 21, 'text_hash': '2d874e741b0c'}
+    glob /home/**      {'ok': True, 'rows': 0, 'statements': 5, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': 'a509069afd9a'}
+    grep needle        {'ok': True, 'rows': 0, 'statements': 7, 'max_binds': 9, 'max_bound_bytes': 29, 'text_hash': 'da60df037c00'}
+    search needle      {'ok': True, 'rows': 0, 'statements': 8, 'max_binds': 9, 'max_bound_bytes': 29, 'text_hash': '7e866627c2ef'}
+    read own           {'ok': False, 'rows': 0, 'statements': 4, 'max_binds': 5, 'max_bound_bytes': 31, 'text_hash': 'f68b58cd80bc'}
+    stat share         {'ok': False, 'rows': 0, 'statements': 4, 'max_binds': 5, 'max_bound_bytes': 39, 'text_hash': 'f68b58cd80bc'}
+    write own          {'ok': False, 'rows': 0, 'statements': 5, 'max_binds': 5, 'max_bound_bytes': 32, 'text_hash': 'cca1c477534d'}
+===== N=10000
+--- ann: compile {"list": {"spans": 68, "roots": 34, "points": 34, "opens": 34, "owner_arms": 1, "owner_points": 35, "owner_opens": 69, "holes": 0, "json_bytes": 4719}, "read": {"spans": 68, "roots": 34, "points": 34, "opens": 34, "owner_arms": 1, "owner_points": 35, "owner_opens": 69, "holes": 0, "json_bytes": 4719}, "read_write": {"spans": 26, "roots": 13, "points": 13, "opens": 13, "owner_arms": 1, "owner_points": 14, "owner_opens": 27, "holes": 0, "json_bytes": 1800}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 6, 'max_bound_bytes': 48, 'text_hash': '68f28e91b4fc'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 10, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': 'c16cb4498a49'}
+    ls /shared         {'ok': True, 'rows': 33, 'statements': 10, 'max_binds': 170, 'max_bound_bytes': 2059, 'text_hash': '1fe8352565b7'}
+    glob /shared/**    {'ok': True, 'rows': 198, 'statements': 9, 'max_binds': 170, 'max_bound_bytes': 2059, 'text_hash': 'cafc45cce5ca'}
+    tree /             {'ok': True, 'rows': 204, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4764, 'text_hash': 'cb0c5868339f'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4820, 'text_hash': '25a362771fcd'}
+    tree /shared       {'ok': True, 'rows': 198, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 4842, 'text_hash': '25a362771fcd'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 9, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': '6f9ab4d67782'}
+    grep needle        {'ok': True, 'rows': 167, 'statements': 7, 'max_binds': 287, 'max_bound_bytes': 3451, 'text_hash': '97a2dac87264'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 287, 'max_bound_bytes': 3451, 'text_hash': '11cfb6a6c213'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 6, 'max_bound_bytes': 48, 'text_hash': '0ec31b09353f'}
+    stat share         {'ok': False, 'rows': 0, 'statements': 9, 'max_binds': 104, 'max_bound_bytes': 1267, 'text_hash': '726c9a6957cd'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '5eaac27eda3c'}
+--- heavy: compile {"list": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}, "read": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}, "read_write": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14048}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '7f266ed5a182'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': 'f5f56df4c1da'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '73bff25a0e05'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': 'e56abc4b6498'}
+    tree /             {'ok': True, 'rows': 606, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14097, 'text_hash': '3d5e0030cd20'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14153, 'text_hash': 'ee348caf0864'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 51, 'max_bound_bytes': 14175, 'text_hash': 'ee348caf0864'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 13, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': '6800540826a4'}
+    grep needle        {'ok': True, 'rows': 502, 'statements': 7, 'max_binds': 827, 'max_bound_bytes': 10260, 'text_hash': '1b8e0c93fc17'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 827, 'max_bound_bytes': 10260, 'text_hash': 'a4361f092e02'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': 'e195e71faa49'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '3bf7a28533a5'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 51, 'max_bound_bytes': 455, 'text_hash': '1fa16c6b33ea'}
+--- granted: compile {"list": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14064}, "read": {"spans": 202, "roots": 101, "points": 101, "opens": 101, "owner_arms": 1, "owner_points": 102, "owner_opens": 203, "holes": 0, "json_bytes": 14064}, "read_write": {"spans": 2, "roots": 1, "points": 1, "opens": 1, "owner_arms": 1, "owner_points": 2, "owner_opens": 3, "holes": 0, "json_bytes": 164}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '77e71d1f3f6c'}
+    ls /home           {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': '0ea009a9d739'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': 'a23b572c7ed0'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': '45520fa613da'}
+    tree /             {'ok': True, 'rows': 606, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14117, 'text_hash': 'e96c3ead19af'}
+    tree /home         {'ok': True, 'rows': 4, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14173, 'text_hash': '6c3e5ae0fbc4'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 28, 'max_bound_bytes': 14195, 'text_hash': '6c3e5ae0fbc4'}
+    glob /home/**      {'ok': True, 'rows': 4, 'statements': 13, 'max_binds': 10106, 'max_bound_bytes': 121290, 'text_hash': '94d3732e2f6e'}
+    grep needle        {'ok': True, 'rows': 502, 'statements': 7, 'max_binds': 827, 'max_bound_bytes': 10290, 'text_hash': '0846d4929eba'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 827, 'max_bound_bytes': 10290, 'text_hash': 'ff540c420ef8'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': 'a7a577279ced'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': 'e7750136a847'}
+    write own          {'ok': True, 'rows': 1, 'statements': 14, 'max_binds': 24, 'max_bound_bytes': 120, 'text_hash': 'e6cbf402a38f'}
+--- admin: compile {"list": "whole", "read": "whole", "read_write": "whole"}
+    ls /               {'ok': True, 'rows': 2, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '864517e4d03d'}
+    ls /home           {'ok': True, 'rows': 10004, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '9f518012ff5c'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '9f518012ff5c'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': '86348c72d733'}
+    tree /             {'ok': True, 'rows': 30617, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 13, 'text_hash': 'd320c21a002b'}
+    tree /home         {'ok': True, 'rows': 30015, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 19, 'text_hash': '4c21276d31fc'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 5, 'max_binds': 3, 'max_bound_bytes': 21, 'text_hash': '4c21276d31fc'}
+    glob /home/**      {'ok': True, 'rows': 30015, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': '86348c72d733'}
+    grep needle        {'ok': True, 'rows': 20508, 'statements': 7, 'max_binds': 20511, 'max_bound_bytes': 29, 'text_hash': 'a7ffe0d402f4'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 10, 'max_binds': 20511, 'max_bound_bytes': 29, 'text_hash': 'fe6422cc4b1a'}
+    read own           {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 30, 'text_hash': 'd7284e5b1317'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 4, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': '2adeb04b413c'}
+    write own          {'ok': True, 'rows': 1, 'statements': 12, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '6fd7015843c4'}
+--- system: compile "everything"
+    ls /               {'ok': True, 'rows': 2, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '8eaad68fba84'}
+    ls /home           {'ok': True, 'rows': 10004, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '08ab852653db'}
+    ls /shared         {'ok': True, 'rows': 100, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '08ab852653db'}
+    glob /shared/**    {'ok': True, 'rows': 600, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': 'c48223ff5916'}
+    tree /             {'ok': True, 'rows': 30617, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 13, 'text_hash': '3fc2bb16627d'}
+    tree /home         {'ok': True, 'rows': 30015, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 19, 'text_hash': '8e8c219ce592'}
+    tree /shared       {'ok': True, 'rows': 600, 'statements': 3, 'max_binds': 3, 'max_bound_bytes': 21, 'text_hash': '8e8c219ce592'}
+    glob /home/**      {'ok': True, 'rows': 30015, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': 'c48223ff5916'}
+    grep needle        {'ok': True, 'rows': 20508, 'statements': 5, 'max_binds': 20511, 'max_bound_bytes': 29, 'text_hash': '8050b3249cd7'}
+    search needle      {'ok': True, 'rows': 10, 'statements': 8, 'max_binds': 20511, 'max_bound_bytes': 29, 'text_hash': '1a5486efeb51'}
+    read own           {'ok': True, 'rows': 1, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 30, 'text_hash': 'b21ff92a3c3b'}
+    stat share         {'ok': True, 'rows': 1, 'statements': 2, 'max_binds': 4, 'max_bound_bytes': 38, 'text_hash': '2eb25b9ca251'}
+    write own          {'ok': True, 'rows': 1, 'statements': 10, 'max_binds': 24, 'max_bound_bytes': 116, 'text_hash': '5303724bd700'}
+--- anonymous: compile {"list": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}, "read": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}, "read_write": {"spans": 0, "roots": 0, "points": 0, "opens": 0, "owner_arms": 0, "owner_points": 0, "owner_opens": 0, "holes": 0, "json_bytes": 4}}
+    ls /               {'ok': True, 'rows': 2, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '911e571b38bb'}
+    ls /home           {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '3592e0480b79'}
+    ls /shared         {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 3, 'max_bound_bytes': 12, 'text_hash': '3592e0480b79'}
+    glob /shared/**    {'ok': True, 'rows': 0, 'statements': 5, 'max_binds': 4, 'max_bound_bytes': 22, 'text_hash': 'a509069afd9a'}
+    tree /             {'ok': True, 'rows': 2, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 13, 'text_hash': '2e2f3afdbcf7'}
+    tree /home         {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 19, 'text_hash': '2d874e741b0c'}
+    tree /shared       {'ok': True, 'rows': 0, 'statements': 6, 'max_binds': 4, 'max_bound_bytes': 21, 'text_hash': '2d874e741b0c'}
+    glob /home/**      {'ok': True, 'rows': 0, 'statements': 5, 'max_binds': 4, 'max_bound_bytes': 20, 'text_hash': 'a509069afd9a'}
+    grep needle        {'ok': True, 'rows': 0, 'statements': 7, 'max_binds': 9, 'max_bound_bytes': 29, 'text_hash': 'da60df037c00'}
+    search needle      {'ok': True, 'rows': 0, 'statements': 8, 'max_binds': 9, 'max_bound_bytes': 29, 'text_hash': '7e866627c2ef'}
+    read own           {'ok': False, 'rows': 0, 'statements': 4, 'max_binds': 5, 'max_bound_bytes': 31, 'text_hash': 'f68b58cd80bc'}
+    stat share         {'ok': False, 'rows': 0, 'statements': 4, 'max_binds': 5, 'max_bound_bytes': 39, 'text_hash': 'f68b58cd80bc'}
+    write own          {'ok': False, 'rows': 0, 'statements': 5, 'max_binds': 5, 'max_bound_bytes': 32, 'text_hash': 'cca1c477534d'}
+===== text identity across sizes
+  same ann       ls /               counts=[5, 5]
+  DIFF ann       ls /home           counts=[10, 10] first-diff-index=[6, 7, 8] lens=10,10
+  same ann       ls /shared         counts=[10, 10]
+  same ann       glob /shared/**    counts=[9, 9]
+  same ann       tree /             counts=[5, 5]
+  same ann       tree /home         counts=[5, 5]
+  same ann       tree /shared       counts=[5, 5]
+  DIFF ann       glob /home/**      counts=[9, 9] first-diff-index=[5, 6, 7] lens=9,9
+  same ann       grep needle        counts=[7, 7]
+  same ann       search needle      counts=[10, 10]
+  same ann       read own           counts=[4, 4]
+  same ann       stat share         counts=[9, 9]
+  same ann       write own          counts=[14, 14]
+  same heavy     ls /               counts=[5, 5]
+  DIFF heavy     ls /home           counts=[14, 14] first-diff-index=[6, 7, 8] lens=14,14
+  same heavy     ls /shared         counts=[5, 5]
+  same heavy     glob /shared/**    counts=[4, 4]
+  same heavy     tree /             counts=[5, 5]
+  same heavy     tree /home         counts=[5, 5]
+  same heavy     tree /shared       counts=[5, 5]
+  DIFF heavy     glob /home/**      counts=[13, 13] first-diff-index=[5, 6, 7] lens=13,13
+  same heavy     grep needle        counts=[7, 7]
+  same heavy     search needle      counts=[10, 10]
+  same heavy     read own           counts=[4, 4]
+  same heavy     stat share         counts=[4, 4]
+  same heavy     write own          counts=[14, 14]
+  same granted   ls /               counts=[5, 5]
+  DIFF granted   ls /home           counts=[14, 14] first-diff-index=[6, 7, 8] lens=14,14
+  same granted   ls /shared         counts=[5, 5]
+  same granted   glob /shared/**    counts=[4, 4]
+  same granted   tree /             counts=[5, 5]
+  same granted   tree /home         counts=[5, 5]
+  same granted   tree /shared       counts=[5, 5]
+  DIFF granted   glob /home/**      counts=[13, 13] first-diff-index=[5, 6, 7] lens=13,13
+  same granted   grep needle        counts=[7, 7]
+  same granted   search needle      counts=[10, 10]
+  same granted   read own           counts=[4, 4]
+  same granted   stat share         counts=[4, 4]
+  same granted   write own          counts=[14, 14]
+  same admin     ls /               counts=[5, 5]
+  same admin     ls /home           counts=[5, 5]
+  same admin     ls /shared         counts=[5, 5]
+  same admin     glob /shared/**    counts=[4, 4]
+  same admin     tree /             counts=[5, 5]
+  same admin     tree /home         counts=[5, 5]
+  same admin     tree /shared       counts=[5, 5]
+  same admin     glob /home/**      counts=[4, 4]
+  DIFF admin     grep needle        counts=[7, 7] first-diff-index=[6] lens=7,7
+  DIFF admin     search needle      counts=[10, 10] first-diff-index=[7, 8] lens=10,10
+  same admin     read own           counts=[4, 4]
+  same admin     stat share         counts=[4, 4]
+  same admin     write own          counts=[12, 12]
+  same system    ls /               counts=[3, 3]
+  same system    ls /home           counts=[3, 3]
+  same system    ls /shared         counts=[3, 3]
+  same system    glob /shared/**    counts=[2, 2]
+  same system    tree /             counts=[3, 3]
+  same system    tree /home         counts=[3, 3]
+  same system    tree /shared       counts=[3, 3]
+  same system    glob /home/**      counts=[2, 2]
+  DIFF system    grep needle        counts=[5, 5] first-diff-index=[4] lens=5,5
+  DIFF system    search needle      counts=[8, 8] first-diff-index=[5, 6] lens=8,8
+  same system    read own           counts=[2, 2]
+  same system    stat share         counts=[2, 2]
+  same system    write own          counts=[10, 10]
+  same anonymous ls /               counts=[6, 6]
+  same anonymous ls /home           counts=[6, 6]
+  same anonymous ls /shared         counts=[6, 6]
+  same anonymous glob /shared/**    counts=[5, 5]
+  same anonymous tree /             counts=[6, 6]
+  same anonymous tree /home         counts=[6, 6]
+  same anonymous tree /shared       counts=[6, 6]
+  same anonymous glob /home/**      counts=[5, 5]
+  same anonymous grep needle        counts=[7, 7]
+  same anonymous search needle      counts=[8, 8]
+  same anonymous read own           counts=[4, 4]
+  same anonymous stat share         counts=[4, 4]
+  same anonymous write own          counts=[5, 5]

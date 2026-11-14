@@ -1,0 +1,3 @@
+D=100 generic floor: steady ls ok=True rows=['/h/u00007']; in flight ls ok=True rows=['/h/u00007'] errors=[] statements=18 max binds=606 max bound bytes=5705
+D=400 generic floor: steady ls ok=True rows=['/h/u00007']; in flight ls ok=False rows=[] errors=[(<ErrorKind.unavailable: 'vfs.unavailable'>, "kind=<ErrorKind.unavailable: 'vfs.unavailable'> message='Unavailable: ls failed: Expression tree is too large (maximum depth 1000)' severity=<Severity.error: 'e")] statements=15 max binds=2007 max bound bytes=19207
+D=400 range source: steady ls ok=True rows=['/h/u00007']; in flight ls ok=True rows=['/h/u00007'] errors=[] statements=18 max binds=411 max bound bytes=32427

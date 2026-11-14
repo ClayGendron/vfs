@@ -1,0 +1,38 @@
+rows=100 relabel_rows=250 deeper=0
+  verb relabel record: {'rows': 102, 'statements': 2, 'transactions': 1}
+  ceil(rows/relabel_rows) = 1; ceil((rows+dirs)/relabel_rows) = 1
+  BEGIN statements=4 entry UPDATE statements=2 max update binds=4 all statements=31
+  midway reads: 2 checks, all agree=True
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 0, 'hole_pieces': 0}
+    {'caller': 'bob', 'named': 101, 'oracle': 101, 'agree': True, 'holes': 0, 'hole_pieces': 0}
+    ... max hole pieces seen midway: 0
+rows=995 relabel_rows=250 deeper=0
+  verb relabel record: {'rows': 997, 'statements': 10, 'transactions': 6}
+  ceil(rows/relabel_rows) = 4; ceil((rows+dirs)/relabel_rows) = 4
+  BEGIN statements=9 entry UPDATE statements=10 max update binds=4 all statements=69
+  midway reads: 12 checks, all agree=True
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 996, 'oracle': 996, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 996, 'oracle': 996, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    ... max hole pieces seen midway: 2
+rows=2000 relabel_rows=250 deeper=0
+  verb relabel record: {'rows': 2002, 'statements': 18, 'transactions': 10}
+  ceil(rows/relabel_rows) = 8; ceil((rows+dirs)/relabel_rows) = 9
+  BEGIN statements=13 entry UPDATE statements=18 max update binds=4 all statements=101
+  midway reads: 20 checks, all agree=True
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 2001, 'oracle': 2001, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 2001, 'oracle': 2001, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    ... max hole pieces seen midway: 2
+rows=100000 relabel_rows=50000 deeper=0
+  verb relabel record: {'rows': 100002, 'statements': 6, 'transactions': 4}
+  ceil(rows/relabel_rows) = 2; ceil((rows+dirs)/relabel_rows) = 3
+  BEGIN statements=7 entry UPDATE statements=6 max update binds=4 all statements=53
+  midway reads: 8 checks, all agree=True
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 100001, 'oracle': 100001, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'ann', 'named': 0, 'oracle': 0, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    {'caller': 'bob', 'named': 100001, 'oracle': 100001, 'agree': True, 'holes': 2, 'hole_pieces': 2}
+    ... max hole pieces seen midway: 2

@@ -1,0 +1,10 @@
+N=1000 window: ann cold compile statements=9 posture rows read=3 read-rung hole pieces=3014 spans=68
+   grep needle      ok=True rows=167 statements=14 max binds=925 max bound bytes=8970
+   glob /shared/**  ok=True rows=198 statements=49 max binds=170 max bound bytes=2109
+   read own         ok=True rows=1 statements=4 max binds=6 max bound bytes=48
+   the posture verb finishing it: {'rows': 1, 'statements': 2, 'transactions': 1} statements=24
+N=10000 window: ann cold compile statements=9 posture rows read=3 read-rung hole pieces=30014 spans=68
+   grep needle      ok=True rows=167 statements=81 max binds=925 max bound bytes=8970
+   glob /shared/**  ok=True rows=198 statements=409 max binds=170 max bound bytes=2109
+   read own         ok=True rows=1 statements=4 max binds=6 max bound bytes=48
+   the posture verb finishing it: {'rows': 1, 'statements': 2, 'transactions': 1} statements=24
