@@ -42,7 +42,9 @@ previews of the overlay entries that answer come from one bounded read
 of those entries' live bodies after the order is settled. The pointer
 read is advisory and re-issued after the fetch (the two-read protocol);
 a moved pointer raises :class:`StaleSnapshot` for the backend to
-redrive.
+redrive. A carried chunk the text read no longer finds answers from its
+entry's live body in the overlay's whole-document shape; an entry whose
+body is gone too raises :class:`StaleSnapshot`.
 
 The **vector leg** is one in-engine statement on every supported
 dialect — ``ORDER BY <cosine distance> LIMIT k`` with the scope
@@ -68,7 +70,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from sqlalchemy import and_, func, or_, select, text, tuple_
+from sqlalchemy import LargeBinary, and_, cast, func, or_, select, text, tuple_
 
 from vfs.batching import byte_chunked
 from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE, Deadline
@@ -464,9 +466,16 @@ async def search_rows(
         fused.entries[entry_id] *= factor
     ordered = _order(fused.entries, rows)[:limit]
     wanted = [chunk_id for entry_id, _ in ordered for chunk_id, _ in fused.chunks[entry_id]]
+    await seam("search:before-chunk-texts")
     texts = await _chunk_texts(session, tables, wanted, profile, membership_budget)
+    # An entry whose ranked chunk is gone was re-split or purged: its live body answers it whole, or it redrives.
+    gone = [eid for eid, _ in ordered if any(cid >= 0 and cid not in texts for cid, _ in fused.chunks[eid])]
+    resplit = await _resplit_bodies(session, tables, profile, membership_budget, gone, view)
+    if len(resplit) < len(gone):
+        raise StaleSnapshot("an entry the answer carries is gone since it was ranked")
+    fused.chunks.update({entry_id: [(-1, fused.chunks[entry_id][0][1])] for entry_id in resplit})
     answering = [entry_id for entry_id, _ in ordered if entry_id in overlay]
-    bodies = await _overlay_bodies(session, tables, profile, membership_budget, answering)
+    bodies = {**await _overlay_bodies(session, tables, profile, membership_budget, answering), **resplit}
     # An overlay body that did not come back was purged between the count and
     # the preview read: absent, as grep leaves a body that did not come back.
     ordered = [(entry_id, score) for entry_id, score in ordered if entry_id not in overlay or entry_id in bodies]
@@ -1055,6 +1064,32 @@ async def _overlay_bodies(
     return {entry_id: _text(body) for entry_id, body in bodies.items()}
 
 
+async def _resplit_bodies(
+    session: AsyncSession,
+    tables: VFSTables,
+    profile: DialectProfile,
+    membership_budget: int,
+    entry_ids: Sequence[EntryId],
+    view: Visibility | None,
+) -> dict[EntryId, str]:
+    """The live bodies of the answer's entries whose ranked chunks are gone, each a row *view* admits where it sits.
+
+    At most the answer's entries, one read per membership chunk, none when no chunk is gone. An entry
+    purged, holding no text, or moved out of the view is absent, and the caller redrives.
+    """
+    entry, content = tables.entry, tables.content
+    body = cast(content.c.content, LargeBinary).label("content") if profile.content_bytes else content.c.content
+    columns = [entry.c.entry_id, body, entry.c.path, *(entry.c[name] for name in sorted(RIGHTS_FIELDS))]
+    out: dict[EntryId, str] = {}
+    for chunk in chunked(list(entry_ids), membership_budget):
+        stmt = select(*columns).select_from(tables.content_joined()).where(membership(entry.c.entry_id, chunk, profile))
+        found = (await session.execute(stmt)).mappings()
+        # A body that is missing or empty holds no text: absent, as a purged entry is.
+        kept = [m for m in found if m["content"] and (view is None or view.holds(m, view.need))]
+        out.update({m["entry_id"]: _text(m["content"]) for m in kept})
+    return out
+
+
 def _text(body: Body) -> str:
     return body if isinstance(body, str) else body.decode("utf-8", "surrogatepass")
 
@@ -1191,8 +1226,8 @@ def _observe(
     """One entry row with its best chunks as ``Match`` rows, chunk scores on the entry's scale.
 
     Every region carries its preview, cut from text already in hand: a
-    chunk's own row, or the overlay entry's live body as the bounded
-    preview read returned it. An overlay entry answers as one whole
+    chunk's own row, or a live body as a bounded read returned it. An
+    overlay entry, or one whose chunks are gone, answers as one whole
     document — bounds over the whole body, no ``content`` (a file is
     not a chunk), the preview alone.
     """

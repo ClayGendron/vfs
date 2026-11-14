@@ -197,6 +197,39 @@ class TestTheLeg:
         assert late.legs["vector"]["hits"] == len(FILES) - 1  # ty: ignore[unresolved-attribute]
         await storage.close()
 
+    async def test_a_vector_chunk_gone_before_its_text_read_answers_from_the_live_body(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the gone-chunk check reading the lexical leg's ids alone, so a chunk only the
+        vectors chose raises out of the call when its row is gone before the text read."""
+        provider = PlantedProvider({"meaning": FILES["/notes/two.md"]})
+        storage = await _indexed(tmp_path, embedder=provider)
+        undisturbed = await storage.search(query="meaning", limit=2)
+        assert undisturbed.legs["lexical"]["hits"] == 0  # ty: ignore[unresolved-attribute]
+        real = search_module._chunk_texts
+        reads: list[int] = []
+
+        async def losing(session, tables, chunk_ids, profile, membership_budget):
+            texts = await real(session, tables, chunk_ids, profile, membership_budget)
+            reads.append(chunk_ids[0])
+            if len(reads) == 1:  # the first text read: the best entry's chunk is gone
+                del texts[chunk_ids[0]]
+            return texts
+
+        monkeypatch.setattr(search_module, "_chunk_texts", losing)
+        result = await storage.search(query="meaning", limit=2)
+        assert result.success is True, result.errors
+        assert [(str(o.path), o.score) for o in result.observations] == [
+            (str(o.path), o.score) for o in undisturbed.observations
+        ]
+        assert _paths(result)[0] == "/notes/two.md"
+        [match] = result.observations[0].matches or []
+        [chunk] = undisturbed.observations[0].matches or []
+        assert (match.start, match.end, match.content, match.score) == (1, 1, None, chunk.score)
+        assert match.preview == chunk.preview == "delta echo foxtrot"
+        assert len(reads) == 1
+        await storage.close()
+
 
 class TestRecords:
     async def test_no_provider_is_an_info_record_and_a_lexical_answer(self, tmp_path: Any) -> None:

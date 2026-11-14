@@ -37,6 +37,7 @@ from vfs.paths import Path
 from vfs.results import ErrorKind
 from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage, seams
+from vfs.storage.backends.database import search as search_module
 from vfs.storage.grants import LEVEL_RANK
 from vfs.storage.replace import EditOperation
 
@@ -747,6 +748,67 @@ class TestGrepEpochConsistency:
             assert error.kind == ErrorKind.conflict
             assert error.retryable is True
             assert "already running" in error.message
+            await _audit(storage)
+
+
+class TestSearchChunkConsistency:
+    """A chunk row removed between a search's ranking and its text read: answered, never raised.
+
+    Where each statement reads the latest commit (no ``op_isolation``
+    pin) the rival's commit is seen: a purged entry runs the call again
+    and a re-split one answers from its live body. Under a pinned
+    snapshot the rival is invisible and the old answer stands.
+    """
+
+    FILES: ClassVar[dict[str, str]] = {
+        "/docs/tokens.md": "Tokens are produced by the lexer and consumed by the parser.\n",
+        "/notes.txt": "A stream of tokens, tokens, tokens.\n",
+        "/src/lexer.py": "def lex(stream):\n    tokens = split(stream)\n    return tokens\n",
+        "/src/parser.py": "def parse_tokens(stream):\n    return tokens_from(stream)\n",
+    }
+
+    @pytest.mark.parametrize("rival", ["sweep", "rewrite"])
+    @pytest.mark.parametrize("env_var", ENGINE_LEGS)
+    async def test_a_chunk_removed_before_its_text_read_never_raises(
+        self, env_var: str, rival: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the live-body answer or the redrive lost, so a rival's purge or re-split of a
+        ranked entry, committed before the text read, raises out of the search."""
+        async with server_storage(env_var) as storage:
+            entries = [Entry(path=Path(path), content=body) for path, body in self.FILES.items()]
+            assert (await storage.write(entries=entries, parents=True)).success
+            assert (await storage.reindex()).success is True
+
+            async def commit_rival() -> Result:
+                if rival == "sweep":
+                    return await storage.sweep(path=Path("/notes.txt"))
+                rewritten = [Entry(path=Path("/notes.txt"), content="A stream of tokens, rewritten.\n")]
+                written = await storage.write(entries=rewritten, overwrite=True)
+                return written if not written.success else await storage.reindex()
+
+            real = search_module._chunk_texts
+            reads: list[int] = []
+
+            async def counted(session, tables, chunk_ids, profile, membership_budget):
+                reads.append(len(chunk_ids))
+                return await real(session, tables, chunk_ids, profile, membership_budget)
+
+            monkeypatch.setattr(search_module, "_chunk_texts", counted)
+            handler, rival_results = _self_clearing("search:before-chunk-texts", commit_rival)
+            with seams.installed("search:before-chunk-texts", handler):
+                raced = await storage.search(query="tokens")
+            assert rival_results and rival_results[0].success is True, rival_results
+            assert raced.success is True, raced.errors
+            answered = sorted(str(o.path) for o in raced.observations)
+            if storage._host.profile.op_isolation is not None:
+                assert (answered, len(reads)) == (sorted(self.FILES), 1)  # the snapshot hides the rival
+            elif rival == "sweep":
+                assert (answered, len(reads)) == (sorted(set(self.FILES) - {"/notes.txt"}), 2)
+            else:
+                assert (answered, len(reads)) == (sorted(self.FILES), 1)
+                [notes] = [o for o in raced.observations if str(o.path) == "/notes.txt"]
+                [match] = notes.matches or []
+                assert match.content is None and match.preview == "A stream of **tokens**, rewritten."
             await _audit(storage)
 
 

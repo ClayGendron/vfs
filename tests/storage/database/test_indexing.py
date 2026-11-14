@@ -12,7 +12,7 @@ import asyncio
 import json
 from contextlib import suppress
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from sqlalchemy import event, func, select, update
 from sqlalchemy.dialects import mssql, postgresql
@@ -708,6 +708,14 @@ class TestChunkProvenance:
 
     BODY = "def f():\n    return 1\n\n\n" + "".join(f"x{i} = {i}\n" for i in range(40))
 
+    # Four one-chunk files, so a published epoch names four chunk ids.
+    FOUR: ClassVar[dict[str, str]] = {
+        "/docs/tokens.md": "Tokens are produced by the lexer and consumed by the parser.\n",
+        "/notes.txt": "A stream of tokens, tokens, tokens.\n",
+        "/src/lexer.py": "def lex(stream):\n    tokens = split(stream)\n    return tokens\n",
+        "/src/parser.py": "def parse_tokens(stream):\n    return tokens_from(stream)\n",
+    }
+
     def _record_into(self, storage: DatabaseStorage, statements: list[str]) -> None:
         @event.listens_for(storage._host.engine.sync_engine, "before_cursor_execute")
         def record(conn, cursor, statement, parameters, context, executemany) -> None:
@@ -845,6 +853,64 @@ class TestChunkProvenance:
         row = await self._entry_row(storage, "/a.py")
         assert row.chunked is True
         assert row.chunk_generation == chunk_generation()
+        await storage.close()
+
+    async def _four_indexed(self, tmp_path) -> DatabaseStorage:
+        storage = DatabaseStorage(url=_url(tmp_path))
+        entries = [Entry(path=Path(path), content=body) for path, body in self.FOUR.items()]
+        assert (await storage.write(entries=entries, parents=True)).success is True
+        assert (await storage.reindex()).success is True
+        return storage
+
+    async def _pointer(self, storage: DatabaseStorage) -> int | None:
+        async with storage._host.session_factory() as session:
+            return await indexing.current_epoch(session, storage._host.tables)
+
+    async def _chunk_ids(self, storage: DatabaseStorage) -> tuple[set[int], set[int]]:
+        """The chunk ids the published epoch's lexical documents name, and the ids the chunk table holds."""
+        docs, chunks = storage._host.tables.lex_docs, storage._host.tables.chunks
+        published = await self._pointer(storage)
+        async with storage._host.engine.connect() as conn:
+            named = (await conn.execute(select(docs.c.chunk_id).where(docs.c.epoch == published))).scalars().all()
+            held = (await conn.execute(select(chunks.c.id))).scalars().all()
+        return set(named), set(held)
+
+    async def test_a_chunk_generation_bump_republishes_in_the_same_run(self, tmp_path, monkeypatch) -> None:
+        """Guards the chunk generation dropped from the options hash: a bump re-splits every entry
+        and publishes nothing, so the published epoch keeps naming chunk ids no row holds."""
+        storage = await self._four_indexed(tmp_path)
+        named, held = await self._chunk_ids(storage)
+        assert await self._pointer(storage) == 1 and len(named) == 4 and named == held
+        settled = indexing.index_options_hash()
+        real = indexing.chunk_generation
+        monkeypatch.setattr(indexing, "chunk_generation", lambda: real() + "-bumped")
+        assert indexing.index_options_hash() != settled
+        assert (await storage.reindex()).success is True
+        assert await self._pointer(storage) == 2
+        renamed, resplit = await self._chunk_ids(storage)
+        assert not resplit & held  # the bump re-split every entry into fresh ids
+        assert len(renamed) == 4 and renamed - resplit == set()  # and the new epoch strands none of them
+        await storage.close()
+
+    async def test_a_chunk_generation_bump_leaves_encoded_alone(self, tmp_path, monkeypatch) -> None:
+        """Guards the generation re-dirty demoting ``encoded``: a re-split changes no gram, and a demoted
+        row leaves grep's index side and search's lexical leg for the whole build."""
+        storage = await self._four_indexed(tmp_path)
+        real = indexing.chunk_generation
+        monkeypatch.setattr(indexing, "chunk_generation", lambda: real() + "-bumped")
+        entry = storage._host.tables.entry
+        flags = select(entry.c.path, entry.c.chunk_generation, entry.c.chunked, entry.c.encoded)
+        seen: list[tuple[str, str, bool, bool]] = []
+
+        async def observe() -> None:
+            async with storage._host.engine.connect() as conn:
+                rows = await conn.execute(flags.where(entry.c.path.in_(list(self.FOUR))).order_by(entry.c.path))
+                seen.extend(row._tuple() for row in rows)
+
+        with installed("reindex:before-publish", observe):
+            assert (await storage.reindex()).success is True
+        # Read once, after the chunk pass re-split all four and before the publish.
+        assert seen == [(path, real() + "-bumped", True, True) for path in sorted(self.FOUR)]
         await storage.close()
 
 

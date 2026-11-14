@@ -23,6 +23,7 @@ from tests.support.database_helpers import _url
 from tests.support.oracles.lexical import pure_overlay_postings, pure_score_blocks
 from tests.support.statements import is_statistics_statement
 from vfs import deadline as deadline_module
+from vfs.authority import Authority, Principal
 from vfs.deadline import WALL_TIME_BUDGET, WALL_TIME_CAUSE
 from vfs.embedding import HashEmbeddingProvider
 from vfs.models import Entry
@@ -32,14 +33,20 @@ from vfs.paths import Path
 from vfs.pattern_matching import ScopeChannel
 from vfs.pattern_matching import glob as glob_module
 from vfs.results import ErrorKind, Result, Severity
+from vfs.storage import ResolvedPair
 from vfs.storage.backends.database import DatabaseStorage
+from vfs.storage.backends.database import backend as backend_module
 from vfs.storage.backends.database import grep as grep_module
+from vfs.storage.backends.database import indexing as indexing_module
 from vfs.storage.backends.database import scope as scope_module
 from vfs.storage.backends.database import search as search_module
 from vfs.storage.backends.database.dialects import MSSQL, SQLITE
 from vfs.storage.backends.database.lexical import TermStatistics
 from vfs.storage.backends.database.reads import AdmittedScope
+from vfs.storage.backends.database.rights import Resolution, Visibility
 from vfs.storage.backends.database.seams import installed
+from vfs.storage.backends.memory import InMemoryStorage
+from vfs.storage.grants import GrantRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -50,6 +57,10 @@ if TYPE_CHECKING:
 _BODY_FETCH = re.compile(r"\bFROM vfs_content\b")
 _SURROGATE_FETCH = re.compile(r"^SELECT vfs_entries\.entry_id, vfs_entries\.id\s+FROM vfs_entries\b")
 _NOMINEE_FETCH = re.compile(r"\bFROM vfs_entries\b.*\bORDER BY vfs_entries\.path\b", re.S)
+# The text read of the answer's chunks: the one statement of a lexical search that reads the chunk table.
+_CHUNK_FETCH = re.compile(r"\bFROM vfs_chunks\b")
+# Any statement that reads the content table, whichever side of a join it stands on.
+_CONTENT_READ = re.compile(r"\bvfs_content\b")
 
 CORPUS = {
     "/src/parser.py": "def parse_tokens(stream):\n    return tokens_from(stream)\n",
@@ -945,4 +956,478 @@ class TestBudgets:
         storage = await _fresh(tmp_path)
         traits = storage.traits()
         assert traits["search_signals"] == "lexical" and traits["search_staleness"] == "overlay"
+        await storage.close()
+
+
+BOB = Authority.of(Principal("bob"))
+SYSTEM = Authority.system()
+
+# A partial caller's store: bob reads ``/d`` alone, and the file a whole caller ranks first is under ``/h``.
+PARTIAL = {
+    "/d/a.txt": "tokens once\n",
+    "/d/b.txt": "tokens tokens and more words here\n",
+    "/h/c.txt": "tokens tokens tokens\n",
+}
+
+
+async def _partial_store(tmp_path: Any = None) -> DatabaseStorage:
+    """The partial caller's store, in memory or, for a node that commits a rival mid-call, on a file."""
+    storage = InMemoryStorage() if tmp_path is None else DatabaseStorage(url=_url(tmp_path))
+    entries = [Entry(path=Path(path), content=body) for path, body in PARTIAL.items()]
+    assert (await storage.write(entries=entries, parents=True, authority=SYSTEM)).success is True
+    assert (await storage.posture(path=Path("/"), posture="none", authority=SYSTEM)).success is True
+    assert (await storage.grant(path=Path("/d"), principal="bob", level="read", authority=SYSTEM)).success is True
+    assert (await storage.reindex()).success is True
+    return storage
+
+
+def _read_committed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model an engine whose read statements each see the latest commit, as SQL Server and Oracle do.
+
+    A read op's connection is told to issue no ``BEGIN``, so SQLite takes
+    no snapshot for the call and a rival committed at a seam is seen by
+    the statements after it. Writers keep their transaction.
+    """
+    real = backend_module.op_execution_options
+
+    def unpinned(profile: Any, *, writer: bool) -> dict[str, str | bool]:
+        options = real(profile, writer=writer)
+        return options if writer else {**options, "vfs_no_begin": True}
+
+    monkeypatch.setattr(backend_module, "op_execution_options", unpinned)
+
+
+def _bump_the_chunk_generation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A chunk-generation bump as a release makes it: the next run re-splits every entry into fresh chunk ids."""
+    real = indexing_module.chunk_generation
+    monkeypatch.setattr(indexing_module, "chunk_generation", lambda: real() + "-bumped")
+
+
+def _text_reads(monkeypatch: pytest.MonkeyPatch, *, lose: str = "never") -> list[int | None]:
+    """The chunk double: the real text read, the smallest chunk id it returned removed from the result.
+
+    *lose* is ``never`` (a spy), ``first`` (the first call only) or
+    ``every``. The list gains one item per text read: the id removed, or
+    ``None``.
+    """
+    real = search_module._chunk_texts
+    reads: list[int | None] = []
+
+    async def losing(session, tables, chunk_ids, profile, membership_budget):
+        texts = await real(session, tables, chunk_ids, profile, membership_budget)
+        removed = min(texts) if lose == "every" or (lose == "first" and not reads) else None
+        reads.append(removed)
+        return {chunk_id: row for chunk_id, row in texts.items() if chunk_id != removed}
+
+    monkeypatch.setattr(search_module, "_chunk_texts", losing)
+    return reads
+
+
+def _body_reads(monkeypatch: pytest.MonkeyPatch, *, lose: str = "never") -> list[int]:
+    """The body double: the real live-body read, its result emptied on the ``first`` call or on ``every`` call.
+
+    With *lose* ``never`` it is a spy. The list gains one item per call:
+    how many entries the read was asked for.
+    """
+    real = search_module._resplit_bodies
+    reads: list[int] = []
+
+    async def losing(session, tables, profile, membership_budget, entry_ids, view):
+        bodies = await real(session, tables, profile, membership_budget, entry_ids, view)
+        reads.append(len(entry_ids))
+        return {} if lose == "every" or (lose == "first" and len(reads) == 1) else bodies
+
+    monkeypatch.setattr(search_module, "_resplit_bodies", losing)
+    return reads
+
+
+async def _chunk_owner(storage: DatabaseStorage, chunk_id: int | None) -> str:
+    """The path of the entry that owns chunk *chunk_id*."""
+    entry, chunks = storage._host.tables.entry, storage._host.tables.chunks
+    owner = select(entry.c.path).join(chunks, chunks.c.entry_id == entry.c.entry_id).where(chunks.c.id == chunk_id)
+    async with storage._host.session_factory() as session:
+        return (await session.execute(owner)).scalar_one()
+
+
+def _matches(result: Result) -> dict[str, Any]:
+    return {str(o.path): o.matches for o in result.observations}
+
+
+def _kinds(result: Result) -> list[Any]:
+    return [error.kind for error in result.errors]
+
+
+class TestVanishedChunks:
+    """A chunk row a chunk pass or a sweep removed under a search: its entry answers from its live body, or the
+    call runs again; it never raises."""
+
+    async def test_search_after_a_chunk_generation_bump_answers_as_before(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a bump's run leaving the published epoch naming chunk rows it deleted, with a
+        search that then raises for the first of them."""
+        storage = await _indexed(tmp_path)
+        settled = await storage.search(query="tokens")
+        assert settled.success is True and len(settled.observations) == 4
+        _bump_the_chunk_generation(monkeypatch)
+        assert (await storage.reindex()).success is True
+        bumped = await storage.search(query="tokens")
+        assert bumped.success is True, bumped.errors
+        assert _ranked(bumped) == _ranked(settled)
+        await storage.close()
+
+    async def test_a_search_during_a_generation_bump_ranks_from_the_published_epoch(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a re-split entry dropped from the answer or redriven until the call gives up,
+        where its unchanged body answers it in one bounded read."""
+        storage = await _indexed(tmp_path)
+        with _recorded(storage) as undisturbed:
+            settled = await storage.search(query="tokens")
+        reads = _text_reads(monkeypatch)
+        _bump_the_chunk_generation(monkeypatch)
+        during: list[tuple[Result, int]] = []
+
+        async def observe() -> None:
+            with _recorded(storage) as statements:
+                result = await storage.search(query="tokens")
+            during.append((result, len(statements)))
+
+        with installed("reindex:before-publish", observe):
+            assert (await storage.reindex()).success is True
+        [(result, issued)] = during
+        assert result.success is True, result.errors
+        assert _ranked(result) == _ranked(settled) and result.errors == settled.errors
+        for row in result.observations:
+            [match] = row.matches or []
+            assert (match.start, match.content) == (1, None)
+        assert reads == [None]  # one text read: nothing was redriven
+        assert (len(undisturbed), issued) == (8, 9)  # one bounded body read more than the settled search
+        await storage.close()
+
+    async def test_grep_and_search_stay_whole_through_a_generation_bump(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a re-split entry sent to the scan tier for the length of the build, where both
+        verbs answer the first rows in path order and a truncation record."""
+        files = {f"/d/f{i:02}.txt": f"plain words in file number {i}\n" for i in range(21)}
+        files["/d/f18.txt"] = "a lantern hangs by the door\n"
+        files["/d/f19.txt"] = "the lantern, the lantern\n"
+        storage = await _indexed(tmp_path, files)
+        monkeypatch.setattr(search_module, "SCAN_TIER_BUDGET", 5)
+        monkeypatch.setattr(grep_module, "SCAN_TIER_BUDGET", 5)
+        searched = await storage.search(query="lantern")
+        grepped = await storage.grep(pattern="lantern")
+        assert set(_paths(searched)) == set(_paths(grepped)) == {"/d/f18.txt", "/d/f19.txt"}
+        assert ErrorKind.truncated not in _kinds(searched) and ErrorKind.truncated not in _kinds(grepped)
+        _bump_the_chunk_generation(monkeypatch)
+        during: list[tuple[Result, Result]] = []
+
+        async def observe() -> None:
+            during.append((await storage.search(query="lantern"), await storage.grep(pattern="lantern")))
+
+        with installed("reindex:before-publish", observe):
+            assert (await storage.reindex()).success is True
+        [(search_during, grep_during)] = during
+        assert (_ranked(search_during), search_during.errors) == (_ranked(searched), searched.errors)
+        assert (_paths(grep_during), grep_during.errors) == (_paths(grepped), grepped.errors)
+        await storage.close()
+
+    async def test_a_chunk_gone_before_its_text_read_answers_from_the_live_body(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: a ranked chunk the text read did not return raising out of the call, redriving
+        it, or dropping its entry; and a body read issued when no chunk is gone."""
+        storage = await _indexed(tmp_path)
+        with _recorded(storage) as undisturbed:
+            settled = await storage.search(query="tokens")
+        assert sum(1 for sql in undisturbed if _CHUNK_FETCH.search(sql)) == 1
+        assert not [sql for sql in undisturbed if _CONTENT_READ.search(sql)]
+        reads = _text_reads(monkeypatch, lose="first")
+        with _recorded(storage) as disturbed:
+            result = await storage.search(query="tokens")
+        assert result.success is True, result.errors
+        assert _ranked(result) == _ranked(settled) and result.errors == settled.errors
+        [removed] = reads
+        assert await _chunk_owner(storage, removed) == "/notes.txt"
+        assert (len(undisturbed), len(disturbed)) == (8, 9)
+        assert sum(1 for sql in disturbed if _CONTENT_READ.search(sql)) == 1
+        before, after = _matches(settled), _matches(result)
+        [whole] = after.pop("/notes.txt")
+        [chunk] = before.pop("/notes.txt")
+        assert (whole.start, whole.end, whole.content, whole.score) == (1, 1, None, chunk.score)
+        assert whole.preview == "A stream of **tokens**, **tokens**, **tokens**."
+        assert after == before  # every other entry still answers from its chunk rows
+        await storage.close()
+
+    async def test_a_chunk_gone_with_its_body_redrives_once(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the redrive deleted, so an entry purged with its chunks reaches the assembly
+        with chunk ids no row holds; or a redrive that leaves a record on a whole answer."""
+        storage = await _indexed(tmp_path)
+        with _recorded(storage) as undisturbed:
+            settled = await storage.search(query="tokens")
+        reads = _text_reads(monkeypatch, lose="first")
+        asked = _body_reads(monkeypatch, lose="first")
+        with _recorded(storage) as redriven:
+            result = await storage.search(query="tokens")
+        assert result.success is True, result.errors
+        assert _ranked(result) == _ranked(settled) and _matches(result) == _matches(settled)
+        assert len(reads) == 2 and asked == [1, 0]
+        assert (len(undisturbed), len(redriven)) == (8, 17)  # both attempts whole, and the one body read
+        assert not {ErrorKind.conflict, ErrorKind.truncated} & set(_kinds(result))
+        await storage.close()
+
+    async def test_a_chunk_and_body_that_never_come_back_classify_conflict(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: an exhausted redrive raising out of the call, classified as anything but the
+        retryable conflict a pointer that never settles gets, or naming the row it lost."""
+        storage = await _indexed(tmp_path)
+        monkeypatch.setattr(storage._host, "_retry_base_delay", 0.0)  # the classification is pinned, not the backoff
+        reads = _text_reads(monkeypatch, lose="every")
+        _body_reads(monkeypatch, lose="every")
+        result = await storage.search(query="tokens")
+        assert result.success is False and result.observations == []
+        [error] = result.errors
+        assert (error.kind, error.retryable, error.path) == (ErrorKind.conflict, True, None)
+        lost = "search kept losing to concurrent changes: an entry the answer carries is gone since it was ranked"
+        assert error.message.endswith(lost)
+        assert len(reads) == 4
+        await storage.close()
+
+    async def test_one_body_gone_among_several_redrives_the_call(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the redrive taken only when no live body came back at all, so one purged entry
+        among several re-split ones reaches the assembly with chunk ids no row holds."""
+        storage = await _indexed(tmp_path)
+        settled = await storage.search(query="tokens")
+        reads = _text_reads(monkeypatch)
+        _bump_the_chunk_generation(monkeypatch)
+        real = search_module._resplit_bodies
+        asked: list[tuple[int, int]] = []
+
+        async def losing_one(session, tables, profile, membership_budget, entry_ids, view):
+            bodies = await real(session, tables, profile, membership_budget, entry_ids, view)
+            if not asked:  # the first attempt: one of the re-split entries is purged as well
+                del bodies[entry_ids[0]]
+            asked.append((len(entry_ids), len(bodies)))
+            return bodies
+
+        monkeypatch.setattr(search_module, "_resplit_bodies", losing_one)
+        during: list[Result] = []
+
+        async def observe() -> None:
+            during.append(await storage.search(query="tokens"))
+
+        with installed("reindex:before-publish", observe):
+            assert (await storage.reindex()).success is True
+        [result] = during
+        assert result.success is True, result.errors
+        assert _ranked(result) == _ranked(settled)
+        assert asked == [(4, 3), (4, 4)] and len(reads) == 2  # every hit re-split; one lost body ran the call again
+        await storage.close()
+
+    async def test_a_partial_callers_live_body_answer_keeps_its_view(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Guards: the live-body answer reaching past the caller's view, or changing what a
+        partial caller is answered when one of its chunks is gone."""
+        storage = await _partial_store()
+        assert _paths(await storage.search(query="tokens"))[0] == "/h/c.txt"  # a whole caller's best hit
+        undisturbed = await storage.search(query="tokens", authority=BOB)
+        assert _paths(undisturbed) == ["/d/a.txt", "/d/b.txt"]
+        reads = _text_reads(monkeypatch, lose="first")
+        real = search_module._resplit_bodies
+        views: list[Any] = []
+
+        async def spying(session, tables, profile, membership_budget, entry_ids, view):
+            views.append(view)
+            return await real(session, tables, profile, membership_budget, entry_ids, view)
+
+        monkeypatch.setattr(search_module, "_resplit_bodies", spying)
+        result = await storage.search(query="tokens", authority=BOB)
+        assert result.success is True, result.errors
+        assert _ranked(result) == _ranked(undisturbed)
+        assert not [path for path in _paths(result) if path.startswith("/h")]
+        assert len(reads) == 1 and reads[0] is not None
+        # The body read was handed bob's own view at the rung search reads at, never a wider one.
+        [view] = views
+        row = {"path": "/d/a.txt", "owner_id": None, "everyone_level": 0}
+        assert view is not None and view.need == "read"
+        assert view.holds(row, view.need) and not view.holds({**row, "path": "/h/c.txt"}, view.need)
+        await storage.close()
+
+    async def test_the_live_body_read_keeps_only_rows_the_view_holds(self) -> None:
+        """Guards: the view test dropped from the live-body read, so it returns a body the call's
+        resolution does not admit where the row sits."""
+        storage = await _partial_store()
+        host = storage._host
+        by_path = {path: entry_id for path in PARTIAL for entry_id in await _entry_ids(storage, [path])}
+        asked = [by_path["/d/a.txt"], by_path["/h/c.txt"]]
+        resolution = Resolution.compile(
+            {"bob": frozenset()}, [GrantRow("bob", "/d", "read")], owner_floor=True, pending=()
+        )
+        view = Visibility(resolution, "read", host.tables, SQLITE, 900, 2_099)
+        # A second view that may name ``/h`` and not read it: the read judges at the view's rung, ``read``.
+        naming = Resolution.compile(
+            {"bob": frozenset()},
+            [GrantRow("bob", "/d", "read"), GrantRow("bob", "/h", "list")],
+            owner_floor=True,
+            pending=(),
+        )
+        named = Visibility(naming, "read", host.tables, SQLITE, 900, 2_099)
+        read, context = search_module._resplit_bodies, (host.tables, host.profile, host.membership_budget)
+        async with host.session_factory() as session:
+            held = await read(session, *context, asked, view)
+            at_the_rung = await read(session, *context, asked, named)
+            every = await read(session, *context, asked, None)
+            nothing = await read(session, *context, [], view)
+        assert held == at_the_rung == {by_path["/d/a.txt"]: "tokens once\n"}
+        assert every == {by_path["/d/a.txt"]: "tokens once\n", by_path["/h/c.txt"]: "tokens tokens tokens\n"}
+        assert nothing == {}
+        await storage.close()
+
+    async def test_the_live_body_read_pages_by_the_membership_budget(self) -> None:
+        """Guards: the live-body read issued as one statement however many entries it is asked for."""
+        storage = await _partial_store()
+        host = storage._host
+        asked = sorted(await _entry_ids(storage, list(PARTIAL)))
+        async with host.session_factory() as session:
+            with _recorded(storage) as paged:
+                bodies = await search_module._resplit_bodies(session, host.tables, host.profile, 2, asked, None)
+        assert sorted(bodies.values()) == sorted(PARTIAL.values())
+        assert sum(1 for sql in paged if _CONTENT_READ.search(sql)) == 2  # three entries, two to a statement
+        await storage.close()
+
+    async def test_an_entry_with_one_chunk_gone_answers_whole(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: an entry counted gone only when all its chunks are, so one that kept some reaches
+        the assembly with a chunk id no row holds; or its whole match scored by a chunk other than its best."""
+        sections = [f"## Section {i}\n\nlantern words in section {i}, plain prose sentence.\n\n" for i in range(120)]
+        storage = await _indexed(tmp_path, {"/doc/big.md": "".join(sections), "/doc/small.md": "no lantern here\n"})
+        [settled] = (await storage.search(query="lantern", limit=1)).observations
+        chunks = settled.matches or []
+        assert len(chunks) == search_module.TOP_CHUNKS and chunks[-1].score != chunks[0].score == settled.score
+        reads = _text_reads(monkeypatch, lose="first")
+        [row] = (await storage.search(query="lantern", limit=1)).observations
+        assert (str(row.path), row.score) == ("/doc/big.md", settled.score)
+        [whole] = row.matches or []
+        assert (whole.start, whole.end, whole.content) == (1, "".join(sections).count("\n"), None)
+        assert whole.score == row.score  # the best chunk's score, on the entry's scale
+        assert len(reads) == 1 and reads[0] is not None
+        await storage.close()
+
+    async def test_a_sweep_committed_at_the_seam_is_hidden_by_the_read_snapshot(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the window before the text read left without its seam, or the seam awaited
+        after the read, so no rival can be committed between the ranking and the read."""
+        storage = await _indexed(tmp_path)
+        settled = await storage.search(query="tokens")
+        reads = _text_reads(monkeypatch)
+        fired: list[tuple[int, bool]] = []
+
+        async def rival() -> None:
+            swept = await storage.sweep(path=Path("/notes.txt"))
+            fired.append((len(reads), swept.success))
+
+        with installed("search:before-chunk-texts", rival):
+            raced = await storage.search(query="tokens")
+        assert fired == [(0, True)]  # once, before the text read, and the purge committed
+        # SQLite's read snapshot was taken at the call's first read: the purge is not seen by it.
+        assert raced.success is True and len(reads) == 1
+        assert (_ranked(raced), _matches(raced)) == (_ranked(settled), _matches(settled))
+        assert "/notes.txt" not in _paths(await storage.search(query="tokens"))
+        await storage.close()
+
+    async def test_the_live_body_read_is_asked_for_the_answer_alone(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the gone entries drawn from every ranked entry and not from the answer's, so a
+        search with more hits than its limit reads the whole body of each hit it does not answer."""
+        storage = await _indexed(tmp_path)
+        assert len((await storage.search(query="tokens")).observations) == 4  # four hits, and two are asked for
+        asked = _body_reads(monkeypatch)
+        with _recorded(storage) as undisturbed:
+            answer = await storage.search(query="tokens", limit=2)
+        assert len(answer.observations) == 2 and asked == [0]
+        assert not [sql for sql in undisturbed if _CONTENT_READ.search(sql)]
+        reads = _text_reads(monkeypatch, lose="first")
+        with _recorded(storage) as disturbed:
+            again = await storage.search(query="tokens", limit=2)
+        assert _ranked(again) == _ranked(answer) and len(reads) == 1
+        assert asked == [0, 1]  # the answered entry whose chunk is gone, never a hit beyond the limit
+        assert sum(1 for sql in disturbed if _CONTENT_READ.search(sql)) == 1
+        await storage.close()
+
+    async def test_the_live_body_read_leaves_out_an_entry_that_holds_no_text(self, tmp_path: Any) -> None:
+        """Guards: an empty body returned as a body, or a body that is not there (a bytes write
+        leaves no text row) decoded, where each must be absent so the caller redrives."""
+        storage = await _fresh(tmp_path)
+        emptied = Entry(path=Path("/notes.txt"), content="")
+        binary = Entry(path=Path("/docs/tokens.md"), data=b"\x89PNG\r\n\x00\xff\xfe")
+        assert (await storage.write(entries=[emptied, binary], overwrite=True)).success is True
+        host = storage._host
+        asked = sorted(await _entry_ids(storage, ["/notes.txt", "/docs/tokens.md", "/src/lexer.py"]))
+        [kept] = await _entry_ids(storage, ["/src/lexer.py"])
+        async with host.session_factory() as session:
+            read = search_module._resplit_bodies
+            bodies = await read(session, host.tables, host.profile, host.membership_budget, asked, None)
+        assert bodies == {kept: CORPUS["/src/lexer.py"]}
+        await storage.close()
+
+    @pytest.mark.parametrize("emptied", ["empty", "bytes"])
+    async def test_an_entry_emptied_of_text_before_its_body_read_redrives(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, emptied: str
+    ) -> None:
+        """Guards: an entry left with no text inside the call's window answered from that body,
+        an empty preview under its old score, or raising, where the call must run again."""
+        storage = await _indexed(tmp_path)
+        _read_committed(monkeypatch)
+        reads = _text_reads(monkeypatch)
+        path = Path("/notes.txt")
+        body = Entry(path=path, content="") if emptied == "empty" else Entry(path=path, data=b"\x89PNG\r\n\x00\xff\xfe")
+        committed: list[bool] = []
+
+        async def rival() -> None:
+            if not committed:  # once: the second attempt meets the state this left
+                written = await storage.write(entries=[body], overwrite=True)
+                committed.append(written.success and (await storage.reindex()).success)
+
+        with installed("search:before-chunk-texts", rival):
+            raced = await storage.search(query="tokens")
+        assert committed == [True]
+        assert raced.success is True, raced.errors
+        assert len(reads) == 2 and "/notes.txt" not in _paths(raced)
+        settled = await storage.search(query="tokens")
+        assert (_ranked(raced), _matches(raced)) == (_ranked(settled), _matches(settled))
+        await storage.close()
+
+    async def test_an_entry_moved_out_of_the_view_before_its_body_read_redrives(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Guards: the live-body read handed no view, so a partial caller is answered the new body
+        of an entry that left its view after it was ranked."""
+        storage = await _partial_store(tmp_path)
+        assert set(_paths(await storage.search(query="tokens", authority=BOB))) == {"/d/a.txt", "/d/b.txt"}
+        _read_committed(monkeypatch)
+        reads = _text_reads(monkeypatch)
+        committed: list[bool] = []
+
+        async def rival() -> None:
+            if not committed:
+                pair = ResolvedPair(src=Path("/d/a.txt"), dest=Path("/h/a.txt"))
+                moved = await storage.move(operations=[pair], authority=SYSTEM)
+                rewritten = [Entry(path=Path("/h/a.txt"), content="tokens moved\n")]
+                written = await storage.write(entries=rewritten, overwrite=True, authority=SYSTEM)
+                committed.append(moved.success and written.success and (await storage.reindex()).success)
+
+        with installed("search:before-chunk-texts", rival):
+            raced = await storage.search(query="tokens", authority=BOB)
+        assert committed == [True]
+        assert raced.success is True, raced.errors
+        assert _paths(raced) == ["/d/b.txt"] and len(reads) == 2  # the moved entry ran the call again and left
+        assert not [m for o in raced.observations for m in o.matches or [] if "moved" in (m.preview or "")]
         await storage.close()

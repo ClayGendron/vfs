@@ -132,9 +132,13 @@ LEASE_LOST_DATA: Final = {"reindex_lease": "lost"}
 
 
 def index_options_hash() -> str:
-    """The options half of the epoch fingerprint; any change forces rebuild."""
+    """The options half of the epoch fingerprint; any change forces rebuild.
+
+    The chunk generation is part of it: a bump re-splits every entry into fresh
+    chunk ids, so the run that re-splits must also rebuild and publish.
+    """
     grams = f"gram={GRAM_SIZE};fold=nl+turkic-i+casefold;bytes={MAX_INDEXABLE_BYTES};grams={MAX_DISTINCT_GRAMS}"
-    return hashlib.sha256(f"{grams};{options_fingerprint()}".encode()).hexdigest()
+    return hashlib.sha256(f"{grams};{options_fingerprint()};chunks={chunk_generation()}".encode()).hexdigest()
 
 
 @dataclass
