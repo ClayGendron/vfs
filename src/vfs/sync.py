@@ -94,7 +94,7 @@ class VirtualFileSystem:
     once per facade, warned about, because it blocks that loop meanwhile.
     """
 
-    __slots__ = ("_closed", "_fs", "_loop", "_thread", "_warned")
+    __slots__ = ("_calls", "_closed", "_fs", "_loop", "_thread", "_warned")
 
     def __init__(
         self,
@@ -152,11 +152,13 @@ class VirtualFileSystem:
     def close(self) -> None:
         """Cancel what is in flight, close the router on the loop, stop the loop, join the thread.
 
-        Idempotent and final. The in-flight calls of other threads are
-        cancelled and gathered on the loop before the router closes, so the
-        engine never disposes a pool a verb is still drawing on; the loop
-        thread then shuts itself down in its runner, so nothing here runs a
-        loop on the caller's thread (which may be running a loop of its own).
+        Idempotent and final. The calls this facade launched for other
+        threads are cancelled and gathered on the loop before the router
+        closes, so the engine never disposes a pool a verb is still drawing
+        on; a storage's own background work is left to its own close. The
+        loop thread then shuts itself down in its runner, so nothing here
+        runs a loop on the caller's thread (which may be running a loop of
+        its own).
         """
         self._refuse_loop_thread()
         if self._closed:
@@ -644,18 +646,28 @@ class VirtualFileSystem:
         self._fs = fs
         self._closed = False
         self._warned = False
+        self._calls: set[asyncio.Task[Any]] = set()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._serve, name=LOOP_THREAD_NAME, daemon=True)
         self._thread.start()
 
     async def _drain_and_close(self) -> None:
-        """On the loop: cancel every other task and wait for it, then close the router with nothing in flight."""
-        current = asyncio.current_task()
-        others = [task for task in asyncio.all_tasks() if task is not current]
+        """On the loop: cancel the calls this facade launched and wait for them, then close the router."""
+        others = list(self._calls)
         for task in others:
             task.cancel()
         await asyncio.gather(*others, return_exceptions=True)
         await self._fs.close()
+
+    async def _tracked(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
+        """On the loop: hold this call's task in ``_calls`` while it runs, however it ends."""
+        task = asyncio.current_task()
+        assert task is not None
+        self._calls.add(task)
+        try:
+            return await coroutine
+        finally:
+            self._calls.discard(task)
 
     def _serve(self) -> None:
         """The loop thread: run until stopped, then shut the loop down here, never on a caller's thread."""
@@ -706,7 +718,7 @@ class VirtualFileSystem:
 
     def _submit(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
         """Run one coroutine on the loop and block; an escaping exception cancels what is in flight."""
-        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        future = asyncio.run_coroutine_threadsafe(self._tracked(coroutine), self._loop)
         try:
             return _wait(future)
         except BaseException:

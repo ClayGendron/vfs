@@ -17,6 +17,7 @@ import shutil
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -144,8 +145,12 @@ def _copied(source: pathlib.Path, tmp_path: pathlib.Path) -> str:
 
 
 def _empty_statistics(url: str) -> None:
-    """Drop every ``sqlite_stat1`` row of the file behind *url*, so every filled table is due again."""
-    with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
+    """Drop every ``sqlite_stat1`` row of the file behind *url*, so every filled table is due again.
+
+    The connection is closed here, not only committed: one left open
+    holds the file's log and its index past the store's own close.
+    """
+    with closing(sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///"))) as connection, connection:
         connection.execute("DELETE FROM sqlite_stat1")
 
 
@@ -314,8 +319,8 @@ def _pass_outcome(traced: Sequence[Traced]) -> str:
     """How the one pass in *traced* ended: its connection's first commit, rollback or invalidation after its begin.
 
     A pass stopped through its owning task rolls back and returns its
-    connection; a pass whose own task was cancelled as well, as the sync
-    facade's drain does, has its connection invalidated by SQLAlchemy.
+    connection; a pass whose inner task is cancelled, as the loop's
+    shutdown does, has its connection invalidated by SQLAlchemy.
     """
     [pass_begin] = [index for index, item in enumerate(traced) if item.text == PASS_BEGIN]
     connection = traced[pass_begin].connection
@@ -728,6 +733,7 @@ class TestPlannerStatistics:
         assert (await fs.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
         await first.wait()
         await fs.close()
+        assert [path.name for path in tmp_path.iterdir() if path.name.endswith(("-wal", "-shm"))] == []
         pool = engine.sync_engine.pool
         assert isinstance(pool, QueuePool) and pool.checkedout() == 0
         assert disposed == [id(engine)]
@@ -744,7 +750,9 @@ class TestPlannerStatistics:
 
     @pytest.mark.slow
     def test_the_sync_facade_close_disposes_with_no_pending_task(self, tmp_path, large_store, monkeypatch) -> None:
-        """Guards: a pass the facade's cancel-first drain cannot stop, leaving a task or an undisposed engine."""
+        """Guards: a facade close that cancels the pass inside its statement, leaving a stranded cursor, a task or an
+        undisposed engine.
+        """
         url = _copied(large_store, tmp_path)
         _empty_statistics(url)
         storage = DatabaseStorage(url=url)
@@ -782,13 +790,123 @@ class TestPlannerStatistics:
         assert facade.write(entries=[Entry(path=Path("/one.txt"), content="x")]).success is True
         assert first.wait(timeout=10.0) is True
         facade.close()
+        assert [path.name for path in tmp_path.iterdir() if path.name.endswith(("-wal", "-shm"))] == []
         assert facade._thread.is_alive() is False
         assert pending == [0]
         assert disposed == [id(engine)]
         with sqlite3.connect(url.removeprefix("sqlite+aiosqlite:///")) as connection:
             assert connection.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] == 0
         assert len(interrupted) >= 1
+        assert _pass_outcome(traced) == "rollback"
+
+    async def test_a_cancelled_pass_leaves_no_interrupt_pending(self, tmp_path, monkeypatch) -> None:
+        """Guards: a cancelled pass that re-raises with its last interrupt pending, or leaves its clearing cursor open.
+
+        The inner task is held open after its transaction has committed,
+        so an interrupt is certain to find nothing running; SQLite's last
+        close would honour it and leave the log and its index behind.
+        """
+        storage = DatabaseStorage(url=_url(tmp_path))
+        committed, held, interrupted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        transaction = engine_module.EngineHost._analysis_transaction
+
+        async def held_open(self: engine_module.EngineHost, state: Any) -> None:
+            await transaction(self, state)
+            committed.set()
+            await held.wait()
+
+        monkeypatch.setattr(engine_module.EngineHost, "_analysis_transaction", held_open)
+        driver: list[str] = []
+        interrupt, execute = aiosqlite.Connection.interrupt, aiosqlite.Connection.execute
+
+        async def recorded_interrupt(self: aiosqlite.Connection) -> None:
+            driver.append("interrupt")
+            interrupted.set()
+            await interrupt(self)
+
+        async def recorded_execute(self: aiosqlite.Connection, sql: str, parameters: Any = None) -> aiosqlite.Cursor:
+            driver.append(sql)
+            return await execute(self, sql, parameters)
+
+        monkeypatch.setattr(aiosqlite.Connection, "interrupt", recorded_interrupt)
+        monkeypatch.setattr(aiosqlite.Connection, "execute", recorded_execute)
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await committed.wait()
+        close = asyncio.create_task(storage.close())
+        await interrupted.wait()
+        held.set()
+        await close
+        assert sorted(path.name for path in tmp_path.iterdir() if path.name.startswith("vfs.sqlite")) == ["vfs.sqlite"]
+        assert driver.count("interrupt") >= 1
+        assert [entry for entry in driver if entry != "interrupt"] == [engine_module.STATISTICS_CLEAR]
+        assert driver[-1] == engine_module.STATISTICS_CLEAR
+
+    async def test_a_pass_cancelled_with_its_inner_task_ends_cancelled(self, tmp_path, monkeypatch) -> None:
+        """Guards: a clearing statement with no suppression, so a driver already closed ends the pass in its error.
+
+        Both of the pass's tasks are cancelled inside a statement, as a
+        loop's shutdown does: SQLAlchemy closes the connection, the driver
+        refuses the clearing statement, and the pass still ends cancelled.
+        """
+        storage = DatabaseStorage(url=_url(tmp_path))
+        engine = storage._host.engine
+        traced = _trace(engine)
+        first = asyncio.Event()
+        _first_analyze(engine, first)
+        refused: list[BaseException] = []
+        execute = aiosqlite.Connection.execute
+
+        async def recorded_execute(self: aiosqlite.Connection, sql: str, parameters: Any = None) -> aiosqlite.Cursor:
+            try:
+                return await execute(self, sql, parameters)
+            except (sqlite3.Error, ValueError) as exc:
+                refused.append(exc)
+                raise
+
+        monkeypatch.setattr(aiosqlite.Connection, "execute", recorded_execute)
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await first.wait()
+        owning = storage._host._analysis
+        assert owning is not None
+        [inner] = [task for task in asyncio.all_tasks() if task.get_name() == f"{STATISTICS_NAME}-pass"]
+        inner.cancel()
+        owning.cancel()
+        await asyncio.wait({owning})
         assert _pass_outcome(traced) == "invalidate"
+        assert len(refused) == 1
+        assert owning.cancelled() is True
+        await storage.close()
+
+    async def test_close_stops_a_pass_that_never_held_a_connection(self, tmp_path, monkeypatch) -> None:
+        """Guards: a clearing statement run for a pass with no driver, which fails the close that is stopping it.
+
+        The pass's transaction is replaced by one that takes no connection
+        and ends only once the owning task has begun to stop it.
+        """
+        storage = DatabaseStorage(url=_url(tmp_path))
+        started, stopping, ended = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class Watched(engine_module._AnalysisPass):
+            def __setattr__(self, name: str, value: Any) -> None:
+                super().__setattr__(name, value)
+                if name == "interrupted" and value:
+                    stopping.set()
+
+        async def no_connection(self: engine_module.EngineHost, state: Any) -> None:
+            started.set()
+            await ended.wait()
+
+        monkeypatch.setattr(engine_module, "_AnalysisPass", Watched)
+        monkeypatch.setattr(engine_module.EngineHost, "_analysis_transaction", no_connection)
+        assert (await storage.write(entries=[Entry(path=Path("/one.txt"), content="x")])).success is True
+        await started.wait()
+        close = asyncio.create_task(storage.close())
+        await stopping.wait()
+        ended.set()
+        await close
+        owning = storage._host._analysis
+        assert owning is not None and owning.cancelled() is True
+        assert sorted(path.name for path in tmp_path.iterdir() if path.name.startswith("vfs.sqlite")) == ["vfs.sqlite"]
 
     async def test_below_sqlite_3_46_the_step_issues_nothing(self, tmp_path, monkeypatch) -> None:
         """Guards: the step running on a library whose listing depends on the connection's own query history."""

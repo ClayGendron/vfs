@@ -116,6 +116,35 @@ class RespawningReadStorage(HangingReadStorage):
         return Result(ops=("read",), observations=[])
 
 
+class DrainOrderStorage(HangingReadStorage):
+    """A hanging read beside a background task of the storage's own; its close records which of the two is done.
+
+    The read takes one more loop step to finish its cancellation, as a
+    real statement does, so a drain that cancels and does not wait
+    reaches the storage's close with the read still running.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reading: asyncio.Task[Any] | None = None
+        self.background: asyncio.Task[Any] | None = None
+        self.record: tuple[bool, bool] | None = None
+
+    async def read(self, *, authority: Any = None, **kwargs: Any) -> Result:
+        self.reading = asyncio.current_task()
+        self.background = asyncio.get_running_loop().create_task(asyncio.Event().wait())
+        try:
+            return await super().read(authority=authority, **kwargs)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            raise
+
+    async def close(self) -> None:
+        assert self.reading is not None and self.background is not None
+        self.record = (self.reading.done(), self.background.done())
+        self.background.cancel()
+
+
 class CallbackStage:
     """A reranker that reaches for the sync handle from the loop thread, the deadlock the facade refuses."""
 
@@ -373,6 +402,36 @@ def test_the_runner_sweeps_a_task_born_during_shutdown() -> None:
     assert isinstance(outcome[0], concurrent.futures.CancelledError)
 
 
+@pytest.mark.timeout(60)
+def test_the_drain_cancels_the_launched_call_and_leaves_the_background_task() -> None:
+    """Guards: a drain that cancels nothing, or every task on the loop, or a call the facade never tracked or kept.
+
+    The storage's close reads both tasks: the launched read is done, so no
+    verb draws on what the router disposes, and the storage's own
+    background task is still running, left to the storage's own close.
+    """
+    storage = DrainOrderStorage()
+    fs = VirtualFileSystem(storage=storage)
+    outcome: list[BaseException | Result] = []
+
+    def worker() -> None:
+        try:
+            outcome.append(fs.read("/a.txt"))
+        except BaseException as exc:  # the whole point is which exception arrives
+            outcome.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    assert storage.started.wait(timeout=10)
+    fs.close()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert storage.record == (True, False)
+    assert isinstance(outcome[0], concurrent.futures.CancelledError)
+    assert _loop_threads() == []
+    assert len(fs._calls) == 0
+
+
 def test_close_under_load_on_a_real_storage_returns_cleanly() -> None:
     """The pooled shutdown: in-flight calls are cancelled and gathered before the router closes; close raises nothing.
 
@@ -448,6 +507,17 @@ def test_one_thread_per_facade_not_per_call() -> None:
             assert fs.ls("/").success is True
         assert _loop_threads() == [thread]
     assert _loop_threads() == []
+
+
+def test_the_facade_holds_no_call_it_has_answered() -> None:
+    """Guards: a finished call kept in the facade's set, by a discard removed or run after the awaited return alone."""
+    with VirtualFileSystem(storage=InMemoryStorage()) as fs:
+        for _ in range(100):
+            assert fs.ls("/").success is True
+        assert len(fs._calls) == 0
+        with pytest.raises(ValueError, match="No mount"):
+            fs.remove_mount("/nope")
+        assert len(fs._calls) == 0
 
 
 def test_the_management_twins_drive_the_mount_tree() -> None:

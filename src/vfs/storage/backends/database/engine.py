@@ -122,6 +122,9 @@ SQLITE_VEC_PATH: str | None = (
 STATISTICS_NAME = "vfs_statistics"
 """The statistics step's one name: the detection savepoint, the pass's begin tag and option, the record key."""
 
+STATISTICS_CLEAR = f"SELECT 1 /* {STATISTICS_NAME} */"
+"""The statement a cancelled pass starts after its last interrupt, which is what clears a pending one."""
+
 STATISTICS_FINGERPRINT = (
     "SELECT group_concat(tbl || ' ' || coalesce(idx, '') || ' ' || stat, ';') FROM {schema}.sqlite_stat1"
 )
@@ -527,14 +530,22 @@ class EngineHost:
         pass is interrupted, not awaited: its cancellation handler stops
         the statement through the driver's thread-safe interrupt, SQLite
         rolls the pass back, and close awaits only that end, about a
-        millisecond. One exception: a pass still waiting in SQLite's
+        millisecond. Two exceptions. A pass still waiting in SQLite's
         busy handler for its ``BEGIN IMMEDIATE`` cannot be interrupted,
         so a close that lands then can wait up to one ``busy_timeout``
         (5 s) before the pass ends; a caller whose own timeout fires
         first leaves the pass to end on its own, still interrupted, and
-        it never commits. An interrupted pass loses only its statistics;
+        it never commits. And the handler's last statement runs on the
+        pass's connection once the pool has it back, so a verb that drew
+        that connection in the instant before the handler woke is ahead
+        of it on the driver's one thread: close then waits for that
+        verb's one statement, a ``busy_timeout`` at most when it is a
+        ``BEGIN IMMEDIATE``, and a router's ``close_timeout`` bounds the
+        wait above that. An interrupted pass loses only its statistics;
         the table stays due and the next write asks again. The dispose
-        below runs either way, in a ``finally``.
+        below runs either way, in a ``finally``, and the pass leaves no
+        interrupt pending on a connection it closes: one would stop
+        SQLite's last close from folding the log in and deleting it.
         """
         try:
             await self.stop_analysis()
@@ -857,8 +868,11 @@ class EngineHost:
         So the transaction runs in an inner task this task never
         cancels. When this task is cancelled it interrupts the driver,
         every millisecond until the inner task ends (the first interrupt
-        can land before the statement has started), and only then
-        re-raises. The interrupted statement fails inside the inner task
+        can land before the statement has started), then starts one
+        statement there, and only then re-raises: SQLite keeps an
+        interrupt that finds nothing running until a statement starts,
+        and the last close's checkpoint would honour it and leave the
+        log behind. The interrupted statement fails inside the inner task
         with the driver's own error, which rolls the pass back as any
         failure would, without holding an advisory. No awaiter forwards
         a second cancellation into this loop (:meth:`stop_analysis`
@@ -875,6 +889,10 @@ class EngineHost:
                     with suppress(sqlite3.Error, ValueError):
                         await state.driver.interrupt()
                 await asyncio.sleep(0.001)
+            if state.driver is not None:
+                with suppress(sqlite3.Error, ValueError):
+                    cursor = await state.driver.execute(STATISTICS_CLEAR)
+                    await cursor.close()
             raise
 
     async def _analysis_transaction(self, state: _AnalysisPass) -> None:
